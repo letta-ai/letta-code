@@ -9,13 +9,7 @@ import {
   isGitRepo,
   pullMemory,
 } from "../../agent/memoryGit";
-import {
-  estimateSystemPromptSize,
-  type FileEstimate,
-  type SystemPromptSizeEstimate,
-} from "../../utils/systemPromptSize";
-
-const DEFAULT_TOP = 20;
+import { runMemfsTokensAction } from "./memfsTokens";
 
 function printUsage(): void {
   console.log(
@@ -131,115 +125,6 @@ function resolveBackupPath(agentId: string, from: string): string {
   return join(getAgentRoot(agentId), from);
 }
 
-function parsePositiveInt(
-  raw: string | undefined,
-  fallback: number,
-): number | null {
-  if (raw === undefined) return fallback;
-  if (!/^\d+$/.test(raw)) return null;
-  return Number.parseInt(raw, 10);
-}
-
-function formatNumber(value: number): string {
-  return value.toLocaleString("en-US");
-}
-
-function printTokensText(
-  total: number,
-  files: FileEstimate[],
-  top: number,
-  quiet: boolean,
-): void {
-  console.log("System prompt token estimate");
-  console.log(`  Total: ${formatNumber(total)} tokens`);
-
-  if (quiet || top <= 0 || files.length === 0) {
-    return;
-  }
-
-  const ranked = [...files].sort((a, b) => b.tokens - a.tokens);
-  const limited = ranked.slice(0, top);
-
-  console.log("");
-  console.log("Top files:");
-  console.log(`  ${"tokens".padStart(8)}  path`);
-  for (const row of limited) {
-    console.log(`  ${formatNumber(row.tokens).padStart(8)}  ${row.path}`);
-  }
-}
-
-function printTokensJson(total: number, files: FileEstimate[]): void {
-  console.log(
-    JSON.stringify(
-      {
-        total_tokens: total,
-        files,
-      },
-      null,
-      2,
-    ),
-  );
-}
-
-function resolveMemoryDirForTokens(
-  memoryDirFlag: string | undefined,
-  agentId: string,
-): string | null {
-  if (memoryDirFlag) return memoryDirFlag;
-  if (process.env.MEMORY_DIR) return process.env.MEMORY_DIR;
-  if (agentId) return getMemoryRoot(agentId);
-  return null;
-}
-
-async function runTokensAction(
-  parsed: ReturnType<typeof parseMemfsArgs>,
-  agentId: string,
-): Promise<number> {
-  const format = (parsed.values.format ?? "text") as string;
-  if (format !== "text" && format !== "json") {
-    console.error(`Invalid --format: ${format} (expected text or json)`);
-    return 64;
-  }
-
-  const quiet = Boolean(parsed.values.quiet);
-  const top = parsePositiveInt(parsed.values.top, DEFAULT_TOP);
-  if (top === null) {
-    console.error(
-      `Invalid --top: ${parsed.values.top} (expected non-negative integer)`,
-    );
-    return 64;
-  }
-
-  const memoryDir = resolveMemoryDirForTokens(
-    parsed.values["memory-dir"],
-    agentId,
-  );
-  if (!memoryDir) {
-    console.error(
-      "Missing memory dir. Set --memory-dir, --agent, $MEMORY_DIR, or $LETTA_AGENT_ID.",
-    );
-    return 64;
-  }
-
-  let estimate: SystemPromptSizeEstimate;
-  try {
-    estimate = estimateSystemPromptSize(memoryDir);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`Failed to read memory dir: ${message}`);
-    return 65;
-  }
-
-  const { total, files } = estimate;
-
-  if (format === "json") {
-    printTokensJson(total, files);
-  } else {
-    printTokensText(total, files, top, quiet);
-  }
-  return 0;
-}
-
 export async function runMemfsSubcommand(argv: string[]): Promise<number> {
   let parsed: ReturnType<typeof parseMemfsArgs>;
   try {
@@ -263,7 +148,13 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
   // `tokens` has its own input resolution (--memory-dir / $MEMORY_DIR first,
   // then falls back to agent id). Short-circuit before the agent-id hard check.
   if (action === "tokens") {
-    return runTokensAction(parsed, agentId);
+    return runMemfsTokensAction({
+      memoryDir: parsed.values["memory-dir"],
+      agentMemoryDir: agentId ? getMemoryRoot(agentId) : undefined,
+      top: parsed.values.top,
+      format: parsed.values.format,
+      quiet: Boolean(parsed.values.quiet),
+    });
   }
 
   if (!agentId) {
