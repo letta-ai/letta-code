@@ -80,6 +80,14 @@ describe("normalizeCredentialBaseUrl", () => {
         "https://selfhost.example.com/v1/git/agent-123/state.git",
       );
     });
+
+    test("defaults to api.letta.com when LETTA_MEMFS_BASE_URL is unset, even if LETTA_BASE_URL is localhost", () => {
+      process.env.LETTA_BASE_URL = "http://localhost:51338";
+      delete process.env.LETTA_MEMFS_BASE_URL;
+      expect(getGitRemoteUrl("agent-123")).toBe(
+        "https://api.letta.com/v1/git/agent-123/state.git",
+      );
+    });
   });
 
   describe("isMemfsRemoteUrlForAgent", () => {

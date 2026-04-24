@@ -206,7 +206,7 @@ function getCurrentServerKey(settings?: Settings | null): string {
 
 /**
  * Get the current memfs server key for memfs-related agent settings.
- * Uses LETTA_MEMFS_BASE_URL first, then falls back to LETTA_BASE_URL.
+ * Uses LETTA_MEMFS_BASE_URL and falls back to api.letta.com.
  * @param settings - Optional settings object to check for env overrides
  * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
  */
@@ -214,8 +214,6 @@ function getCurrentMemfsServerKey(settings?: Settings | null): string {
   const baseUrl =
     process.env.LETTA_MEMFS_BASE_URL ||
     settings?.env?.LETTA_MEMFS_BASE_URL ||
-    process.env.LETTA_BASE_URL ||
-    settings?.env?.LETTA_BASE_URL ||
     DEFAULT_LETTA_API_URL;
   return normalizeBaseUrl(baseUrl);
 }

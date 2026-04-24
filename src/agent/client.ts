@@ -119,7 +119,7 @@ export function getServerUrl(): string {
 
 /**
  * Get the current Letta memfs server URL from environment or settings.
- * Falls back to the primary API server URL when no memfs-specific URL is set.
+ * Falls back to Letta Cloud when no memfs-specific URL is set.
  */
 export function getMemfsServerUrl(): string {
   let settings: Settings | null = null;
@@ -132,8 +132,6 @@ export function getMemfsServerUrl(): string {
   return (
     process.env.LETTA_MEMFS_BASE_URL ||
     settings?.env?.LETTA_MEMFS_BASE_URL ||
-    process.env.LETTA_BASE_URL ||
-    settings?.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL
   );
 }
