@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "../accounts";
+import {
+  listChannelAccounts,
+  removeChannelAccount,
+  upsertChannelAccount,
+} from "../accounts";
 import type { BlueskyChannelAccount, DmPolicy } from "../types";
 import {
   DEFAULT_APPVIEW_URL,
@@ -135,6 +139,21 @@ export async function runBlueskySetup(): Promise<boolean> {
         )
       : DEFAULT_NOTIFICATIONS_INTERVAL_SEC;
 
+    console.log(
+      "\nBackfill: deliver any existing unseen mentions/replies/quotes from",
+    );
+    console.log(
+      "the AppView the first time the listener starts? Default no — the first",
+    );
+    console.log(
+      "poll silently advances state and only notifications that arrive AFTER",
+    );
+    console.log("the listener is running will be delivered.");
+    const backfillInput = (await rl.question("Backfill on first poll? [y/N]: "))
+      .trim()
+      .toLowerCase();
+    const backfill = backfillInput === "y" || backfillInput === "yes";
+
     const envAgentId = process.env.LETTA_AGENT_ID || "";
     let agentId: string | null = null;
     if (envAgentId) {
@@ -161,10 +180,29 @@ export async function runBlueskySetup(): Promise<boolean> {
       );
     }
 
+    // Reuse the existing accountId if this handle is already configured.
+    // Avoids duplicate adapter instances racing on the same state slot.
+    const existing = listChannelAccounts("bluesky")
+      .filter((a): a is BlueskyChannelAccount => a.channel === "bluesky")
+      .find((a) => a.handle.toLowerCase() === handle.toLowerCase());
+    if (existing) {
+      console.log(
+        `\nFound existing config for @${handle} (accountId ${existing.accountId}).`,
+      );
+      const overwrite = (await rl.question("Overwrite it? [Y/n]: "))
+        .trim()
+        .toLowerCase();
+      if (overwrite === "n" || overwrite === "no") {
+        console.log("Aborted. No changes made.");
+        return false;
+      }
+      removeChannelAccount("bluesky", existing.accountId);
+    }
+
     const now = new Date().toISOString();
     const account: BlueskyChannelAccount = {
       channel: "bluesky",
-      accountId: randomUUID(),
+      accountId: existing?.accountId ?? randomUUID(),
       enabled: true,
       handle,
       appPassword,
@@ -173,7 +211,7 @@ export async function runBlueskySetup(): Promise<boolean> {
       intervalSec,
       threadContextDepth: DEFAULT_THREAD_CONTEXT_DEPTH,
       reasons: ["mention", "reply", "quote"],
-      backfill: false,
+      backfill,
       agentId,
       dmPolicy: policy,
       allowedUsers,
