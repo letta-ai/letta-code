@@ -128,6 +128,27 @@ export function buildSlackConversationSummary(
   return `[Slack] Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
+function buildDiscordConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Discord] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const preview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (preview) {
+    return `[Discord] Thread${channelLabel}: ${preview}`;
+  }
+
+  return `[Discord] Thread${channelLabel || ` ${msg.chatId}`}`;
+}
+
 function buildChannelTurnSource(
   route: ChannelRoute,
   msg: Pick<
@@ -761,12 +782,13 @@ export class ChannelRegistry {
       return;
     }
 
-    // Discord guild messages use auto-routing (like Slack).
-    // DMs fall through to the standard pairing flow below.
+    // Discord guild messages and account-bound DMs use auto-routing (like
+    // Slack). DMs configured with explicit pairing fall through to the
+    // standard pairing flow below.
     if (
       msg.channel === "discord" &&
       config.channel === "discord" &&
-      msg.chatType === "channel"
+      (msg.chatType === "channel" || config.dmPolicy !== "pairing")
     ) {
       const discordResult = await this.ensureDiscordRoute(adapter, msg, config);
       if (!discordResult) {
@@ -1016,7 +1038,7 @@ export class ChannelRegistry {
 
     const conversationId = await this.createConversationForAgent(
       config.agentId,
-      `[Discord] Thread ${msg.chatLabel ?? msg.chatId}`,
+      buildDiscordConversationSummary(msg),
     );
     const now = new Date().toISOString();
     const route: ChannelRoute = {
@@ -1052,6 +1074,18 @@ export class ChannelRegistry {
       return null;
     }
 
+    if (
+      msg.chatType === "direct" &&
+      config.dmPolicy === "allowlist" &&
+      !config.allowedUsers.includes(msg.senderId)
+    ) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "You are not on the allowed users list for this Discord bot.",
+      );
+      return null;
+    }
+
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const routeThreadId = msg.threadId ?? null;
     let route = getRouteFromStore(
@@ -1074,9 +1108,9 @@ export class ChannelRegistry {
       return { route, isFirstRouteTurn: false };
     }
 
-    // Only create routes from explicit mentions.
+    // In guild channels, only create routes from explicit mentions.
     // Existing routed threads continue above via the route lookup path.
-    if (!msg.isMention) {
+    if (msg.chatType === "channel" && !msg.isMention) {
       return null;
     }
 

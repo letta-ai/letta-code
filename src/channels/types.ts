@@ -327,7 +327,7 @@ export interface SlackChannelAccount extends ChannelAccountBase {
 export interface DiscordChannelAccount extends ChannelAccountBase {
   channel: "discord";
   token: string;
-  /** Agent ID used for guild auto-routing (like Slack's agentId). */
+  /** Agent ID used for account-bound DM and guild auto-routing. */
   agentId: string | null;
 }
 
