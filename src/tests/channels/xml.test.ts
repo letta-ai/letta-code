@@ -68,7 +68,7 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain("Current local time on this device:");
   });
 
-  test("mentions ViewImage for attachment image local_path inspection", () => {
+  test("mentions toolset-dependent local file/image inspection for attachment paths", () => {
     const msg: InboundChannelMessage = {
       channel: "slack",
       chatId: "C123",
@@ -87,8 +87,10 @@ describe("formatChannelNotification", () => {
 
     const reminder = buildChannelReminderText(msg);
 
-    expect(reminder).toContain("Read tool");
+    expect(reminder).toContain("current toolset");
+    expect(reminder).toContain("Read");
     expect(reminder).toContain("ViewImage");
+    expect(reminder).not.toContain("ReadFileGemini");
   });
 
   test("adds Slack thread guidance for channel notifications", () => {
