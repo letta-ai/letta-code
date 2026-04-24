@@ -877,32 +877,6 @@
       }
     },
     {
-      "id": "gpt-5.2-plus-pro-medium",
-      "handle": "chatgpt-plus-pro/gpt-5.2",
-      "label": "GPT-5.2",
-      "description": "GPT-5.2 (med reasoning) via ChatGPT Plus/Pro",
-      "updateArgs": {
-        "reasoning_effort": "medium",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.2-plus-pro-high",
-      "handle": "chatgpt-plus-pro/gpt-5.2",
-      "label": "GPT-5.2",
-      "description": "GPT-5.2 (high reasoning) via ChatGPT Plus/Pro",
-      "updateArgs": {
-        "reasoning_effort": "high",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
       "id": "gpt-5-codex",
       "handle": "openai/gpt-5-codex",
       "label": "GPT-5-Codex",
@@ -912,71 +886,6 @@
         "verbosity": "medium",
         "context_window": 272000,
         "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.2-none",
-      "handle": "openai/gpt-5.2",
-      "label": "GPT-5.2",
-      "description": "Latest general-purpose GPT (no reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "none",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": null,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.2-low",
-      "handle": "openai/gpt-5.2",
-      "label": "GPT-5.2",
-      "description": "Latest general-purpose GPT (low reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "low",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": null,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.2-medium",
-      "handle": "openai/gpt-5.2",
-      "label": "GPT-5.2",
-      "description": "Latest general-purpose GPT (med reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "medium",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": null,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.2-high",
-      "handle": "openai/gpt-5.2",
-      "label": "GPT-5.2",
-      "description": "Latest general-purpose GPT (high reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "high",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": null,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.2-xhigh",
-      "handle": "openai/gpt-5.2",
-      "label": "GPT-5.2",
-      "description": "Latest general-purpose GPT (max reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "xhigh",
-        "verbosity": "medium",
-        "context_window": 272000,
-        "max_output_tokens": null,
         "parallel_tool_calls": true
       }
     },
@@ -1450,17 +1359,6 @@
       "label": "Gemini 3.1 Pro",
       "description": "Google's latest and smartest model",
       "isFeatured": true,
-      "updateArgs": {
-        "context_window": 180000,
-        "temperature": 1.0,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gemini-3-flash",
-      "handle": "google_ai/gemini-3-flash-preview",
-      "label": "Gemini 3 Flash",
-      "description": "Google's fastest Gemini 3 model",
       "updateArgs": {
         "context_window": 180000,
         "temperature": 1.0,
