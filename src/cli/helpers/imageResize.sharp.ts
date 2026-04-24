@@ -15,12 +15,22 @@ import {
 async function inspectImageBuffer(
   buffer: Buffer,
   context: string,
-): Promise<{ width: number; height: number; format?: string }> {
+): Promise<{
+  width: number;
+  height: number;
+  format?: string;
+  orientation?: number;
+}> {
   const metadata = await sharp(buffer).metadata();
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
   assertImageHasDimensions(width, height, context);
-  return { width, height, format: metadata.format };
+  return {
+    width,
+    height,
+    format: metadata.format,
+    orientation: metadata.orientation,
+  };
 }
 
 async function buildVerifiedResizeResult(
@@ -106,10 +116,15 @@ export async function resizeImageIfNeeded(
   buffer: Buffer,
   inputMediaType: string,
 ): Promise<ResizeResult> {
-  const image = sharp(buffer);
+  const sourceMetadata = await inspectImageBuffer(buffer, "source image");
+  const normalizedBuffer =
+    sourceMetadata.orientation && sourceMetadata.orientation !== 1
+      ? await sharp(buffer).rotate().toBuffer()
+      : buffer;
+  const image = sharp(normalizedBuffer);
   const { width, height, format } = await inspectImageBuffer(
-    buffer,
-    "source image",
+    normalizedBuffer,
+    "normalized source image",
   );
 
   const needsResize = width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT;
@@ -119,12 +134,16 @@ export async function resizeImageIfNeeded(
 
   if (!needsResize && isPassthroughFormat) {
     // No resize needed and format is supported - but check byte limit
-    const compressed = await compressToFitByteLimit(buffer, width, height);
+    const compressed = await compressToFitByteLimit(
+      normalizedBuffer,
+      width,
+      height,
+    );
     if (compressed) {
       return compressed;
     }
     return buildVerifiedResizeResult(
-      buffer,
+      normalizedBuffer,
       inputMediaType,
       false,
       "passthrough image output",
