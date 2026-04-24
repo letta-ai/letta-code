@@ -507,40 +507,77 @@ describe("stream-json format", () => {
   );
 
   test(
-    "tool_return_message lands before stop_reason and usage_statistics of its step",
+    "stop_reason and usage are merged inline onto approval_request_message",
     async () => {
-      // Ordering invariant:
-      //   approval_request_message → auto_approval → tool_return_message
-      //   → stop_reason (requires_approval) → usage_statistics → next step.
-      // Before the held-terminator fix, stop_reason and usage_statistics
-      // landed *before* tool_return_message.
+      // The step that ends in `requires_approval` is now a single coalesced
+      // event: the approval_request_message carries `stop_reason` and
+      // `usage` inline. There should be no standalone `stop_reason` or
+      // `usage_statistics` line for that step.
       const lines = await runHeadlessCommand(TOOL_PROMPT);
       const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
 
-      const kindFor = (o: Record<string, unknown>): string => {
-        if (o.type === "message") return String(o.message_type ?? "unknown");
-        return String(o.type);
-      };
-
-      // Locate the first tool_return_message and the stop_reason that
-      // follows it. The stop_reason's index must be AFTER the tool_return.
-      const toolReturnIdx = parsed.findIndex(
-        (o) => kindFor(o) === "tool_return_message",
+      const approvalMsgs = parsed.filter(
+        (o) =>
+          o.type === "message" &&
+          (o.message_type === "approval_request_message" ||
+            o.message_type === "tool_call_message"),
       );
-      expect(toolReturnIdx).toBeGreaterThan(-1);
+      expect(approvalMsgs.length).toBeGreaterThan(0);
 
-      // Find the first stop_reason AT OR AFTER the tool_return_message.
-      // Under the old ordering this would have been before.
-      const stopReasonIdx = parsed.findIndex(
-        (o, i) => i >= toolReturnIdx && kindFor(o) === "stop_reason",
+      // At least one approval message in the run carries inline terminators.
+      const merged = approvalMsgs.find(
+        (o) => o.stop_reason === "requires_approval",
       );
-      expect(stopReasonIdx).toBeGreaterThan(toolReturnIdx);
+      expect(merged).toBeDefined();
+      if (!merged) throw new Error("no merged approval_request_message");
+      expect(merged.usage).toBeDefined();
+      const usage = merged.usage as Record<string, unknown>;
+      expect(typeof usage.total_tokens).toBe("number");
+      expect(typeof usage.completion_tokens).toBe("number");
+      expect(typeof usage.prompt_tokens).toBe("number");
 
-      // And the usage_statistics for that step follows stop_reason.
-      const usageIdx = parsed.findIndex(
-        (o, i) => i >= stopReasonIdx && kindFor(o) === "usage_statistics",
+      // No standalone stop_reason: requires_approval line should remain
+      // (the inline merge replaces it on the wire).
+      const standaloneRequiresApproval = parsed.filter(
+        (o) =>
+          o.type === "message" &&
+          o.message_type === "stop_reason" &&
+          o.stop_reason === "requires_approval",
       );
-      expect(usageIdx).toBeGreaterThan(stopReasonIdx);
+      expect(standaloneRequiresApproval).toHaveLength(0);
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "stop_reason: end_turn and usage are merged inline onto the final assistant_message",
+    async () => {
+      // The terminating step of the turn ends with `end_turn`; its
+      // assistant_message carries `stop_reason: end_turn` and `usage` inline.
+      const lines = await runHeadlessCommand(TOOL_PROMPT);
+      const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+
+      const assistantMsgs = parsed.filter(
+        (o) => o.type === "message" && o.message_type === "assistant_message",
+      );
+      expect(assistantMsgs.length).toBeGreaterThan(0);
+
+      // The last assistant_message should carry the inline terminators.
+      const last = assistantMsgs[assistantMsgs.length - 1];
+      if (!last) throw new Error("no assistant_message found");
+      expect(last.stop_reason).toBe("end_turn");
+      expect(last.usage).toBeDefined();
+      const usage = last.usage as Record<string, unknown>;
+      expect(typeof usage.completion_tokens).toBe("number");
+
+      // And no standalone stop_reason: end_turn line for the same step.
+      const standaloneEndTurn = parsed.filter(
+        (o) =>
+          o.type === "message" &&
+          o.message_type === "stop_reason" &&
+          o.stop_reason === "end_turn",
+      );
+      expect(standaloneEndTurn).toHaveLength(0);
     },
     { timeout: 200000 },
   );

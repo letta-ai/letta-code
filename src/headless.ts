@@ -2020,14 +2020,10 @@ ${SYSTEM_REMINDER_CLOSE}
       let approvalPendingRecovery = false;
 
       if (outputFormat === "stream-json") {
-        // Track approval requests across streamed chunks
-        const autoApprovalEmitted = new Set<string>();
-
         const streamJsonHook: DrainStreamHook = async ({
           chunk,
           shouldOutput,
           errorInfo,
-          updatedApproval,
         }) => {
           let shouldOutputChunk = shouldOutput;
 
@@ -2079,46 +2075,11 @@ ${SYSTEM_REMINDER_CLOSE}
             return { stopReason: "error", shouldAccumulate: true };
           }
 
-          // Check if this approval will be auto-approved. Dedup per tool_call_id
-          if (
-            updatedApproval &&
-            !autoApprovalEmitted.has(updatedApproval.toolCallId)
-          ) {
-            const { autoAllowed } = await classifyApprovals([updatedApproval], {
-              alwaysRequiresUserInput: isInteractiveApprovalTool,
-              requireArgsForAutoApprove: true,
-              missingNameReason: "Tool call incomplete - missing name",
-            });
-
-            const [approval] = autoAllowed;
-            if (approval) {
-              const permission = approval.permission;
-              // Ingest the final-args chunk first so the coalesced
-              // approval_request_message is complete, then flush so it
-              // lands on the wire before the auto_approval marker.
-              if (shouldOutputChunk) streamJsonAggregator?.ingest(chunk);
-              streamJsonAggregator?.flushPending();
-              shouldOutputChunk = false;
-              const autoApprovalMsg: AutoApprovalMessage = {
-                type: "auto_approval",
-                tool_call: {
-                  name: approval.approval.toolName,
-                  tool_call_id: approval.approval.toolCallId,
-                  arguments: approval.approval.toolArgs || "{}",
-                },
-                reason: permission.reason || "Allowed by permission rule",
-                matched_rule:
-                  "matchedRule" in permission && permission.matchedRule
-                    ? permission.matchedRule
-                    : "auto-approved",
-                session_id: sessionId,
-                uuid: `auto-approval-${approval.approval.toolCallId}`,
-              };
-              writeWireMessage(autoApprovalMsg);
-              autoApprovalEmitted.add(approval.approval.toolCallId);
-            }
-          }
-
+          // Note: `auto_approval` is no longer emitted from inside the hook.
+          // We defer it to the post-drain section so the merged
+          // approval_request_message (with inline stop_reason / usage) lands
+          // on the wire BEFORE the auto_approval marker. Emitting during
+          // drain forced a premature aggregator flush, breaking the merge.
           if (shouldOutputChunk) {
             streamJsonAggregator?.ingest(chunk);
           }
@@ -2217,6 +2178,34 @@ ${SYSTEM_REMINDER_CLOSE}
             missingNameReason: "Tool call incomplete - missing name",
           });
 
+        // Emit `auto_approval` markers for each auto-allowed approval. These
+        // used to fire from inside the streamJsonHook, but doing so forced an
+        // early aggregator flush that broke the merged-terminator emission
+        // for the approval_request_message. Emitting them here ensures the
+        // wire order is: approval_request (merged) → auto_approval →
+        // tool_return_message (from executeApprovalBatch below).
+        if (outputFormat === "stream-json") {
+          for (const approvalItem of autoAllowed) {
+            const permission = approvalItem.permission;
+            const autoApprovalMsg: AutoApprovalMessage = {
+              type: "auto_approval",
+              tool_call: {
+                name: approvalItem.approval.toolName,
+                tool_call_id: approvalItem.approval.toolCallId,
+                arguments: approvalItem.approval.toolArgs || "{}",
+              },
+              reason: permission.reason || "Allowed by permission rule",
+              matched_rule:
+                "matchedRule" in permission && permission.matchedRule
+                  ? permission.matchedRule
+                  : "auto-approved",
+              session_id: sessionId,
+              uuid: `auto-approval-${approvalItem.approval.toolCallId}`,
+            };
+            writeWireMessage(autoApprovalMsg);
+          }
+        }
+
         const decisions: Decision[] = [
           ...autoAllowed.map((ac) => ({
             type: "approve" as const,
@@ -2257,12 +2246,10 @@ ${SYSTEM_REMINDER_CLOSE}
           },
         );
 
-        // Now that tool_return_message events have landed on the wire,
-        // release the step terminators held during the approval step so
-        // stop_reason / usage_statistics come after their tool returns.
-        streamJsonAggregator?.releaseHeldTerminators();
-
-        // Send all results in one batch
+        // Send all results in one batch.
+        // (`stop_reason: requires_approval` and `usage_statistics` are now
+        // merged inline onto the approval_request_message at flush time, so
+        // there's nothing held to release after tool execution.)
         const approvalInputWithOtid = {
           type: "approval" as const,
           approvals: executedResults as ApprovalResult[],
@@ -4009,12 +3996,10 @@ async function runBidirectionalMode(
               { toolContextId: turnToolContextId ?? undefined },
             );
 
-            // Release the held step terminators now that tool returns have
-            // been emitted — stop_reason / usage_statistics come after their
-            // tool_return_message.
-            streamJsonAggregator.releaseHeldTerminators();
-
-            // Send approval results back to continue
+            // Send approval results back to continue.
+            // (`stop_reason: requires_approval` and `usage_statistics` are
+            // merged inline onto the approval_request_message at flush time,
+            // so there's nothing held to release after tool execution.)
             const approvalInputWithOtid = {
               type: "approval" as const,
               approvals: executedResults,
