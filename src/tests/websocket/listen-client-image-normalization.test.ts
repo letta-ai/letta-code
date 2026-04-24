@@ -194,6 +194,7 @@ describe("listen-client inbound image normalization", () => {
       async () => {
         throw new Error("codec unavailable");
       },
+      { imageFailureMode: "drop" },
     );
 
     expect(normalized).toEqual([

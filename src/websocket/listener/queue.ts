@@ -14,7 +14,10 @@ import type {
 import { isCoalescable } from "../../queue/queueRuntime";
 import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { normalizeMessageContentImages as normalizeSharedMessageContentImages } from "../../utils/messageImageNormalization";
+import {
+  type ImageNormalizationFailureMode,
+  normalizeMessageContentImages as normalizeSharedMessageContentImages,
+} from "../../utils/messageImageNormalization";
 import { getListenerBlockedReason } from "../helpers/listenerQueueAdapter";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
@@ -202,13 +205,21 @@ function mapTurnLifecycleOutcome(
 export async function normalizeMessageContentImages(
   content: MessageCreate["content"],
   resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
+  failureMode: ImageNormalizationFailureMode = "strict",
 ): Promise<MessageCreate["content"]> {
-  return await normalizeSharedMessageContentImages(content, resize);
+  return await normalizeSharedMessageContentImages(
+    content,
+    resize,
+    failureMode,
+  );
 }
 
 export async function normalizeInboundMessages(
   messages: InboundMessagePayload[],
   resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
+  options: {
+    imageFailureMode?: ImageNormalizationFailureMode;
+  } = {},
 ): Promise<InboundMessagePayload[]> {
   let didChange = false;
 
@@ -221,6 +232,7 @@ export async function normalizeInboundMessages(
       const normalizedContent = await normalizeMessageContentImages(
         message.content,
         resize,
+        options.imageFailureMode ?? "strict",
       );
       if (normalizedContent !== message.content) {
         didChange = true;
