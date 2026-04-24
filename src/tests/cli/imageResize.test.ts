@@ -50,6 +50,31 @@ describe("resizeImageIfNeeded", () => {
     expect(result.mediaType).toBe("image/png");
   });
 
+  test("normalizes EXIF-oriented JPEG inputs before returning them", async () => {
+    const orientedJpeg = await sharp({
+      create: {
+        width: 200,
+        height: 120,
+        channels: 3,
+        background: { r: 220, g: 60, b: 40 },
+      },
+    })
+      .jpeg()
+      .withMetadata({ orientation: 6 })
+      .toBuffer();
+
+    const result = await resizeImageIfNeeded(orientedJpeg, "image/jpeg");
+    const normalizedBuffer = Buffer.from(result.data, "base64");
+    const metadata = await sharp(normalizedBuffer).metadata();
+
+    expect(result.mediaType).toBe("image/jpeg");
+    expect(result.width).toBe(120);
+    expect(result.height).toBe(200);
+    expect(metadata.width).toBe(120);
+    expect(metadata.height).toBe(200);
+    expect(metadata.orientation).toBeUndefined();
+  });
+
   test("converts HEIC inputs on macOS before applying model limits", async () => {
     if (process.platform !== "darwin") {
       return;
