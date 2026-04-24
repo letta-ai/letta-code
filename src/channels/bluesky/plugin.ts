@@ -1,6 +1,7 @@
 import type { ChannelPlugin } from "../pluginTypes";
 import type { BlueskyChannelAccount, ChannelAccount } from "../types";
 import { createBlueskyAdapter } from "./adapter";
+import { blueskyMessageActions } from "./messageActions";
 import { runBlueskySetup } from "./setup";
 
 /**
@@ -29,4 +30,5 @@ export const blueskyChannelPlugin: ChannelPlugin = {
   runSetup() {
     return runBlueskySetup();
   },
+  messageActions: blueskyMessageActions,
 };
