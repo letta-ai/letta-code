@@ -60,185 +60,6 @@ type UiModel = {
 
 const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
 
-/**
- * Parse a model label into a family name, semantic version, and modifier.
- *
- * `family` is the text BEFORE the first version token, `modifier` is the
- * text AFTER it. Keeping modifier separate from family lets us group
- * sibling variants (Opus 4.6 and Opus 4.6 1M, GPT-5.5 and GPT-5.5 Fast)
- * together while still sorting them deterministically within a version.
- *
- * Examples:
- *   "GLM-5.1"           → { family: "glm",          version: [5, 1], modifier: "" }
- *   "GPT-5.5 (ChatGPT)" → { family: "gpt",          version: [5, 5], modifier: "(chatgpt)" }
- *   "GPT-5.5 Fast"      → { family: "gpt",          version: [5, 5], modifier: "fast" }
- *   "GPT-5.1 Codex"     → { family: "gpt",          version: [5, 1], modifier: "codex" }
- *   "GPT-5.1 Codex Max" → { family: "gpt",          version: [5, 1], modifier: "codex max" }
- *   "Opus 4.6"          → { family: "opus",         version: [4, 6], modifier: "" }
- *   "Opus 4.6 1M"       → { family: "opus",         version: [4, 6], modifier: "1m" }
- *   "Kimi K2.6"         → { family: "kimi k",       version: [2, 6], modifier: "" }
- *   "MiniMax 2.7"       → { family: "minimax",      version: [2, 7], modifier: "" }
- *   "Bedrock Opus 4.6"  → { family: "bedrock opus", version: [4, 6], modifier: "" }
- *
- * Family and modifier are lowercased so case differences across models
- * (e.g. "MiniMax" vs "Minimax") still group together.
- */
-export function parseModelLabel(label: string): {
-  family: string;
-  version: number[];
-  modifier: string;
-} {
-  const normalize = (s: string) =>
-    s
-      .replace(/[\s-]+/g, " ")
-      .trim()
-      .toLowerCase();
-  const versionMatch = label.match(/(\d+(?:\.\d+)*)/);
-  const versionToken = versionMatch?.[1];
-  if (!versionMatch || !versionToken) {
-    return { family: normalize(label), version: [0], modifier: "" };
-  }
-  const versionStart = versionMatch.index ?? 0;
-  const versionEnd = versionStart + versionToken.length;
-  const version = versionToken.split(".").map((n) => parseInt(n, 10));
-  const family = normalize(label.slice(0, versionStart));
-  const modifier = normalize(label.slice(versionEnd));
-  return { family, version, modifier };
-}
-
-/**
- * A set of families that share a release cadence and should sort together
- * "by generation". Within a group, version is the primary sort key; within
- * a version, the family index in `families` is the secondary (so passing
- * `["haiku", "sonnet", "opus"]` produces smaller-tier-first inside each
- * Claude generation).
- */
-export type GenerationGroup = {
-  name: string;
-  families: string[];
-};
-
-/**
- * Anthropic's Claude line ships Haiku / Sonnet / Opus together each
- * generation, so we treat them as one sort group: version first, smaller
- * tier first inside the version. Produces e.g.
- *   Opus 4.7 → Sonnet 4.6 → Sonnet 4.6 1M → Opus 4.6 → Opus 4.6 1M → Opus 4.5
- */
-const DEFAULT_GENERATION_GROUPS: GenerationGroup[] = [
-  { name: "anthropic", families: ["haiku", "sonnet", "opus"] },
-];
-
-type SortOptions = {
-  priorityFamilies?: string[];
-  generationGroups?: GenerationGroup[];
-};
-
-/**
- * Sort a list of raw API handles using the same newer-first-within-family
- * policy as sortModelsByFamilyAndVersion. Each handle is resolved to a label
- * via `labelFor`; handles without a label fall back to the handle string
- * itself, which still gives reasonable family grouping via the provider
- * prefix.
- */
-export function sortHandlesByFamilyAndVersion(
-  handles: string[],
-  labelFor: (handle: string) => string | undefined,
-  options?: SortOptions,
-): string[] {
-  const wrapped = handles.map((handle) => ({
-    handle,
-    label: labelFor(handle) ?? handle,
-  }));
-  return sortModelsByFamilyAndVersion(wrapped, options).map((w) => w.handle);
-}
-
-/**
- * Sort models so that within each family the newest version appears first,
- * while preserving the order in which families first appear in the input
- * (so provider grouping is still driven by the upstream list). Callers can
- * pass `priorityFamilies` to pin specific families to the top in a given
- * order — by default no family is pinned.
- *
- * Families that belong to a generation group (see `generationGroups`, which
- * defaults to the Anthropic tier trio) are collapsed into a single group
- * for sorting purposes: generation (version) first, then tier index.
- *
- * Tie-break order: groupFamily order → version desc → tier index within
- * generation group asc → modifier asc (so base sorts before "Fast"/"1M"/
- * "Codex" variants) → featured first → stable original position.
- */
-export function sortModelsByFamilyAndVersion<
-  T extends { label: string; isFeatured?: boolean },
->(models: T[], options?: SortOptions): T[] {
-  const generationGroups =
-    options?.generationGroups ?? DEFAULT_GENERATION_GROUPS;
-  const findGroup = (family: string) => {
-    for (const g of generationGroups) {
-      const idx = g.families.indexOf(family);
-      if (idx >= 0) return { name: g.name, idx };
-    }
-    return null;
-  };
-
-  const annotated = models.map((m, originalIndex) => {
-    const parsed = parseModelLabel(m.label);
-    const group = findGroup(parsed.family);
-    return {
-      model: m,
-      originalIndex,
-      family: parsed.family,
-      version: parsed.version,
-      modifier: parsed.modifier,
-      // `sortFamily` is what drives the cross-family ordering: members of
-      // the same generation group share one key so they stay adjacent.
-      sortFamily: group?.name ?? parsed.family,
-      // `groupTierIdx` is only meaningful inside a generation group — it
-      // orders tiers (Haiku < Sonnet < Opus) at the same version.
-      groupTierIdx: group?.idx ?? 0,
-    };
-  });
-
-  const familyOrder = new Map<string, number>();
-  // Seed with any caller-supplied priority list first so those families win
-  // the appearance race regardless of where they show up in the input.
-  for (const fam of options?.priorityFamilies ?? []) {
-    if (!familyOrder.has(fam)) {
-      familyOrder.set(fam, familyOrder.size);
-    }
-  }
-  for (const entry of annotated) {
-    if (!familyOrder.has(entry.sortFamily)) {
-      familyOrder.set(entry.sortFamily, familyOrder.size);
-    }
-  }
-  annotated.sort((a, b) => {
-    const famDiff =
-      (familyOrder.get(a.sortFamily) ?? 0) -
-      (familyOrder.get(b.sortFamily) ?? 0);
-    if (famDiff !== 0) return famDiff;
-    const len = Math.max(a.version.length, b.version.length);
-    for (let i = 0; i < len; i++) {
-      const av = a.version[i] ?? 0;
-      const bv = b.version[i] ?? 0;
-      if (av !== bv) return bv - av;
-    }
-    // Inside a generation group, smaller tier first (Haiku → Sonnet → Opus).
-    if (a.groupTierIdx !== b.groupTierIdx) {
-      return a.groupTierIdx - b.groupTierIdx;
-    }
-    // Base model (empty modifier) sorts before its variants; among variants,
-    // alphabetical so "fast" < "fast (chatgpt)" and "codex" < "codex max".
-    if (a.modifier !== b.modifier) {
-      return a.modifier.localeCompare(b.modifier);
-    }
-    const aRank = a.model.isFeatured ? 0 : 1;
-    const bRank = b.model.isFeatured ? 0 : 1;
-    if (aRank !== bRank) return aRank - bRank;
-    return a.originalIndex - b.originalIndex;
-  });
-  return annotated.map((entry) => entry.model);
-}
-
 export function filterModelsByAvailabilityForSelector<
   T extends { handle: string },
 >(
@@ -453,7 +274,7 @@ export function ModelSelector({
       deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
     }
 
-    return sortModelsByFamilyAndVersion(deduped);
+    return deduped;
   }, [
     typedModels,
     availableHandles,
@@ -470,9 +291,6 @@ export function ModelSelector({
   );
 
   // Letta API (all): all non-BYOK handles from API, including recommended models.
-  // Legacy entries stay visible here (that's the point of "(all)") but we still
-  // sort newer-first within each family so the order is consistent with the
-  // recommended tab.
   const allLettaModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
@@ -495,19 +313,14 @@ export function ModelSelector({
         } satisfies UiModel;
       });
 
-    const filtered = searchQuery
-      ? (() => {
-          const query = searchQuery.toLowerCase();
-          return modelsForHandles.filter(
-            (model) =>
-              model.label.toLowerCase().includes(query) ||
-              model.description.toLowerCase().includes(query) ||
-              model.handle.toLowerCase().includes(query),
-          );
-        })()
-      : modelsForHandles;
-
-    return sortModelsByFamilyAndVersion(filtered);
+    if (!searchQuery) return modelsForHandles;
+    const query = searchQuery.toLowerCase();
+    return modelsForHandles.filter(
+      (model) =>
+        model.label.toLowerCase().includes(query) ||
+        model.description.toLowerCase().includes(query) ||
+        model.handle.toLowerCase().includes(query),
+    );
   }, [
     availableHandles,
     allApiHandles,
@@ -536,58 +349,54 @@ export function ModelSelector({
     [byokProviderAliases],
   );
 
-  // BYOK (recommended): BYOK API handles that have matching entries in models.json.
-  // Legacy entries are hidden (still reachable under "BYOK (all)").
-  // Output is sorted by family → newer version first, independent of the
-  // API handle ordering we happened to receive.
+  // BYOK (recommended): iterate models.json in order, keeping entries the
+  // user has a BYOK handle for. Legacy entries are hidden (still reachable
+  // under "BYOK (all)"). Display order follows models.json directly, and
+  // we dedupe by (baseHandle, contextWindow) so a single underlying model
+  // exposed via multiple BYOK providers only shows one row.
   const byokModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
-    // Get all BYOK handles from API
-    const byokHandles = allApiHandles.filter(isByokHandle);
-
-    // Find models.json entries that match (using alias for lc-* providers).
-    // Dedupe by (baseHandle, contextWindow) so users who have the same
-    // underlying model connected via multiple BYOK providers (e.g. direct
-    // Anthropic key AND a custom-provider forward) only see one row.
-    const matched: UiModel[] = [];
-    const seenBase = new Set<string>();
-    for (const handle of byokHandles) {
+    // Index BYOK API handles by their base handle for fast lookup.
+    const byokHandleByBase = new Map<string, string>();
+    for (const handle of allApiHandles) {
+      if (!isByokHandle(handle)) continue;
       const baseHandle = toBaseHandle(handle);
-      const staticModel = pickPreferredStaticModel(baseHandle);
-      if (!staticModel) continue;
-      const contextWindow = staticModel.updateArgs?.context_window as
-        | number
-        | undefined;
-      const dedupKey = `${baseHandle}:${contextWindow ?? 0}`;
-      if (seenBase.has(dedupKey)) continue;
-      seenBase.add(dedupKey);
-      // Use models.json data but with the BYOK handle as the ID
+      if (!byokHandleByBase.has(baseHandle)) {
+        byokHandleByBase.set(baseHandle, handle);
+      }
+    }
+
+    const seen = new Set<string>();
+    const matched: UiModel[] = [];
+    for (const m of typedModels) {
+      if (m.legacy) continue;
+      const byokHandle = byokHandleByBase.get(m.handle);
+      if (!byokHandle) continue;
+      const contextWindow = m.updateArgs?.context_window as number | undefined;
+      const dedupKey = `${m.handle}:${contextWindow ?? 0}`;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
+      const preferred = pickPreferredStaticModel(m.handle, contextWindow) ?? m;
       matched.push({
-        ...staticModel,
-        id: handle,
-        handle: handle,
+        ...preferred,
+        id: byokHandle,
+        handle: byokHandle,
       });
     }
 
-    // Drop legacy models from the recommended view.
-    let filtered = matched.filter((m) => !m.legacy);
-
-    // Apply search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (m) =>
-          m.label.toLowerCase().includes(query) ||
-          m.description.toLowerCase().includes(query) ||
-          m.handle.toLowerCase().includes(query),
-      );
-    }
-
-    return sortModelsByFamilyAndVersion(filtered);
+    if (!searchQuery) return matched;
+    const query = searchQuery.toLowerCase();
+    return matched.filter(
+      (m) =>
+        m.label.toLowerCase().includes(query) ||
+        m.description.toLowerCase().includes(query) ||
+        m.handle.toLowerCase().includes(query),
+    );
   }, [
     availableHandles,
     allApiHandles,
+    typedModels,
     pickPreferredStaticModel,
     searchQuery,
     isByokHandle,
@@ -595,34 +404,14 @@ export function ModelSelector({
   ]);
 
   // BYOK (all): all BYOK handles from API (including recommended ones).
-  // Sorted newer-first within family via label lookup (using the base handle
-  // alias so "lc-anthropic/..." resolves against models.json "anthropic/...").
   const byokAllModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
     const byokHandles = allApiHandles.filter(isByokHandle);
-
-    // Apply search filter
-    let filtered = byokHandles;
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = byokHandles.filter((handle) =>
-        handle.toLowerCase().includes(query),
-      );
-    }
-
-    return sortHandlesByFamilyAndVersion(filtered, (handle) => {
-      const baseHandle = toBaseHandle(handle);
-      return typedModels.find((m) => m.handle === baseHandle)?.label;
-    });
-  }, [
-    availableHandles,
-    allApiHandles,
-    searchQuery,
-    isByokHandle,
-    toBaseHandle,
-    typedModels,
-  ]);
+    if (!searchQuery) return byokHandles;
+    const query = searchQuery.toLowerCase();
+    return byokHandles.filter((handle) => handle.toLowerCase().includes(query));
+  }, [availableHandles, allApiHandles, searchQuery, isByokHandle]);
 
   // Server-recommended models: models.json entries available on the server (for self-hosted)
   // Filter out letta/letta-free legacy model and the broader `legacy: true` set.
@@ -653,7 +442,7 @@ export function ModelSelector({
       seen.add(key);
       deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
     }
-    return sortModelsByFamilyAndVersion(deduped);
+    return deduped;
   }, [
     isSelfHosted,
     typedModels,
@@ -663,20 +452,14 @@ export function ModelSelector({
   ]);
 
   // Server-all models: ALL handles from the server (for self-hosted)
-  // Filter out letta/letta-free legacy model. Sort newer-first within family
-  // (handles without a models.json match sort by their handle string).
+  // Filter out letta/letta-free legacy model.
   const serverAllModels = useMemo(() => {
     if (!isSelfHosted) return [];
-    let handles = allApiHandles.filter((h) => h !== "letta/letta-free");
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      handles = handles.filter((h) => h.toLowerCase().includes(query));
-    }
-    return sortHandlesByFamilyAndVersion(
-      handles,
-      (handle) => typedModels.find((m) => m.handle === handle)?.label,
-    );
-  }, [isSelfHosted, allApiHandles, searchQuery, typedModels]);
+    const handles = allApiHandles.filter((h) => h !== "letta/letta-free");
+    if (!searchQuery) return handles;
+    const query = searchQuery.toLowerCase();
+    return handles.filter((h) => h.toLowerCase().includes(query));
+  }, [isSelfHosted, allApiHandles, searchQuery]);
 
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
