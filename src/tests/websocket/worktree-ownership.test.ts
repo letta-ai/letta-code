@@ -99,4 +99,31 @@ describe("worktree ownership tracking", () => {
       ),
     ).toBe(path.resolve("/repo/packages/app", ".letta/worktrees/fix-bar"));
   });
+
+  test("parses env-prefixed git worktree commands", () => {
+    expect(
+      __worktreeOwnershipTestUtils.resolveGitWorktreeAddTargetPath(
+        "FOO=1 env -i BAR=2 git worktree add -b fix/foo ../outside main",
+        "/repo",
+      ),
+    ).toBe(path.resolve("/repo", "../outside"));
+
+    expect(
+      __worktreeOwnershipTestUtils.resolveGitWorktreeAddTargetPathFromLauncher(
+        [
+          "env",
+          "-i",
+          "FOO=1",
+          "git",
+          "worktree",
+          "add",
+          "-b",
+          "fix/foo",
+          ".letta/worktrees/fix-foo",
+          "main",
+        ],
+        "/repo",
+      ),
+    ).toBe(path.resolve("/repo", ".letta/worktrees/fix-foo"));
+  });
 });
