@@ -12,6 +12,8 @@ Your context is what makes you *you* across sessions. You are responsible for ma
 
 Over time, context can degrade — bloat and poor prompt quality erode your ability to remember the right things and follow instructions properly. This skill helps you identify issues with your context and repair them collaboratively with the user.
 
+**IMPORTANT**: Your edits of your system instructions should be **conservative**. Do NOT make assuptions about what parts of the system prompt are critical. The system prompt defines who you are, so significant modifications to its structure can have unintended consequences. Focus on making minimal changes to meet the token budget, and to effectively link out to external memory. 
+
 ## Operating Procedure
 
 ### Step 1: Identify and resolve context issues 
@@ -19,37 +21,33 @@ Explore your memory files to identify issues. Consider what is confusing about y
 
 Below are additional common issues with context and how they can be resolved: 
 
-### Context quality 
-Your system prompt and memory filesystem should be well structured and clear. 
+#### System prompt bloat
+Memories compiled into the system prompt (contained in `system/`) should take up about 10% of the total context size (usually ~15-20K tokens). This is a soft target, not a hard requirement.
 
-**Questions to ask**: 
-- Is my system prompt clear and well formatted? 
-- Are there wasteful or unnecessary tokens in my prompts? 
-- Do I know when to load which files in my memory filesystem? 
-
-#### System prompt bloat 
-Memories that are compiled as part of the system prompt (contained in `system/`) should only take up about 10% of the total context size (usually ~15-20K tokens), though this is a recommendation, not a hard requirement.
-
-Use the following script to evaluate the token usage of the system prompt: 
+Use the following script to evaluate the token usage of the system prompt:
 ```bash
 npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
 ```
 Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
 
-**Questions to ask**:
-- Do all these tokens need to be passed to the LLM on every turn, or can they be retrieved when needed through being part of external memory or conversation history? 
-- Do any of these prompts confuse or distract me? 
-- Am I able to effectively follow critical instructions (e.g. persona information, user preferences) given the current prompt structure and contents? 
+**Why detail is load-bearing (read this before cutting anything)**: In-context detail does more than carry information. It does at least four things, and byte-counting sweeps only see the first:
+1. **Information** — the literal facts stated
+2. **Attention anchoring** — makes certain topics feel important to the model when it's reasoning
+3. **Semantic priming** — raises the prior on codebase-specific patterns ("this codebase has weird X, don't assume defaults")
+4. **Reasoning templates** — past examples become heuristics for new bugs; rationale in "why" prose becomes scaffolding
 
-**Solution**: Reduce the size of the system prompt if needed: 
-- Move files outside of `system/` so they are no longer part of the system prompt
-- Compact information to be more information dense or eliminate redundancy
-- Leverage progressive disclosure: move some context outside of `system/` and reference it via `[[path]]` links to create discovery paths
+Compression preserves (1). It destroys (2), (3), (4). That's why a compressed prompt can make an agent measurably worse at codebase-specific reasoning even though the explicit facts are all "still there" in reference files.
 
-**Scope**: You may refine, tighten, and restructure prompts to improve clarity and adherence — but do not change the intended semantics. The goal is better signal, not different behavior.
-- Do not alter persona-defining content (who you are, how you communicate)
-- Do not remove or change user identity or preferences (e.g. the human's name, their stated goals)
-- Do not rewrite instructions in ways that shift their meaning — only reduce noise and improve structure
+
+**Reference links (`[[path]]`) are NOT equivalent to in-context presence.** They're latent until the agent actively fetches them. An agent only fetches when it already knows it doesn't know. The priming cues that tell it *when* it doesn't know are in the system prompt itself — they can't be replaced by links.
+
+**When to intervene**: Only if the system prompt is *meaningfully* over target. At or near the target, leave it alone. Every edit risks removing content that was doing work you can't see. A prompt that feels "a bit long" is almost always better than one that's been aggressively trimmed.
+
+**Modifying the system prompt**: Make **MINIMAL** changes required to cut the token count of the system prompt if needed. The goal preserve the existing behavior while cutting down the token count. Focus on reducing redundancy or compressing - rather than offloading entire sections to external memory.
+- Preserve persona-defining content (who you are, how you communicate)
+- Preserve user identity or preferences (e.g. the human's name, their stated goals)
+- Maintain the existing distribution of detail: compression should be applied evenly across all topics. If the original prompt was 50% about a specific issue, the new prompt should also be 50% about that issue. 
+- Only reduce noise and improve structure - if compression must result in information loss, preserve lost details into external memory
 
 #### Context redundancy and unclear organization 
 The context in the memory filesystem should have a clear structure, with a well-defined purpose for each file. Memory file descriptions should be precise and non-overlapping. Their contents should be consistent with the description, and have non-overlapping content to other files. 
@@ -98,10 +96,13 @@ Sarah's active projects are: Letta Code [[projects/letta_code.md]] and Letta Clo
 - Make sure your future self will be able to find and load external files when needed. 
 
 ### Step 2: Implement context fixes
-Create a plan for what fixes you want to make, then implement them.
+Create a plan for what fixes you want to make, then implement them. Favor the smallest possible change that resolves the issue — if the system prompt is 1.5× the target, don't cut it to half the target "for headroom." Cut until you're near the target, then stop.
 
 Before moving on, verify:
 - [ ] System prompt token budget reviewed (target ~10% of context, usually 15-20k tokens)
+- [ ] Changes are proportional to the problem — only offloaded what's needed to meet the target
+- [ ] Preserved detailed rationale, examples, and cross-references in sections that stayed in `system/`
+- [ ] Preferred moving whole files or deleting stale sections over compressing detailed sections into summaries
 - [ ] No overlapping or redundant files remain
 - [ ] All file descriptions are unique, accurate, and match their contents
 - [ ] Moved-out knowledge has `[[path]]` references from in-context memory so it can be discovered
@@ -130,4 +131,4 @@ Before finishing make sure you:
 - [ ] Told the user to run `/recompile` to refresh the system prompt and apply changes
 
 ## Critical information 
-- **Ask the user about their goals for you, not the implementation**: You understand your own context best, and should follow the guidelines in this document. Do NOT ask the user about their structural preferences — the context is for YOU, not them. Ask them how they want YOU to behave or know instead. 
+- **Ask the user about their goals for you, not the implementation**: You understand your own context best, and should follow the guidelines in this document. Do NOT ask the user about their structural preferences — the context is for YOU, not them. Ask them how they want YOU to behave or know instead.
