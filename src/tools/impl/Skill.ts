@@ -67,6 +67,14 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
   }
 }
 
+function isMemfsEnabledForSkillLookup(agentId: string): boolean {
+  try {
+    return settingsManager.isMemfsEnabled(agentId);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Read skill content from file or bundled source
  * Returns both content and the path to the SKILL.md file
@@ -108,7 +116,7 @@ async function readSkillContent(
   }
 
   // 3. Try agent memory skills directories
-  if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+  if (agentId && isMemfsEnabledForSkillLookup(agentId)) {
     try {
       await ensureLocalMemfsCheckout(agentId);
     } catch {
