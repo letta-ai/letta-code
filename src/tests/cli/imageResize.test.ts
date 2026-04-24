@@ -75,6 +75,23 @@ describe("resizeImageIfNeeded", () => {
     expect(metadata.orientation).toBeUndefined();
   });
 
+  test("rejects images whose input pixel count exceeds the safety limit", async () => {
+    const oversizedByPixels = await sharp({
+      create: {
+        width: 5000,
+        height: 5001,
+        channels: 3,
+        background: { r: 40, g: 120, b: 200 },
+      },
+    })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    await expect(
+      resizeImageIfNeeded(oversizedByPixels, "image/jpeg"),
+    ).rejects.toThrow(/pixel input limit/);
+  });
+
   test("converts HEIC inputs on macOS before applying model limits", async () => {
     if (process.platform !== "darwin") {
       return;
