@@ -1,4 +1,5 @@
 import path from "node:path";
+import type WebSocket from "ws";
 import {
   ensureFileIndex,
   getIndexRoot,
@@ -12,7 +13,7 @@ import {
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import { getConversationRuntime } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
-import type { ListenerRuntime } from "./types";
+import type { ConversationRuntime, ListenerRuntime } from "./types";
 
 function isWithinOrEqual(parent: string, candidate: string): boolean {
   const relative = path.relative(parent, candidate);
@@ -42,6 +43,8 @@ export function switchConversationWorkingDirectory(params: {
   conversationId: string;
   workingDirectory: string;
   emitStatus?: boolean;
+  statusRuntime?: ConversationRuntime | ListenerRuntime;
+  statusSocket?: WebSocket;
   updateCurrentRuntimeContext?: boolean;
 }): void {
   const { runtime, workingDirectory } = params;
@@ -76,10 +79,15 @@ export function switchConversationWorkingDirectory(params: {
 
   refreshIndexForWorkingDirectory(workingDirectory);
 
-  if (params.emitStatus !== false && runtime.socket) {
-    emitDeviceStatusUpdate(runtime.socket, conversationRuntime ?? runtime, {
-      agent_id: agentId,
-      conversation_id: conversationId,
-    });
+  const statusSocket = params.statusSocket ?? runtime.socket;
+  if (params.emitStatus !== false && statusSocket) {
+    emitDeviceStatusUpdate(
+      statusSocket,
+      params.statusRuntime ?? conversationRuntime ?? runtime,
+      {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      },
+    );
   }
 }

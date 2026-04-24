@@ -3906,6 +3906,8 @@ async function handleCwdChange(
       agentId,
       conversationId,
       workingDirectory: normalizedPath,
+      statusRuntime: runtime,
+      statusSocket: socket,
     });
 
     // Restart the worktree file watcher for the new CWD so we detect

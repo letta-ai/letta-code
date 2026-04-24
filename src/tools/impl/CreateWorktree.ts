@@ -386,7 +386,7 @@ export async function create_worktree(
       repoRoot,
     );
 
-    const normalizedWorktreePath = await realpath(worktreePath);
+    const normalizedWorktreePath = path.normalize(await realpath(worktreePath));
     const shouldSwitchCwd = args.switch_cwd !== false;
 
     if (shouldSwitchCwd) {

@@ -187,9 +187,11 @@ describe("CreateWorktree tool", () => {
       throw new Error("Expected CreateWorktree to return a worktree path");
     }
     expect(result.base_ref).toBe("origin/main");
-    await expect(
-      readFile(path.join(result.worktree_path, "REMOTE.md"), "utf8"),
-    ).resolves.toBe("latest remote\n");
+    const remoteFile = await readFile(
+      path.join(result.worktree_path, "REMOTE.md"),
+      "utf8",
+    );
+    expect(remoteFile.replace(/\r\n/g, "\n")).toBe("latest remote\n");
   });
 
   test("returns an error outside a git repository", async () => {
