@@ -8,6 +8,9 @@ import { debugLog } from "../../utils/debug";
 const MEMORY_INTERVAL_FREQUENT = 5;
 const MEMORY_INTERVAL_OCCASIONAL = 10;
 const DEFAULT_STEP_COUNT = 25;
+const DEFAULT_IDLE_SWEEP_INTERVAL_HOURS = 24;
+const DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS = 24;
+const DEFAULT_IDLE_MIN_UNREFLECTED_TURNS = 3;
 
 export type MemoryReminderMode =
   | number
@@ -18,26 +21,91 @@ export type MemoryReminderMode =
 export type ReflectionTrigger = "off" | "step-count" | "compaction-event";
 
 export interface ReflectionSettings {
+  /** Back-compat alias for activeTrigger. */
   trigger: ReflectionTrigger;
+  /** Back-compat alias for activeStepCount. */
   stepCount: number;
+  activeTrigger?: ReflectionTrigger;
+  activeStepCount?: number;
+  idleSweepEnabled?: boolean;
+  idleSweepIntervalHours?: number;
+  idleConversationMinAgeHours?: number;
+  idleMinUnreflectedTurns?: number;
 }
+
+export type NormalizedReflectionSettings = Required<ReflectionSettings>;
 
 type PersistedReflectionSettings = {
   trigger?: unknown;
   stepCount?: unknown;
+  activeTrigger?: unknown;
+  activeStepCount?: unknown;
+  idleSweepEnabled?: unknown;
+  idleSweepIntervalHours?: unknown;
+  idleConversationMinAgeHours?: unknown;
+  idleMinUnreflectedTurns?: unknown;
 };
 
 interface ReflectionSettingsCarrier {
   memoryReminderInterval?: MemoryReminderMode;
   reflectionTrigger?: unknown;
   reflectionStepCount?: unknown;
+  reflectionActiveTrigger?: unknown;
+  reflectionActiveStepCount?: unknown;
+  reflectionIdleSweepEnabled?: unknown;
+  reflectionIdleSweepIntervalHours?: unknown;
+  reflectionIdleConversationMinAgeHours?: unknown;
+  reflectionIdleMinUnreflectedTurns?: unknown;
   reflectionSettingsByAgent?: Record<string, PersistedReflectionSettings>;
 }
 
-const DEFAULT_REFLECTION_SETTINGS: ReflectionSettings = {
-  trigger: "compaction-event",
+const DEFAULT_REFLECTION_SETTINGS: NormalizedReflectionSettings = {
+  trigger: "step-count",
   stepCount: DEFAULT_STEP_COUNT,
+  activeTrigger: "step-count",
+  activeStepCount: DEFAULT_STEP_COUNT,
+  idleSweepEnabled: true,
+  idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
+  idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
+  idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
 };
+
+export function normalizeReflectionSettings(
+  raw: Partial<ReflectionSettings> = {},
+): NormalizedReflectionSettings {
+  const activeTrigger = normalizeTrigger(
+    raw.activeTrigger ?? raw.trigger,
+    DEFAULT_REFLECTION_SETTINGS.activeTrigger,
+  );
+  const activeStepCount = normalizeStepCount(
+    raw.activeStepCount ?? raw.stepCount,
+    DEFAULT_REFLECTION_SETTINGS.activeStepCount,
+  );
+  return {
+    trigger: activeTrigger,
+    stepCount: activeStepCount,
+    activeTrigger,
+    activeStepCount,
+    idleSweepEnabled:
+      typeof raw.idleSweepEnabled === "boolean"
+        ? raw.idleSweepEnabled
+        : activeTrigger === "off"
+          ? false
+          : DEFAULT_REFLECTION_SETTINGS.idleSweepEnabled,
+    idleSweepIntervalHours: normalizePositiveNumber(
+      raw.idleSweepIntervalHours,
+      DEFAULT_REFLECTION_SETTINGS.idleSweepIntervalHours,
+    ),
+    idleConversationMinAgeHours: normalizePositiveNumber(
+      raw.idleConversationMinAgeHours,
+      DEFAULT_REFLECTION_SETTINGS.idleConversationMinAgeHours,
+    ),
+    idleMinUnreflectedTurns: normalizePositiveInteger(
+      raw.idleMinUnreflectedTurns,
+      DEFAULT_REFLECTION_SETTINGS.idleMinUnreflectedTurns,
+    ),
+  };
+}
 
 function isValidStepCount(value: unknown): value is number {
   return (
@@ -49,6 +117,16 @@ function isValidStepCount(value: unknown): value is number {
 }
 
 function normalizeStepCount(value: unknown, fallback: number): number {
+  return isValidStepCount(value) ? value : fallback;
+}
+
+function normalizePositiveNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : fallback;
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
   return isValidStepCount(value) ? value : fallback;
 }
 
@@ -67,60 +145,145 @@ function normalizeTrigger(
 }
 
 function applyExplicitReflectionOverrides(
-  base: ReflectionSettings,
+  base: NormalizedReflectionSettings,
   raw: {
     reflectionTrigger?: unknown;
     reflectionStepCount?: unknown;
+    reflectionActiveTrigger?: unknown;
+    reflectionActiveStepCount?: unknown;
+    reflectionIdleSweepEnabled?: unknown;
+    reflectionIdleSweepIntervalHours?: unknown;
+    reflectionIdleConversationMinAgeHours?: unknown;
+    reflectionIdleMinUnreflectedTurns?: unknown;
   },
-): ReflectionSettings {
+): NormalizedReflectionSettings {
+  const activeTrigger = normalizeTrigger(
+    raw.reflectionActiveTrigger ?? raw.reflectionTrigger,
+    base.activeTrigger,
+  );
+  const activeStepCount = normalizeStepCount(
+    raw.reflectionActiveStepCount ?? raw.reflectionStepCount,
+    base.activeStepCount,
+  );
+  const idleSweepEnabled =
+    typeof raw.reflectionIdleSweepEnabled === "boolean"
+      ? raw.reflectionIdleSweepEnabled
+      : base.idleSweepEnabled;
   return {
-    trigger: normalizeTrigger(raw.reflectionTrigger, base.trigger),
-    stepCount: normalizeStepCount(raw.reflectionStepCount, base.stepCount),
+    trigger: activeTrigger,
+    stepCount: activeStepCount,
+    activeTrigger,
+    activeStepCount,
+    idleSweepEnabled,
+    idleSweepIntervalHours: normalizePositiveNumber(
+      raw.reflectionIdleSweepIntervalHours,
+      base.idleSweepIntervalHours,
+    ),
+    idleConversationMinAgeHours: normalizePositiveNumber(
+      raw.reflectionIdleConversationMinAgeHours,
+      base.idleConversationMinAgeHours,
+    ),
+    idleMinUnreflectedTurns: normalizePositiveInteger(
+      raw.reflectionIdleMinUnreflectedTurns,
+      base.idleMinUnreflectedTurns,
+    ),
   };
 }
 
 function applyPersistedAgentScopedSettings(
-  base: ReflectionSettings,
+  base: NormalizedReflectionSettings,
   raw: PersistedReflectionSettings | undefined,
-): ReflectionSettings {
+): NormalizedReflectionSettings {
   if (!raw) {
-    return base;
+    return normalizeReflectionSettings(base);
   }
 
+  const activeTrigger = normalizeTrigger(
+    raw.activeTrigger ?? raw.trigger,
+    base.activeTrigger,
+  );
+  const activeStepCount = normalizeStepCount(
+    raw.activeStepCount ?? raw.stepCount,
+    base.activeStepCount,
+  );
+  const idleSweepEnabled =
+    typeof raw.idleSweepEnabled === "boolean"
+      ? raw.idleSweepEnabled
+      : base.idleSweepEnabled;
   return {
-    trigger: normalizeTrigger(raw.trigger, base.trigger),
-    stepCount: normalizeStepCount(raw.stepCount, base.stepCount),
+    trigger: activeTrigger,
+    stepCount: activeStepCount,
+    activeTrigger,
+    activeStepCount,
+    idleSweepEnabled,
+    idleSweepIntervalHours: normalizePositiveNumber(
+      raw.idleSweepIntervalHours,
+      base.idleSweepIntervalHours,
+    ),
+    idleConversationMinAgeHours: normalizePositiveNumber(
+      raw.idleConversationMinAgeHours,
+      base.idleConversationMinAgeHours,
+    ),
+    idleMinUnreflectedTurns: normalizePositiveInteger(
+      raw.idleMinUnreflectedTurns,
+      base.idleMinUnreflectedTurns,
+    ),
   };
 }
 
 function legacyModeToReflectionSettings(
   mode: MemoryReminderMode | undefined,
-): ReflectionSettings {
+): NormalizedReflectionSettings {
   if (typeof mode === "number") {
+    const stepCount = normalizeStepCount(mode, DEFAULT_STEP_COUNT);
     return {
       trigger: "step-count",
-      stepCount: normalizeStepCount(mode, DEFAULT_STEP_COUNT),
+      stepCount,
+      activeTrigger: "step-count",
+      activeStepCount: stepCount,
+      idleSweepEnabled: true,
+      idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
+      idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
+      idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
     };
   }
 
   if (mode === null) {
     return {
       trigger: "off",
+      activeTrigger: "off",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
+      activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
+      idleSweepEnabled: false,
+      idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
+      idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
+      idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
     };
   }
 
   if (mode === "compaction") {
     return {
       trigger: "compaction-event",
+      activeTrigger: "compaction-event",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
+      activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
+      idleSweepEnabled: true,
+      idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
+      idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
+      idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
     };
   }
 
   if (mode === "auto-compaction") {
     return {
       trigger: "compaction-event",
+      activeTrigger: "compaction-event",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
+      activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
+      idleSweepEnabled: true,
+      idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
+      idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
+      idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -130,13 +293,14 @@ function legacyModeToReflectionSettings(
 export function reflectionSettingsToLegacyMode(
   settings: ReflectionSettings,
 ): MemoryReminderMode {
-  if (settings.trigger === "off") {
+  const normalized = normalizeReflectionSettings(settings);
+  if (normalized.activeTrigger === "off") {
     return null;
   }
-  if (settings.trigger === "compaction-event") {
+  if (normalized.activeTrigger === "compaction-event") {
     return "auto-compaction";
   }
-  return normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
+  return normalizeStepCount(normalized.activeStepCount, DEFAULT_STEP_COUNT);
 }
 
 /**
@@ -145,7 +309,7 @@ export function reflectionSettingsToLegacyMode(
 export function getReflectionSettings(
   agentId?: string,
   workingDirectory: string = process.cwd(),
-): ReflectionSettings {
+): NormalizedReflectionSettings {
   const globalSettings =
     settingsManager.getSettings() as unknown as ReflectionSettingsCarrier;
   let localSettings: ReflectionSettingsCarrier | null = null;
@@ -209,10 +373,14 @@ export function shouldFireStepCountTrigger(
   turnsSinceLastSuccessfulReflection: number,
   settings: ReflectionSettings = getReflectionSettings(),
 ): boolean {
-  if (settings.trigger !== "step-count") {
+  const normalized = normalizeReflectionSettings(settings);
+  if (normalized.activeTrigger !== "step-count") {
     return false;
   }
-  const stepCount = normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
+  const stepCount = normalizeStepCount(
+    normalized.activeStepCount,
+    DEFAULT_STEP_COUNT,
+  );
   return turnsSinceLastSuccessfulReflection >= stepCount;
 }
 
@@ -220,10 +388,14 @@ function shouldFireLegacyTurnCountReminder(
   turnCount: number,
   settings: ReflectionSettings,
 ): boolean {
-  if (settings.trigger !== "step-count") {
+  const normalized = normalizeReflectionSettings(settings);
+  if (normalized.activeTrigger !== "step-count") {
     return false;
   }
-  const stepCount = normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
+  const stepCount = normalizeStepCount(
+    normalized.activeStepCount,
+    DEFAULT_STEP_COUNT,
+  );
   return turnCount > 0 && turnCount % stepCount === 0;
 }
 
@@ -265,14 +437,14 @@ export async function buildMemoryReminder(
   workingDirectory?: string,
 ): Promise<string> {
   const reflectionSettings = getReflectionSettings(agentId, workingDirectory);
-  if (reflectionSettings.trigger !== "step-count") {
+  if (reflectionSettings.activeTrigger !== "step-count") {
     return "";
   }
 
   if (shouldFireLegacyTurnCountReminder(turnCount, reflectionSettings)) {
     debugLog(
       "memory",
-      `Turn-based memory reminder fired (turn ${turnCount}, interval ${reflectionSettings.stepCount}, agent ${agentId})`,
+      `Turn-based memory reminder fired (turn ${turnCount}, interval ${reflectionSettings.activeStepCount}, agent ${agentId})`,
     );
     return buildMemfsAwareMemoryReminder(agentId, "interval");
   }
@@ -291,12 +463,13 @@ export async function persistReflectionSettingsForAgent(
   settings: ReflectionSettings,
   options: PersistReflectionSettingsOptions = {},
 ): Promise<void> {
+  const normalizedSettings = normalizeReflectionSettings(settings);
   const {
     workingDirectory = process.cwd(),
     persistLocalProject = true,
     persistGlobal = true,
   } = options;
-  const legacyMode = reflectionSettingsToLegacyMode(settings);
+  const legacyMode = reflectionSettingsToLegacyMode(normalizedSettings);
 
   if (persistLocalProject) {
     try {
@@ -310,13 +483,29 @@ export async function persistReflectionSettingsForAgent(
     settingsManager.updateLocalProjectSettings(
       {
         memoryReminderInterval: legacyMode,
-        reflectionTrigger: settings.trigger,
-        reflectionStepCount: settings.stepCount,
+        reflectionTrigger: normalizedSettings.activeTrigger,
+        reflectionStepCount: normalizedSettings.activeStepCount,
+        reflectionActiveTrigger: normalizedSettings.activeTrigger,
+        reflectionActiveStepCount: normalizedSettings.activeStepCount,
+        reflectionIdleSweepEnabled: normalizedSettings.idleSweepEnabled,
+        reflectionIdleSweepIntervalHours:
+          normalizedSettings.idleSweepIntervalHours,
+        reflectionIdleConversationMinAgeHours:
+          normalizedSettings.idleConversationMinAgeHours,
+        reflectionIdleMinUnreflectedTurns:
+          normalizedSettings.idleMinUnreflectedTurns,
         reflectionSettingsByAgent: {
           ...(localSettings.reflectionSettingsByAgent ?? {}),
           [agentId]: {
-            trigger: settings.trigger,
-            stepCount: settings.stepCount,
+            trigger: normalizedSettings.activeTrigger,
+            stepCount: normalizedSettings.activeStepCount,
+            activeTrigger: normalizedSettings.activeTrigger,
+            activeStepCount: normalizedSettings.activeStepCount,
+            idleSweepEnabled: normalizedSettings.idleSweepEnabled,
+            idleSweepIntervalHours: normalizedSettings.idleSweepIntervalHours,
+            idleConversationMinAgeHours:
+              normalizedSettings.idleConversationMinAgeHours,
+            idleMinUnreflectedTurns: normalizedSettings.idleMinUnreflectedTurns,
           },
         },
       },
@@ -328,13 +517,29 @@ export async function persistReflectionSettingsForAgent(
     const globalSettings = settingsManager.getSettings();
     settingsManager.updateSettings({
       memoryReminderInterval: legacyMode,
-      reflectionTrigger: settings.trigger,
-      reflectionStepCount: settings.stepCount,
+      reflectionTrigger: normalizedSettings.activeTrigger,
+      reflectionStepCount: normalizedSettings.activeStepCount,
+      reflectionActiveTrigger: normalizedSettings.activeTrigger,
+      reflectionActiveStepCount: normalizedSettings.activeStepCount,
+      reflectionIdleSweepEnabled: normalizedSettings.idleSweepEnabled,
+      reflectionIdleSweepIntervalHours:
+        normalizedSettings.idleSweepIntervalHours,
+      reflectionIdleConversationMinAgeHours:
+        normalizedSettings.idleConversationMinAgeHours,
+      reflectionIdleMinUnreflectedTurns:
+        normalizedSettings.idleMinUnreflectedTurns,
       reflectionSettingsByAgent: {
         ...(globalSettings.reflectionSettingsByAgent ?? {}),
         [agentId]: {
-          trigger: settings.trigger,
-          stepCount: settings.stepCount,
+          trigger: normalizedSettings.activeTrigger,
+          stepCount: normalizedSettings.activeStepCount,
+          activeTrigger: normalizedSettings.activeTrigger,
+          activeStepCount: normalizedSettings.activeStepCount,
+          idleSweepEnabled: normalizedSettings.idleSweepEnabled,
+          idleSweepIntervalHours: normalizedSettings.idleSweepIntervalHours,
+          idleConversationMinAgeHours:
+            normalizedSettings.idleConversationMinAgeHours,
+          idleMinUnreflectedTurns: normalizedSettings.idleMinUnreflectedTurns,
         },
       },
     });
@@ -377,10 +582,10 @@ export function parseMemoryPreference(
         if (agentId) {
           void persistReflectionSettingsForAgent(
             agentId,
-            {
+            normalizeReflectionSettings({
               trigger: "step-count",
               stepCount: MEMORY_INTERVAL_FREQUENT,
-            },
+            }),
             {
               workingDirectory,
               persistLocalProject: true,
@@ -402,10 +607,10 @@ export function parseMemoryPreference(
         if (agentId) {
           void persistReflectionSettingsForAgent(
             agentId,
-            {
+            normalizeReflectionSettings({
               trigger: "step-count",
               stepCount: MEMORY_INTERVAL_OCCASIONAL,
-            },
+            }),
             {
               workingDirectory,
               persistLocalProject: true,

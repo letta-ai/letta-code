@@ -17,7 +17,11 @@ const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
 export const REFLECTION_STATE_SCHEMA_VERSION = "v2_message_id" as const;
 
-export type ReflectionSource = "step-count" | "compaction-event" | "idle-time";
+export type ReflectionSource =
+  | "manual"
+  | "step-count"
+  | "compaction-event"
+  | "idle-time";
 
 export interface ReflectionHistoryEntry {
   source: ReflectionSource;
@@ -598,7 +602,8 @@ function normalizeReflectionSource(
 ): ReflectionSource | undefined {
   return value === "step-count" ||
     value === "compaction-event" ||
-    value === "idle-time"
+    value === "idle-time" ||
+    value === "manual"
     ? value
     : undefined;
 }
@@ -773,8 +778,7 @@ export function getReflectionTranscriptPaths(
   conversationId: string,
 ): ReflectionTranscriptPaths {
   const rootDir = join(
-    getTranscriptRoot(),
-    sanitizePathSegment(agentId),
+    getReflectionTranscriptAgentRoot(agentId),
     sanitizePathSegment(conversationId),
   );
   return {
@@ -782,6 +786,27 @@ export function getReflectionTranscriptPaths(
     transcriptPath: join(rootDir, "transcript.jsonl"),
     statePath: join(rootDir, "state.json"),
   };
+}
+
+export function getReflectionTranscriptAgentRoot(agentId: string): string {
+  return join(getTranscriptRoot(), sanitizePathSegment(agentId));
+}
+
+export async function listReflectionTranscriptConversationIds(
+  agentId: string,
+): Promise<string[]> {
+  try {
+    const entries = await readdir(getReflectionTranscriptAgentRoot(agentId), {
+      withFileTypes: true,
+    });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => name.length > 0)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
 }
 
 export async function appendTranscriptDeltaJsonl(

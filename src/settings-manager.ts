@@ -73,11 +73,23 @@ export interface Settings {
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionStepCount: number;
+  reflectionActiveTrigger?: "off" | "step-count" | "compaction-event";
+  reflectionActiveStepCount?: number;
+  reflectionIdleSweepEnabled?: boolean;
+  reflectionIdleSweepIntervalHours?: number;
+  reflectionIdleConversationMinAgeHours?: number;
+  reflectionIdleMinUnreflectedTurns?: number;
   reflectionSettingsByAgent?: Record<
     string,
     {
       trigger: "off" | "step-count" | "compaction-event";
       stepCount: number;
+      activeTrigger?: "off" | "step-count" | "compaction-event";
+      activeStepCount?: number;
+      idleSweepEnabled?: boolean;
+      idleSweepIntervalHours?: number;
+      idleConversationMinAgeHours?: number;
+      idleMinUnreflectedTurns?: number;
     }
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
@@ -127,11 +139,23 @@ export interface LocalProjectSettings {
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger?: "off" | "step-count" | "compaction-event";
   reflectionStepCount?: number;
+  reflectionActiveTrigger?: "off" | "step-count" | "compaction-event";
+  reflectionActiveStepCount?: number;
+  reflectionIdleSweepEnabled?: boolean;
+  reflectionIdleSweepIntervalHours?: number;
+  reflectionIdleConversationMinAgeHours?: number;
+  reflectionIdleMinUnreflectedTurns?: number;
   reflectionSettingsByAgent?: Record<
     string,
     {
       trigger: "off" | "step-count" | "compaction-event";
       stepCount: number;
+      activeTrigger?: "off" | "step-count" | "compaction-event";
+      activeStepCount?: number;
+      idleSweepEnabled?: boolean;
+      idleSweepIntervalHours?: number;
+      idleConversationMinAgeHours?: number;
+      idleMinUnreflectedTurns?: number;
     }
   >;
   // Server-indexed settings (agent IDs are server-specific)

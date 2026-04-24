@@ -11,6 +11,7 @@ interface BuildListenReminderContextParams {
   state: SharedReminderState;
   reflectionSettings: ReflectionSettings;
   maybeLaunchReflectionSubagent?: SharedReminderContext["maybeLaunchReflectionSubagent"];
+  maybeStartIdleReflectionSweep?: SharedReminderContext["maybeStartIdleReflectionSweep"];
   resolvePlanModeReminder: () => string | Promise<string>;
   /** Explicit working directory for session context (overrides process.cwd()). */
   workingDirectory?: string;
@@ -35,6 +36,7 @@ export function buildListenReminderContext(
     reflectionSettings: params.reflectionSettings,
     skillSources: [],
     maybeLaunchReflectionSubagent: params.maybeLaunchReflectionSubagent,
+    maybeStartIdleReflectionSweep: params.maybeStartIdleReflectionSweep,
     resolvePlanModeReminder: params.resolvePlanModeReminder,
     workingDirectory: params.workingDirectory,
     sessionContextSource: "listen",

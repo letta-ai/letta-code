@@ -4,6 +4,7 @@ import { buildAgentInfo } from "../cli/helpers/agentInfo";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
+  normalizeReflectionSettings,
   type ReflectionSettings,
   shouldFireStepCountTrigger,
 } from "../cli/helpers/memoryReminder";
@@ -44,6 +45,7 @@ export interface SharedReminderContext {
   maybeLaunchReflectionSubagent?: (
     triggerSource: ReflectionTriggerSource,
   ) => Promise<boolean>;
+  maybeStartIdleReflectionSweep?: () => void;
   /** Explicit working directory (overrides process.cwd() in session context). */
   workingDirectory?: string;
   /** Source of the session context (varies intro text). */
@@ -199,9 +201,12 @@ async function buildReflectionStepReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
   const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
+  const reflectionSettings = normalizeReflectionSettings(
+    context.reflectionSettings,
+  );
   let reminder: string | null = null;
 
-  if (context.reflectionSettings.trigger === "step-count") {
+  if (reflectionSettings.activeTrigger === "step-count") {
     if (memfsEnabled) {
       const transcriptState = await getReflectionTranscriptState(
         context.agent.id,
@@ -209,7 +214,7 @@ async function buildReflectionStepReminder(
       );
       const shouldFireStepTrigger = shouldFireStepCountTrigger(
         transcriptState.turns_since_last_successful_reflection,
-        context.reflectionSettings,
+        reflectionSettings,
       );
       if (shouldFireStepTrigger) {
         if (context.maybeLaunchReflectionSubagent) {
@@ -243,7 +248,10 @@ async function buildReflectionCompactionReminder(
 
   context.state.pendingReflectionTrigger = false;
 
-  if (context.reflectionSettings.trigger !== "compaction-event") {
+  const reflectionSettings = normalizeReflectionSettings(
+    context.reflectionSettings,
+  );
+  if (reflectionSettings.activeTrigger !== "compaction-event") {
     return null;
   }
 
@@ -420,6 +428,8 @@ export async function buildSharedReminderParts(
     parts.push({ type: "text", text });
     appliedReminderIds.push(reminder.id);
   }
+
+  context.maybeStartIdleReflectionSweep?.();
 
   return { parts, appliedReminderIds };
 }

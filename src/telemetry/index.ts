@@ -14,7 +14,9 @@ export interface TelemetryEvent {
     | "error"
     | "user_input"
     | "reflection_start"
-    | "reflection_end";
+    | "reflection_end"
+    | "reflection_skip"
+    | "reflection_idle_sweep";
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -73,7 +75,8 @@ export interface UserInputData {
 }
 
 export interface ReflectionStartData {
-  trigger_source: "manual" | "step-count" | "compaction-event";
+  trigger_source: "manual" | "step-count" | "compaction-event" | "idle-time";
+  agent_id?: string;
   subagent_id?: string;
   conversation_id?: string;
   start_message_id?: string;
@@ -81,11 +84,27 @@ export interface ReflectionStartData {
 }
 
 export interface ReflectionEndData {
-  trigger_source: "manual" | "step-count" | "compaction-event";
+  trigger_source: "manual" | "step-count" | "compaction-event" | "idle-time";
   success: boolean;
+  agent_id?: string;
   subagent_id?: string;
   conversation_id?: string;
   error?: string;
+}
+
+export interface ReflectionSkipData {
+  trigger_source: "step-count" | "compaction-event" | "idle-time";
+  agent_id?: string;
+  conversation_id?: string;
+  skipped_reason: "memfs-disabled" | "already-active" | "no-transcript-delta";
+}
+
+export interface ReflectionIdleSweepData {
+  agent_id: string;
+  candidate_count: number;
+  launched_count: number;
+  success_count: number;
+  duration_ms: number;
 }
 
 /**
@@ -296,11 +315,19 @@ class TelemetryManager {
       | ErrorData
       | UserInputData
       | ReflectionStartData
-      | ReflectionEndData,
+      | ReflectionEndData
+      | ReflectionSkipData
+      | ReflectionIdleSweepData,
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
     }
+
+    const explicitAgentId = (data as Record<string, unknown>).agent_id;
+    const agentId =
+      typeof explicitAgentId === "string"
+        ? explicitAgentId
+        : (this.currentAgentId ?? undefined);
 
     const event: TelemetryEvent = {
       type,
@@ -308,7 +335,7 @@ class TelemetryManager {
       data: {
         ...data,
         session_id: this.sessionId,
-        agent_id: this.currentAgentId || undefined,
+        agent_id: agentId,
         surface: this.surface,
       },
     };
@@ -579,8 +606,9 @@ class TelemetryManager {
    * Track reflection start events (manual and auto-triggered).
    */
   trackReflectionStart(
-    triggerSource: "manual" | "step-count" | "compaction-event",
+    triggerSource: "manual" | "step-count" | "compaction-event" | "idle-time",
     options?: {
+      agentId?: string;
       subagentId?: string;
       conversationId?: string;
       startMessageId?: string;
@@ -589,6 +617,7 @@ class TelemetryManager {
   ) {
     const data: ReflectionStartData = {
       trigger_source: triggerSource,
+      agent_id: options?.agentId,
       subagent_id: options?.subagentId,
       conversation_id: options?.conversationId,
       start_message_id: options?.startMessageId,
@@ -601,9 +630,10 @@ class TelemetryManager {
    * Track reflection completion events.
    */
   trackReflectionEnd(
-    triggerSource: "manual" | "step-count" | "compaction-event",
+    triggerSource: "manual" | "step-count" | "compaction-event" | "idle-time",
     success: boolean,
     options?: {
+      agentId?: string;
       subagentId?: string;
       conversationId?: string;
       error?: string;
@@ -612,11 +642,46 @@ class TelemetryManager {
     const data: ReflectionEndData = {
       trigger_source: triggerSource,
       success,
+      agent_id: options?.agentId,
       subagent_id: options?.subagentId,
       conversation_id: options?.conversationId,
       error: options?.error,
     };
     this.track("reflection_end", data);
+  }
+
+  trackReflectionSkip(
+    triggerSource: "step-count" | "compaction-event" | "idle-time",
+    options: {
+      agentId?: string;
+      conversationId?: string;
+      skippedReason: ReflectionSkipData["skipped_reason"];
+    },
+  ) {
+    const data: ReflectionSkipData = {
+      trigger_source: triggerSource,
+      agent_id: options.agentId,
+      conversation_id: options.conversationId,
+      skipped_reason: options.skippedReason,
+    };
+    this.track("reflection_skip", data);
+  }
+
+  trackReflectionIdleSweep(options: {
+    agentId: string;
+    candidateCount: number;
+    launchedCount: number;
+    successCount: number;
+    durationMs: number;
+  }) {
+    const data: ReflectionIdleSweepData = {
+      agent_id: options.agentId,
+      candidate_count: options.candidateCount,
+      launched_count: options.launchedCount,
+      success_count: options.successCount,
+      duration_ms: options.durationMs,
+    };
+    this.track("reflection_idle_sweep", data);
   }
 
   /**

@@ -40,6 +40,10 @@ export interface StatusLineInputs {
   turnCount?: number;
   reflectionMode?: "off" | "step-count" | "compaction-event" | null;
   reflectionStepCount?: number;
+  reflectionIdleSweepEnabled?: boolean;
+  reflectionIdleSweepIntervalHours?: number;
+  reflectionIdleConversationMinAgeHours?: number;
+  reflectionIdleMinUnreflectedTurns?: number;
   memfsEnabled?: boolean;
   memfsDirectory?: string | null;
   permissionMode?: string;
@@ -114,6 +118,11 @@ function toPayloadInput(inputs: StatusLineInputs): StatusLinePayloadBuildInput {
     turnCount: inputs.turnCount,
     reflectionMode: inputs.reflectionMode,
     reflectionStepCount: inputs.reflectionStepCount,
+    reflectionIdleSweepEnabled: inputs.reflectionIdleSweepEnabled,
+    reflectionIdleSweepIntervalHours: inputs.reflectionIdleSweepIntervalHours,
+    reflectionIdleConversationMinAgeHours:
+      inputs.reflectionIdleConversationMinAgeHours,
+    reflectionIdleMinUnreflectedTurns: inputs.reflectionIdleMinUnreflectedTurns,
     memfsEnabled: inputs.memfsEnabled,
     memfsDirectory: inputs.memfsDirectory,
     permissionMode: inputs.permissionMode,

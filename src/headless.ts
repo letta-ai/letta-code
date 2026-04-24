@@ -59,6 +59,7 @@ import { createContextTracker } from "./cli/helpers/contextTracker";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import {
   getReflectionSettings,
+  normalizeReflectionSettings,
   persistReflectionSettingsForAgent,
   type ReflectionSettings,
   type ReflectionTrigger,
@@ -328,10 +329,16 @@ async function applyReflectionOverrides(
   overrides: ReflectionOverrides,
 ): Promise<ReflectionSettings> {
   const current = getReflectionSettings(agentId);
-  const merged: ReflectionSettings = {
+  const merged: ReflectionSettings = normalizeReflectionSettings({
     trigger: overrides.trigger ?? current.trigger,
     stepCount: overrides.stepCount ?? current.stepCount,
-  };
+    activeTrigger: overrides.trigger ?? current.activeTrigger,
+    activeStepCount: overrides.stepCount ?? current.activeStepCount,
+    idleSweepEnabled: current.idleSweepEnabled,
+    idleSweepIntervalHours: current.idleSweepIntervalHours,
+    idleConversationMinAgeHours: current.idleConversationMinAgeHours,
+    idleMinUnreflectedTurns: current.idleMinUnreflectedTurns,
+  });
 
   if (!hasReflectionOverrides(overrides)) {
     return merged;
@@ -2797,8 +2804,8 @@ async function runBidirectionalMode(
     memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
     skill_sources: skillSources,
     system_info_reminder_enabled: systemInfoReminderEnabled,
-    reflection_trigger: reflectionSettings.trigger,
-    reflection_step_count: reflectionSettings.stepCount,
+    reflection_trigger: reflectionSettings.activeTrigger,
+    reflection_step_count: reflectionSettings.activeStepCount,
     uuid: `init-${agent.id}`,
   };
   writeWireMessage(initEvent);
@@ -3323,8 +3330,8 @@ async function runBidirectionalMode(
               memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
               skill_sources: skillSources,
               system_info_reminder_enabled: systemInfoReminderEnabled,
-              reflection_trigger: reflectionSettings.trigger,
-              reflection_step_count: reflectionSettings.stepCount,
+              reflection_trigger: reflectionSettings.activeTrigger,
+              reflection_step_count: reflectionSettings.activeStepCount,
             },
           },
           session_id: sessionId,

@@ -137,8 +137,16 @@ export type ReflectionSettingsScope = "local_project" | "global" | "both";
 
 export interface ReflectionSettingsSnapshot {
   agent_id: string;
+  /** Legacy alias for active_trigger. */
   trigger: ReflectionTriggerMode;
+  /** Legacy alias for active_step_count. */
   step_count: number;
+  active_trigger: ReflectionTriggerMode;
+  active_step_count: number;
+  idle_sweep_enabled: boolean;
+  idle_sweep_interval_hours: number;
+  idle_conversation_min_age_hours: number;
+  idle_min_unreflected_turns: number;
 }
 
 export type ChannelId = "telegram" | "slack" | "discord";
@@ -978,8 +986,14 @@ export interface SetReflectionSettingsCommand {
   request_id: string;
   runtime: RuntimeScope;
   settings: {
-    trigger: ReflectionTriggerMode;
-    step_count: number;
+    trigger?: ReflectionTriggerMode;
+    step_count?: number;
+    active_trigger?: ReflectionTriggerMode;
+    active_step_count?: number;
+    idle_sweep_enabled?: boolean;
+    idle_sweep_interval_hours?: number;
+    idle_conversation_min_age_hours?: number;
+    idle_min_unreflected_turns?: number;
   };
   scope?: ReflectionSettingsScope;
 }

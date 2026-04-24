@@ -33,6 +33,7 @@ import {
 import { getGitContext } from "../../cli/helpers/gitContext";
 import {
   getReflectionSettings,
+  normalizeReflectionSettings,
   persistReflectionSettingsForAgent,
 } from "../../cli/helpers/memoryReminder";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
@@ -3051,12 +3052,24 @@ function toReflectionSettingsResponse(
   agent_id: string;
   trigger: "off" | "step-count" | "compaction-event";
   step_count: number;
+  active_trigger: "off" | "step-count" | "compaction-event";
+  active_step_count: number;
+  idle_sweep_enabled: boolean;
+  idle_sweep_interval_hours: number;
+  idle_conversation_min_age_hours: number;
+  idle_min_unreflected_turns: number;
 } {
   const settings = getReflectionSettings(agentId, workingDirectory);
   return {
     agent_id: agentId,
-    trigger: settings.trigger,
-    step_count: settings.stepCount,
+    trigger: settings.activeTrigger,
+    step_count: settings.activeStepCount,
+    active_trigger: settings.activeTrigger,
+    active_step_count: settings.activeStepCount,
+    idle_sweep_enabled: settings.idleSweepEnabled,
+    idle_sweep_interval_hours: settings.idleSweepIntervalHours,
+    idle_conversation_min_age_hours: settings.idleConversationMinAgeHours,
+    idle_min_unreflected_turns: settings.idleMinUnreflectedTurns,
   };
 }
 
@@ -3142,10 +3155,17 @@ async function handleReflectionSettingsCommand(
   try {
     await persistReflectionSettingsForAgent(
       agentId,
-      {
+      normalizeReflectionSettings({
         trigger: parsed.settings.trigger,
         stepCount: parsed.settings.step_count,
-      },
+        activeTrigger: parsed.settings.active_trigger,
+        activeStepCount: parsed.settings.active_step_count,
+        idleSweepEnabled: parsed.settings.idle_sweep_enabled,
+        idleSweepIntervalHours: parsed.settings.idle_sweep_interval_hours,
+        idleConversationMinAgeHours:
+          parsed.settings.idle_conversation_min_age_hours,
+        idleMinUnreflectedTurns: parsed.settings.idle_min_unreflected_turns,
+      }),
       {
         workingDirectory,
         persistLocalProject,

@@ -10,15 +10,23 @@ describe("reflection auto-launch wiring", () => {
     const enginePath = fileURLToPath(
       new URL("../../reminders/engine.ts", import.meta.url),
     );
+    const helperPath = fileURLToPath(
+      new URL("../../cli/helpers/autoReflection.ts", import.meta.url),
+    );
     const appSource = readFileSync(appPath, "utf-8");
     const engineSource = readFileSync(enginePath, "utf-8");
+    const helperSource = readFileSync(helperPath, "utf-8");
 
     expect(appSource).toContain("const maybeLaunchReflectionSubagent = async");
-    expect(appSource).toContain("hasActiveReflectionSubagent(agentId,");
-    expect(appSource).toContain("buildAutoReflectionPayload(");
-    expect(appSource).toContain("finalizeAutoReflectionPayload(");
-    expect(appSource).toContain("spawnBackgroundSubagentTask({");
+    expect(appSource).toContain("launchReflectionSubagent({");
     expect(appSource).toContain("maybeLaunchReflectionSubagent,");
+    expect(appSource).toContain("maybeStartIdleReflectionSweep:");
+
+    expect(helperSource).toContain("hasActiveReflectionSubagent(");
+    expect(helperSource).toContain("buildAutoReflectionPayload(");
+    expect(helperSource).toContain("finalizeAutoReflectionPayload(");
+    expect(helperSource).toContain("spawnBackgroundSubagentTask({");
+    expect(helperSource).toContain("reflectionQueueByAgent");
 
     expect(engineSource).toContain(
       'await context.maybeLaunchReflectionSubagent("step-count")',

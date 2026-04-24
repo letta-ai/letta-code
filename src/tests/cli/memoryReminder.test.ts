@@ -66,10 +66,15 @@ describe("memoryReminder", () => {
         typeof settingsManager.getSettings
       >) as typeof settingsManager.getSettings;
 
-    expect(getReflectionSettings()).toEqual({
-      trigger: "compaction-event",
-      stepCount: 33,
-    });
+    expect(getReflectionSettings()).toEqual(
+      expect.objectContaining({
+        trigger: "compaction-event",
+        stepCount: 33,
+        activeTrigger: "compaction-event",
+        activeStepCount: 33,
+        idleSweepEnabled: true,
+      }),
+    );
   });
 
   test("falls back to legacy local mode when split fields are absent", () => {
@@ -86,10 +91,15 @@ describe("memoryReminder", () => {
         typeof settingsManager.getSettings
       >) as typeof settingsManager.getSettings;
 
-    expect(getReflectionSettings()).toEqual({
-      trigger: "compaction-event",
-      stepCount: 25,
-    });
+    expect(getReflectionSettings()).toEqual(
+      expect.objectContaining({
+        trigger: "compaction-event",
+        stepCount: 25,
+        activeTrigger: "compaction-event",
+        activeStepCount: 25,
+        idleSweepEnabled: true,
+      }),
+    );
   });
 
   test("prefers local per-agent settings over global per-agent settings", () => {
@@ -116,10 +126,14 @@ describe("memoryReminder", () => {
         typeof settingsManager.getSettings
       >) as typeof settingsManager.getSettings;
 
-    expect(getReflectionSettings("agent-1")).toEqual({
-      trigger: "compaction-event",
-      stepCount: 13,
-    });
+    expect(getReflectionSettings("agent-1")).toEqual(
+      expect.objectContaining({
+        trigger: "compaction-event",
+        stepCount: 13,
+        activeTrigger: "compaction-event",
+        activeStepCount: 13,
+      }),
+    );
   });
 
   test("falls back to per-agent global settings before legacy settings", () => {
@@ -143,10 +157,14 @@ describe("memoryReminder", () => {
         typeof settingsManager.getSettings
       >) as typeof settingsManager.getSettings;
 
-    expect(getReflectionSettings("agent-1")).toEqual({
-      trigger: "compaction-event",
-      stepCount: 17,
-    });
+    expect(getReflectionSettings("agent-1")).toEqual(
+      expect.objectContaining({
+        trigger: "compaction-event",
+        stepCount: 17,
+        activeTrigger: "compaction-event",
+        activeStepCount: 17,
+      }),
+    );
   });
 
   test("disables turn-based reminders for non-step-count trigger", async () => {
@@ -285,13 +303,25 @@ describe("memoryReminder", () => {
 
     expect(localUpdates).toHaveLength(1);
     expect(globalUpdates).toHaveLength(1);
-    expect(localUpdates[0]?.reflectionSettingsByAgent).toEqual({
+    expect(localUpdates[0]?.reflectionSettingsByAgent).toMatchObject({
       "agent-2": { trigger: "off", stepCount: 5 },
-      "agent-1": { trigger: "compaction-event", stepCount: 11 },
+      "agent-1": {
+        trigger: "compaction-event",
+        stepCount: 11,
+        activeTrigger: "compaction-event",
+        activeStepCount: 11,
+        idleSweepEnabled: true,
+      },
     });
-    expect(globalUpdates[0]?.reflectionSettingsByAgent).toEqual({
+    expect(globalUpdates[0]?.reflectionSettingsByAgent).toMatchObject({
       "agent-3": { trigger: "off", stepCount: 7 },
-      "agent-1": { trigger: "compaction-event", stepCount: 11 },
+      "agent-1": {
+        trigger: "compaction-event",
+        stepCount: 11,
+        activeTrigger: "compaction-event",
+        activeStepCount: 11,
+        idleSweepEnabled: true,
+      },
     });
   });
 });

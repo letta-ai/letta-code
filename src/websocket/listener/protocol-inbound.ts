@@ -775,14 +775,32 @@ export function isSetReflectionSettingsCommand(
   const settings = c.settings as {
     trigger?: unknown;
     step_count?: unknown;
+    active_trigger?: unknown;
+    active_step_count?: unknown;
+    idle_sweep_enabled?: unknown;
+    idle_sweep_interval_hours?: unknown;
+    idle_conversation_min_age_hours?: unknown;
+    idle_min_unreflected_turns?: unknown;
   };
+  const activeTrigger = settings.active_trigger ?? settings.trigger;
+  const activeStepCount = settings.active_step_count ?? settings.step_count;
+  const isPositiveNumber = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) && value > 0;
+  const isPositiveInteger = (value: unknown) =>
+    isPositiveNumber(value) && Number.isInteger(value);
   return (
-    (settings.trigger === "off" ||
-      settings.trigger === "step-count" ||
-      settings.trigger === "compaction-event") &&
-    typeof settings.step_count === "number" &&
-    Number.isInteger(settings.step_count) &&
-    settings.step_count > 0 &&
+    (activeTrigger === "off" ||
+      activeTrigger === "step-count" ||
+      activeTrigger === "compaction-event") &&
+    isPositiveInteger(activeStepCount) &&
+    (settings.idle_sweep_enabled === undefined ||
+      typeof settings.idle_sweep_enabled === "boolean") &&
+    (settings.idle_sweep_interval_hours === undefined ||
+      isPositiveNumber(settings.idle_sweep_interval_hours)) &&
+    (settings.idle_conversation_min_age_hours === undefined ||
+      isPositiveNumber(settings.idle_conversation_min_age_hours)) &&
+    (settings.idle_min_unreflected_turns === undefined ||
+      isPositiveInteger(settings.idle_min_unreflected_turns)) &&
     (c.scope === undefined ||
       c.scope === "local_project" ||
       c.scope === "global" ||

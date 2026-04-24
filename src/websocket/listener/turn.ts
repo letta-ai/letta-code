@@ -15,7 +15,6 @@ import {
   setConversationId,
   setCurrentAgentId,
 } from "../../agent/context";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   getStreamToolContextId,
   type sendMessageStream,
@@ -26,21 +25,15 @@ import {
   rebuildInputWithFreshDenials,
 } from "../../agent/turn-recovery-policy";
 import { createBuffers, toLines } from "../../cli/helpers/accumulator";
+import { launchReflectionSubagent } from "../../cli/helpers/autoReflection";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
+import { maybeStartIdleReflectionSweep } from "../../cli/helpers/idleReflectionSweep";
 import {
   getReflectionSettings,
   type ReflectionTrigger,
 } from "../../cli/helpers/memoryReminder";
-import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
-import {
-  appendTranscriptDeltaJsonl,
-  buildAutoReflectionPayload,
-  buildParentMemorySnapshot,
-  buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
-} from "../../cli/helpers/reflectionTranscript";
+import { appendTranscriptDeltaJsonl } from "../../cli/helpers/reflectionTranscript";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
-import { getSubagents } from "../../cli/helpers/subagentState";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -48,13 +41,12 @@ import {
 import { buildListenReminderContext } from "../../reminders/listenContext";
 import { getPlanModeReminder } from "../../reminders/planModeReminder";
 import { syncReminderStateFromContextTracker } from "../../reminders/state";
-import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
 import { extractTelemetryInputText } from "../../telemetry/input";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
-import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
+import { debugWarn, isDebugEnabled } from "../../utils/debug";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -111,8 +103,6 @@ import type {
   IncomingMessage,
 } from "./types";
 
-const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
-
 function trackListenerUserInput(
   messages: InboundMessagePayload[],
   modelId: string,
@@ -135,27 +125,6 @@ export const __listenerTurnTestUtils = {
   trackListenerUserInput,
 };
 
-function hasActiveReflectionSubagent(
-  agentId: string,
-  conversationId: string,
-): boolean {
-  return getSubagents().some((agent) => {
-    if (agent.type.toLowerCase() !== "reflection") {
-      return false;
-    }
-    if (agent.status !== "pending" && agent.status !== "running") {
-      return false;
-    }
-    if (!agent.parentAgentId) {
-      return false;
-    }
-    const parentConversationId = agent.parentConversationId ?? "default";
-    return (
-      agent.parentAgentId === agentId && parentConversationId === conversationId
-    );
-  });
-}
-
 function escapeTaskNotificationSummary(summary: string): string {
   return summary
     .replace(/&/g, "&amp;")
@@ -174,140 +143,41 @@ function buildMaybeLaunchReflectionSubagent(params: {
     const { runtime, socket, agentId, conversationId, workingDirectory } =
       params;
 
-    if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
-      return false;
-    }
-
-    if (hasActiveReflectionSubagent(agentId, conversationId)) {
-      debugLog(
-        "memory",
-        `Skipping auto reflection launch (${triggerSource}) because one is already active`,
-      );
-      return false;
-    }
-
-    try {
-      // Fetch the agent's system prompt so the reflection payload includes
-      // the core behavioural instructions (filtered to strip dynamic content).
-      let systemPrompt: string | undefined;
-      try {
-        const client = await getClient();
-        const agent = await client.agents.retrieve(agentId);
-        systemPrompt = agent.system ?? undefined;
-      } catch {
-        // Non-fatal — the reflection payload will just omit the system prompt.
-        debugLog(
-          "memory",
-          "Failed to fetch agent system prompt for reflection payload",
+    const result = await launchReflectionSubagent({
+      agentId,
+      conversationId,
+      workingDirectory,
+      triggerSource,
+      waitForCompletion: false,
+      recompileContext: {
+        recompileByConversation:
+          runtime.listener.systemPromptRecompileByConversation,
+        recompileQueuedByConversation:
+          runtime.listener.queuedSystemPromptRecompileByConversation,
+        logRecompileFailure: (message) => debugWarn("memory", message),
+      },
+      emitCompletionNotification: async (completionMessage) => {
+        const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+          completionMessage,
+        )}</summary></task-notification>`;
+        emitCanonicalMessageDelta(
+          socket,
+          runtime,
+          {
+            type: "message",
+            id: `user-msg-${crypto.randomUUID()}`,
+            date: new Date().toISOString(),
+            message_type: "user_message",
+            content: [{ type: "text", text: notificationXml }],
+          } as StreamDelta,
+          {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          },
         );
-      }
-
-      const autoPayload = await buildAutoReflectionPayload(
-        agentId,
-        conversationId,
-        systemPrompt,
-      );
-      if (!autoPayload) {
-        debugLog(
-          "memory",
-          `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
-        );
-        return false;
-      }
-
-      const memoryDir = getMemoryFilesystemRoot(agentId);
-      const parentMemory = await buildParentMemorySnapshot(memoryDir);
-      const reflectionPrompt = buildReflectionSubagentPrompt({
-        transcriptPath: autoPayload.payloadPath,
-        memoryDir,
-        cwd: workingDirectory,
-        parentMemory,
-      });
-
-      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("../../tools/impl/Task");
-      const { subagentId } = spawnBackgroundSubagentTask({
-        subagentType: "reflection",
-        prompt: reflectionPrompt,
-        description: AUTO_REFLECTION_DESCRIPTION,
-        silentCompletion: true,
-        parentScope: { agentId, conversationId },
-        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
-          telemetry.trackReflectionEnd(triggerSource, success, {
-            subagentId: reflectionAgentId ?? undefined,
-            conversationId,
-            error,
-          });
-          await finalizeAutoReflectionPayload(
-            agentId,
-            conversationId,
-            autoPayload.payloadPath,
-            autoPayload.endSnapshotLine,
-            success,
-            triggerSource,
-          );
-
-          const completionMessage = await handleMemorySubagentCompletion(
-            {
-              agentId,
-              conversationId,
-              subagentType: "reflection",
-              success,
-              error,
-            },
-            {
-              recompileByConversation:
-                runtime.listener.systemPromptRecompileByConversation,
-              recompileQueuedByConversation:
-                runtime.listener.queuedSystemPromptRecompileByConversation,
-              logRecompileFailure: (message) => debugWarn("memory", message),
-            },
-          );
-          const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
-            completionMessage,
-          )}</summary></task-notification>`;
-          emitCanonicalMessageDelta(
-            socket,
-            runtime,
-            {
-              type: "message",
-              id: `user-msg-${crypto.randomUUID()}`,
-              date: new Date().toISOString(),
-              message_type: "user_message",
-              content: [{ type: "text", text: notificationXml }],
-            } as StreamDelta,
-            {
-              agent_id: agentId,
-              conversation_id: conversationId,
-            },
-          );
-        },
-      });
-      const reflectionAgentId = await waitForBackgroundSubagentAgentId(
-        subagentId,
-        1000,
-      );
-      telemetry.trackReflectionStart(triggerSource, {
-        subagentId: reflectionAgentId ?? undefined,
-        conversationId,
-        startMessageId: autoPayload.startMessageId,
-        endMessageId: autoPayload.endMessageId,
-      });
-
-      debugLog(
-        "memory",
-        `Auto-launched reflection subagent (${triggerSource})`,
-      );
-      return true;
-    } catch (error) {
-      debugWarn(
-        "memory",
-        `Failed to auto-launch reflection subagent (${triggerSource}): ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return false;
-    }
+      },
+    });
+    return result.launched;
   };
 }
 
@@ -539,6 +409,46 @@ export async function handleIncomingMessage(
                   conversationId,
                   workingDirectory: turnWorkingDirectory,
                 })
+              : undefined,
+            maybeStartIdleReflectionSweep: agentId
+              ? () => {
+                  maybeStartIdleReflectionSweep({
+                    agentId,
+                    activeConversationId: conversationId,
+                    workingDirectory: turnWorkingDirectory,
+                    reflectionSettings,
+                    listenerRuntime: runtime.listener,
+                    recompileContext: {
+                      recompileByConversation:
+                        runtime.listener.systemPromptRecompileByConversation,
+                      recompileQueuedByConversation:
+                        runtime.listener
+                          .queuedSystemPromptRecompileByConversation,
+                      logRecompileFailure: (message) =>
+                        debugWarn("memory", message),
+                    },
+                    emitCompletionNotification: (message) => {
+                      const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+                        message,
+                      )}</summary></task-notification>`;
+                      emitCanonicalMessageDelta(
+                        socket,
+                        runtime,
+                        {
+                          type: "message",
+                          id: `user-msg-${crypto.randomUUID()}`,
+                          date: new Date().toISOString(),
+                          message_type: "user_message",
+                          content: [{ type: "text", text: notificationXml }],
+                        } as StreamDelta,
+                        {
+                          agent_id: agentId,
+                          conversation_id: conversationId,
+                        },
+                      );
+                    },
+                  });
+                }
               : undefined,
             resolvePlanModeReminder: getPlanModeReminder,
             workingDirectory: turnWorkingDirectory,
