@@ -97,35 +97,6 @@ export function getSystemPromptDoctorState(
   return systemPromptDoctorStateByAgent.get(agentId) ?? null;
 }
 
-/**
- * I think the issue is here where the initially cached value keeps getting returned bc LCD doesn't
- * access the CLI's local map that's updated for the agent ID upon /recompile,
- * and LCD currently has no /recompile path to update its own cache
- * bc I think the caches are in separate CLI/LCD Node.js processes.
- */
-export function getOrRefreshSystemPromptDoctorState(
-  agentId: string,
-): SystemPromptDoctorState | null {
-  // check if we have a cached state for this agent
-  const existing = systemPromptDoctorStateByAgent.get(agentId);
-  if (existing) {
-    return existing;
-  }
-
-  try {
-    const memoryDir = getMemoryFilesystemRoot(agentId);
-    const systemDir = join(memoryDir, "system");
-    if (existsSync(systemDir)) {
-      const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
-      return setSystemPromptDoctorState(agentId, tokens);
-    }
-  } catch {
-    // fall through (no agent state to access non-memfs system prompt)
-  }
-
-  return null;
-}
-
 export function refreshSystemPromptDoctorState(
   agentId: string,
   agentState: AgentState | null | undefined,

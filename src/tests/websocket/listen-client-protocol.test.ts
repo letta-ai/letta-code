@@ -1391,15 +1391,18 @@ describe("listen-client v2 status builders", () => {
     expect(deviceStatus.should_doctor).toBe(true);
   });
 
-  test("buildDeviceStatus refreshes should_doctor from memfs when cache is cold", async () => {
+  test("buildDeviceStatus does not cold-refresh should_doctor from stray memfs", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const agentId = `agent-doctor-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const memoryDir = getMemoryFilesystemRoot(agentId);
     const systemDir = join(memoryDir, "system");
+    const originalIsMemfsEnabled = settingsManager.isMemfsEnabled;
 
     await mkdir(systemDir, { recursive: true });
 
     try {
+      (settingsManager as typeof settingsManager).isMemfsEnabled = (() =>
+        false) as typeof settingsManager.isMemfsEnabled;
       await writeFile(join(systemDir, "context.md"), "x".repeat(120_000));
 
       const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
@@ -1407,8 +1410,10 @@ describe("listen-client v2 status builders", () => {
         conversation_id: "default",
       });
 
-      expect(deviceStatus.should_doctor).toBe(true);
+      expect(deviceStatus.should_doctor).toBe(false);
     } finally {
+      (settingsManager as typeof settingsManager).isMemfsEnabled =
+        originalIsMemfsEnabled;
       await rm(memoryDir, { recursive: true, force: true });
     }
   });
