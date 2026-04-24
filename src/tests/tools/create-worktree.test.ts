@@ -88,9 +88,11 @@ describe("CreateWorktree tool", () => {
     expect(result.branch_name).toStartWith("letta/fix-login-flow-");
     expect(result.base_ref).toBe("main");
     expect(result.switched_cwd).toBe(false);
-    expect(git(["rev-parse", "--show-toplevel"], result.worktree_path)).toBe(
-      result.worktree_path,
-    );
+    expect(
+      path.normalize(
+        git(["rev-parse", "--show-toplevel"], result.worktree_path),
+      ),
+    ).toBe(result.worktree_path);
   });
 
   test("switches only the active conversation cwd", async () => {
