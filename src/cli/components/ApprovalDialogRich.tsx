@@ -1005,5 +1005,6 @@ function getHeaderLabel(toolName: string): string {
   if (t === "killbash") return "Kill Shell";
   if (t === "bashoutput") return "Shell Output";
   if (t === "task") return "Task";
+  if (t === "agent") return "Agent";
   return toolName;
 }

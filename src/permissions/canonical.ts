@@ -50,7 +50,7 @@ const LIST_TOOL_NAMES = new Set([
   "LS",
 ]);
 
-const TASK_TOOL_NAMES = new Set(["Task", "task"]);
+const TASK_TOOL_NAMES = new Set(["Task", "task", "Agent", "agent"]);
 
 const FILE_TOOL_FAMILIES = new Set([
   "Read",

@@ -780,7 +780,7 @@ function getDefaultDecision(
   }
 
   // Task tool: auto-approve safe subagent types
-  if (toolName === "Task" || toolName === "task") {
+  if (canonicalToolName(toolName) === "Task") {
     const subagentType =
       typeof toolArgs?.subagent_type === "string" ? toolArgs.subagent_type : "";
     if (SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)) {

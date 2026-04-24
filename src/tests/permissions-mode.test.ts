@@ -87,6 +87,30 @@ test("default mode - auto-allows memory_apply_patch", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
+test("default mode - treats Agent like Task for safe subagent auto-approval", () => {
+  permissionMode.setMode("default");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Agent",
+    {
+      subagent_type: "recall",
+      prompt: "find prior notes",
+      description: "Search history",
+    },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
 // ============================================================================
 // Permission Mode: bypassPermissions
 // ============================================================================
@@ -493,6 +517,30 @@ test("plan mode - allows TodoWrite", () => {
   const result = checkPermission(
     "TodoWrite",
     { todos: [] },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("plan mode");
+});
+
+test("plan mode - allows Agent with read-only subagent types", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Agent",
+    {
+      subagent_type: "recall",
+      prompt: "find prior notes",
+      description: "Search history",
+    },
     permissions,
     "/Users/test/project",
   );

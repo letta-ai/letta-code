@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { canonicalToolName } from "./canonical";
 import { extractApplyPatchPaths } from "./crossAgentGuard";
 import {
   isPathWithinRoots,
@@ -408,7 +409,7 @@ class PermissionModeManager {
           "recall",
           "Recall",
         ]);
-        if (toolName === "Task" || toolName === "task") {
+        if (canonicalToolName(toolName) === "Task") {
           const subagentType = toolArgs?.subagent_type as string | undefined;
           if (subagentType && readOnlySubagentTypes.has(subagentType)) {
             return "allow";
