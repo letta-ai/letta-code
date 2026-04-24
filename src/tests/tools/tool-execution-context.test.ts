@@ -155,6 +155,19 @@ describe("tool execution context snapshot", () => {
     expect(withPreparedContext.status).toBe("success");
   });
 
+  test("Gemini models use the default Claude-style auto toolset", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "google_ai/gemini-2.5-pro",
+    );
+
+    expect(prepared.loadedToolNames).toContain("Read");
+    expect(prepared.loadedToolNames).toContain("Write");
+    expect(prepared.loadedToolNames).toContain("Bash");
+    expect(prepared.loadedToolNames).not.toContain("ReadFileGemini");
+    expect(prepared.loadedToolNames).not.toContain("WriteFileGemini");
+    expect(prepared.loadedToolNames).not.toContain("RunShellCommand");
+  });
+
   test("prepares current tool snapshots with fresh MessageChannel discovery", async () => {
     await loadSpecificTools(["Read"]);
 

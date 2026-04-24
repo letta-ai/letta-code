@@ -1142,16 +1142,12 @@ async function resolveBaseToolNamesForModel(
   if (
     !toolFilter.isActive() &&
     modelIdentifier &&
-    isGeminiModel(modelIdentifier)
-  ) {
-    baseToolNames = GEMINI_PASCAL_TOOLS;
-  } else if (
-    !toolFilter.isActive() &&
-    modelIdentifier &&
     isOpenAIModel(modelIdentifier)
   ) {
     baseToolNames = OPENAI_PASCAL_TOOLS;
   } else if (!toolFilter.isActive()) {
+    // Temporary rollback: Gemini models should use the default Claude-style
+    // toolset until we intentionally restore the Gemini-specific toolset.
     baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
   } else {
     baseToolNames = TOOL_NAMES;

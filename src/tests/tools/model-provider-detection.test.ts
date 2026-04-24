@@ -38,6 +38,11 @@ describe("deriveToolsetFromModel", () => {
     expect(deriveToolsetFromModel("chatgpt_oauth/gpt-5.3-codex")).toBe("codex");
   });
 
+  test("maps Gemini models to default (anthropic) toolset", () => {
+    expect(deriveToolsetFromModel("google_ai/gemini-2.5-pro")).toBe("default");
+    expect(deriveToolsetFromModel("gemini-pro")).toBe("default");
+  });
+
   test("maps auto models to default (anthropic) toolset", () => {
     expect(deriveToolsetFromModel("auto")).toBe("default");
     expect(deriveToolsetFromModel("letta/auto")).toBe("default");

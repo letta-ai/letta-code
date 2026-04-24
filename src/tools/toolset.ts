@@ -17,7 +17,6 @@ import {
   GEMINI_DEFAULT_TOOLS,
   GEMINI_PASCAL_TOOLS,
   getToolNames,
-  isGeminiModel,
   isOpenAIModel,
   loadSpecificTools,
   loadTools,
@@ -56,13 +55,9 @@ export type ToolsetPreference = ToolsetName | "auto";
 
 export function deriveToolsetFromModel(
   modelIdentifier: string,
-): "codex" | "gemini" | "default" {
+): "codex" | "default" {
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
-  return isOpenAIModel(resolvedModel)
-    ? "codex"
-    : isGeminiModel(resolvedModel)
-      ? "gemini"
-      : "default";
+  return isOpenAIModel(resolvedModel) ? "codex" : "default";
 }
 
 type ScopeModelCarrier = Pick<AgentState, "model" | "llm_config">;
