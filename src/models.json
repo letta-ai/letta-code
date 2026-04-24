@@ -177,6 +177,32 @@
       }
     },
     {
+      "id": "sonnet-4.5",
+      "handle": "anthropic/claude-sonnet-4-5-20250929",
+      "label": "Sonnet 4.5",
+      "description": "Previous default Sonnet model",
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "sonnet-4.5-no-reasoning",
+      "handle": "anthropic/claude-sonnet-4-5-20250929",
+      "label": "Sonnet 4.5",
+      "description": "Sonnet 4.5 with no reasoning (faster)",
+      "updateArgs": {
+        "enable_reasoner": false,
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
       "id": "opus-4.6-high",
       "handle": "anthropic/claude-opus-4-6",
       "label": "Opus 4.6",
@@ -877,6 +903,132 @@
       }
     },
     {
+      "id": "gpt-5.2-codex-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.2-codex",
+      "label": "GPT-5.2 Codex",
+      "description": "GPT-5.2 Codex (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-codex-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.2-codex",
+      "label": "GPT-5.2 Codex",
+      "description": "GPT-5.2 Codex (high reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.2",
+      "label": "GPT-5.2",
+      "description": "GPT-5.2 (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.2",
+      "label": "GPT-5.2",
+      "description": "GPT-5.2 (high reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.1-codex",
+      "label": "GPT-5.1 Codex",
+      "description": "GPT-5.1 Codex (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.1-codex",
+      "label": "GPT-5.1 Codex",
+      "description": "GPT-5.1 Codex (high reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-max-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
+      "label": "GPT-5.1 Codex Max",
+      "description": "GPT-5.1 Codex Max (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-max-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
+      "label": "GPT-5.1 Codex Max",
+      "description": "GPT-5.1 Codex Max (high reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-max-plus-pro-xhigh",
+      "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
+      "label": "GPT-5.1 Codex Max",
+      "description": "GPT-5.1 Codex Max (extra-high reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
       "id": "gpt-5-codex",
       "handle": "openai/gpt-5-codex",
       "label": "GPT-5-Codex",
@@ -888,6 +1040,146 @@
         "max_output_tokens": 128000,
         "parallel_tool_calls": true
       }
+    },
+    {
+      "id": "gpt-5.2-none",
+      "handle": "openai/gpt-5.2",
+      "label": "GPT-5.2",
+      "description": "Latest general-purpose GPT (no reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-low",
+      "handle": "openai/gpt-5.2",
+      "label": "GPT-5.2",
+      "description": "Latest general-purpose GPT (low reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-medium",
+      "handle": "openai/gpt-5.2",
+      "label": "GPT-5.2",
+      "description": "Latest general-purpose GPT (med reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-high",
+      "handle": "openai/gpt-5.2",
+      "label": "GPT-5.2",
+      "description": "Latest general-purpose GPT (high reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-xhigh",
+      "handle": "openai/gpt-5.2",
+      "label": "GPT-5.2",
+      "description": "Latest general-purpose GPT (max reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-codex-none",
+      "handle": "openai/gpt-5.2-codex",
+      "label": "GPT-5.2-Codex",
+      "description": "GPT-5.2 variant (no reasoning) optimized for coding",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-codex-low",
+      "handle": "openai/gpt-5.2-codex",
+      "label": "GPT-5.2-Codex",
+      "description": "GPT-5.2 variant (low reasoning) optimized for coding",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-codex-medium",
+      "handle": "openai/gpt-5.2-codex",
+      "label": "GPT-5.2-Codex",
+      "description": "GPT-5.2 variant (med reasoning) optimized for coding",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-codex-high",
+      "handle": "openai/gpt-5.2-codex",
+      "label": "GPT-5.2-Codex",
+      "description": "GPT-5.2 variant (high reasoning) optimized for coding",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.2-codex-xhigh",
+      "handle": "openai/gpt-5.2-codex",
+      "label": "GPT-5.2-Codex",
+      "description": "GPT-5.2 variant (max reasoning) optimized for coding",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": null,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
     },
     {
       "id": "gpt-5.4-none",
@@ -1024,7 +1316,7 @@
       "id": "gpt-5.4-pro-medium",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro \u2014 max performance variant (med reasoning)",
+      "description": "GPT-5.4 Pro — max performance variant (med reasoning)",
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -1037,7 +1329,7 @@
       "id": "gpt-5.4-pro-high",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro \u2014 max performance variant (high reasoning)",
+      "description": "GPT-5.4 Pro — max performance variant (high reasoning)",
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -1050,7 +1342,7 @@
       "id": "gpt-5.4-pro-xhigh",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro \u2014 max performance variant (max reasoning)",
+      "description": "GPT-5.4 Pro — max performance variant (max reasoning)",
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "medium",
@@ -1257,6 +1549,202 @@
       }
     },
     {
+      "id": "gpt-5.1-none",
+      "handle": "openai/gpt-5.1",
+      "label": "GPT-5.1",
+      "description": "Legacy GPT-5.1 (no reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-low",
+      "handle": "openai/gpt-5.1",
+      "label": "GPT-5.1",
+      "description": "Legacy GPT-5.1 (low reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-medium",
+      "handle": "openai/gpt-5.1",
+      "label": "GPT-5.1",
+      "description": "Legacy GPT-5.1 (med reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-high",
+      "handle": "openai/gpt-5.1",
+      "label": "GPT-5.1",
+      "description": "Legacy GPT-5.1 (high reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-none",
+      "handle": "openai/gpt-5.1-codex",
+      "label": "GPT-5.1-Codex",
+      "description": "GPT-5.1 variant (no reasoning) optimized for coding",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-medium",
+      "handle": "openai/gpt-5.1-codex",
+      "label": "GPT-5.1-Codex",
+      "description": "GPT-5.1 variant (med reasoning) optimized for coding",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-high",
+      "handle": "openai/gpt-5.1-codex",
+      "label": "GPT-5.1-Codex",
+      "description": "GPT-5.1 variant (max reasoning) optimized for coding",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-max-medium",
+      "handle": "openai/gpt-5.1-codex-max",
+      "label": "GPT-5.1-Codex-Max",
+      "description": "GPT-5.1-Codex 'Max' variant (med reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-max-high",
+      "handle": "openai/gpt-5.1-codex-max",
+      "label": "GPT-5.1-Codex-Max",
+      "description": "GPT-5.1-Codex 'Max' variant (high reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5.1-codex-max-x-high",
+      "handle": "openai/gpt-5.1-codex-max",
+      "label": "GPT-5.1-Codex-Max",
+      "description": "GPT-5.1-Codex 'Max' variant (extra-high reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5-minimal",
+      "handle": "openai/gpt-5",
+      "label": "GPT-5",
+      "description": "Legacy GPT-5 (minimal reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "minimal",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5-low",
+      "handle": "openai/gpt-5",
+      "label": "GPT-5",
+      "description": "Legacy GPT-5 (low reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5-medium",
+      "handle": "openai/gpt-5",
+      "label": "GPT-5",
+      "description": "Legacy GPT-5 (med reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gpt-5-high",
+      "handle": "openai/gpt-5",
+      "label": "GPT-5",
+      "description": "Legacy GPT-5 (high reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
       "id": "gpt-5-mini-high",
       "handle": "openai/gpt-5-mini-2025-08-07",
       "label": "GPT-5-Mini",
@@ -1309,6 +1797,33 @@
       }
     },
     {
+      "id": "glm-5",
+      "handle": "zai/glm-5",
+      "label": "GLM-5",
+      "description": "zAI's latest coding model (legacy)",
+      "isFeatured": true,
+      "free": true,
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 16000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "glm-4.7",
+      "handle": "zai/glm-4.7",
+      "label": "GLM-4.7",
+      "description": "zAI's latest coding model (legacy)",
+      "free": true,
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 16000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
       "id": "minimax-m2.7",
       "handle": "minimax/MiniMax-M2.7",
       "label": "MiniMax 2.7",
@@ -1322,6 +1837,32 @@
       }
     },
     {
+      "id": "minimax-m2.5",
+      "handle": "minimax/MiniMax-M2.5",
+      "label": "MiniMax 2.5",
+      "description": "MiniMax's latest coding model (legacy)",
+      "free": true,
+      "updateArgs": {
+        "context_window": 160000,
+        "max_output_tokens": 64000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "minimax-m2.1",
+      "handle": "minimax/MiniMax-M2.1",
+      "label": "MiniMax 2.1",
+      "description": "MiniMax's latest coding model (legacy)",
+      "free": true,
+      "updateArgs": {
+        "context_window": 160000,
+        "max_output_tokens": 64000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
       "id": "minimax-m2",
       "handle": "openrouter/minimax/minimax-m2",
       "label": "Minimax M2",
@@ -1331,6 +1872,53 @@
         "max_output_tokens": 64000,
         "parallel_tool_calls": true
       }
+    },
+    {
+      "id": "kimi-k2",
+      "handle": "openrouter/moonshotai/kimi-k2-0905",
+      "label": "Kimi K2",
+      "description": "Kimi's K2 model",
+      "updateArgs": {
+        "context_window": 262144,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "kimi-k2-thinking",
+      "handle": "openrouter/moonshotai/kimi-k2-thinking",
+      "label": "Kimi K2 Thinking",
+      "description": "Kimi's K2 model with advanced thinking capabilities",
+      "updateArgs": {
+        "context_window": 256000,
+        "max_output_tokens": 16000,
+        "temperature": 1.0,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "kimi-k2.5",
+      "handle": "baseten/moonshotai/Kimi-K2.5",
+      "label": "Kimi K2.5",
+      "description": "Kimi's latest coding model",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 262000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "kimi-k2.5",
+      "handle": "openrouter/moonshotai/kimi-k2.5",
+      "label": "Kimi K2.5 (openrouter)",
+      "description": "Kimi's latest coding model",
+      "updateArgs": {
+        "context_window": 262144,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
     },
     {
       "id": "kimi-k2.6",
@@ -1364,6 +1952,40 @@
         "temperature": 1.0,
         "parallel_tool_calls": true
       }
+    },
+    {
+      "id": "gemini-3-flash",
+      "handle": "google_ai/gemini-3-flash-preview",
+      "label": "Gemini 3 Flash",
+      "description": "Google's fastest Gemini 3 model",
+      "updateArgs": {
+        "context_window": 180000,
+        "temperature": 1.0,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gemini-flash",
+      "handle": "google_ai/gemini-2.5-flash",
+      "label": "Gemini 2.5 Flash",
+      "description": "Google's fastest model",
+      "updateArgs": {
+        "context_window": 180000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
+    },
+    {
+      "id": "gemini-pro",
+      "handle": "google_ai/gemini-2.5-pro",
+      "label": "Gemini 2.5 Pro",
+      "description": "Google's last generation flagship model",
+      "updateArgs": {
+        "context_window": 180000,
+        "parallel_tool_calls": true
+      },
+      "legacy": true
     },
     {
       "id": "gpt-4.1",

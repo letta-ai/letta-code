@@ -54,6 +54,7 @@ type UiModel = {
   isDefault?: boolean;
   isFeatured?: boolean;
   free?: boolean;
+  legacy?: boolean;
   updateArgs?: Record<string, unknown>;
 };
 
@@ -104,6 +105,10 @@ export function ModelSelector({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
+  const curatedTypedModels = useMemo(
+    () => typedModels.filter((m) => !m.legacy),
+    [typedModels],
+  );
 
   // For self-hosted, only show server-specific tabs
   const modelCategories = useMemo(
@@ -226,7 +231,7 @@ export function ModelSelector({
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
     let available = filterModelsByAvailabilityForSelector(
-      typedModels,
+      curatedTypedModels,
       availableHandles,
       allApiHandles,
     );
@@ -265,7 +270,7 @@ export function ModelSelector({
     const nonFeatured = deduped.filter((m) => !m.isFeatured);
     return [...featured, ...nonFeatured];
   }, [
-    typedModels,
+    curatedTypedModels,
     availableHandles,
     allApiHandles,
     filterProvider,
@@ -353,7 +358,7 @@ export function ModelSelector({
     for (const handle of byokHandles) {
       const baseHandle = toBaseHandle(handle);
       const staticModel = pickPreferredStaticModel(baseHandle);
-      if (staticModel) {
+      if (staticModel && !staticModel.legacy) {
         // Use models.json data but with the BYOK handle as the ID
         matched.push({
           ...staticModel,
