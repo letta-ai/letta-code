@@ -45,7 +45,10 @@ describe("Read tool HEIC support", () => {
     const result = await read({ file_path: file });
 
     expect(resizeImageIfNeededMock).toHaveBeenCalledTimes(1);
-    expect(resizeImageIfNeededMock.mock.calls[0]?.[1]).toBe("image/heic");
+    const heicCall = resizeImageIfNeededMock.mock.calls[0] as
+      | [Buffer, string]
+      | undefined;
+    expect(heicCall?.[1]).toBe("image/heic");
     expect(Array.isArray(result.content)).toBe(true);
     const content = result.content as Array<TextContent | ImageContent>;
     expect(content[0]).toEqual({ type: "text", text: "[Image: photo.heic]" });
@@ -69,7 +72,10 @@ describe("Read tool HEIC support", () => {
     await read({ file_path: file });
 
     expect(resizeImageIfNeededMock).toHaveBeenCalledTimes(1);
-    expect(resizeImageIfNeededMock.mock.calls[0]?.[1]).toBe("image/heif");
+    const heifCall = resizeImageIfNeededMock.mock.calls[0] as
+      | [Buffer, string]
+      | undefined;
+    expect(heifCall?.[1]).toBe("image/heif");
   });
 
   test("surfaces a clean image-read error when HEIC preparation fails", async () => {
