@@ -8,6 +8,7 @@ export {
   isHeicMediaType,
   MAX_IMAGE_BYTES,
   MAX_IMAGE_HEIGHT,
+  MAX_IMAGE_INPUT_PIXELS,
   MAX_IMAGE_WIDTH,
 } from "./imageResize.shared";
 
