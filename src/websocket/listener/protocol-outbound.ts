@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -60,6 +61,114 @@ type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
+const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
+const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
+
+type ProtocolPerfBucket = {
+  count: number;
+  bytes: number;
+  stringifyMs: number;
+  sendMs: number;
+  maxBufferedBefore: number;
+  maxBufferedAfter: number;
+};
+
+const protocolPerfBuckets = new Map<string, ProtocolPerfBucket>();
+let protocolPerfFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let protocolPerfWindowStartedAt = 0;
+
+function isProtocolPerfTelemetryEnabled(): boolean {
+  return PROTOCOL_PERF_ENV_VALUES.has(
+    (process.env.LETTA_LISTENER_PERF ?? "").toLowerCase(),
+  );
+}
+
+function getProtocolPerfKey(
+  message: Omit<
+    WsProtocolMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  >,
+): string {
+  if (message.type === "stream_delta" && "delta" in message) {
+    const delta = message.delta as { message_type?: unknown };
+    return `${message.type}:${String(delta.message_type ?? "unknown")}`;
+  }
+  return message.type;
+}
+
+function scheduleProtocolPerfFlush(): void {
+  if (protocolPerfFlushTimer) {
+    return;
+  }
+  protocolPerfFlushTimer = setTimeout(() => {
+    protocolPerfFlushTimer = null;
+    flushProtocolPerfTelemetry();
+  }, PROTOCOL_PERF_FLUSH_INTERVAL_MS);
+  const timerWithUnref = protocolPerfFlushTimer as ReturnType<
+    typeof setTimeout
+  > & {
+    unref?: () => void;
+  };
+  timerWithUnref.unref?.();
+}
+
+function recordProtocolPerfTelemetry(
+  key: string,
+  sample: {
+    bytes: number;
+    stringifyMs: number;
+    sendMs: number;
+    bufferedBefore: number;
+    bufferedAfter: number;
+  },
+): void {
+  if (protocolPerfWindowStartedAt === 0) {
+    protocolPerfWindowStartedAt = Date.now();
+  }
+  const bucket = protocolPerfBuckets.get(key) ?? {
+    count: 0,
+    bytes: 0,
+    stringifyMs: 0,
+    sendMs: 0,
+    maxBufferedBefore: 0,
+    maxBufferedAfter: 0,
+  };
+  bucket.count += 1;
+  bucket.bytes += sample.bytes;
+  bucket.stringifyMs += sample.stringifyMs;
+  bucket.sendMs += sample.sendMs;
+  bucket.maxBufferedBefore = Math.max(
+    bucket.maxBufferedBefore,
+    sample.bufferedBefore,
+  );
+  bucket.maxBufferedAfter = Math.max(
+    bucket.maxBufferedAfter,
+    sample.bufferedAfter,
+  );
+  protocolPerfBuckets.set(key, bucket);
+  scheduleProtocolPerfFlush();
+}
+
+function flushProtocolPerfTelemetry(): void {
+  if (protocolPerfBuckets.size === 0) {
+    protocolPerfWindowStartedAt = 0;
+    return;
+  }
+  const windowMs = Math.max(1, Date.now() - protocolPerfWindowStartedAt);
+  const parts = [...protocolPerfBuckets.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, bucket]) => {
+      const stringifyMs = bucket.stringifyMs.toFixed(2);
+      const sendMs = bucket.sendMs.toFixed(2);
+      return `${key}{count=${bucket.count},bytes=${bucket.bytes},stringify_ms=${stringifyMs},send_ms=${sendMs},max_buffered_before=${bucket.maxBufferedBefore},max_buffered_after=${bucket.maxBufferedAfter}}`;
+    });
+  console.error(
+    `[Listen Perf] protocol_emit window_ms=${windowMs} ${parts.join(" ")}`,
+  );
+  protocolPerfBuckets.clear();
+  protocolPerfWindowStartedAt = 0;
+}
+
 const gitContextCache = new Map<
   string,
   {
@@ -405,8 +514,26 @@ export function emitProtocolV2Message(
     emitted_at: new Date().toISOString(),
     idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
   } as WsProtocolMessage;
+  const perfEnabled = isProtocolPerfTelemetryEnabled();
+  const stringifyStartedAt = perfEnabled ? performance.now() : 0;
+  let payload: string;
   try {
-    socket.send(JSON.stringify(outbound));
+    payload = JSON.stringify(outbound);
+    const stringifyMs = perfEnabled
+      ? performance.now() - stringifyStartedAt
+      : 0;
+    const bufferedBefore = perfEnabled ? socket.bufferedAmount : 0;
+    const sendStartedAt = perfEnabled ? performance.now() : 0;
+    socket.send(payload);
+    if (perfEnabled) {
+      recordProtocolPerfTelemetry(getProtocolPerfKey(message), {
+        bytes: Buffer.byteLength(payload),
+        stringifyMs,
+        sendMs: performance.now() - sendStartedAt,
+        bufferedBefore,
+        bufferedAfter: socket.bufferedAmount,
+      });
+    }
   } catch (error) {
     console.error(
       `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
