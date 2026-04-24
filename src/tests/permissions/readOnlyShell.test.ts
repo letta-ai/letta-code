@@ -446,42 +446,45 @@ describe("isReadOnlyShellCommand", () => {
   });
 
   describe("letta CLI commands", () => {
-    test("allows letta memory tokens", () => {
-      expect(isReadOnlyShellCommand("letta memory tokens")).toBe(true);
+    test("allows letta memfs tokens", () => {
+      expect(isReadOnlyShellCommand("letta memfs tokens")).toBe(true);
     });
 
-    test("allows letta memory tokens with flags", () => {
+    test("allows letta memfs tokens with flags", () => {
       expect(
-        isReadOnlyShellCommand("letta memory tokens --quiet --format json"),
+        isReadOnlyShellCommand("letta memfs tokens --quiet --format json"),
       ).toBe(true);
       expect(
         isReadOnlyShellCommand(
-          "letta memory tokens --memory-dir /tmp/mem --top 10",
+          "letta memfs tokens --memory-dir /tmp/mem --top 10",
         ),
       ).toBe(true);
     });
 
-    test("allows letta memory help", () => {
-      expect(isReadOnlyShellCommand("letta memory help")).toBe(true);
+    test("allows letta memfs help", () => {
+      expect(isReadOnlyShellCommand("letta memfs help")).toBe(true);
     });
 
-    test("blocks unknown letta memory action", () => {
-      expect(isReadOnlyShellCommand("letta memory write")).toBe(false);
-      expect(isReadOnlyShellCommand("letta memory delete")).toBe(false);
+    test("blocks unknown letta memfs action", () => {
+      // restore/backup/pull/diff mutate state — not in read-only allowlist
+      expect(isReadOnlyShellCommand("letta memfs restore")).toBe(false);
+      expect(isReadOnlyShellCommand("letta memfs pull")).toBe(false);
+      expect(isReadOnlyShellCommand("letta memfs delete")).toBe(false);
     });
 
-    test("blocks letta memory with no action", () => {
-      expect(isReadOnlyShellCommand("letta memory")).toBe(false);
+    test("blocks letta memfs with no action", () => {
+      expect(isReadOnlyShellCommand("letta memfs")).toBe(false);
     });
 
     test("blocks unknown letta group", () => {
+      expect(isReadOnlyShellCommand("letta memory tokens")).toBe(false);
       expect(isReadOnlyShellCommand("letta install plugin")).toBe(false);
       expect(isReadOnlyShellCommand("letta doctor")).toBe(false);
     });
 
-    test("allows letta memory tokens piped to a safe command", () => {
+    test("allows letta memfs tokens piped to a safe command", () => {
       expect(
-        isReadOnlyShellCommand("letta memory tokens --format json | head -5"),
+        isReadOnlyShellCommand("letta memfs tokens --format json | head -5"),
       ).toBe(true);
     });
   });

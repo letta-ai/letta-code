@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runMemorySubcommand } from "../../cli/subcommands/memory";
+import { runMemfsSubcommand } from "../../cli/subcommands/memfs";
 
 interface Capture {
   stdout: string[];
@@ -32,15 +32,31 @@ function captureConsole(): { capture: Capture; restore: () => void } {
   };
 }
 
-describe("letta memory subcommand", () => {
+describe("letta memfs tokens", () => {
   let tmpRoot: string;
+  let priorMemoryDir: string | undefined;
+  let priorAgentId: string | undefined;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "memory-subcommand-"));
+    tmpRoot = mkdtempSync(join(tmpdir(), "memfs-tokens-"));
+    priorMemoryDir = process.env.MEMORY_DIR;
+    priorAgentId = process.env.LETTA_AGENT_ID;
+    delete process.env.MEMORY_DIR;
+    delete process.env.LETTA_AGENT_ID;
   });
 
   afterEach(() => {
     rmSync(tmpRoot, { recursive: true, force: true });
+    if (priorMemoryDir !== undefined) {
+      process.env.MEMORY_DIR = priorMemoryDir;
+    } else {
+      delete process.env.MEMORY_DIR;
+    }
+    if (priorAgentId !== undefined) {
+      process.env.LETTA_AGENT_ID = priorAgentId;
+    } else {
+      delete process.env.LETTA_AGENT_ID;
+    }
   });
 
   function writeSystemFile(relativePath: string, content: string): void {
@@ -49,54 +65,71 @@ describe("letta memory subcommand", () => {
     writeFileSync(full, content);
   }
 
-  test("prints usage with no action and exits 0", async () => {
+  test("returns 64 when no memory dir source is available", async () => {
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemorySubcommand([]);
-      expect(code).toBe(0);
-      expect(capture.stdout.join("\n")).toContain("letta memory tokens");
-    } finally {
-      restore();
-    }
-  });
-
-  test("returns 64 when --memory-dir missing and MEMORY_DIR unset", async () => {
-    const prior = process.env.MEMORY_DIR;
-    delete process.env.MEMORY_DIR;
-    const { capture, restore } = captureConsole();
-    try {
-      const code = await runMemorySubcommand(["tokens"]);
+      const code = await runMemfsSubcommand(["tokens"]);
       expect(code).toBe(64);
       expect(capture.stderr.join("\n")).toContain("Missing memory dir");
     } finally {
-      if (prior !== undefined) process.env.MEMORY_DIR = prior;
       restore();
     }
   });
 
-  test("tokens action with empty system/ exits 0", async () => {
+  test("tokens with --memory-dir and empty system/ exits 0", async () => {
     mkdirSync(join(tmpRoot, "system"), { recursive: true });
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemorySubcommand([
+      const code = await runMemfsSubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
       ]);
       expect(code).toBe(0);
-      const out = capture.stdout.join("\n");
-      expect(out).toContain("Total: 0 tokens");
+      expect(capture.stdout.join("\n")).toContain("Total: 0 tokens");
     } finally {
       restore();
     }
   });
 
-  test("always exits 0 regardless of size", async () => {
-    // Exit code is not a policy signal — the CLI just reports the number.
+  test("reads MEMORY_DIR env when --memory-dir not passed", async () => {
+    writeSystemFile("persona.md", "abcd");
+    process.env.MEMORY_DIR = tmpRoot;
+    const { capture, restore } = captureConsole();
+    try {
+      const code = await runMemfsSubcommand(["tokens", "--quiet"]);
+      expect(code).toBe(0);
+      expect(capture.stdout.join("\n")).toContain("Total: 1 tokens");
+    } finally {
+      restore();
+    }
+  });
+
+  test("--memory-dir takes precedence over $MEMORY_DIR", async () => {
+    // Populate tmpRoot (used via --memory-dir), leave the env var pointing
+    // at a nonexistent path to confirm the flag wins.
+    writeSystemFile("persona.md", "a".repeat(8)); // 2 tokens
+    process.env.MEMORY_DIR = "/nonexistent/does-not-exist";
+    const { capture, restore } = captureConsole();
+    try {
+      const code = await runMemfsSubcommand([
+        "tokens",
+        "--memory-dir",
+        tmpRoot,
+        "--quiet",
+      ]);
+      expect(code).toBe(0);
+      expect(capture.stdout.join("\n")).toContain("Total: 2 tokens");
+    } finally {
+      restore();
+    }
+  });
+
+  test("exits 0 regardless of size (CLI reports, does not judge)", async () => {
     writeSystemFile("persona.md", "a".repeat(4 * 50000));
     const { restore } = captureConsole();
     try {
-      const code = await runMemorySubcommand([
+      const code = await runMemfsSubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -112,7 +145,7 @@ describe("letta memory subcommand", () => {
     mkdirSync(join(tmpRoot, "system"), { recursive: true });
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemorySubcommand([
+      const code = await runMemfsSubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -126,11 +159,29 @@ describe("letta memory subcommand", () => {
     }
   });
 
-  test("json output contains expected fields", async () => {
+  test("returns 64 for invalid --top", async () => {
+    mkdirSync(join(tmpRoot, "system"), { recursive: true });
+    const { capture, restore } = captureConsole();
+    try {
+      const code = await runMemfsSubcommand([
+        "tokens",
+        "--memory-dir",
+        tmpRoot,
+        "--top",
+        "abc",
+      ]);
+      expect(code).toBe(64);
+      expect(capture.stderr.join("\n")).toContain("Invalid --top");
+    } finally {
+      restore();
+    }
+  });
+
+  test("json output contains expected fields and nothing else", async () => {
     writeSystemFile("persona.md", "abcd");
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemorySubcommand([
+      const code = await runMemfsSubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -141,7 +192,7 @@ describe("letta memory subcommand", () => {
       const parsed = JSON.parse(capture.stdout.join("\n"));
       expect(parsed.total_tokens).toBe(1);
       expect(parsed.files).toEqual([{ path: "system/persona.md", tokens: 1 }]);
-      // No status or threshold fields — CLI doesn't encode policy.
+      // No policy fields.
       expect(parsed.status).toBeUndefined();
       expect(parsed.threshold_warn).toBeUndefined();
       expect(parsed.threshold_fail).toBeUndefined();
@@ -150,12 +201,12 @@ describe("letta memory subcommand", () => {
     }
   });
 
-  test("text output includes top files sorted by tokens", async () => {
+  test("text output includes top files sorted by tokens desc", async () => {
     writeSystemFile("small.md", "a".repeat(4)); // 1 token
     writeSystemFile("large.md", "a".repeat(40)); // 10 tokens
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemorySubcommand([
+      const code = await runMemfsSubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -166,7 +217,7 @@ describe("letta memory subcommand", () => {
       const smallIdx = out.indexOf("system/small.md");
       expect(largeIdx).toBeGreaterThanOrEqual(0);
       expect(smallIdx).toBeGreaterThanOrEqual(0);
-      expect(largeIdx).toBeLessThan(smallIdx); // large printed first
+      expect(largeIdx).toBeLessThan(smallIdx);
     } finally {
       restore();
     }
@@ -176,7 +227,7 @@ describe("letta memory subcommand", () => {
     writeSystemFile("persona.md", "abcd");
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemorySubcommand([
+      const code = await runMemfsSubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -192,12 +243,12 @@ describe("letta memory subcommand", () => {
     }
   });
 
-  test("unknown action returns 64", async () => {
+  test("help usage mentions tokens", async () => {
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemorySubcommand(["nonsense"]);
-      expect(code).toBe(64);
-      expect(capture.stderr.join("\n")).toContain("Unknown action");
+      const code = await runMemfsSubcommand([]);
+      expect(code).toBe(0);
+      expect(capture.stdout.join("\n")).toContain("letta memfs tokens");
     } finally {
       restore();
     }

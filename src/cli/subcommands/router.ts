@@ -5,7 +5,6 @@ import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runListenSubcommand } from "./listen.tsx";
 import { runMemfsSubcommand } from "./memfs";
-import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 
 export async function runSubcommand(argv: string[]): Promise<number | null> {
@@ -18,8 +17,6 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
   switch (command) {
     case "memfs":
       return runMemfsSubcommand(rest);
-    case "memory":
-      return runMemorySubcommand(rest);
     case "agents":
       return runAgentsSubcommand(rest);
     case "messages":
