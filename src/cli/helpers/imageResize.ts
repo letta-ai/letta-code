@@ -3,10 +3,12 @@
 
 export type { ResizeResult } from "./imageResize.shared";
 export {
+  isHeicMediaType,
   MAX_IMAGE_BYTES,
   MAX_IMAGE_HEIGHT,
   MAX_IMAGE_WIDTH,
 } from "./imageResize.shared";
+import { isHeicMediaType } from "./imageResize.shared";
 
 // Build-time constant for magick variant (set via Bun.build define when USE_MAGICK=1)
 // At dev/test time this is undefined, at build time it's true/false
@@ -17,6 +19,26 @@ declare const __USE_MAGICK__: boolean | undefined;
 const useMagick =
   typeof __USE_MAGICK__ !== "undefined" && __USE_MAGICK__ === true;
 
-export const resizeImageIfNeeded = useMagick
+const backendResizeImageIfNeeded = useMagick
   ? (await import("./imageResize.magick.js")).resizeImageIfNeeded
   : (await import("./imageResize.sharp.js")).resizeImageIfNeeded;
+
+export async function resizeImageIfNeeded(
+  buffer: Buffer,
+  inputMediaType: string,
+) {
+  if (process.platform === "darwin" && isHeicMediaType(inputMediaType)) {
+    try {
+      const { convertHeicToJpegWithSips } = await import(
+        "./imageResize.sips.js"
+      );
+      const convertedBuffer = await convertHeicToJpegWithSips(buffer);
+      return await backendResizeImageIfNeeded(convertedBuffer, "image/jpeg");
+    } catch {
+      // Fall through to the configured backend so non-sips environments still
+      // get the existing behavior.
+    }
+  }
+
+  return await backendResizeImageIfNeeded(buffer, inputMediaType);
+}

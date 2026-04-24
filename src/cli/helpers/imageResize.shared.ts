@@ -15,6 +15,11 @@ export interface ResizeResult {
   resized: boolean;
 }
 
+export function isHeicMediaType(mediaType?: string | null): boolean {
+  const normalized = mediaType?.trim().toLowerCase();
+  return normalized === "image/heic" || normalized === "image/heif";
+}
+
 export function mediaTypeForDecodedImageFormat(
   format?: string | null,
 ): string | null {
