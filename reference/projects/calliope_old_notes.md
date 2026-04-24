@@ -1,20 +1,15 @@
-# CALLIOPE — Early Planning Notes (ARCHIVED)
+# CALLIOPE — Early Planning Notes (Archived)
 
-*This file has been archived for historical reference. All decisions listed below have been superseded by current project state.*
+*Superseded by current project notes. See [[system/project_notes.md]]*
 
-## Original Proposal Ideas
-- Original idea: Map prosodic features to RST (Rhetorical Structure Theory) relations
-- Decided against RST in favor of SDRT (Segmented Discourse Representation Theory) after committee feedback (Oct 2024)
+Original proposal idea: Map prosodic features to RST (Rhetorical Structure Theory) relations.
 
-## Baseline Evolution
-- Original baseline: SVM classifier
-- Switched to Random Forest after poor SVM results (Dec 2024)
-- Current model: wav2vec2 encoder with discourse-aware attention, F1=0.78
+Decided against RST in favor of SDRT (Segmented Discourse Representation Theory) after committee feedback (Oct 2024).
 
-## Corpus Selection
-- Considered using Switchboard exclusively
-- Beaumont pushed for recording a local corpus (became GreenTalk)
+Original baseline: SVM classifier. Switched to Random Forest after poor SVM results (Dec 2024).
 
-## Funding History
-- Applied for NSF DDIG, rejected March 2025
-- Current funding: NSF supplemental to Tanaka's grant (NSF-2431587), $45K/18mo, approved March 2026
+Corpus selection: Considered using Switchboard exclusively, but Beaumont pushed for recording a local corpus (became GreenTalk).
+
+Funding: Applied for NSF DDIG, rejected March 2025. Currently unfunded beyond TA stipend.
+
+**Status**: All decisions above are superseded. Current project uses wav2vec2-based architecture with discourse-aware attention, 5-tier annotation scheme, and NSF supplemental funding.
