@@ -303,6 +303,26 @@ export interface CancelAckMessage extends MessageEnvelope {
   reason?: string;
 }
 
+/**
+ * Marks the end of a server-side step. Combines the server's `stop_reason`
+ * and `usage_statistics` chunks into a single wire event so consumers can
+ * observe a clean step boundary without hunting for two separate messages.
+ *
+ * Emitted after all content messages (`assistant_message`,
+ * `reasoning_message`, `tool_call_message`, `approval_request_message`) for
+ * the step have been flushed, and before any client-side markers
+ * (`auto_approval`, `tool_return_message`) for tools invoked in that step.
+ */
+export interface StepEndMessage extends MessageEnvelope {
+  type: "step_end";
+  /** Why the step ended — e.g. `end_turn`, `requires_approval`, `max_steps`. */
+  stop_reason: string;
+  /** Server step identifier for the step that just ended, if available. */
+  step_id?: string;
+  /** Usage statistics for the step. May be null for error paths. */
+  usage: UsageStatistics | null;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // RESULT
 // ═══════════════════════════════════════════════════════════════
@@ -886,6 +906,7 @@ export type WireMessage =
   | ErrorMessage
   | RetryMessage
   | RecoveryMessage
+  | StepEndMessage
   | ResultMessage
   | ControlResponse
   | ControlRequest // CLI → SDK control requests (e.g., can_use_tool)

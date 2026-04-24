@@ -507,77 +507,75 @@ describe("stream-json format", () => {
   );
 
   test(
-    "stop_reason and usage are merged inline onto approval_request_message",
+    "step_end event is emitted for each approval step and for end_turn",
     async () => {
-      // The step that ends in `requires_approval` is now a single coalesced
-      // event: the approval_request_message carries `stop_reason` and
-      // `usage` inline. There should be no standalone `stop_reason` or
-      // `usage_statistics` line for that step.
+      // Each server step terminates with a single `step_end` wire event
+      // carrying `stop_reason`, `step_id`, and `usage`. Content messages
+      // never carry step metadata inline.
       const lines = await runHeadlessCommand(TOOL_PROMPT);
       const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
 
-      const approvalMsgs = parsed.filter(
-        (o) =>
-          o.type === "message" &&
-          (o.message_type === "approval_request_message" ||
-            o.message_type === "tool_call_message"),
-      );
-      expect(approvalMsgs.length).toBeGreaterThan(0);
+      const stepEndEvents = parsed.filter((o) => o.type === "step_end");
+      expect(stepEndEvents.length).toBeGreaterThanOrEqual(2);
 
-      // At least one approval message in the run carries inline terminators.
-      const merged = approvalMsgs.find(
+      // At least one approval step.
+      const approvalStepEnd = stepEndEvents.find(
         (o) => o.stop_reason === "requires_approval",
       );
-      expect(merged).toBeDefined();
-      if (!merged) throw new Error("no merged approval_request_message");
-      expect(merged.usage).toBeDefined();
-      const usage = merged.usage as Record<string, unknown>;
-      expect(typeof usage.total_tokens).toBe("number");
-      expect(typeof usage.completion_tokens).toBe("number");
-      expect(typeof usage.prompt_tokens).toBe("number");
+      expect(approvalStepEnd).toBeDefined();
+      if (!approvalStepEnd) throw new Error("no approval step_end");
+      expect(typeof approvalStepEnd.step_id).toBe("string");
+      expect(approvalStepEnd.usage).toBeDefined();
+      const approvalUsage = approvalStepEnd.usage as Record<string, unknown>;
+      expect(typeof approvalUsage.total_tokens).toBe("number");
+      expect(typeof approvalUsage.prompt_tokens).toBe("number");
+      expect(typeof approvalUsage.completion_tokens).toBe("number");
 
-      // No standalone stop_reason: requires_approval line should remain
-      // (the inline merge replaces it on the wire).
-      const standaloneRequiresApproval = parsed.filter(
-        (o) =>
-          o.type === "message" &&
-          o.message_type === "stop_reason" &&
-          o.stop_reason === "requires_approval",
+      // And exactly one end_turn step at the tail.
+      const endTurnStepEnd = stepEndEvents.find(
+        (o) => o.stop_reason === "end_turn",
       );
-      expect(standaloneRequiresApproval).toHaveLength(0);
+      expect(endTurnStepEnd).toBeDefined();
+      if (!endTurnStepEnd) throw new Error("no end_turn step_end");
+      expect(typeof endTurnStepEnd.step_id).toBe("string");
+      expect(endTurnStepEnd.usage).toBeDefined();
     },
     { timeout: 200000 },
   );
 
   test(
-    "stop_reason: end_turn and usage are merged inline onto the final assistant_message",
+    "content messages never carry stop_reason or usage inline",
     async () => {
-      // The terminating step of the turn ends with `end_turn`; its
-      // assistant_message carries `stop_reason: end_turn` and `usage` inline.
+      // Regression guard: the previous design merged step terminators onto
+      // the last content message in each step. That's gone — content stays
+      // clean, terminators live on the `step_end` event.
       const lines = await runHeadlessCommand(TOOL_PROMPT);
       const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
 
-      const assistantMsgs = parsed.filter(
-        (o) => o.type === "message" && o.message_type === "assistant_message",
-      );
-      expect(assistantMsgs.length).toBeGreaterThan(0);
-
-      // The last assistant_message should carry the inline terminators.
-      const last = assistantMsgs[assistantMsgs.length - 1];
-      if (!last) throw new Error("no assistant_message found");
-      expect(last.stop_reason).toBe("end_turn");
-      expect(last.usage).toBeDefined();
-      const usage = last.usage as Record<string, unknown>;
-      expect(typeof usage.completion_tokens).toBe("number");
-
-      // And no standalone stop_reason: end_turn line for the same step.
-      const standaloneEndTurn = parsed.filter(
+      const contentMsgs = parsed.filter(
         (o) =>
           o.type === "message" &&
-          o.message_type === "stop_reason" &&
-          o.stop_reason === "end_turn",
+          (o.message_type === "assistant_message" ||
+            o.message_type === "reasoning_message" ||
+            o.message_type === "approval_request_message" ||
+            o.message_type === "tool_call_message"),
       );
-      expect(standaloneEndTurn).toHaveLength(0);
+      expect(contentMsgs.length).toBeGreaterThan(0);
+      for (const msg of contentMsgs) {
+        expect(msg.stop_reason).toBeUndefined();
+        expect(msg.usage).toBeUndefined();
+      }
+
+      // And no standalone stop_reason / usage_statistics messages either —
+      // those are subsumed by `step_end`.
+      const standaloneStopReason = parsed.filter(
+        (o) => o.type === "message" && o.message_type === "stop_reason",
+      );
+      const standaloneUsage = parsed.filter(
+        (o) => o.type === "message" && o.message_type === "usage_statistics",
+      );
+      expect(standaloneStopReason).toHaveLength(0);
+      expect(standaloneUsage).toHaveLength(0);
     },
     { timeout: 200000 },
   );

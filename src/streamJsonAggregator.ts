@@ -16,15 +16,13 @@
  *   `tool_call.tool_call_id` are merged on `arguments` concatenation.
  * - `tool_return_message` is never fragmented by the server; it's emitted
  *   directly, and flushes the matching tool_call accumulator first.
- * - `stop_reason` and the following `usage_statistics` are *merged inline*
- *   onto the step's terminating message rather than emitted as separate
- *   wire events:
- *     - `end_turn` / `max_steps` / `max_tokens` / `stop_sequence` →
- *       attached to the last `assistant_message` (fallback `reasoning_message`)
- *     - `requires_approval` → attached to the `approval_request_message`
- *     - `error` or no clear target → emitted as standalone events (rare)
- *   The merged message carries `stop_reason: "<reason>"` and a nested
- *   `usage: { ... }` block matching the `result` line's usage shape.
+ * - `stop_reason` and the following `usage_statistics` are combined into a
+ *   single `step_end` wire event instead of being emitted as two separate
+ *   server chunks. Content messages are flushed clean (no step metadata
+ *   inline); the `step_end` event carries `stop_reason`, `step_id`, and a
+ *   `usage` block matching the `result` line's usage shape. This keeps
+ *   step-boundary metadata separate from message content and works
+ *   uniformly for single- and multi-message steps.
  * - Unknown or non-accumulable chunks flush pending first, then pass through.
  *
  * When `passthrough: true` (i.e. `--include-partial-messages`), aggregation
@@ -52,17 +50,7 @@ type ChunkWithIds = LettaStreamingResponse & {
 type TextKind = "assistant_message" | "reasoning_message";
 type ToolCallKind = "tool_call_message" | "approval_request_message";
 
-/**
- * Fields shared by every pending entry. The `stopReason` and `usage` slots
- * are populated when the step's terminator events arrive on the stream;
- * they're rendered inline on the merged wire emission at flush time.
- */
-interface PendingTerminators {
-  stopReason?: string;
-  usage?: UsageStatistics;
-}
-
-interface PendingTextEntry extends PendingTerminators {
+interface PendingTextEntry {
   kind: TextKind;
   key: string;
   uuid: string;
@@ -72,18 +60,33 @@ interface PendingTextEntry extends PendingTerminators {
   chunk: LettaStreamingResponse;
   // Concatenated text (for assistant: content; for reasoning: reasoning).
   text: string;
+  // Carries the server-side step_id when present on the content chunk, so
+  // we can stamp the following step_end event with the same step_id.
+  stepId?: string;
 }
 
-interface PendingToolCallEntry extends PendingTerminators {
+interface PendingToolCallEntry {
   kind: ToolCallKind;
   key: string; // tool_call_id
   uuid: string;
   chunk: LettaStreamingResponse;
   toolName: string | undefined;
   args: string; // concatenated arguments JSON text
+  stepId?: string;
 }
 
 type PendingEntry = PendingTextEntry | PendingToolCallEntry;
+
+/**
+ * Buffer the server's `stop_reason` chunk until the matching
+ * `usage_statistics` chunk arrives, so we can emit both as a single
+ * `step_end` event. `stepId` is carried forward from the last content
+ * message flushed in the step.
+ */
+interface BufferedStepEnd {
+  stopReason: string;
+  stepId?: string;
+}
 
 export interface AggregatorOptions {
   sessionId: string;
@@ -102,6 +105,13 @@ export class StreamJsonAggregator {
   // across text and tool-call accumulators — flush emits them in the order
   // they first appeared on the stream.
   private readonly pending = new Map<string, PendingEntry>();
+  // Buffers the server's `stop_reason` chunk until `usage_statistics`
+  // arrives so we can emit a combined `step_end` wire event.
+  private bufferedStepEnd: BufferedStepEnd | undefined;
+  // Tracks the step_id of the most recently flushed content so we can
+  // associate it with the step_end event (the server's stop_reason /
+  // usage_statistics chunks don't carry step_id themselves).
+  private lastFlushedStepId: string | undefined;
 
   constructor(options: AggregatorOptions) {
     this.options = options;
@@ -135,34 +145,31 @@ export class StreamJsonAggregator {
 
       case "stop_reason": {
         const stopReason = (chunk as { stop_reason?: string }).stop_reason;
+        // Flush any content messages first so they land on the wire clean,
+        // before the step_end event that follows.
+        this.flushPending();
         if (!stopReason) {
-          // Malformed chunk — preserve ordering and pass through.
-          this.flushPending();
+          // Malformed chunk — preserve ordering by passing through.
           this.emitMessage(chunk);
           return;
         }
-        const target = this.pickStopReasonTarget(stopReason);
-        if (target) {
-          // Attach inline; do NOT flush yet — we still want to merge the
-          // following `usage_statistics` onto the same message.
-          target.stopReason = stopReason;
-        } else {
-          // No clear target (e.g. error stop with no preceding content):
-          // emit as a standalone event after flushing.
-          this.flushPending();
-          this.emitMessage(chunk);
-        }
+        // Buffer until usage_statistics arrives; the combined event emits
+        // from the usage_statistics branch below.
+        this.bufferedStepEnd = {
+          stopReason,
+          stepId: this.lastFlushedStepId,
+        };
         return;
       }
 
       case "usage_statistics": {
-        const target = this.findTargetWithStopReason();
-        if (target) {
-          target.usage = this.extractUsage(chunk);
-          // `usage_statistics` is the last server event in a step, so it's
-          // safe to flush all pending entries now (the step is closed).
-          this.flushPending();
+        const usage = this.extractUsage(chunk);
+        if (this.bufferedStepEnd) {
+          this.emitStepEnd(this.bufferedStepEnd, usage);
+          this.bufferedStepEnd = undefined;
         } else {
+          // usage_statistics arrived without a preceding stop_reason —
+          // unexpected, but pass it through rather than swallow.
           this.flushPending();
           this.emitMessage(chunk);
         }
@@ -179,10 +186,8 @@ export class StreamJsonAggregator {
 
   /**
    * Emit all buffered text / tool-call accumulators in insertion order, then
-   * clear them.
-   *
-   * Each entry is rendered with its accumulated text/args, and any merged
-   * `stop_reason` / `usage` terminators inline on the wire message.
+   * clear them. Also records the last seen step_id so a subsequent
+   * `step_end` event can be stamped with it.
    *
    * Call this before emitting a non-chunk event (error, recovery,
    * auto_approval) from outside the aggregator, so the buffered chunks
@@ -190,21 +195,28 @@ export class StreamJsonAggregator {
    */
   flushPending(): void {
     if (this.pending.size === 0) return;
+    let lastStepId: string | undefined;
     for (const entry of this.pending.values()) {
-      writeWireMessage(this.buildPendingWire(entry));
+      writeWireMessage(this.buildMessageWire(entry.chunk, entry.uuid));
+      if (entry.stepId) lastStepId = entry.stepId;
     }
+    if (lastStepId) this.lastFlushedStepId = lastStepId;
     this.pending.clear();
   }
 
   /**
-   * Flush all pending buffered events. Safety net for turn-end / abort paths.
-   *
-   * (Kept as a separate method from `flushPending` so callers can express
-   * intent — "I'm done with this turn" vs "I'm interleaving an out-of-band
-   * event" — even though both currently delegate to the same flush.)
+   * Flush all pending content, and release any buffered step_end. Safety net
+   * for turn-end / abort paths where `usage_statistics` may never arrive
+   * (so a buffered `stop_reason` would otherwise leak).
    */
   flushAll(): void {
     this.flushPending();
+    if (this.bufferedStepEnd) {
+      // No usage arrived — emit step_end with usage=null rather than drop
+      // the stop_reason entirely.
+      this.emitStepEnd(this.bufferedStepEnd, null);
+      this.bufferedStepEnd = undefined;
+    }
   }
 
   // ─────────────────────────── internals ───────────────────────────
@@ -244,6 +256,7 @@ export class StreamJsonAggregator {
       uuid,
       chunk: this.mergeTextChunk(kind, undefined, chunk, delta),
       text: delta,
+      stepId: (chunk as { step_id?: string }).step_id,
     };
     this.pending.set(mapKey, entry);
   }
@@ -307,6 +320,7 @@ export class StreamJsonAggregator {
       ),
       toolName: name,
       args: argsDelta,
+      stepId: (chunk as { step_id?: string }).step_id,
     };
     this.pending.set(mapKey, entry);
   }
@@ -317,65 +331,36 @@ export class StreamJsonAggregator {
     for (const k of [approvalKey, toolCallKey]) {
       const entry = this.pending.get(k);
       if (entry) {
-        writeWireMessage(this.buildPendingWire(entry));
+        writeWireMessage(this.buildMessageWire(entry.chunk, entry.uuid));
+        if (entry.stepId) this.lastFlushedStepId = entry.stepId;
         this.pending.delete(k);
       }
     }
   }
 
   /**
-   * Pick the pending entry that a `stop_reason` belongs to, based on the
-   * stop reason value:
-   *   - `requires_approval` → the approval_request_message in the step
-   *     (fallback: tool_call_message)
-   *   - any other natural stop (`end_turn`, `max_steps`, `max_tokens`,
-   *     `stop_sequence`, ...) → the last assistant_message
-   *     (fallback: last reasoning_message)
-   *   - `error` and other unknown reasons → undefined (caller emits standalone)
+   * Emit a combined `step_end` wire event carrying the step's
+   * `stop_reason`, its `step_id` (when known), and the final
+   * `usage_statistics`. Emitted after all content messages for the step
+   * have flushed, so consumers see a clean step boundary.
    */
-  private pickStopReasonTarget(reason: string): PendingEntry | undefined {
-    const entries = Array.from(this.pending.values());
-    if (entries.length === 0) return undefined;
-
-    if (reason === "requires_approval") {
-      // Walk the entries newest-first to pick the most recent matching one.
-      for (let i = entries.length - 1; i >= 0; i--) {
-        const e = entries[i];
-        if (
-          e &&
-          (e.kind === "approval_request_message" ||
-            e.kind === "tool_call_message")
-        ) {
-          return e;
-        }
-      }
-      return undefined;
-    }
-
-    if (reason === "error") {
-      // Errors don't have a clean content target — emit standalone.
-      return undefined;
-    }
-
-    // Default natural-stop behavior: last assistant, fallback last reasoning.
-    let assistant: PendingEntry | undefined;
-    let reasoning: PendingEntry | undefined;
-    for (const e of entries) {
-      if (e.kind === "assistant_message") assistant = e;
-      else if (e.kind === "reasoning_message") reasoning = e;
-    }
-    return assistant ?? reasoning;
-  }
-
-  /**
-   * Locate the pending entry that already has a `stopReason` attached so
-   * we can merge the following `usage_statistics` onto the same message.
-   */
-  private findTargetWithStopReason(): PendingEntry | undefined {
-    for (const e of this.pending.values()) {
-      if (e.stopReason) return e;
-    }
-    return undefined;
+  private emitStepEnd(
+    buffered: BufferedStepEnd,
+    usage: UsageStatistics | null,
+  ): void {
+    const stepId = buffered.stepId ?? this.lastFlushedStepId;
+    const uuid = stepId ? `step-end-${stepId}` : randomUUID();
+    const event = {
+      type: "step_end" as const,
+      stop_reason: buffered.stopReason,
+      ...(stepId ? { step_id: stepId } : {}),
+      usage,
+      session_id: this.options.sessionId,
+      agent_id: this.options.agentId,
+      conversation_id: this.options.conversationId,
+      uuid,
+    };
+    writeWireMessage(event);
   }
 
   private extractUsage(chunk: LettaStreamingResponse): UsageStatistics {
@@ -425,18 +410,6 @@ export class StreamJsonAggregator {
       conversation_id: this.options.conversationId,
       uuid,
     } as MessageWire;
-  }
-
-  /**
-   * Render a pending entry as a wire message, inlining any merged
-   * `stop_reason` / `usage` terminators alongside the accumulated chunk.
-   */
-  private buildPendingWire(entry: PendingEntry): MessageWire {
-    const base = this.buildMessageWire(entry.chunk, entry.uuid) as MessageWire &
-      Record<string, unknown>;
-    if (entry.stopReason) base.stop_reason = entry.stopReason;
-    if (entry.usage) base.usage = entry.usage;
-    return base as MessageWire;
   }
 
   private extractTextDelta(

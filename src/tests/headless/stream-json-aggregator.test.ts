@@ -242,11 +242,12 @@ describe("StreamJsonAggregator", () => {
     expect(emission(1).message_type).toBe("tool_return_message");
   });
 
-  test("stop_reason: end_turn merges inline onto the last assistant_message", () => {
+  test("emits step_end after assistant_message when stop_reason is end_turn", () => {
     const agg = aggregator();
     agg.ingest({
       message_type: "assistant_message",
       otid: "otid-final",
+      step_id: "step-123",
       content: "All done.",
     } as never);
 
@@ -262,12 +263,19 @@ describe("StreamJsonAggregator", () => {
       step_count: 1,
     } as never);
 
-    // One coalesced wire event carrying content + stop_reason + usage.
-    expect(getEmissions()).toHaveLength(1);
+    // Content message first (clean, no terminators inline), then step_end.
+    const emissions = getEmissions();
+    expect(emissions).toHaveLength(2);
+
     expect(emission(0).message_type).toBe("assistant_message");
     expect(emission(0).content).toBe("All done.");
-    expect(emission(0).stop_reason).toBe("end_turn");
-    expect(emission(0).usage).toMatchObject({
+    expect(emission(0).stop_reason).toBeUndefined();
+    expect(emission(0).usage).toBeUndefined();
+
+    expect(emission(1).type).toBe("step_end");
+    expect(emission(1).stop_reason).toBe("end_turn");
+    expect(emission(1).step_id).toBe("step-123");
+    expect(emission(1).usage).toMatchObject({
       completion_tokens: 7,
       prompt_tokens: 11,
       total_tokens: 18,
@@ -275,34 +283,13 @@ describe("StreamJsonAggregator", () => {
     });
   });
 
-  test("stop_reason: end_turn falls back to last reasoning_message when no assistant present", () => {
-    const agg = aggregator();
-    agg.ingest({
-      message_type: "reasoning_message",
-      otid: "reason-1",
-      reasoning: "thinking...",
-    } as never);
-    agg.ingest({
-      message_type: "stop_reason",
-      stop_reason: "end_turn",
-    } as never);
-    agg.ingest({
-      message_type: "usage_statistics",
-      completion_tokens: 1,
-    } as never);
-
-    expect(getEmissions()).toHaveLength(1);
-    expect(emission(0).message_type).toBe("reasoning_message");
-    expect(emission(0).stop_reason).toBe("end_turn");
-    expect(emission(0).usage).toMatchObject({ completion_tokens: 1 });
-  });
-
-  test("stop_reason: requires_approval merges inline onto the approval_request_message", () => {
+  test("emits step_end after approval_request_message when stop_reason is requires_approval", () => {
     const agg = aggregator();
     agg.ingest({
       message_type: "approval_request_message",
+      step_id: "step-appr",
       tool_call: {
-        tool_call_id: "call-merge",
+        tool_call_id: "call-approve",
         name: "Bash",
         arguments: '{"command":"ls"}',
       },
@@ -318,38 +305,112 @@ describe("StreamJsonAggregator", () => {
       step_count: 1,
     } as never);
 
-    // Single wire event carrying tool_call + stop_reason + usage inline.
-    expect(getEmissions()).toHaveLength(1);
+    const emissions = getEmissions();
+    expect(emissions).toHaveLength(2);
+
     expect(emission(0).message_type).toBe("approval_request_message");
-    expect(emission(0).stop_reason).toBe("requires_approval");
-    expect(emission(0).usage).toMatchObject({
+    expect(emission(0).stop_reason).toBeUndefined();
+    expect(emission(0).usage).toBeUndefined();
+
+    expect(emission(1).type).toBe("step_end");
+    expect(emission(1).stop_reason).toBe("requires_approval");
+    expect(emission(1).step_id).toBe("step-appr");
+    expect(emission(1).usage).toMatchObject({
       completion_tokens: 10,
       prompt_tokens: 100,
       step_count: 1,
     });
   });
 
-  test("stop_reason: error with no content target emits standalone", () => {
+  test("step_end is uniform across multi-message steps (parallel tool calls)", () => {
+    // Server emits three parallel approval_request_messages in one step;
+    // step_end should fire once after all three content messages, carrying
+    // the step's stop_reason and usage.
     const agg = aggregator();
+    for (const toolCallId of ["call-a", "call-b", "call-c"]) {
+      agg.ingest({
+        message_type: "approval_request_message",
+        step_id: "step-parallel",
+        tool_call: {
+          tool_call_id: toolCallId,
+          name: "Read",
+          arguments: `{"file":"${toolCallId}"}`,
+        },
+      } as never);
+    }
     agg.ingest({
       message_type: "stop_reason",
-      stop_reason: "error",
+      stop_reason: "requires_approval",
     } as never);
     agg.ingest({
       message_type: "usage_statistics",
-      completion_tokens: 0,
+      total_tokens: 42,
     } as never);
 
-    // No content message to attach to → both emit as separate events.
     const emissions = getEmissions();
-    expect(emissions.map((e) => e.message_type)).toEqual([
-      "stop_reason",
-      "usage_statistics",
+    expect(emissions).toHaveLength(4);
+    expect(emissions.slice(0, 3).map((e) => e.message_type)).toEqual([
+      "approval_request_message",
+      "approval_request_message",
+      "approval_request_message",
     ]);
-    expect(emission(0).stop_reason).toBe("error");
+    // None of the content messages carry inline terminators.
+    for (let i = 0; i < 3; i++) {
+      expect(emission(i).stop_reason).toBeUndefined();
+      expect(emission(i).usage).toBeUndefined();
+    }
+    expect(emission(3).type).toBe("step_end");
+    expect(emission(3).stop_reason).toBe("requires_approval");
+    expect(emission(3).step_id).toBe("step-parallel");
+    expect(emission(3).usage).toMatchObject({ total_tokens: 42 });
   });
 
-  test("flushAll emits pending entries even when terminators never arrive (abort path)", () => {
+  test("stop_reason without step_id on content omits step_id from step_end", () => {
+    const agg = aggregator();
+    agg.ingest({
+      message_type: "assistant_message",
+      otid: "otid-no-step",
+      content: "hi",
+    } as never);
+    agg.ingest({
+      message_type: "stop_reason",
+      stop_reason: "end_turn",
+    } as never);
+    agg.ingest({
+      message_type: "usage_statistics",
+      total_tokens: 5,
+    } as never);
+
+    expect(emission(1).type).toBe("step_end");
+    expect(emission(1).step_id).toBeUndefined();
+    expect(emission(1).stop_reason).toBe("end_turn");
+  });
+
+  test("flushAll emits step_end with usage=null when usage_statistics never arrives", () => {
+    const agg = aggregator();
+    agg.ingest({
+      message_type: "assistant_message",
+      otid: "otid-abort",
+      step_id: "step-abort",
+      content: "partial",
+    } as never);
+    agg.ingest({
+      message_type: "stop_reason",
+      stop_reason: "end_turn",
+    } as never);
+    // usage_statistics never arrives (abort path).
+    agg.flushAll();
+
+    const emissions = getEmissions();
+    expect(emissions.map((e) => e.message_type ?? e.type)).toEqual([
+      "assistant_message",
+      "step_end",
+    ]);
+    expect(emission(1).stop_reason).toBe("end_turn");
+    expect(emission(1).usage).toBeNull();
+  });
+
+  test("flushAll emits pending content even when no terminators arrive", () => {
     const agg = aggregator();
     agg.ingest({
       message_type: "assistant_message",
@@ -357,13 +418,12 @@ describe("StreamJsonAggregator", () => {
       content: "partial thought",
     } as never);
 
-    // No stop_reason / usage_statistics ever arrive (abort mid-stream).
+    // No stop_reason / usage_statistics ever arrive (abort mid-stream before
+    // the server emitted any step terminator at all).
     agg.flushAll();
     const emissions = getEmissions();
-    expect(emissions.map((e) => e.message_type)).toEqual(["assistant_message"]);
-    // No stop_reason / usage on the message since none arrived.
-    expect(emission(0).stop_reason).toBeUndefined();
-    expect(emission(0).usage).toBeUndefined();
+    expect(emissions).toHaveLength(1);
+    expect(emission(0).message_type).toBe("assistant_message");
   });
 
   test("passthrough mode emits each chunk as a stream_event envelope", () => {
