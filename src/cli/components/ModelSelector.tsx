@@ -59,30 +59,6 @@ type UiModel = {
 
 const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
 
-// Hide last-generation models from the recommended Letta API and BYOK tabs,
-// but keep them visible in the corresponding "(all)" tabs.
-const LEGACY_MODEL_HANDLES = new Set([
-  "anthropic/claude-sonnet-4-5-20250929",
-  "chatgpt-plus-pro/gpt-5.1-codex",
-  "chatgpt-plus-pro/gpt-5.1-codex-max",
-  "chatgpt-plus-pro/gpt-5.2-codex",
-  "openai/gpt-5",
-  "openai/gpt-5.1",
-  "openai/gpt-5.1-codex",
-  "openai/gpt-5.1-codex-max",
-  "openai/gpt-5.2-codex",
-  "zai/glm-5",
-  "zai/glm-4.7",
-  "minimax/MiniMax-M2.5",
-  "minimax/MiniMax-M2.1",
-  "openrouter/moonshotai/kimi-k2-0905",
-  "openrouter/moonshotai/kimi-k2-thinking",
-  "baseten/moonshotai/Kimi-K2.5",
-  "openrouter/moonshotai/kimi-k2.5",
-  "google_ai/gemini-2.5-flash",
-  "google_ai/gemini-2.5-pro",
-]);
-
 export function filterModelsByAvailabilityForSelector<
   T extends { handle: string },
 >(
@@ -260,7 +236,28 @@ export function ModelSelector({
         m.handle.startsWith(`${filterProvider}/`),
       );
     }
-    available = available.filter((m) => !LEGACY_MODEL_HANDLES.has(m.handle));
+    available = available.filter(
+      (m) =>
+        m.handle !== "anthropic/claude-sonnet-4-5-20250929" &&
+        m.handle !== "chatgpt-plus-pro/gpt-5.1-codex" &&
+        m.handle !== "chatgpt-plus-pro/gpt-5.1-codex-max" &&
+        m.handle !== "chatgpt-plus-pro/gpt-5.2-codex" &&
+        m.handle !== "openai/gpt-5" &&
+        m.handle !== "openai/gpt-5.1" &&
+        m.handle !== "openai/gpt-5.1-codex" &&
+        m.handle !== "openai/gpt-5.1-codex-max" &&
+        m.handle !== "openai/gpt-5.2-codex" &&
+        m.handle !== "zai/glm-5" &&
+        m.handle !== "zai/glm-4.7" &&
+        m.handle !== "minimax/MiniMax-M2.5" &&
+        m.handle !== "minimax/MiniMax-M2.1" &&
+        m.handle !== "openrouter/moonshotai/kimi-k2-0905" &&
+        m.handle !== "openrouter/moonshotai/kimi-k2-thinking" &&
+        m.handle !== "baseten/moonshotai/Kimi-K2.5" &&
+        m.handle !== "openrouter/moonshotai/kimi-k2.5" &&
+        m.handle !== "google_ai/gemini-2.5-flash" &&
+        m.handle !== "google_ai/gemini-2.5-pro",
+    );
     // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -378,7 +375,28 @@ export function ModelSelector({
     for (const handle of byokHandles) {
       const baseHandle = toBaseHandle(handle);
       const staticModel = pickPreferredStaticModel(baseHandle);
-      if (staticModel && !LEGACY_MODEL_HANDLES.has(baseHandle)) {
+      if (
+        staticModel &&
+        baseHandle !== "anthropic/claude-sonnet-4-5-20250929" &&
+        baseHandle !== "chatgpt-plus-pro/gpt-5.1-codex" &&
+        baseHandle !== "chatgpt-plus-pro/gpt-5.1-codex-max" &&
+        baseHandle !== "chatgpt-plus-pro/gpt-5.2-codex" &&
+        baseHandle !== "openai/gpt-5" &&
+        baseHandle !== "openai/gpt-5.1" &&
+        baseHandle !== "openai/gpt-5.1-codex" &&
+        baseHandle !== "openai/gpt-5.1-codex-max" &&
+        baseHandle !== "openai/gpt-5.2-codex" &&
+        baseHandle !== "zai/glm-5" &&
+        baseHandle !== "zai/glm-4.7" &&
+        baseHandle !== "minimax/MiniMax-M2.5" &&
+        baseHandle !== "minimax/MiniMax-M2.1" &&
+        baseHandle !== "openrouter/moonshotai/kimi-k2-0905" &&
+        baseHandle !== "openrouter/moonshotai/kimi-k2-thinking" &&
+        baseHandle !== "baseten/moonshotai/Kimi-K2.5" &&
+        baseHandle !== "openrouter/moonshotai/kimi-k2.5" &&
+        baseHandle !== "google_ai/gemini-2.5-flash" &&
+        baseHandle !== "google_ai/gemini-2.5-pro"
+      ) {
         // Use models.json data but with the BYOK handle as the ID
         matched.push({
           ...staticModel,
