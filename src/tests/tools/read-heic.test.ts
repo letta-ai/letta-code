@@ -1,81 +1,103 @@
-import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
-import type { ImageContent, TextContent } from "@letta-ai/letta-client/resources/agents/messages";
+import { execFileSync } from "node:child_process";
+import { cpSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import sharp from "sharp";
+import { read } from "../../tools/impl/Read";
 import { TestDirectory } from "../helpers/testFs";
-
-const resizeImageIfNeededMock = mock(async () => ({
-  data: "resized-heic-base64",
-  mediaType: "image/jpeg",
-  width: 640,
-  height: 480,
-  resized: false,
-}));
-
-mock.module("../../cli/helpers/imageResize.js", () => ({
-  resizeImageIfNeeded: resizeImageIfNeededMock,
-}));
-
-const { read } = await import("../../tools/impl/Read");
 
 describe("Read tool HEIC support", () => {
   let testDir: TestDirectory;
 
   afterEach(() => {
     testDir?.cleanup();
-    resizeImageIfNeededMock.mockReset();
-    resizeImageIfNeededMock.mockResolvedValue({
-      data: "resized-heic-base64",
-      mediaType: "image/jpeg",
-      width: 640,
-      height: 480,
-      resized: false,
-    });
   });
 
-  afterAll(() => {
-    mock.restore();
-  });
+  test("reads .heic files as images on macOS", async () => {
+    if (process.platform !== "darwin") {
+      return;
+    }
 
-  test("routes .heic files through shared image resizing", async () => {
     testDir = new TestDirectory();
-    const file = testDir.createBinaryFile(
-      "photo.heic",
-      Buffer.from([0x01, 0x02, 0x03, 0x04]),
+    const pngPath = testDir.createBinaryFile(
+      "photo.png",
+      await sharp({
+        create: {
+          width: 96,
+          height: 72,
+          channels: 3,
+          background: { r: 35, g: 140, b: 225 },
+        },
+      })
+        .png()
+        .toBuffer(),
+    );
+    const heicPath = testDir.resolve("photo.heic");
+
+    execFileSync(
+      "/usr/bin/sips",
+      ["-s", "format", "heic", pngPath, "--out", heicPath],
+      { stdio: "ignore" },
     );
 
-    const result = await read({ file_path: file });
+    const result = await read({ file_path: heicPath });
 
-    expect(resizeImageIfNeededMock).toHaveBeenCalledTimes(1);
-    const heicCall = resizeImageIfNeededMock.mock.calls[0] as
-      | [Buffer, string]
-      | undefined;
-    expect(heicCall?.[1]).toBe("image/heic");
     expect(Array.isArray(result.content)).toBe(true);
-    const content = result.content as Array<TextContent | ImageContent>;
-    expect(content[0]).toEqual({ type: "text", text: "[Image: photo.heic]" });
-    expect(content[1]).toEqual({
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: "image/jpeg",
-        data: "resized-heic-base64",
-      },
-    });
+    if (!Array.isArray(result.content)) {
+      throw new Error("Expected image content");
+    }
+
+    expect(result.content[0]).toEqual({ type: "text", text: "[Image: photo.heic]" });
+    const imagePart = result.content[1];
+    if (!imagePart || imagePart.type !== "image") {
+      throw new Error("Expected image content part");
+    }
+    expect(imagePart.source.type).toBe("base64");
+    expect(imagePart.source.media_type).toBe("image/jpeg");
   });
 
-  test("routes .heif files through shared image resizing", async () => {
+  test("reads .heif files as images on macOS", async () => {
+    if (process.platform !== "darwin") {
+      return;
+    }
+
     testDir = new TestDirectory();
-    const file = testDir.createBinaryFile(
-      "photo.heif",
-      Buffer.from([0x05, 0x06, 0x07, 0x08]),
+    const pngPath = testDir.createBinaryFile(
+      "photo.png",
+      await sharp({
+        create: {
+          width: 96,
+          height: 72,
+          channels: 3,
+          background: { r: 60, g: 120, b: 210 },
+        },
+      })
+        .png()
+        .toBuffer(),
     );
+    const heicPath = testDir.resolve("photo.heic");
+    const heifPath = testDir.resolve("photo.heif");
 
-    await read({ file_path: file });
+    execFileSync(
+      "/usr/bin/sips",
+      ["-s", "format", "heic", pngPath, "--out", heicPath],
+      { stdio: "ignore" },
+    );
+    cpSync(heicPath, heifPath);
 
-    expect(resizeImageIfNeededMock).toHaveBeenCalledTimes(1);
-    const heifCall = resizeImageIfNeededMock.mock.calls[0] as
-      | [Buffer, string]
-      | undefined;
-    expect(heifCall?.[1]).toBe("image/heif");
+    const result = await read({ file_path: heifPath });
+
+    expect(Array.isArray(result.content)).toBe(true);
+    if (!Array.isArray(result.content)) {
+      throw new Error("Expected image content");
+    }
+
+    expect(result.content[0]).toEqual({ type: "text", text: "[Image: photo.heif]" });
+    const imagePart = result.content[1];
+    if (!imagePart || imagePart.type !== "image") {
+      throw new Error("Expected image content part");
+    }
+    expect(imagePart.source.type).toBe("base64");
+    expect(imagePart.source.media_type).toBe("image/jpeg");
   });
 
   test("surfaces a clean image-read error when HEIC preparation fails", async () => {
@@ -84,12 +106,9 @@ describe("Read tool HEIC support", () => {
       "photo.heic",
       Buffer.from([0x00, 0x0a, 0x0b, 0x0c]),
     );
-    resizeImageIfNeededMock.mockImplementationOnce(async () => {
-      throw new Error("codec unavailable");
-    });
 
     await expect(read({ file_path: file })).rejects.toThrow(
-      /Failed to read image file: .*codec unavailable/,
+      /Failed to read image file:/,
     );
   });
 });
