@@ -15,7 +15,7 @@ import {
 
 function createSharpInstance(buffer: Buffer) {
   return sharp(buffer, {
-    failOnError: false,
+    failOn: "warning",
     limitInputPixels: MAX_IMAGE_INPUT_PIXELS,
   });
 }
