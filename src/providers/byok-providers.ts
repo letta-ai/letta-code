@@ -76,6 +76,20 @@ export const BYOK_PROVIDERS = [
     providerName: "lc-gemini",
   },
   {
+    id: "moonshot",
+    displayName: "Moonshot AI",
+    description: "Connect a Moonshot AI API key",
+    providerType: "moonshot",
+    providerName: "lc-moonshot",
+  },
+  {
+    id: "kimi-code",
+    displayName: "Kimi Code",
+    description: "Connect a Kimi Code API key",
+    providerType: "moonshot_coding",
+    providerName: "lc-kimi-code",
+  },
+  {
     id: "openrouter",
     displayName: "OpenRouter API",
     description: "Connect an OpenRouter API key",
@@ -140,6 +154,8 @@ export const PROVIDER_TYPE_TO_BASE_PROVIDER: Record<string, string> = {
   google_ai: "google_ai",
   google_vertex: "google_vertex",
   minimax: "minimax",
+  moonshot: "moonshot",
+  moonshot_coding: "moonshot_coding",
   openrouter: "openrouter",
   bedrock: "bedrock",
 };
