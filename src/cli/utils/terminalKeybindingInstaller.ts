@@ -382,6 +382,41 @@ table.insert(keys, {
 config.keys = keys
 `;
 
+const RETURN_CONFIG_LINE = /^\s*return config\s*$/m;
+
+export function injectWezTermDeleteFix(content: string): string {
+  let nextContent = content;
+
+  // For simple configs that return a table directly, we need to modify them
+  // to use a config variable. Check if it's a simple "return {" style config.
+  if (
+    nextContent.includes("return {") &&
+    !nextContent.includes("local config")
+  ) {
+    nextContent = nextContent.replace(/return\s*\{/, "local config = {");
+    if (!nextContent.includes("return config")) {
+      nextContent = `${nextContent.trimEnd()}\n\nreturn config\n`;
+    }
+  }
+
+  if (!nextContent.trim()) {
+    nextContent = `-- WezTerm configuration
+local config = {}
+
+return config
+`;
+  }
+
+  if (RETURN_CONFIG_LINE.test(nextContent)) {
+    return nextContent.replace(
+      RETURN_CONFIG_LINE,
+      `${WEZTERM_DELETE_FIX}\nreturn config`,
+    );
+  }
+
+  return `${nextContent.trimEnd()}\n${WEZTERM_DELETE_FIX}\n`;
+}
+
 /**
  * Check if WezTerm config already has our Delete key fix
  */
@@ -423,36 +458,7 @@ export function installWezTermDeleteFix(): InstallResult {
       content = readFileSync(configPath, { encoding: "utf-8" });
     }
 
-    // For simple configs that return a table directly, we need to modify them
-    // to use a config variable. Check if it's a simple "return {" style config.
-    if (content.includes("return {") && !content.includes("local config")) {
-      // Convert simple config to use config variable
-      content = content.replace(/return\s*\{/, "local config = {");
-      // Add return config at the end if not present
-      if (!content.includes("return config")) {
-        content = `${content.trimEnd()}\n\nreturn config\n`;
-      }
-    }
-
-    // If config doesn't exist or is empty, create a basic one
-    if (!content.trim()) {
-      content = `-- WezTerm configuration
-local config = {}
-
-return config
-`;
-    }
-
-    // Insert our fix before "return config"
-    if (content.includes("return config")) {
-      content = content.replace(
-        "return config",
-        `${WEZTERM_DELETE_FIX}\nreturn config`,
-      );
-    } else {
-      // Append to end as fallback
-      content = `${content.trimEnd()}\n${WEZTERM_DELETE_FIX}\n`;
-    }
+    content = injectWezTermDeleteFix(content);
 
     // Ensure parent directory exists
     const parentDir = dirname(configPath);
