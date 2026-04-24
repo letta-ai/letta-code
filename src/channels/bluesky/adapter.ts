@@ -495,6 +495,25 @@ export function createBlueskyAdapter(
         },
       });
     },
+
+    /**
+     * Bluesky V1 refuses to relay tool-approval prompts onto a public
+     * thread. The default registry fallback (`adapter.sendDirectReply`)
+     * would dump the full prompt — including tool name, command line, and
+     * working directory — into a public reply where any reader can see it
+     * AND any reader could spoof an "approve" reply that the agent might
+     * accept. Instead we no-op here so the desktop app's permission UI
+     * remains the only approval path. The runtime stays in
+     * WAITING_ON_APPROVAL until the operator approves via the desktop app
+     * (or a designated DM channel once operator-channel routing lands —
+     * see RFC issue).
+     */
+    async handleControlRequestEvent(_event) {
+      console.warn(
+        "[Bluesky] Suppressed public control-request prompt. " +
+          "Approve in the Letta Code desktop app instead.",
+      );
+    },
   };
 
   return adapter;
