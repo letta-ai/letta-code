@@ -119,6 +119,8 @@ export type ConversationRuntime = {
   lastStopReason: string | null;
   isProcessing: boolean;
   activeWorkingDirectory: string | null;
+  expectedWorktreePath: string | null;
+  expectedWorktreeExpiresAt: number | null;
   activeRunId: string | null;
   activeRunStartedAt: string | null;
   activeAbortController: AbortController | null;

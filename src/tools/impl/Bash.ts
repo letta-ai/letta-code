@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { resolveGitWorktreeAddTargetPath } from "../../websocket/listener/worktree-ownership";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
@@ -23,19 +24,16 @@ import { validateRequiredParams } from "./validation.js";
  * Returns an error message if the path is invalid, or null if OK.
  */
 function validateWorktreePath(command: string, cwd: string): string | null {
-  // Match `git worktree add` with optional flags before the path
-  const match = command.match(/\bgit\s+worktree\s+add\s+(?:-b\s+\S+\s+)?(\S+)/);
-  if (!match?.[1]) return null;
+  const resolved = resolveGitWorktreeAddTargetPath(command, cwd);
+  if (!resolved) return null;
 
-  const targetPath = match[1];
-  const resolved = resolve(cwd, targetPath);
   const requiredPrefix = resolve(cwd, ".letta/worktrees");
 
   if (!resolved.startsWith(requiredPrefix)) {
     return (
       `Error: Worktrees must be created under .letta/worktrees/. ` +
       `Use: git worktree add -b <branch> .letta/worktrees/<name> main\n` +
-      `Got: ${targetPath}`
+      `Got: ${resolved}`
     );
   }
   return null;

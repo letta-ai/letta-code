@@ -8,6 +8,10 @@ import {
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import { getConversationRuntime } from "./runtime";
 import type { ListenerRuntime } from "./types";
+import {
+  clearExpectedWorktreePath,
+  hasExpectedWorktreePath,
+} from "./worktree-ownership";
 
 const WORKTREES_DIR = ".letta/worktrees";
 
@@ -175,18 +179,20 @@ async function handleNewWorktree(params: {
   // Verify it's actually a directory.
   if (!(await directoryExists(newWorktreePath))) return;
 
-  // Only react if THIS conversation is the one actively running a turn.
-  // Multiple conversations in the same project share `.letta/worktrees/`, so
-  // they all receive the same filesystem event when any agent creates a
-  // worktree. Without this guard, every conversation would hijack its CWD
-  // to the new worktree even if it wasn't the one that created it. The
-  // conversation executing `git worktree add` is always `isProcessing`.
+  // Only react if THIS conversation asked git to create this exact worktree
+  // path. Multiple conversations in the same project share
+  // `.letta/worktrees/`, so they all receive the same filesystem event when
+  // any agent creates a worktree. Ownership comes from the tracked expected
+  // path, which stays live briefly after the turn so the debounced watcher can
+  // still attribute the event correctly.
   const conversationRuntime = getConversationRuntime(
     runtime,
     agentId,
     conversationId,
   );
-  if (!conversationRuntime?.isProcessing) return;
+  if (!hasExpectedWorktreePath(conversationRuntime, newWorktreePath)) {
+    return;
+  }
 
   // Check if CWD already points here (stream detection got it first).
   const currentCwd = getConversationWorkingDirectory(
@@ -194,7 +200,12 @@ async function handleNewWorktree(params: {
     agentId,
     conversationId,
   );
-  if (currentCwd === newWorktreePath) return;
+  if (currentCwd === newWorktreePath) {
+    clearExpectedWorktreePath(conversationRuntime);
+    return;
+  }
+
+  clearExpectedWorktreePath(conversationRuntime);
 
   console.log(
     `[WorktreeWatcher] New worktree detected: ${newWorktreePath} — switching CWD`,
