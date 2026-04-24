@@ -290,11 +290,16 @@ export function createBlueskyAdapter(
         cursor: accountState.notificationsCursor,
       });
 
-      // First poll with no backfill: just advance the cursor silently.
-      const isInitial = !accountState.notificationsCursor;
+      // First poll with no backfill: just advance state silently so we don't
+      // replay the last 24h of mentions on every restart. We track this with
+      // a dedicated flag because Bluesky only returns a `cursor` when there's
+      // a next page, so cursor presence is NOT a reliable "have we polled
+      // before" signal.
+      const isInitial = !accountState.hasCompletedInitialPoll;
       if (isInitial && !cfg.backfill) {
         updateAccountState(state, cfg.accountId, (s) => {
           s.notificationsCursor = response.cursor;
+          s.hasCompletedInitialPoll = true;
           s.lastPolledAt = new Date().toISOString();
           for (const n of response.notifications) {
             if (n.uri && !s.seenNotificationUris.includes(n.uri)) {
@@ -315,6 +320,15 @@ export function createBlueskyAdapter(
       for (const notification of fresh) {
         if (!running) break;
         await processNotification(notification);
+      }
+
+      // Always mark the initial poll as completed once we've actually
+      // dispatched (covers the backfill=true path on first run too).
+      if (!accountState.hasCompletedInitialPoll) {
+        updateAccountState(state, cfg.accountId, (s) => {
+          s.hasCompletedInitialPoll = true;
+        });
+        markDirty();
       }
 
       if (response.cursor) {

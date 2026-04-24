@@ -23,8 +23,15 @@ import {
 import type { BlueskySession } from "./types";
 
 export interface BlueskyAccountState {
-  /** AppView notifications cursor (opaque server token). */
+  /** AppView notifications cursor (opaque server token). Only set when the
+   * AppView returns a cursor (i.e. there are more pages). Cannot be used as
+   * a proxy for "has the listener completed its initial poll" — see
+   * `hasCompletedInitialPoll`. */
   notificationsCursor?: string;
+  /** True after the listener has completed its first poll for this account.
+   * Subsequent polls deliver fresh notifications normally; the initial poll
+   * silently advances state when `backfill` is false. */
+  hasCompletedInitialPoll?: boolean;
   /** Live auth session — access + refresh JWTs. */
   auth?: BlueskySession;
   /** Bounded LRU of post URIs we've already delivered, for replay safety. */
@@ -68,6 +75,7 @@ function parseState(raw: string): BlueskyStateFile {
           typeof value.notificationsCursor === "string"
             ? value.notificationsCursor
             : undefined,
+        hasCompletedInitialPoll: value.hasCompletedInitialPoll === true,
         auth: isValidSession(value.auth) ? value.auth : undefined,
         seenNotificationUris: seen.slice(-SEEN_NOTIFICATION_IDS_MAX),
         lastPolledAt:
