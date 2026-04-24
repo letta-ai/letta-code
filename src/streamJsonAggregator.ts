@@ -286,7 +286,13 @@ export class StreamJsonAggregator {
       return;
     }
 
-    const uuid = chunk.otid ?? chunk.id ?? toolCallId;
+    // Prefer `tool_call_id` as the wire uuid for tool-call entries: the
+    // server often emits multiple parallel tool calls inside a single
+    // message (shared `id` / `otid`), so using the message id would
+    // collide uuids across distinct wire events. `tool_call_id` is unique
+    // per call, which matches the unique-per-event convention the tool_return
+    // and auto_approval wire events already follow.
+    const uuid = toolCallId;
     const entry: PendingToolCallEntry = {
       kind,
       key: toolCallId,

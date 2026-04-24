@@ -163,6 +163,57 @@ describe("StreamJsonAggregator", () => {
     const toolCall = out.tool_call as Record<string, unknown>;
     expect(toolCall.arguments).toBe('{"command":"ls"}');
     // Previous `arguments: null` chunk is not visible.
+    // Wire uuid is derived from tool_call_id, not the shared otid.
+    expect(out.uuid).toBe("call-ap");
+  });
+
+  test("parallel tool calls in the same server message get distinct wire uuids", () => {
+    // Server often emits multiple tool calls in a single message (shared
+    // otid/id). Each emission must end up with a distinct uuid derived from
+    // its tool_call_id — otherwise consumers can't tell the events apart.
+    const agg = aggregator();
+    const sharedOtid = "message-parallel";
+    agg.ingest({
+      message_type: "approval_request_message",
+      id: sharedOtid,
+      otid: sharedOtid,
+      tool_call: {
+        tool_call_id: "call-a",
+        name: "Read",
+        arguments: '{"file":"a"}',
+      },
+    } as never);
+    agg.ingest({
+      message_type: "approval_request_message",
+      id: sharedOtid,
+      otid: sharedOtid,
+      tool_call: {
+        tool_call_id: "call-b",
+        name: "Read",
+        arguments: '{"file":"b"}',
+      },
+    } as never);
+    agg.ingest({
+      message_type: "approval_request_message",
+      id: sharedOtid,
+      otid: sharedOtid,
+      tool_call: {
+        tool_call_id: "call-c",
+        name: "Read",
+        arguments: '{"file":"c"}',
+      },
+    } as never);
+    agg.flushAll();
+
+    const emissions = getEmissions();
+    expect(emissions).toHaveLength(3);
+    const uuids = emissions.map((e) => e.uuid);
+    expect(uuids).toEqual(["call-a", "call-b", "call-c"]);
+    // Each emission's uuid matches its own tool_call_id.
+    for (const e of emissions) {
+      const tc = e.tool_call as Record<string, unknown>;
+      expect(e.uuid).toBe(tc.tool_call_id);
+    }
   });
 
   test("tool_return_message flushes its matching tool_call first, then passes through", () => {
