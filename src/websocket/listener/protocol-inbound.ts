@@ -806,6 +806,10 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
     config.allowed_users === undefined ||
     (Array.isArray(config.allowed_users) &&
       config.allowed_users.every((entry) => typeof entry === "string"));
+  const hasValidAllowedChannels =
+    config.allowed_channels === undefined ||
+    (Array.isArray(config.allowed_channels) &&
+      config.allowed_channels.every((entry) => typeof entry === "string"));
   const hasValidDisplayName =
     config.display_name === undefined ||
     typeof config.display_name === "string";
@@ -815,6 +819,7 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
   return (
     hasValidDmPolicy &&
     hasValidAllowedUsers &&
+    hasValidAllowedChannels &&
     hasValidDisplayName &&
     hasValidEnabled
   );

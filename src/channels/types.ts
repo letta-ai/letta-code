@@ -292,6 +292,13 @@ export interface DiscordChannelConfig {
   token: string;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /**
+   * Optional allowlist of guild channel IDs. When non-empty, only messages
+   * whose channel ID (or parent channel ID for thread messages) appears in
+   * this list are processed. Empty/undefined preserves the default behavior
+   * of listening in every guild channel the bot can see.
+   */
+  allowedChannels?: string[];
 }
 
 export type ChannelConfig =
@@ -329,6 +336,13 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   token: string;
   /** Agent ID used for guild auto-routing (like Slack's agentId). */
   agentId: string | null;
+  /**
+   * Optional allowlist of guild channel IDs. When non-empty, only messages
+   * whose channel ID (or parent channel ID for thread messages) appears in
+   * this list are processed. Empty/undefined preserves the default behavior
+   * of listening in every guild channel the bot can see. DMs are unaffected.
+   */
+  allowedChannels?: string[];
 }
 
 export type ChannelAccount =

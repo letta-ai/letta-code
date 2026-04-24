@@ -1910,6 +1910,10 @@ async function handleChannelsProtocolCommand(
               : undefined,
           dmPolicy: parsed.account.dm_policy,
           allowedUsers: parsed.account.allowed_users,
+          allowedChannels:
+            "allowed_channels" in parsed.account
+              ? parsed.account.allowed_channels
+              : undefined,
         },
         {
           accountId:
@@ -1990,6 +1994,10 @@ async function handleChannelsProtocolCommand(
               : undefined,
           dmPolicy: parsed.patch.dm_policy,
           allowedUsers: parsed.patch.allowed_users,
+          allowedChannels:
+            "allowed_channels" in parsed.patch
+              ? parsed.patch.allowed_channels
+              : undefined,
         },
       );
       const shouldRefreshDisplayName =

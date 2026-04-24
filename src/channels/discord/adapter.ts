@@ -7,6 +7,7 @@ import type {
   InboundChannelMessage,
   OutboundChannelMessage,
 } from "../types";
+import { isDiscordGuildChannelAllowed } from "./channelGating";
 import {
   resolveDiscordInboundAttachments,
   resolveDiscordThreadHistory,
@@ -612,6 +613,20 @@ export function createDiscordAdapter(
         // the thread is already routed, or whether a new mention is required.
         if (!isThread && !wasMentioned) return;
 
+        // Channel allowlist: when configured, only process guild messages whose
+        // channel ID (or parent channel ID for thread messages) is allowed.
+        if (
+          !isDiscordGuildChannelAllowed({
+            channelId: message.channelId,
+            parentChannelId:
+              (message.channel as { parentId?: string | null }).parentId ??
+              null,
+            isThread,
+            allowedChannels: config.allowedChannels,
+          })
+        )
+          return;
+
         if (markIngressMessageSeen(message.channelId, message.id)) return;
 
         let effectiveChatId = message.channelId;
@@ -700,6 +715,20 @@ export function createDiscordAdapter(
 
         // In guilds, only react on messages in threads we're tracking
         if (chatType === "channel" && !isThread) return;
+
+        // Apply channel allowlist gating in guilds (parent channel of the thread)
+        if (
+          chatType === "channel" &&
+          isThread &&
+          !isDiscordGuildChannelAllowed({
+            channelId,
+            parentChannelId:
+              (msg.channel as { parentId?: string | null }).parentId ?? null,
+            isThread: true,
+            allowedChannels: config.allowedChannels,
+          })
+        )
+          return;
 
         const inbound: InboundChannelMessage = {
           channel: "discord",
