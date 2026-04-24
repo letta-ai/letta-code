@@ -156,9 +156,13 @@ export function createBlueskyAdapter(
   }
 
   function isAllowedAuthor(did: string): boolean {
+    // The account's "dmPolicy" field is overloaded here — on Bluesky V1 it
+    // governs inbound public mentions/replies/quotes, not DMs (which are
+    // unsupported without OAuth + transition:chat.bsky). The wizard surfaces
+    // this as "inbound policy" for clarity.
     if (cfg.dmPolicy === "open") return true;
     if (cfg.dmPolicy === "allowlist") return cfg.allowedUsers.includes(did);
-    // pairing is disallowed at setup — treat defensively here.
+    // pairing is not wired for Bluesky in V1 — treat defensively.
     return false;
   }
 
@@ -378,7 +382,7 @@ export function createBlueskyAdapter(
       console.log(
         `[Bluesky] Adapter running for @${cfg.handle} (interval: ${Math.round(
           cfg.intervalMs / 1000,
-        )}s, reasons: ${cfg.reasons.join(",")}, dm_policy: ${cfg.dmPolicy}).`,
+        )}s, reasons: ${cfg.reasons.join(",")}, inbound_policy: ${cfg.dmPolicy}).`,
       );
     },
 

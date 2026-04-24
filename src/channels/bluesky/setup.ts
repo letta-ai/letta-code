@@ -33,9 +33,12 @@ export async function runBlueskySetup(): Promise<boolean> {
     );
     console.log("  3. Copy the generated password (shown once).\n");
     console.log(
-      "App passwords are scoped — they can post, like, follow, and read DMs, but they",
+      "App passwords can post, like, follow, and read public notifications. They",
     );
-    console.log("can't change the account password or disable the account.\n");
+    console.log(
+      "cannot read or send DMs (chat.bsky.convo.*), change the account password,",
+    );
+    console.log("or disable the account.\n");
 
     await ensureBlueskyRuntimeInstalled();
 
@@ -80,16 +83,23 @@ export async function runBlueskySetup(): Promise<boolean> {
       `✓ Authenticated as @${session.handle || handle} (${session.did}).\n`,
     );
 
-    console.log("DM policy — which Bluesky authors can reach the agent?\n");
     console.log(
-      "  open      — anyone whose mention/reply reaches the account (recommended)",
+      "Note: Bluesky V1 only handles public notifications (mentions, replies,",
+    );
+    console.log(
+      "quotes). Bluesky DMs (chat.bsky.convo.*) are not supported — they require",
+    );
+    console.log("OAuth with transition:chat.bsky scope.\n");
+
+    console.log(
+      "Inbound policy — whose public mentions/replies should reach the agent?\n",
+    );
+    console.log(
+      "  open      — any author whose mention/reply/quote reaches the account (recommended)",
     );
     console.log("  allowlist — only the DIDs listed below\n");
-    console.log(
-      "  (pairing is not supported on Bluesky — public social doesn't map to it.)\n",
-    );
 
-    const policyInput = await rl.question("DM policy [open]: ");
+    const policyInput = await rl.question("Inbound policy [open]: ");
     const policy = (policyInput.trim() || "open") as DmPolicy;
     if (!["open", "allowlist"].includes(policy)) {
       console.error(`Invalid policy "${policy}". Setup cancelled.`);
@@ -179,9 +189,6 @@ export async function runBlueskySetup(): Promise<boolean> {
     console.log("  1. Start the listener: letta server --channels bluesky");
     console.log(
       "  2. Mention the account from another Bluesky handle to trigger the first reply.\n",
-    );
-    console.log(
-      "Note: app passwords can't DM or invite — only read notifications and post on behalf of the account.",
     );
 
     return true;

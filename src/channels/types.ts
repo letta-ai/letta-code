@@ -349,6 +349,15 @@ export interface BlueskyChannelConfig {
   backfill?: boolean;
   /** Parent-post depth for thread-context hydration. Defaults to 5. */
   threadContextDepth?: number;
+  /**
+   * Inbound policy — gates which public-post authors trigger the agent.
+   *
+   * Bluesky V1 only reads public notifications (mentions, replies, quotes);
+   * DMs (chat.bsky.convo.*) are unsupported without OAuth + the
+   * `transition:chat.bsky` scope. The field is named `dmPolicy` because it's
+   * shared across all channels, but the Bluesky wizard surfaces it as
+   * "inbound policy" to avoid implying DM semantics.
+   */
   dmPolicy: DmPolicy;
   /** Allowlisted author DIDs when dmPolicy === "allowlist". */
   allowedUsers: string[];
