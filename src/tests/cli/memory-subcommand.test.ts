@@ -86,14 +86,14 @@ describe("letta memory subcommand", () => {
       expect(code).toBe(0);
       const out = capture.stdout.join("\n");
       expect(out).toContain("Total: 0 tokens");
-      expect(out).toContain("Status: within target");
     } finally {
       restore();
     }
   });
 
-  test("exits 0 when under warn threshold", async () => {
-    writeSystemFile("persona.md", "a".repeat(4 * 10000)); // ~10k tokens
+  test("always exits 0 regardless of size", async () => {
+    // Exit code is not a policy signal — the CLI just reports the number.
+    writeSystemFile("persona.md", "a".repeat(4 * 50000));
     const { restore } = captureConsole();
     try {
       const code = await runMemorySubcommand([
@@ -103,80 +103,6 @@ describe("letta memory subcommand", () => {
         "--quiet",
       ]);
       expect(code).toBe(0);
-    } finally {
-      restore();
-    }
-  });
-
-  test("exits 1 when between warn and fail", async () => {
-    // 4 bytes/token, so 90k bytes -> 22.5k tokens
-    writeSystemFile("persona.md", "a".repeat(4 * 22500));
-    const { restore } = captureConsole();
-    try {
-      const code = await runMemorySubcommand([
-        "tokens",
-        "--memory-dir",
-        tmpRoot,
-        "--quiet",
-      ]);
-      expect(code).toBe(1);
-    } finally {
-      restore();
-    }
-  });
-
-  test("exits 2 when over fail threshold", async () => {
-    // 4 bytes/token, so 120k bytes -> 30k tokens (> 25k default fail)
-    writeSystemFile("persona.md", "a".repeat(4 * 30000));
-    const { restore } = captureConsole();
-    try {
-      const code = await runMemorySubcommand([
-        "tokens",
-        "--memory-dir",
-        tmpRoot,
-        "--quiet",
-      ]);
-      expect(code).toBe(2);
-    } finally {
-      restore();
-    }
-  });
-
-  test("respects --threshold-warn and --threshold-fail overrides", async () => {
-    writeSystemFile("persona.md", "a".repeat(4 * 100)); // 100 tokens
-    const { restore } = captureConsole();
-    try {
-      const code = await runMemorySubcommand([
-        "tokens",
-        "--memory-dir",
-        tmpRoot,
-        "--threshold-warn",
-        "50",
-        "--threshold-fail",
-        "200",
-        "--quiet",
-      ]);
-      expect(code).toBe(1); // 100 is > 50 (warn) but <= 200 (fail)
-    } finally {
-      restore();
-    }
-  });
-
-  test("returns 64 when --threshold-fail < --threshold-warn", async () => {
-    mkdirSync(join(tmpRoot, "system"), { recursive: true });
-    const { capture, restore } = captureConsole();
-    try {
-      const code = await runMemorySubcommand([
-        "tokens",
-        "--memory-dir",
-        tmpRoot,
-        "--threshold-warn",
-        "1000",
-        "--threshold-fail",
-        "500",
-      ]);
-      expect(code).toBe(64);
-      expect(capture.stderr.join("\n")).toContain("Invalid thresholds");
     } finally {
       restore();
     }
@@ -214,10 +140,11 @@ describe("letta memory subcommand", () => {
       expect(code).toBe(0);
       const parsed = JSON.parse(capture.stdout.join("\n"));
       expect(parsed.total_tokens).toBe(1);
-      expect(parsed.status).toBe("within_target");
-      expect(parsed.threshold_warn).toBe(20000);
-      expect(parsed.threshold_fail).toBe(25000);
       expect(parsed.files).toEqual([{ path: "system/persona.md", tokens: 1 }]);
+      // No status or threshold fields — CLI doesn't encode policy.
+      expect(parsed.status).toBeUndefined();
+      expect(parsed.threshold_warn).toBeUndefined();
+      expect(parsed.threshold_fail).toBeUndefined();
     } finally {
       restore();
     }
