@@ -59,6 +59,30 @@ type UiModel = {
 
 const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
 
+// Hide last-generation models from the recommended Letta API and BYOK tabs,
+// but keep them visible in the corresponding "(all)" tabs.
+const LEGACY_MODEL_HANDLES = new Set([
+  "anthropic/claude-sonnet-4-5-20250929",
+  "chatgpt-plus-pro/gpt-5.1-codex",
+  "chatgpt-plus-pro/gpt-5.1-codex-max",
+  "chatgpt-plus-pro/gpt-5.2-codex",
+  "openai/gpt-5",
+  "openai/gpt-5.1",
+  "openai/gpt-5.1-codex",
+  "openai/gpt-5.1-codex-max",
+  "openai/gpt-5.2-codex",
+  "zai/glm-5",
+  "zai/glm-4.7",
+  "minimax/MiniMax-M2.5",
+  "minimax/MiniMax-M2.1",
+  "openrouter/moonshotai/kimi-k2-0905",
+  "openrouter/moonshotai/kimi-k2-thinking",
+  "baseten/moonshotai/Kimi-K2.5",
+  "openrouter/moonshotai/kimi-k2.5",
+  "google_ai/gemini-2.5-flash",
+  "google_ai/gemini-2.5-pro",
+]);
+
 export function filterModelsByAvailabilityForSelector<
   T extends { handle: string },
 >(
@@ -236,6 +260,7 @@ export function ModelSelector({
         m.handle.startsWith(`${filterProvider}/`),
       );
     }
+    available = available.filter((m) => !LEGACY_MODEL_HANDLES.has(m.handle));
     // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -353,7 +378,7 @@ export function ModelSelector({
     for (const handle of byokHandles) {
       const baseHandle = toBaseHandle(handle);
       const staticModel = pickPreferredStaticModel(baseHandle);
-      if (staticModel) {
+      if (staticModel && !LEGACY_MODEL_HANDLES.has(baseHandle)) {
         // Use models.json data but with the BYOK handle as the ID
         matched.push({
           ...staticModel,
