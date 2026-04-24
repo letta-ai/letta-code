@@ -206,8 +206,19 @@ export function getMemoryReminderMode(
 }
 
 export function shouldFireStepCountTrigger(
-  turnCount: number,
+  turnsSinceLastSuccessfulReflection: number,
   settings: ReflectionSettings = getReflectionSettings(),
+): boolean {
+  if (settings.trigger !== "step-count") {
+    return false;
+  }
+  const stepCount = normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
+  return turnsSinceLastSuccessfulReflection >= stepCount;
+}
+
+function shouldFireLegacyTurnCountReminder(
+  turnCount: number,
+  settings: ReflectionSettings,
 ): boolean {
   if (settings.trigger !== "step-count") {
     return false;
@@ -258,7 +269,7 @@ export async function buildMemoryReminder(
     return "";
   }
 
-  if (shouldFireStepCountTrigger(turnCount, reflectionSettings)) {
+  if (shouldFireLegacyTurnCountReminder(turnCount, reflectionSettings)) {
     debugLog(
       "memory",
       `Turn-based memory reminder fired (turn ${turnCount}, interval ${reflectionSettings.stepCount}, agent ${agentId})`,

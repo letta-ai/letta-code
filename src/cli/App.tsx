@@ -10897,6 +10897,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 autoPayload.payloadPath,
                 autoPayload.endSnapshotLine,
                 success,
+                triggerSource,
               );
 
               const msg = await handleMemorySubagentCompletion(
