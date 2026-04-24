@@ -168,9 +168,7 @@ export async function maybeUpdateMemoryRemoteOrigin(
     return;
   }
 
-  const expectedOrigin = normalizeRemoteUrl(
-    getGitRemoteUrl(agentId),
-  );
+  const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
   const normalizedCurrent = normalizeRemoteUrl(currentOrigin);
 
   if (normalizedCurrent !== expectedOrigin) {

@@ -1185,7 +1185,11 @@ describe("Settings Manager - Agents Array Migration", () => {
     settingsManager.updateSettings({
       agents: [
         { agentId: "agent-cloud-memfs", memfs: true },
-        { agentId: "agent-local-memfs", baseUrl: "localhost:54085", memfs: true },
+        {
+          agentId: "agent-local-memfs",
+          baseUrl: "localhost:54085",
+          memfs: true,
+        },
       ],
     });
 
