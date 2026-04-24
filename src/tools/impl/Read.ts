@@ -64,7 +64,7 @@ async function readImageFile(
   const mediaType = getMediaType(ext);
 
   // Use shared image resize utility
-  let result;
+  let result: Awaited<ReturnType<typeof resizeImageIfNeeded>>;
   try {
     result = await resizeImageIfNeeded(buffer, mediaType);
   } catch (error) {

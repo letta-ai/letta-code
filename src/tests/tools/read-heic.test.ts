@@ -1,6 +1,6 @@
+import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { cpSync } from "node:fs";
-import { afterEach, describe, expect, test } from "bun:test";
 import sharp from "sharp";
 import { read } from "../../tools/impl/Read";
 import { TestDirectory } from "../helpers/testFs";
@@ -46,7 +46,10 @@ describe("Read tool HEIC support", () => {
       throw new Error("Expected image content");
     }
 
-    expect(result.content[0]).toEqual({ type: "text", text: "[Image: photo.heic]" });
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: "[Image: photo.heic]",
+    });
     const imagePart = result.content[1];
     if (
       !imagePart ||
@@ -94,7 +97,10 @@ describe("Read tool HEIC support", () => {
       throw new Error("Expected image content");
     }
 
-    expect(result.content[0]).toEqual({ type: "text", text: "[Image: photo.heif]" });
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: "[Image: photo.heif]",
+    });
     const imagePart = result.content[1];
     if (
       !imagePart ||

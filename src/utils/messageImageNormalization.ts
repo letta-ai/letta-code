@@ -64,7 +64,7 @@ export async function normalizeMessageContentImages(
         return part;
       }
 
-      let resized;
+      let resized: Awaited<ReturnType<typeof resize>>;
       try {
         resized = await resize(
           Buffer.from(part.source.data, "base64"),
