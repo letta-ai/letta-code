@@ -426,6 +426,18 @@ async function flushAndExit(code: number): Promise<never> {
   process.exit(code);
 }
 
+// For one-shot headless outputs (json/text), await the final stdout write before
+// exiting so CI pipes don't occasionally observe an empty stdout buffer.
+async function writeFinalHeadlessStdout(text: string): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (process.stdout.destroyed || process.stdout.writableEnded) {
+      resolve();
+      return;
+    }
+    process.stdout.write(text, () => resolve());
+  });
+}
+
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -2705,7 +2717,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversation_id: conversationId,
       usage,
     };
-    console.log(JSON.stringify(output, null, 2));
+    await writeFinalHeadlessStdout(`${JSON.stringify(output, null, 2)}\n`);
   } else if (outputFormat === "stream-json") {
     // Output final result event
     // Collect all run_ids from buffers
@@ -2744,7 +2756,7 @@ ${SYSTEM_REMINDER_CLOSE}
       console.error("No assistant response found");
       await exitHeadless(1, "headless_missing_result_text");
     }
-    console.log(resultText);
+    await writeFinalHeadlessStdout(`${resultText}\n`);
   }
 
   // Report all milestones at the end for latency audit
