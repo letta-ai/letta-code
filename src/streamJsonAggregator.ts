@@ -151,6 +151,25 @@ export class StreamJsonAggregator {
   }
 
   /**
+   * Emit all buffered text / tool-call accumulators in insertion order, then
+   * clear them. Held terminators (stop_reason + usage_statistics from an
+   * approval step) are *not* touched — use {@link releaseHeldTerminators}
+   * for those.
+   *
+   * Call this before emitting a non-chunk event (error, recovery,
+   * auto_approval) from outside the aggregator, so the buffered chunks
+   * appear on the wire before the out-of-band message.
+   */
+  flushPending(): void {
+    if (this.pending.size === 0) return;
+    for (const entry of this.pending.values()) {
+      const wire = this.buildMessageWire(entry.chunk, entry.uuid);
+      writeWireMessage(wire);
+    }
+    this.pending.clear();
+  }
+
+  /**
    * Emit any held `stop_reason` / `usage_statistics` events. Called by the
    * caller after local tool execution (executeApprovalBatch) completes, so
    * that `tool_return_message` events land *before* the step terminators.
@@ -164,8 +183,9 @@ export class StreamJsonAggregator {
   }
 
   /**
-   * Flush all pending buffered events. Safety net for turn-end / abort paths
-   * where `releaseHeldTerminators` may not have been called explicitly.
+   * Flush all pending buffered events and release any held terminators.
+   * Safety net for turn-end / abort paths where `releaseHeldTerminators`
+   * may not have been called explicitly.
    */
   flushAll(): void {
     this.flushPending();
@@ -268,15 +288,6 @@ export class StreamJsonAggregator {
       args: argsDelta,
     };
     this.pending.set(mapKey, entry);
-  }
-
-  private flushPending(): void {
-    if (this.pending.size === 0) return;
-    for (const entry of this.pending.values()) {
-      const wire = this.buildMessageWire(entry.chunk, entry.uuid);
-      writeWireMessage(wire);
-    }
-    this.pending.clear();
   }
 
   private flushToolCall(toolCallId: string): void {

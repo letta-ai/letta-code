@@ -95,6 +95,7 @@ import {
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
+import { StreamJsonAggregator } from "./streamJsonAggregator";
 import { writeWireMessage } from "./streamJsonWriter";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
@@ -1441,6 +1442,20 @@ export async function handleHeadlessCommand(
     return await flushAndExit(code);
   };
 
+  // Aggregator for stream-json chunk coalescing. Instantiated once per turn
+  // (one handleHeadlessCommand call = one user message). Scoped at function
+  // level so held terminators can survive stream boundaries across approval
+  // continuations. `undefined` outside stream-json mode.
+  const streamJsonAggregator =
+    outputFormat === "stream-json"
+      ? new StreamJsonAggregator({
+          sessionId,
+          agentId: agent.id,
+          conversationId,
+          passthrough: includePartialMessages,
+        })
+      : undefined;
+
   // Callback that emits a ToolReturnMessageWire for each locally-executed tool.
   // The server doesn't echo local tool results back on the post-approval stream,
   // so without this stream-json consumers have no visibility into what the tool
@@ -2017,6 +2032,9 @@ ${SYSTEM_REMINDER_CLOSE}
           let shouldOutputChunk = shouldOutput;
 
           if (errorInfo && shouldOutput) {
+            // Flush buffered chunks first so their full text lands on the
+            // wire before this error event.
+            streamJsonAggregator?.flushPending();
             const errorEvent: ErrorMessage = {
               type: "error",
               message: errorInfo.message,
@@ -2045,6 +2063,7 @@ ${SYSTEM_REMINDER_CLOSE}
             isApprovalPendingError(errorInfo?.detail) ||
             isApprovalPendingError(errorInfo?.message)
           ) {
+            streamJsonAggregator?.flushPending();
             const recoveryRunId = errorInfo?.run_id;
             const recoveryMsg: RecoveryMessage = {
               type: "recovery",
@@ -2074,6 +2093,11 @@ ${SYSTEM_REMINDER_CLOSE}
             const [approval] = autoAllowed;
             if (approval) {
               const permission = approval.permission;
+              // Ingest the final-args chunk first so the coalesced
+              // approval_request_message is complete, then flush so it
+              // lands on the wire before the auto_approval marker.
+              if (shouldOutputChunk) streamJsonAggregator?.ingest(chunk);
+              streamJsonAggregator?.flushPending();
               shouldOutputChunk = false;
               const autoApprovalMsg: AutoApprovalMessage = {
                 type: "auto_approval",
@@ -2096,29 +2120,7 @@ ${SYSTEM_REMINDER_CLOSE}
           }
 
           if (shouldOutputChunk) {
-            const chunkWithIds = chunk as typeof chunk & {
-              otid?: string;
-              id?: string;
-            };
-            const uuid = chunkWithIds.otid || chunkWithIds.id;
-
-            if (includePartialMessages) {
-              const streamEvent: StreamEvent = {
-                type: "stream_event",
-                event: chunk,
-                session_id: sessionId,
-                uuid: uuid || randomUUID(),
-              };
-              writeWireMessage(streamEvent);
-            } else {
-              const msg: MessageWire = {
-                type: "message",
-                ...chunk,
-                session_id: sessionId,
-                uuid: uuid || randomUUID(),
-              };
-              writeWireMessage(msg);
-            }
+            streamJsonAggregator?.ingest(chunk);
           }
 
           return { shouldOutput: shouldOutputChunk, shouldAccumulate: true };
@@ -2254,6 +2256,11 @@ ${SYSTEM_REMINDER_CLOSE}
             toolContextId: turnToolContextId ?? undefined,
           },
         );
+
+        // Now that tool_return_message events have landed on the wire,
+        // release the step terminators held during the approval step so
+        // stop_reason / usage_statistics come after their tool returns.
+        streamJsonAggregator?.releaseHeldTerminators();
 
         // Send all results in one batch
         const approvalInputWithOtid = {
@@ -2619,6 +2626,9 @@ ${SYSTEM_REMINDER_CLOSE}
         "headless_turn_execution",
       );
       if (outputFormat === "stream-json") {
+        // Flush any buffered chunks so they're visible before the final
+        // error line.
+        streamJsonAggregator?.flushAll();
         // Emit error event
         const errorMsg: ErrorMessage = {
           type: "error",
@@ -2647,6 +2657,7 @@ ${SYSTEM_REMINDER_CLOSE}
     );
 
     if (outputFormat === "stream-json") {
+      streamJsonAggregator?.flushAll();
       const errorMsg: ErrorMessage = {
         type: "error",
         message: errorDetails,
@@ -2731,6 +2742,9 @@ ${SYSTEM_REMINDER_CLOSE}
     };
     console.log(JSON.stringify(output, null, 2));
   } else if (outputFormat === "stream-json") {
+    // Flush any chunks still buffered in the aggregator (and release any
+    // held terminators) so nothing lingers past the result line.
+    streamJsonAggregator?.flushAll();
     // Output final result event
     // Collect all run_ids from buffers
     const allRunIds = new Set<string>();
@@ -3637,6 +3651,15 @@ async function runBidirectionalMode(
       currentAbortController = new AbortController();
 
       turnInProgress = true;
+      // Per-turn aggregator for stream-json coalescing. Declared outside the
+      // try so the catch block below can flush anything still buffered
+      // before emitting the error line.
+      const streamJsonAggregator = new StreamJsonAggregator({
+        sessionId,
+        agentId: agent.id,
+        conversationId,
+        passthrough: includePartialMessages,
+      });
       try {
         const buffers = createBuffers(agent.id);
         const startTime = performance.now();
@@ -3796,6 +3819,9 @@ async function runBidirectionalMode(
             // Handle in-stream errors (emit ErrorMessage with full details)
             if (errorInfo && shouldOutput) {
               sawStreamError = true; // Track that we saw an error (affects result subtype)
+              // Flush buffered chunks so they're on the wire before the
+              // error line.
+              streamJsonAggregator.flushPending();
               const errorEvent: ErrorMessage = {
                 type: "error",
                 message: errorInfo.message,
@@ -3822,29 +3848,7 @@ async function runBidirectionalMode(
               return { shouldAccumulate: true };
             }
 
-            const chunkWithIds = chunk as typeof chunk & {
-              otid?: string;
-              id?: string;
-            };
-            const uuid = chunkWithIds.otid || chunkWithIds.id;
-
-            if (includePartialMessages) {
-              const streamEvent: StreamEvent = {
-                type: "stream_event",
-                event: chunk,
-                session_id: sessionId,
-                uuid: uuid || randomUUID(),
-              };
-              writeWireMessage(streamEvent);
-            } else {
-              const msg: MessageWire = {
-                type: "message",
-                ...chunk,
-                session_id: sessionId,
-                uuid: uuid || randomUUID(),
-              };
-              writeWireMessage(msg);
-            }
+            streamJsonAggregator.ingest(chunk);
 
             return { shouldAccumulate: true };
           };
@@ -4005,6 +4009,11 @@ async function runBidirectionalMode(
               { toolContextId: turnToolContextId ?? undefined },
             );
 
+            // Release the held step terminators now that tool returns have
+            // been emitted — stop_reason / usage_statistics come after their
+            // tool_return_message.
+            streamJsonAggregator.releaseHeldTerminators();
+
             // Send approval results back to continue
             const approvalInputWithOtid = {
               type: "approval" as const,
@@ -4069,6 +4078,9 @@ async function runBidirectionalMode(
             ? "error"
             : "success";
 
+        // Flush any chunks still buffered (and release held terminators)
+        // so nothing lingers past this turn's result line.
+        streamJsonAggregator.flushAll();
         const resultMsg: ResultMessage = {
           type: "result",
           subtype,
@@ -4092,6 +4104,8 @@ async function runBidirectionalMode(
         };
         writeWireMessage(resultMsg);
       } catch (error) {
+        // Flush any buffered chunks so they're on the wire before the error.
+        streamJsonAggregator.flushAll();
         // Use formatErrorDetails for comprehensive error formatting (same as one-shot mode)
         const errorDetails = formatErrorDetails(error, agent.id);
         trackHeadlessBoundaryError(
