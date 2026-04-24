@@ -423,4 +423,181 @@ describe("stream-json format", () => {
     },
     { timeout: 200000 },
   );
+
+  test(
+    "assistant_message arrives as one complete event per otid in default mode",
+    async () => {
+      // Default (coalesced) mode: each logical message surfaces as exactly
+      // one event. In partial mode (below) the same otid produces many.
+      const lines = await runHeadlessCommand(FAST_PROMPT);
+
+      const assistantLines = lines
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+        .filter(
+          (o) => o.type === "message" && o.message_type === "assistant_message",
+        );
+
+      expect(assistantLines.length).toBeGreaterThan(0);
+
+      // Group by otid — each otid should appear exactly once.
+      const perOtid = new Map<string, number>();
+      for (const msg of assistantLines) {
+        const otid = String(msg.otid ?? msg.id ?? "");
+        perOtid.set(otid, (perOtid.get(otid) ?? 0) + 1);
+      }
+      for (const [otid, count] of perOtid) {
+        expect(count, `assistant_message otid "${otid}" fragmented`).toBe(1);
+      }
+
+      // And at least one assistant message should carry non-trivial text.
+      const hasText = assistantLines.some((msg) => {
+        const content = msg.content;
+        if (typeof content === "string") return content.trim().length > 0;
+        if (Array.isArray(content)) {
+          return content.some((part) => {
+            const p = part as { text?: unknown };
+            return typeof p?.text === "string" && p.text.trim().length > 0;
+          });
+        }
+        return false;
+      });
+      expect(hasText).toBe(true);
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "tool_call arguments are complete valid JSON in default mode",
+    async () => {
+      // With coalescing, the approval_request_message on the wire carries a
+      // complete `arguments` string — parseable as JSON, not a fragment.
+      const lines = await runHeadlessCommand(TOOL_PROMPT);
+
+      const approvalMessages = lines
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+        .filter(
+          (o) =>
+            o.type === "message" &&
+            (o.message_type === "approval_request_message" ||
+              o.message_type === "tool_call_message"),
+        );
+
+      expect(approvalMessages.length).toBeGreaterThan(0);
+
+      // Each approval/tool-call message should appear once per tool_call_id.
+      const perToolCall = new Map<string, number>();
+      for (const msg of approvalMessages) {
+        const toolCall = msg.tool_call as { tool_call_id?: string };
+        const id = toolCall?.tool_call_id;
+        expect(id).toBeTruthy();
+        if (!id) continue;
+        perToolCall.set(id, (perToolCall.get(id) ?? 0) + 1);
+
+        // `arguments` must be a non-empty JSON-parseable string.
+        const args = (toolCall as { arguments?: unknown }).arguments;
+        expect(typeof args).toBe("string");
+        expect(String(args).length).toBeGreaterThan(0);
+        expect(() => JSON.parse(String(args))).not.toThrow();
+      }
+      for (const [id, count] of perToolCall) {
+        expect(count, `tool_call_id "${id}" fragmented`).toBe(1);
+      }
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "tool_return_message lands before stop_reason and usage_statistics of its step",
+    async () => {
+      // Ordering invariant:
+      //   approval_request_message → auto_approval → tool_return_message
+      //   → stop_reason (requires_approval) → usage_statistics → next step.
+      // Before the held-terminator fix, stop_reason and usage_statistics
+      // landed *before* tool_return_message.
+      const lines = await runHeadlessCommand(TOOL_PROMPT);
+      const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+
+      const kindFor = (o: Record<string, unknown>): string => {
+        if (o.type === "message") return String(o.message_type ?? "unknown");
+        return String(o.type);
+      };
+
+      // Locate the first tool_return_message and the stop_reason that
+      // follows it. The stop_reason's index must be AFTER the tool_return.
+      const toolReturnIdx = parsed.findIndex(
+        (o) => kindFor(o) === "tool_return_message",
+      );
+      expect(toolReturnIdx).toBeGreaterThan(-1);
+
+      // Find the first stop_reason AT OR AFTER the tool_return_message.
+      // Under the old ordering this would have been before.
+      const stopReasonIdx = parsed.findIndex(
+        (o, i) => i >= toolReturnIdx && kindFor(o) === "stop_reason",
+      );
+      expect(stopReasonIdx).toBeGreaterThan(toolReturnIdx);
+
+      // And the usage_statistics for that step follows stop_reason.
+      const usageIdx = parsed.findIndex(
+        (o, i) => i >= stopReasonIdx && kindFor(o) === "usage_statistics",
+      );
+      expect(usageIdx).toBeGreaterThan(stopReasonIdx);
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "--include-partial-messages yields multiple delta events per otid",
+    async () => {
+      // In passthrough mode the aggregator is bypassed; assistant_message
+      // deltas surface as multiple stream_event lines per otid.
+      const lines = await runHeadlessCommand(FAST_PROMPT, [
+        "--include-partial-messages",
+      ]);
+
+      const assistantEvents = lines
+        .map((l) => JSON.parse(l) as { type: string; event?: unknown })
+        .filter(
+          (o) =>
+            o.type === "stream_event" &&
+            typeof o.event === "object" &&
+            o.event !== null &&
+            (o.event as { message_type?: string }).message_type ===
+              "assistant_message",
+        );
+
+      // Fast prompts sometimes collapse to a single delta. Where we do see
+      // more than one assistant chunk, some otid should have >1 event.
+      if (assistantEvents.length > 1) {
+        const perOtid = new Map<string, number>();
+        for (const ev of assistantEvents) {
+          const event = ev.event as { otid?: string; id?: string };
+          const otid = String(event.otid ?? event.id ?? "");
+          perOtid.set(otid, (perOtid.get(otid) ?? 0) + 1);
+        }
+        const hasFragmented = Array.from(perOtid.values()).some((n) => n > 1);
+        expect(
+          hasFragmented,
+          "passthrough mode should produce multiple deltas per otid",
+        ).toBe(true);
+      }
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "no emitted line carries a `date` field (regression guard for #8)",
+    async () => {
+      // The server includes `date` (second-precision, +00:00 format) on some
+      // messages; `timestamp` (ms, Z) is the canonical time source on the
+      // wire. PR 2 drops `date` from every emission.
+      const lines = await runHeadlessCommand(TOOL_PROMPT);
+      expect(lines.length).toBeGreaterThan(0);
+
+      for (const line of lines) {
+        const obj = JSON.parse(line) as Record<string, unknown>;
+        expect(obj).not.toHaveProperty("date");
+      }
+    },
+    { timeout: 200000 },
+  );
 });
