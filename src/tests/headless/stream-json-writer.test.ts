@@ -59,4 +59,63 @@ describe("writeWireMessage", () => {
     };
     expect(payload.timestamp).toBe("2026-04-21T23:59:59.000Z");
   });
+
+  test("strips the server-origin `date` field from emitted payloads", () => {
+    const consoleLog = mock((..._args: unknown[]) => {});
+    console.log = consoleLog as typeof console.log;
+
+    const msg: MessageWire = {
+      type: "message",
+      session_id: "session-1",
+      uuid: "uuid-1",
+      message_type: "assistant_message",
+      id: "msg-1",
+      date: "2026-04-22T00:00:00+00:00",
+      content: [{ type: "text", text: "hi" }],
+    };
+
+    writeWireMessage(msg);
+
+    const firstCall = consoleLog.mock.calls[0];
+    const payload = JSON.parse(String(firstCall?.[0])) as Record<
+      string,
+      unknown
+    >;
+
+    expect(payload).not.toHaveProperty("date");
+    expect(payload.timestamp).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+    // Other fields unaffected.
+    expect(payload.message_type).toBe("assistant_message");
+    expect(payload.id).toBe("msg-1");
+    expect(payload.session_id).toBe("session-1");
+  });
+
+  test("leaves messages without `date` unaffected", () => {
+    const consoleLog = mock((..._args: unknown[]) => {});
+    console.log = consoleLog as typeof console.log;
+
+    const msg: MessageWire = {
+      type: "message",
+      session_id: "session-1",
+      uuid: "uuid-1",
+      message_type: "stop_reason",
+      stop_reason: "end_turn",
+    };
+
+    writeWireMessage(msg);
+
+    const firstCall = consoleLog.mock.calls[0];
+    const payload = JSON.parse(String(firstCall?.[0])) as Record<
+      string,
+      unknown
+    >;
+
+    expect(payload).not.toHaveProperty("date");
+    expect(payload.stop_reason).toBe("end_turn");
+    expect(payload.timestamp).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+  });
 });

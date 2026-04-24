@@ -23,9 +23,16 @@
 import type { WireMessage } from "./types/protocol";
 
 export function writeWireMessage(msg: WireMessage): void {
+  // Strip the server-origin `date` field (second precision, +00:00) if
+  // present. `timestamp` (CLI-stamped, ms + Z) is the canonical time source
+  // for stream-json consumers; `date` is a redundant duplicate that diverges
+  // on both field name and format.
+  const { date: _date, ...withoutDate } = msg as typeof msg & {
+    date?: string;
+  };
   const stamped =
-    msg.timestamp === undefined
-      ? { ...msg, timestamp: new Date().toISOString() }
-      : msg;
+    withoutDate.timestamp === undefined
+      ? { ...withoutDate, timestamp: new Date().toISOString() }
+      : withoutDate;
   console.log(JSON.stringify(stamped));
 }
