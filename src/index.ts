@@ -91,7 +91,7 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
-  letta memfs ...       Memory filesystem subcommands (JSON-only)
+  letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta blocks ...      Blocks subcommands (JSON-only)
@@ -100,14 +100,16 @@ USAGE
 OPTIONS
 ${renderCliOptionsHelp()}
 
-SUBCOMMANDS (JSON-only)
-  letta memfs status --agent <id>
-  letta memfs diff --agent <id>
-  letta memfs resolve --agent <id> --resolutions '<JSON>'
-  letta memfs backup --agent <id>
-  letta memfs backups --agent <id>
-  letta memfs restore --agent <id> --from <backup> --force
-  letta memfs export --agent <id> --out <dir>
+SUBCOMMANDS
+  letta memory status --agent <id>
+  letta memory diff --agent <id>
+  letta memory resolve --agent <id> --resolutions '<JSON>'
+  letta memory backup --agent <id>
+  letta memory backups --agent <id>
+  letta memory restore --agent <id> --from <backup> --force
+  letta memory export --agent <id> --out <dir>
+  letta memory pull --agent <id>
+  letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
@@ -355,7 +357,7 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
-  // Early exit for CLI subcommands (e.g., `letta server`, `letta memfs`).
+  // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
   const subcommandResult = await runSubcommand(process.argv.slice(2));

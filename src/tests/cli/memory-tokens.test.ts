@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runMemfsSubcommand } from "../../cli/subcommands/memfs";
+import { runMemorySubcommand } from "../../cli/subcommands/memory";
 
 interface Capture {
   stdout: string[];
@@ -32,13 +32,13 @@ function captureConsole(): { capture: Capture; restore: () => void } {
   };
 }
 
-describe("letta memfs tokens", () => {
+describe("letta memory tokens", () => {
   let tmpRoot: string;
   let priorMemoryDir: string | undefined;
   let priorAgentId: string | undefined;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "memfs-tokens-"));
+    tmpRoot = mkdtempSync(join(tmpdir(), "memory-tokens-"));
     priorMemoryDir = process.env.MEMORY_DIR;
     priorAgentId = process.env.LETTA_AGENT_ID;
     delete process.env.MEMORY_DIR;
@@ -68,7 +68,7 @@ describe("letta memfs tokens", () => {
   test("returns 64 when no memory dir source is available", async () => {
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand(["tokens"]);
+      const code = await runMemorySubcommand(["tokens"]);
       expect(code).toBe(64);
       expect(capture.stderr.join("\n")).toContain("Missing memory dir");
     } finally {
@@ -80,7 +80,7 @@ describe("letta memfs tokens", () => {
     mkdirSync(join(tmpRoot, "system"), { recursive: true });
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([
+      const code = await runMemorySubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -97,7 +97,7 @@ describe("letta memfs tokens", () => {
     process.env.MEMORY_DIR = tmpRoot;
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand(["tokens", "--quiet"]);
+      const code = await runMemorySubcommand(["tokens", "--quiet"]);
       expect(code).toBe(0);
       expect(capture.stdout.join("\n")).toContain("Total: 1 tokens");
     } finally {
@@ -112,7 +112,7 @@ describe("letta memfs tokens", () => {
     process.env.MEMORY_DIR = "/nonexistent/does-not-exist";
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([
+      const code = await runMemorySubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -129,7 +129,7 @@ describe("letta memfs tokens", () => {
     writeSystemFile("persona.md", "a".repeat(4 * 50000));
     const { restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([
+      const code = await runMemorySubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -145,7 +145,7 @@ describe("letta memfs tokens", () => {
     mkdirSync(join(tmpRoot, "system"), { recursive: true });
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([
+      const code = await runMemorySubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -163,7 +163,7 @@ describe("letta memfs tokens", () => {
     mkdirSync(join(tmpRoot, "system"), { recursive: true });
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([
+      const code = await runMemorySubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -181,7 +181,7 @@ describe("letta memfs tokens", () => {
     writeSystemFile("persona.md", "abcd");
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([
+      const code = await runMemorySubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -206,7 +206,7 @@ describe("letta memfs tokens", () => {
     writeSystemFile("large.md", "a".repeat(40)); // 10 tokens
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([
+      const code = await runMemorySubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -227,7 +227,7 @@ describe("letta memfs tokens", () => {
     writeSystemFile("persona.md", "abcd");
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([
+      const code = await runMemorySubcommand([
         "tokens",
         "--memory-dir",
         tmpRoot,
@@ -246,9 +246,9 @@ describe("letta memfs tokens", () => {
   test("help usage mentions tokens", async () => {
     const { capture, restore } = captureConsole();
     try {
-      const code = await runMemfsSubcommand([]);
+      const code = await runMemorySubcommand([]);
       expect(code).toBe(0);
-      expect(capture.stdout.join("\n")).toContain("letta memfs tokens");
+      expect(capture.stdout.join("\n")).toContain("letta memory tokens");
     } finally {
       restore();
     }

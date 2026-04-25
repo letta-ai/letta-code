@@ -8,7 +8,7 @@ const DEFAULT_TOP = 20;
 const USAGE_EXIT = 64;
 const IO_EXIT = 65;
 
-export interface MemfsTokensOptions {
+export interface MemoryTokensOptions {
   memoryDir: string | undefined;
   agentMemoryDir: string | undefined;
   top: string | undefined;
@@ -66,15 +66,15 @@ function printJson(total: number, files: FileEstimate[]): void {
   );
 }
 
-function resolveMemoryDir(options: MemfsTokensOptions): string | null {
+function resolveMemoryDir(options: MemoryTokensOptions): string | null {
   if (options.memoryDir) return options.memoryDir;
   if (process.env.MEMORY_DIR) return process.env.MEMORY_DIR;
   if (options.agentMemoryDir) return options.agentMemoryDir;
   return null;
 }
 
-export async function runMemfsTokensAction(
-  options: MemfsTokensOptions,
+export async function runMemoryTokensAction(
+  options: MemoryTokensOptions,
 ): Promise<number> {
   const format = options.format ?? "text";
   if (format !== "text" && format !== "json") {
