@@ -20,14 +20,67 @@ const execFile = promisify(execFileCb);
 const TEST_AGENT_ID = "agent-test-memory-tool";
 const TEST_AGENT_NAME = "Bob";
 
+let mockClientOverride: (() => Promise<unknown>) | null = null;
+
+async function getMockClient() {
+  if (mockClientOverride) {
+    return mockClientOverride();
+  }
+
+  return {
+    _options: { apiKey: process.env.LETTA_API_KEY ?? "" },
+    agents: {
+      retrieve: mock(() => Promise.resolve({ name: TEST_AGENT_NAME })),
+    },
+  };
+}
+
+function getMockMemfsServerUrl(): string {
+  return process.env.LETTA_MEMFS_BASE_URL || "https://api.letta.com";
+}
+
+function isMockLocalhostUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function getMockMemfsGitProxyRewriteConfig() {
+  const rawProxyBaseUrl = process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL?.trim();
+  if (!rawProxyBaseUrl || !isMockLocalhostUrl(rawProxyBaseUrl)) {
+    return null;
+  }
+
+  const memfsBaseUrl = getMockMemfsServerUrl().trim().replace(/\/+$/, "");
+  if (!memfsBaseUrl.includes("api.letta.com")) {
+    return null;
+  }
+
+  const proxyBaseUrl = rawProxyBaseUrl.replace(/\/+$/, "");
+  const proxyPrefix = `${proxyBaseUrl}/v1/git/`;
+  const memfsPrefix = `${memfsBaseUrl}/v1/git/`;
+  return {
+    proxyBaseUrl,
+    memfsBaseUrl,
+    proxyPrefix,
+    memfsPrefix,
+    configKey: `url.${proxyPrefix}.insteadOf`,
+    configValue: memfsPrefix,
+  };
+}
+
 mock.module("../../agent/client", () => ({
-  getClient: mock(() =>
-    Promise.resolve({
-      agents: {
-        retrieve: mock(() => Promise.resolve({ name: TEST_AGENT_NAME })),
-      },
-    }),
-  ),
+  __testOverrideGetClient: (factory: (() => Promise<unknown>) | null) => {
+    mockClientOverride = factory;
+  },
+  getClient: mock(getMockClient),
+  LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV: "LETTA_MEMFS_GIT_PROXY_BASE_URL",
+  getMemfsGitProxyRewriteConfig: getMockMemfsGitProxyRewriteConfig,
+  getMemfsServerUrl: getMockMemfsServerUrl,
   getServerUrl: () => "http://localhost:8283",
 }));
 

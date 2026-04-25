@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { getMemfsServerUrl } from "../../agent/client";
+import { __testOverrideGetClient, getMemfsServerUrl } from "../../agent/client";
 import {
+  assertMemoryRepoReadyForWrite,
   buildGitAuthArgs,
   buildMemfsGitProxyArgs,
   buildNonInteractiveGitEnv,
@@ -23,10 +24,13 @@ const ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL =
   process.env.LETTA_DESKTOP_DEBUG_PANEL;
 const ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL =
   process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
+const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
 
 let tempDirs: string[] = [];
 
 afterEach(() => {
+  __testOverrideGetClient(null);
+
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -56,6 +60,12 @@ afterEach(() => {
     process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL =
       ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL;
   }
+
+  if (ORIGINAL_LETTA_API_KEY === undefined) {
+    delete process.env.LETTA_API_KEY;
+  } else {
+    process.env.LETTA_API_KEY = ORIGINAL_LETTA_API_KEY;
+  }
 });
 
 function makeGitRepo(): string {
@@ -63,6 +73,40 @@ function makeGitRepo(): string {
   tempDirs.push(dir);
   execSync("git init -b main", { cwd: dir, stdio: "ignore" });
   return dir;
+}
+
+function makeBareGitRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "memory-git-remote-"));
+  tempDirs.push(dir);
+  execSync("git init --bare -b main", { cwd: dir, stdio: "ignore" });
+  return dir;
+}
+
+function commitFile(repo: string, fileName: string, content: string): string {
+  writeFileSync(join(repo, fileName), content, "utf-8");
+  git(repo, `add ${fileName}`);
+  git(repo, `commit -m ${fileName}`);
+  return git(repo, "rev-parse HEAD").trim();
+}
+
+function makeSyncedRepo(): { repo: string; remote: string } {
+  const remote = makeBareGitRepo();
+  const repo = makeGitRepo();
+  git(repo, "config user.name Test");
+  git(repo, "config user.email test@example.com");
+  git(repo, `remote add origin ${remote}`);
+  commitFile(repo, "initial.md", "initial");
+  git(repo, "push -u origin main");
+  return { repo, remote };
+}
+
+function cloneRepo(remote: string): string {
+  const repo = mkdtempSync(join(tmpdir(), "memory-git-clone-"));
+  tempDirs.push(repo);
+  execSync(`git clone ${remote} .`, { cwd: repo, stdio: "ignore" });
+  git(repo, "config user.name Test");
+  git(repo, "config user.email test@example.com");
+  return repo;
 }
 
 function git(cwd: string, args: string): string {
@@ -367,5 +411,41 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
+  });
+});
+
+describe("assertMemoryRepoReadyForWrite", () => {
+  test("pushes clean local commits before blocking memory writes", async () => {
+    const { repo, remote } = makeSyncedRepo();
+    const localSha = commitFile(repo, "local.md", "local");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    await assertMemoryRepoReadyForWrite(repo, "agent-123");
+
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("0");
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(localSha);
+  });
+
+  test("leaves clean behind repos for write-time conflict replay", async () => {
+    const { repo, remote } = makeSyncedRepo();
+    const originalSha = git(repo, "rev-parse HEAD").trim();
+    const other = cloneRepo(remote);
+    commitFile(other, "remote.md", "remote");
+    git(other, "push");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    await assertMemoryRepoReadyForWrite(repo, "agent-123");
+
+    expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
   });
 });

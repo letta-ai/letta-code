@@ -1100,6 +1100,43 @@ async function fetchMemoryRemote(
   });
 }
 
+async function getMemoryAheadBehind(
+  memoryDir: string,
+): Promise<{ ahead: number; behind: number } | null> {
+  try {
+    const { stdout } = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "HEAD...@{u}",
+    ]);
+    const [aheadRaw, behindRaw] = stdout.trim().split(/\s+/);
+    return {
+      ahead: Number.parseInt(aheadRaw ?? "0", 10) || 0,
+      behind: Number.parseInt(behindRaw ?? "0", 10) || 0,
+    };
+  } catch {
+    // No upstream configured or unable to inspect divergence.
+    return null;
+  }
+}
+
+async function pushCleanPendingMemoryCommitsForWrite(
+  memoryDir: string,
+  agentId: string,
+  token: string,
+): Promise<void> {
+  await prepareMemoryRepoForGitOps(memoryDir, agentId, token);
+
+  const divergence = await getMemoryAheadBehind(memoryDir);
+
+  if (divergence && divergence.ahead > 0) {
+    await runGitWithRetry(memoryDir, ["push"], token, {
+      operation: "push pending memory commits",
+    });
+  }
+}
+
 async function resetMemoryToUpstream(
   memoryDir: string,
   token: string,
@@ -1221,6 +1258,7 @@ async function recoverMemoryPushConflict(
 
 export async function assertMemoryRepoReadyForWrite(
   memoryDir: string,
+  agentId?: string,
 ): Promise<void> {
   const status = await runGit(memoryDir, ["status", "--porcelain"]);
   if (status.stdout.trim().length > 0) {
@@ -1229,14 +1267,14 @@ export async function assertMemoryRepoReadyForWrite(
     );
   }
 
+  if (agentId) {
+    const token = await getAuthToken();
+    await pushCleanPendingMemoryCommitsForWrite(memoryDir, agentId, token);
+  }
+
   try {
-    const { stdout } = await runGit(memoryDir, [
-      "rev-list",
-      "--count",
-      "@{u}..HEAD",
-    ]);
-    const aheadCount = parseInt(stdout.trim(), 10);
-    if (aheadCount > 0) {
+    const divergence = await getMemoryAheadBehind(memoryDir);
+    if (divergence && divergence.ahead > 0) {
       throw new Error(
         "Memory repo has local commits that are not pushed to remote. Sync the repo before using memory tools.",
       );
