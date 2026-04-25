@@ -28,6 +28,7 @@ import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
+import { debugWarn } from "../../utils/debug";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
@@ -973,6 +974,31 @@ async function executeSubagent(
 
     // Fallback: parse from stdout
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+
+    // Reflection subagent with auto-memory can return empty output.
+    // Retry once with the parent model before falling through to parseResultFromStdout.
+    if (!stdout.trim() && type === "reflection" && !isRetry) {
+      const fallbackModel = parentModelHandle || "letta/auto";
+      debugWarn(
+        "memory",
+        `Reflection subagent returned empty output, retrying with ${fallbackModel}`,
+      );
+      return executeSubagent(
+        type,
+        config,
+        fallbackModel,
+        userPrompt,
+        baseURL,
+        subagentId,
+        true, // isRetry
+        signal,
+        undefined, // existingAgentId
+        undefined, // existingConversationId
+        maxTurns,
+        parentAgentIdOverride,
+      );
+    }
+
     return parseResultFromStdout(stdout, state.agentId);
   } catch (error) {
     return {
