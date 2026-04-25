@@ -682,6 +682,7 @@ export async function resolveRecoveredApprovalResponse(
       {
         type: "approval",
         approvals: approvalResults,
+        otid: crypto.randomUUID(),
       },
     ];
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;

@@ -550,6 +550,7 @@ export async function handleApprovalStop(params: {
     {
       type: "approval",
       approvals: persistedExecutionResults,
+      otid: crypto.randomUUID(),
     },
   ];
   let continuationBatchId = dequeuedBatchId;
