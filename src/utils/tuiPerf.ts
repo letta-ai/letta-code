@@ -3,6 +3,10 @@ import { dirname } from "node:path";
 
 const TUI_PERF_FLUSH_INTERVAL_MS = 1_000;
 const TUI_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
+const TUI_PERF_ENABLED = TUI_PERF_ENV_VALUES.has(
+  (process.env.LETTA_TUI_PERF ?? "").toLowerCase(),
+);
+const TUI_PERF_FILE = process.env.LETTA_TUI_PERF_FILE?.trim() || null;
 
 type TuiPerfBucket = {
   count: number;
@@ -18,17 +22,6 @@ let tuiPerfWindowStartedAt = 0;
 let tuiPerfFileDirEnsured: string | null = null;
 let tuiPerfWarningEmitted = false;
 let tuiPerfExitHookRegistered = false;
-
-function isTuiPerfEnabled(): boolean {
-  return TUI_PERF_ENV_VALUES.has(
-    (process.env.LETTA_TUI_PERF ?? "").toLowerCase(),
-  );
-}
-
-function getTuiPerfFilePath(): string | null {
-  const filePath = process.env.LETTA_TUI_PERF_FILE?.trim();
-  return filePath && filePath.length > 0 ? filePath : null;
-}
 
 function ensureExitHook(): void {
   if (tuiPerfExitHookRegistered) {
@@ -61,7 +54,7 @@ export function recordTuiPerf(
     ms?: number;
   },
 ): void {
-  if (!isTuiPerfEnabled() || !getTuiPerfFilePath()) {
+  if (!TUI_PERF_ENABLED || !TUI_PERF_FILE) {
     return;
   }
 
@@ -89,7 +82,7 @@ export function recordTuiPerf(
 }
 
 export function recordTuiJsonPayload(key: string, value: unknown): void {
-  if (!isTuiPerfEnabled() || !getTuiPerfFilePath()) {
+  if (!TUI_PERF_ENABLED || !TUI_PERF_FILE) {
     return;
   }
 
@@ -106,7 +99,7 @@ function flushTuiPerfTelemetry(): void {
     return;
   }
 
-  const filePath = getTuiPerfFilePath();
+  const filePath = TUI_PERF_FILE;
   if (!filePath) {
     tuiPerfBuckets.clear();
     tuiPerfWindowStartedAt = 0;
