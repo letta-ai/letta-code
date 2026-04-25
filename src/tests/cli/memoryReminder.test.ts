@@ -7,6 +7,7 @@ import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
   getReflectionSettings,
+  mergeReflectionSettingsPatch,
   persistReflectionSettingsForAgent,
   reflectionSettingsToLegacyMode,
   shouldFireStepCountTrigger,
@@ -226,6 +227,46 @@ describe("memoryReminder", () => {
         stepCount: 25,
       }),
     ).toBe("auto-compaction");
+  });
+
+  test("merges reflection settings patches without resetting omitted fields", () => {
+    const mergedPassive = mergeReflectionSettingsPatch(
+      {
+        trigger: "step-count",
+        stepCount: 9,
+        activeTrigger: "step-count",
+        activeStepCount: 9,
+        passiveSweepEnabled: true,
+        passiveSweepIntervalHours: 12,
+        passiveMinQuietMinutes: 20,
+        passiveMinUnreflectedTurns: 4,
+      },
+      {
+        passiveSweepEnabled: false,
+      },
+    );
+
+    expect(mergedPassive).toMatchObject({
+      activeTrigger: "step-count",
+      activeStepCount: 9,
+      passiveSweepEnabled: false,
+      passiveSweepIntervalHours: 12,
+      passiveMinQuietMinutes: 20,
+      passiveMinUnreflectedTurns: 4,
+    });
+
+    const mergedActive = mergeReflectionSettingsPatch(mergedPassive, {
+      activeTrigger: "compaction-event",
+    });
+
+    expect(mergedActive).toMatchObject({
+      activeTrigger: "compaction-event",
+      activeStepCount: 9,
+      passiveSweepEnabled: false,
+      passiveSweepIntervalHours: 12,
+      passiveMinQuietMinutes: 20,
+      passiveMinUnreflectedTurns: 4,
+    });
   });
 
   test("builds compaction reminder using memory-check content", async () => {

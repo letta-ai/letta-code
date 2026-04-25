@@ -59,7 +59,7 @@ import { createContextTracker } from "./cli/helpers/contextTracker";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import {
   getReflectionSettings,
-  normalizeReflectionSettings,
+  mergeReflectionSettingsPatch,
   persistReflectionSettingsForAgent,
   type ReflectionSettings,
   type ReflectionTrigger,
@@ -329,15 +329,9 @@ async function applyReflectionOverrides(
   overrides: ReflectionOverrides,
 ): Promise<ReflectionSettings> {
   const current = getReflectionSettings(agentId);
-  const merged: ReflectionSettings = normalizeReflectionSettings({
+  const merged: ReflectionSettings = mergeReflectionSettingsPatch(current, {
     trigger: overrides.trigger ?? current.trigger,
     stepCount: overrides.stepCount ?? current.stepCount,
-    activeTrigger: overrides.trigger ?? current.activeTrigger,
-    activeStepCount: overrides.stepCount ?? current.activeStepCount,
-    passiveSweepEnabled: current.passiveSweepEnabled,
-    passiveSweepIntervalHours: current.passiveSweepIntervalHours,
-    passiveMinQuietMinutes: current.passiveMinQuietMinutes,
-    passiveMinUnreflectedTurns: current.passiveMinUnreflectedTurns,
   });
 
   if (!hasReflectionOverrides(overrides)) {

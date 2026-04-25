@@ -308,6 +308,58 @@ describe("reflectionTranscript helper", () => {
     expect(derived.state.turns_since_last_successful_reflection).toBe(1);
   });
 
+  test("message-id cursor resumes after the last eligible duplicate row", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "first", messageId: "u1" },
+      {
+        kind: "assistant",
+        id: "a1-first",
+        text: "first assistant segment",
+        phase: "finished",
+        messageId: "assistant-duplicate",
+      },
+      {
+        kind: "assistant",
+        id: "a1-second",
+        text: "second assistant segment",
+        phase: "finished",
+        messageId: "assistant-duplicate",
+      },
+    ]);
+
+    const firstPayload = await buildAutoReflectionPayload(
+      agentId,
+      conversationId,
+    );
+    expect(firstPayload).not.toBeNull();
+    if (!firstPayload) return;
+    expect(firstPayload.endMessageId).toBe("assistant-duplicate");
+
+    await finalizeAutoReflectionPayload(
+      agentId,
+      conversationId,
+      firstPayload.payloadPath,
+      firstPayload.endSnapshotLine,
+      true,
+    );
+
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u2", text: "second", messageId: "u2" },
+    ]);
+
+    const secondPayload = await buildAutoReflectionPayload(
+      agentId,
+      conversationId,
+    );
+    expect(secondPayload).not.toBeNull();
+    if (!secondPayload) return;
+    expect(secondPayload.startMessageId).toBe("u2");
+
+    const payloadText = await readFile(secondPayload.payloadPath, "utf-8");
+    const messages = JSON.parse(payloadText);
+    expect(messages).toEqual([{ role: "user", content: "second" }]);
+  });
+
   test("turns appended during reflection are preserved across finalize", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "first", messageId: "u1" },

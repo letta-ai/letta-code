@@ -866,9 +866,46 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
+    const passiveOnlySettings = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "set_reflection_settings",
+          request_id: "reflection-set-passive",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {
+            passive_sweep_enabled: false,
+          },
+        }),
+      ),
+    );
+    const invalidSettings = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "set_reflection_settings",
+          request_id: "reflection-set-invalid",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {
+            passive_sweep_interval_hours: 0,
+          },
+        }),
+      ),
+    );
+    const emptySettings = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "set_reflection_settings",
+          request_id: "reflection-set-empty",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {},
+        }),
+      ),
+    );
 
     expect(getSettings?.type).toBe("get_reflection_settings");
     expect(setSettings?.type).toBe("set_reflection_settings");
+    expect(passiveOnlySettings?.type).toBe("set_reflection_settings");
+    expect(invalidSettings).toBeNull();
+    expect(emptySettings).toBeNull();
   });
 
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
@@ -2043,6 +2080,69 @@ describe("listen-client reflection settings command handling", () => {
             passive_min_quiet_minutes: 20,
             passive_min_unreflected_turns: 4,
           },
+        },
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleReflectionSettingsCommand(
+        {
+          type: "set_reflection_settings",
+          request_id: "reflection-set-passive",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {
+            passive_sweep_enabled: false,
+          },
+          scope: "local_project",
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const passivePatchResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(passivePatchResponse).toMatchObject({
+        type: "set_reflection_settings_response",
+        request_id: "reflection-set-passive",
+        success: true,
+        reflection_settings: {
+          trigger: "step-count",
+          step_count: 9,
+          passive_sweep_enabled: false,
+          passive_sweep_interval_hours: 12,
+          passive_min_quiet_minutes: 20,
+          passive_min_unreflected_turns: 4,
+        },
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleReflectionSettingsCommand(
+        {
+          type: "set_reflection_settings",
+          request_id: "reflection-set-active",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          settings: {
+            active_trigger: "compaction-event",
+            active_step_count: 17,
+          },
+          scope: "local_project",
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const activePatchResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(activePatchResponse).toMatchObject({
+        type: "set_reflection_settings_response",
+        request_id: "reflection-set-active",
+        success: true,
+        reflection_settings: {
+          trigger: "compaction-event",
+          step_count: 17,
+          passive_sweep_enabled: false,
+          passive_sweep_interval_hours: 12,
+          passive_min_quiet_minutes: 20,
+          passive_min_unreflected_turns: 4,
         },
       });
     } finally {

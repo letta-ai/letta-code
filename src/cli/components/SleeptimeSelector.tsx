@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type {
   ReflectionSettings,
   ReflectionTrigger,
@@ -14,6 +14,11 @@ const DEFAULT_STEP_COUNT = "25";
 const DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS = "24";
 const DEFAULT_PASSIVE_MIN_QUIET_MINUTES = "15";
 const DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS = "3";
+const TRIGGER_LABELS: Record<ReflectionTrigger, string> = {
+  off: "Off",
+  "step-count": "Step count",
+  "compaction-event": "Compaction event",
+};
 
 type FocusRow =
   | "trigger"
@@ -219,6 +224,24 @@ export function SleeptimeSelector({
     );
   };
 
+  const renderTriggerOption = (option: ReflectionTrigger) => {
+    const selected = trigger === option;
+    return (
+      <Fragment key={option}>
+        <Text
+          backgroundColor={
+            selected ? colors.selector.itemHighlighted : undefined
+          }
+          color={selected ? "black" : undefined}
+          bold={selected}
+        >
+          {` ${TRIGGER_LABELS[option]} `}
+        </Text>
+        <Text> </Text>
+      </Fragment>
+    );
+  };
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       onCancel();
@@ -320,64 +343,32 @@ export function SleeptimeSelector({
 
       <Box height={1} />
 
-      {memfsEnabled ? (
+      <Box flexDirection="row">
+        <Text>{focusRow === "trigger" ? "> " : "  "}</Text>
+        <Text bold>Trigger event:</Text>
+        <Text>{"   "}</Text>
+        {triggerOptions.map(renderTriggerOption)}
+      </Box>
+
+      {trigger === "step-count" && (
         <>
+          <Box height={1} />
           <Box flexDirection="row">
-            <Text>{focusRow === "trigger" ? "> " : "  "}</Text>
-            <Text bold>Trigger event:</Text>
-            <Text>{"   "}</Text>
-            <Text
-              backgroundColor={
-                trigger === "off" ? colors.selector.itemHighlighted : undefined
-              }
-              color={trigger === "off" ? "black" : undefined}
-              bold={trigger === "off"}
-            >
-              {" Off "}
-            </Text>
-            <Text> </Text>
-            <Text
-              backgroundColor={
-                trigger === "step-count"
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-              color={trigger === "step-count" ? "black" : undefined}
-              bold={trigger === "step-count"}
-            >
-              {" Step count "}
-            </Text>
-            <Text> </Text>
-            <Text
-              backgroundColor={
-                trigger === "compaction-event"
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-              color={trigger === "compaction-event" ? "black" : undefined}
-              bold={trigger === "compaction-event"}
-            >
-              {" Compaction event "}
-            </Text>
+            <Text>{focusRow === "step-count" ? "> " : "  "}</Text>
+            <Text bold>Step count: </Text>
+            <Text>{stepCountInput}</Text>
+            {isEditingStepCount && <Text>█</Text>}
+            {validationError && focusRow === "step-count" && (
+              <Text color={colors.error.text}>
+                {` (error: ${validationError})`}
+              </Text>
+            )}
           </Box>
+        </>
+      )}
 
-          {trigger === "step-count" && (
-            <>
-              <Box height={1} />
-              <Box flexDirection="row">
-                <Text>{focusRow === "step-count" ? "> " : "  "}</Text>
-                <Text bold>Step count: </Text>
-                <Text>{stepCountInput}</Text>
-                {isEditingStepCount && <Text>█</Text>}
-                {validationError && focusRow === "step-count" && (
-                  <Text color={colors.error.text}>
-                    {` (error: ${validationError})`}
-                  </Text>
-                )}
-              </Box>
-            </>
-          )}
-
+      {memfsEnabled && (
+        <>
           <Box height={1} />
           <Box flexDirection="row">
             <Text>{focusRow === "idle-enabled" ? "> " : "  "}</Text>
@@ -434,52 +425,6 @@ export function SleeptimeSelector({
                   {`  error: ${validationError}`}
                 </Text>
               )}
-            </>
-          )}
-        </>
-      ) : (
-        <>
-          <Box flexDirection="row">
-            <Text>{focusRow === "trigger" ? "> " : "  "}</Text>
-            <Text bold>Trigger event:</Text>
-            <Text>{"   "}</Text>
-            <Text
-              backgroundColor={
-                trigger === "off" ? colors.selector.itemHighlighted : undefined
-              }
-              color={trigger === "off" ? "black" : undefined}
-              bold={trigger === "off"}
-            >
-              {" Off "}
-            </Text>
-            <Text> </Text>
-            <Text
-              backgroundColor={
-                trigger === "step-count"
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-              color={trigger === "step-count" ? "black" : undefined}
-              bold={trigger === "step-count"}
-            >
-              {" Step count "}
-            </Text>
-          </Box>
-
-          {trigger === "step-count" && (
-            <>
-              <Box height={1} />
-              <Box flexDirection="row">
-                <Text>{focusRow === "step-count" ? "> " : "  "}</Text>
-                <Text bold>Step count: </Text>
-                <Text>{stepCountInput}</Text>
-                {isEditingStepCount && <Text>█</Text>}
-                {validationError && focusRow === "step-count" && (
-                  <Text color={colors.error.text}>
-                    {` (error: ${validationError})`}
-                  </Text>
-                )}
-              </Box>
             </>
           )}
         </>

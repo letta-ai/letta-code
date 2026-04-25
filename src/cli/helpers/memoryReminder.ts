@@ -34,6 +34,7 @@ export interface ReflectionSettings {
 }
 
 export type NormalizedReflectionSettings = Required<ReflectionSettings>;
+export type ReflectionSettingsPatch = Partial<ReflectionSettings>;
 
 type PersistedReflectionSettings = {
   trigger?: unknown;
@@ -105,6 +106,44 @@ export function normalizeReflectionSettings(
       DEFAULT_REFLECTION_SETTINGS.passiveMinUnreflectedTurns,
     ),
   };
+}
+
+export function mergeReflectionSettingsPatch(
+  current: ReflectionSettings,
+  patch: ReflectionSettingsPatch,
+): NormalizedReflectionSettings {
+  const normalizedCurrent = normalizeReflectionSettings(current);
+  const activeTrigger = normalizeTrigger(
+    patch.activeTrigger ?? patch.trigger,
+    normalizedCurrent.activeTrigger,
+  );
+  const activeStepCount = normalizeStepCount(
+    patch.activeStepCount ?? patch.stepCount,
+    normalizedCurrent.activeStepCount,
+  );
+
+  return normalizeReflectionSettings({
+    trigger: activeTrigger,
+    stepCount: activeStepCount,
+    activeTrigger,
+    activeStepCount,
+    passiveSweepEnabled:
+      typeof patch.passiveSweepEnabled === "boolean"
+        ? patch.passiveSweepEnabled
+        : normalizedCurrent.passiveSweepEnabled,
+    passiveSweepIntervalHours: normalizePositiveNumber(
+      patch.passiveSweepIntervalHours,
+      normalizedCurrent.passiveSweepIntervalHours,
+    ),
+    passiveMinQuietMinutes: normalizePositiveNumber(
+      patch.passiveMinQuietMinutes,
+      normalizedCurrent.passiveMinQuietMinutes,
+    ),
+    passiveMinUnreflectedTurns: normalizePositiveInteger(
+      patch.passiveMinUnreflectedTurns,
+      normalizedCurrent.passiveMinUnreflectedTurns,
+    ),
+  });
 }
 
 function isValidStepCount(value: unknown): value is number {

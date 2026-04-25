@@ -109,7 +109,109 @@ export type LaunchReflectionResult =
   | LaunchReflectionCompletedResult
   | LaunchReflectionFailedResult;
 
-const reflectionQueueByAgent = new Map<string, Promise<void>>();
+const REFLECTION_QUEUE_PRIORITY = {
+  manual: 0,
+  active: 1,
+  idle: 2,
+} as const;
+
+type ReflectionQueuePriority =
+  (typeof REFLECTION_QUEUE_PRIORITY)[keyof typeof REFLECTION_QUEUE_PRIORITY];
+
+type ReflectionQueueJob = {
+  priority: ReflectionQueuePriority;
+  sequence: number;
+  launch: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+};
+
+type ReflectionQueueState = {
+  running: boolean;
+  nextSequence: number;
+  jobs: ReflectionQueueJob[];
+};
+
+const reflectionQueueByAgent = new Map<string, ReflectionQueueState>();
+
+function getReflectionQueuePriority(
+  triggerSource: ReflectionSource,
+): ReflectionQueuePriority {
+  if (triggerSource === "manual") {
+    return REFLECTION_QUEUE_PRIORITY.manual;
+  }
+  if (triggerSource === "idle-time") {
+    return REFLECTION_QUEUE_PRIORITY.idle;
+  }
+  return REFLECTION_QUEUE_PRIORITY.active;
+}
+
+function getOrCreateReflectionQueueState(
+  agentId: string,
+): ReflectionQueueState {
+  let state = reflectionQueueByAgent.get(agentId);
+  if (!state) {
+    state = { running: false, nextSequence: 0, jobs: [] };
+    reflectionQueueByAgent.set(agentId, state);
+  }
+  return state;
+}
+
+function shiftNextReflectionJob(
+  state: ReflectionQueueState,
+): ReflectionQueueJob | undefined {
+  if (state.jobs.length === 0) {
+    return undefined;
+  }
+
+  let bestIndex = 0;
+  for (let index = 1; index < state.jobs.length; index += 1) {
+    const candidate = state.jobs[index] as ReflectionQueueJob;
+    const best = state.jobs[bestIndex] as ReflectionQueueJob;
+    if (
+      candidate.priority < best.priority ||
+      (candidate.priority === best.priority &&
+        candidate.sequence < best.sequence)
+    ) {
+      bestIndex = index;
+    }
+  }
+
+  const [job] = state.jobs.splice(bestIndex, 1) as [ReflectionQueueJob];
+  return job;
+}
+
+function drainReflectionQueue(agentId: string): void {
+  const state = reflectionQueueByAgent.get(agentId);
+  if (!state || state.running) {
+    return;
+  }
+
+  const job = shiftNextReflectionJob(state);
+  if (!job) {
+    reflectionQueueByAgent.delete(agentId);
+    return;
+  }
+
+  state.running = true;
+  void (async () => {
+    try {
+      job.resolve(await job.launch());
+    } catch (error) {
+      job.reject(error);
+    } finally {
+      const currentState = reflectionQueueByAgent.get(agentId);
+      if (currentState) {
+        currentState.running = false;
+        if (currentState.jobs.length === 0) {
+          reflectionQueueByAgent.delete(agentId);
+        } else {
+          drainReflectionQueue(agentId);
+        }
+      }
+    }
+  })();
+}
 
 function hasActiveReflectionSubagent(
   agentId: string,
@@ -309,32 +411,31 @@ async function runReflectionLaunch(
 function enqueueReflectionForAgent<T>(
   agentId: string,
   launch: () => Promise<T>,
+  priority: ReflectionQueuePriority = REFLECTION_QUEUE_PRIORITY.active,
 ): Promise<T> {
-  const previous = reflectionQueueByAgent.get(agentId) ?? Promise.resolve();
-  const launchPromise = previous
-    .catch(() => {
-      // A previous reflection failure must not poison this agent's queue.
-    })
-    .then(launch);
-
-  const queueTail = launchPromise
-    .then(() => undefined)
-    .catch(() => undefined)
-    .finally(() => {
-      if (reflectionQueueByAgent.get(agentId) === queueTail) {
-        reflectionQueueByAgent.delete(agentId);
-      }
+  const state = getOrCreateReflectionQueueState(agentId);
+  const promise = new Promise<T>((resolve, reject) => {
+    state.jobs.push({
+      priority,
+      sequence: state.nextSequence,
+      launch: launch as () => Promise<unknown>,
+      resolve: (value) => resolve(value as T),
+      reject,
     });
-  reflectionQueueByAgent.set(agentId, queueTail);
-  return launchPromise;
+    state.nextSequence += 1;
+  });
+  drainReflectionQueue(agentId);
+  return promise;
 }
 
 function enqueueReflectionLaunch(
   input: LaunchReflectionInput,
   onLaunched?: (result: LaunchReflectionLaunchedResult) => void,
 ): Promise<LaunchReflectionResult> {
-  return enqueueReflectionForAgent(input.agentId, () =>
-    runReflectionLaunch(input, onLaunched),
+  return enqueueReflectionForAgent(
+    input.agentId,
+    () => runReflectionLaunch(input, onLaunched),
+    getReflectionQueuePriority(input.triggerSource),
   );
 }
 
@@ -410,4 +511,5 @@ export const __autoReflectionTestUtils = {
     reflectionQueueByAgent.clear();
   },
   enqueueReflectionForAgent,
+  queuePriority: REFLECTION_QUEUE_PRIORITY,
 };

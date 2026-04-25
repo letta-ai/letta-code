@@ -53,6 +53,66 @@ describe("auto reflection launcher serialization", () => {
     ]);
   });
 
+  test("runs queued manual reflection before queued idle reflection", async () => {
+    const events: string[] = [];
+    let releaseFirst = () => {};
+    const firstCanFinish = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstStarted = () => {};
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+
+    const first = __autoReflectionTestUtils.enqueueReflectionForAgent(
+      "agent-priority",
+      async () => {
+        events.push("start:first");
+        markFirstStarted();
+        await firstCanFinish;
+        events.push("end:first");
+        return "first";
+      },
+      __autoReflectionTestUtils.queuePriority.active,
+    );
+    await firstStarted;
+
+    const idle = __autoReflectionTestUtils.enqueueReflectionForAgent(
+      "agent-priority",
+      async () => {
+        events.push("start:idle");
+        events.push("end:idle");
+        return "idle";
+      },
+      __autoReflectionTestUtils.queuePriority.idle,
+    );
+    const manual = __autoReflectionTestUtils.enqueueReflectionForAgent(
+      "agent-priority",
+      async () => {
+        events.push("start:manual");
+        events.push("end:manual");
+        return "manual";
+      },
+      __autoReflectionTestUtils.queuePriority.manual,
+    );
+
+    releaseFirst();
+
+    await expect(Promise.all([first, idle, manual])).resolves.toEqual([
+      "first",
+      "idle",
+      "manual",
+    ]);
+    expect(events).toEqual([
+      "start:first",
+      "end:first",
+      "start:manual",
+      "end:manual",
+      "start:idle",
+      "end:idle",
+    ]);
+  });
+
   test("does not serialize reflection work across different agents", async () => {
     let releaseFirst = () => {};
     const firstCanFinish = new Promise<void>((resolve) => {

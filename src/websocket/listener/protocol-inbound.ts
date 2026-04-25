@@ -782,17 +782,30 @@ export function isSetReflectionSettingsCommand(
     passive_min_quiet_minutes?: unknown;
     passive_min_unreflected_turns?: unknown;
   };
-  const activeTrigger = settings.active_trigger ?? settings.trigger;
-  const activeStepCount = settings.active_step_count ?? settings.step_count;
+  const hasSettingsField =
+    "trigger" in settings ||
+    "step_count" in settings ||
+    "active_trigger" in settings ||
+    "active_step_count" in settings ||
+    "passive_sweep_enabled" in settings ||
+    "passive_sweep_interval_hours" in settings ||
+    "passive_min_quiet_minutes" in settings ||
+    "passive_min_unreflected_turns" in settings;
+  const isTrigger = (value: unknown) =>
+    value === "off" || value === "step-count" || value === "compaction-event";
   const isPositiveNumber = (value: unknown) =>
     typeof value === "number" && Number.isFinite(value) && value > 0;
   const isPositiveInteger = (value: unknown) =>
     isPositiveNumber(value) && Number.isInteger(value);
   return (
-    (activeTrigger === "off" ||
-      activeTrigger === "step-count" ||
-      activeTrigger === "compaction-event") &&
-    isPositiveInteger(activeStepCount) &&
+    hasSettingsField &&
+    (settings.trigger === undefined || isTrigger(settings.trigger)) &&
+    (settings.active_trigger === undefined ||
+      isTrigger(settings.active_trigger)) &&
+    (settings.step_count === undefined ||
+      isPositiveInteger(settings.step_count)) &&
+    (settings.active_step_count === undefined ||
+      isPositiveInteger(settings.active_step_count)) &&
     (settings.passive_sweep_enabled === undefined ||
       typeof settings.passive_sweep_enabled === "boolean") &&
     (settings.passive_sweep_interval_hours === undefined ||

@@ -33,7 +33,6 @@ import {
 import { getGitContext } from "../../cli/helpers/gitContext";
 import {
   getReflectionSettings,
-  normalizeReflectionSettings,
   persistReflectionSettingsForAgent,
 } from "../../cli/helpers/memoryReminder";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
@@ -251,6 +250,10 @@ import {
   resolveRecoveredApprovalResponse,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
+import {
+  mergeProtocolReflectionSettingsPatch,
+  toReflectionSettingsSnapshot,
+} from "./reflection-settings";
 import {
   clearActiveRunState,
   clearConversationRuntimeState,
@@ -3048,29 +3051,9 @@ async function handleCreateAgentCommand(
 function toReflectionSettingsResponse(
   agentId: string,
   workingDirectory: string,
-): {
-  agent_id: string;
-  trigger: "off" | "step-count" | "compaction-event";
-  step_count: number;
-  active_trigger: "off" | "step-count" | "compaction-event";
-  active_step_count: number;
-  passive_sweep_enabled: boolean;
-  passive_sweep_interval_hours: number;
-  passive_min_quiet_minutes: number;
-  passive_min_unreflected_turns: number;
-} {
+): ReturnType<typeof toReflectionSettingsSnapshot> {
   const settings = getReflectionSettings(agentId, workingDirectory);
-  return {
-    agent_id: agentId,
-    trigger: settings.activeTrigger,
-    step_count: settings.activeStepCount,
-    active_trigger: settings.activeTrigger,
-    active_step_count: settings.activeStepCount,
-    passive_sweep_enabled: settings.passiveSweepEnabled,
-    passive_sweep_interval_hours: settings.passiveSweepIntervalHours,
-    passive_min_quiet_minutes: settings.passiveMinQuietMinutes,
-    passive_min_unreflected_turns: settings.passiveMinUnreflectedTurns,
-  };
+  return toReflectionSettingsSnapshot(agentId, settings);
 }
 
 function resolveReflectionSettingsScope(
@@ -3153,19 +3136,10 @@ async function handleReflectionSettingsCommand(
     resolveReflectionSettingsScope(parsed.scope);
 
   try {
+    const currentSettings = getReflectionSettings(agentId, workingDirectory);
     await persistReflectionSettingsForAgent(
       agentId,
-      normalizeReflectionSettings({
-        trigger: parsed.settings.trigger,
-        stepCount: parsed.settings.step_count,
-        activeTrigger: parsed.settings.active_trigger,
-        activeStepCount: parsed.settings.active_step_count,
-        passiveSweepEnabled: parsed.settings.passive_sweep_enabled,
-        passiveSweepIntervalHours: parsed.settings.passive_sweep_interval_hours,
-        passiveMinQuietMinutes: parsed.settings.passive_min_quiet_minutes,
-        passiveMinUnreflectedTurns:
-          parsed.settings.passive_min_unreflected_turns,
-      }),
+      mergeProtocolReflectionSettingsPatch(currentSettings, parsed.settings),
       {
         workingDirectory,
         persistLocalProject,

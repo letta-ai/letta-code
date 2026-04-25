@@ -918,7 +918,7 @@ function selectUnreflectedTranscriptRange(
   const anchorRow =
     reflectedThroughMessageId === undefined
       ? undefined
-      : rows.find(
+      : rows.findLast(
           (row) =>
             isEligibleCanonicalEntry(row.entry) &&
             row.entry.source_message_id === reflectedThroughMessageId,

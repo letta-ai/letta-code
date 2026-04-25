@@ -37,6 +37,7 @@ import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { getConversationPermissionModeState } from "./permissionMode";
+import { toReflectionSettingsSnapshot } from "./reflection-settings";
 import {
   getConversationRuntime,
   getPendingControlRequests,
@@ -264,21 +265,7 @@ export function buildDeviceStatus(
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
     reflection_settings: scopedAgentId
-      ? {
-          agent_id: scopedAgentId,
-          trigger: reflectionSettings?.activeTrigger ?? "step-count",
-          step_count: reflectionSettings?.activeStepCount ?? 25,
-          active_trigger: reflectionSettings?.activeTrigger ?? "step-count",
-          active_step_count: reflectionSettings?.activeStepCount ?? 25,
-          passive_sweep_enabled:
-            reflectionSettings?.passiveSweepEnabled ?? true,
-          passive_sweep_interval_hours:
-            reflectionSettings?.passiveSweepIntervalHours ?? 24,
-          passive_min_quiet_minutes:
-            reflectionSettings?.passiveMinQuietMinutes ?? 15,
-          passive_min_unreflected_turns:
-            reflectionSettings?.passiveMinUnreflectedTurns ?? 3,
-        }
+      ? toReflectionSettingsSnapshot(scopedAgentId, reflectionSettings)
       : null,
   };
 }
