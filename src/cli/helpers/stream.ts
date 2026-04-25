@@ -22,6 +22,7 @@ import {
   createStreamAbortRelay,
 } from "../../utils/streamAbortRelay";
 import { formatDuration, logTiming } from "../../utils/timing";
+import { recordTuiJsonPayload, recordTuiPerf } from "../../utils/tuiPerf";
 
 import {
   type createBuffers,
@@ -265,6 +266,11 @@ export async function drainStream(
 
   try {
     for await (const chunk of stream) {
+      recordTuiJsonPayload(
+        `stream_chunk:${chunk.message_type ?? "unknown"}`,
+        chunk,
+      );
+
       // Check if abort generation changed (handleInterrupt ran while we were waiting)
       // This catches cases where the abort signal might not propagate correctly
       if ((buffers.abortGeneration || 0) !== startAbortGen) {
@@ -350,6 +356,10 @@ export async function drainStream(
       }
 
       if (shouldAccumulate) {
+        recordTuiJsonPayload(
+          `stream_accumulate:${chunk.message_type ?? "unknown"}`,
+          chunk,
+        );
         onChunk(buffers, chunk, contextTracker);
         queueMicrotask(refresh);
       }
@@ -530,6 +540,7 @@ export async function drainStreamWithResume(
   seenSeqIdThreshold?: number | null,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
+  recordTuiPerf("stream_lifecycle:start");
   const streamRequestContext = getStreamRequestContext(stream);
   // Use the message OTID stored in the request context (set from messages[0].otid).
   // This is the real UUID OTID — distinct from the tool execution context ID
@@ -864,6 +875,9 @@ export async function drainStreamWithResume(
 
   // Update duration to reflect total time (including resume attempt)
   result.apiDurationMs = performance.now() - overallStartTime;
+  recordTuiPerf(`stream_lifecycle:end:${result.stopReason}`, {
+    ms: result.apiDurationMs,
+  });
 
   return result;
 }

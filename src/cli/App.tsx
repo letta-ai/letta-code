@@ -143,6 +143,7 @@ import {
   debugWarn,
   isDebugEnabled,
 } from "../utils/debug";
+import { recordTuiPerf } from "../utils/tuiPerf";
 import { getVersion } from "../version";
 import {
   handleMcpAdd,
@@ -3175,6 +3176,7 @@ export default function App({
     streamingRefreshTimeoutRef.current = setTimeout(() => {
       streamingRefreshTimeoutRef.current = null;
       if (!buffersRef.current.interrupted) {
+        recordTuiPerf("ui_refresh:tool_output");
         refreshDerived();
       }
     }, 100);
@@ -3192,6 +3194,10 @@ export default function App({
   // Helper to update streaming output for bash/shell tools
   const updateStreamingOutput = useCallback(
     (toolCallId: string, chunk: string, isStderr = false) => {
+      recordTuiPerf(`tool_output:${isStderr ? "stderr" : "stdout"}`, {
+        bytes: Buffer.byteLength(chunk),
+      });
+
       const lineId = buffersRef.current.toolCallIdToLineId.get(toolCallId);
       if (!lineId) return;
 
@@ -3233,6 +3239,7 @@ export default function App({
           !buffersRef.current.interrupted &&
           (buffersRef.current.commitGeneration || 0) === capturedGeneration
         ) {
+          recordTuiPerf("ui_refresh:stream");
           refreshDerived();
         }
       }, 16); // ~60fps
