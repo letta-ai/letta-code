@@ -1,3 +1,5 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
@@ -76,6 +78,8 @@ type ProtocolPerfBucket = {
 const protocolPerfBuckets = new Map<string, ProtocolPerfBucket>();
 let protocolPerfFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let protocolPerfWindowStartedAt = 0;
+let protocolPerfFileDirEnsured: string | null = null;
+let protocolPerfFileWarningEmitted = false;
 
 function isProtocolPerfTelemetryEnabled(): boolean {
   return PROTOCOL_PERF_ENV_VALUES.has(
@@ -149,20 +153,107 @@ function recordProtocolPerfTelemetry(
   scheduleProtocolPerfFlush();
 }
 
+function writeProtocolPerfFile(
+  record: {
+    ts: string;
+    event: "protocol_emit";
+    window_ms: number;
+    totals: ProtocolPerfBucket;
+    buckets: Record<
+      string,
+      ProtocolPerfBucket & {
+        avg_bytes: number;
+        avg_stringify_ms: number;
+        avg_send_ms: number;
+      }
+    >;
+  },
+  fallbackLine: string,
+): void {
+  const filePath = process.env.LETTA_LISTENER_PERF_FILE?.trim();
+  if (!filePath) {
+    console.error(fallbackLine);
+    return;
+  }
+
+  try {
+    const dir = dirname(filePath);
+    if (protocolPerfFileDirEnsured !== dir) {
+      mkdirSync(dir, { recursive: true });
+      protocolPerfFileDirEnsured = dir;
+    }
+    appendFileSync(filePath, `${JSON.stringify(record)}\n`, {
+      encoding: "utf8",
+    });
+  } catch (error) {
+    if (!protocolPerfFileWarningEmitted) {
+      protocolPerfFileWarningEmitted = true;
+      console.error(
+        `[Listen Perf] Failed to write LETTA_LISTENER_PERF_FILE=${filePath}`,
+        error,
+      );
+    }
+    console.error(fallbackLine);
+  }
+}
+
 function flushProtocolPerfTelemetry(): void {
   if (protocolPerfBuckets.size === 0) {
     protocolPerfWindowStartedAt = 0;
     return;
   }
   const windowMs = Math.max(1, Date.now() - protocolPerfWindowStartedAt);
+  const totals: ProtocolPerfBucket = {
+    count: 0,
+    bytes: 0,
+    stringifyMs: 0,
+    sendMs: 0,
+    maxBufferedBefore: 0,
+    maxBufferedAfter: 0,
+  };
+  const buckets: Record<
+    string,
+    ProtocolPerfBucket & {
+      avg_bytes: number;
+      avg_stringify_ms: number;
+      avg_send_ms: number;
+    }
+  > = {};
   const parts = [...protocolPerfBuckets.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, bucket]) => {
+      totals.count += bucket.count;
+      totals.bytes += bucket.bytes;
+      totals.stringifyMs += bucket.stringifyMs;
+      totals.sendMs += bucket.sendMs;
+      totals.maxBufferedBefore = Math.max(
+        totals.maxBufferedBefore,
+        bucket.maxBufferedBefore,
+      );
+      totals.maxBufferedAfter = Math.max(
+        totals.maxBufferedAfter,
+        bucket.maxBufferedAfter,
+      );
+      buckets[key] = {
+        ...bucket,
+        avg_bytes: bucket.count > 0 ? bucket.bytes / bucket.count : 0,
+        avg_stringify_ms:
+          bucket.count > 0 ? bucket.stringifyMs / bucket.count : 0,
+        avg_send_ms: bucket.count > 0 ? bucket.sendMs / bucket.count : 0,
+      };
+
       const stringifyMs = bucket.stringifyMs.toFixed(2);
       const sendMs = bucket.sendMs.toFixed(2);
       return `${key}{count=${bucket.count},bytes=${bucket.bytes},stringify_ms=${stringifyMs},send_ms=${sendMs},max_buffered_before=${bucket.maxBufferedBefore},max_buffered_after=${bucket.maxBufferedAfter}}`;
     });
-  console.error(
+  writeProtocolPerfFile(
+    {
+      ts: new Date().toISOString(),
+      event: "protocol_emit",
+      window_ms: windowMs,
+      totals,
+      buckets,
+    },
     `[Listen Perf] protocol_emit window_ms=${windowMs} ${parts.join(" ")}`,
   );
   protocolPerfBuckets.clear();
