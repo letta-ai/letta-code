@@ -117,9 +117,24 @@ export function getServerUrl(): string {
   );
 }
 
+function isLocalhostUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function isDesktopLocalProxyUrl(value: string | undefined): boolean {
+  return process.env.LETTA_DESKTOP_DEBUG_PANEL === "1" && isLocalhostUrl(value);
+}
+
 /**
  * Get the current Letta memfs server URL from environment or settings.
- * Falls back to Letta Cloud when no memfs-specific URL is set.
+ * Falls back to the Desktop localhost proxy in desktop listener sessions,
+ * otherwise falls back to Letta Cloud when no memfs-specific URL is set.
  */
 export function getMemfsServerUrl(): string {
   let settings: Settings | null = null;
@@ -129,11 +144,18 @@ export function getMemfsServerUrl(): string {
     // Settings may be unavailable in isolated tests that only rely on env.
   }
 
-  return (
-    process.env.LETTA_MEMFS_BASE_URL ||
-    settings?.env?.LETTA_MEMFS_BASE_URL ||
-    LETTA_CLOUD_API_URL
-  );
+  const configuredMemfsUrl =
+    process.env.LETTA_MEMFS_BASE_URL || settings?.env?.LETTA_MEMFS_BASE_URL;
+  if (configuredMemfsUrl) {
+    return configuredMemfsUrl;
+  }
+
+  const apiUrl = process.env.LETTA_BASE_URL || settings?.env?.LETTA_BASE_URL;
+  if (apiUrl && isDesktopLocalProxyUrl(apiUrl)) {
+    return apiUrl;
+  }
+
+  return LETTA_CLOUD_API_URL;
 }
 
 export async function getClient() {
