@@ -193,14 +193,14 @@ describe("MemFS endpoint validation", () => {
     expect(await isLettaMemfsServer()).toBe(false);
   });
 
-  test("allows Desktop local proxy as an explicit MemFS sync endpoint", async () => {
+  test("rejects Desktop local proxy as a canonical MemFS sync endpoint", async () => {
     process.env.LETTA_BASE_URL = "http://localhost:54085";
     process.env.LETTA_MEMFS_BASE_URL = "http://localhost:54085";
     delete process.env.LETTA_MEMFS_LOCAL;
     process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
     process.env.LETTA_API_KEY = "desktop-session-token";
 
-    expect(await isLettaMemfsServer()).toBe(true);
+    expect(await isLettaMemfsServer()).toBe(false);
   });
 });
 

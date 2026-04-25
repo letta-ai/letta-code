@@ -34,6 +34,35 @@ function withTemporaryAgentEnv<T>(agentId: string, fn: () => T): T {
   }
 }
 
+function withTemporaryEnv<T>(
+  updates: Record<string, string | undefined>,
+  fn: () => T,
+): T {
+  const original = Object.fromEntries(
+    Object.keys(updates).map((key) => [key, process.env[key]]),
+  ) as Record<string, string | undefined>;
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 describe("shellEnv letta shim", () => {
   test("resolveLettaInvocation prefers explicit launcher env", () => {
     const invocation = resolveLettaInvocation(
@@ -343,4 +372,51 @@ test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
       ).isMemfsEnabled = original;
     }
   });
+});
+
+test("getShellEnv injects transient MemFS git proxy config for Desktop Bash commands", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_BASE_URL: "http://localhost:57294",
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: "http://localhost:57294",
+      GIT_CONFIG_COUNT: undefined,
+      GIT_CONFIG_KEY_0: undefined,
+      GIT_CONFIG_VALUE_0: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBe("1");
+  expect(env.GIT_CONFIG_KEY_0).toBe(
+    "url.http://localhost:57294/v1/git/.insteadOf",
+  );
+  expect(env.GIT_CONFIG_VALUE_0).toBe("https://api.letta.com/v1/git/");
+  expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+  expect(env.GCM_INTERACTIVE).toBe("never");
+  expect(env.GIT_ASKPASS).toBe("");
+  expect(env.SSH_ASKPASS).toBe("");
+});
+
+test("getShellEnv appends MemFS git proxy config without clobbering existing git config env", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: "http://localhost:57294",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "safe.directory",
+      GIT_CONFIG_VALUE_0: "*",
+      GIT_CONFIG_KEY_1: undefined,
+      GIT_CONFIG_VALUE_1: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBe("2");
+  expect(env.GIT_CONFIG_KEY_0).toBe("safe.directory");
+  expect(env.GIT_CONFIG_VALUE_0).toBe("*");
+  expect(env.GIT_CONFIG_KEY_1).toBe(
+    "url.http://localhost:57294/v1/git/.insteadOf",
+  );
+  expect(env.GIT_CONFIG_VALUE_1).toBe("https://api.letta.com/v1/git/");
 });
