@@ -308,6 +308,118 @@ describe("reflectionTranscript helper", () => {
     expect(derived.state.turns_since_last_successful_reflection).toBe(1);
   });
 
+  test("turns appended during reflection are preserved across finalize", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "first", messageId: "u1" },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "ok",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    // Two more user turns complete while reflection is "running".
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u2", text: "second", messageId: "u2" },
+    ]);
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u3", text: "third", messageId: "u3" },
+    ]);
+
+    await finalizeAutoReflectionPayload(
+      agentId,
+      conversationId,
+      payload.payloadPath,
+      payload.endSnapshotLine,
+      true,
+    );
+
+    const derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.state.total_completed_turns).toBe(3);
+    expect(derived.state.reflected_completed_turns).toBe(1);
+    expect(derived.state.turns_since_last_successful_reflection).toBe(2);
+    expect(derived.state.reflected_through_message_id).toBe("a1");
+  });
+
+  test("assistant-only delta does not advance completed-turn counter", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+    ]);
+
+    let derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.state.total_completed_turns).toBe(1);
+
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.state.total_completed_turns).toBe(1);
+  });
+
+  test("concurrent append and finalize do not lose state updates", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    await Promise.all([
+      appendTranscriptDeltaJsonl(agentId, conversationId, [
+        { kind: "user", id: "u2", text: "second", messageId: "u2" },
+      ]),
+      finalizeAutoReflectionPayload(
+        agentId,
+        conversationId,
+        payload.payloadPath,
+        payload.endSnapshotLine,
+        true,
+      ),
+      appendTranscriptDeltaJsonl(agentId, conversationId, [
+        { kind: "user", id: "u3", text: "third", messageId: "u3" },
+      ]),
+    ]);
+
+    const derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.state.total_completed_turns).toBe(3);
+    expect(derived.state.reflected_completed_turns).toBe(1);
+    expect(derived.state.turns_since_last_successful_reflection).toBe(2);
+    expect(derived.state.reflected_through_message_id).toBe("a1");
+  });
+
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
     const memoryDir = join(testRoot, "memory");
     const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");

@@ -2,6 +2,10 @@ import { getClient } from "../../agent/client";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
+import {
+  spawnBackgroundSubagentTask as defaultSpawnBackgroundSubagentTask,
+  waitForBackgroundSubagentAgentId as defaultWaitForBackgroundSubagentAgentId,
+} from "../../tools/impl/Task";
 import { debugLog, debugWarn } from "../../utils/debug";
 import { handleMemorySubagentCompletion } from "./memorySubagentCompletion";
 import { isReflectionSubagentActive } from "./reflectionGate";
@@ -15,6 +19,7 @@ import {
 import { getSubagents } from "./subagentState";
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+const SUBAGENT_ID_WAIT_MS = 1000;
 
 export type ReflectionRecompileContext = {
   recompileByConversation: Map<string, Promise<void>>;
@@ -205,15 +210,12 @@ async function runReflectionLaunch(
     parentMemory,
   });
 
-  const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-    input.deps?.spawnBackgroundSubagentTask &&
-    input.deps.waitForBackgroundSubagentAgentId
-      ? {
-          spawnBackgroundSubagentTask: input.deps.spawnBackgroundSubagentTask,
-          waitForBackgroundSubagentAgentId:
-            input.deps.waitForBackgroundSubagentAgentId,
-        }
-      : await import("../../tools/impl/Task");
+  const spawnBackgroundSubagentTask =
+    input.deps?.spawnBackgroundSubagentTask ??
+    defaultSpawnBackgroundSubagentTask;
+  const waitForBackgroundSubagentAgentId =
+    input.deps?.waitForBackgroundSubagentAgentId ??
+    defaultWaitForBackgroundSubagentAgentId;
 
   let resolveCompletion: (result: LaunchReflectionCompletedResult) => void =
     () => {};
@@ -281,7 +283,7 @@ async function runReflectionLaunch(
 
   const reflectionAgentId = await waitForBackgroundSubagentAgentId(
     subagentId,
-    1000,
+    SUBAGENT_ID_WAIT_MS,
   );
   telemetry.trackReflectionStart(triggerSource, {
     agentId,
@@ -342,6 +344,9 @@ export async function launchReflectionSubagent(
   if (!input.agentId || !isMemfsEnabled(input)) {
     return trackSkippedLaunch(input, "memfs-disabled");
   }
+  // Pre-queue check for the user-facing "already running" signal. A queued
+  // launch racing with this check is harmless: the per-agent queue is the
+  // source of truth and serializes overlapping launches.
   if (hasActiveReflectionSubagent(input.agentId, input.conversationId)) {
     return trackSkippedLaunch(input, "already-active");
   }

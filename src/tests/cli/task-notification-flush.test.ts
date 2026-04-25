@@ -132,17 +132,20 @@ describe("background onComplete → flush wiring in App.tsx", () => {
     expect(refAssign).toBeGreaterThan(derivedDecl);
   });
 
-  test("reflection onComplete calls appendTaskNotificationEvents", () => {
+  test("launchReflectionSubagent call sites wire appendTaskNotificationEvents into emitCompletionNotification", () => {
     const source = readSource();
 
-    const reflectionBlock = source.indexOf('subagentType: "reflection"');
-    expect(reflectionBlock).toBeGreaterThan(-1);
-
-    const onCompleteIdx = source.indexOf("onComplete:", reflectionBlock);
-    expect(onCompleteIdx).toBeGreaterThan(-1);
-
-    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 1400);
-    expect(onCompleteWindow).toContain("await handleMemorySubagentCompletion(");
-    expect(onCompleteWindow).toContain("appendTaskNotificationEvents(");
+    let cursor = 0;
+    let callSites = 0;
+    while (true) {
+      const launchIdx = source.indexOf("launchReflectionSubagent(", cursor);
+      if (launchIdx === -1) break;
+      callSites += 1;
+      const window = source.slice(launchIdx, launchIdx + 1400);
+      expect(window).toContain("emitCompletionNotification");
+      expect(window).toContain("appendTaskNotificationEvents(");
+      cursor = launchIdx + 1;
+    }
+    expect(callSites).toBeGreaterThan(0);
   });
 });

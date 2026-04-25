@@ -193,16 +193,6 @@ async function discoverIdleReflectionCandidates(
   return candidates;
 }
 
-export const __idleReflectionSweepTestUtils = {
-  discoverIdleReflectionCandidates,
-  readIdleSweepState,
-  writeIdleSweepState,
-  runIdleReflectionSweep,
-  resetInFlight() {
-    idleSweepInFlightByAgent.clear();
-  },
-};
-
 async function runIdleReflectionSweep(
   input: IdleReflectionSweepInput,
 ): Promise<void> {
@@ -306,3 +296,13 @@ export function maybeStartIdleReflectionSweep(
     idleSweepInFlightByAgent.delete(input.agentId);
   });
 }
+
+export const __idleReflectionSweepTestUtils = {
+  discoverIdleReflectionCandidates,
+  readIdleSweepState,
+  writeIdleSweepState,
+  runIdleReflectionSweep,
+  resetInFlight() {
+    idleSweepInFlightByAgent.clear();
+  },
+};

@@ -369,7 +369,7 @@ export function SleeptimeSelector({
                 <Text bold>Step count: </Text>
                 <Text>{stepCountInput}</Text>
                 {isEditingStepCount && <Text>█</Text>}
-                {validationError && (
+                {validationError && focusRow === "step-count" && (
                   <Text color={colors.error.text}>
                     {` (error: ${validationError})`}
                   </Text>
@@ -474,7 +474,7 @@ export function SleeptimeSelector({
                 <Text bold>Step count: </Text>
                 <Text>{stepCountInput}</Text>
                 {isEditingStepCount && <Text>█</Text>}
-                {validationError && (
+                {validationError && focusRow === "step-count" && (
                   <Text color={colors.error.text}>
                     {` (error: ${validationError})`}
                   </Text>

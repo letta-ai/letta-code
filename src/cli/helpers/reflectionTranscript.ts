@@ -383,6 +383,26 @@ function defaultState(lineCount = 0): ReflectionTranscriptState {
   };
 }
 
+const stateMutexes = new Map<string, Promise<unknown>>();
+
+function withStateLock<T>(
+  agentId: string,
+  conversationId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const key = `${agentId}::${conversationId}`;
+  const previous = stateMutexes.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(fn);
+  const tail = next.catch(() => undefined);
+  stateMutexes.set(key, tail);
+  tail.finally(() => {
+    if (stateMutexes.get(key) === tail) {
+      stateMutexes.delete(key);
+    }
+  });
+  return next;
+}
+
 function isEligibleCanonicalEntry(
   entry: TranscriptEntry,
 ): entry is TranscriptEntry & { source_message_id: string } {
@@ -619,9 +639,9 @@ function normalizeV2State(
     normalizeNonNegativeInteger(parsed.reflected_completed_turns),
     totalCompletedTurns,
   );
-  const turnsSinceLastSuccessfulReflection = normalizeNonNegativeInteger(
-    parsed.turns_since_last_successful_reflection,
-    Math.max(0, totalCompletedTurns - reflectedCompletedTurns),
+  const turnsSinceLastSuccessfulReflection = Math.max(
+    0,
+    totalCompletedTurns - reflectedCompletedTurns,
   );
   const lastReflectionSource = normalizeReflectionSource(
     parsed.last_reflection?.source,
@@ -761,6 +781,10 @@ async function writeState(
   paths: ReflectionTranscriptPaths,
   state: ReflectionTranscriptState,
 ): Promise<void> {
+  state.turns_since_last_successful_reflection = Math.max(
+    0,
+    state.total_completed_turns - state.reflected_completed_turns,
+  );
   await writeFile(
     paths.statePath,
     `${JSON.stringify(state, null, 2)}\n`,
@@ -814,28 +838,30 @@ export async function appendTranscriptDeltaJsonl(
   conversationId: string,
   lines: Line[],
 ): Promise<number> {
-  const paths = getReflectionTranscriptPaths(agentId, conversationId);
-  await ensurePaths(paths);
-  const existingTranscriptLines = await readTranscriptLines(paths);
-  const state = await readState(paths, existingTranscriptLines);
+  return withStateLock(agentId, conversationId, async () => {
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await ensurePaths(paths);
+    const existingTranscriptLines = await readTranscriptLines(paths);
+    const state = await readState(paths, existingTranscriptLines);
 
-  const capturedAt = new Date().toISOString();
-  const entries = lines
-    .map((line) => lineToTranscriptEntry(line, capturedAt))
-    .filter((entry): entry is TranscriptEntry => entry !== null);
-  if (entries.length === 0) {
-    return 0;
-  }
+    const capturedAt = new Date().toISOString();
+    const entries = lines
+      .map((line) => lineToTranscriptEntry(line, capturedAt))
+      .filter((entry): entry is TranscriptEntry => entry !== null);
+    if (entries.length === 0) {
+      return 0;
+    }
 
-  const payload = entries.map((entry) => JSON.stringify(entry)).join("\n");
-  await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
-  const nowIso = new Date().toISOString();
-  state.transcript_line_count = existingTranscriptLines.length + entries.length;
-  state.total_completed_turns += 1;
-  state.turns_since_last_successful_reflection += 1;
-  state.last_transcript_appended_at = nowIso;
-  await writeState(paths, state);
-  return entries.length;
+    const payload = entries.map((entry) => JSON.stringify(entry)).join("\n");
+    await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
+    const nowIso = new Date().toISOString();
+    state.transcript_line_count =
+      existingTranscriptLines.length + entries.length;
+    state.total_completed_turns += countUserRows(entries);
+    state.last_transcript_appended_at = nowIso;
+    await writeState(paths, state);
+    return entries.length;
+  });
 }
 
 /**
@@ -967,48 +993,50 @@ export async function buildAutoReflectionPayload(
   conversationId: string,
   systemPrompt?: string,
 ): Promise<AutoReflectionPayload | null> {
-  const paths = getReflectionTranscriptPaths(agentId, conversationId);
-  await ensurePaths(paths);
+  return withStateLock(agentId, conversationId, async () => {
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await ensurePaths(paths);
 
-  const lines = await readTranscriptLines(paths);
-  const state = await readState(paths, lines);
-  const rows = parseTranscriptRows(lines);
-  const selection = selectUnreflectedTranscriptRange(
-    rows,
-    state.reflected_through_message_id,
-  );
-  if (!selection) {
-    return null;
-  }
+    const lines = await readTranscriptLines(paths);
+    const state = await readState(paths, lines);
+    const rows = parseTranscriptRows(lines);
+    const selection = selectUnreflectedTranscriptRange(
+      rows,
+      state.reflected_through_message_id,
+    );
+    if (!selection) {
+      return null;
+    }
 
-  const entries = rows
-    .filter(
-      (row) =>
-        row.lineIndex >= selection.startLineIndex &&
-        row.lineIndex <= selection.endLineIndex,
-    )
-    .map((row) => row.entry);
-  const filteredSystemPrompt = systemPrompt
-    ? filterSystemPromptForReflection(systemPrompt) || undefined
-    : undefined;
-  const transcript = formatTaggedTranscript(entries, filteredSystemPrompt);
-  if (!transcript || transcript === "[]") {
-    return null;
-  }
+    const entries = rows
+      .filter(
+        (row) =>
+          row.lineIndex >= selection.startLineIndex &&
+          row.lineIndex <= selection.endLineIndex,
+      )
+      .map((row) => row.entry);
+    const filteredSystemPrompt = systemPrompt
+      ? filterSystemPromptForReflection(systemPrompt) || undefined
+      : undefined;
+    const transcript = formatTaggedTranscript(entries, filteredSystemPrompt);
+    if (!transcript || transcript === "[]") {
+      return null;
+    }
 
-  const payloadPath = buildPayloadPath(paths.rootDir, "auto");
-  await writeFile(payloadPath, transcript, "utf-8");
+    const payloadPath = buildPayloadPath(paths.rootDir, "auto");
+    await writeFile(payloadPath, transcript, "utf-8");
 
-  state.last_reflection_started_at = new Date().toISOString();
-  state.transcript_line_count = lines.length;
-  await writeState(paths, state);
+    state.last_reflection_started_at = new Date().toISOString();
+    state.transcript_line_count = lines.length;
+    await writeState(paths, state);
 
-  return {
-    payloadPath,
-    startMessageId: selection.startMessageId,
-    endMessageId: selection.endMessageId,
-    endSnapshotLine: selection.endLineIndex + 1,
-  };
+    return {
+      payloadPath,
+      startMessageId: selection.startMessageId,
+      endMessageId: selection.endMessageId,
+      endSnapshotLine: selection.endLineIndex + 1,
+    };
+  });
 }
 
 export async function finalizeAutoReflectionPayload(
@@ -1019,34 +1047,38 @@ export async function finalizeAutoReflectionPayload(
   success: boolean,
   triggerSource: ReflectionSource = "step-count",
 ): Promise<void> {
-  const paths = getReflectionTranscriptPaths(agentId, conversationId);
-  await ensurePaths(paths);
+  return withStateLock(agentId, conversationId, async () => {
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await ensurePaths(paths);
 
-  const lines = await readTranscriptLines(paths);
-  const state = await readState(paths, lines);
-  state.transcript_line_count = lines.length;
-  if (success) {
-    const snapshotLines = lines.slice(0, Math.max(0, endSnapshotLine));
-    const selection = selectUnreflectedTranscriptRange(
-      parseTranscriptRows(snapshotLines),
-      state.reflected_through_message_id,
-    );
-    if (!selection) {
-      await writeState(paths, state);
-      return;
+    const lines = await readTranscriptLines(paths);
+    const state = await readState(paths, lines);
+    state.transcript_line_count = lines.length;
+    if (success) {
+      const snapshotLines = lines.slice(0, Math.max(0, endSnapshotLine));
+      const snapshotRows = parseTranscriptRows(snapshotLines);
+      const selection = selectUnreflectedTranscriptRange(
+        snapshotRows,
+        state.reflected_through_message_id,
+      );
+      if (!selection) {
+        await writeState(paths, state);
+        return;
+      }
+      const nowIso = new Date().toISOString();
+      state.reflected_through_message_id = selection.endMessageId;
+      state.reflected_completed_turns = countUserRows(
+        snapshotRows.map((row) => row.entry),
+      );
+      state.last_reflection_succeeded_at = nowIso;
+      state.last_reflection_source = triggerSource;
+      state.last_reflection = {
+        source: triggerSource,
+        start_message_id: selection.startMessageId,
+        end_message_id: selection.endMessageId,
+        succeeded_at: nowIso,
+      };
     }
-    const nowIso = new Date().toISOString();
-    state.reflected_through_message_id = selection.endMessageId;
-    state.reflected_completed_turns = state.total_completed_turns;
-    state.turns_since_last_successful_reflection = 0;
-    state.last_reflection_succeeded_at = nowIso;
-    state.last_reflection_source = triggerSource;
-    state.last_reflection = {
-      source: triggerSource,
-      start_message_id: selection.startMessageId,
-      end_message_id: selection.endMessageId,
-      succeeded_at: nowIso,
-    };
-  }
-  await writeState(paths, state);
+    await writeState(paths, state);
+  });
 }
