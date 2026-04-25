@@ -1402,6 +1402,17 @@
       }
     },
     {
+      "id": "deepseek-v4-pro",
+      "handle": "openrouter/deepseek/deepseek-v4-pro",
+      "label": "DeepSeek V4 Pro",
+      "description": "DeepSeek's V4 Pro model",
+      "updateArgs": {
+        "context_window": 1048576,
+        "max_output_tokens": 384000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "glm-5.1",
       "handle": "zai/glm-5.1",
       "label": "GLM-5.1",
