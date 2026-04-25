@@ -65,6 +65,10 @@ const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
 const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
 const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
+const PROTOCOL_PERF_ENABLED = PROTOCOL_PERF_ENV_VALUES.has(
+  (process.env.LETTA_LISTENER_PERF ?? "").toLowerCase(),
+);
+const PROTOCOL_PERF_FILE = process.env.LETTA_LISTENER_PERF_FILE?.trim() || null;
 
 type ProtocolPerfBucket = {
   count: number;
@@ -80,12 +84,6 @@ let protocolPerfFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let protocolPerfWindowStartedAt = 0;
 let protocolPerfFileDirEnsured: string | null = null;
 let protocolPerfFileWarningEmitted = false;
-
-function isProtocolPerfTelemetryEnabled(): boolean {
-  return PROTOCOL_PERF_ENV_VALUES.has(
-    (process.env.LETTA_LISTENER_PERF ?? "").toLowerCase(),
-  );
-}
 
 function getProtocolPerfKey(
   message: Omit<
@@ -170,7 +168,7 @@ function writeProtocolPerfFile(
   },
   fallbackLine: string,
 ): void {
-  const filePath = process.env.LETTA_LISTENER_PERF_FILE?.trim();
+  const filePath = PROTOCOL_PERF_FILE;
   if (!filePath) {
     console.error(fallbackLine);
     return;
@@ -605,7 +603,7 @@ export function emitProtocolV2Message(
     emitted_at: new Date().toISOString(),
     idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
   } as WsProtocolMessage;
-  const perfEnabled = isProtocolPerfTelemetryEnabled();
+  const perfEnabled = PROTOCOL_PERF_ENABLED;
   const stringifyStartedAt = perfEnabled ? performance.now() : 0;
   let payload: string;
   try {
