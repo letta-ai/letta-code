@@ -76,6 +76,11 @@ You can create, delete, or modify files — including their contents, names, and
 - Why did the agent make the mistakes it did? What was missing from context?
 - Why did the user have to make corrections?
 - Does anything in memory contradict the observed conversation history, or need updating?
+- Check the current size of `system/` before adding or expanding in-context memory:
+  ```bash
+  letta memory tokens --format json --quiet
+  ```
+  This command is memory-mode safe. Treat it as measurement only: decide whether a size is concerning based on the actual context and the value of the proposed change. Prefer adding durable detail to external memory unless the information is important enough to stay in-context.
 
 ### Step 4: Update memory files (if needed)
 
