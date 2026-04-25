@@ -3,7 +3,8 @@
  *
  * When memFS is enabled, the agent's memory is stored in a git repo
  * on the server at $LETTA_MEMFS_BASE_URL/v1/git/$AGENT_ID/state.git
- * (falling back to $LETTA_BASE_URL when unset).
+ * (falling back to the Desktop local proxy in desktop listener sessions, or
+ * api.letta.com otherwise).
  * This module provides the CLI harness helpers: clone on first run,
  * pull on startup, and status check for system reminders.
  *
@@ -246,6 +247,29 @@ async function getAuthToken(): Promise<string> {
   return (client as any)._options?.apiKey ?? "";
 }
 
+export function buildGitAuthArgs(token: string): string[] {
+  return [
+    "-c",
+    "credential.helper=",
+    "-c",
+    "core.askPass=",
+    "-c",
+    `http.extraHeader=Authorization: Basic ${Buffer.from(`letta:${token}`).toString("base64")}`,
+  ];
+}
+
+export function buildNonInteractiveGitEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+    GIT_ASKPASS: "",
+    SSH_ASKPASS: "",
+  };
+}
+
 /**
  * Run a git command in the given directory.
  * If a token is provided, passes it as an auth header.
@@ -255,12 +279,7 @@ async function runGit(
   args: string[],
   token?: string,
 ): Promise<{ stdout: string; stderr: string }> {
-  const authArgs = token
-    ? [
-        "-c",
-        `http.extraHeader=Authorization: Basic ${Buffer.from(`letta:${token}`).toString("base64")}`,
-      ]
-    : [];
+  const authArgs = token ? buildGitAuthArgs(token) : [];
   const allArgs = [...authArgs, ...args];
 
   // Redact credential helper values to avoid leaking tokens in debug logs.
@@ -279,6 +298,7 @@ async function runGit(
 
   const result = await execFile("git", allArgs, {
     cwd,
+    env: buildNonInteractiveGitEnv(),
     maxBuffer: 10 * 1024 * 1024, // 10MB
     timeout: 60_000, // 60s
   });

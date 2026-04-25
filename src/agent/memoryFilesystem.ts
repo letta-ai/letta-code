@@ -494,11 +494,14 @@ function getServerHostLabel(serverUrl: string): string {
  * Whether the MemFS sync endpoint is backed by the Letta API.
  */
 export async function isLettaMemfsServer(): Promise<boolean> {
-  const { getMemfsServerUrl } = await import("./client");
+  const { getMemfsServerUrl, isDesktopLocalProxyUrl } = await import(
+    "./client"
+  );
   const memfsServerUrl = getMemfsServerUrl();
 
   return (
     memfsServerUrl.includes("api.letta.com") ||
+    isDesktopLocalProxyUrl(memfsServerUrl) ||
     process.env.LETTA_MEMFS_LOCAL === "1" ||
     process.env.LETTA_API_KEY === "local-desktop"
   );

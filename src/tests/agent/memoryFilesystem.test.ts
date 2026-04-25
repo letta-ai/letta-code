@@ -20,6 +20,8 @@ const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_LOCAL = process.env.LETTA_MEMFS_LOCAL;
 const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
+const ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL =
+  process.env.LETTA_DESKTOP_DEBUG_PANEL;
 const DIRECTORY_LIMIT_ENV_KEYS = Object.values(DIRECTORY_LIMIT_ENV);
 const ORIGINAL_DIRECTORY_ENV = Object.fromEntries(
   DIRECTORY_LIMIT_ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -48,6 +50,12 @@ function restoreMemfsEnv(): void {
     delete process.env.LETTA_API_KEY;
   } else {
     process.env.LETTA_API_KEY = ORIGINAL_LETTA_API_KEY;
+  }
+
+  if (ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL === undefined) {
+    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  } else {
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL;
   }
 }
 
@@ -179,9 +187,20 @@ describe("MemFS endpoint validation", () => {
     process.env.LETTA_BASE_URL = "http://localhost:54085";
     process.env.LETTA_MEMFS_BASE_URL = "https://selfhost.example.com";
     delete process.env.LETTA_MEMFS_LOCAL;
+    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
     process.env.LETTA_API_KEY = "desktop-session-token";
 
     expect(await isLettaMemfsServer()).toBe(false);
+  });
+
+  test("allows Desktop local proxy as an explicit MemFS sync endpoint", async () => {
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    process.env.LETTA_MEMFS_BASE_URL = "http://localhost:54085";
+    delete process.env.LETTA_MEMFS_LOCAL;
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_API_KEY = "desktop-session-token";
+
+    expect(await isLettaMemfsServer()).toBe(true);
   });
 });
 

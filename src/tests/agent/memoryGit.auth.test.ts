@@ -4,7 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { getMemfsServerUrl } from "../../agent/client";
 import {
+  buildGitAuthArgs,
+  buildNonInteractiveGitEnv,
   formatGitCredentialHelperPath,
   getGitRemoteUrl,
   isMemfsRemoteUrlForAgent,
@@ -14,6 +17,8 @@ import {
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;
+const ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL =
+  process.env.LETTA_DESKTOP_DEBUG_PANEL;
 
 let tempDirs: string[] = [];
 
@@ -33,6 +38,12 @@ afterEach(() => {
     delete process.env.LETTA_MEMFS_BASE_URL;
   } else {
     process.env.LETTA_MEMFS_BASE_URL = ORIGINAL_LETTA_MEMFS_BASE_URL;
+  }
+
+  if (ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL === undefined) {
+    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  } else {
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL;
   }
 });
 
@@ -84,8 +95,20 @@ describe("normalizeCredentialBaseUrl", () => {
     test("defaults to api.letta.com when LETTA_MEMFS_BASE_URL is unset, even if LETTA_BASE_URL is localhost", () => {
       process.env.LETTA_BASE_URL = "http://localhost:51338";
       delete process.env.LETTA_MEMFS_BASE_URL;
+      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
       expect(getGitRemoteUrl("agent-123")).toBe(
         "https://api.letta.com/v1/git/agent-123/state.git",
+      );
+    });
+
+    test("uses the Desktop localhost proxy for memfs git in desktop listener sessions", () => {
+      process.env.LETTA_BASE_URL = "http://localhost:51338";
+      delete process.env.LETTA_MEMFS_BASE_URL;
+      process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+
+      expect(getMemfsServerUrl()).toBe("http://localhost:51338");
+      expect(getGitRemoteUrl("agent-123")).toBe(
+        "http://localhost:51338/v1/git/agent-123/state.git",
       );
     });
   });
@@ -152,6 +175,26 @@ describe("formatGitCredentialHelperPath", () => {
     ).toBe(
       "C:/Users/Jane\\ Doe/.letta/agents/agent-1/memory/.git/letta-credential-helper.cmd",
     );
+  });
+});
+
+describe("git auth hardening", () => {
+  test("auth args pass Basic auth and suppress inherited credential helpers", () => {
+    const args = buildGitAuthArgs("token-123");
+
+    expect(args.slice(0, 2)).toEqual(["-c", "credential.helper="]);
+    expect(args).toContain("core.askPass=");
+    expect(args.join("\n")).toContain("http.extraHeader=Authorization: Basic");
+  });
+
+  test("git env disables terminal and Git Credential Manager prompts", () => {
+    const env = buildNonInteractiveGitEnv({ PATH: "/usr/bin" });
+
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.GCM_INTERACTIVE).toBe("never");
+    expect(env.GIT_ASKPASS).toBe("");
+    expect(env.SSH_ASKPASS).toBe("");
   });
 });
 
