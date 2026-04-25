@@ -8,9 +8,9 @@ import { debugLog } from "../../utils/debug";
 const MEMORY_INTERVAL_FREQUENT = 5;
 const MEMORY_INTERVAL_OCCASIONAL = 10;
 const DEFAULT_STEP_COUNT = 25;
-const DEFAULT_IDLE_SWEEP_INTERVAL_HOURS = 24;
-const DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS = 24;
-const DEFAULT_IDLE_MIN_UNREFLECTED_TURNS = 3;
+const DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS = 24;
+const DEFAULT_PASSIVE_MIN_QUIET_MINUTES = 15;
+const DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS = 3;
 
 export type MemoryReminderMode =
   | number
@@ -27,10 +27,10 @@ export interface ReflectionSettings {
   stepCount: number;
   activeTrigger?: ReflectionTrigger;
   activeStepCount?: number;
-  idleSweepEnabled?: boolean;
-  idleSweepIntervalHours?: number;
-  idleConversationMinAgeHours?: number;
-  idleMinUnreflectedTurns?: number;
+  passiveSweepEnabled?: boolean;
+  passiveSweepIntervalHours?: number;
+  passiveMinQuietMinutes?: number;
+  passiveMinUnreflectedTurns?: number;
 }
 
 export type NormalizedReflectionSettings = Required<ReflectionSettings>;
@@ -40,10 +40,10 @@ type PersistedReflectionSettings = {
   stepCount?: unknown;
   activeTrigger?: unknown;
   activeStepCount?: unknown;
-  idleSweepEnabled?: unknown;
-  idleSweepIntervalHours?: unknown;
-  idleConversationMinAgeHours?: unknown;
-  idleMinUnreflectedTurns?: unknown;
+  passiveSweepEnabled?: unknown;
+  passiveSweepIntervalHours?: unknown;
+  passiveMinQuietMinutes?: unknown;
+  passiveMinUnreflectedTurns?: unknown;
 };
 
 interface ReflectionSettingsCarrier {
@@ -52,10 +52,10 @@ interface ReflectionSettingsCarrier {
   reflectionStepCount?: unknown;
   reflectionActiveTrigger?: unknown;
   reflectionActiveStepCount?: unknown;
-  reflectionIdleSweepEnabled?: unknown;
-  reflectionIdleSweepIntervalHours?: unknown;
-  reflectionIdleConversationMinAgeHours?: unknown;
-  reflectionIdleMinUnreflectedTurns?: unknown;
+  reflectionPassiveSweepEnabled?: unknown;
+  reflectionPassiveSweepIntervalHours?: unknown;
+  reflectionPassiveMinQuietMinutes?: unknown;
+  reflectionPassiveMinUnreflectedTurns?: unknown;
   reflectionSettingsByAgent?: Record<string, PersistedReflectionSettings>;
 }
 
@@ -64,10 +64,10 @@ const DEFAULT_REFLECTION_SETTINGS: NormalizedReflectionSettings = {
   stepCount: DEFAULT_STEP_COUNT,
   activeTrigger: "step-count",
   activeStepCount: DEFAULT_STEP_COUNT,
-  idleSweepEnabled: true,
-  idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
-  idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
-  idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
+  passiveSweepEnabled: true,
+  passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
+  passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
+  passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
 };
 
 export function normalizeReflectionSettings(
@@ -86,23 +86,23 @@ export function normalizeReflectionSettings(
     stepCount: activeStepCount,
     activeTrigger,
     activeStepCount,
-    idleSweepEnabled:
-      typeof raw.idleSweepEnabled === "boolean"
-        ? raw.idleSweepEnabled
+    passiveSweepEnabled:
+      typeof raw.passiveSweepEnabled === "boolean"
+        ? raw.passiveSweepEnabled
         : activeTrigger === "off"
           ? false
-          : DEFAULT_REFLECTION_SETTINGS.idleSweepEnabled,
-    idleSweepIntervalHours: normalizePositiveNumber(
-      raw.idleSweepIntervalHours,
-      DEFAULT_REFLECTION_SETTINGS.idleSweepIntervalHours,
+          : DEFAULT_REFLECTION_SETTINGS.passiveSweepEnabled,
+    passiveSweepIntervalHours: normalizePositiveNumber(
+      raw.passiveSweepIntervalHours,
+      DEFAULT_REFLECTION_SETTINGS.passiveSweepIntervalHours,
     ),
-    idleConversationMinAgeHours: normalizePositiveNumber(
-      raw.idleConversationMinAgeHours,
-      DEFAULT_REFLECTION_SETTINGS.idleConversationMinAgeHours,
+    passiveMinQuietMinutes: normalizePositiveNumber(
+      raw.passiveMinQuietMinutes,
+      DEFAULT_REFLECTION_SETTINGS.passiveMinQuietMinutes,
     ),
-    idleMinUnreflectedTurns: normalizePositiveInteger(
-      raw.idleMinUnreflectedTurns,
-      DEFAULT_REFLECTION_SETTINGS.idleMinUnreflectedTurns,
+    passiveMinUnreflectedTurns: normalizePositiveInteger(
+      raw.passiveMinUnreflectedTurns,
+      DEFAULT_REFLECTION_SETTINGS.passiveMinUnreflectedTurns,
     ),
   };
 }
@@ -151,10 +151,10 @@ function applyExplicitReflectionOverrides(
     reflectionStepCount?: unknown;
     reflectionActiveTrigger?: unknown;
     reflectionActiveStepCount?: unknown;
-    reflectionIdleSweepEnabled?: unknown;
-    reflectionIdleSweepIntervalHours?: unknown;
-    reflectionIdleConversationMinAgeHours?: unknown;
-    reflectionIdleMinUnreflectedTurns?: unknown;
+    reflectionPassiveSweepEnabled?: unknown;
+    reflectionPassiveSweepIntervalHours?: unknown;
+    reflectionPassiveMinQuietMinutes?: unknown;
+    reflectionPassiveMinUnreflectedTurns?: unknown;
   },
 ): NormalizedReflectionSettings {
   const activeTrigger = normalizeTrigger(
@@ -165,27 +165,27 @@ function applyExplicitReflectionOverrides(
     raw.reflectionActiveStepCount ?? raw.reflectionStepCount,
     base.activeStepCount,
   );
-  const idleSweepEnabled =
-    typeof raw.reflectionIdleSweepEnabled === "boolean"
-      ? raw.reflectionIdleSweepEnabled
-      : base.idleSweepEnabled;
+  const passiveSweepEnabled =
+    typeof raw.reflectionPassiveSweepEnabled === "boolean"
+      ? raw.reflectionPassiveSweepEnabled
+      : base.passiveSweepEnabled;
   return {
     trigger: activeTrigger,
     stepCount: activeStepCount,
     activeTrigger,
     activeStepCount,
-    idleSweepEnabled,
-    idleSweepIntervalHours: normalizePositiveNumber(
-      raw.reflectionIdleSweepIntervalHours,
-      base.idleSweepIntervalHours,
+    passiveSweepEnabled,
+    passiveSweepIntervalHours: normalizePositiveNumber(
+      raw.reflectionPassiveSweepIntervalHours,
+      base.passiveSweepIntervalHours,
     ),
-    idleConversationMinAgeHours: normalizePositiveNumber(
-      raw.reflectionIdleConversationMinAgeHours,
-      base.idleConversationMinAgeHours,
+    passiveMinQuietMinutes: normalizePositiveNumber(
+      raw.reflectionPassiveMinQuietMinutes,
+      base.passiveMinQuietMinutes,
     ),
-    idleMinUnreflectedTurns: normalizePositiveInteger(
-      raw.reflectionIdleMinUnreflectedTurns,
-      base.idleMinUnreflectedTurns,
+    passiveMinUnreflectedTurns: normalizePositiveInteger(
+      raw.reflectionPassiveMinUnreflectedTurns,
+      base.passiveMinUnreflectedTurns,
     ),
   };
 }
@@ -206,27 +206,27 @@ function applyPersistedAgentScopedSettings(
     raw.activeStepCount ?? raw.stepCount,
     base.activeStepCount,
   );
-  const idleSweepEnabled =
-    typeof raw.idleSweepEnabled === "boolean"
-      ? raw.idleSweepEnabled
-      : base.idleSweepEnabled;
+  const passiveSweepEnabled =
+    typeof raw.passiveSweepEnabled === "boolean"
+      ? raw.passiveSweepEnabled
+      : base.passiveSweepEnabled;
   return {
     trigger: activeTrigger,
     stepCount: activeStepCount,
     activeTrigger,
     activeStepCount,
-    idleSweepEnabled,
-    idleSweepIntervalHours: normalizePositiveNumber(
-      raw.idleSweepIntervalHours,
-      base.idleSweepIntervalHours,
+    passiveSweepEnabled,
+    passiveSweepIntervalHours: normalizePositiveNumber(
+      raw.passiveSweepIntervalHours,
+      base.passiveSweepIntervalHours,
     ),
-    idleConversationMinAgeHours: normalizePositiveNumber(
-      raw.idleConversationMinAgeHours,
-      base.idleConversationMinAgeHours,
+    passiveMinQuietMinutes: normalizePositiveNumber(
+      raw.passiveMinQuietMinutes,
+      base.passiveMinQuietMinutes,
     ),
-    idleMinUnreflectedTurns: normalizePositiveInteger(
-      raw.idleMinUnreflectedTurns,
-      base.idleMinUnreflectedTurns,
+    passiveMinUnreflectedTurns: normalizePositiveInteger(
+      raw.passiveMinUnreflectedTurns,
+      base.passiveMinUnreflectedTurns,
     ),
   };
 }
@@ -241,10 +241,10 @@ function legacyModeToReflectionSettings(
       stepCount,
       activeTrigger: "step-count",
       activeStepCount: stepCount,
-      idleSweepEnabled: true,
-      idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
-      idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
-      idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
+      passiveSweepEnabled: true,
+      passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
+      passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
+      passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -254,10 +254,10 @@ function legacyModeToReflectionSettings(
       activeTrigger: "off",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
       activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
-      idleSweepEnabled: false,
-      idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
-      idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
-      idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
+      passiveSweepEnabled: false,
+      passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
+      passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
+      passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -267,10 +267,10 @@ function legacyModeToReflectionSettings(
       activeTrigger: "compaction-event",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
       activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
-      idleSweepEnabled: true,
-      idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
-      idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
-      idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
+      passiveSweepEnabled: true,
+      passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
+      passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
+      passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -280,10 +280,10 @@ function legacyModeToReflectionSettings(
       activeTrigger: "compaction-event",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
       activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
-      idleSweepEnabled: true,
-      idleSweepIntervalHours: DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
-      idleConversationMinAgeHours: DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
-      idleMinUnreflectedTurns: DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
+      passiveSweepEnabled: true,
+      passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
+      passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
+      passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -487,13 +487,13 @@ export async function persistReflectionSettingsForAgent(
         reflectionStepCount: normalizedSettings.activeStepCount,
         reflectionActiveTrigger: normalizedSettings.activeTrigger,
         reflectionActiveStepCount: normalizedSettings.activeStepCount,
-        reflectionIdleSweepEnabled: normalizedSettings.idleSweepEnabled,
-        reflectionIdleSweepIntervalHours:
-          normalizedSettings.idleSweepIntervalHours,
-        reflectionIdleConversationMinAgeHours:
-          normalizedSettings.idleConversationMinAgeHours,
-        reflectionIdleMinUnreflectedTurns:
-          normalizedSettings.idleMinUnreflectedTurns,
+        reflectionPassiveSweepEnabled: normalizedSettings.passiveSweepEnabled,
+        reflectionPassiveSweepIntervalHours:
+          normalizedSettings.passiveSweepIntervalHours,
+        reflectionPassiveMinQuietMinutes:
+          normalizedSettings.passiveMinQuietMinutes,
+        reflectionPassiveMinUnreflectedTurns:
+          normalizedSettings.passiveMinUnreflectedTurns,
         reflectionSettingsByAgent: {
           ...(localSettings.reflectionSettingsByAgent ?? {}),
           [agentId]: {
@@ -501,11 +501,12 @@ export async function persistReflectionSettingsForAgent(
             stepCount: normalizedSettings.activeStepCount,
             activeTrigger: normalizedSettings.activeTrigger,
             activeStepCount: normalizedSettings.activeStepCount,
-            idleSweepEnabled: normalizedSettings.idleSweepEnabled,
-            idleSweepIntervalHours: normalizedSettings.idleSweepIntervalHours,
-            idleConversationMinAgeHours:
-              normalizedSettings.idleConversationMinAgeHours,
-            idleMinUnreflectedTurns: normalizedSettings.idleMinUnreflectedTurns,
+            passiveSweepEnabled: normalizedSettings.passiveSweepEnabled,
+            passiveSweepIntervalHours:
+              normalizedSettings.passiveSweepIntervalHours,
+            passiveMinQuietMinutes: normalizedSettings.passiveMinQuietMinutes,
+            passiveMinUnreflectedTurns:
+              normalizedSettings.passiveMinUnreflectedTurns,
           },
         },
       },
@@ -521,13 +522,13 @@ export async function persistReflectionSettingsForAgent(
       reflectionStepCount: normalizedSettings.activeStepCount,
       reflectionActiveTrigger: normalizedSettings.activeTrigger,
       reflectionActiveStepCount: normalizedSettings.activeStepCount,
-      reflectionIdleSweepEnabled: normalizedSettings.idleSweepEnabled,
-      reflectionIdleSweepIntervalHours:
-        normalizedSettings.idleSweepIntervalHours,
-      reflectionIdleConversationMinAgeHours:
-        normalizedSettings.idleConversationMinAgeHours,
-      reflectionIdleMinUnreflectedTurns:
-        normalizedSettings.idleMinUnreflectedTurns,
+      reflectionPassiveSweepEnabled: normalizedSettings.passiveSweepEnabled,
+      reflectionPassiveSweepIntervalHours:
+        normalizedSettings.passiveSweepIntervalHours,
+      reflectionPassiveMinQuietMinutes:
+        normalizedSettings.passiveMinQuietMinutes,
+      reflectionPassiveMinUnreflectedTurns:
+        normalizedSettings.passiveMinUnreflectedTurns,
       reflectionSettingsByAgent: {
         ...(globalSettings.reflectionSettingsByAgent ?? {}),
         [agentId]: {
@@ -535,11 +536,12 @@ export async function persistReflectionSettingsForAgent(
           stepCount: normalizedSettings.activeStepCount,
           activeTrigger: normalizedSettings.activeTrigger,
           activeStepCount: normalizedSettings.activeStepCount,
-          idleSweepEnabled: normalizedSettings.idleSweepEnabled,
-          idleSweepIntervalHours: normalizedSettings.idleSweepIntervalHours,
-          idleConversationMinAgeHours:
-            normalizedSettings.idleConversationMinAgeHours,
-          idleMinUnreflectedTurns: normalizedSettings.idleMinUnreflectedTurns,
+          passiveSweepEnabled: normalizedSettings.passiveSweepEnabled,
+          passiveSweepIntervalHours:
+            normalizedSettings.passiveSweepIntervalHours,
+          passiveMinQuietMinutes: normalizedSettings.passiveMinQuietMinutes,
+          passiveMinUnreflectedTurns:
+            normalizedSettings.passiveMinUnreflectedTurns,
         },
       },
     });

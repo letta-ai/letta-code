@@ -857,6 +857,10 @@ describe("listen-client parseServerMessage", () => {
           settings: {
             trigger: "step-count",
             step_count: 9,
+            passive_sweep_enabled: true,
+            passive_sweep_interval_hours: 12,
+            passive_min_quiet_minutes: 20,
+            passive_min_unreflected_turns: 4,
           },
           scope: "local_project",
         }),
@@ -1999,6 +2003,10 @@ describe("listen-client reflection settings command handling", () => {
           settings: {
             trigger: "step-count",
             step_count: 9,
+            passive_sweep_enabled: true,
+            passive_sweep_interval_hours: 12,
+            passive_min_quiet_minutes: 20,
+            passive_min_unreflected_turns: 4,
           },
           scope: "local_project",
         },
@@ -2017,6 +2025,10 @@ describe("listen-client reflection settings command handling", () => {
           agent_id: "agent-1",
           trigger: "step-count",
           step_count: 9,
+          passive_sweep_enabled: true,
+          passive_sweep_interval_hours: 12,
+          passive_min_quiet_minutes: 20,
+          passive_min_unreflected_turns: 4,
         },
       });
       expect(deviceStatusUpdate).toMatchObject({
@@ -2026,6 +2038,10 @@ describe("listen-client reflection settings command handling", () => {
             agent_id: "agent-1",
             trigger: "step-count",
             step_count: 9,
+            passive_sweep_enabled: true,
+            passive_sweep_interval_hours: 12,
+            passive_min_quiet_minutes: 20,
+            passive_min_unreflected_turns: 4,
           },
         },
       });

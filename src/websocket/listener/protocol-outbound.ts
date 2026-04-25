@@ -270,13 +270,14 @@ export function buildDeviceStatus(
           step_count: reflectionSettings?.activeStepCount ?? 25,
           active_trigger: reflectionSettings?.activeTrigger ?? "step-count",
           active_step_count: reflectionSettings?.activeStepCount ?? 25,
-          idle_sweep_enabled: reflectionSettings?.idleSweepEnabled ?? true,
-          idle_sweep_interval_hours:
-            reflectionSettings?.idleSweepIntervalHours ?? 24,
-          idle_conversation_min_age_hours:
-            reflectionSettings?.idleConversationMinAgeHours ?? 24,
-          idle_min_unreflected_turns:
-            reflectionSettings?.idleMinUnreflectedTurns ?? 3,
+          passive_sweep_enabled:
+            reflectionSettings?.passiveSweepEnabled ?? true,
+          passive_sweep_interval_hours:
+            reflectionSettings?.passiveSweepIntervalHours ?? 24,
+          passive_min_quiet_minutes:
+            reflectionSettings?.passiveMinQuietMinutes ?? 15,
+          passive_min_unreflected_turns:
+            reflectionSettings?.passiveMinUnreflectedTurns ?? 3,
         }
       : null,
   };

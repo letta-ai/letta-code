@@ -75,10 +75,10 @@ export interface Settings {
   reflectionStepCount: number;
   reflectionActiveTrigger?: "off" | "step-count" | "compaction-event";
   reflectionActiveStepCount?: number;
-  reflectionIdleSweepEnabled?: boolean;
-  reflectionIdleSweepIntervalHours?: number;
-  reflectionIdleConversationMinAgeHours?: number;
-  reflectionIdleMinUnreflectedTurns?: number;
+  reflectionPassiveSweepEnabled?: boolean;
+  reflectionPassiveSweepIntervalHours?: number;
+  reflectionPassiveMinQuietMinutes?: number;
+  reflectionPassiveMinUnreflectedTurns?: number;
   reflectionSettingsByAgent?: Record<
     string,
     {
@@ -86,10 +86,10 @@ export interface Settings {
       stepCount: number;
       activeTrigger?: "off" | "step-count" | "compaction-event";
       activeStepCount?: number;
-      idleSweepEnabled?: boolean;
-      idleSweepIntervalHours?: number;
-      idleConversationMinAgeHours?: number;
-      idleMinUnreflectedTurns?: number;
+      passiveSweepEnabled?: boolean;
+      passiveSweepIntervalHours?: number;
+      passiveMinQuietMinutes?: number;
+      passiveMinUnreflectedTurns?: number;
     }
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
@@ -141,10 +141,10 @@ export interface LocalProjectSettings {
   reflectionStepCount?: number;
   reflectionActiveTrigger?: "off" | "step-count" | "compaction-event";
   reflectionActiveStepCount?: number;
-  reflectionIdleSweepEnabled?: boolean;
-  reflectionIdleSweepIntervalHours?: number;
-  reflectionIdleConversationMinAgeHours?: number;
-  reflectionIdleMinUnreflectedTurns?: number;
+  reflectionPassiveSweepEnabled?: boolean;
+  reflectionPassiveSweepIntervalHours?: number;
+  reflectionPassiveMinQuietMinutes?: number;
+  reflectionPassiveMinUnreflectedTurns?: number;
   reflectionSettingsByAgent?: Record<
     string,
     {
@@ -152,10 +152,10 @@ export interface LocalProjectSettings {
       stepCount: number;
       activeTrigger?: "off" | "step-count" | "compaction-event";
       activeStepCount?: number;
-      idleSweepEnabled?: boolean;
-      idleSweepIntervalHours?: number;
-      idleConversationMinAgeHours?: number;
-      idleMinUnreflectedTurns?: number;
+      passiveSweepEnabled?: boolean;
+      passiveSweepIntervalHours?: number;
+      passiveMinQuietMinutes?: number;
+      passiveMinUnreflectedTurns?: number;
     }
   >;
   // Server-indexed settings (agent IDs are server-specific)

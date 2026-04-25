@@ -72,7 +72,8 @@ describe("memoryReminder", () => {
         stepCount: 33,
         activeTrigger: "compaction-event",
         activeStepCount: 33,
-        idleSweepEnabled: true,
+        passiveSweepEnabled: true,
+        passiveMinQuietMinutes: 15,
       }),
     );
   });
@@ -97,7 +98,7 @@ describe("memoryReminder", () => {
         stepCount: 25,
         activeTrigger: "compaction-event",
         activeStepCount: 25,
-        idleSweepEnabled: true,
+        passiveSweepEnabled: true,
       }),
     );
   });
@@ -310,7 +311,7 @@ describe("memoryReminder", () => {
         stepCount: 11,
         activeTrigger: "compaction-event",
         activeStepCount: 11,
-        idleSweepEnabled: true,
+        passiveSweepEnabled: true,
       },
     });
     expect(globalUpdates[0]?.reflectionSettingsByAgent).toMatchObject({
@@ -320,7 +321,7 @@ describe("memoryReminder", () => {
         stepCount: 11,
         activeTrigger: "compaction-event",
         activeStepCount: 11,
-        idleSweepEnabled: true,
+        passiveSweepEnabled: true,
       },
     });
   });

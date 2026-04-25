@@ -40,10 +40,10 @@ export interface StatusLineInputs {
   turnCount?: number;
   reflectionMode?: "off" | "step-count" | "compaction-event" | null;
   reflectionStepCount?: number;
-  reflectionIdleSweepEnabled?: boolean;
-  reflectionIdleSweepIntervalHours?: number;
-  reflectionIdleConversationMinAgeHours?: number;
-  reflectionIdleMinUnreflectedTurns?: number;
+  reflectionPassiveSweepEnabled?: boolean;
+  reflectionPassiveSweepIntervalHours?: number;
+  reflectionPassiveMinQuietMinutes?: number;
+  reflectionPassiveMinUnreflectedTurns?: number;
   memfsEnabled?: boolean;
   memfsDirectory?: string | null;
   permissionMode?: string;
@@ -118,11 +118,12 @@ function toPayloadInput(inputs: StatusLineInputs): StatusLinePayloadBuildInput {
     turnCount: inputs.turnCount,
     reflectionMode: inputs.reflectionMode,
     reflectionStepCount: inputs.reflectionStepCount,
-    reflectionIdleSweepEnabled: inputs.reflectionIdleSweepEnabled,
-    reflectionIdleSweepIntervalHours: inputs.reflectionIdleSweepIntervalHours,
-    reflectionIdleConversationMinAgeHours:
-      inputs.reflectionIdleConversationMinAgeHours,
-    reflectionIdleMinUnreflectedTurns: inputs.reflectionIdleMinUnreflectedTurns,
+    reflectionPassiveSweepEnabled: inputs.reflectionPassiveSweepEnabled,
+    reflectionPassiveSweepIntervalHours:
+      inputs.reflectionPassiveSweepIntervalHours,
+    reflectionPassiveMinQuietMinutes: inputs.reflectionPassiveMinQuietMinutes,
+    reflectionPassiveMinUnreflectedTurns:
+      inputs.reflectionPassiveMinUnreflectedTurns,
     memfsEnabled: inputs.memfsEnabled,
     memfsDirectory: inputs.memfsDirectory,
     permissionMode: inputs.permissionMode,

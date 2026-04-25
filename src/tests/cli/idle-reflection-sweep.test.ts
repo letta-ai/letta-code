@@ -24,6 +24,7 @@ import {
 
 describe("idle reflection sweep candidate discovery", () => {
   const agentId = "agent-idle-test";
+  const nowMs = Date.parse("2026-04-24T12:00:00.000Z");
   let testRoot: string;
 
   beforeEach(async () => {
@@ -41,42 +42,58 @@ describe("idle reflection sweep candidate discovery", () => {
   async function appendCompletedTurns(
     conversationId: string,
     count: number,
+    startIndex = 0,
   ): Promise<void> {
     for (let index = 0; index < count; index += 1) {
+      const turnIndex = startIndex + index;
       await appendTranscriptDeltaJsonl(agentId, conversationId, [
         {
           kind: "user",
-          id: `${conversationId}-u${index}`,
-          text: `user ${index}`,
-          messageId: `${conversationId}-msg-u${index}`,
+          id: `${conversationId}-u${turnIndex}`,
+          text: `user ${turnIndex}`,
+          messageId: `${conversationId}-msg-u${turnIndex}`,
         },
         {
           kind: "assistant",
-          id: `${conversationId}-a${index}`,
-          text: `assistant ${index}`,
+          id: `${conversationId}-a${turnIndex}`,
+          text: `assistant ${turnIndex}`,
           phase: "finished",
-          messageId: `${conversationId}-msg-a${index}`,
+          messageId: `${conversationId}-msg-a${turnIndex}`,
         },
       ]);
     }
   }
 
-  async function ageTranscript(conversationId: string, hoursAgo: number) {
+  async function setTranscriptMetadata(
+    conversationId: string,
+    metadata: {
+      transcriptAppendedMinutesAgo?: number;
+      reflectionSucceededHoursAgo?: number;
+    },
+  ) {
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
     const state = JSON.parse(await readFile(paths.statePath, "utf-8")) as {
       last_transcript_appended_at?: string;
+      last_reflection_succeeded_at?: string;
     };
-    state.last_transcript_appended_at = new Date(
-      Date.now() - hoursAgo * 60 * 60 * 1000,
-    ).toISOString();
+    if (metadata.transcriptAppendedMinutesAgo !== undefined) {
+      state.last_transcript_appended_at = new Date(
+        nowMs - metadata.transcriptAppendedMinutesAgo * 60 * 1000,
+      ).toISOString();
+    }
+    if (metadata.reflectionSucceededHoursAgo !== undefined) {
+      state.last_reflection_succeeded_at = new Date(
+        nowMs - metadata.reflectionSucceededHoursAgo * 60 * 60 * 1000,
+      ).toISOString();
+    }
     await writeFile(paths.statePath, `${JSON.stringify(state, null, 2)}\n`);
   }
 
-  test("filters local idle candidates by active conversation, age, turns, and cursor", async () => {
+  test("filters passive candidates by active conversation, quiet window, turns, and cursor", async () => {
     await appendCompletedTurns("active", 3);
-    await appendCompletedTurns("idle-good", 3);
+    await appendCompletedTurns("passive-good", 3);
     await appendCompletedTurns("too-short", 2);
-    await appendCompletedTurns("too-new", 3);
+    await appendCompletedTurns("too-noisy", 3);
     await appendCompletedTurns("already-reflected", 3);
 
     const reflectedPayload = await buildAutoReflectionPayload(
@@ -94,11 +111,19 @@ describe("idle reflection sweep candidate discovery", () => {
       "idle-time",
     );
 
-    await ageTranscript("active", 25);
-    await ageTranscript("idle-good", 25);
-    await ageTranscript("too-short", 25);
-    await ageTranscript("too-new", 1);
-    await ageTranscript("already-reflected", 25);
+    await setTranscriptMetadata("active", { transcriptAppendedMinutesAgo: 20 });
+    await setTranscriptMetadata("passive-good", {
+      transcriptAppendedMinutesAgo: 20,
+    });
+    await setTranscriptMetadata("too-short", {
+      transcriptAppendedMinutesAgo: 20,
+    });
+    await setTranscriptMetadata("too-noisy", {
+      transcriptAppendedMinutesAgo: 5,
+    });
+    await setTranscriptMetadata("already-reflected", {
+      transcriptAppendedMinutesAgo: 20,
+    });
 
     const candidates =
       await __idleReflectionSweepTestUtils.discoverIdleReflectionCandidates({
@@ -108,30 +133,90 @@ describe("idle reflection sweep candidate discovery", () => {
         reflectionSettings: normalizeReflectionSettings({
           trigger: "step-count",
           stepCount: 25,
-          idleSweepEnabled: true,
-          idleSweepIntervalHours: 24,
-          idleConversationMinAgeHours: 24,
-          idleMinUnreflectedTurns: 3,
+          passiveSweepEnabled: true,
+          passiveSweepIntervalHours: 24,
+          passiveMinQuietMinutes: 15,
+          passiveMinUnreflectedTurns: 3,
         }),
         recompileContext: {
           recompileByConversation: new Map(),
           recompileQueuedByConversation: new Set(),
         },
+        now: () => nowMs,
       });
 
     expect(candidates.map((candidate) => candidate.conversationId)).toEqual([
-      "idle-good",
+      "passive-good",
+    ]);
+  });
+
+  test("uses reflection staleness separately from transcript quiet time", async () => {
+    await appendCompletedTurns("stale-and-quiet", 3);
+    await appendCompletedTurns("recent-reflection", 3);
+    const reflectedPayload = await buildAutoReflectionPayload(
+      agentId,
+      "recent-reflection",
+    );
+    expect(reflectedPayload).not.toBeNull();
+    if (!reflectedPayload) return;
+    await finalizeAutoReflectionPayload(
+      agentId,
+      "recent-reflection",
+      reflectedPayload.payloadPath,
+      reflectedPayload.endSnapshotLine,
+      true,
+      "idle-time",
+    );
+    await appendCompletedTurns("recent-reflection", 3, 3);
+
+    await setTranscriptMetadata("stale-and-quiet", {
+      transcriptAppendedMinutesAgo: 20,
+      reflectionSucceededHoursAgo: 25,
+    });
+    await setTranscriptMetadata("recent-reflection", {
+      transcriptAppendedMinutesAgo: 20,
+      reflectionSucceededHoursAgo: 1,
+    });
+
+    const candidates =
+      await __idleReflectionSweepTestUtils.discoverIdleReflectionCandidates({
+        agentId,
+        activeConversationId: "active",
+        workingDirectory: "/tmp/work",
+        reflectionSettings: normalizeReflectionSettings({
+          trigger: "step-count",
+          stepCount: 25,
+          passiveSweepEnabled: true,
+          passiveSweepIntervalHours: 24,
+          passiveMinQuietMinutes: 15,
+          passiveMinUnreflectedTurns: 3,
+        }),
+        recompileContext: {
+          recompileByConversation: new Map(),
+          recompileQueuedByConversation: new Set(),
+        },
+        now: () => nowMs,
+      });
+
+    expect(candidates.map((candidate) => candidate.conversationId)).toEqual([
+      "stale-and-quiet",
     ]);
   });
 
   test("skips candidates with active reflection subagents or busy runtimes", async () => {
-    await appendCompletedTurns("idle-good", 3);
+    await appendCompletedTurns("passive-good", 3);
     await appendCompletedTurns("reflection-active", 3);
     await appendCompletedTurns("runtime-busy", 3);
 
-    await ageTranscript("idle-good", 25);
-    await ageTranscript("reflection-active", 25);
-    await ageTranscript("runtime-busy", 25);
+    await setTranscriptMetadata("passive-good", {
+      transcriptAppendedMinutesAgo: 20,
+    });
+    await setTranscriptMetadata("reflection-active", {
+      transcriptAppendedMinutesAgo: 20,
+    });
+    await setTranscriptMetadata("runtime-busy", {
+      transcriptAppendedMinutesAgo: 20,
+    });
 
     registerSubagent(
       "reflection-subagent",
@@ -151,10 +236,10 @@ describe("idle reflection sweep candidate discovery", () => {
         reflectionSettings: normalizeReflectionSettings({
           trigger: "step-count",
           stepCount: 25,
-          idleSweepEnabled: true,
-          idleSweepIntervalHours: 24,
-          idleConversationMinAgeHours: 24,
-          idleMinUnreflectedTurns: 3,
+          passiveSweepEnabled: true,
+          passiveSweepIntervalHours: 24,
+          passiveMinQuietMinutes: 15,
+          passiveMinUnreflectedTurns: 3,
         }),
         recompileContext: {
           recompileByConversation: new Map(),
@@ -178,10 +263,11 @@ describe("idle reflection sweep candidate discovery", () => {
             ],
           ]),
         } as never,
+        now: () => nowMs,
       });
 
     expect(candidates.map((candidate) => candidate.conversationId)).toEqual([
-      "idle-good",
+      "passive-good",
     ]);
   });
 
@@ -189,9 +275,9 @@ describe("idle reflection sweep candidate discovery", () => {
     await appendCompletedTurns("idle-a", 3);
     await appendCompletedTurns("idle-b", 3);
     await appendCompletedTurns("idle-c", 3);
-    await ageTranscript("idle-a", 25);
-    await ageTranscript("idle-b", 25);
-    await ageTranscript("idle-c", 25);
+    await setTranscriptMetadata("idle-a", { transcriptAppendedMinutesAgo: 20 });
+    await setTranscriptMetadata("idle-b", { transcriptAppendedMinutesAgo: 20 });
+    await setTranscriptMetadata("idle-c", { transcriptAppendedMinutesAgo: 20 });
 
     const events: string[] = [];
     const notifications: string[] = [];
@@ -220,10 +306,10 @@ describe("idle reflection sweep candidate discovery", () => {
       reflectionSettings: normalizeReflectionSettings({
         trigger: "step-count",
         stepCount: 25,
-        idleSweepEnabled: true,
-        idleSweepIntervalHours: 24,
-        idleConversationMinAgeHours: 24,
-        idleMinUnreflectedTurns: 3,
+        passiveSweepEnabled: true,
+        passiveSweepIntervalHours: 24,
+        passiveMinQuietMinutes: 15,
+        passiveMinUnreflectedTurns: 3,
       }),
       recompileContext: {
         recompileByConversation: new Map(),
@@ -233,6 +319,7 @@ describe("idle reflection sweep candidate discovery", () => {
       emitCompletionNotification: (message) => {
         notifications.push(message);
       },
+      now: () => nowMs,
     });
 
     expect(maxActiveLaunches).toBe(1);
@@ -256,9 +343,9 @@ describe("idle reflection sweep candidate discovery", () => {
 
   test("scheduler skips when not due", async () => {
     await appendCompletedTurns("idle-good", 3);
-    await ageTranscript("idle-good", 25);
-
-    const nowMs = Date.parse("2026-04-24T12:00:00.000Z");
+    await setTranscriptMetadata("idle-good", {
+      transcriptAppendedMinutesAgo: 20,
+    });
     await __idleReflectionSweepTestUtils.writeIdleSweepState(agentId, {
       last_idle_sweep_started_at: new Date(
         nowMs - 60 * 60 * 1000,
@@ -273,10 +360,10 @@ describe("idle reflection sweep candidate discovery", () => {
       reflectionSettings: normalizeReflectionSettings({
         trigger: "step-count",
         stepCount: 25,
-        idleSweepEnabled: true,
-        idleSweepIntervalHours: 24,
-        idleConversationMinAgeHours: 24,
-        idleMinUnreflectedTurns: 3,
+        passiveSweepEnabled: true,
+        passiveSweepIntervalHours: 24,
+        passiveMinQuietMinutes: 15,
+        passiveMinUnreflectedTurns: 3,
       }),
       recompileContext: {
         recompileByConversation: new Map(),

@@ -143,10 +143,10 @@ export interface ReflectionSettingsSnapshot {
   step_count: number;
   active_trigger: ReflectionTriggerMode;
   active_step_count: number;
-  idle_sweep_enabled: boolean;
-  idle_sweep_interval_hours: number;
-  idle_conversation_min_age_hours: number;
-  idle_min_unreflected_turns: number;
+  passive_sweep_enabled: boolean;
+  passive_sweep_interval_hours: number;
+  passive_min_quiet_minutes: number;
+  passive_min_unreflected_turns: number;
 }
 
 export type ChannelId = "telegram" | "slack" | "discord";
@@ -990,10 +990,10 @@ export interface SetReflectionSettingsCommand {
     step_count?: number;
     active_trigger?: ReflectionTriggerMode;
     active_step_count?: number;
-    idle_sweep_enabled?: boolean;
-    idle_sweep_interval_hours?: number;
-    idle_conversation_min_age_hours?: number;
-    idle_min_unreflected_turns?: number;
+    passive_sweep_enabled?: boolean;
+    passive_sweep_interval_hours?: number;
+    passive_min_quiet_minutes?: number;
+    passive_min_unreflected_turns?: number;
   };
   scope?: ReflectionSettingsScope;
 }

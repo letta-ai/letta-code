@@ -334,10 +334,10 @@ async function applyReflectionOverrides(
     stepCount: overrides.stepCount ?? current.stepCount,
     activeTrigger: overrides.trigger ?? current.activeTrigger,
     activeStepCount: overrides.stepCount ?? current.activeStepCount,
-    idleSweepEnabled: current.idleSweepEnabled,
-    idleSweepIntervalHours: current.idleSweepIntervalHours,
-    idleConversationMinAgeHours: current.idleConversationMinAgeHours,
-    idleMinUnreflectedTurns: current.idleMinUnreflectedTurns,
+    passiveSweepEnabled: current.passiveSweepEnabled,
+    passiveSweepIntervalHours: current.passiveSweepIntervalHours,
+    passiveMinQuietMinutes: current.passiveMinQuietMinutes,
+    passiveMinUnreflectedTurns: current.passiveMinUnreflectedTurns,
   });
 
   if (!hasReflectionOverrides(overrides)) {

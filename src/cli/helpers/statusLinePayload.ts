@@ -22,10 +22,10 @@ export interface StatusLinePayloadBuildInput {
   turnCount?: number;
   reflectionMode?: "off" | "step-count" | "compaction-event" | null;
   reflectionStepCount?: number;
-  reflectionIdleSweepEnabled?: boolean;
-  reflectionIdleSweepIntervalHours?: number;
-  reflectionIdleConversationMinAgeHours?: number;
-  reflectionIdleMinUnreflectedTurns?: number;
+  reflectionPassiveSweepEnabled?: boolean;
+  reflectionPassiveSweepIntervalHours?: number;
+  reflectionPassiveMinQuietMinutes?: number;
+  reflectionPassiveMinUnreflectedTurns?: number;
   memfsEnabled?: boolean;
   memfsDirectory?: string | null;
   permissionMode?: string;
@@ -99,10 +99,10 @@ export interface StatusLinePayload {
     step_count: number;
     active_trigger: "off" | "step-count" | "compaction-event" | null;
     active_step_count: number;
-    idle_sweep_enabled: boolean;
-    idle_sweep_interval_hours: number;
-    idle_conversation_min_age_hours: number;
-    idle_min_unreflected_turns: number;
+    passive_sweep_enabled: boolean;
+    passive_sweep_interval_hours: number;
+    passive_min_quiet_minutes: number;
+    passive_min_unreflected_turns: number;
   };
   memfs: {
     enabled: boolean;
@@ -160,17 +160,17 @@ export function buildStatusLinePayload(
     0,
     Math.floor(input.reflectionStepCount ?? 0),
   );
-  const reflectionIdleSweepIntervalHours = Math.max(
+  const reflectionPassiveSweepIntervalHours = Math.max(
     0,
-    input.reflectionIdleSweepIntervalHours ?? 0,
+    input.reflectionPassiveSweepIntervalHours ?? 0,
   );
-  const reflectionIdleConversationMinAgeHours = Math.max(
+  const reflectionPassiveMinQuietMinutes = Math.max(
     0,
-    input.reflectionIdleConversationMinAgeHours ?? 0,
+    input.reflectionPassiveMinQuietMinutes ?? 0,
   );
-  const reflectionIdleMinUnreflectedTurns = Math.max(
+  const reflectionPassiveMinUnreflectedTurns = Math.max(
     0,
-    Math.floor(input.reflectionIdleMinUnreflectedTurns ?? 0),
+    Math.floor(input.reflectionPassiveMinUnreflectedTurns ?? 0),
   );
 
   const percentages =
@@ -226,10 +226,10 @@ export function buildStatusLinePayload(
       step_count: reflectionStepCount,
       active_trigger: input.reflectionMode ?? null,
       active_step_count: reflectionStepCount,
-      idle_sweep_enabled: input.reflectionIdleSweepEnabled ?? false,
-      idle_sweep_interval_hours: reflectionIdleSweepIntervalHours,
-      idle_conversation_min_age_hours: reflectionIdleConversationMinAgeHours,
-      idle_min_unreflected_turns: reflectionIdleMinUnreflectedTurns,
+      passive_sweep_enabled: input.reflectionPassiveSweepEnabled ?? false,
+      passive_sweep_interval_hours: reflectionPassiveSweepIntervalHours,
+      passive_min_quiet_minutes: reflectionPassiveMinQuietMinutes,
+      passive_min_unreflected_turns: reflectionPassiveMinUnreflectedTurns,
     },
     memfs: {
       enabled: input.memfsEnabled ?? false,

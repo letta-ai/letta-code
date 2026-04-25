@@ -11,9 +11,9 @@ import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 const DEFAULT_STEP_COUNT = "25";
-const DEFAULT_IDLE_SWEEP_INTERVAL_HOURS = "24";
-const DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS = "24";
-const DEFAULT_IDLE_MIN_UNREFLECTED_TURNS = "3";
+const DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS = "24";
+const DEFAULT_PASSIVE_MIN_QUIET_MINUTES = "15";
+const DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS = "3";
 
 type FocusRow =
   | "trigger"
@@ -53,10 +53,10 @@ function cycleOption<T extends string>(
 function parseInitialState(initialSettings: ReflectionSettings): {
   trigger: ReflectionTrigger;
   stepCount: string;
-  idleSweepEnabled: boolean;
-  idleSweepIntervalHours: string;
-  idleConversationMinAgeHours: string;
-  idleMinUnreflectedTurns: string;
+  passiveSweepEnabled: boolean;
+  passiveSweepIntervalHours: string;
+  passiveMinQuietMinutes: string;
+  passiveMinUnreflectedTurns: string;
 } {
   const normalized = normalizeReflectionSettings(initialSettings);
   return {
@@ -72,22 +72,22 @@ function parseInitialState(initialSettings: ReflectionSettings): {
         ? normalized.activeStepCount
         : Number(DEFAULT_STEP_COUNT),
     ),
-    idleSweepEnabled: normalized.idleSweepEnabled,
-    idleSweepIntervalHours: String(
-      normalized.idleSweepIntervalHours > 0
-        ? normalized.idleSweepIntervalHours
-        : DEFAULT_IDLE_SWEEP_INTERVAL_HOURS,
+    passiveSweepEnabled: normalized.passiveSweepEnabled,
+    passiveSweepIntervalHours: String(
+      normalized.passiveSweepIntervalHours > 0
+        ? normalized.passiveSweepIntervalHours
+        : DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
     ),
-    idleConversationMinAgeHours: String(
-      normalized.idleConversationMinAgeHours > 0
-        ? normalized.idleConversationMinAgeHours
-        : DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS,
+    passiveMinQuietMinutes: String(
+      normalized.passiveMinQuietMinutes > 0
+        ? normalized.passiveMinQuietMinutes
+        : DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
     ),
-    idleMinUnreflectedTurns: String(
-      Number.isInteger(normalized.idleMinUnreflectedTurns) &&
-        normalized.idleMinUnreflectedTurns > 0
-        ? normalized.idleMinUnreflectedTurns
-        : DEFAULT_IDLE_MIN_UNREFLECTED_TURNS,
+    passiveMinUnreflectedTurns: String(
+      Number.isInteger(normalized.passiveMinUnreflectedTurns) &&
+        normalized.passiveMinUnreflectedTurns > 0
+        ? normalized.passiveMinUnreflectedTurns
+        : DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
     ),
   };
 }
@@ -128,16 +128,17 @@ export function SleeptimeSelector({
     return initialState.trigger;
   });
   const [stepCountInput, setStepCountInput] = useState(initialState.stepCount);
-  const [idleSweepEnabled, setIdleSweepEnabled] = useState(
-    initialState.idleSweepEnabled,
+  const [passiveSweepEnabled, setPassiveSweepEnabled] = useState(
+    initialState.passiveSweepEnabled,
   );
-  const [idleSweepIntervalInput, setIdleSweepIntervalInput] = useState(
-    initialState.idleSweepIntervalHours,
+  const [passiveSweepIntervalInput, setPassiveSweepIntervalInput] = useState(
+    initialState.passiveSweepIntervalHours,
   );
-  const [idleConversationMinAgeInput, setIdleConversationMinAgeInput] =
-    useState(initialState.idleConversationMinAgeHours);
-  const [idleMinUnreflectedTurnsInput, setIdleMinUnreflectedTurnsInput] =
-    useState(initialState.idleMinUnreflectedTurns);
+  const [passiveQuietMinutesInput, setPassiveQuietMinutesInput] = useState(
+    initialState.passiveMinQuietMinutes,
+  );
+  const [passiveMinUnreflectedTurnsInput, setPassiveMinUnreflectedTurnsInput] =
+    useState(initialState.passiveMinUnreflectedTurns);
   const [focusRow, setFocusRow] = useState<FocusRow>("trigger");
   const [validationError, setValidationError] = useState<string | null>(null);
   const triggerOptions = useMemo(
@@ -151,19 +152,20 @@ export function SleeptimeSelector({
     }
     if (memfsEnabled) {
       rows.push("idle-enabled");
-      if (idleSweepEnabled) {
+      if (passiveSweepEnabled) {
         rows.push("idle-interval", "idle-min-age", "idle-min-turns");
       }
     }
     return rows;
-  }, [trigger, memfsEnabled, idleSweepEnabled]);
+  }, [trigger, memfsEnabled, passiveSweepEnabled]);
   const isEditingStepCount =
     focusRow === "step-count" && trigger === "step-count";
-  const isEditingIdleInterval =
-    focusRow === "idle-interval" && idleSweepEnabled;
-  const isEditingIdleMinAge = focusRow === "idle-min-age" && idleSweepEnabled;
-  const isEditingIdleMinTurns =
-    focusRow === "idle-min-turns" && idleSweepEnabled;
+  const isEditingPassiveInterval =
+    focusRow === "idle-interval" && passiveSweepEnabled;
+  const isEditingPassiveQuiet =
+    focusRow === "idle-min-age" && passiveSweepEnabled;
+  const isEditingPassiveMinTurns =
+    focusRow === "idle-min-turns" && passiveSweepEnabled;
 
   useEffect(() => {
     if (!visibleRows.includes(focusRow)) {
@@ -178,27 +180,27 @@ export function SleeptimeSelector({
       setValidationError("step count must be a positive integer");
       return;
     }
-    const idleSweepIntervalHours =
-      parsePositiveNumber(idleSweepIntervalInput) ??
-      Number(DEFAULT_IDLE_SWEEP_INTERVAL_HOURS);
-    const idleConversationMinAgeHours =
-      parsePositiveNumber(idleConversationMinAgeInput) ??
-      Number(DEFAULT_IDLE_CONVERSATION_MIN_AGE_HOURS);
-    const idleMinUnreflectedTurns =
-      parseStepCount(idleMinUnreflectedTurnsInput) ??
-      Number(DEFAULT_IDLE_MIN_UNREFLECTED_TURNS);
+    const passiveSweepIntervalHours =
+      parsePositiveNumber(passiveSweepIntervalInput) ??
+      Number(DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS);
+    const passiveMinQuietMinutes =
+      parsePositiveNumber(passiveQuietMinutesInput) ??
+      Number(DEFAULT_PASSIVE_MIN_QUIET_MINUTES);
+    const passiveMinUnreflectedTurns =
+      parseStepCount(passiveMinUnreflectedTurnsInput) ??
+      Number(DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS);
 
-    if (idleSweepEnabled) {
-      if (parsePositiveNumber(idleSweepIntervalInput) === null) {
-        setValidationError("idle interval must be a positive number");
+    if (passiveSweepEnabled) {
+      if (parsePositiveNumber(passiveSweepIntervalInput) === null) {
+        setValidationError("passive sweep interval must be a positive number");
         return;
       }
-      if (parsePositiveNumber(idleConversationMinAgeInput) === null) {
-        setValidationError("idle age must be a positive number");
+      if (parsePositiveNumber(passiveQuietMinutesInput) === null) {
+        setValidationError("passive quiet minutes must be a positive number");
         return;
       }
-      if (parseStepCount(idleMinUnreflectedTurnsInput) === null) {
-        setValidationError("idle min turns must be a positive integer");
+      if (parseStepCount(passiveMinUnreflectedTurnsInput) === null) {
+        setValidationError("passive min turns must be a positive integer");
         return;
       }
     }
@@ -209,10 +211,10 @@ export function SleeptimeSelector({
         stepCount,
         activeTrigger: trigger,
         activeStepCount: stepCount,
-        idleSweepEnabled: memfsEnabled ? idleSweepEnabled : false,
-        idleSweepIntervalHours,
-        idleConversationMinAgeHours,
-        idleMinUnreflectedTurns,
+        passiveSweepEnabled: memfsEnabled ? passiveSweepEnabled : false,
+        passiveSweepIntervalHours,
+        passiveMinQuietMinutes,
+        passiveMinUnreflectedTurns,
       }),
     );
   };
@@ -252,16 +254,16 @@ export function SleeptimeSelector({
       if (focusRow === "trigger") {
         setTrigger((prev) => cycleOption(triggerOptions, prev, direction));
       } else if (focusRow === "idle-enabled") {
-        setIdleSweepEnabled((prev) => !prev);
+        setPassiveSweepEnabled((prev) => !prev);
       }
       return;
     }
 
     if (
       !isEditingStepCount &&
-      !isEditingIdleInterval &&
-      !isEditingIdleMinAge &&
-      !isEditingIdleMinTurns
+      !isEditingPassiveInterval &&
+      !isEditingPassiveQuiet &&
+      !isEditingPassiveMinTurns
     ) {
       return;
     }
@@ -269,12 +271,12 @@ export function SleeptimeSelector({
     if (key.backspace || key.delete) {
       if (isEditingStepCount) {
         setStepCountInput((prev) => prev.slice(0, -1));
-      } else if (isEditingIdleInterval) {
-        setIdleSweepIntervalInput((prev) => prev.slice(0, -1));
-      } else if (isEditingIdleMinAge) {
-        setIdleConversationMinAgeInput((prev) => prev.slice(0, -1));
-      } else if (isEditingIdleMinTurns) {
-        setIdleMinUnreflectedTurnsInput((prev) => prev.slice(0, -1));
+      } else if (isEditingPassiveInterval) {
+        setPassiveSweepIntervalInput((prev) => prev.slice(0, -1));
+      } else if (isEditingPassiveQuiet) {
+        setPassiveQuietMinutesInput((prev) => prev.slice(0, -1));
+      } else if (isEditingPassiveMinTurns) {
+        setPassiveMinUnreflectedTurnsInput((prev) => prev.slice(0, -1));
       }
       setValidationError(null);
       return;
@@ -294,12 +296,12 @@ export function SleeptimeSelector({
     ) {
       if (isEditingStepCount) {
         setStepCountInput((prev) => `${prev}${input}`);
-      } else if (isEditingIdleInterval) {
-        setIdleSweepIntervalInput((prev) => `${prev}${input}`);
-      } else if (isEditingIdleMinAge) {
-        setIdleConversationMinAgeInput((prev) => `${prev}${input}`);
-      } else if (isEditingIdleMinTurns) {
-        setIdleMinUnreflectedTurnsInput((prev) => `${prev}${input}`);
+      } else if (isEditingPassiveInterval) {
+        setPassiveSweepIntervalInput((prev) => `${prev}${input}`);
+      } else if (isEditingPassiveQuiet) {
+        setPassiveQuietMinutesInput((prev) => `${prev}${input}`);
+      } else if (isEditingPassiveMinTurns) {
+        setPassiveMinUnreflectedTurnsInput((prev) => `${prev}${input}`);
       }
       setValidationError(null);
     }
@@ -379,49 +381,53 @@ export function SleeptimeSelector({
           <Box height={1} />
           <Box flexDirection="row">
             <Text>{focusRow === "idle-enabled" ? "> " : "  "}</Text>
-            <Text bold>Idle sweep:</Text>
+            <Text bold>Passive sweep:</Text>
             <Text>{"   "}</Text>
             <Text
               backgroundColor={
-                idleSweepEnabled ? colors.selector.itemHighlighted : undefined
+                passiveSweepEnabled
+                  ? colors.selector.itemHighlighted
+                  : undefined
               }
-              color={idleSweepEnabled ? "black" : undefined}
-              bold={idleSweepEnabled}
+              color={passiveSweepEnabled ? "black" : undefined}
+              bold={passiveSweepEnabled}
             >
               {" On "}
             </Text>
             <Text> </Text>
             <Text
               backgroundColor={
-                !idleSweepEnabled ? colors.selector.itemHighlighted : undefined
+                !passiveSweepEnabled
+                  ? colors.selector.itemHighlighted
+                  : undefined
               }
-              color={!idleSweepEnabled ? "black" : undefined}
-              bold={!idleSweepEnabled}
+              color={!passiveSweepEnabled ? "black" : undefined}
+              bold={!passiveSweepEnabled}
             >
               {" Off "}
             </Text>
           </Box>
 
-          {idleSweepEnabled && (
+          {passiveSweepEnabled && (
             <>
               <Box height={1} />
               <Box flexDirection="row">
                 <Text>{focusRow === "idle-interval" ? "> " : "  "}</Text>
-                <Text bold>Idle sweep interval hours: </Text>
-                <Text>{idleSweepIntervalInput}</Text>
-                {isEditingIdleInterval && <Text>█</Text>}
+                <Text bold>Passive sweep interval hours: </Text>
+                <Text>{passiveSweepIntervalInput}</Text>
+                {isEditingPassiveInterval && <Text>█</Text>}
               </Box>
               <Box flexDirection="row">
                 <Text>{focusRow === "idle-min-age" ? "> " : "  "}</Text>
-                <Text bold>Idle conversation min age hours: </Text>
-                <Text>{idleConversationMinAgeInput}</Text>
-                {isEditingIdleMinAge && <Text>█</Text>}
+                <Text bold>Passive quiet minutes: </Text>
+                <Text>{passiveQuietMinutesInput}</Text>
+                {isEditingPassiveQuiet && <Text>█</Text>}
               </Box>
               <Box flexDirection="row">
                 <Text>{focusRow === "idle-min-turns" ? "> " : "  "}</Text>
-                <Text bold>Idle min unreflected turns: </Text>
-                <Text>{idleMinUnreflectedTurnsInput}</Text>
-                {isEditingIdleMinTurns && <Text>█</Text>}
+                <Text bold>Passive min unreflected turns: </Text>
+                <Text>{passiveMinUnreflectedTurnsInput}</Text>
+                {isEditingPassiveMinTurns && <Text>█</Text>}
               </Box>
               {validationError && focusRow !== "step-count" && (
                 <Text color={colors.error.text}>

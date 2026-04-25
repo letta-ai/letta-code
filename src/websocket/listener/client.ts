@@ -3054,10 +3054,10 @@ function toReflectionSettingsResponse(
   step_count: number;
   active_trigger: "off" | "step-count" | "compaction-event";
   active_step_count: number;
-  idle_sweep_enabled: boolean;
-  idle_sweep_interval_hours: number;
-  idle_conversation_min_age_hours: number;
-  idle_min_unreflected_turns: number;
+  passive_sweep_enabled: boolean;
+  passive_sweep_interval_hours: number;
+  passive_min_quiet_minutes: number;
+  passive_min_unreflected_turns: number;
 } {
   const settings = getReflectionSettings(agentId, workingDirectory);
   return {
@@ -3066,10 +3066,10 @@ function toReflectionSettingsResponse(
     step_count: settings.activeStepCount,
     active_trigger: settings.activeTrigger,
     active_step_count: settings.activeStepCount,
-    idle_sweep_enabled: settings.idleSweepEnabled,
-    idle_sweep_interval_hours: settings.idleSweepIntervalHours,
-    idle_conversation_min_age_hours: settings.idleConversationMinAgeHours,
-    idle_min_unreflected_turns: settings.idleMinUnreflectedTurns,
+    passive_sweep_enabled: settings.passiveSweepEnabled,
+    passive_sweep_interval_hours: settings.passiveSweepIntervalHours,
+    passive_min_quiet_minutes: settings.passiveMinQuietMinutes,
+    passive_min_unreflected_turns: settings.passiveMinUnreflectedTurns,
   };
 }
 
@@ -3160,11 +3160,11 @@ async function handleReflectionSettingsCommand(
         stepCount: parsed.settings.step_count,
         activeTrigger: parsed.settings.active_trigger,
         activeStepCount: parsed.settings.active_step_count,
-        idleSweepEnabled: parsed.settings.idle_sweep_enabled,
-        idleSweepIntervalHours: parsed.settings.idle_sweep_interval_hours,
-        idleConversationMinAgeHours:
-          parsed.settings.idle_conversation_min_age_hours,
-        idleMinUnreflectedTurns: parsed.settings.idle_min_unreflected_turns,
+        passiveSweepEnabled: parsed.settings.passive_sweep_enabled,
+        passiveSweepIntervalHours: parsed.settings.passive_sweep_interval_hours,
+        passiveMinQuietMinutes: parsed.settings.passive_min_quiet_minutes,
+        passiveMinUnreflectedTurns:
+          parsed.settings.passive_min_unreflected_turns,
       }),
       {
         workingDirectory,

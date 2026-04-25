@@ -1067,10 +1067,10 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
       : settings.activeTrigger === "compaction-event"
         ? "Compaction event"
         : `Step count (every ${settings.activeStepCount} turns since last reflection)`;
-  const idle = settings.idleSweepEnabled
-    ? `idle sweep every ${settings.idleSweepIntervalHours}h, min ${settings.idleMinUnreflectedTurns} turns, idle >= ${settings.idleConversationMinAgeHours}h`
-    : "idle sweep off";
-  return `${active}; ${idle}`;
+  const passive = settings.passiveSweepEnabled
+    ? `passive sweep every ${settings.passiveSweepIntervalHours}h, min ${settings.passiveMinUnreflectedTurns} turns, quiet >= ${settings.passiveMinQuietMinutes}m`
+    : "passive sweep off";
+  return `${active}; ${passive}`;
 }
 
 function buildTextParts(
@@ -2827,12 +2827,12 @@ export default function App({
     turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.activeTrigger,
     reflectionStepCount: reflectionSettings.activeStepCount,
-    reflectionIdleSweepEnabled: reflectionSettings.idleSweepEnabled,
-    reflectionIdleSweepIntervalHours: reflectionSettings.idleSweepIntervalHours,
-    reflectionIdleConversationMinAgeHours:
-      reflectionSettings.idleConversationMinAgeHours,
-    reflectionIdleMinUnreflectedTurns:
-      reflectionSettings.idleMinUnreflectedTurns,
+    reflectionPassiveSweepEnabled: reflectionSettings.passiveSweepEnabled,
+    reflectionPassiveSweepIntervalHours:
+      reflectionSettings.passiveSweepIntervalHours,
+    reflectionPassiveMinQuietMinutes: reflectionSettings.passiveMinQuietMinutes,
+    reflectionPassiveMinUnreflectedTurns:
+      reflectionSettings.passiveMinUnreflectedTurns,
     memfsEnabled,
     memfsDirectory,
     permissionMode: uiPermissionMode,
@@ -8422,15 +8422,14 @@ export default function App({
                       getReflectionSettings(agentId).activeTrigger,
                     reflectionStepCount:
                       getReflectionSettings(agentId).activeStepCount,
-                    reflectionIdleSweepEnabled:
-                      getReflectionSettings(agentId).idleSweepEnabled,
-                    reflectionIdleSweepIntervalHours:
-                      getReflectionSettings(agentId).idleSweepIntervalHours,
-                    reflectionIdleConversationMinAgeHours:
-                      getReflectionSettings(agentId)
-                        .idleConversationMinAgeHours,
-                    reflectionIdleMinUnreflectedTurns:
-                      getReflectionSettings(agentId).idleMinUnreflectedTurns,
+                    reflectionPassiveSweepEnabled:
+                      getReflectionSettings(agentId).passiveSweepEnabled,
+                    reflectionPassiveSweepIntervalHours:
+                      getReflectionSettings(agentId).passiveSweepIntervalHours,
+                    reflectionPassiveMinQuietMinutes:
+                      getReflectionSettings(agentId).passiveMinQuietMinutes,
+                    reflectionPassiveMinUnreflectedTurns:
+                      getReflectionSettings(agentId).passiveMinUnreflectedTurns,
                     memfsEnabled:
                       agentId !== "loading"
                         ? settingsManager.isMemfsEnabled(agentId)

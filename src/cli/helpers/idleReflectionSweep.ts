@@ -92,6 +92,17 @@ function hoursSince(iso: string | undefined, nowMs: number): number {
   return (nowMs - parsed) / (60 * 60 * 1000);
 }
 
+function minutesSince(iso: string | undefined, nowMs: number): number {
+  if (!iso) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const parsed = Date.parse(iso);
+  if (!Number.isFinite(parsed)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return (nowMs - parsed) / (60 * 1000);
+}
+
 function isConversationRuntimeBusy(
   listenerRuntime: ListenerRuntime | undefined,
   agentId: string,
@@ -160,13 +171,19 @@ async function discoverIdleReflectionCandidates(
     }
     if (
       derived.unreflectedCompletedTurns <
-      reflectionSettings.idleMinUnreflectedTurns
+      reflectionSettings.passiveMinUnreflectedTurns
     ) {
       continue;
     }
     if (
-      hoursSince(derived.state.last_transcript_appended_at, nowMs) <
-      reflectionSettings.idleConversationMinAgeHours
+      hoursSince(derived.state.last_reflection_succeeded_at, nowMs) <
+      reflectionSettings.passiveSweepIntervalHours
+    ) {
+      continue;
+    }
+    if (
+      minutesSince(derived.state.last_transcript_appended_at, nowMs) <
+      reflectionSettings.passiveMinQuietMinutes
     ) {
       continue;
     }
@@ -255,7 +272,7 @@ export function maybeStartIdleReflectionSweep(
   const reflectionSettings = normalizeReflectionSettings(
     input.reflectionSettings,
   );
-  if (!reflectionSettings.idleSweepEnabled) {
+  if (!reflectionSettings.passiveSweepEnabled) {
     return;
   }
   if (idleSweepInFlightByAgent.has(input.agentId)) {
@@ -268,7 +285,7 @@ export function maybeStartIdleReflectionSweep(
     const state = await readIdleSweepState(input.agentId);
     if (
       hoursSince(state.last_idle_sweep_started_at, now()) <
-      reflectionSettings.idleSweepIntervalHours
+      reflectionSettings.passiveSweepIntervalHours
     ) {
       idleSweepInFlightByAgent.delete(input.agentId);
       return;
