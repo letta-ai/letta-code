@@ -237,8 +237,14 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   const candidate = value as {
     type?: unknown;
     runtime?: unknown;
+    recover_approvals?: unknown;
   };
-  return candidate.type === "sync" && isRuntimeScope(candidate.runtime);
+  return (
+    candidate.type === "sync" &&
+    isRuntimeScope(candidate.runtime) &&
+    (candidate.recover_approvals === undefined ||
+      typeof candidate.recover_approvals === "boolean")
+  );
 }
 
 function isTerminalSpawnCommand(value: unknown): value is TerminalSpawnCommand {

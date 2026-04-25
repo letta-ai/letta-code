@@ -371,10 +371,15 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "sync",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
+          recover_approvals: false,
         }),
       ),
     );
     expect(sync?.type).toBe("sync");
+    if (sync?.type !== "sync") {
+      throw new Error("expected sync command");
+    }
+    expect(sync.recover_approvals).toBe(false);
   });
 
   test("parses cron CRUD commands", () => {
@@ -2762,6 +2767,41 @@ describe("listen-client v2 status builders", () => {
           message.delta?.message_type === "loop_error",
       ),
     ).toBe(false);
+  });
+
+  test("sync replay can skip backend approval recovery for lightweight state sync", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const recoverApprovalStateForSync = mock(async () => {});
+
+    await __listenClientTestUtils.replaySyncStateForRuntime(
+      listener,
+      socket as unknown as WebSocket,
+      {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      },
+      {
+        recoverApprovals: false,
+        recoverApprovalStateForSync,
+      },
+    );
+
+    expect(recoverApprovalStateForSync).not.toHaveBeenCalled();
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    expect(outbound.map((message) => message.type)).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
   });
 
   test("sync includes silent background reflection subagents in update_subagent_state", () => {

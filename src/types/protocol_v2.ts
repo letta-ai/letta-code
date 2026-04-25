@@ -578,6 +578,12 @@ export interface AbortMessageCommand {
 export interface SyncCommand {
   type: "sync";
   runtime: RuntimeScope;
+  /**
+   * Whether the device should probe backend state for stale pending approvals.
+   * Defaults to true for older clients. Lightweight status/recovery syncs should
+   * set this false and only replay in-memory listener state.
+   */
+  recover_approvals?: boolean;
 }
 
 export interface TerminalSpawnCommand {

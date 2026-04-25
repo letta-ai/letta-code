@@ -361,6 +361,7 @@ async function replaySyncStateForRuntime(
   socket: WebSocket,
   scope: { agent_id: string; conversation_id: string },
   opts?: {
+    recoverApprovals?: boolean;
     recoverApprovalStateForSync?: (
       runtime: ConversationRuntime,
       scope: { agent_id: string; conversation_id: string },
@@ -375,16 +376,18 @@ async function replaySyncStateForRuntime(
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
 
-  try {
-    await recoverFn(syncScopedRuntime, scope);
-  } catch (error) {
-    trackListenerError(
-      "listener_sync_recovery_failed",
-      error,
-      "listener_sync_recovery",
-    );
-    if (isDebugEnabled()) {
-      console.warn("[Listen] Sync approval recovery failed:", error);
+  if (opts?.recoverApprovals ?? true) {
+    try {
+      await recoverFn(syncScopedRuntime, scope);
+    } catch (error) {
+      trackListenerError(
+        "listener_sync_recovery_failed",
+        error,
+        "listener_sync_recovery",
+      );
+      if (isDebugEnabled()) {
+        console.warn("[Listen] Sync approval recovery failed:", error);
+      }
     }
   }
 
@@ -4426,7 +4429,9 @@ async function connectWithRetry(
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
           return;
         }
-        await replaySyncStateForRuntime(runtime, socket, parsed.runtime);
+        await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
+          recoverApprovals: parsed.recover_approvals !== false,
+        });
         return;
       }
 
