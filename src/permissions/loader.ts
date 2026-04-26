@@ -1,7 +1,8 @@
 // src/permissions/loader.ts
 // Load and merge permission settings from hierarchical sources
 
-import { type FSWatcher, statSync, watch } from "node:fs";
+import { createHash } from "node:crypto";
+import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { exists, readFile, writeFile } from "../utils/fs.js";
@@ -26,6 +27,7 @@ type FileSignature =
       exists: true;
       mtimeMs: number;
       size: number;
+      hash: string;
     }
   | { exists: false };
 
@@ -75,6 +77,7 @@ function getFileSignature(path: string): FileSignature {
       exists: true,
       mtimeMs: stat.mtimeMs,
       size: stat.size,
+      hash: createHash("sha256").update(readFileSync(path)).digest("hex"),
     };
   } catch {
     return { exists: false };
@@ -95,7 +98,7 @@ function signaturesEqual(
 ): boolean {
   if (!a || !b) return false;
   if (!a.exists || !b.exists) return a.exists === b.exists;
-  return a.mtimeMs === b.mtimeMs && a.size === b.size;
+  return a.mtimeMs === b.mtimeMs && a.size === b.size && a.hash === b.hash;
 }
 
 function cachedEntryMatchesSources(
