@@ -800,6 +800,22 @@ async function main(): Promise<void> {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
+  // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
+  // Stored OAuth credentials (interactive session tokens) are not accepted for
+  // automated/headless use — get an API key at https://app.letta.com/api-keys
+  if (
+    isHeadless &&
+    baseURL === LETTA_CLOUD_API_URL &&
+    !process.env.LETTA_API_KEY
+  ) {
+    console.error("Missing LETTA_API_KEY");
+    console.error(
+      "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
+    );
+    console.error("Get an API key at https://app.letta.com/api-keys");
+    process.exit(1);
+  }
+
   // Check if refresh token is missing for Letta Cloud (only when not using env var)
   // Skip this check if we already have an API key from env
   if (
@@ -826,15 +842,6 @@ async function main(): Promise<void> {
   }
 
   if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-    // For headless mode, error out (assume automation context)
-    if (isHeadless) {
-      console.error("Missing LETTA_API_KEY");
-      console.error(
-        "Run 'letta' in interactive mode to authenticate or export the missing environment variable",
-      );
-      process.exit(1);
-    }
-
     // For interactive mode, show setup flow
     console.log("No credentials found. Let's get you set up!\n");
     const { runSetup } = await import("./auth/setup");
