@@ -555,13 +555,15 @@ export function PasteAwareTextInput({
       // Option+Delete sequences (check first as they're exact matches)
       // - iTerm2/some terminals: ESC + DEL (\x1b\x7f)
       // - Some terminals: ESC + Backspace (\x1b\x08)
-      // - Warp: Ctrl+W (\x17)
+      // - Warp/legacy: Ctrl+W (\x17)
+      // - Kitty protocol: Ctrl+W sent as CSI-u (\x1b[119;5u)
       // Note: macOS Terminal sends plain \x7f (same as regular delete) - no modifier info
       if (
         sequence === "\x1b\x7f" ||
         sequence === "\x1b\x08" ||
         sequence === "\x1b\b" ||
-        sequence === "\x17"
+        sequence === "\x17" ||
+        sequence === "\x1b[119;5u"
       ) {
         deletePreviousWord();
         return;
