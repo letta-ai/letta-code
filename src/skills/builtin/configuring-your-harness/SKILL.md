@@ -1,11 +1,11 @@
 ---
-name: "modifying-letta-code"
-description: "Modify a Letta Code agent's deterministic harness, primarily permissions and hooks. Use when the user asks to self-evolve, self-configure, add hooks, change approval behavior, or modify Letta Code settings rather than memory."
+name: configuring-your-harness
+description: "Configure deterministic Letta Code harness behavior, especially permission rules and lifecycle hooks. Use when the user asks to auto-approve or deny actions, change approval behavior, add event hooks, run scripts on tool/session events, or self-configure behavior enforced outside the LLM. Do not use for preferences the LLM should remember or apply itself; store those in memory."
 ---
 
-# Modifying Letta Code (Self-Configuration)
+# Configuring Your Harness
 
-Use this skill to modify the deterministic harness around a Letta Code agent, primarily permissions and hooks. It can also help with local per-agent settings like toolset, model, context window, name, and description.
+Use this skill to configure deterministic Letta Code harness behavior, primarily permissions and lifecycle hooks. It can also help with local per-agent settings like toolset, model, context window, name, and description.
 
 ## Memory vs harness
 
@@ -19,6 +19,20 @@ Keep these layers separate:
 Edit memory when the agent should remember or learn something. Edit the harness when runtime behavior should deterministically change.
 
 Do **not** edit harness settings for ordinary preferences like “remember I prefer concise answers.” Store those in memory. Do edit harness settings for deterministic behavior like “always ask before shell commands,” “add a hook to block unsafe edits,” or “change this agent’s toolset.”
+
+Decision rule: if the LLM is responsible for choosing the behavior, store the instruction in memory. If the harness should enforce the behavior outside the LLM, use this skill.
+
+Examples:
+
+| User asks for... | Use |
+|------------------|-----|
+| “Auto-approve safe `git diff` commands” | Harness permission rule |
+| “Deny all `rm -rf` shell commands” | Harness permission rule or hook |
+| “Run a script before every Bash call” | Harness hook |
+| “Notify me when you finish a response” | Harness hook |
+| “Always sign commits like XYZ” | Memory, because the LLM writes commit messages |
+| “Prefer short answers” | Memory, because the LLM controls response style |
+| “Remember this repo’s PR checklist” | Memory or project docs, because the LLM applies it |
 
 ## Where harness changes live
 
