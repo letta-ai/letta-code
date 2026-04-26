@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { writeWireMessage } from "../../streamJsonWriter";
+import {
+  writeWireMessage,
+  writeWireMessageAsync,
+} from "../../streamJsonWriter";
 import type { ControlRequest, MessageWire } from "../../types/protocol";
 
 const originalConsoleLog = console.log;
+const originalStdoutWrite = process.stdout.write;
 
 afterEach(() => {
   console.log = originalConsoleLog;
+  process.stdout.write = originalStdoutWrite;
 });
 
 describe("writeWireMessage", () => {
@@ -58,5 +63,51 @@ describe("writeWireMessage", () => {
       timestamp?: string;
     };
     expect(payload.timestamp).toBe("2026-04-21T23:59:59.000Z");
+  });
+
+  test("async writer resolves after stdout accepts the stamped line", async () => {
+    let writeCallback: (() => void) | undefined;
+    const stdoutWrite = mock(
+      (
+        chunk: string | Uint8Array,
+        callback?: (error?: Error | null) => void,
+      ) => {
+        expect(typeof chunk).toBe("string");
+        writeCallback = () => callback?.();
+        return true;
+      },
+    );
+    process.stdout.write =
+      stdoutWrite as unknown as typeof process.stdout.write;
+
+    const msg: ControlRequest = {
+      type: "control_request",
+      request_id: "req-async",
+      request: { subtype: "interrupt" },
+    };
+
+    let resolved = false;
+    const pending = writeWireMessageAsync(msg).then(() => {
+      resolved = true;
+    });
+
+    expect(resolved).toBe(false);
+    expect(stdoutWrite).toHaveBeenCalledTimes(1);
+
+    const firstCall = stdoutWrite.mock.calls[0];
+    const payload = JSON.parse(String(firstCall?.[0]).trim()) as {
+      type: string;
+      timestamp?: string;
+      request_id: string;
+    };
+    expect(payload.type).toBe("control_request");
+    expect(payload.request_id).toBe("req-async");
+    expect(payload.timestamp).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+
+    writeCallback?.();
+    await pending;
+    expect(resolved).toBe(true);
   });
 });

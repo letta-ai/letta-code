@@ -94,7 +94,7 @@ import {
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
-import { writeWireMessage } from "./streamJsonWriter";
+import { writeWireMessage, writeWireMessageAsync } from "./streamJsonWriter";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import { extractTelemetryInputText } from "./telemetry/input";
@@ -1745,7 +1745,7 @@ ${SYSTEM_REMINDER_CLOSE}
           session_id: sessionId,
           uuid: `error-max-turns-${randomUUID()}`,
         };
-        writeWireMessage(errorMsg);
+        await writeWireMessageAsync(errorMsg);
       } else {
         console.error(
           `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
@@ -2379,7 +2379,7 @@ ${SYSTEM_REMINDER_CLOSE}
               session_id: sessionId,
               uuid: `error-${lastRunId || randomUUID()}`,
             };
-            writeWireMessage(errorMsg);
+            await writeWireMessageAsync(errorMsg);
           } else {
             console.error("Failed to fetch pending approvals for resync");
           }
@@ -2616,7 +2616,7 @@ ${SYSTEM_REMINDER_CLOSE}
           session_id: sessionId,
           uuid: `error-${lastRunId || randomUUID()}`,
         };
-        writeWireMessage(errorMsg);
+        await writeWireMessageAsync(errorMsg);
       } else {
         console.error(`Error: ${errorMessage}`);
       }
@@ -2643,7 +2643,7 @@ ${SYSTEM_REMINDER_CLOSE}
         session_id: sessionId,
         uuid: `error-${lastKnownRunId || randomUUID()}`,
       };
-      writeWireMessage(errorMsg);
+      await writeWireMessageAsync(errorMsg);
     } else {
       console.error(`Error: ${errorDetails}`);
     }
@@ -2749,7 +2749,7 @@ ${SYSTEM_REMINDER_CLOSE}
       usage,
       uuid: resultUuid,
     };
-    writeWireMessage(resultEvent);
+    await writeWireMessageAsync(resultEvent);
   } else {
     // text format (default)
     if (!resultText || resultText === "No assistant response found") {
