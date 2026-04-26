@@ -1,6 +1,6 @@
 ---
 name: configuring-your-harness
-description: "Configure deterministic Letta Code harness behavior, especially permission rules and lifecycle hooks. Use when the user asks to auto-approve or deny actions, change approval behavior, add event hooks, run scripts on tool/session events, or self-configure behavior enforced outside the LLM. Do not use for preferences the LLM should remember or apply itself; store those in memory."
+description: "Configure deterministic Letta Code harness behavior, such as permission rules, lifecycle hooks, and model configuration."
 ---
 
 # Configuring Your Harness
