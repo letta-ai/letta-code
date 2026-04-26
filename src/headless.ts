@@ -99,6 +99,12 @@ import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import { extractTelemetryInputText } from "./telemetry/input";
 import {
+  runSessionEndHooks,
+  runSessionStartHooks,
+  runStopHooks,
+  runUserPromptSubmitHooks,
+} from "./hooks";
+import {
   isHeadlessAutoAllowTool,
   isInteractiveApprovalTool,
 } from "./tools/interactivePolicy";
@@ -1387,6 +1393,11 @@ export async function handleHeadlessCommand(
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
+  // Fire SessionStart hooks (fire-and-forget, cannot block in headless mode)
+  runSessionStartHooks(false, agent.id, agent.name, conversationId).catch(
+    () => {},
+  );
+
   // Validate output format
   const outputFormat = values["output-format"] || "text";
   const includePartialMessages = Boolean(values["include-partial-messages"]);
@@ -1442,8 +1453,17 @@ export async function handleHeadlessCommand(
     code: number,
     exitReason: string,
   ): Promise<never> => {
+    // Fire SessionEnd hooks (fire-and-forget)
+    const snapshot = sessionStats.getSnapshot();
+    runSessionEndHooks(
+      snapshot.duration_ms,
+      snapshot.message_count,
+      snapshot.tool_call_count,
+      agent.id,
+      conversationId,
+    ).catch(() => {});
     try {
-      telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
+      telemetry.trackSessionEnd(snapshot, exitReason);
       await telemetry.flush();
     } finally {
       telemetry.setSessionStatsGetter(undefined);
@@ -2162,6 +2182,54 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
+        // Run Stop hooks (same extraction pattern as App.tsx)
+        const reversedLines = [...toLines(buffers)].reverse();
+        const lastAssistant = reversedLines.find(
+          (line) =>
+            line.kind === "assistant" &&
+            "text" in line &&
+            typeof line.text === "string" &&
+            line.text.trim().length > 0,
+        ) as Extract<Line, { kind: "assistant" }> | undefined;
+        const lastUser = reversedLines.find(
+          (line) =>
+            line.kind === "user" &&
+            "text" in line &&
+            typeof line.text === "string" &&
+            line.text.trim().length > 0,
+        ) as Extract<Line, { kind: "user" }> | undefined;
+        const precedingReasoning = buffers.lastReasoning;
+        buffers.lastReasoning = undefined; // Clear after use
+
+        const stopHookResult = await runStopHooks(
+          stopReason,
+          buffers.order.length,
+          Array.from(buffers.byId.values()).filter(
+            (item) => item.kind === "tool_call",
+          ).length,
+          undefined, // workingDirectory (uses default)
+          precedingReasoning,
+          lastAssistant?.text,
+          lastUser?.text,
+        );
+
+        // If hook blocked (exit 2), inject feedback and continue turn loop
+        if (stopHookResult.blocked) {
+          const stderrOutput = stopHookResult.results
+            .map((r) => r.stderr)
+            .filter(Boolean)
+            .join("\n");
+          const feedback = stderrOutput || "Stop hook blocked";
+          currentInput = [
+            {
+              role: "user",
+              content: `<stop-hook>\n${feedback}\n</stop-hook>`,
+              otid: randomUUID(),
+            },
+          ];
+          continue;
+        }
+
         // Reset retry counters on success
         llmApiErrorRetries = 0;
         emptyResponseRetries = 0;
@@ -2788,6 +2856,10 @@ async function runBidirectionalMode(
     code: number,
     exitReason: string,
   ): Promise<never> => {
+    // Fire SessionEnd hooks (fire-and-forget, bidirectional has no sessionStats)
+    runSessionEndHooks(undefined, undefined, undefined, agent.id, conversationId).catch(
+      () => {},
+    );
     telemetry.trackSessionEnd(undefined, exitReason);
     await telemetry.flush();
     return await flushAndExit(code);
@@ -3607,6 +3679,36 @@ async function runBidirectionalMode(
         continue;
       }
 
+      // Run UserPromptSubmit hooks (bidirectional only)
+      const userTextForHook =
+        typeof userContent === "string"
+          ? userContent
+          : Array.isArray(userContent)
+            ? userContent
+                .filter((c) => c.type === "text")
+                .map((c) => c.text)
+                .join("")
+            : "";
+      const isCommand = userTextForHook.startsWith("/");
+      const hookResult = await runUserPromptSubmitHooks(
+        userTextForHook,
+        isCommand,
+        agent.id,
+        conversationId,
+      );
+      if (hookResult.blocked) {
+        const feedback = hookResult.feedback.join("\n") || "Blocked by hook";
+        const blockedMsg: ErrorMessage = {
+          type: "error",
+          message: `UserPromptSubmit hook blocked: ${feedback}`,
+          stop_reason: "error",
+          session_id: sessionId,
+          uuid: randomUUID(),
+        };
+        writeWireMessage(blockedMsg);
+        continue;
+      }
+
       // Create abort controller for this operation
       currentAbortController = new AbortController();
 
@@ -3838,6 +3940,54 @@ async function runBidirectionalMode(
 
           // Case 1: Turn ended normally - break out of loop
           if (stopReason === "end_turn") {
+            // Run Stop hooks (same extraction pattern as App.tsx)
+            const lines = toLines(buffers);
+            const reversed = [...lines].reverse();
+            const lastAssistant = reversed.find(
+              (line) =>
+                line.kind === "assistant" &&
+                "text" in line &&
+                typeof line.text === "string" &&
+                line.text.trim().length > 0,
+            ) as Extract<Line, { kind: "assistant" }> | undefined;
+            const lastUser = reversed.find(
+              (line) =>
+                line.kind === "user" &&
+                "text" in line &&
+                typeof line.text === "string" &&
+                line.text.trim().length > 0,
+            ) as Extract<Line, { kind: "user" }> | undefined;
+            const precedingReasoning = buffers.lastReasoning;
+            buffers.lastReasoning = undefined; // Clear after use
+
+            const stopHookResult = await runStopHooks(
+              stopReason,
+              buffers.order.length,
+              Array.from(buffers.byId.values()).filter(
+                (item) => item.kind === "tool_call",
+              ).length,
+              undefined, // workingDirectory (uses default)
+              precedingReasoning,
+              lastAssistant?.text,
+              lastUser?.text,
+            );
+
+            // If hook blocked (exit 2), inject feedback and continue conversation
+            if (stopHookResult.blocked) {
+              const stderrOutput = stopHookResult.results
+                .map((r) => r.stderr)
+                .filter(Boolean)
+                .join("\n");
+              const feedback = stderrOutput || "Stop hook blocked";
+              currentInput = [
+                {
+                  role: "user",
+                  content: `<stop-hook>\n${feedback}\n</stop-hook>`,
+                },
+              ];
+              continue;
+            }
+
             break;
           }
 
