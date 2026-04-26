@@ -1,6 +1,6 @@
 ---
 name: "modifying-letta-code"
-description: "Modify your own Letta Code harness: permission rules, hooks, and agent configuration (model, context window, name, toolset, system prompt). Use when you want to change your own deterministic configuration, not your memory."
+description: "Modify your own Letta Code harness: permission rules, hooks, and agent configuration (model, context window, name, toolset, system prompt). Use when you want to self-evolve or change your own deterministic configuration, not your memory."
 ---
 
 # Modifying Letta Code (Self-Configuration)
@@ -93,48 +93,154 @@ After editing, your new rules apply on your next restart. In-session additions v
 
 ## 2. Adding hooks
 
-Hooks let you run a shell command or LLM prompt in response to events. Use them to log activity, enforce policy, auto-format, or gate actions.
+Hooks run shell commands or LLM prompt checks in response to Letta Code events. Use them to audit actions, inject context, enforce policy, auto-format after edits, notify on completion, or block unsafe actions.
+
+### Choose the scope first
+
+- **User scope**: `~/.letta/settings.json` — applies everywhere. Best for personal audit logs, notifications, and global safety rails.
+- **Project scope**: `./.letta/settings.json` — applies to everyone using the repo. Best for team-shared formatting or policy.
+- **Local scope**: `./.letta/settings.local.json` — applies only to this checkout. Best for personal project overrides or experiments; should be gitignored.
+
+The helper supports all three:
+
+```bash
+python3 <skill-dir>/scripts/add_hook.py ... --scope user
+python3 <skill-dir>/scripts/add_hook.py ... --scope project --cwd /path/to/repo
+python3 <skill-dir>/scripts/add_hook.py ... --scope local --cwd /path/to/repo
+```
 
 ### Events
 
-**Tool events** (need a `matcher`):
-- `PreToolUse` — before a tool runs (can block)
-- `PostToolUse` — after a tool succeeds
-- `PostToolUseFailure` — after a tool fails (stderr fed back to you)
-- `PermissionRequest` — when a permission dialog shows (can allow/deny)
+**Tool events** require a `matcher`:
 
-**Simple events** (no matcher):
-- `UserPromptSubmit` — user sends a prompt (can block)
-- `Stop` — you finish responding (can block)
-- `SubagentStop` — a subagent finishes
-- `PreCompact` — before context compaction
-- `SessionStart`, `SessionEnd`, `Notification`
+| Event | When it runs | Blocking behavior |
+|-------|--------------|-------------------|
+| `PreToolUse` | Before a tool runs | Exit 2 blocks the tool |
+| `PostToolUse` | After a tool succeeds | Good for logging/context; do not rely on it to undo work |
+| `PostToolUseFailure` | After a tool fails | Good for diagnostics; it cannot make the failed tool succeed |
+| `PermissionRequest` | When an approval dialog would show | Exit 0 allows; exit 2 denies |
+
+**Simple events** do not use a matcher:
+
+| Event | When it runs |
+|-------|--------------|
+| `UserPromptSubmit` | User submits a normal prompt, not a slash command |
+| `Stop` | Agent finishes a response |
+| `SubagentStop` | Subagent completes |
+| `PreCompact` | Before context compaction |
+| `SessionStart` | Session starts |
+| `SessionEnd` | Session ends |
+| `Notification` | Notification event fires |
+
+### Matchers
+
+Tool-event matchers are regex-style patterns over the tool name. `*` is the special match-all value.
+
+Common matchers:
+
+```text
+Bash          # shell commands
+Edit|Write    # edits and writes
+Read|Grep     # reads/searches
+*             # all tools
+```
+
+Prefer narrow matchers. Use `*` only for cheap logging or broad policy checks.
 
 ### Hook types
 
-**Command** — runs a shell command:
-```json
-{"type": "command", "command": "echo $TOOL_INPUT >> ~/audit.log", "timeout": 60000}
-```
+#### Command hooks
 
-**Prompt** — sends event JSON to an LLM for evaluation:
-```json
-{"type": "prompt", "prompt": "Is this safe? Input: $ARGUMENTS", "model": "gpt-5.2"}
-```
-Supported events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `UserPromptSubmit`, `Stop`, `SubagentStop`.
+Command hooks run a shell command. The hook input JSON is written to stdin. The command also receives useful environment variables:
 
-### Helper: add a hook
+- `LETTA_HOOK_EVENT` — event name
+- `LETTA_WORKING_DIR` / `USER_CWD` — working directory
+- `LETTA_AGENT_ID` / `AGENT_ID` — present when the event has an agent id
+
+Exit codes matter:
+
+- `0` — allow / success
+- `2` — block, for blocking-capable events
+- Any other code or timeout — hook error
+
+Example: log every Bash invocation as one JSON line:
 
 ```bash
+mkdir -p ~/.letta/hooks
+cat > ~/.letta/hooks/log-bash.py <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path.home() / ".letta" / "bash-audit.jsonl"
+path.parent.mkdir(exist_ok=True)
+path.open("a").write(sys.stdin.read() + "\n")
+PY
+
 python3 <skill-dir>/scripts/add_hook.py \
   --event PreToolUse \
   --matcher Bash \
   --type command \
-  --command 'echo "bash: $TOOL_INPUT" >> ~/.letta/audit.log' \
+  --command 'python3 ~/.letta/hooks/log-bash.py' \
   --scope user
 ```
 
-### Direct edit (in `settings.json`)
+Example: block shell commands containing `rm -rf`:
+
+```bash
+mkdir -p ~/.letta/hooks
+cat > ~/.letta/hooks/check-bash.py <<'PY'
+import json
+import sys
+
+data = json.load(sys.stdin)
+cmd = str(data.get("tool_input", {}).get("command", ""))
+if "rm -rf" in cmd:
+    print("rm -rf is blocked by hook", file=sys.stderr)
+    sys.exit(2)
+PY
+
+python3 <skill-dir>/scripts/add_hook.py \
+  --event PreToolUse \
+  --matcher Bash \
+  --type command \
+  --command 'python3 ~/.letta/hooks/check-bash.py' \
+  --scope user
+```
+
+For anything non-trivial, write a script somewhere stable and call it from the hook. This avoids brittle shell quoting:
+
+```json
+{
+  "type": "command",
+  "command": "python3 ~/.letta/hooks/check-bash.py",
+  "timeout": 60000
+}
+```
+
+#### Prompt hooks
+
+Prompt hooks send the hook input to an LLM evaluator. Use `$ARGUMENTS` inside the prompt to insert the event JSON; if omitted, the JSON is appended automatically.
+
+Supported prompt-hook events:
+`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `UserPromptSubmit`, `Stop`, `SubagentStop`.
+
+The evaluator must return JSON with `ok: true` or `ok: false`; when blocking, include `reason`.
+
+Example: LLM gate for edits:
+
+```bash
+python3 <skill-dir>/scripts/add_hook.py \
+  --event PreToolUse \
+  --matcher "Edit|Write" \
+  --type prompt \
+  --prompt 'Allow only edits under src/ unless the user explicitly requested otherwise. Respond with JSON. Input: $ARGUMENTS' \
+  --model gpt-5.2 \
+  --scope project
+```
+
+### Direct edit format
+
+Tool events group hooks under matcher entries:
 
 ```json
 {
@@ -142,17 +248,83 @@ python3 <skill-dir>/scripts/add_hook.py \
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "echo $TOOL_INPUT >> audit.log"}]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.letta/hooks/check-bash.py",
+            "timeout": 60000
+          }
+        ]
       }
-    ],
-    "Stop": [
-      {"hooks": [{"type": "command", "command": "say done"}]}
     ]
   }
 }
 ```
 
-Matchers: exact (`"Bash"`), multiple (`"Edit|Write"`), all (`"*"`).
+Simple events omit matchers:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "say done" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Disable hooks in a settings file with:
+
+```json
+{
+  "hooks": {
+    "disabled": true
+  }
+}
+```
+
+### Hook input fields
+
+All hook inputs include `event_type` and `working_directory`. Event-specific fields commonly include:
+
+- Tool events: `tool_name`, `tool_input`, `tool_call_id`
+- `PostToolUse`: `tool_result`
+- `PostToolUseFailure`: `error_message`, `error_type`
+- `PermissionRequest`: `permission`, `session_permissions`
+- `UserPromptSubmit`: `prompt`, `conversation_id`, `agent_id`
+- `Stop`: `stop_reason`, `message_count`, `tool_call_count`, `assistant_message`, `user_message`
+- `SessionStart` / `SessionEnd`: session metadata, `agent_id`, `conversation_id`
+
+When unsure, add a temporary logging hook and inspect the JSON it writes.
+
+### Practical patterns
+
+- **Audit tools**: `PreToolUse` + `matcher: "*"` + append stdin to JSONL.
+- **Safety gate**: `PreToolUse` on `Bash` or `Edit|Write`; exit 2 with a stderr reason to block.
+- **Permission policy**: `PermissionRequest`; exit 0 for known-safe requests and exit 2 for known-dangerous ones.
+- **Auto-format**: `PostToolUse` on `Edit|Write`; run a fast idempotent formatter.
+- **Context injection**: `UserPromptSubmit` or `SessionStart`; stdout can be fed back as context.
+- **Notifications**: `Stop` or `SessionEnd`; call `say`, `terminal-notifier`, Slack scripts, etc.
+
+### Debug hooks
+
+Show merged config:
+
+```bash
+python3 <skill-dir>/scripts/show_config.py
+```
+
+Common gotchas:
+
+- Settings-file changes usually require a fresh session to be picked up reliably.
+- Project/local hooks depend on starting Letta Code from the intended project root.
+- JSON quoting inside shell one-liners is fragile; use a separate script for real logic.
+- Long-running hooks block the agent. Keep hooks fast and set `timeout`.
+- Prompt hooks require an agent id and LLM access.
 
 ---
 
