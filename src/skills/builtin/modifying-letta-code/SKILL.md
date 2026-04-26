@@ -1,11 +1,11 @@
 ---
 name: "modifying-letta-code"
-description: "Modify a Letta Code agent's deterministic harness: permissions, hooks, toolset, memfs, model, context window, name, description, and system prompt. Use when the user asks to self-evolve, self-configure, add hooks, change approval behavior, or modify Letta Code settings rather than memory."
+description: "Modify a Letta Code agent's deterministic harness, primarily permissions and hooks. Use when the user asks to self-evolve, self-configure, add hooks, change approval behavior, or modify Letta Code settings rather than memory."
 ---
 
 # Modifying Letta Code (Self-Configuration)
 
-Use this skill to modify the deterministic harness around a Letta Code agent: permissions, hooks, local per-agent settings, toolset, memfs behavior, model, context window, name, description, and system prompt.
+Use this skill to modify the deterministic harness around a Letta Code agent, primarily permissions and hooks. It can also help with local per-agent settings like toolset, model, context window, name, and description.
 
 ## Memory vs harness
 
@@ -36,7 +36,7 @@ Use project or local scope only when the current working directory is intentiona
 
 ### Letta API fields
 
-Name, description, model, context window, and system prompt are server-side agent fields. Change them with `PATCH /v1/agents/{agent_id}`.
+Name, description, model, and context window are server-side agent fields. Change them with `PATCH /v1/agents/{agent_id}`.
 
 Required environment:
 
@@ -167,14 +167,6 @@ curl -X PATCH "https://api.letta.com/v1/agents/$LETTA_AGENT_ID" \
   -d '{"description": "..."}'
 ```
 
-**Update your system prompt (use with care — system prompt is structural):**
-```bash
-curl -X PATCH "https://api.letta.com/v1/agents/$LETTA_AGENT_ID" \
-  -H "Authorization: Bearer $LETTA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"system": "You are..."}'
-```
-
 For Python / TypeScript SDK usage, see `docs.letta.com/api-overview/introduction` or load the `letta-api-client` skill.
 
 ### Local per-agent harness (edit `~/.letta/settings.json`)
@@ -188,17 +180,13 @@ The `agents[]` array stores per-agent harness preferences you can edit directly:
       "agentId": "agent-abc123",
       "baseUrl": "https://api.letta.com",
       "pinned": true,
-      "memfs": true,
-      "toolset": "default",
-      "systemPromptPreset": "letta-code-v2"
+      "toolset": "default"
     }
   ]
 }
 ```
 
 - **`toolset`** — which tool set to load for this agent
-- **`memfs`** — whether memory filesystem projection is active
-- **`systemPromptPreset`** — preset label; actual system prompt is server-side
 - **`pinned`** — quick-switch visibility
 
 Find your own entry by matching `agentId === $LETTA_AGENT_ID`, then edit the fields you need.
@@ -220,16 +208,14 @@ Find your own entry by matching `agentId === $LETTA_AGENT_ID`, then edit the fie
 | Change context window | `PATCH /v1/agents/$LETTA_AGENT_ID` with `llm_config.context_window` |
 | Rename | `PATCH /v1/agents/$LETTA_AGENT_ID` with `name` |
 | Update description | `PATCH /v1/agents/$LETTA_AGENT_ID` with `description` |
-| Modify system prompt | `PATCH /v1/agents/$LETTA_AGENT_ID` with `system` |
 | Change toolset | Edit `agents[].toolset` in `~/.letta/settings.json` |
-| Disable memfs | Edit `agents[].memfs = false` |
 
 ## After making changes
 
 - **Permissions** — file changes are signature-checked and generally hot-reload; restart if behavior does not update.
 - **Hooks** — external file edits may require a fresh session; in-app hook management updates in-memory settings immediately.
 - **Letta API changes** — apply server-side immediately, but current session state may not fully reflect them until restart.
-- **System prompt / model changes** — start a fresh conversation after changing them for a clean context.
+- **Model changes** — start a fresh conversation after changing them for a clean context.
 
 ## Helper scripts in this skill
 
