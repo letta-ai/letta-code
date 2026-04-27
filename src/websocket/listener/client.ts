@@ -37,7 +37,6 @@ import {
 } from "../../cli/helpers/memoryReminder";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
-import { experimentManager } from "../../experiments/manager";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
@@ -59,6 +58,7 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
+import { experimentManager } from "../../experiments/manager";
 import {
   buildByokProviderAliases,
   listProviders,
@@ -3158,8 +3158,7 @@ async function handleExperimentCommand(
       request_id: parsed.request_id,
       success: false,
       experiments: experimentManager.list(),
-      error:
-        err instanceof Error ? err.message : "Failed to update experiment",
+      error: err instanceof Error ? err.message : "Failed to update experiment",
     };
     safeSocketSend(
       socket,

@@ -86,6 +86,8 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "../constants";
+import { experimentManager } from "../experiments/manager";
+import type { ExperimentId } from "../experiments/types";
 import {
   runNotificationHooks,
   runPreCompactHooks,
@@ -94,8 +96,6 @@ import {
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "../hooks";
-import { experimentManager } from "../experiments/manager";
-import type { ExperimentId } from "../experiments/types";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { formatPermissionDenial } from "../permissions/formatDenial";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
@@ -181,8 +181,8 @@ import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
-import { ExperimentSelector } from "./components/ExperimentSelector";
 import { EventMessage } from "./components/EventMessage";
+import { ExperimentSelector } from "./components/ExperimentSelector";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";

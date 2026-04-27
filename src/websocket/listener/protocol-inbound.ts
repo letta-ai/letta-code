@@ -806,9 +806,7 @@ export function isGetExperimentsCommand(
     type?: unknown;
     request_id?: unknown;
   };
-  return (
-    c.type === "get_experiments" && typeof c.request_id === "string"
-  );
+  return c.type === "get_experiments" && typeof c.request_id === "string";
 }
 
 export function isSetExperimentCommand(

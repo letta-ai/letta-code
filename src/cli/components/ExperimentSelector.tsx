@@ -9,7 +9,10 @@ const SOLID_LINE = "─";
 
 interface ExperimentSelectorProps {
   experiments: ExperimentSnapshot[];
-  onSelect: (selection: { experimentId: ExperimentId; enabled: boolean }) => void;
+  onSelect: (selection: {
+    experimentId: ExperimentId;
+    enabled: boolean;
+  }) => void;
   onCancel: () => void;
 }
 
@@ -109,7 +112,7 @@ export function ExperimentSelector({
       </Box>
 
       <Box marginTop={1}>
-        <Text dimColor>  Enter toggle · ↑↓ navigate · Esc cancel</Text>
+        <Text dimColor> Enter toggle · ↑↓ navigate · Esc cancel</Text>
       </Box>
     </Box>
   );
