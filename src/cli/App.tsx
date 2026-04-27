@@ -4870,9 +4870,20 @@ export default function App({
             }
           };
 
+          const isAutoApprovalMode =
+            pinnedPermissionMode === "bypassPermissions";
+          const isUserInitiated = currentInput.some(
+            (item) => item.type === "message" && item.role === "user",
+          );
           const handleFirstMessage = () => {
             setNetworkPhase("download");
-            void syncAgentState();
+            // Only sync agent state on user messages or when manual approval
+            // mode is active (user may have changed model while reviewing).
+            // In bypass mode, tool-result continuations happen instantly —
+            // no time for the agent to have changed.
+            if (isUserInitiated || !isAutoApprovalMode) {
+              void syncAgentState();
+            }
           };
 
           const runTokenStart = buffersRef.current.tokenCount;
