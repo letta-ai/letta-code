@@ -408,34 +408,28 @@ export function getMemoryReminderMode(
   );
 }
 
+function getActiveStepCount(settings: ReflectionSettings): number | null {
+  const normalized = normalizeReflectionSettings(settings);
+  if (normalized.activeTrigger !== "step-count") {
+    return null;
+  }
+  return normalizeStepCount(normalized.activeStepCount, DEFAULT_STEP_COUNT);
+}
+
 export function shouldFireStepCountTrigger(
   turnsSinceLastSuccessfulReflection: number,
   settings: ReflectionSettings = getReflectionSettings(),
 ): boolean {
-  const normalized = normalizeReflectionSettings(settings);
-  if (normalized.activeTrigger !== "step-count") {
-    return false;
-  }
-  const stepCount = normalizeStepCount(
-    normalized.activeStepCount,
-    DEFAULT_STEP_COUNT,
-  );
-  return turnsSinceLastSuccessfulReflection >= stepCount;
+  const stepCount = getActiveStepCount(settings);
+  return stepCount !== null && turnsSinceLastSuccessfulReflection >= stepCount;
 }
 
 function shouldFireLegacyTurnCountReminder(
   turnCount: number,
   settings: ReflectionSettings,
 ): boolean {
-  const normalized = normalizeReflectionSettings(settings);
-  if (normalized.activeTrigger !== "step-count") {
-    return false;
-  }
-  const stepCount = normalizeStepCount(
-    normalized.activeStepCount,
-    DEFAULT_STEP_COUNT,
-  );
-  return turnCount > 0 && turnCount % stepCount === 0;
+  const stepCount = getActiveStepCount(settings);
+  return stepCount !== null && turnCount > 0 && turnCount % stepCount === 0;
 }
 
 async function buildMemfsAwareMemoryReminder(

@@ -13,6 +13,7 @@ import {
   buildSessionContext,
   type SessionContextSource,
 } from "../cli/helpers/sessionContext";
+import { escapeXml } from "../cli/helpers/taskNotifications";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
 import { permissionMode } from "../permissions/mode";
 import { settingsManager } from "../settings-manager";
@@ -276,13 +277,6 @@ const MAX_TOOLSET_REMINDERS_PER_TURN = 5;
 const MAX_COMMAND_INPUT_CHARS = 2000;
 const MAX_COMMAND_OUTPUT_CHARS = 4000;
 const MAX_TOOL_LIST_CHARS = 3000;
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
 
 function truncate(value: string, maxChars: number): string {
   if (value.length <= maxChars) {

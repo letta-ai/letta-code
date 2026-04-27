@@ -29,7 +29,7 @@ export interface TaskNotification {
 /**
  * Escape special XML characters to prevent breaking the XML structure.
  */
-function escapeXml(str: string): string {
+export function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 

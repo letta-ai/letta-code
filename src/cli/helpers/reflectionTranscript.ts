@@ -12,6 +12,7 @@ import { MEMORY_SYSTEM_DIR } from "../../agent/memoryFilesystem";
 import { getDirectoryLimits } from "../../utils/directoryLimits";
 import { parseFrontmatter } from "../../utils/frontmatter";
 import type { Line } from "./accumulator";
+import { safeJsonParseOr } from "./safeJsonParse";
 
 const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
@@ -563,14 +564,6 @@ function lineToTranscriptEntry(
   }
 }
 
-function parseJsonLine<T>(line: string): T | null {
-  try {
-    return JSON.parse(line) as T;
-  } catch {
-    return null;
-  }
-}
-
 async function ensurePaths(paths: ReflectionTranscriptPaths): Promise<void> {
   await mkdir(paths.rootDir, { recursive: true });
   await writeFile(paths.transcriptPath, "", { encoding: "utf-8", flag: "a" });
@@ -598,7 +591,7 @@ type ParsedTranscriptRow = {
 function parseTranscriptRows(lines: string[]): ParsedTranscriptRow[] {
   return lines
     .map((line, lineIndex) => {
-      const entry = parseJsonLine<TranscriptEntry>(line);
+      const entry = safeJsonParseOr<TranscriptEntry | null>(line, null);
       return entry ? { entry, lineIndex } : null;
     })
     .filter((row): row is ParsedTranscriptRow => row !== null);
@@ -751,10 +744,9 @@ async function readState(
   const transcriptLines = lines ?? (await readTranscriptLines(paths));
   try {
     const raw = await readFile(paths.statePath, "utf-8");
-    const parsed =
-      parseJsonLine<
-        Partial<ReflectionTranscriptState & LegacyReflectionTranscriptState>
-      >(raw);
+    const parsed = safeJsonParseOr<Partial<
+      ReflectionTranscriptState & LegacyReflectionTranscriptState
+    > | null>(raw, null);
     if (!parsed) {
       const state = defaultState(transcriptLines.length);
       await writeState(paths, state);

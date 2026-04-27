@@ -21,9 +21,8 @@ describe("listen reflection wiring", () => {
     expect(turnSource).toContain("launchReflectionSubagent({");
     expect(turnSource).toContain("emitCanonicalMessageDelta(");
     expect(turnSource).toContain('message_type: "user_message"');
-    expect(turnSource).toContain(
-      "<task-notification><summary>${escapeTaskNotificationSummary(",
-    );
+    expect(turnSource).toContain("<task-notification><summary>${escapeXml(");
+    expect(turnSource).toContain("emitTaskNotificationDelta({");
     expect(turnSource).toContain("appendTranscriptDeltaJsonl(");
     expect(turnSource).toContain("syncReminderStateFromContextTracker(");
     expect(turnSource).toContain("getReflectionSettings(");

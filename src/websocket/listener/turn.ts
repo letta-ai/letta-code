@@ -34,6 +34,7 @@ import {
 } from "../../cli/helpers/memoryReminder";
 import { appendTranscriptDeltaJsonl } from "../../cli/helpers/reflectionTranscript";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
+import { escapeXml } from "../../cli/helpers/taskNotifications";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -125,11 +126,32 @@ export const __listenerTurnTestUtils = {
   trackListenerUserInput,
 };
 
-function escapeTaskNotificationSummary(summary: string): string {
-  return summary
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function emitTaskNotificationDelta(params: {
+  socket: WebSocket;
+  runtime: ConversationRuntime;
+  agentId: string;
+  conversationId: string;
+  summary: string;
+}): void {
+  const { socket, runtime, agentId, conversationId, summary } = params;
+  const notificationXml = `<task-notification><summary>${escapeXml(
+    summary,
+  )}</summary></task-notification>`;
+  emitCanonicalMessageDelta(
+    socket,
+    runtime,
+    {
+      type: "message",
+      id: `user-msg-${crypto.randomUUID()}`,
+      date: new Date().toISOString(),
+      message_type: "user_message",
+      content: [{ type: "text", text: notificationXml }],
+    } as StreamDelta,
+    {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    },
+  );
 }
 
 function buildMaybeLaunchReflectionSubagent(params: {
@@ -157,24 +179,13 @@ function buildMaybeLaunchReflectionSubagent(params: {
         logRecompileFailure: (message) => debugWarn("memory", message),
       },
       emitCompletionNotification: async (completionMessage) => {
-        const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
-          completionMessage,
-        )}</summary></task-notification>`;
-        emitCanonicalMessageDelta(
+        emitTaskNotificationDelta({
           socket,
           runtime,
-          {
-            type: "message",
-            id: `user-msg-${crypto.randomUUID()}`,
-            date: new Date().toISOString(),
-            message_type: "user_message",
-            content: [{ type: "text", text: notificationXml }],
-          } as StreamDelta,
-          {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          },
-        );
+          agentId,
+          conversationId,
+          summary: completionMessage,
+        });
       },
     });
     return result.status !== "skipped" && result.status !== "failed";
@@ -428,24 +439,13 @@ export async function handleIncomingMessage(
                         debugWarn("memory", message),
                     },
                     emitCompletionNotification: (message) => {
-                      const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
-                        message,
-                      )}</summary></task-notification>`;
-                      emitCanonicalMessageDelta(
+                      emitTaskNotificationDelta({
                         socket,
                         runtime,
-                        {
-                          type: "message",
-                          id: `user-msg-${crypto.randomUUID()}`,
-                          date: new Date().toISOString(),
-                          message_type: "user_message",
-                          content: [{ type: "text", text: notificationXml }],
-                        } as StreamDelta,
-                        {
-                          agent_id: agentId,
-                          conversation_id: conversationId,
-                        },
-                      );
+                        agentId,
+                        conversationId,
+                        summary: message,
+                      });
                     },
                   });
                 }
