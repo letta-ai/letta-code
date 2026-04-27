@@ -4306,6 +4306,7 @@ export default function App({
         }
 
         let highestSeqIdSeen: number | null = null;
+        let prefetchedAgent: AgentState | null = null;
 
         while (true) {
           // Capture the signal BEFORE any async operations
@@ -4353,7 +4354,6 @@ export default function App({
             null;
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
-          let prefetchedAgent: AgentState | null = null;
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
