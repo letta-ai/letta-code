@@ -105,7 +105,8 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   const memoryDir = resolveMemoryDir();
   ensureMemoryRepo(memoryDir);
 
-  await assertMemoryRepoReadyForWrite(memoryDir);
+  const { agentId, agentName } = await getAgentIdentity();
+  await assertMemoryRepoReadyForWrite(memoryDir, agentId);
 
   const affectedPaths = await applyMemoryCommand(memoryDir, args);
   if (affectedPaths.length === 0) {
@@ -114,7 +115,6 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     };
   }
 
-  const { agentId, agentName } = await getAgentIdentity();
   const commitResult = await commitAndSyncMemoryWrite({
     memoryDir,
     pathspecs: affectedPaths,

@@ -497,15 +497,20 @@ export async function handleApprovalStop(params: {
     }
   };
 
-  const executionResults = await executeApprovalBatch(decisions, undefined, {
-    toolContextId: turnToolContextId ?? undefined,
-    abortSignal: abortController.signal,
-    onStreamingOutput: emitToolExecutionOutput,
-    workingDirectory: turnWorkingDirectory,
-    parentScope:
-      agentId && conversationId ? { agentId, conversationId } : undefined,
-    onFileWrite,
-  });
+  let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
+  try {
+    executionResults = await executeApprovalBatch(decisions, undefined, {
+      toolContextId: turnToolContextId ?? undefined,
+      abortSignal: abortController.signal,
+      onStreamingOutput: emitToolExecutionOutput,
+      workingDirectory: turnWorkingDirectory,
+      parentScope:
+        agentId && conversationId ? { agentId, conversationId } : undefined,
+      onFileWrite,
+    });
+  } finally {
+    emitToolExecutionOutput.flush();
+  }
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
     executionResults,
@@ -545,6 +550,7 @@ export async function handleApprovalStop(params: {
     {
       type: "approval",
       approvals: persistedExecutionResults,
+      otid: crypto.randomUUID(),
     },
   ];
   let continuationBatchId = dequeuedBatchId;

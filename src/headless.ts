@@ -94,7 +94,7 @@ import {
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
-import { writeWireMessage } from "./streamJsonWriter";
+import { writeWireMessage, writeWireMessageAsync } from "./streamJsonWriter";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import { extractTelemetryInputText } from "./telemetry/input";
@@ -989,7 +989,9 @@ export async function handleHeadlessCommand(
   // Priority 2: Try to use --agent specified ID
   if (!agent && specifiedAgentId) {
     try {
-      agent = await client.agents.retrieve(specifiedAgentId);
+      agent = await client.agents.retrieve(specifiedAgentId, {
+        include: ["agent.secrets", "agent.tools"],
+      });
     } catch (_error) {
       console.error(`Agent ${specifiedAgentId} not found`);
       process.exit(1);
@@ -1124,7 +1126,7 @@ export async function handleHeadlessCommand(
   const secretsAgentId = agent?.id;
   const secretsInitPromise = secretsAgentId
     ? import("./utils/secretsStore").then(({ initSecretsFromServer }) =>
-        initSecretsFromServer(secretsAgentId),
+        initSecretsFromServer(secretsAgentId, agent ?? undefined),
       )
     : Promise.resolve();
 
@@ -1277,7 +1279,7 @@ export async function handleHeadlessCommand(
   }
 
   const startupAgentId = agent.id;
-  void clearPersistedClientToolRules(startupAgentId)
+  void clearPersistedClientToolRules(startupAgentId, agent)
     .then((cleanup) => {
       if (cleanup) {
         const count = cleanup.removedToolNames.length;
@@ -1418,6 +1420,7 @@ export async function handleHeadlessCommand(
     const initialToolContext = await prepareHeadlessToolExecutionContext({
       agentId: agent.id,
       conversationId,
+      cachedAgent: agent as AgentState,
     });
     availableTools = initialToolContext.availableTools;
     cachedAgent = initialToolContext.preparedToolContext.agent;
@@ -1756,7 +1759,7 @@ ${SYSTEM_REMINDER_CLOSE}
           session_id: sessionId,
           uuid: `error-max-turns-${randomUUID()}`,
         };
-        writeWireMessage(errorMsg);
+        await writeWireMessageAsync(errorMsg);
       } else {
         console.error(
           `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
@@ -2391,7 +2394,7 @@ ${SYSTEM_REMINDER_CLOSE}
               session_id: sessionId,
               uuid: `error-${lastRunId || randomUUID()}`,
             };
-            writeWireMessage(errorMsg);
+            await writeWireMessageAsync(errorMsg);
           } else {
             console.error("Failed to fetch pending approvals for resync");
           }
@@ -2628,7 +2631,7 @@ ${SYSTEM_REMINDER_CLOSE}
           session_id: sessionId,
           uuid: `error-${lastRunId || randomUUID()}`,
         };
-        writeWireMessage(errorMsg);
+        await writeWireMessageAsync(errorMsg);
       } else {
         console.error(`Error: ${errorMessage}`);
       }
@@ -2655,7 +2658,7 @@ ${SYSTEM_REMINDER_CLOSE}
         session_id: sessionId,
         uuid: `error-${lastKnownRunId || randomUUID()}`,
       };
-      writeWireMessage(errorMsg);
+      await writeWireMessageAsync(errorMsg);
     } else {
       console.error(`Error: ${errorDetails}`);
     }
@@ -2761,7 +2764,7 @@ ${SYSTEM_REMINDER_CLOSE}
       usage,
       uuid: resultUuid,
     };
-    writeWireMessage(resultEvent);
+    await writeWireMessageAsync(resultEvent);
   } else {
     // text format (default)
     if (!resultText || resultText === "No assistant response found") {

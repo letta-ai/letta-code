@@ -33,6 +33,7 @@ import type {
   EnableMemfsCommand,
   ExecuteCommandCommand,
   FileOpsCommand,
+  GetExperimentsCommand,
   GetReflectionSettingsCommand,
   GetTreeCommand,
   GrepInFilesCommand,
@@ -47,6 +48,7 @@ import type {
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
+  SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
@@ -237,8 +239,14 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   const candidate = value as {
     type?: unknown;
     runtime?: unknown;
+    recover_approvals?: unknown;
   };
-  return candidate.type === "sync" && isRuntimeScope(candidate.runtime);
+  return (
+    candidate.type === "sync" &&
+    isRuntimeScope(candidate.runtime) &&
+    (candidate.recover_approvals === undefined ||
+      typeof candidate.recover_approvals === "boolean")
+  );
 }
 
 function isTerminalSpawnCommand(value: unknown): value is TerminalSpawnCommand {
@@ -787,6 +795,35 @@ export function isSetReflectionSettingsCommand(
       c.scope === "local_project" ||
       c.scope === "global" ||
       c.scope === "both")
+  );
+}
+
+export function isGetExperimentsCommand(
+  value: unknown,
+): value is GetExperimentsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+  };
+  return c.type === "get_experiments" && typeof c.request_id === "string";
+}
+
+export function isSetExperimentCommand(
+  value: unknown,
+): value is SetExperimentCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    experiment_id?: unknown;
+    enabled?: unknown;
+  };
+  return (
+    c.type === "set_experiment" &&
+    typeof c.request_id === "string" &&
+    c.experiment_id === "node" &&
+    typeof c.enabled === "boolean"
   );
 }
 
@@ -1377,6 +1414,8 @@ export function parseServerMessage(
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isGetExperimentsCommand(parsed) ||
+      isSetExperimentCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||

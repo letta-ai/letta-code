@@ -9,29 +9,36 @@ import {
   isGitRepo,
   pullMemory,
 } from "../../agent/memoryGit";
+import { runMemoryTokensAction } from "./memoryTokens";
 
 function printUsage(): void {
   console.log(
     `
 Usage:
-  letta memfs status [--agent <id>]
-  letta memfs diff [--agent <id>]
-  letta memfs backup [--agent <id>]
-  letta memfs backups [--agent <id>]
-  letta memfs restore --from <backup> --force [--agent <id>]
-  letta memfs export --agent <id> --out <dir>
-  letta memfs pull [--agent <id>]
+  letta memory status [--agent <id>]
+  letta memory diff [--agent <id>]
+  letta memory backup [--agent <id>]
+  letta memory backups [--agent <id>]
+  letta memory restore --from <backup> --force [--agent <id>]
+  letta memory export --agent <id> --out <dir>
+  letta memory pull [--agent <id>]
+  letta memory tokens [--memory-dir <path>] [--agent <id>] [--top <N>]
+                     [--format text|json] [--quiet]
 
 Notes:
-  - Requires agent id via --agent or LETTA_AGENT_ID.
-  - Output is JSON only.
+  - Most actions require agent id via --agent or LETTA_AGENT_ID and output JSON.
+  - \`tokens\` additionally accepts --memory-dir or $MEMORY_DIR; reports the
+    estimated token size of system/. Policy (whether a size is concerning) is
+    up to the caller.
   - Memory is git-backed. Use git commands for commit/push.
 
 Examples:
-  LETTA_AGENT_ID=agent-123 letta memfs status
-  letta memfs pull --agent agent-123
-  letta memfs backup --agent agent-123
-  letta memfs export --agent agent-123 --out /tmp/letta-memfs-agent-123
+  LETTA_AGENT_ID=agent-123 letta memory status
+  letta memory pull --agent agent-123
+  letta memory backup --agent agent-123
+  letta memory export --agent agent-123 --out /tmp/letta-memory-agent-123
+  letta memory tokens
+  letta memory tokens --memory-dir ~/.letta/agents/agent-123/memory --format json
 `.trim(),
   );
 }
@@ -40,19 +47,23 @@ function getAgentId(agentFromArgs?: string, agentIdFromArgs?: string): string {
   return agentFromArgs || agentIdFromArgs || process.env.LETTA_AGENT_ID || "";
 }
 
-const MEMFS_OPTIONS = {
+const MEMORY_OPTIONS = {
   help: { type: "boolean", short: "h" },
   agent: { type: "string" },
   "agent-id": { type: "string" },
   from: { type: "string" },
   force: { type: "boolean" },
   out: { type: "string" },
+  "memory-dir": { type: "string" },
+  top: { type: "string" },
+  format: { type: "string" },
+  quiet: { type: "boolean" },
 } as const;
 
-function parseMemfsArgs(argv: string[]) {
+function parseMemoryArgs(argv: string[]) {
   return parseArgs({
     args: argv,
-    options: MEMFS_OPTIONS,
+    options: MEMORY_OPTIONS,
     strict: true,
     allowPositionals: true,
   });
@@ -114,10 +125,10 @@ function resolveBackupPath(agentId: string, from: string): string {
   return join(getAgentRoot(agentId), from);
 }
 
-export async function runMemfsSubcommand(argv: string[]): Promise<number> {
-  let parsed: ReturnType<typeof parseMemfsArgs>;
+export async function runMemorySubcommand(argv: string[]): Promise<number> {
+  let parsed: ReturnType<typeof parseMemoryArgs>;
   try {
-    parsed = parseMemfsArgs(argv);
+    parsed = parseMemoryArgs(argv);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
@@ -133,6 +144,18 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
   }
 
   const agentId = getAgentId(parsed.values.agent, parsed.values["agent-id"]);
+
+  // `tokens` has its own input resolution (--memory-dir / $MEMORY_DIR first,
+  // then falls back to agent id). Short-circuit before the agent-id hard check.
+  if (action === "tokens") {
+    return runMemoryTokensAction({
+      memoryDir: parsed.values["memory-dir"],
+      agentMemoryDir: agentId ? getMemoryRoot(agentId) : undefined,
+      top: parsed.values.top,
+      format: parsed.values.format,
+      quiet: Boolean(parsed.values.quiet),
+    });
+  }
 
   if (!agentId) {
     console.error(

@@ -3,6 +3,17 @@ type ShellLaunchOptions = {
   login?: boolean;
 };
 
+const POWERSHELL_ENV_ALIASES = [
+  "MEMORY_DIR",
+  "LETTA_MEMORY_DIR",
+  "AGENT_ID",
+  "LETTA_AGENT_ID",
+  "LETTA_PARENT_AGENT_ID",
+  "CONVERSATION_ID",
+  "LETTA_CONVERSATION_ID",
+  "USER_CWD",
+];
+
 function pushUnique(
   list: string[][],
   seen: Set<string>,
@@ -15,19 +26,32 @@ function pushUnique(
   list.push(entry);
 }
 
+function normalizePowerShellCommand(command: string): string {
+  const trimmed = command.trim();
+  if (
+    trimmed.startsWith("&") ||
+    trimmed.startsWith('"') ||
+    trimmed.startsWith("'")
+  ) {
+    return trimmed.startsWith("&") ? trimmed : `& ${trimmed}`;
+  }
+  return trimmed;
+}
+
+export function buildPowerShellCommand(command: string): string {
+  const powerShellCommand = normalizePowerShellCommand(command);
+  const aliasPrelude = POWERSHELL_ENV_ALIASES.map(
+    (name) => `$${name} = $env:${name}`,
+  ).join("; ");
+  return `${aliasPrelude}; ${powerShellCommand}`;
+}
+
 function windowsLaunchers(command: string): string[][] {
   const trimmed = command.trim();
   if (!trimmed) return [];
   const launchers: string[][] = [];
   const seen = new Set<string>();
-  const powerShellCommand =
-    trimmed.startsWith("&") ||
-    trimmed.startsWith('"') ||
-    trimmed.startsWith("'")
-      ? trimmed.startsWith("&")
-        ? trimmed
-        : `& ${trimmed}`
-      : trimmed;
+  const powerShellCommand = buildPowerShellCommand(trimmed);
 
   // Default to PowerShell on Windows (same as Gemini CLI and Codex CLI)
   // This ensures better PATH compatibility since many tools are configured

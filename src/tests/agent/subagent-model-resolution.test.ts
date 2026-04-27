@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
 import type { SubagentConfig } from "../../agent/subagents";
 import {
+  estimateStartupContextTokens,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "../../agent/subagents/contextBudget";
+import {
   buildSubagentArgs,
   resolveSubagentLauncher,
   resolveSubagentModel,
@@ -232,6 +236,42 @@ describe("buildSubagentArgs", () => {
 
     expect(args).toContain("--permission-mode");
     expect(args).toContain("memory");
+  });
+
+  test("caps reflection system prompt plus initial message to startup budget", () => {
+    const systemPrompt = "system ".repeat(1_000);
+    const memoryPreview = `<parent_memory>\n<memory_filesystem>\n/memory/\n└── system/\n</memory_filesystem>\n${"memory ".repeat(40_000)}\n</parent_memory>`;
+    const userPrompt = `Review transcript at /tmp/payload.json\n\n${memoryPreview}`;
+
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection", systemPrompt },
+      null,
+      userPrompt,
+    );
+    const promptArg = args[args.indexOf("-p") + 1] ?? "";
+
+    expect(
+      estimateStartupContextTokens(`${systemPrompt}\n${promptArg}`),
+    ).toBeLessThanOrEqual(REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT);
+    expect(promptArg).toContain("Review transcript at /tmp/payload.json");
+    expect(promptArg).toContain("<parent_memory>");
+    expect(promptArg).toContain("<memory_filesystem>");
+    expect(promptArg).toContain("Reflection startup context truncated");
+    expect(promptArg.length).toBeLessThan(userPrompt.length);
+  });
+
+  test("does not cap non-reflection initial messages", () => {
+    const longPrompt = "prompt ".repeat(40_000);
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      longPrompt,
+    );
+    const promptArg = args[args.indexOf("-p") + 1] ?? "";
+
+    expect(promptArg).toBe(longPrompt);
   });
 });
 

@@ -91,7 +91,7 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
-  letta memfs ...       Memory filesystem subcommands (JSON-only)
+  letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta blocks ...      Blocks subcommands (JSON-only)
@@ -100,14 +100,16 @@ USAGE
 OPTIONS
 ${renderCliOptionsHelp()}
 
-SUBCOMMANDS (JSON-only)
-  letta memfs status --agent <id>
-  letta memfs diff --agent <id>
-  letta memfs resolve --agent <id> --resolutions '<JSON>'
-  letta memfs backup --agent <id>
-  letta memfs backups --agent <id>
-  letta memfs restore --agent <id> --from <backup> --force
-  letta memfs export --agent <id> --out <dir>
+SUBCOMMANDS
+  letta memory status --agent <id>
+  letta memory diff --agent <id>
+  letta memory resolve --agent <id> --resolutions '<JSON>'
+  letta memory backup --agent <id>
+  letta memory backups --agent <id>
+  letta memory restore --agent <id> --from <backup> --force
+  letta memory export --agent <id> --out <dir>
+  letta memory pull --agent <id>
+  letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
@@ -355,7 +357,7 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
-  // Early exit for CLI subcommands (e.g., `letta server`, `letta memfs`).
+  // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
   const subcommandResult = await runSubcommand(process.argv.slice(2));
@@ -798,6 +800,22 @@ async function main(): Promise<void> {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
+  // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
+  // Stored OAuth credentials (interactive session tokens) are not accepted for
+  // automated/headless use — get an API key at https://app.letta.com/api-keys
+  if (
+    isHeadless &&
+    baseURL === LETTA_CLOUD_API_URL &&
+    !process.env.LETTA_API_KEY
+  ) {
+    console.error("Missing LETTA_API_KEY");
+    console.error(
+      "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
+    );
+    console.error("Get an API key at https://app.letta.com/api-keys");
+    process.exit(1);
+  }
+
   // Check if refresh token is missing for Letta Cloud (only when not using env var)
   // Skip this check if we already have an API key from env
   if (
@@ -824,15 +842,6 @@ async function main(): Promise<void> {
   }
 
   if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-    // For headless mode, error out (assume automation context)
-    if (isHeadless) {
-      console.error("Missing LETTA_API_KEY");
-      console.error(
-        "Run 'letta' in interactive mode to authenticate or export the missing environment variable",
-      );
-      process.exit(1);
-    }
-
     // For interactive mode, show setup flow
     console.log("No credentials found. Let's get you set up!\n");
     const { runSetup } = await import("./auth/setup");

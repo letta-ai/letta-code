@@ -30,7 +30,7 @@ This is the recommended flow:
 
 1. **Export the source agent's memfs to a temp directory**
    ```bash
-   letta memfs export --agent <source-agent-id> --out /tmp/letta-memfs-<source-agent-id>
+   letta memory export --agent <source-agent-id> --out /tmp/letta-memory-<source-agent-id>
    ```
 
 2. **Copy the files you want into your own memfs**
@@ -39,13 +39,16 @@ This is the recommended flow:
 
    Example:
    ```bash
-   cp -r /tmp/letta-memfs-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
-   cp /tmp/letta-memfs-agent-abc123/notes.md ~/.letta/agents/$LETTA_AGENT_ID/memory/
+   cp -r /tmp/letta-memory-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
+   cp /tmp/letta-memory-agent-abc123/notes.md ~/.letta/agents/$LETTA_AGENT_ID/memory/
    ```
 
-3. **Sync to API**
+3. **Commit and push the memory repo**
    ```bash
-   letta memfs sync --agent $LETTA_AGENT_ID
+   cd ~/.letta/agents/$LETTA_AGENT_ID/memory
+   git add system/project notes.md
+   git commit -m "Import memory from source agent"
+   git push
    ```
 
 This gives you full control over what you bring across and keeps everything consistent with memfs.
@@ -107,15 +110,18 @@ Scenario: You're a new agent and want to inherit memory from an existing agent "
 
 2. **Export their memfs:**
    ```bash
-   letta memfs export --agent agent-abc123 --out /tmp/letta-memfs-agent-abc123
+   letta memory export --agent agent-abc123 --out /tmp/letta-memory-agent-abc123
    ```
 
 3. **Copy the relevant files into your memfs:**
    ```bash
-   cp -r /tmp/letta-memfs-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
+   cp -r /tmp/letta-memory-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
    ```
 
-4. **Sync:**
+4. **Commit and push:**
    ```bash
-   letta memfs sync --agent $LETTA_AGENT_ID
+   cd ~/.letta/agents/$LETTA_AGENT_ID/memory
+   git add system/project
+   git commit -m "Import project memory"
+   git push
    ```

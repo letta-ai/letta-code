@@ -253,7 +253,6 @@ export async function prepareToolExecutionContextForScope(params: {
   exclude?: ToolName[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
-  /** Pre-fetched agent state — skips agents.retrieve when provided. */
   cachedAgent?: AgentState | null;
 }): Promise<PreparedScopeToolContext> {
   const {
@@ -497,13 +496,15 @@ export function shouldClearPersistedToolRules(
 
 export async function clearPersistedClientToolRules(
   agentId: string,
+  cachedAgent?: AgentState | null,
 ): Promise<{ removedToolNames: string[] } | null> {
   const client = await getClient();
 
   try {
-    const agentWithTools = (await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    })) as AgentWithToolsAndRules;
+    const agentWithTools = (cachedAgent ??
+      (await client.agents.retrieve(agentId, {
+        include: ["agent.tools"],
+      }))) as AgentWithToolsAndRules;
     if (!shouldClearPersistedToolRules(agentWithTools)) {
       return null;
     }
