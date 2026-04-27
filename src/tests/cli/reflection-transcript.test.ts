@@ -765,6 +765,27 @@ describe("reflectionTranscript helper", () => {
     expect(filtered).not.toContain("git push");
   });
 
+  test("concurrent appends to the same conversation serialize via the state lock", async () => {
+    const appends = await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        appendTranscriptDeltaJsonl(agentId, conversationId, [
+          {
+            kind: "user",
+            id: `u${i}`,
+            text: `msg ${i}`,
+            messageId: `m${i}`,
+          },
+        ]),
+      ),
+    );
+
+    expect(appends).toEqual([1, 1, 1, 1, 1]);
+
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.transcript_line_count).toBe(5);
+    expect(state.total_completed_turns).toBe(5);
+  });
+
   test("v2 state read and append trust persisted counters over transcript file", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "hello", messageId: "u1" },

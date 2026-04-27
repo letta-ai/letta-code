@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { MEMORY_SYSTEM_DIR } from "../../agent/memoryFilesystem";
 import { getDirectoryLimits } from "../../utils/directoryLimits";
+import { withFileLock } from "../../utils/fileLock";
 import { parseFrontmatter } from "../../utils/frontmatter";
 import type { Line } from "./accumulator";
 import { safeJsonParseOr } from "./safeJsonParse";
@@ -393,7 +394,13 @@ function withStateLock<T>(
 ): Promise<T> {
   const key = `${agentId}::${conversationId}`;
   const previous = stateMutexes.get(key) ?? Promise.resolve();
-  const next = previous.catch(() => undefined).then(fn);
+  const next = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const paths = getReflectionTranscriptPaths(agentId, conversationId);
+      await mkdir(paths.rootDir, { recursive: true });
+      return withFileLock(`${paths.statePath}.lock`, fn);
+    });
   const tail = next.catch(() => undefined);
   stateMutexes.set(key, tail);
   tail.finally(() => {

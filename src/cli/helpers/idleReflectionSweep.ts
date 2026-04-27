@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { telemetry } from "../../telemetry";
 import { debugLog, debugWarn } from "../../utils/debug";
+import { withFileLock } from "../../utils/fileLock";
 import type { ListenerRuntime } from "../../websocket/listener/types";
 import {
   launchReflectionSubagent,
@@ -287,16 +288,32 @@ export function maybeStartIdleReflectionSweep(
       return;
     }
 
-    const state = await readIdleSweepState(input.agentId);
-    const persistedStartedAt = state.last_idle_sweep_started_at
-      ? Date.parse(state.last_idle_sweep_started_at)
-      : Number.NaN;
-    if (Number.isFinite(persistedStartedAt)) {
-      idleSweepLastStartedAtByAgent.set(input.agentId, persistedStartedAt);
-      if (now() - persistedStartedAt < intervalMs) {
-        idleSweepInFlightByAgent.delete(input.agentId);
-        return;
+    const root = getReflectionTranscriptAgentRoot(input.agentId);
+    await mkdir(root, { recursive: true });
+    const lockPath = join(root, "idle-sweep-state.json.lock");
+
+    let claimed = false;
+    await withFileLock(lockPath, async () => {
+      const state = await readIdleSweepState(input.agentId);
+      const persistedStartedAt = state.last_idle_sweep_started_at
+        ? Date.parse(state.last_idle_sweep_started_at)
+        : Number.NaN;
+      if (Number.isFinite(persistedStartedAt)) {
+        idleSweepLastStartedAtByAgent.set(input.agentId, persistedStartedAt);
+        if (now() - persistedStartedAt < intervalMs) {
+          return;
+        }
       }
+      const claimedAt = now();
+      state.last_idle_sweep_started_at = new Date(claimedAt).toISOString();
+      await writeIdleSweepState(input.agentId, state);
+      idleSweepLastStartedAtByAgent.set(input.agentId, claimedAt);
+      claimed = true;
+    });
+
+    if (!claimed) {
+      idleSweepInFlightByAgent.delete(input.agentId);
+      return;
     }
 
     try {
