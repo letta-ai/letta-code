@@ -12,7 +12,7 @@ import { Text } from "./Text";
 const SOLID_LINE = "─";
 const DEFAULT_STEP_COUNT = "25";
 const DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS = "24";
-const DEFAULT_PASSIVE_MIN_QUIET_MINUTES = "15";
+const DEFAULT_PASSIVE_MIN_QUIET_MINUTES = "60";
 const DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS = "3";
 const TRIGGER_LABELS: Record<ReflectionTrigger, string> = {
   off: "Off",
