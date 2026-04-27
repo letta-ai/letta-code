@@ -623,7 +623,6 @@ function normalizeReflectionSource(
 
 function normalizeV2State(
   parsed: Partial<ReflectionTranscriptState>,
-  lineCount: number,
 ): ReflectionTranscriptState {
   const totalCompletedTurns = normalizeNonNegativeInteger(
     parsed.total_completed_turns,
@@ -669,7 +668,9 @@ function normalizeV2State(
     total_completed_turns: totalCompletedTurns,
     reflected_completed_turns: reflectedCompletedTurns,
     turns_since_last_successful_reflection: turnsSinceLastSuccessfulReflection,
-    transcript_line_count: lineCount,
+    transcript_line_count: normalizeNonNegativeInteger(
+      parsed.transcript_line_count,
+    ),
     last_transcript_appended_at: normalizeString(
       parsed.last_transcript_appended_at,
     ),
@@ -739,34 +740,36 @@ function migrateLegacyState(
 
 async function readState(
   paths: ReflectionTranscriptPaths,
-  lines?: string[],
 ): Promise<ReflectionTranscriptState> {
-  const transcriptLines = lines ?? (await readTranscriptLines(paths));
+  let raw: string | null = null;
   try {
-    const raw = await readFile(paths.statePath, "utf-8");
-    const parsed = safeJsonParseOr<Partial<
-      ReflectionTranscriptState & LegacyReflectionTranscriptState
-    > | null>(raw, null);
-    if (!parsed) {
-      const state = defaultState(transcriptLines.length);
-      await writeState(paths, state);
-      return state;
-    }
-    if (parsed.schema_version === REFLECTION_STATE_SCHEMA_VERSION) {
-      const state = normalizeV2State(parsed, transcriptLines.length);
-      if (JSON.stringify(state) !== JSON.stringify(parsed)) {
-        await writeState(paths, state);
-      }
-      return state;
-    }
-    const migrated = migrateLegacyState(parsed, transcriptLines);
-    await writeState(paths, migrated);
-    return migrated;
+    raw = await readFile(paths.statePath, "utf-8");
   } catch {
+    raw = null;
+  }
+  const parsed = raw
+    ? safeJsonParseOr<Partial<
+        ReflectionTranscriptState & LegacyReflectionTranscriptState
+      > | null>(raw, null)
+    : null;
+
+  if (parsed?.schema_version === REFLECTION_STATE_SCHEMA_VERSION) {
+    const state = normalizeV2State(parsed);
+    if (JSON.stringify(state) !== JSON.stringify(parsed)) {
+      await writeState(paths, state);
+    }
+    return state;
+  }
+
+  const transcriptLines = await readTranscriptLines(paths);
+  if (!parsed) {
     const state = defaultState(transcriptLines.length);
     await writeState(paths, state);
     return state;
   }
+  const migrated = migrateLegacyState(parsed, transcriptLines);
+  await writeState(paths, migrated);
+  return migrated;
 }
 
 async function writeState(
@@ -833,8 +836,7 @@ export async function appendTranscriptDeltaJsonl(
   return withStateLock(agentId, conversationId, async () => {
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
     await ensurePaths(paths);
-    const existingTranscriptLines = await readTranscriptLines(paths);
-    const state = await readState(paths, existingTranscriptLines);
+    const state = await readState(paths);
 
     const capturedAt = new Date().toISOString();
     const entries = lines
@@ -846,11 +848,9 @@ export async function appendTranscriptDeltaJsonl(
 
     const payload = entries.map((entry) => JSON.stringify(entry)).join("\n");
     await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
-    const nowIso = new Date().toISOString();
-    state.transcript_line_count =
-      existingTranscriptLines.length + entries.length;
+    state.transcript_line_count += entries.length;
     state.total_completed_turns += countUserRows(entries);
-    state.last_transcript_appended_at = nowIso;
+    state.last_transcript_appended_at = new Date().toISOString();
     await writeState(paths, state);
     return entries.length;
   });
@@ -965,8 +965,7 @@ export async function getReflectionTranscriptState(
 ): Promise<ReflectionTranscriptState> {
   const paths = getReflectionTranscriptPaths(agentId, conversationId);
   await ensurePaths(paths);
-  const lines = await readTranscriptLines(paths);
-  return readState(paths, lines);
+  return readState(paths);
 }
 
 export async function getReflectionTranscriptDerivedState(
@@ -976,7 +975,7 @@ export async function getReflectionTranscriptDerivedState(
   const paths = getReflectionTranscriptPaths(agentId, conversationId);
   await ensurePaths(paths);
   const lines = await readTranscriptLines(paths);
-  const state = await readState(paths, lines);
+  const state = await readState(paths);
   return buildDerivedState(state, parseTranscriptRows(lines));
 }
 
@@ -990,7 +989,7 @@ export async function buildAutoReflectionPayload(
     await ensurePaths(paths);
 
     const lines = await readTranscriptLines(paths);
-    const state = await readState(paths, lines);
+    const state = await readState(paths);
     const rows = parseTranscriptRows(lines);
     const selection = selectUnreflectedTranscriptRange(
       rows,
@@ -1044,7 +1043,7 @@ export async function finalizeAutoReflectionPayload(
     await ensurePaths(paths);
 
     const lines = await readTranscriptLines(paths);
-    const state = await readState(paths, lines);
+    const state = await readState(paths);
     state.transcript_line_count = lines.length;
     if (success) {
       const snapshotLines = lines.slice(0, Math.max(0, endSnapshotLine));

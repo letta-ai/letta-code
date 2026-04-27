@@ -383,4 +383,58 @@ describe("idle reflection sweep candidate discovery", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(launchCount).toBe(0);
   });
+
+  test("scheduler caches last-started timestamp and short-circuits without rereading state", async () => {
+    await appendCompletedTurns("idle-good", 3);
+    await setTranscriptMetadata("idle-good", {
+      transcriptAppendedMinutesAgo: 20,
+    });
+
+    let launchCount = 0;
+    const sweepInput = {
+      agentId,
+      activeConversationId: "active",
+      workingDirectory: "/tmp/work",
+      reflectionSettings: normalizeReflectionSettings({
+        trigger: "step-count" as const,
+        stepCount: 25,
+        passiveSweepEnabled: true,
+        passiveSweepIntervalHours: 24,
+        passiveMinQuietMinutes: 15,
+        passiveMinUnreflectedTurns: 3,
+      }),
+      recompileContext: {
+        recompileByConversation: new Map<string, Promise<void>>(),
+        recompileQueuedByConversation: new Set<string>(),
+      },
+      now: () => nowMs,
+      launchReflectionSubagent: async () => {
+        launchCount += 1;
+        return {
+          status: "completed" as const,
+          success: true,
+          payloadPath: "/tmp/idle-good.json",
+        };
+      },
+    };
+
+    maybeStartIdleReflectionSweep(sweepInput);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(launchCount).toBe(1);
+
+    const sweepStatePath = join(testRoot, agentId, "idle-sweep-state.json");
+    await rm(sweepStatePath, { force: true });
+
+    maybeStartIdleReflectionSweep(sweepInput);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(launchCount).toBe(1);
+
+    let stateFileExists = true;
+    try {
+      await readFile(sweepStatePath, "utf-8");
+    } catch {
+      stateFileExists = false;
+    }
+    expect(stateFileExists).toBe(false);
+  });
 });

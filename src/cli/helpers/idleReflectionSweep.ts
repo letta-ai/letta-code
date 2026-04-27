@@ -15,6 +15,7 @@ import { isReflectionSubagentActive } from "./reflectionGate";
 import {
   getReflectionTranscriptAgentRoot,
   getReflectionTranscriptDerivedState,
+  getReflectionTranscriptState,
   listReflectionTranscriptConversationIds,
 } from "./reflectionTranscript";
 import { getSubagents } from "./subagentState";
@@ -41,6 +42,8 @@ type IdleReflectionCandidate = {
 };
 
 const idleSweepInFlightByAgent = new Set<string>();
+const idleSweepLastStartedAtByAgent = new Map<string, number>();
+const HOUR_MS = 60 * 60 * 1000;
 
 function getIdleSweepStatePath(agentId: string): string {
   return join(
@@ -135,62 +138,68 @@ async function discoverIdleReflectionCandidates(
   input: IdleReflectionSweepInput,
 ): Promise<IdleReflectionCandidate[]> {
   const nowMs = input.now?.() ?? Date.now();
-  const reflectionSettings = normalizeReflectionSettings(
-    input.reflectionSettings,
-  );
+  const settings = normalizeReflectionSettings(input.reflectionSettings);
   const conversationIds = await listReflectionTranscriptConversationIds(
     input.agentId,
   );
-  const candidates: IdleReflectionCandidate[] = [];
 
-  for (const conversationId of conversationIds) {
-    if (conversationId === input.activeConversationId) {
-      continue;
-    }
-    if (
-      isReflectionSubagentActive(getSubagents(), input.agentId, conversationId)
-    ) {
-      continue;
-    }
-    if (
-      isConversationRuntimeBusy(
+  const eligible = conversationIds.filter(
+    (conversationId) =>
+      conversationId !== input.activeConversationId &&
+      !isReflectionSubagentActive(
+        getSubagents(),
+        input.agentId,
+        conversationId,
+      ) &&
+      !isConversationRuntimeBusy(
         input.listenerRuntime,
         input.agentId,
         conversationId,
-      )
-    ) {
-      continue;
-    }
+      ),
+  );
 
-    const derived = await getReflectionTranscriptDerivedState(
-      input.agentId,
-      conversationId,
-    );
-    if (!derived.hasUnreflectedMessages) {
-      continue;
-    }
-    if (
-      derived.unreflectedCompletedTurns <
-      reflectionSettings.passiveMinUnreflectedTurns
-    ) {
-      continue;
-    }
-    if (
-      hoursSince(derived.state.last_reflection_succeeded_at, nowMs) <
-      reflectionSettings.passiveSweepIntervalHours
-    ) {
-      continue;
-    }
-    if (
-      minutesSince(derived.state.last_transcript_appended_at, nowMs) <
-      reflectionSettings.passiveMinQuietMinutes
-    ) {
-      continue;
-    }
-    candidates.push({ conversationId });
-  }
+  const phase1 = await Promise.all(
+    eligible.map(async (conversationId) => {
+      const state = await getReflectionTranscriptState(
+        input.agentId,
+        conversationId,
+      );
+      const unreflectedTurns = Math.max(
+        0,
+        state.total_completed_turns - state.reflected_completed_turns,
+      );
+      if (unreflectedTurns < settings.passiveMinUnreflectedTurns) {
+        return null;
+      }
+      if (
+        hoursSince(state.last_reflection_succeeded_at, nowMs) <
+        settings.passiveSweepIntervalHours
+      ) {
+        return null;
+      }
+      if (
+        minutesSince(state.last_transcript_appended_at, nowMs) <
+        settings.passiveMinQuietMinutes
+      ) {
+        return null;
+      }
+      return conversationId;
+    }),
+  );
+  const survivors = phase1.filter((id): id is string => id !== null);
 
-  return candidates;
+  const phase2 = await Promise.all(
+    survivors.map(async (conversationId) => {
+      const derived = await getReflectionTranscriptDerivedState(
+        input.agentId,
+        conversationId,
+      );
+      return derived.hasUnreflectedMessages ? { conversationId } : null;
+    }),
+  );
+  return phase2.filter(
+    (candidate): candidate is IdleReflectionCandidate => candidate !== null,
+  );
 }
 
 async function runIdleReflectionSweep(
@@ -201,6 +210,7 @@ async function runIdleReflectionSweep(
   const state = await readIdleSweepState(input.agentId);
   state.last_idle_sweep_started_at = new Date(startedAt).toISOString();
   await writeIdleSweepState(input.agentId, state);
+  idleSweepLastStartedAtByAgent.set(input.agentId, startedAt);
 
   let candidates: IdleReflectionCandidate[] = [];
   let launchedCount = 0;
@@ -272,13 +282,23 @@ export function maybeStartIdleReflectionSweep(
 
   void (async () => {
     const now = input.now ?? Date.now;
-    const state = await readIdleSweepState(input.agentId);
-    if (
-      hoursSince(state.last_idle_sweep_started_at, now()) <
-      reflectionSettings.passiveSweepIntervalHours
-    ) {
+    const intervalMs = reflectionSettings.passiveSweepIntervalHours * HOUR_MS;
+    const cachedStartedAt = idleSweepLastStartedAtByAgent.get(input.agentId);
+    if (cachedStartedAt !== undefined && now() - cachedStartedAt < intervalMs) {
       idleSweepInFlightByAgent.delete(input.agentId);
       return;
+    }
+
+    const state = await readIdleSweepState(input.agentId);
+    const persistedStartedAt = state.last_idle_sweep_started_at
+      ? Date.parse(state.last_idle_sweep_started_at)
+      : Number.NaN;
+    if (Number.isFinite(persistedStartedAt)) {
+      idleSweepLastStartedAtByAgent.set(input.agentId, persistedStartedAt);
+      if (now() - persistedStartedAt < intervalMs) {
+        idleSweepInFlightByAgent.delete(input.agentId);
+        return;
+      }
     }
 
     try {
@@ -304,5 +324,6 @@ export const __idleReflectionSweepTestUtils = {
   runIdleReflectionSweep,
   resetInFlight() {
     idleSweepInFlightByAgent.clear();
+    idleSweepLastStartedAtByAgent.clear();
   },
 };

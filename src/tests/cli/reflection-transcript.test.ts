@@ -12,6 +12,7 @@ import {
   finalizeAutoReflectionPayload,
   getReflectionTranscriptDerivedState,
   getReflectionTranscriptPaths,
+  getReflectionTranscriptState,
   REFLECTION_STATE_SCHEMA_VERSION,
 } from "../../cli/helpers/reflectionTranscript";
 import { DIRECTORY_LIMIT_ENV } from "../../utils/directoryLimits";
@@ -762,5 +763,33 @@ describe("reflectionTranscript helper", () => {
     expect(filtered).not.toContain("pinned into your prompt");
     expect(filtered).not.toContain("Syncing");
     expect(filtered).not.toContain("git push");
+  });
+
+  test("v2 state read and append trust persisted counters over transcript file", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await writeFile(paths.transcriptPath, "", "utf-8");
+
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.transcript_line_count).toBe(2);
+    expect(state.total_completed_turns).toBe(1);
+
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u2", text: "again", messageId: "u2" },
+    ]);
+
+    const after = await getReflectionTranscriptState(agentId, conversationId);
+    expect(after.transcript_line_count).toBe(3);
+    expect(after.total_completed_turns).toBe(2);
   });
 });
