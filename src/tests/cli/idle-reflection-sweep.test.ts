@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  LaunchReflectionInput,
-  LaunchReflectionResult,
+import {
+  __autoReflectionTestUtils,
+  type LaunchReflectionInput,
+  type LaunchReflectionResult,
+  launchReflectionSubagent,
 } from "../../cli/helpers/autoReflection";
 import {
   __idleReflectionSweepTestUtils,
@@ -15,6 +17,7 @@ import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   finalizeAutoReflectionPayload,
+  getReflectionTranscriptDerivedState,
   getReflectionTranscriptPaths,
 } from "../../cli/helpers/reflectionTranscript";
 import {
@@ -270,7 +273,7 @@ describe("idle reflection sweep candidate discovery", () => {
     ]);
   });
 
-  test("sweep processes candidates sequentially and emits one aggregate notification", async () => {
+  test("multi-candidate sweep runs sequentially through the real launcher, advancing only successful cursors", async () => {
     await appendCompletedTurns("idle-a", 3);
     await appendCompletedTurns("idle-b", 3);
     await appendCompletedTurns("idle-c", 3);
@@ -278,25 +281,48 @@ describe("idle reflection sweep candidate discovery", () => {
     await setTranscriptMetadata("idle-b", { transcriptAppendedMinutesAgo: 20 });
     await setTranscriptMetadata("idle-c", { transcriptAppendedMinutesAgo: 20 });
 
+    __autoReflectionTestUtils.resetReflectionQueue();
+
     const events: string[] = [];
-    const notifications: string[] = [];
     let activeLaunches = 0;
     let maxActiveLaunches = 0;
-    const launch = async (
-      input: LaunchReflectionInput,
-    ): Promise<LaunchReflectionResult> => {
-      events.push(`start:${input.conversationId}`);
-      activeLaunches += 1;
-      maxActiveLaunches = Math.max(maxActiveLaunches, activeLaunches);
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      activeLaunches -= 1;
-      events.push(`end:${input.conversationId}`);
-      return {
-        status: "completed",
-        success: input.conversationId !== "idle-b",
-        payloadPath: `/tmp/${input.conversationId}.json`,
-      };
+    // idle-b's reflection fails — cursor must not advance and aggregate
+    // notification must report partial success.
+    const successByConv: Record<string, boolean> = {
+      "idle-a": true,
+      "idle-b": false,
+      "idle-c": true,
     };
+
+    const wrappedLaunch = (
+      input: LaunchReflectionInput,
+    ): Promise<LaunchReflectionResult> =>
+      launchReflectionSubagent({
+        ...input,
+        deps: {
+          isMemfsEnabled: () => true,
+          getSystemPrompt: async () => undefined,
+          spawnBackgroundSubagentTask: ({ onComplete, parentScope }) => {
+            const conversationId = parentScope.conversationId;
+            events.push(`spawn:${conversationId}`);
+            activeLaunches += 1;
+            maxActiveLaunches = Math.max(maxActiveLaunches, activeLaunches);
+            void Promise.resolve().then(async () => {
+              activeLaunches -= 1;
+              events.push(`complete:${conversationId}`);
+              await onComplete({
+                success: successByConv[conversationId] ?? true,
+                agentId: `reflection-${conversationId}`,
+              });
+            });
+            return { subagentId: `sub-${conversationId}` };
+          },
+          waitForBackgroundSubagentAgentId: async () => "reflection-agent-stub",
+          handleMemorySubagentCompletion: async () => "reflection complete",
+        },
+      });
+
+    const notifications: string[] = [];
 
     await __idleReflectionSweepTestUtils.runIdleReflectionSweep({
       agentId,
@@ -313,7 +339,7 @@ describe("idle reflection sweep candidate discovery", () => {
         recompileByConversation: new Map(),
         recompileQueuedByConversation: new Set(),
       },
-      launchReflectionSubagent: launch,
+      launchReflectionSubagent: wrappedLaunch,
       emitCompletionNotification: (message) => {
         notifications.push(message);
       },
@@ -322,21 +348,46 @@ describe("idle reflection sweep candidate discovery", () => {
 
     expect(maxActiveLaunches).toBe(1);
     expect(events).toEqual([
-      "start:idle-a",
-      "end:idle-a",
-      "start:idle-b",
-      "end:idle-b",
-      "start:idle-c",
-      "end:idle-c",
+      "spawn:idle-a",
+      "complete:idle-a",
+      "spawn:idle-b",
+      "complete:idle-b",
+      "spawn:idle-c",
+      "complete:idle-c",
     ]);
     expect(notifications).toEqual([
       "Idle reflection sweep completed: 2/3 conversation(s) reflected.",
     ]);
 
-    const state =
+    const derivedA = await getReflectionTranscriptDerivedState(
+      agentId,
+      "idle-a",
+    );
+    expect(derivedA.state.reflected_completed_turns).toBe(3);
+    expect(derivedA.state.last_reflection_source).toBe("idle-time");
+    expect(derivedA.hasUnreflectedMessages).toBe(false);
+
+    // Failed reflection leaves cursor and source untouched.
+    const derivedB = await getReflectionTranscriptDerivedState(
+      agentId,
+      "idle-b",
+    );
+    expect(derivedB.state.reflected_completed_turns).toBe(0);
+    expect(derivedB.state.last_reflection_source).toBeUndefined();
+    expect(derivedB.hasUnreflectedMessages).toBe(true);
+
+    const derivedC = await getReflectionTranscriptDerivedState(
+      agentId,
+      "idle-c",
+    );
+    expect(derivedC.state.reflected_completed_turns).toBe(3);
+    expect(derivedC.state.last_reflection_source).toBe("idle-time");
+    expect(derivedC.hasUnreflectedMessages).toBe(false);
+
+    const sweepState =
       await __idleReflectionSweepTestUtils.readIdleSweepState(agentId);
-    expect(state.last_idle_sweep_started_at).toBeString();
-    expect(state.last_idle_sweep_completed_at).toBeString();
+    expect(sweepState.last_idle_sweep_started_at).toBeString();
+    expect(sweepState.last_idle_sweep_completed_at).toBeString();
   });
 
   test("scheduler skips when not due", async () => {
