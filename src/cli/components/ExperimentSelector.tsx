@@ -16,7 +16,7 @@ interface ExperimentSelectorProps {
 function formatExperimentState(experiment: ExperimentSnapshot): string {
   const state = experiment.enabled ? "on" : "off";
   if (experiment.source === "override") {
-    return `${state} · in-app override`;
+    return state;
   }
   if (experiment.source === "env") {
     return `${state} · env`;
@@ -73,7 +73,7 @@ export function ExperimentSelector({
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>{"> /experiment"}</Text>
+      <Text dimColor>{"> /experiments"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />

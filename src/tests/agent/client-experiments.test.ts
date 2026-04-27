@@ -56,7 +56,7 @@ function getDefaultHeaders(client: unknown): Record<string, string> {
 }
 
 describe("getClient experiment headers", () => {
-  test("uses LETTA_NODE when no in-app override exists", async () => {
+  test("uses LETTA_NODE when no explicit experiment override exists", async () => {
     process.env.LETTA_NODE = "1";
 
     const client = await getClient();

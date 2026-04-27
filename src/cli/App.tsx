@@ -617,7 +617,7 @@ function extractErrorMeta(e: unknown) {
 // Any changes made in the overlay will be queued until end_turn
 const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/model",
-  "/experiment",
+  "/experiments",
   "/toolset",
   "/system",
   "/personality",
@@ -7953,12 +7953,12 @@ export default function App({
           return { submitted: true };
         }
 
-        if (trimmed === "/experiment") {
+        if (trimmed === "/experiments") {
           startOverlayCommand(
             "experiment",
-            "/experiment",
-            "Opening experiment selector...",
-            "Experiment dialog dismissed",
+            "/experiments",
+            "Opening experiments selector...",
+            "Experiments dialog dismissed",
           );
           setActiveOverlay("experiment");
           return { submitted: true };
@@ -12791,7 +12791,7 @@ ${SYSTEM_REMINDER_CLOSE}
       commandId?: string | null,
     ) => {
       const overlayCommand = commandId
-        ? commandRunner.getHandle(commandId, "/experiment")
+        ? commandRunner.getHandle(commandId, "/experiments")
         : consumeOverlayCommand("experiment");
 
       if (isAgentBusy()) {
@@ -12799,7 +12799,7 @@ ${SYSTEM_REMINDER_CLOSE}
         const cmd =
           overlayCommand ??
           commandRunner.start(
-            "/experiment",
+            "/experiments",
             "Experiment toggle queued – will update after current task completes",
           );
         cmd.update({
@@ -12819,7 +12819,7 @@ ${SYSTEM_REMINDER_CLOSE}
       await withCommandLock(async () => {
         const cmd =
           overlayCommand ??
-          commandRunner.start("/experiment", "Updating experiment...");
+          commandRunner.start("/experiments", "Updating experiment...");
         cmd.update({
           output: "Updating experiment...",
           phase: "running",
@@ -12831,7 +12831,7 @@ ${SYSTEM_REMINDER_CLOSE}
             selection.enabled,
           );
           cmd.finish(
-            `Experiment "${snapshot.label}" ${snapshot.enabled ? "enabled" : "disabled"} (${snapshot.source})`,
+            `Experiment "${snapshot.label}" ${snapshot.enabled ? "enabled" : "disabled"}`,
             true,
           );
         } catch (error) {
