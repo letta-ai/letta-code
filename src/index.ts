@@ -1478,8 +1478,13 @@ async function main(): Promise<void> {
     ]);
 
     // Main initialization effect - runs after profile selection
+    const initStartedRef = React.useRef(false);
     useEffect(() => {
       if (loadingState !== "assembling") return;
+      // Guard against double-fire from dependency churn in the same
+      // "assembling" phase.  Only the first invocation should run.
+      if (initStartedRef.current) return;
+      initStartedRef.current = true;
 
       async function init() {
         const client = await getClient();
