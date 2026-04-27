@@ -273,6 +273,40 @@ export const CLI_FLAG_CATALOG = {
       description: "Sleeptime step-count interval (positive integer)",
     },
   },
+  "reflection-passive-sweep-enabled": {
+    parser: { type: "string" },
+    mode: "both",
+    help: {
+      argLabel: "<bool>",
+      description: "Enable/disable passive idle-time reflection sweep",
+    },
+  },
+  "reflection-passive-sweep-interval-hours": {
+    parser: { type: "string" },
+    mode: "both",
+    help: {
+      argLabel: "<hours>",
+      description: "Minimum hours between passive sweeps (positive number)",
+    },
+  },
+  "reflection-passive-conversation-min-idle-hours": {
+    parser: { type: "string" },
+    mode: "both",
+    help: {
+      argLabel: "<hours>",
+      description:
+        "Per-conversation: minimum hours of idle time before it qualifies for the passive sweep",
+    },
+  },
+  "reflection-passive-conversation-min-unreflected-turns": {
+    parser: { type: "string" },
+    mode: "both",
+    help: {
+      argLabel: "<n>",
+      description:
+        "Per-conversation: minimum unreflected turns before it qualifies for the passive sweep",
+    },
+  },
   "max-turns": { parser: { type: "string" }, mode: "headless" },
 } as const satisfies Record<string, CliFlagDefinition>;
 

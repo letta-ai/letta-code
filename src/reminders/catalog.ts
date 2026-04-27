@@ -77,22 +77,12 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "reflection-step-count",
       description: "Step-count reflection trigger handling",
-      modes: [
-        "interactive",
-        "headless-one-shot",
-        "headless-bidirectional",
-        "listen",
-      ],
+      modes: ["interactive", "headless-bidirectional", "listen"],
     },
     {
       id: "reflection-compaction",
       description: "Compaction-triggered reflection trigger handling",
-      modes: [
-        "interactive",
-        "headless-one-shot",
-        "headless-bidirectional",
-        "listen",
-      ],
+      modes: ["interactive", "headless-bidirectional", "listen"],
     },
     {
       id: "command-io",
