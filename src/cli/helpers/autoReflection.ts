@@ -19,7 +19,7 @@ import {
 import { getSubagents } from "./subagentState";
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
-const SUBAGENT_ID_WAIT_MS = 1000;
+const SUBAGENT_ID_WAIT_MS = 60_000;
 
 export type ReflectionRecompileContext = {
   recompileByConversation: Map<string, Promise<void>>;
