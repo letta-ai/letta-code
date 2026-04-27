@@ -215,6 +215,7 @@ import { UserMessage } from "./components/UserMessageRich";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { AnimationProvider } from "./contexts/AnimationContext";
 import {
+  appendOptimisticUserLine,
   appendStreamingOutput,
   type Buffers,
   createBuffers,
@@ -725,27 +726,6 @@ function uid(prefix: string) {
 // server with the real message.id.
 function createClientOtid(): string {
   return randomUUID();
-}
-
-function appendOptimisticUserLine(
-  buffers: Buffers,
-  text: string,
-  otid: string,
-): string | null {
-  if (!text) {
-    return null;
-  }
-
-  const userId = uid("user");
-  buffers.byId.set(userId, {
-    kind: "user",
-    id: userId,
-    text,
-    otid,
-  });
-  buffers.userLineIdByOtid.set(otid, userId);
-  buffers.order.push(userId);
-  return userId;
 }
 
 function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {

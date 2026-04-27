@@ -326,6 +326,27 @@ function ensure<T extends Line>(b: Buffers, id: string, make: () => T): T {
   return created;
 }
 
+/**
+ * Append a user line into buffers before sending — gives the transcript a
+ * row to count even when the server doesn't echo `user_message` back. The
+ * caller passes its own otid so a later server echo can reconcile via
+ * `userLineIdByOtid`.
+ */
+export function appendOptimisticUserLine(
+  buffers: Buffers,
+  text: string,
+  otid: string,
+): string | null {
+  if (!text) return null;
+  const userId = `user-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+  buffers.byId.set(userId, { kind: "user", id: userId, text, otid });
+  buffers.userLineIdByOtid.set(otid, userId);
+  buffers.order.push(userId);
+  return userId;
+}
+
 // Mark a line as finished if it has a phase (immutable update)
 function markAsFinished(b: Buffers, id: string) {
   const line = b.byId.get(id);
