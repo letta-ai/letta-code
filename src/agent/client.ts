@@ -211,6 +211,20 @@ export function getMemfsServerUrl(): string {
   return LETTA_CLOUD_API_URL;
 }
 
+export function getClientDefaultHeaders(): Record<string, string> {
+  const nodeExperiment = experimentManager.getSnapshot("node");
+
+  return {
+    "X-Letta-Source": "letta-code",
+    "User-Agent": `letta-code/${packageJson.version}`,
+    ...(nodeExperiment.source === "override"
+      ? { "x-letta-node": nodeExperiment.enabled ? "1" : "0" }
+      : nodeExperiment.enabled
+        ? { "x-letta-node": "1" }
+        : {}),
+  };
+}
+
 export async function getClient() {
   if (_testClientOverride) {
     return (await _testClientOverride()) as Letta;
@@ -318,22 +332,12 @@ export async function getClient() {
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
-  const nodeExperiment = experimentManager.getSnapshot("node");
-
   return new Letta({
     apiKey,
     baseURL,
     logger: sdkLogger,
     timeout: Number(process.env.LETTA_REQUEST_TIMEOUT_MS) || 10 * 60 * 1000, // default 10 min; override via env for slow local inference
-    defaultHeaders: {
-      "X-Letta-Source": "letta-code",
-      "User-Agent": `letta-code/${packageJson.version}`,
-      ...(nodeExperiment.source === "override"
-        ? { "x-letta-node": nodeExperiment.enabled ? "1" : "0" }
-        : nodeExperiment.enabled
-          ? { "x-letta-node": "1" }
-          : {}),
-    },
+    defaultHeaders: getClientDefaultHeaders(),
     // Use instrumented fetch for timing logs when LETTA_DEBUG_TIMINGS is enabled
     ...(isTimingsEnabled() && { fetch: createTimingFetch(fetch) }),
   });

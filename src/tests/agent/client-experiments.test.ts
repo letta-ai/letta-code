@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getClient } from "../../agent/client";
+import { getClientDefaultHeaders } from "../../agent/client";
 import { experimentManager } from "../../experiments/manager";
 import { settingsManager } from "../../settings-manager";
 
@@ -50,32 +50,21 @@ afterEach(async () => {
   }
 });
 
-function getDefaultHeaders(client: unknown): Record<string, string> {
-  return ((client as { _options?: { defaultHeaders?: Record<string, string> } })
-    ._options?.defaultHeaders ?? {}) as Record<string, string>;
-}
-
 describe("getClient experiment headers", () => {
   test("uses LETTA_NODE when no explicit experiment override exists", async () => {
     process.env.LETTA_NODE = "1";
 
-    const client = await getClient();
-
-    expect(getDefaultHeaders(client)["x-letta-node"]).toBe("1");
+    expect(getClientDefaultHeaders()["x-letta-node"]).toBe("1");
   });
 
   test("sends an explicit off header when the override disables node", async () => {
     process.env.LETTA_NODE = "1";
     experimentManager.set("node", false);
 
-    const client = await getClient();
-
-    expect(getDefaultHeaders(client)["x-letta-node"]).toBe("0");
+    expect(getClientDefaultHeaders()["x-letta-node"]).toBe("0");
   });
 
   test("omits the node header when the experiment is default-off", async () => {
-    const client = await getClient();
-
-    expect(getDefaultHeaders(client)["x-letta-node"]).toBeUndefined();
+    expect(getClientDefaultHeaders()["x-letta-node"]).toBeUndefined();
   });
 });
