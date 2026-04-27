@@ -4,6 +4,7 @@
  * Implementation lives under `src/websocket/listener/`.
  */
 
+export type { StartLocalChannelListenerOptions } from "./listener/client";
 export {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,
@@ -13,5 +14,6 @@ export {
   requestApprovalOverWS,
   resolvePendingApprovalResolver,
   startListenerClient,
+  startLocalChannelListener,
   stopListenerClient,
 } from "./listener/client";

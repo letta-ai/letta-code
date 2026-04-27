@@ -1,6 +1,7 @@
 /**
  * CLI subcommand: letta server --name \"george\"
- * Register letta-code as a listener to receive messages from Letta Cloud
+ * Register letta-code as a Cloud listener, or run local channel adapters for
+ * self-hosted servers.
  */
 
 import { hostname } from "node:os";
@@ -54,6 +55,11 @@ class MissingListenerApiKeyError extends Error {
   }
 }
 
+type ListenerStartupMode =
+  | { kind: "remote"; serverUrl: string }
+  | { kind: "local-channels"; serverUrl: string }
+  | { kind: "unsupported-self-hosted"; serverUrl: string };
+
 /**
  * Interactive prompt for environment name
  */
@@ -104,6 +110,34 @@ function getListenerServerUrl(settings: {
     settings.env?.LETTA_BASE_URL ||
     oauthDeps.LETTA_CLOUD_API_URL
   );
+}
+
+function normalizeListenerBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function isCloudListenerServerUrl(serverUrl: string): boolean {
+  return (
+    normalizeListenerBaseUrl(serverUrl) ===
+    normalizeListenerBaseUrl(getListenerOAuthDeps().LETTA_CLOUD_API_URL)
+  );
+}
+
+async function resolveListenerStartupMode(
+  channelNames: string[],
+): Promise<ListenerStartupMode> {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const serverUrl = getListenerServerUrl(settings);
+
+  if (isCloudListenerServerUrl(serverUrl)) {
+    return { kind: "remote", serverUrl };
+  }
+
+  if (channelNames.length > 0) {
+    return { kind: "local-channels", serverUrl };
+  }
+
+  return { kind: "unsupported-self-hosted", serverUrl };
 }
 
 async function refreshListenerAccessToken(
@@ -245,7 +279,9 @@ async function resolveListenerRegistrationOptions(
 export const __listenSubcommandTestUtils = {
   flushListenerTelemetryEnd,
   getListenerServerUrl,
+  isCloudListenerServerUrl,
   resolveListenerRegistrationOptions,
+  resolveListenerStartupMode,
   setOAuthDepsForTests(overrides: Partial<ListenerOAuthDeps> | null) {
     listenerOAuthDepsOverride = overrides
       ? {
@@ -278,7 +314,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
     );
     console.log(
-      "Register this letta-code instance to receive messages from Letta Cloud.\n",
+      "Register this letta-code instance for Letta Cloud remote control, or run local channels for self-hosted servers.\n",
     );
     console.log("Options:");
     console.log(
@@ -312,7 +348,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "  letta server --debug                       # Log all WS events\n",
     );
     console.log(
-      "Once connected, this instance will listen for incoming messages from cloud agents.",
+      "Once connected, this instance will listen for incoming messages from cloud agents or local channel adapters.",
     );
     console.log(
       "Messages will be executed locally using your letta-code environment.",
@@ -430,6 +466,73 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
+    const startupMode = await resolveListenerStartupMode(channelNames);
+
+    if (startupMode.kind === "unsupported-self-hosted") {
+      console.error(
+        `Self-hosted listener registration is not supported for ${startupMode.serverUrl}.`,
+      );
+      console.error(
+        "Start with --channels to run a local channel listener, or unset LETTA_BASE_URL to use Letta Cloud remote environments.",
+      );
+      await flushListenerTelemetryEnd("listener_self_hosted_no_channels");
+      return 1;
+    }
+
+    sessionLog.log(`Session started (debug=${debugMode})`);
+    sessionLog.log(`deviceId: ${deviceId}`);
+    sessionLog.log(`connectionName: ${connectionName}`);
+
+    if (startupMode.kind === "local-channels") {
+      const connectionId = `local-${deviceId}`;
+      sessionLog.log(
+        `Starting local channel listener for ${startupMode.serverUrl}`,
+      );
+      sessionLog.log("Skipping environment registration");
+      console.log(
+        `Starting local channel listener for self-hosted server ${startupMode.serverUrl}`,
+      );
+      console.log("Skipping environment registration. Press Ctrl+C to stop.\n");
+
+      const { startLocalChannelListener } = await import(
+        "../../websocket/listen-client"
+      );
+
+      await startLocalChannelListener({
+        connectionId,
+        deviceId,
+        connectionName,
+        onWsEvent:
+          process.env.LETTA_LOG_WS_EVENTS === "1"
+            ? (direction, label, event) => {
+                sessionLog.wsEvent(direction, label, event);
+              }
+            : undefined,
+        onStatusChange: (status) => {
+          sessionLog.log(`status: ${status}`);
+          if (debugMode) {
+            console.log(`[${formatTimestamp()}] status: ${status}`);
+          }
+        },
+        onConnected: () => {
+          sessionLog.log("Local channel listener ready.");
+          if (debugMode) {
+            console.log(`[${formatTimestamp()}] Local channel listener ready.`);
+            console.log("");
+          }
+        },
+        onError: (error: Error) => {
+          sessionLog.log(`Error: ${error.message}`);
+          console.error(`[${formatTimestamp()}] Error: ${error.message}`);
+          void exitWithTelemetry(1, "listener_error");
+        },
+      });
+
+      return new Promise<number>(() => {
+        // Never resolves - runs until Ctrl+C
+      });
+    }
+
     let registerOptions: RegisterOptions;
 
     try {
@@ -452,10 +555,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       await flushListenerTelemetryEnd("listener_oauth_failed");
       return 1;
     }
-
-    sessionLog.log(`Session started (debug=${debugMode})`);
-    sessionLog.log(`deviceId: ${deviceId}`);
-    sessionLog.log(`connectionName: ${connectionName}`);
 
     if (debugMode) {
       console.log(
