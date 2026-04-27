@@ -104,9 +104,13 @@ function findNextWordBoundary(text: string, cursorPos: number): number {
 type WordDirection = "left" | "right";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
-const OPTION_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)D$/;
+// Match word-navigation arrow sequences: ESC[1;modifier D/C
+// Modifier values: 2=Shift, 3=Alt, 4=Alt+Shift, 5=Ctrl, 6=Ctrl+Shift,
+//   7=Alt+Ctrl, 8=Alt+Ctrl+Shift, 9=Meta
+// All of these should trigger word navigation (move by word).
+const OPTION_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:2|3|4|5|6|7|8|9)D$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
-const OPTION_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)C$/;
+const OPTION_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:2|3|4|5|6|7|8|9)C$/;
 
 function detectOptionWordDirection(sequence: string): WordDirection | null {
   if (!sequence.startsWith("\u001b")) return null;
