@@ -782,7 +782,6 @@ describe("reflectionTranscript helper", () => {
     expect(appends).toEqual([1, 1, 1, 1, 1]);
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.transcript_line_count).toBe(5);
     expect(state.total_completed_turns).toBe(5);
   });
 
@@ -802,7 +801,6 @@ describe("reflectionTranscript helper", () => {
     await writeFile(paths.transcriptPath, "", "utf-8");
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.transcript_line_count).toBe(2);
     expect(state.total_completed_turns).toBe(1);
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
@@ -810,7 +808,6 @@ describe("reflectionTranscript helper", () => {
     ]);
 
     const after = await getReflectionTranscriptState(agentId, conversationId);
-    expect(after.transcript_line_count).toBe(3);
     expect(after.total_completed_turns).toBe(2);
   });
 });

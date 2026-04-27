@@ -38,7 +38,6 @@ export interface ReflectionTranscriptState {
   total_completed_turns: number;
   reflected_completed_turns: number;
   turns_since_last_successful_reflection: number;
-  transcript_line_count: number;
   last_transcript_appended_at?: string;
   last_reflection_started_at?: string;
   last_reflection_succeeded_at?: string;
@@ -375,13 +374,12 @@ function getTranscriptRoot(): string {
   return join(homedir(), ".letta", DEFAULT_TRANSCRIPT_DIR);
 }
 
-function defaultState(lineCount = 0): ReflectionTranscriptState {
+function defaultState(): ReflectionTranscriptState {
   return {
     schema_version: REFLECTION_STATE_SCHEMA_VERSION,
     total_completed_turns: 0,
     reflected_completed_turns: 0,
     turns_since_last_successful_reflection: 0,
-    transcript_line_count: lineCount,
   };
 }
 
@@ -675,9 +673,6 @@ function normalizeV2State(
     total_completed_turns: totalCompletedTurns,
     reflected_completed_turns: reflectedCompletedTurns,
     turns_since_last_successful_reflection: turnsSinceLastSuccessfulReflection,
-    transcript_line_count: normalizeNonNegativeInteger(
-      parsed.transcript_line_count,
-    ),
     last_transcript_appended_at: normalizeString(
       parsed.last_transcript_appended_at,
     ),
@@ -735,7 +730,6 @@ function migrateLegacyState(
       0,
       totalCompletedTurns - reflectedCompletedTurns,
     ),
-    transcript_line_count: lines.length,
     last_reflection_started_at: normalizeString(
       parsed?.last_auto_reflection_started_at,
     ),
@@ -768,12 +762,12 @@ async function readState(
     return state;
   }
 
-  const transcriptLines = await readTranscriptLines(paths);
   if (!parsed) {
-    const state = defaultState(transcriptLines.length);
+    const state = defaultState();
     await writeState(paths, state);
     return state;
   }
+  const transcriptLines = await readTranscriptLines(paths);
   const migrated = migrateLegacyState(parsed, transcriptLines);
   await writeState(paths, migrated);
   return migrated;
@@ -855,7 +849,6 @@ export async function appendTranscriptDeltaJsonl(
 
     const payload = entries.map((entry) => JSON.stringify(entry)).join("\n");
     await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
-    state.transcript_line_count += entries.length;
     state.total_completed_turns += countUserRows(entries);
     state.last_transcript_appended_at = new Date().toISOString();
     await writeState(paths, state);
@@ -1025,7 +1018,6 @@ export async function buildAutoReflectionPayload(
     await writeFile(payloadPath, transcript, "utf-8");
 
     state.last_reflection_started_at = new Date().toISOString();
-    state.transcript_line_count = lines.length;
     await writeState(paths, state);
 
     return {
@@ -1051,7 +1043,6 @@ export async function finalizeAutoReflectionPayload(
 
     const lines = await readTranscriptLines(paths);
     const state = await readState(paths);
-    state.transcript_line_count = lines.length;
     if (success) {
       const snapshotLines = lines.slice(0, Math.max(0, endSnapshotLine));
       const snapshotRows = parseTranscriptRows(snapshotLines);
