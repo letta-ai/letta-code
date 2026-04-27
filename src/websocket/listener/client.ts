@@ -4,7 +4,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
@@ -282,6 +282,21 @@ type ChannelsServiceModule = typeof import("../../channels/service");
 let channelsServiceLoaderOverride:
   | null
   | (() => Promise<ChannelsServiceModule>) = null;
+
+/**
+ * Detect whether a directory is a git worktree root.
+ * Worktrees have a `.git` **file** (not directory) that points to the main
+ * repo's `.git/worktrees/<name>`.  This distinguishes them from normal repos
+ * where `.git` is a directory.
+ */
+async function isGitWorktreeRoot(dir: string): Promise<boolean> {
+  try {
+    const stats = await lstat(path.join(dir, ".git"));
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
 
 async function loadChannelsService(): Promise<ChannelsServiceModule> {
   if (channelsServiceLoaderOverride) {
@@ -3793,12 +3808,16 @@ async function handleCwdChange(
     runtime.reminderState.hasSentSessionContext = false;
     runtime.reminderState.pendingSessionContextReason = "cwd_changed";
 
-    // If the new cwd is outside the current file-index root, re-root the
-    // index so file search covers the new workspace.  setIndexRoot()
-    // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
-    // keeping concurrent conversations safe.
+    // If the new cwd is outside the current file-index root, or is a git
+    // worktree nested under it, re-root the index so file search covers
+    // the new workspace.  setIndexRoot() triggers a non-blocking rebuild
+    // and does NOT mutate process.cwd(), keeping concurrent conversations safe.
     const currentRoot = getIndexRoot();
-    if (!normalizedPath.startsWith(currentRoot)) {
+    const needsReroot =
+      !normalizedPath.startsWith(currentRoot) ||
+      (normalizedPath !== currentRoot &&
+        (await isGitWorktreeRoot(normalizedPath)));
+    if (needsReroot) {
       setIndexRoot(normalizedPath);
     }
 
@@ -4475,10 +4494,12 @@ async function connectWithRetry(
             // the search covers the correct workspace.
             if (parsed.cwd) {
               const currentRoot = getIndexRoot();
-              if (
-                !parsed.cwd.startsWith(currentRoot + path.sep) &&
-                parsed.cwd !== currentRoot
-              ) {
+              const needsReroot =
+                (!parsed.cwd.startsWith(currentRoot + path.sep) &&
+                  parsed.cwd !== currentRoot) ||
+                (parsed.cwd !== currentRoot &&
+                  (await isGitWorktreeRoot(parsed.cwd)));
+              if (needsReroot) {
                 setIndexRoot(parsed.cwd);
               }
             }
