@@ -42,6 +42,19 @@ function validateWorktreePath(command: string, cwd: string): string | null {
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
 
+function rebuildCachedLauncher(command: string): string[] | null {
+  if (!cachedWorkingLauncher) return null;
+  const cachedExecutable = cachedWorkingLauncher[0]?.toLowerCase();
+  if (!cachedExecutable) return null;
+
+  const launchers = buildShellLaunchers(command);
+  return (
+    launchers.find(
+      (launcher) => launcher[0]?.toLowerCase() === cachedExecutable,
+    ) ?? null
+  );
+}
+
 /**
  * Get the first working shell launcher for background processes.
  * Uses cached launcher if available, otherwise returns first launcher from buildShellLaunchers.
@@ -49,12 +62,9 @@ let cachedWorkingLauncher: string[] | null = null;
  * from previous foreground commands or the default launcher order.
  */
 function getBackgroundLauncher(command: string): string[] {
-  if (cachedWorkingLauncher) {
-    const [executable, ...launcherArgs] = cachedWorkingLauncher;
-    if (executable) {
-      return [executable, ...launcherArgs.slice(0, -1), command];
-    }
-  }
+  const cachedLauncher = rebuildCachedLauncher(command);
+  if (cachedLauncher) return cachedLauncher;
+
   const launchers = buildShellLaunchers(command);
   return launchers[0] || [];
 }
@@ -91,9 +101,8 @@ export async function spawnCommand(
 
   // On Windows, use fallback logic to handle PowerShell ENOENT errors (PR #482)
   if (cachedWorkingLauncher) {
-    const [executable, ...launcherArgs] = cachedWorkingLauncher;
-    if (executable) {
-      const newLauncher = [executable, ...launcherArgs.slice(0, -1), command];
+    const newLauncher = rebuildCachedLauncher(command);
+    if (newLauncher) {
       try {
         const result = await spawnWithLauncher(newLauncher, {
           cwd: options.cwd,

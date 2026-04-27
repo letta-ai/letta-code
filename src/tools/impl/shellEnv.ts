@@ -9,7 +9,10 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getServerUrl } from "../../agent/client";
+import {
+  getMemfsGitProxyRewriteConfig,
+  getServerUrl,
+} from "../../agent/client";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
@@ -182,6 +185,31 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
   return shimDir;
 }
 
+function appendGitConfigEnv(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: string,
+): void {
+  const rawCount = env.GIT_CONFIG_COUNT;
+  const count = rawCount && /^\d+$/.test(rawCount) ? Number(rawCount) : 0;
+  env[`GIT_CONFIG_KEY_${count}`] = key;
+  env[`GIT_CONFIG_VALUE_${count}`] = value;
+  env.GIT_CONFIG_COUNT = String(count + 1);
+}
+
+function applyMemfsGitProxyEnv(env: NodeJS.ProcessEnv): void {
+  const rewrite = getMemfsGitProxyRewriteConfig(env);
+  if (!rewrite) {
+    return;
+  }
+
+  appendGitConfigEnv(env, rewrite.configKey, rewrite.configValue);
+  env.GIT_TERMINAL_PROMPT = "0";
+  env.GCM_INTERACTIVE = "never";
+  env.GIT_ASKPASS = "";
+  env.SSH_ASKPASS = "";
+}
+
 /**
  * Get enhanced environment variables for shell execution.
  * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
@@ -307,6 +335,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (!env.TERM) {
     env.TERM = "xterm-256color";
   }
+
+  // Desktop's local listener only has a localhost session token; the proxy owns
+  // the real Cloud token. Apply a process-local git URL rewrite so agent-run
+  // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
+  // ephemeral localhost URL into the memory repo's git config.
+  applyMemfsGitProxyEnv(env);
 
   return env;
 }

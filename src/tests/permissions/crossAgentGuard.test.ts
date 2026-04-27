@@ -527,7 +527,7 @@ describe("shell bypass regression tests", () => {
     const result = evaluateCrossAgentGuard(
       "Bash",
       {
-        command: 'find "${HOME}/.letta/agents" -mindepth 1 -maxdepth 1 -type d',
+        command: `find "\${HOME}/.letta/agents" -mindepth 1 -maxdepth 1 -type d`,
       },
       "/tmp",
     );
@@ -538,7 +538,7 @@ describe("shell bypass regression tests", () => {
     // Exploit variant 1 (finds another agent via dynamic path resolution).
     const command = [
       'CURRENT="$AGENT_ID"',
-      'BASE="${HOME}/.letta/agents"',
+      `BASE="\${HOME}/.letta/agents"`,
       'TARGET="$(find "$BASE" -mindepth 1 -maxdepth 1 -type d ! -name "$CURRENT" | sort | head -n 1)"',
       'cat "$TARGET/memory/system/persona.md"',
     ].join("\n");
@@ -549,7 +549,7 @@ describe("shell bypass regression tests", () => {
   test("command substitution variant 2 (find -name memory) is denied", () => {
     const command = [
       'CURRENT="$AGENT_ID"',
-      'BASE="${HOME}/.letta/agents"',
+      `BASE="\${HOME}/.letta/agents"`,
       'TARGET="$(find "$BASE" -mindepth 2 -maxdepth 2 -type d -name memory | grep -v "/$CURRENT/" | sort | head -n 1)"',
       'cat "$TARGET/system/persona.md"',
     ].join("\n");
@@ -562,7 +562,7 @@ describe("shell bypass regression tests", () => {
     // because the quote-wrapping on the assignment value broke the
     // anchored path regex.
     const command = [
-      'TARGET="${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"',
+      `TARGET="\${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"`,
       'sed -n "1,80p" "$TARGET/system/persona.md"',
     ].join("\n");
     const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
@@ -581,13 +581,12 @@ describe("shell bypass regression tests", () => {
     expect(result).not.toBeNull();
   });
 
-  test("self-targeting references using ${AGENT_ID} pass through", () => {
+  test(`self-targeting references using \${AGENT_ID} pass through`, () => {
     process.env.AGENT_ID = SELF;
     const result = evaluateCrossAgentGuard(
       "Bash",
       {
-        command:
-          'cat "${HOME}/.letta/agents/${AGENT_ID}/memory/system/persona.md"',
+        command: `cat "\${HOME}/.letta/agents/\${AGENT_ID}/memory/system/persona.md"`,
       },
       "/tmp",
     );
@@ -597,9 +596,8 @@ describe("shell bypass regression tests", () => {
   test("scoped access via LETTA_MEMORY_SCOPE passes through", () => {
     process.env.LETTA_MEMORY_SCOPE =
       "agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada";
-    const command =
-      'TARGET="${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"\n' +
-      'cat "$TARGET/system/persona.md"';
+    const command = `TARGET="\${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"
+cat "$TARGET/system/persona.md"`;
     const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
     expect(result).toBeNull();
   });

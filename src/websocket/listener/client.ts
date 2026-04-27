@@ -4,7 +4,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
@@ -58,6 +58,7 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
+import { experimentManager } from "../../experiments/manager";
 import {
   buildByokProviderAliases,
   listProviders,
@@ -110,11 +111,15 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  GetExperimentsCommand,
+  GetExperimentsResponseMessage,
   GetReflectionSettingsCommand,
   ListMemoryCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   ReflectionSettingsScope,
+  SetExperimentCommand,
+  SetExperimentResponseMessage,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
@@ -196,6 +201,7 @@ import {
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isFileOpsCommand,
+  isGetExperimentsCommand,
   isGetReflectionSettingsCommand,
   isGetTreeCommand,
   isGrepInFilesCommand,
@@ -208,6 +214,7 @@ import {
   isReadFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
+  isSetExperimentCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
@@ -295,6 +302,21 @@ let channelsServiceLoaderOverride:
   | null
   | (() => Promise<ChannelsServiceModule>) = null;
 
+/**
+ * Detect whether a directory is a git worktree root.
+ * Worktrees have a `.git` **file** (not directory) that points to the main
+ * repo's `.git/worktrees/<name>`.  This distinguishes them from normal repos
+ * where `.git` is a directory.
+ */
+async function isGitWorktreeRoot(dir: string): Promise<boolean> {
+  try {
+    const stats = await lstat(path.join(dir, ".git"));
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
 async function loadChannelsService(): Promise<ChannelsServiceModule> {
   if (channelsServiceLoaderOverride) {
     return channelsServiceLoaderOverride();
@@ -361,6 +383,7 @@ async function replaySyncStateForRuntime(
   socket: WebSocket,
   scope: { agent_id: string; conversation_id: string },
   opts?: {
+    recoverApprovals?: boolean;
     recoverApprovalStateForSync?: (
       runtime: ConversationRuntime,
       scope: { agent_id: string; conversation_id: string },
@@ -375,16 +398,18 @@ async function replaySyncStateForRuntime(
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
 
-  try {
-    await recoverFn(syncScopedRuntime, scope);
-  } catch (error) {
-    trackListenerError(
-      "listener_sync_recovery_failed",
-      error,
-      "listener_sync_recovery",
-    );
-    if (isDebugEnabled()) {
-      console.warn("[Listen] Sync approval recovery failed:", error);
+  if (opts?.recoverApprovals ?? true) {
+    try {
+      await recoverFn(syncScopedRuntime, scope);
+    } catch (error) {
+      trackListenerError(
+        "listener_sync_recovery_failed",
+        error,
+        "listener_sync_recovery",
+      );
+      if (isDebugEnabled()) {
+        console.warn("[Listen] Sync approval recovery failed:", error);
+      }
     }
   }
 
@@ -991,6 +1016,8 @@ async function buildListModelsResponse(
 type ReflectionSettingsCommand =
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand;
+
+type ExperimentCommand = GetExperimentsCommand | SetExperimentCommand;
 
 type ChannelsCommand =
   | ChannelsListCommand
@@ -3088,6 +3115,62 @@ function resolveReflectionSettingsScope(
   };
 }
 
+async function handleExperimentCommand(
+  parsed: ExperimentCommand,
+  socket: WebSocket,
+  listener: ListenerRuntime,
+): Promise<boolean> {
+  if (parsed.type === "get_experiments") {
+    const response: GetExperimentsResponseMessage = {
+      type: "get_experiments_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+    return true;
+  }
+
+  try {
+    experimentManager.set(parsed.experiment_id, parsed.enabled);
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+
+    emitDeviceStatusUpdate(socket, listener);
+  } catch (err) {
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: false,
+      experiments: experimentManager.list(),
+      error: err instanceof Error ? err.message : "Failed to update experiment",
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+  }
+
+  return true;
+}
+
 async function handleReflectionSettingsCommand(
   parsed: ReflectionSettingsCommand,
   socket: WebSocket,
@@ -3912,12 +3995,16 @@ async function handleCwdChange(
     runtime.reminderState.hasSentSessionContext = false;
     runtime.reminderState.pendingSessionContextReason = "cwd_changed";
 
-    // If the new cwd is outside the current file-index root, re-root the
-    // index so file search covers the new workspace.  setIndexRoot()
-    // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
-    // keeping concurrent conversations safe.
+    // If the new cwd is outside the current file-index root, or is a git
+    // worktree nested under it, re-root the index so file search covers
+    // the new workspace.  setIndexRoot() triggers a non-blocking rebuild
+    // and does NOT mutate process.cwd(), keeping concurrent conversations safe.
     const currentRoot = getIndexRoot();
-    if (!normalizedPath.startsWith(currentRoot)) {
+    const needsReroot =
+      !normalizedPath.startsWith(currentRoot) ||
+      (normalizedPath !== currentRoot &&
+        (await isGitWorktreeRoot(normalizedPath)));
+    if (needsReroot) {
       setIndexRoot(normalizedPath);
     }
 
@@ -4426,7 +4513,9 @@ async function connectWithRetry(
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
           return;
         }
-        await replaySyncStateForRuntime(runtime, socket, parsed.runtime);
+        await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
+          recoverApprovals: parsed.recover_approvals !== false,
+        });
         return;
       }
 
@@ -4594,10 +4683,12 @@ async function connectWithRetry(
             // the search covers the correct workspace.
             if (parsed.cwd) {
               const currentRoot = getIndexRoot();
-              if (
-                !parsed.cwd.startsWith(currentRoot + path.sep) &&
-                parsed.cwd !== currentRoot
-              ) {
+              const needsReroot =
+                (!parsed.cwd.startsWith(currentRoot + path.sep) &&
+                  parsed.cwd !== currentRoot) ||
+                (parsed.cwd !== currentRoot &&
+                  (await isGitWorktreeRoot(parsed.cwd)));
+              if (needsReroot) {
                 setIndexRoot(parsed.cwd);
               }
             }
@@ -5678,6 +5769,13 @@ async function connectWithRetry(
         return;
       }
 
+      if (isGetExperimentsCommand(parsed) || isSetExperimentCommand(parsed)) {
+        runDetachedListenerTask("experiment_command", async () => {
+          await handleExperimentCommand(parsed, socket, runtime);
+        });
+        return;
+      }
+
       if (
         isGetReflectionSettingsCommand(parsed) ||
         isSetReflectionSettingsCommand(parsed)
@@ -6369,6 +6467,7 @@ export const __listenClientTestUtils = {
   handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
+  handleExperimentCommand,
   handleReflectionSettingsCommand,
   enqueueChannelTurn,
   scheduleQueuePump,

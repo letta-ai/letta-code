@@ -103,6 +103,13 @@ If worktree creation fails (locked index), retry up to 3 times with backoff (sle
 ### 2. Read existing memory
 Read the memory files in your worktree, to understand what already exists in the memory filesystem.
 
+Before adding or expanding `system/` memory, measure its current token footprint:
+```bash
+letta memory tokens --format json --quiet --memory-dir "$WORKTREE_DIR/$BRANCH_NAME"
+```
+
+This command is memory-mode safe. Treat it as measurement only: use the reported `total_tokens` and per-file breakdown to decide whether new findings belong in `system/` or external memory. Do not use custom token-counting scripts, `npx`, `awk`, or `find -exec wc` for this.
+
 ### 3. Read and analyze history
 
 Your prompt will specify a pre-split JSONL chunk file and its source format. Use these patterns to read it:

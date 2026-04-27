@@ -3,7 +3,9 @@
  *
  * When memFS is enabled, the agent's memory is stored in a git repo
  * on the server at $LETTA_MEMFS_BASE_URL/v1/git/$AGENT_ID/state.git
- * (falling back to $LETTA_BASE_URL when unset).
+ * (falling back to api.letta.com when unset). Desktop may route git transport
+ * through a localhost proxy transiently, but that URL must not be persisted in
+ * the repo's git config.
  * This module provides the CLI harness helpers: clone on first run,
  * pull on startup, and status check for system reminders.
  *
@@ -24,7 +26,11 @@ import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { debugLog, debugWarn } from "../utils/debug";
-import { getClient, getMemfsServerUrl } from "./client";
+import {
+  getClient,
+  getMemfsGitProxyRewriteConfig,
+  getMemfsServerUrl,
+} from "./client";
 
 const execFile = promisify(execFileCb);
 
@@ -246,6 +252,55 @@ async function getAuthToken(): Promise<string> {
   return (client as any)._options?.apiKey ?? "";
 }
 
+export function buildGitAuthArgs(token: string): string[] {
+  return [
+    "-c",
+    "credential.helper=",
+    "-c",
+    "core.askPass=",
+    "-c",
+    `http.extraHeader=Authorization: Basic ${Buffer.from(`letta:${token}`).toString("base64")}`,
+  ];
+}
+
+export function isMemfsGitNetworkCommand(args: string[]): boolean {
+  return ["clone", "fetch", "pull", "push"].includes(args[0] ?? "");
+}
+
+export function buildMemfsGitProxyArgs(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (!isMemfsGitNetworkCommand(args)) {
+    return [];
+  }
+
+  const rewrite = getMemfsGitProxyRewriteConfig(env);
+  if (!rewrite) {
+    return [];
+  }
+
+  return ["-c", `${rewrite.configKey}=${rewrite.configValue}`];
+}
+
+export function shouldConfigurePersistentMemfsCredentialHelper(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return getMemfsGitProxyRewriteConfig(env) === null;
+}
+
+export function buildNonInteractiveGitEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+    GIT_ASKPASS: "",
+    SSH_ASKPASS: "",
+  };
+}
+
 /**
  * Run a git command in the given directory.
  * If a token is provided, passes it as an auth header.
@@ -255,13 +310,8 @@ async function runGit(
   args: string[],
   token?: string,
 ): Promise<{ stdout: string; stderr: string }> {
-  const authArgs = token
-    ? [
-        "-c",
-        `http.extraHeader=Authorization: Basic ${Buffer.from(`letta:${token}`).toString("base64")}`,
-      ]
-    : [];
-  const allArgs = [...authArgs, ...args];
+  const authArgs = token ? buildGitAuthArgs(token) : [];
+  const allArgs = [...buildMemfsGitProxyArgs(args), ...authArgs, ...args];
 
   // Redact credential helper values to avoid leaking tokens in debug logs.
   let loggableArgs = args;
@@ -279,6 +329,7 @@ async function runGit(
 
   const result = await execFile("git", allArgs, {
     cwd,
+    env: buildNonInteractiveGitEnv(),
     maxBuffer: 10 * 1024 * 1024, // 10MB
     timeout: 60_000, // 60s
   });
@@ -368,6 +419,9 @@ async function runGitWithRetry(
 /**
  * Configure a local credential helper in the repo's .git/config
  * so plain `git push` / `git pull` work without auth prefixes.
+ * Skipped in Desktop proxy transport mode because the listener only has a
+ * local session token; persisting that token under api.letta.com would break
+ * normal CLI/TUI sessions that share the same memory repo.
  *
  * On Windows, we write a batch script because the bash-style inline
  * helper (`!f() { ... }; f`) doesn't work in PowerShell/cmd.
@@ -378,6 +432,15 @@ async function configureLocalCredentialHelper(
 ): Promise<void> {
   const rawBaseUrl = getMemfsServerUrl();
   const normalizedBaseUrl = normalizeCredentialBaseUrl(rawBaseUrl);
+
+  if (!shouldConfigurePersistentMemfsCredentialHelper()) {
+    await clearLocalCredentialHelper(dir, rawBaseUrl, normalizedBaseUrl);
+    debugLog(
+      "memfs-git",
+      `Skipped persistent credential helper for ${normalizedBaseUrl}; using transient MemFS git proxy transport`,
+    );
+    return;
+  }
 
   let helper: string;
 
@@ -413,6 +476,25 @@ echo password=${token}
     "memfs-git",
     `Configured local credential helper for ${normalizedBaseUrl}${rawBaseUrl !== normalizedBaseUrl ? ` (and raw ${rawBaseUrl})` : ""}`,
   );
+}
+
+async function clearLocalCredentialHelper(
+  dir: string,
+  rawBaseUrl: string,
+  normalizedBaseUrl: string,
+): Promise<void> {
+  const keys = new Set([
+    `credential.${normalizedBaseUrl}.helper`,
+    `credential.${rawBaseUrl}.helper`,
+  ]);
+
+  for (const key of keys) {
+    try {
+      await runGit(dir, ["config", "--local", "--unset-all", key]);
+    } catch {
+      // Already unset — ignore.
+    }
+  }
 }
 
 /**
@@ -1018,6 +1100,43 @@ async function fetchMemoryRemote(
   });
 }
 
+async function getMemoryAheadBehind(
+  memoryDir: string,
+): Promise<{ ahead: number; behind: number } | null> {
+  try {
+    const { stdout } = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "HEAD...@{u}",
+    ]);
+    const [aheadRaw, behindRaw] = stdout.trim().split(/\s+/);
+    return {
+      ahead: Number.parseInt(aheadRaw ?? "0", 10) || 0,
+      behind: Number.parseInt(behindRaw ?? "0", 10) || 0,
+    };
+  } catch {
+    // No upstream configured or unable to inspect divergence.
+    return null;
+  }
+}
+
+async function pushCleanPendingMemoryCommitsForWrite(
+  memoryDir: string,
+  agentId: string,
+  token: string,
+): Promise<void> {
+  await prepareMemoryRepoForGitOps(memoryDir, agentId, token);
+
+  const divergence = await getMemoryAheadBehind(memoryDir);
+
+  if (divergence && divergence.ahead > 0) {
+    await runGitWithRetry(memoryDir, ["push"], token, {
+      operation: "push pending memory commits",
+    });
+  }
+}
+
 async function resetMemoryToUpstream(
   memoryDir: string,
   token: string,
@@ -1139,6 +1258,7 @@ async function recoverMemoryPushConflict(
 
 export async function assertMemoryRepoReadyForWrite(
   memoryDir: string,
+  agentId?: string,
 ): Promise<void> {
   const status = await runGit(memoryDir, ["status", "--porcelain"]);
   if (status.stdout.trim().length > 0) {
@@ -1147,14 +1267,14 @@ export async function assertMemoryRepoReadyForWrite(
     );
   }
 
+  if (agentId) {
+    const token = await getAuthToken();
+    await pushCleanPendingMemoryCommitsForWrite(memoryDir, agentId, token);
+  }
+
   try {
-    const { stdout } = await runGit(memoryDir, [
-      "rev-list",
-      "--count",
-      "@{u}..HEAD",
-    ]);
-    const aheadCount = parseInt(stdout.trim(), 10);
-    if (aheadCount > 0) {
+    const divergence = await getMemoryAheadBehind(memoryDir);
+    if (divergence && divergence.ahead > 0) {
       throw new Error(
         "Memory repo has local commits that are not pushed to remote. Sync the repo before using memory tools.",
       );

@@ -67,7 +67,6 @@ export type PreparedScopeToolContext = {
   toolset: ToolsetName;
   toolsetPreference: ToolsetPreference;
   effectiveModel: string | null;
-  /** The agent state fetched during tool context preparation. */
   agent: AgentState | null;
 };
 
@@ -254,6 +253,7 @@ export async function prepareToolExecutionContextForScope(params: {
   exclude?: ToolName[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  cachedAgent?: AgentState | null;
 }): Promise<PreparedScopeToolContext> {
   const {
     agentId,
@@ -262,10 +262,12 @@ export async function prepareToolExecutionContextForScope(params: {
     exclude,
     workingDirectory,
     permissionModeState,
+    cachedAgent,
   } = params;
 
   const client = await getClient();
-  const agent = (await client.agents.retrieve(agentId)) as ScopeModelCarrier;
+  const agent = (cachedAgent ??
+    (await client.agents.retrieve(agentId))) as ScopeModelCarrier;
   let effectiveModel =
     overrideModel && overrideModel.length > 0
       ? (resolveModel(overrideModel) ?? overrideModel)
@@ -307,7 +309,6 @@ export async function prepareToolExecutionContextForScope(params: {
       conversationId ?? "default",
     ),
   });
-
   return { ...result, agent: agent as AgentState };
 }
 
@@ -495,13 +496,15 @@ export function shouldClearPersistedToolRules(
 
 export async function clearPersistedClientToolRules(
   agentId: string,
+  cachedAgent?: AgentState | null,
 ): Promise<{ removedToolNames: string[] } | null> {
   const client = await getClient();
 
   try {
-    const agentWithTools = (await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    })) as AgentWithToolsAndRules;
+    const agentWithTools = (cachedAgent ??
+      (await client.agents.retrieve(agentId, {
+        include: ["agent.tools"],
+      }))) as AgentWithToolsAndRules;
     if (!shouldClearPersistedToolRules(agentWithTools)) {
       return null;
     }

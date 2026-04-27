@@ -138,7 +138,6 @@ interface DiscordClient {
 
 type DiscordMessage = DiscordMessageLike;
 
-const DISCORD_MAX_LENGTH = 2000;
 const DISCORD_SPLIT_THRESHOLD = 1900;
 const INGRESS_DEDUPE_TTL_MS = 60_000;
 const INGRESS_DEDUPE_MAX = 2_000;

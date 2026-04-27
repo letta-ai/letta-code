@@ -1,3 +1,6 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -6,6 +9,7 @@ import { getGitContext } from "../../cli/helpers/gitContext";
 import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
 import { getSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
+import { experimentManager } from "../../experiments/manager";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
@@ -60,6 +64,201 @@ type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
+const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
+const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
+const PROTOCOL_PERF_ENABLED = PROTOCOL_PERF_ENV_VALUES.has(
+  (process.env.LETTA_LISTENER_PERF ?? "").toLowerCase(),
+);
+const PROTOCOL_PERF_FILE = process.env.LETTA_LISTENER_PERF_FILE?.trim() || null;
+
+type ProtocolPerfBucket = {
+  count: number;
+  bytes: number;
+  stringifyMs: number;
+  sendMs: number;
+  maxBufferedBefore: number;
+  maxBufferedAfter: number;
+};
+
+const protocolPerfBuckets = new Map<string, ProtocolPerfBucket>();
+let protocolPerfFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let protocolPerfWindowStartedAt = 0;
+let protocolPerfFileDirEnsured: string | null = null;
+let protocolPerfFileWarningEmitted = false;
+
+function getProtocolPerfKey(
+  message: Omit<
+    WsProtocolMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  >,
+): string {
+  if (message.type === "stream_delta" && "delta" in message) {
+    const delta = message.delta as { message_type?: unknown };
+    return `${message.type}:${String(delta.message_type ?? "unknown")}`;
+  }
+  return message.type;
+}
+
+function scheduleProtocolPerfFlush(): void {
+  if (protocolPerfFlushTimer) {
+    return;
+  }
+  protocolPerfFlushTimer = setTimeout(() => {
+    protocolPerfFlushTimer = null;
+    flushProtocolPerfTelemetry();
+  }, PROTOCOL_PERF_FLUSH_INTERVAL_MS);
+  const timerWithUnref = protocolPerfFlushTimer as ReturnType<
+    typeof setTimeout
+  > & {
+    unref?: () => void;
+  };
+  timerWithUnref.unref?.();
+}
+
+function recordProtocolPerfTelemetry(
+  key: string,
+  sample: {
+    bytes: number;
+    stringifyMs: number;
+    sendMs: number;
+    bufferedBefore: number;
+    bufferedAfter: number;
+  },
+): void {
+  if (protocolPerfWindowStartedAt === 0) {
+    protocolPerfWindowStartedAt = Date.now();
+  }
+  const bucket = protocolPerfBuckets.get(key) ?? {
+    count: 0,
+    bytes: 0,
+    stringifyMs: 0,
+    sendMs: 0,
+    maxBufferedBefore: 0,
+    maxBufferedAfter: 0,
+  };
+  bucket.count += 1;
+  bucket.bytes += sample.bytes;
+  bucket.stringifyMs += sample.stringifyMs;
+  bucket.sendMs += sample.sendMs;
+  bucket.maxBufferedBefore = Math.max(
+    bucket.maxBufferedBefore,
+    sample.bufferedBefore,
+  );
+  bucket.maxBufferedAfter = Math.max(
+    bucket.maxBufferedAfter,
+    sample.bufferedAfter,
+  );
+  protocolPerfBuckets.set(key, bucket);
+  scheduleProtocolPerfFlush();
+}
+
+function writeProtocolPerfFile(
+  record: {
+    ts: string;
+    event: "protocol_emit";
+    window_ms: number;
+    totals: ProtocolPerfBucket;
+    buckets: Record<
+      string,
+      ProtocolPerfBucket & {
+        avg_bytes: number;
+        avg_stringify_ms: number;
+        avg_send_ms: number;
+      }
+    >;
+  },
+  fallbackLine: string,
+): void {
+  const filePath = PROTOCOL_PERF_FILE;
+  if (!filePath) {
+    console.error(fallbackLine);
+    return;
+  }
+
+  try {
+    const dir = dirname(filePath);
+    if (protocolPerfFileDirEnsured !== dir) {
+      mkdirSync(dir, { recursive: true });
+      protocolPerfFileDirEnsured = dir;
+    }
+    appendFileSync(filePath, `${JSON.stringify(record)}\n`, {
+      encoding: "utf8",
+    });
+  } catch (error) {
+    if (!protocolPerfFileWarningEmitted) {
+      protocolPerfFileWarningEmitted = true;
+      console.error(
+        `[Listen Perf] Failed to write LETTA_LISTENER_PERF_FILE=${filePath}`,
+        error,
+      );
+    }
+    console.error(fallbackLine);
+  }
+}
+
+function flushProtocolPerfTelemetry(): void {
+  if (protocolPerfBuckets.size === 0) {
+    protocolPerfWindowStartedAt = 0;
+    return;
+  }
+  const windowMs = Math.max(1, Date.now() - protocolPerfWindowStartedAt);
+  const totals: ProtocolPerfBucket = {
+    count: 0,
+    bytes: 0,
+    stringifyMs: 0,
+    sendMs: 0,
+    maxBufferedBefore: 0,
+    maxBufferedAfter: 0,
+  };
+  const buckets: Record<
+    string,
+    ProtocolPerfBucket & {
+      avg_bytes: number;
+      avg_stringify_ms: number;
+      avg_send_ms: number;
+    }
+  > = {};
+  const parts = [...protocolPerfBuckets.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, bucket]) => {
+      totals.count += bucket.count;
+      totals.bytes += bucket.bytes;
+      totals.stringifyMs += bucket.stringifyMs;
+      totals.sendMs += bucket.sendMs;
+      totals.maxBufferedBefore = Math.max(
+        totals.maxBufferedBefore,
+        bucket.maxBufferedBefore,
+      );
+      totals.maxBufferedAfter = Math.max(
+        totals.maxBufferedAfter,
+        bucket.maxBufferedAfter,
+      );
+      buckets[key] = {
+        ...bucket,
+        avg_bytes: bucket.count > 0 ? bucket.bytes / bucket.count : 0,
+        avg_stringify_ms:
+          bucket.count > 0 ? bucket.stringifyMs / bucket.count : 0,
+        avg_send_ms: bucket.count > 0 ? bucket.sendMs / bucket.count : 0,
+      };
+
+      const stringifyMs = bucket.stringifyMs.toFixed(2);
+      const sendMs = bucket.sendMs.toFixed(2);
+      return `${key}{count=${bucket.count},bytes=${bucket.bytes},stringify_ms=${stringifyMs},send_ms=${sendMs},max_buffered_before=${bucket.maxBufferedBefore},max_buffered_after=${bucket.maxBufferedAfter}}`;
+    });
+  writeProtocolPerfFile(
+    {
+      ts: new Date().toISOString(),
+      event: "protocol_emit",
+      window_ms: windowMs,
+      totals,
+      buckets,
+    },
+    `[Listen Perf] protocol_emit window_ms=${windowMs} ${parts.join(" ")}`,
+  );
+  protocolPerfBuckets.clear();
+  protocolPerfWindowStartedAt = 0;
+}
+
 const gitContextCache = new Map<
   string,
   {
@@ -189,6 +388,7 @@ export function buildDeviceStatus(
       current_available_skills: [],
       background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
+      experiments: experimentManager.list(),
       memory_directory: null,
       should_doctor: false,
       reflection_settings: null,
@@ -258,6 +458,7 @@ export function buildDeviceStatus(
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),
+    experiments: experimentManager.list(),
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
@@ -405,8 +606,26 @@ export function emitProtocolV2Message(
     emitted_at: new Date().toISOString(),
     idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
   } as WsProtocolMessage;
+  const perfEnabled = PROTOCOL_PERF_ENABLED;
+  const stringifyStartedAt = perfEnabled ? performance.now() : 0;
+  let payload: string;
   try {
-    socket.send(JSON.stringify(outbound));
+    payload = JSON.stringify(outbound);
+    const stringifyMs = perfEnabled
+      ? performance.now() - stringifyStartedAt
+      : 0;
+    const bufferedBefore = perfEnabled ? socket.bufferedAmount : 0;
+    const sendStartedAt = perfEnabled ? performance.now() : 0;
+    socket.send(payload);
+    if (perfEnabled) {
+      recordProtocolPerfTelemetry(getProtocolPerfKey(message), {
+        bytes: Buffer.byteLength(payload),
+        stringifyMs,
+        sendMs: performance.now() - sendStartedAt,
+        bufferedBefore,
+        bufferedAfter: socket.bufferedAmount,
+      });
+    }
   } catch (error) {
     console.error(
       `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,

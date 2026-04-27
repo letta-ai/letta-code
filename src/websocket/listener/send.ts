@@ -570,6 +570,20 @@ export async function sendApprovalContinuationWithRetry(
           retryAfterMs,
         });
         transientRetries = attempt;
+
+        const retryMessage = getRetryStatusMessage(errorDetail);
+        if (retryMessage) {
+          emitRetryDelta(socket, runtime, {
+            message: retryMessage,
+            reason: "error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs,
+            agentId: runtime.agentId ?? undefined,
+            conversationId,
+          });
+        }
+
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         if (abortSignal?.aborted) {
           throw new Error("Cancelled by user");
@@ -638,6 +652,17 @@ export async function sendApprovalContinuationWithRetry(
           category: "conversation_busy",
           attempt: conversationBusyRetries,
         });
+
+        emitRetryDelta(socket, runtime, {
+          message: "Conversation is busy, waiting and retrying…",
+          reason: "error",
+          attempt: conversationBusyRetries,
+          maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
+          delayMs: retryDelayMs,
+          agentId: runtime.agentId ?? undefined,
+          conversationId,
+        });
+
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         if (abortSignal?.aborted) {
           throw new Error("Cancelled by user");

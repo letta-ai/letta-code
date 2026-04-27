@@ -221,6 +221,9 @@ mock.module("../../agent/approval-recovery", () => ({
 }));
 
 const listenClientModule = await import("../../websocket/listen-client");
+const { sendApprovalContinuationWithRetry } = await import(
+  "../../websocket/listener/send"
+);
 const {
   __listenClientTestUtils,
   requestApprovalOverWS,
@@ -1397,6 +1400,7 @@ describe("listen-client multi-worker concurrency", () => {
     expect(firstSendMessages?.[0]).toMatchObject({
       type: "approval",
       approvals: [],
+      otid: expect.any(String),
     });
     expect(firstSendMessages?.[1]).toEqual({
       role: "user",
@@ -1631,6 +1635,7 @@ describe("listen-client multi-worker concurrency", () => {
       expect.objectContaining({
         type: "approval",
         approvals: approvalResults,
+        otid: expect.any(String),
       }),
     );
   });
@@ -2035,6 +2040,13 @@ describe("listen-client multi-worker concurrency", () => {
     await turnPromise;
 
     expect(capturedModeAtClassification === "bypassPermissions").toBe(true);
+    const continuationMessages = sendMessageStreamMock.mock.calls[1]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(continuationMessages?.[0]).toMatchObject({
+      type: "approval",
+      otid: expect.any(String),
+    });
   });
 
   test("change_device_state does not prune default-state entry mid-turn", async () => {
@@ -2297,5 +2309,91 @@ describe("listen-client multi-worker concurrency", () => {
       signal: expect.any(AbortSignal),
     });
     expect(firstCall?.[2]?.signal).not.toBe(parentAbortController.signal);
+  });
+
+  test("approval continuation busy retry emits retry delta before waiting", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-approval-busy",
+      "conv-approval-busy",
+    );
+    const socket = new MockSocket();
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+    conversationMessagesStreamMock.mockRejectedValueOnce(
+      new Error("resume unavailable"),
+    );
+
+    const originalSetTimeout = globalThis.setTimeout;
+    type SetTimeoutParams = Parameters<typeof setTimeout>;
+    globalThis.setTimeout = ((
+      handler: SetTimeoutParams[0],
+      _timeout?: SetTimeoutParams[1],
+      ...args: unknown[]
+    ) => originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+    try {
+      const stream = await sendApprovalContinuationWithRetry(
+        "conv-approval-busy",
+        [
+          {
+            type: "approval",
+            approvals: [],
+            otid: "approval-otid",
+          },
+        ],
+        {
+          agentId: "agent-approval-busy",
+          streamTokens: true,
+          background: true,
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        new AbortController().signal,
+      );
+
+      expect(stream as unknown as MockStream).toEqual({
+        conversationId: "conv-approval-busy",
+        agentId: "agent-approval-busy",
+      });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(conversationMessagesStreamMock.mock.calls[0]?.[1]).toMatchObject({
+      otid: "approval-otid",
+      starting_after: 0,
+      batch_size: 1000,
+    });
+
+    const retryPayload = socket.sentPayloads
+      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+      .find(
+        (payload) =>
+          payload.type === "stream_delta" &&
+          (payload.delta as { message_type?: unknown } | undefined)
+            ?.message_type === "retry",
+      );
+
+    expect(retryPayload?.delta).toMatchObject({
+      message_type: "retry",
+      message: "Conversation is busy, waiting and retrying…",
+      reason: "error",
+      attempt: 1,
+      max_attempts: 3,
+      delay_ms: 10000,
+    });
   });
 });

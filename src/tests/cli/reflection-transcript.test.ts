@@ -4,6 +4,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  estimateStartupContextTokens,
+  REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "../../agent/subagents/contextBudget";
+import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
@@ -291,6 +296,42 @@ describe("reflectionTranscript helper", () => {
     expect(snapshot).toContain("users/");
     expect(snapshot).toContain("… (7 more entries)");
     expect(snapshot).not.toContain("user_09.md");
+  });
+
+  test("buildParentMemorySnapshot truncates large system memory previews", async () => {
+    const memoryDir = join(testRoot, "memory-large-system");
+    const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");
+    await mkdir(join(memoryDir, "system"), { recursive: true });
+
+    const largeContent = `---\ndescription: Large system memory\n---\nSTART\n${"x".repeat(60_000)}\nEND_SHOULD_BE_TRUNCATED\n`;
+    await writeFile(
+      join(memoryDir, "system", "large.md"),
+      largeContent,
+      "utf-8",
+    );
+    await writeFile(
+      join(memoryDir, "system", "small.md"),
+      "---\ndescription: Small system memory\n---\nsmall content\n",
+      "utf-8",
+    );
+
+    const snapshot = await buildParentMemorySnapshot(memoryDir);
+
+    expect(snapshot.length).toBeLessThanOrEqual(
+      REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
+    );
+    expect(estimateStartupContextTokens(snapshot)).toBeLessThanOrEqual(
+      REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+    );
+    expect(snapshot).toContain("<memory_filesystem>");
+    expect(snapshot).toContain("large.md");
+    expect(snapshot).toContain(
+      `<path>${normalizedMemoryDir}/system/large.md</path>`,
+    );
+    expect(snapshot).toContain("START");
+    expect(snapshot).toContain("Memory preview truncated");
+    expect(snapshot).not.toContain("END_SHOULD_BE_TRUNCATED");
+    expect(snapshot).toContain("</parent_memory>");
   });
 
   test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {

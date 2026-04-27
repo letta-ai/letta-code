@@ -371,10 +371,15 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "sync",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
+          recover_approvals: false,
         }),
       ),
     );
     expect(sync?.type).toBe("sync");
+    if (sync?.type !== "sync") {
+      throw new Error("expected sync command");
+    }
+    expect(sync.recover_approvals).toBe(false);
   });
 
   test("parses cron CRUD commands", () => {
@@ -865,6 +870,30 @@ describe("listen-client parseServerMessage", () => {
 
     expect(getSettings?.type).toBe("get_reflection_settings");
     expect(setSettings?.type).toBe("set_reflection_settings");
+  });
+
+  test("parses experiment commands", () => {
+    const getExperiments = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "get_experiments",
+          request_id: "experiments-get-1",
+        }),
+      ),
+    );
+    const setExperiment = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "set_experiment",
+          request_id: "experiment-set-1",
+          experiment_id: "node",
+          enabled: true,
+        }),
+      ),
+    );
+
+    expect(getExperiments?.type).toBe("get_experiments");
+    expect(setExperiment?.type).toBe("set_experiment");
   });
 
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
@@ -2045,6 +2074,110 @@ describe("listen-client reflection settings command handling", () => {
   });
 });
 
+describe("listen-client experiment command handling", () => {
+  test("wraps typed experiment reads and writes over WS", async () => {
+    const originalGetSettings = settingsManager.getSettings;
+    const originalUpdateSettings = settingsManager.updateSettings;
+    const originalNodeFlag = process.env.LETTA_NODE;
+    const globalSettings = {} as Settings;
+
+    try {
+      delete process.env.LETTA_NODE;
+      (settingsManager as typeof settingsManager).getSettings = (() =>
+        globalSettings) as typeof settingsManager.getSettings;
+      (settingsManager as typeof settingsManager).updateSettings = ((
+        updates: Record<string, unknown>,
+      ) => {
+        Object.assign(
+          globalSettings as unknown as Record<string, unknown>,
+          updates,
+        );
+      }) as typeof settingsManager.updateSettings;
+
+      const socket = new MockSocket(WebSocket.OPEN);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+
+      await __listenClientTestUtils.handleExperimentCommand(
+        {
+          type: "get_experiments",
+          request_id: "experiments-get-1",
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const getResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(getResponse).toMatchObject({
+        type: "get_experiments_response",
+        request_id: "experiments-get-1",
+        success: true,
+        experiments: [
+          expect.objectContaining({
+            id: "node",
+            enabled: false,
+            source: "default",
+          }),
+        ],
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleExperimentCommand(
+        {
+          type: "set_experiment",
+          request_id: "experiment-set-1",
+          experiment_id: "node",
+          enabled: true,
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const setResponse = JSON.parse(socket.sentPayloads[0] as string);
+      const deviceStatusUpdate = JSON.parse(socket.sentPayloads[1] as string);
+      expect(setResponse).toMatchObject({
+        type: "set_experiment_response",
+        request_id: "experiment-set-1",
+        success: true,
+        experiments: [
+          expect.objectContaining({
+            id: "node",
+            enabled: true,
+            source: "override",
+          }),
+        ],
+      });
+      expect(deviceStatusUpdate).toMatchObject({
+        type: "update_device_status",
+        device_status: {
+          experiments: [
+            expect.objectContaining({
+              id: "node",
+              enabled: true,
+              source: "override",
+            }),
+          ],
+        },
+      });
+    } finally {
+      if (originalNodeFlag === undefined) {
+        delete process.env.LETTA_NODE;
+      } else {
+        process.env.LETTA_NODE = originalNodeFlag;
+      }
+      (settingsManager as typeof settingsManager).getSettings =
+        originalGetSettings;
+      (settingsManager as typeof settingsManager).updateSettings =
+        originalUpdateSettings;
+    }
+  });
+});
+
 describe("listen-client permission mode scope keys", () => {
   test("falls back from legacy default key and migrates to agent-scoped key", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
@@ -2487,13 +2620,29 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
+    const originalNodeFlag = process.env.LETTA_NODE;
+    delete process.env.LETTA_NODE;
     const runtime = __listenClientTestUtils.createRuntime();
-    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
-    expect(typeof deviceStatus.current_working_directory).toBe("string");
-    expect(
-      (deviceStatus.current_working_directory ?? "").length,
-    ).toBeGreaterThan(0);
-    expect(deviceStatus.current_toolset_preference).toBe("auto");
+    try {
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+      expect(typeof deviceStatus.current_working_directory).toBe("string");
+      expect(
+        (deviceStatus.current_working_directory ?? "").length,
+      ).toBeGreaterThan(0);
+      expect(deviceStatus.current_toolset_preference).toBe("auto");
+      expect(deviceStatus.experiments).toEqual([
+        expect.objectContaining({
+          id: "node",
+          source: "default",
+        }),
+      ]);
+    } finally {
+      if (originalNodeFlag === undefined) {
+        delete process.env.LETTA_NODE;
+      } else {
+        process.env.LETTA_NODE = originalNodeFlag;
+      }
+    }
   });
 
   test("buildDeviceStatus includes should_doctor state when available", () => {
@@ -2762,6 +2911,41 @@ describe("listen-client v2 status builders", () => {
           message.delta?.message_type === "loop_error",
       ),
     ).toBe(false);
+  });
+
+  test("sync replay can skip backend approval recovery for lightweight state sync", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const recoverApprovalStateForSync = mock(async () => {});
+
+    await __listenClientTestUtils.replaySyncStateForRuntime(
+      listener,
+      socket as unknown as WebSocket,
+      {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      },
+      {
+        recoverApprovals: false,
+        recoverApprovalStateForSync,
+      },
+    );
+
+    expect(recoverApprovalStateForSync).not.toHaveBeenCalled();
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    expect(outbound.map((message) => message.type)).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
   });
 
   test("sync includes silent background reflection subagents in update_subagent_state", () => {

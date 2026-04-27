@@ -22,10 +22,31 @@
  */
 import type { WireMessage } from "./types/protocol";
 
+function stampWireMessage(msg: WireMessage): WireMessage {
+  return msg.timestamp === undefined
+    ? { ...msg, timestamp: new Date().toISOString() }
+    : msg;
+}
+
 export function writeWireMessage(msg: WireMessage): void {
-  const stamped =
-    msg.timestamp === undefined
-      ? { ...msg, timestamp: new Date().toISOString() }
-      : msg;
-  console.log(JSON.stringify(stamped));
+  console.log(JSON.stringify(stampWireMessage(msg)));
+}
+
+export async function writeWireMessageAsync(msg: WireMessage): Promise<void> {
+  const line = `${JSON.stringify(stampWireMessage(msg))}\n`;
+
+  await new Promise<void>((resolve, reject) => {
+    if (process.stdout.destroyed || process.stdout.writableEnded) {
+      resolve();
+      return;
+    }
+
+    process.stdout.write(line, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
 }
