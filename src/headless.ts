@@ -1413,9 +1413,10 @@ export async function handleHeadlessCommand(
   // calls on every while-loop iteration.
   let cachedAgent: AgentState | null = null;
   // Capture the resolved model (conversation override → agent fallback) so
-  // subsequent while-loop iterations can pass it as overrideModel, skipping
-  // the redundant conversations.retrieve in prepareToolExecutionContextForScope.
-  let resolvedModel: string | null | undefined;
+  // subsequent while-loop iterations can prepare the correct toolset without
+  // re-fetching the conversation model. This is only for local tool context;
+  // request-scoped override_model should remain reserved for provider fallback.
+  let preparedEffectiveModel: string | null | undefined;
   {
     const initialToolContext = await prepareHeadlessToolExecutionContext({
       agentId: agent.id,
@@ -1424,7 +1425,8 @@ export async function handleHeadlessCommand(
     });
     availableTools = initialToolContext.availableTools;
     cachedAgent = initialToolContext.preparedToolContext.agent;
-    resolvedModel = initialToolContext.preparedToolContext.effectiveModel;
+    preparedEffectiveModel =
+      initialToolContext.preparedToolContext.effectiveModel;
   }
 
   // If input-format is stream-json, use bidirectional mode
@@ -1744,7 +1746,7 @@ ${SYSTEM_REMINDER_CLOSE}
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
   let providerFallbackAttempted = false;
-  let overrideModelHandle: string | undefined = resolvedModel ?? undefined;
+  let overrideModelHandle: string | undefined;
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
@@ -1811,7 +1813,7 @@ ${SYSTEM_REMINDER_CLOSE}
         const turnToolContext = await prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           conversationId,
-          overrideModel: overrideModelHandle,
+          overrideModel: overrideModelHandle ?? preparedEffectiveModel,
           cachedAgent,
         });
         availableTools = turnToolContext.availableTools;
