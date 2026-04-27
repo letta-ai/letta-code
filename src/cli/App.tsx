@@ -2179,7 +2179,7 @@ export default function App({
     releaseToolExecutionContext(contextId);
   }, []);
   const prepareScopedToolExecutionContext = useCallback(
-    async (overrideModel?: string | null) => {
+    async (overrideModel?: string | null, cachedAgent?: AgentState | null) => {
       const workingDirectory = getCurrentWorkingDirectory();
       const desiredModel = overrideModel ?? currentModelHandle;
 
@@ -2189,6 +2189,7 @@ export default function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
+          cachedAgent,
         });
       }
 
@@ -4352,10 +4353,13 @@ export default function App({
             null;
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
+          let prefetchedAgent: AgentState | null = null;
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
+              prefetchedAgent,
             );
+            prefetchedAgent = preparedToolContext.agent;
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
@@ -5447,6 +5451,7 @@ export default function App({
                 (
                   await prepareScopedToolExecutionContext(
                     tempModelOverrideRef.current ?? undefined,
+                    prefetchedAgent,
                   )
                 ).preparedToolContext.contextId;
               autoAllowedResults =
