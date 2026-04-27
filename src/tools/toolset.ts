@@ -67,6 +67,8 @@ export type PreparedScopeToolContext = {
   toolset: ToolsetName;
   toolsetPreference: ToolsetPreference;
   effectiveModel: string | null;
+  /** The agent state fetched during tool context preparation. */
+  agent: AgentState | null;
 };
 
 function buildModelHandleFromLlmConfig(
@@ -175,6 +177,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
         : "default",
       toolsetPreference,
       effectiveModel,
+      agent: null,
     };
   }
 
@@ -195,6 +198,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolset: toolsetPreference,
     toolsetPreference,
     effectiveModel,
+    agent: null,
   };
 }
 
@@ -287,7 +291,7 @@ export async function prepareToolExecutionContextForScope(params: {
     }
   })();
 
-  return prepareToolExecutionContextForResolvedTarget({
+  const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
     toolsetPreference,
     exclude,
@@ -303,6 +307,8 @@ export async function prepareToolExecutionContextForScope(params: {
       conversationId ?? "default",
     ),
   });
+
+  return { ...result, agent: agent as AgentState };
 }
 
 /**

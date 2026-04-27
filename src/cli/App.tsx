@@ -4352,10 +4352,12 @@ export default function App({
             null;
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
+          let prefetchedAgent: AgentState | null = null;
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
             );
+            prefetchedAgent = preparedToolContext.agent;
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
@@ -4803,8 +4805,11 @@ export default function App({
           // This ensures the UI shows the correct model as early as possible
           const syncAgentState = async () => {
             try {
-              const client = await getClient();
-              const agent = await client.agents.retrieve(agentIdRef.current);
+              // Reuse the agent fetched by prepareToolExecutionContextForScope
+              // (avoids a redundant agents.retrieve per turn).
+              const agent =
+                prefetchedAgent ??
+                (await (await getClient()).agents.retrieve(agentIdRef.current));
 
               // Keep model UI in sync with the agent configuration.
               // Note: many tiers share the same handle (e.g. gpt-5.2-none/high), so we
