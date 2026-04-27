@@ -365,6 +365,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   agentId: string;
   conversationId: string;
   overrideModel?: string | null;
+  cachedAgent?: AgentState | null;
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -377,6 +378,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
+    cachedAgent: params.cachedAgent,
   });
 
   return {
@@ -1405,12 +1407,16 @@ export async function handleHeadlessCommand(
 
   let availableTools =
     agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
+  // Cache the agent from the initial fetch to avoid redundant agents.retrieve
+  // calls on every while-loop iteration.
+  let cachedAgent: AgentState | null = null;
   {
     const initialToolContext = await prepareHeadlessToolExecutionContext({
       agentId: agent.id,
       conversationId,
     });
     availableTools = initialToolContext.availableTools;
+    cachedAgent = initialToolContext.preparedToolContext.agent;
   }
 
   // If input-format is stream-json, use bidirectional mode
@@ -1798,6 +1804,7 @@ ${SYSTEM_REMINDER_CLOSE}
           agentId: agent.id,
           conversationId,
           overrideModel: overrideModelHandle,
+          cachedAgent,
         });
         availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
