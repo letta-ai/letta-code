@@ -89,8 +89,8 @@ describe("idle reflection sweep candidate discovery", () => {
     await writeFile(paths.statePath, `${JSON.stringify(state, null, 2)}\n`);
   }
 
-  test("filters passive candidates by active conversation, quiet window, turns, and cursor", async () => {
-    await appendCompletedTurns("active", 3);
+  test("filters passive candidates by quiet window, turns, and cursor", async () => {
+    await appendCompletedTurns("quiet-recently", 3);
     await appendCompletedTurns("passive-good", 3);
     await appendCompletedTurns("too-short", 2);
     await appendCompletedTurns("too-noisy", 3);
@@ -111,7 +111,9 @@ describe("idle reflection sweep candidate discovery", () => {
       "idle-time",
     );
 
-    await setTranscriptMetadata("active", { transcriptAppendedMinutesAgo: 20 });
+    await setTranscriptMetadata("quiet-recently", {
+      transcriptAppendedMinutesAgo: 20,
+    });
     await setTranscriptMetadata("passive-good", {
       transcriptAppendedMinutesAgo: 20,
     });
@@ -128,7 +130,6 @@ describe("idle reflection sweep candidate discovery", () => {
     const candidates =
       await __idleReflectionSweepTestUtils.discoverIdleReflectionCandidates({
         agentId,
-        activeConversationId: "active",
         workingDirectory: "/tmp/work",
         reflectionSettings: normalizeReflectionSettings({
           trigger: "step-count",
@@ -145,9 +146,9 @@ describe("idle reflection sweep candidate discovery", () => {
         now: () => nowMs,
       });
 
-    expect(candidates.map((candidate) => candidate.conversationId)).toEqual([
-      "passive-good",
-    ]);
+    expect(
+      candidates.map((candidate) => candidate.conversationId).sort(),
+    ).toEqual(["passive-good", "quiet-recently"]);
   });
 
   test("uses reflection staleness separately from transcript quiet time", async () => {
@@ -181,7 +182,6 @@ describe("idle reflection sweep candidate discovery", () => {
     const candidates =
       await __idleReflectionSweepTestUtils.discoverIdleReflectionCandidates({
         agentId,
-        activeConversationId: "active",
         workingDirectory: "/tmp/work",
         reflectionSettings: normalizeReflectionSettings({
           trigger: "step-count",
@@ -231,7 +231,6 @@ describe("idle reflection sweep candidate discovery", () => {
     const candidates =
       await __idleReflectionSweepTestUtils.discoverIdleReflectionCandidates({
         agentId,
-        activeConversationId: "active",
         workingDirectory: "/tmp/work",
         reflectionSettings: normalizeReflectionSettings({
           trigger: "step-count",
@@ -301,7 +300,6 @@ describe("idle reflection sweep candidate discovery", () => {
 
     await __idleReflectionSweepTestUtils.runIdleReflectionSweep({
       agentId,
-      activeConversationId: "active",
       workingDirectory: "/tmp/work",
       reflectionSettings: normalizeReflectionSettings({
         trigger: "step-count",
@@ -355,7 +353,6 @@ describe("idle reflection sweep candidate discovery", () => {
     let launchCount = 0;
     maybeStartIdleReflectionSweep({
       agentId,
-      activeConversationId: "active",
       workingDirectory: "/tmp/work",
       reflectionSettings: normalizeReflectionSettings({
         trigger: "step-count",
@@ -393,7 +390,6 @@ describe("idle reflection sweep candidate discovery", () => {
     let launchCount = 0;
     const sweepInput = {
       agentId,
-      activeConversationId: "active",
       workingDirectory: "/tmp/work",
       reflectionSettings: normalizeReflectionSettings({
         trigger: "step-count" as const,

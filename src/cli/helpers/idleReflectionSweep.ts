@@ -27,7 +27,6 @@ type IdleSweepState = {
 
 export type IdleReflectionSweepInput = {
   agentId: string;
-  activeConversationId: string;
   workingDirectory: string;
   reflectionSettings: ReflectionSettings;
   recompileContext: ReflectionRecompileContext;
@@ -145,7 +144,6 @@ async function discoverIdleReflectionCandidates(
 
   const eligible = conversationIds.filter(
     (conversationId) =>
-      conversationId !== input.activeConversationId &&
       !isReflectionSubagentActive(
         getSubagents(),
         input.agentId,

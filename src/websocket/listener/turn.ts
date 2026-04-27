@@ -425,7 +425,6 @@ export async function handleIncomingMessage(
               ? () => {
                   maybeStartIdleReflectionSweep({
                     agentId,
-                    activeConversationId: conversationId,
                     workingDirectory: turnWorkingDirectory,
                     reflectionSettings,
                     listenerRuntime: runtime.listener,

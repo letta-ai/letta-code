@@ -10802,7 +10802,6 @@ ${SYSTEM_REMINDER_CLOSE}
         maybeStartIdleReflectionSweep: () => {
           maybeStartIdleReflectionSweep({
             agentId,
-            activeConversationId: conversationIdRef.current ?? "default",
             workingDirectory: process.cwd(),
             reflectionSettings,
             recompileContext: {
