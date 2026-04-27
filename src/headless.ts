@@ -365,6 +365,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   agentId: string;
   conversationId: string;
   overrideModel?: string | null;
+  cachedAgent?: AgentState | null;
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -377,6 +378,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
+    cachedAgent: params.cachedAgent,
   });
 
   return {
@@ -987,7 +989,9 @@ export async function handleHeadlessCommand(
   // Priority 2: Try to use --agent specified ID
   if (!agent && specifiedAgentId) {
     try {
-      agent = await client.agents.retrieve(specifiedAgentId);
+      agent = await client.agents.retrieve(specifiedAgentId, {
+        include: ["agent.secrets", "agent.tools"],
+      });
     } catch (_error) {
       console.error(`Agent ${specifiedAgentId} not found`);
       process.exit(1);
@@ -1122,7 +1126,7 @@ export async function handleHeadlessCommand(
   const secretsAgentId = agent?.id;
   const secretsInitPromise = secretsAgentId
     ? import("./utils/secretsStore").then(({ initSecretsFromServer }) =>
-        initSecretsFromServer(secretsAgentId),
+        initSecretsFromServer(secretsAgentId, agent ?? undefined),
       )
     : Promise.resolve();
 
@@ -1275,7 +1279,7 @@ export async function handleHeadlessCommand(
   }
 
   const startupAgentId = agent.id;
-  void clearPersistedClientToolRules(startupAgentId)
+  void clearPersistedClientToolRules(startupAgentId, agent)
     .then((cleanup) => {
       if (cleanup) {
         const count = cleanup.removedToolNames.length;
@@ -1409,6 +1413,7 @@ export async function handleHeadlessCommand(
     const initialToolContext = await prepareHeadlessToolExecutionContext({
       agentId: agent.id,
       conversationId,
+      cachedAgent: agent as AgentState,
     });
     availableTools = initialToolContext.availableTools;
   }

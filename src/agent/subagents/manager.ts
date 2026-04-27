@@ -93,14 +93,20 @@ function getModelHandleFromAgent(agent: {
   return model || null;
 }
 
-async function getPrimaryAgentModelHandle(): Promise<string | null> {
+async function getPrimaryAgentModelHandle(): Promise<{
+  handle: string | null;
+  agent: {
+    name?: string | null;
+    llm_config?: { model_endpoint_type?: string | null; model?: string | null };
+  } | null;
+}> {
   try {
     const agentId = getCurrentAgentId();
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
-    return getModelHandleFromAgent(agent);
+    return { handle: getModelHandleFromAgent(agent), agent };
   } catch {
-    return null;
+    return { handle: null, agent: null };
   }
 }
 
@@ -1009,7 +1015,7 @@ async function executeSubagent(
     if (exitCode !== 0) {
       // Check if this is a provider-not-supported error and we haven't retried yet
       if (!isRetry && isProviderNotSupportedError(stderr)) {
-        const primaryModel = await getPrimaryAgentModelHandle();
+        const { handle: primaryModel } = await getPrimaryAgentModelHandle();
         if (primaryModel) {
           // Retry with the primary agent's model
           return executeSubagent(
@@ -1188,7 +1194,8 @@ export async function spawnSubagent(
     existingAgentId || existingConversationId,
   );
 
-  const parentModelHandle = await getPrimaryAgentModelHandle();
+  const { handle: parentModelHandle, agent: parentAgent } =
+    await getPrimaryAgentModelHandle();
   const billingTier = await getCurrentBillingTier();
 
   // For existing agents, don't override model; for new agents, use provided or config default
@@ -1219,14 +1226,15 @@ export async function spawnSubagent(
   let finalPrompt = prompt;
   if (isDeployingExisting && resolvedParentAgentId) {
     try {
-      const client = await getClient();
-      const parentAgent = await client.agents.retrieve(resolvedParentAgentId);
+      const cachedParent =
+        parentAgent ??
+        (await (await getClient()).agents.retrieve(resolvedParentAgentId));
       if (forkedContext) {
         const systemReminder = buildForkSystemReminder(type);
         finalPrompt = systemReminder + prompt;
       } else {
         const systemReminder = buildDeploySystemReminder(
-          parentAgent.name,
+          cachedParent.name ?? "",
           resolvedParentAgentId,
         );
         finalPrompt = systemReminder + prompt;
