@@ -106,10 +106,15 @@ function findNextWordBoundary(text: string, cursorPos: number): number {
 
 type WordDirection = "left" | "right";
 
+// Match word-navigation arrow sequences: CSI 1 ; modifier [CD]
+// Kitty keyboard protocol modifier encoding is 1 + bit-sum
+// (shift=1, alt=2, ctrl=4, super=8):
+//   3=Alt, 4=Alt+Shift, 5=Ctrl, 6=Ctrl+Shift,
+//   7=Alt+Ctrl, 8=Alt+Ctrl+Shift, 9=Super
 // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
-const OPTION_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)D$/;
+const OPTION_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|5|6|7|8|9)D$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
-const OPTION_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)C$/;
+const OPTION_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|5|6|7|8|9)C$/;
 
 function detectOptionWordDirection(sequence: string): WordDirection | null {
   if (!sequence.startsWith("\u001b")) return null;
