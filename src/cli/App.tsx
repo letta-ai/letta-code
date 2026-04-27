@@ -94,6 +94,8 @@ import {
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "../hooks";
+import { experimentManager } from "../experiments/manager";
+import type { ExperimentId } from "../experiments/types";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { formatPermissionDenial } from "../permissions/formatDenial";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
@@ -179,6 +181,7 @@ import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
+import { ExperimentSelector } from "./components/ExperimentSelector";
 import { EventMessage } from "./components/EventMessage";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
@@ -614,6 +617,7 @@ function extractErrorMeta(e: unknown) {
 // Any changes made in the overlay will be queued until end_turn
 const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/model",
+  "/experiment",
   "/toolset",
   "/system",
   "/personality",
@@ -1581,6 +1585,7 @@ export default function App({
   // Overlay/selector state - only one can be open at a time
   type ActiveOverlay =
     | "model"
+    | "experiment"
     | "sleeptime"
     | "compaction"
     | "toolset"
@@ -1649,6 +1654,12 @@ export default function App({
   type QueuedOverlayAction =
     | { type: "switch_agent"; agentId: string; commandId?: string }
     | { type: "switch_model"; modelId: string; commandId?: string }
+    | {
+        type: "set_experiment";
+        experimentId: ExperimentId;
+        enabled: boolean;
+        commandId?: string;
+      }
     | {
         type: "set_sleeptime";
         settings: ReflectionSettings;
@@ -7942,6 +7953,17 @@ export default function App({
           return { submitted: true };
         }
 
+        if (trimmed === "/experiment") {
+          startOverlayCommand(
+            "experiment",
+            "/experiment",
+            "Opening experiment selector...",
+            "Experiment dialog dismissed",
+          );
+          setActiveOverlay("experiment");
+          return { submitted: true };
+        }
+
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
           const adeUrl = buildChatUrl(agentId, {
@@ -12763,6 +12785,72 @@ ${SYSTEM_REMINDER_CLOSE}
     ],
   );
 
+  const handleExperimentSelect = useCallback(
+    async (
+      selection: { experimentId: ExperimentId; enabled: boolean },
+      commandId?: string | null,
+    ) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/experiment")
+        : consumeOverlayCommand("experiment");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/experiment",
+            "Experiment toggle queued – will update after current task completes",
+          );
+        cmd.update({
+          output:
+            "Experiment toggle queued – will update after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "set_experiment",
+          experimentId: selection.experimentId,
+          enabled: selection.enabled,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/experiment", "Updating experiment...");
+        cmd.update({
+          output: "Updating experiment...",
+          phase: "running",
+        });
+
+        try {
+          const snapshot = experimentManager.set(
+            selection.experimentId,
+            selection.enabled,
+          );
+          cmd.finish(
+            `Experiment "${snapshot.label}" ${snapshot.enabled ? "enabled" : "disabled"} (${snapshot.source})`,
+            true,
+          );
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to update experiment: ${errorDetails}`);
+        } finally {
+          setActiveOverlay(null);
+        }
+      });
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
   // Process queued overlay actions when streaming ends
   // These are actions from interactive commands (like /agents, /model) that were
   // used while the agent was busy. The change is applied after end_turn.
@@ -12854,6 +12942,14 @@ ${SYSTEM_REMINDER_CLOSE}
         })();
       } else if (action.type === "switch_toolset") {
         handleToolsetSelect(action.toolsetId, action.commandId);
+      } else if (action.type === "set_experiment") {
+        handleExperimentSelect(
+          {
+            experimentId: action.experimentId,
+            enabled: action.enabled,
+          },
+          action.commandId,
+        );
       } else if (action.type === "switch_system") {
         handleSystemPromptSelect(action.promptId, action.commandId);
       } else if (action.type === "switch_personality") {
@@ -12871,6 +12967,7 @@ ${SYSTEM_REMINDER_CLOSE}
     handleSleeptimeModeSelect,
     handleCompactionModeSelect,
     handleToolsetSelect,
+    handleExperimentSelect,
     handleSystemPromptSelect,
     handlePersonalitySelect,
     agentId,
@@ -14598,6 +14695,15 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     setActiveConnectCommandId(null);
                   }
                 }}
+              />
+            )}
+
+            {/* Experiment Selector - conditionally mounted as overlay */}
+            {activeOverlay === "experiment" && (
+              <ExperimentSelector
+                experiments={experimentManager.list()}
+                onSelect={handleExperimentSelect}
+                onCancel={closeOverlay}
               />
             )}
 

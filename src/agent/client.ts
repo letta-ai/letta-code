@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
+import { experimentManager } from "../experiments/manager";
 import { type Settings, settingsManager } from "../settings-manager";
 import { trackBoundaryError } from "../telemetry/errorReporting";
 import { isDebugEnabled } from "../utils/debug";
@@ -317,6 +318,7 @@ export async function getClient() {
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
+  const nodeExperiment = experimentManager.getSnapshot("node");
 
   return new Letta({
     apiKey,
@@ -326,9 +328,11 @@ export async function getClient() {
     defaultHeaders: {
       "X-Letta-Source": "letta-code",
       "User-Agent": `letta-code/${packageJson.version}`,
-      ...(process.env.LETTA_NODE === "1" && {
-        "x-letta-node": "1",
-      }),
+      ...(nodeExperiment.source === "override"
+        ? { "x-letta-node": nodeExperiment.enabled ? "1" : "0" }
+        : nodeExperiment.enabled
+          ? { "x-letta-node": "1" }
+          : {}),
     },
     // Use instrumented fetch for timing logs when LETTA_DEBUG_TIMINGS is enabled
     ...(isTimingsEnabled() && { fetch: createTimingFetch(fetch) }),

@@ -15,6 +15,7 @@ import type {
   SlackDefaultPermissionMode,
 } from "../channels/types";
 import type { CronTask } from "../cron";
+import type { ExperimentId, ExperimentSnapshot } from "../experiments/types";
 
 /**
  * Runtime identity for all state and delta events.
@@ -300,6 +301,7 @@ export interface DeviceStatus {
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
+  experiments: ExperimentSnapshot[];
   memory_directory: string | null;
   should_doctor?: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
@@ -990,6 +992,18 @@ export interface SetReflectionSettingsCommand {
   scope?: ReflectionSettingsScope;
 }
 
+export interface GetExperimentsCommand {
+  type: "get_experiments";
+  request_id: string;
+}
+
+export interface SetExperimentCommand {
+  type: "set_experiment";
+  request_id: string;
+  experiment_id: ExperimentId;
+  enabled: boolean;
+}
+
 export interface ChannelsListCommand {
   type: "channels_list";
   request_id: string;
@@ -1265,6 +1279,22 @@ export interface SetReflectionSettingsResponseMessage {
   success: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
   scope: ReflectionSettingsScope;
+  error?: string;
+}
+
+export interface GetExperimentsResponseMessage {
+  type: "get_experiments_response";
+  request_id: string;
+  success: boolean;
+  experiments: ExperimentSnapshot[];
+  error?: string;
+}
+
+export interface SetExperimentResponseMessage {
+  type: "set_experiment_response";
+  request_id: string;
+  success: boolean;
+  experiments: ExperimentSnapshot[];
   error?: string;
 }
 
@@ -1587,6 +1617,8 @@ export type WsProtocolCommand =
   | CreateAgentCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
+  | GetExperimentsCommand
+  | SetExperimentCommand
   | ChannelsListCommand
   | ChannelAccountsListCommand
   | ChannelAccountCreateCommand
@@ -1620,6 +1652,8 @@ export type WsProtocolMessage =
   | ListModelsResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
+  | GetExperimentsResponseMessage
+  | SetExperimentResponseMessage
   | ChannelsListResponseMessage
   | ChannelAccountsListResponseMessage
   | ChannelAccountCreateResponseMessage

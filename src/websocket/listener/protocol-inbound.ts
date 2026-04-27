@@ -33,6 +33,7 @@ import type {
   EnableMemfsCommand,
   ExecuteCommandCommand,
   FileOpsCommand,
+  GetExperimentsCommand,
   GetReflectionSettingsCommand,
   GetTreeCommand,
   GrepInFilesCommand,
@@ -47,6 +48,7 @@ import type {
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
+  SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
@@ -796,6 +798,37 @@ export function isSetReflectionSettingsCommand(
   );
 }
 
+export function isGetExperimentsCommand(
+  value: unknown,
+): value is GetExperimentsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "get_experiments" && typeof c.request_id === "string"
+  );
+}
+
+export function isSetExperimentCommand(
+  value: unknown,
+): value is SetExperimentCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    experiment_id?: unknown;
+    enabled?: unknown;
+  };
+  return (
+    c.type === "set_experiment" &&
+    typeof c.request_id === "string" &&
+    c.experiment_id === "node" &&
+    typeof c.enabled === "boolean"
+  );
+}
+
 function isChannelId(
   value: unknown,
 ): value is "telegram" | "slack" | "discord" {
@@ -1383,6 +1416,8 @@ export function parseServerMessage(
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isGetExperimentsCommand(parsed) ||
+      isSetExperimentCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||

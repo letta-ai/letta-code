@@ -37,6 +37,7 @@ import {
 } from "../../cli/helpers/memoryReminder";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
+import { experimentManager } from "../../experiments/manager";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
@@ -110,11 +111,15 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  GetExperimentsCommand,
+  GetExperimentsResponseMessage,
   GetReflectionSettingsCommand,
   ListMemoryCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   ReflectionSettingsScope,
+  SetExperimentCommand,
+  SetExperimentResponseMessage,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
@@ -196,6 +201,7 @@ import {
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isFileOpsCommand,
+  isGetExperimentsCommand,
   isGetReflectionSettingsCommand,
   isGetTreeCommand,
   isGrepInFilesCommand,
@@ -208,6 +214,7 @@ import {
   isReadFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
+  isSetExperimentCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
@@ -1009,6 +1016,8 @@ async function buildListModelsResponse(
 type ReflectionSettingsCommand =
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand;
+
+type ExperimentCommand = GetExperimentsCommand | SetExperimentCommand;
 
 type ChannelsCommand =
   | ChannelsListCommand
@@ -3104,6 +3113,63 @@ function resolveReflectionSettingsScope(
     persistGlobal: true,
     normalizedScope: "both",
   };
+}
+
+async function handleExperimentCommand(
+  parsed: ExperimentCommand,
+  socket: WebSocket,
+  listener: ListenerRuntime,
+): Promise<boolean> {
+  if (parsed.type === "get_experiments") {
+    const response: GetExperimentsResponseMessage = {
+      type: "get_experiments_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+    return true;
+  }
+
+  try {
+    experimentManager.set(parsed.experiment_id, parsed.enabled);
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+
+    emitDeviceStatusUpdate(socket, listener);
+  } catch (err) {
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: false,
+      experiments: experimentManager.list(),
+      error:
+        err instanceof Error ? err.message : "Failed to update experiment",
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+  }
+
+  return true;
 }
 
 async function handleReflectionSettingsCommand(
@@ -5704,6 +5770,13 @@ async function connectWithRetry(
         return;
       }
 
+      if (isGetExperimentsCommand(parsed) || isSetExperimentCommand(parsed)) {
+        runDetachedListenerTask("experiment_command", async () => {
+          await handleExperimentCommand(parsed, socket, runtime);
+        });
+        return;
+      }
+
       if (
         isGetReflectionSettingsCommand(parsed) ||
         isSetReflectionSettingsCommand(parsed)
@@ -6395,6 +6468,7 @@ export const __listenClientTestUtils = {
   handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
+  handleExperimentCommand,
   handleReflectionSettingsCommand,
   enqueueChannelTurn,
   scheduleQueuePump,

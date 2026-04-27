@@ -9,6 +9,7 @@ import { getGitContext } from "../../cli/helpers/gitContext";
 import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
 import { getSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
+import { experimentManager } from "../../experiments/manager";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
@@ -387,6 +388,7 @@ export function buildDeviceStatus(
       current_available_skills: [],
       background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
+      experiments: experimentManager.list(),
       memory_directory: null,
       should_doctor: false,
       reflection_settings: null,
@@ -456,6 +458,7 @@ export function buildDeviceStatus(
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),
+    experiments: experimentManager.list(),
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
