@@ -1480,7 +1480,18 @@ async function main(): Promise<void> {
     // Main initialization effect - runs after profile selection
     const initStartedRef = React.useRef(false);
     useEffect(() => {
-      if (loadingState !== "assembling") return;
+      if (loadingState !== "assembling") {
+        // If init bounced back to a picker, allow the next user selection to
+        // start a fresh assembling phase.
+        if (
+          loadingState === "selecting" ||
+          loadingState === "selecting_global" ||
+          loadingState === "selecting_conversation"
+        ) {
+          initStartedRef.current = false;
+        }
+        return;
+      }
       // Guard against double-fire from dependency churn in the same
       // "assembling" phase.  Only the first invocation should run.
       if (initStartedRef.current) return;
