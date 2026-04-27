@@ -6,7 +6,6 @@ import {
 } from "./config";
 import type {
   ChannelAccount,
-  DiscordChannelAccount,
   SlackChannelAccount,
   SlackDefaultPermissionMode,
   SupportedChannelId,

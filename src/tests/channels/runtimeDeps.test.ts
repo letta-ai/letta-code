@@ -45,15 +45,6 @@ function writeFakeGrammyModule(runtimeDir: string): void {
 let runtimeRoot: string;
 let bundledRuntimeRoot: string;
 
-function expectedPackageManagerCommand(
-  packageManager: "bun" | "npm" | "pnpm",
-  platform: NodeJS.Platform = process.platform,
-): string {
-  return platform === "win32" && packageManager !== "bun"
-    ? `${packageManager}.cmd`
-    : packageManager;
-}
-
 beforeEach(() => {
   runtimeRoot = mkdtempSync(join(tmpdir(), "letta-channel-runtime-"));
   bundledRuntimeRoot = mkdtempSync(
