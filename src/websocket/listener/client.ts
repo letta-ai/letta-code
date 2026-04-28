@@ -4121,6 +4121,7 @@ function createRuntime(): ListenerRuntime {
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
     memfsSyncedAgents: new Map(),
+    secretsHydrationByAgent: new Map(),
     lastEmittedStatus: null,
   };
 }
@@ -6333,6 +6334,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+  secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
@@ -6368,6 +6370,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+    secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
@@ -6523,6 +6526,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.memfsSyncedAgents,
       set: (value: ListenerRuntime["memfsSyncedAgents"]) => {
         listener.memfsSyncedAgents = value;
+      },
+    },
+    secretsHydrationByAgent: {
+      get: () => listener.secretsHydrationByAgent,
+      set: (value: ListenerRuntime["secretsHydrationByAgent"]) => {
+        listener.secretsHydrationByAgent = value;
       },
     },
     worktreeWatcherByConversation: {

@@ -11,34 +11,63 @@ import { loadSecrets } from "../utils/secretsStore";
  */
 const SECRET_PATTERN = /\$([A-Z_][A-Z0-9_]*)/g;
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 /**
  * Substitute $SECRET_NAME patterns in a string with actual secret values.
  * If a secret is not found, the pattern is left unchanged.
  */
-export function substituteSecretsInString(input: string): string {
-  const secrets = loadSecrets();
+export function substituteSecretsInString(
+  input: string,
+  agentId?: string,
+): string {
+  const secrets = loadSecrets(agentId);
   return input.replace(SECRET_PATTERN, (match, name) => {
     const value = secrets[name];
     return value !== undefined ? value : match;
   });
 }
 
+function substituteSecretsInValue(value: unknown, agentId?: string): unknown {
+  if (typeof value === "string") {
+    return substituteSecretsInString(value, agentId);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => substituteSecretsInValue(item, agentId));
+  }
+
+  if (isPlainRecord(value)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+      result[key] = substituteSecretsInValue(nestedValue, agentId);
+    }
+    return result;
+  }
+
+  return value;
+}
+
 /**
  * Substitute secrets in tool arguments.
- * Only processes string values; other types are passed through unchanged.
+ * Processes strings recursively in arrays and plain objects; other values are
+ * passed through unchanged.
  * Only applies to shell tools (checked by caller in manager.ts).
  */
 export function substituteSecretsInArgs(
   args: Record<string, unknown>,
+  agentId?: string,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(args)) {
-    if (typeof value === "string") {
-      result[key] = substituteSecretsInString(value);
-    } else {
-      result[key] = value;
-    }
+    result[key] = substituteSecretsInValue(value, agentId);
   }
 
   return result;
@@ -49,8 +78,11 @@ export function substituteSecretsInArgs(
  * placeholder that makes it unambiguous to the LLM that the value is hidden.
  * Used to prevent secret values from leaking into agent context via tool output.
  */
-export function scrubSecretsFromString(input: string): string {
-  const secrets = loadSecrets();
+export function scrubSecretsFromString(
+  input: string,
+  agentId?: string,
+): string {
+  const secrets = loadSecrets(agentId);
   let result = input;
   // Replace longer values first to avoid partial matches
   const entries = Object.entries(secrets).sort(

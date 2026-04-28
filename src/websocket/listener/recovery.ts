@@ -61,6 +61,7 @@ import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
 } from "./runtime";
+import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
@@ -626,6 +627,7 @@ export async function resolveRecoveredApprovalResponse(
   );
   const recoveryAbortController = new AbortController();
   runtime.activeAbortController = recoveryAbortController;
+  await ensureSecretsHydratedForAgent(runtime.listener, recovered.agentId);
   const preparedToolContext = await prepareToolExecutionContextForScope({
     agentId: recovered.agentId,
     conversationId: recovered.conversationId,

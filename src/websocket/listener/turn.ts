@@ -423,9 +423,15 @@ export async function handleIncomingMessage(
       return;
     }
 
-    // Ensure memfs repo is cloned/pulled for this agent (lazy, once per session).
-    const { ensureMemfsSyncedForAgent } = await import("./memfs-sync");
-    await ensureMemfsSyncedForAgent(runtime.listener, agentId);
+    // Ensure local per-agent state is ready before reminders and tool execution.
+    const [{ ensureMemfsSyncedForAgent }, { ensureSecretsHydratedForAgent }] =
+      await Promise.all([import("./memfs-sync"), import("./secrets-sync")]);
+    await Promise.all([
+      // Memfs is lazy and memoized once per session.
+      ensureMemfsSyncedForAgent(runtime.listener, agentId),
+      // Secrets refresh every turn so desktop GUI updates are picked up.
+      ensureSecretsHydratedForAgent(runtime.listener, agentId),
+    ]);
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);

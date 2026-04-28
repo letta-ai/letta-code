@@ -1625,13 +1625,16 @@ export async function executeTool(
           enhancedArgs = {
             ...enhancedArgs,
             onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(scrubSecretsFromString(chunk), stream);
+              options.onOutput?.(
+                scrubSecretsFromString(chunk, scopedAgentId),
+                stream,
+              );
             },
           };
         }
 
         // Substitute $SECRET_NAME patterns with actual secret values
-        enhancedArgs = substituteSecretsInArgs(enhancedArgs);
+        enhancedArgs = substituteSecretsInArgs(enhancedArgs, scopedAgentId);
       }
 
       // Inject toolCallId, abort signal, and parent scope for Task tool
@@ -1721,11 +1724,17 @@ export async function executeTool(
       // Scrub secret values from tool output so they don't leak into agent context
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
         if (typeof flattenedResponse === "string") {
-          flattenedResponse = scrubSecretsFromString(flattenedResponse);
+          flattenedResponse = scrubSecretsFromString(
+            flattenedResponse,
+            scopedAgentId,
+          );
         } else if (Array.isArray(flattenedResponse)) {
           flattenedResponse = flattenedResponse.map((block) =>
             block.type === "text"
-              ? { ...block, text: scrubSecretsFromString(block.text) }
+              ? {
+                  ...block,
+                  text: scrubSecretsFromString(block.text, scopedAgentId),
+                }
               : block,
           );
         }
@@ -1733,7 +1742,7 @@ export async function executeTool(
           for (let i = 0; i < stdout.length; i++) {
             const line = stdout[i];
             if (line !== undefined) {
-              stdout[i] = scrubSecretsFromString(line);
+              stdout[i] = scrubSecretsFromString(line, scopedAgentId);
             }
           }
         }
@@ -1741,7 +1750,7 @@ export async function executeTool(
           for (let i = 0; i < stderr.length; i++) {
             const line = stderr[i];
             if (line !== undefined) {
-              stderr[i] = scrubSecretsFromString(line);
+              stderr[i] = scrubSecretsFromString(line, scopedAgentId);
             }
           }
         }
