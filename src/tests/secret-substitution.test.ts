@@ -1,7 +1,7 @@
 // src/tests/secret-substitution.test.ts
 // Tests for secret env extraction and scrubbing
 
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
@@ -19,6 +19,10 @@ const mockSecrets: Record<string, string> = {
 mock.module("../utils/secretsStore", () => ({
   loadSecrets: () => mockSecrets,
 }));
+
+afterAll(() => {
+  mock.restore();
+});
 
 describe("extractSecretEnvFromCommand", () => {
   test("extracts single secret reference", () => {
