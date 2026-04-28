@@ -64,7 +64,7 @@ function isToolsNotFoundError(err: unknown): boolean {
   );
 }
 
-async function addBaseToolsToServer(): Promise<boolean> {
+export async function addBaseToolsToServer(): Promise<boolean> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
@@ -209,9 +209,7 @@ export async function createAgent(
       console.error(`Error: Unknown model "${options.model}"`);
       console.error("Available models:");
       console.error(availableModels);
-      throw new Error(
-        `Unknown model "${options.model}". Available models:\n${availableModels}`,
-      );
+      throw new Error(`Unknown model "${options.model}".`);
     }
     modelHandle = resolved;
   } else {

@@ -4,8 +4,21 @@
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
 import { canonicalToolName, isFileToolName } from "./canonical";
-import { isReadOnlyShellCommand, SAFE_GH_COMMANDS } from "./readOnlyShell";
-import { unwrapShellLauncherCommand } from "./shell-command-normalization";
+import {
+  isReadOnlyShellCommand,
+  SAFE_GH_COMMANDS,
+  SAFE_GIT_SUBCOMMAND_LIST,
+} from "./readOnlyShell";
+import {
+  extractPrimaryShellCommand,
+  unwrapShellLauncherCommand,
+} from "./shell-command-normalization";
+import {
+  splitShellSegmentsAllowCommandSubstitution,
+  tokenizeShellWords,
+} from "./shellAnalysis";
+
+const SAFE_GIT_COMMANDS: readonly string[] = SAFE_GIT_SUBCOMMAND_LIST;
 
 export interface ApprovalContext {
   // What rule should be saved if user clicks "approve always"
@@ -563,12 +576,32 @@ function buildPackageStyleRule(
   };
 }
 
+function containsDangerousFlag(command: string): boolean {
+  const segments = splitShellSegmentsAllowCommandSubstitution(command) ?? [
+    command,
+  ];
+
+  for (const segment of segments) {
+    const tokens = tokenizeShellWords(segment);
+    if (
+      tokens.includes("--force") ||
+      tokens.includes("--hard") ||
+      tokens.includes("-f")
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function analyzeBashApproval(
   command: string,
   workingDir: string,
 ): ApprovalContext {
   const normalizedCommand = unwrapShellLauncherCommand(command);
-  const parts = normalizedCommand.trim().split(/\s+/);
+  const analysisCommand = extractPrimaryShellCommand(normalizedCommand);
+  const parts = analysisCommand.trim().split(/\s+/);
   const baseCommand = parts[0] || "";
   const firstArg = parts[1] || "";
   const topLevelGitSubcommand =
@@ -590,11 +623,7 @@ function analyzeBashApproval(
   }
 
   // Check for dangerous flags
-  if (
-    normalizedCommand.includes("--force") ||
-    normalizedCommand.includes("-f") ||
-    normalizedCommand.includes("--hard")
-  ) {
+  if (containsDangerousFlag(normalizedCommand)) {
     return {
       recommendedRule: "",
       ruleDescription: "",
@@ -623,15 +652,11 @@ function analyzeBashApproval(
     const gitSubcommand = topLevelGitSubcommand;
 
     // Safe read-only git commands
-    const safeGitCommands = [
-      "status",
-      "diff",
-      "log",
-      "show",
-      "branch",
-      "remote",
-    ];
-    if (gitSubcommand && safeGitCommands.includes(gitSubcommand)) {
+    if (
+      gitSubcommand &&
+      SAFE_GIT_COMMANDS.includes(gitSubcommand) &&
+      isReadOnlyShellCommand(analysisCommand, { allowExternalPaths: true })
+    ) {
       return {
         recommendedRule: `Bash(git ${gitSubcommand}:*)`,
         ruleDescription: `'git ${gitSubcommand}' commands`,
@@ -706,7 +731,7 @@ function analyzeBashApproval(
   const readOnlyRulePrefix = getReadOnlyRulePrefix(parts);
   if (
     readOnlyRulePrefix &&
-    (isReadOnlyShellCommand(normalizedCommand, {
+    (isReadOnlyShellCommand(analysisCommand, {
       allowExternalPaths: true,
     }) ||
       readOnlyRulePrefix === "curl")
@@ -721,124 +746,14 @@ function analyzeBashApproval(
     };
   }
 
-  // Handle complex piped/chained commands (cd /path && git diff | head)
-  // For pipes (|), the FIRST command is the main one
-  // For && and ;, we skip cd prefixes and use the actual command
-  if (
-    normalizedCommand.includes("&&") ||
-    normalizedCommand.includes("|") ||
-    normalizedCommand.includes(";")
-  ) {
-    // First, strip everything after the first pipe - the piped-to command is secondary
-    // e.g., "curl --version | head -1" -> analyze "curl --version"
-    const beforePipe = (
-      normalizedCommand.split("|")[0] ?? normalizedCommand
-    ).trim();
-
-    // Now split on && and ; to handle cd prefixes
-    const segments = beforePipe.split(/\s*(?:&&|;)\s*/);
-
-    for (const segment of segments) {
-      const segmentParts = segment.trim().split(/\s+/);
-      const segmentBase = segmentParts[0] || "";
-      const segmentArg = segmentParts[1] || "";
-
-      // Skip cd commands - we want the actual command
-      if (segmentBase === "cd") {
-        continue;
-      }
-
-      // Check if this segment is git command
-      if (segmentBase === "git") {
-        const gitSubcommand = extractGitSubcommand(segmentParts);
-        const safeGitCommands = [
-          "status",
-          "diff",
-          "log",
-          "show",
-          "branch",
-          "remote",
-        ];
-        const writeGitCommands = ["push", "pull", "fetch", "commit", "add"];
-
-        if (
-          gitSubcommand &&
-          (safeGitCommands.includes(gitSubcommand) ||
-            writeGitCommands.includes(gitSubcommand))
-        ) {
-          return {
-            recommendedRule: `Bash(git ${gitSubcommand}:*)`,
-            ruleDescription: `'git ${gitSubcommand}' commands`,
-            approveAlwaysText: `Yes, and don't ask again for 'git ${gitSubcommand}' commands in this project`,
-            defaultScope: "project",
-            allowPersistence: true,
-            safetyLevel: safeGitCommands.includes(gitSubcommand)
-              ? "safe"
-              : "moderate",
-          };
-        }
-      }
-
-      // Check if this segment is a gh CLI command
-      if (segmentBase === "gh") {
-        return analyzeGhApproval(segmentArg, segmentParts[2] || "");
-      }
-
-      // Check if this segment is npm/bun/yarn/pnpm
-      if (segmentBase && ["npm", "bun", "yarn", "pnpm"].includes(segmentBase)) {
-        const subcommand = segmentArg;
-        const thirdPart = segmentParts[2];
-
-        if (subcommand === "run" && thirdPart) {
-          const fullCommand = `${segmentBase} ${subcommand} ${thirdPart}`;
-          return buildPackageStyleRule(fullCommand, "safe");
-        }
-
-        if (subcommand) {
-          const fullCommand = `${segmentBase} ${subcommand}`;
-          return buildPackageStyleRule(fullCommand, "safe");
-        }
-      }
-
-      if (segmentBase && ["npx", "bunx"].includes(segmentBase)) {
-        const subcommand = segmentArg;
-        if (subcommand) {
-          return buildPackageStyleRule(
-            `${segmentBase} ${subcommand}`,
-            "moderate",
-          );
-        }
-      }
-
-      // Check if this segment is a safe read-only command
-      const readOnlySegmentPrefix = getReadOnlyRulePrefix(segmentParts);
-      if (
-        readOnlySegmentPrefix &&
-        (isReadOnlyShellCommand(segment.trim(), {
-          allowExternalPaths: true,
-        }) ||
-          readOnlySegmentPrefix === "curl")
-      ) {
-        return {
-          recommendedRule: `Bash(${readOnlySegmentPrefix}:*)`,
-          ruleDescription: `'${readOnlySegmentPrefix}' commands`,
-          approveAlwaysText: `Yes, and don't ask again for '${readOnlySegmentPrefix}' commands in this project`,
-          defaultScope: "project",
-          allowPersistence: true,
-          safetyLevel: "safe",
-        };
-      }
-    }
-  }
-
   // Default: allow this specific command only
   const displayCommand =
-    normalizedCommand.length > 40
-      ? `${normalizedCommand.slice(0, 40)}...`
-      : normalizedCommand;
+    analysisCommand.length > 40
+      ? `${analysisCommand.slice(0, 40)}...`
+      : analysisCommand;
 
   return {
-    recommendedRule: `Bash(${normalizedCommand})`,
+    recommendedRule: `Bash(${analysisCommand})`,
     ruleDescription: `'${displayCommand}'`,
     approveAlwaysText: `Yes, and don't ask again for '${displayCommand}' in this project`,
     defaultScope: "project",
@@ -849,6 +764,7 @@ function analyzeBashApproval(
 
 function extractGitSubcommand(parts: string[]): string | null {
   let index = 1;
+  let skipNext = false;
 
   while (index < parts.length) {
     const token = parts[index];
@@ -857,8 +773,49 @@ function extractGitSubcommand(parts: string[]): string | null {
       continue;
     }
 
-    if (token === "-C") {
-      index += 2;
+    if (skipNext) {
+      skipNext = false;
+      index += 1;
+      continue;
+    }
+
+    if (
+      token === "-C" ||
+      token === "-c" ||
+      token === "--config-env" ||
+      token === "--exec-path" ||
+      token === "--git-dir" ||
+      token === "--namespace" ||
+      token === "--super-prefix" ||
+      token === "--work-tree"
+    ) {
+      skipNext = true;
+      index += 1;
+      continue;
+    }
+
+    if (
+      (token.startsWith("-C") || token.startsWith("-c")) &&
+      token.length > 2
+    ) {
+      index += 1;
+      continue;
+    }
+
+    if (
+      token.startsWith("--config-env=") ||
+      token.startsWith("--exec-path=") ||
+      token.startsWith("--git-dir=") ||
+      token.startsWith("--namespace=") ||
+      token.startsWith("--super-prefix=") ||
+      token.startsWith("--work-tree=")
+    ) {
+      index += 1;
+      continue;
+    }
+
+    if (token === "--" || token.startsWith("-")) {
+      index += 1;
       continue;
     }
 

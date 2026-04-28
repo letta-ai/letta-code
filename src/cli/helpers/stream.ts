@@ -17,7 +17,12 @@ import {
 } from "../../agent/message";
 import { telemetry } from "../../telemetry";
 import { debugLog, debugWarn } from "../../utils/debug";
+import {
+  cleanupStreamAbortRelay,
+  createStreamAbortRelay,
+} from "../../utils/streamAbortRelay";
 import { formatDuration, logTiming } from "../../utils/timing";
+import { recordTuiJsonPayload, recordTuiPerf } from "../../utils/tuiPerf";
 
 import {
   type createBuffers,
@@ -86,6 +91,89 @@ type RunsListClient = {
 };
 
 const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
+
+function summarizeStreamForDebug(stream: unknown): string {
+  if (!stream || typeof stream !== "object") {
+    return `type=${typeof stream}`;
+  }
+  const record = stream as Record<PropertyKey, unknown>;
+  const ctor = (stream as { constructor?: { name?: string } }).constructor
+    ?.name;
+  const controller =
+    record.controller && typeof record.controller === "object"
+      ? (record.controller as Record<string, unknown>)
+      : null;
+  const keys = Object.keys(record).slice(0, 8);
+  return [
+    `ctor=${ctor ?? "unknown"}`,
+    `asyncIterator=${typeof record[Symbol.asyncIterator]}`,
+    `controller=${typeof record.controller}`,
+    `controllerAbort=${typeof controller?.abort}`,
+    `controllerSignal=${typeof controller?.signal}`,
+    keys.length > 0 ? `keys=${keys.join(",")}` : "keys=(none)",
+  ].join(" ");
+}
+
+function summarizeChunkForDebug(chunk: LettaStreamingResponse | null): string {
+  if (!chunk) {
+    return "none";
+  }
+  const record = chunk as unknown as Record<string, unknown>;
+  const parts = [`message_type=${chunk.message_type ?? "unknown"}`];
+  for (const key of ["run_id", "seq_id", "id", "otid", "tool_call_id"]) {
+    const value = record[key];
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      parts.push(`${key}=${value}`);
+    }
+  }
+  if (chunk.message_type === "stop_reason") {
+    parts.push(`stop_reason=${String(record.stop_reason ?? "unknown")}`);
+  }
+  const toolCalls = record.tool_calls;
+  if (Array.isArray(toolCalls)) {
+    parts.push(`tool_calls=${toolCalls.length}`);
+  }
+  return parts.join(" ");
+}
+
+function abortStreamController(
+  stream: Stream<LettaStreamingResponse>,
+  reason: string,
+): void {
+  const controller = (stream as unknown as { controller?: unknown }).controller;
+  if (!controller || typeof controller !== "object") {
+    debugWarn(
+      "drainStream",
+      "stream.controller is unavailable during %s - cannot abort HTTP request (%s)",
+      reason,
+      summarizeStreamForDebug(stream),
+    );
+    return;
+  }
+
+  const controllerRecord = controller as {
+    abort?: () => void;
+    signal?: { aborted?: boolean };
+  };
+  if (controllerRecord.signal?.aborted) {
+    return;
+  }
+  if (typeof controllerRecord.abort !== "function") {
+    debugWarn(
+      "drainStream",
+      "stream.controller.abort is unavailable during %s - cannot abort HTTP request (%s)",
+      reason,
+      summarizeStreamForDebug(stream),
+    );
+    return;
+  }
+
+  controllerRecord.abort();
+}
 
 function hasPaginatedItems(
   response: RunsListResponse,
@@ -225,6 +313,7 @@ export async function drainStream(
   let stopReason: StopReasonType | null = null;
   let hasCalledFirstMessage = false;
   let fallbackError: string | null = null;
+  let lastChunkDebugSummary = "none";
 
   // Track if we triggered abort via our listener (for eager cancellation)
   let abortedViaListener = false;
@@ -236,17 +325,7 @@ export async function drainStream(
   // This immediately cancels the HTTP request instead of waiting for next chunk
   const abortHandler = () => {
     abortedViaListener = true;
-    // Abort the SDK's stream controller to cancel the underlying HTTP request
-    if (!stream.controller) {
-      debugWarn(
-        "drainStream",
-        "stream.controller is undefined - cannot abort HTTP request",
-      );
-      return;
-    }
-    if (!stream.controller.signal.aborted) {
-      stream.controller.abort();
-    }
+    abortStreamController(stream, "abort_signal");
   };
 
   if (abortSignal && !abortSignal.aborted) {
@@ -254,13 +333,26 @@ export async function drainStream(
   } else if (abortSignal?.aborted) {
     // Already aborted before we started
     abortedViaListener = true;
-    if (stream.controller && !stream.controller.signal.aborted) {
-      stream.controller.abort();
-    }
+    abortStreamController(stream, "pre_aborted_signal");
   }
 
   try {
+    const asyncIterator = (stream as unknown as Record<PropertyKey, unknown>)[
+      Symbol.asyncIterator
+    ];
+    if (typeof asyncIterator !== "function") {
+      throw new TypeError(
+        `Stream is not async iterable (${summarizeStreamForDebug(stream)})`,
+      );
+    }
+
     for await (const chunk of stream) {
+      lastChunkDebugSummary = summarizeChunkForDebug(chunk);
+      recordTuiJsonPayload(
+        `stream_chunk:${chunk.message_type ?? "unknown"}`,
+        chunk,
+      );
+
       // Check if abort generation changed (handleInterrupt ran while we were waiting)
       // This catches cases where the abort signal might not propagate correctly
       if ((buffers.abortGeneration || 0) !== startAbortGen) {
@@ -346,6 +438,10 @@ export async function drainStream(
       }
 
       if (shouldAccumulate) {
+        recordTuiJsonPayload(
+          `stream_accumulate:${chunk.message_type ?? "unknown"}`,
+          chunk,
+        );
         onChunk(buffers, chunk, contextTracker);
         queueMicrotask(refresh);
       }
@@ -362,7 +458,16 @@ export async function drainStream(
     const errorMessageWithDiagnostic = sdkDiagnostic
       ? `${errorMessage} [${sdkDiagnostic}]`
       : errorMessage;
-    debugWarn("drainStream", "Stream error caught:", errorMessage);
+    debugWarn(
+      "drainStream",
+      "Stream error caught: %s last_chunk=%s stream=%s",
+      errorMessageWithDiagnostic,
+      lastChunkDebugSummary,
+      summarizeStreamForDebug(stream),
+    );
+    if (e instanceof Error && e.stack) {
+      debugWarn("drainStream", "Stream error stack: %s", e.stack);
+    }
 
     // Try to extract run_id from APIError if we don't have one yet
     if (!streamProcessor.lastRunId && e instanceof APIError && e.error) {
@@ -422,6 +527,8 @@ export async function drainStream(
     if (abortSignal) {
       abortSignal.removeEventListener("abort", abortHandler);
     }
+
+    cleanupStreamAbortRelay(stream as object);
 
     // Clear SDK parse diagnostics on stream completion so they don't leak
     // into a future stream. On error paths the catch block already consumed
@@ -524,6 +631,7 @@ export async function drainStreamWithResume(
   seenSeqIdThreshold?: number | null,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
+  recordTuiPerf("stream_lifecycle:start");
   const streamRequestContext = getStreamRequestContext(stream);
   // Use the message OTID stored in the request context (set from messages[0].otid).
   // This is the real UUID OTID — distinct from the tool execution context ID
@@ -680,28 +788,45 @@ export async function drainStreamWithResume(
       // Create the resume stream: use OTID-based conversations endpoint only when
       // run_id is unavailable (server resolves the exact run, safe for multi-client).
       // When we already have run_id from stream chunks, use the run stream directly.
-      const resumeStream =
-        runIdSource === "otid" && streamOtid && streamRequestContext
-          ? await client.conversations.messages.stream(
-              streamRequestContext.resolvedConversationId,
-              {
-                agent_id:
-                  streamRequestContext.conversationId === "default"
-                    ? (streamRequestContext.agentId ?? undefined)
-                    : undefined,
-                otid: streamOtid,
-                starting_after: result.lastSeqId ?? 0,
-                batch_size: 1000,
-              } as unknown as Parameters<
-                typeof client.conversations.messages.stream
-              >[1],
-            )
-          : await client.runs.messages.stream(runIdToResume as string, {
-              // If lastSeqId is null the stream failed before any seq_id-bearing
-              // chunk arrived; use 0 to replay the run from the beginning.
-              starting_after: result.lastSeqId ?? 0,
-              batch_size: 1000,
-            });
+      const resumeAbortRelay = createStreamAbortRelay(abortSignal);
+      let resumeStream: Stream<LettaStreamingResponse>;
+      try {
+        resumeStream =
+          runIdSource === "otid" && streamOtid && streamRequestContext
+            ? await client.conversations.messages.stream(
+                streamRequestContext.resolvedConversationId,
+                {
+                  agent_id:
+                    streamRequestContext.conversationId === "default"
+                      ? (streamRequestContext.agentId ?? undefined)
+                      : undefined,
+                  otid: streamOtid,
+                  starting_after: result.lastSeqId ?? 0,
+                  batch_size: 1000,
+                } as unknown as Parameters<
+                  typeof client.conversations.messages.stream
+                >[1],
+                resumeAbortRelay
+                  ? { signal: resumeAbortRelay.signal }
+                  : undefined,
+              )
+            : await client.runs.messages.stream(
+                runIdToResume as string,
+                {
+                  // If lastSeqId is null the stream failed before any seq_id-bearing
+                  // chunk arrived; use 0 to replay the run from the beginning.
+                  starting_after: result.lastSeqId ?? 0,
+                  batch_size: 1000,
+                },
+                resumeAbortRelay
+                  ? { signal: resumeAbortRelay.signal }
+                  : undefined,
+              );
+      } catch (resumeError) {
+        resumeAbortRelay?.cleanup();
+        throw resumeError;
+      }
+      resumeAbortRelay?.attach(resumeStream as object);
 
       // Continue draining from where we left off
       // Note: Don't pass onFirstMessage again - already called in initial drain
@@ -841,6 +966,9 @@ export async function drainStreamWithResume(
 
   // Update duration to reflect total time (including resume attempt)
   result.apiDurationMs = performance.now() - overallStartTime;
+  recordTuiPerf(`stream_lifecycle:end:${result.stopReason}`, {
+    ms: result.apiDurationMs,
+  });
 
   return result;
 }

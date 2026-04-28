@@ -12,7 +12,6 @@
  * On stop: clears interval, releases lease.
  */
 
-import type WebSocket from "ws";
 import type { CronPromptQueueItem, DequeuedBatch } from "../queue/queueRuntime";
 import { ensureConversationQueueRuntime } from "../websocket/listener/client";
 import { scheduleQueuePump } from "../websocket/listener/queue";
@@ -20,6 +19,7 @@ import {
   getActiveRuntime,
   getOrCreateConversationRuntime,
 } from "../websocket/listener/runtime";
+import type { ListenerTransport } from "../websocket/listener/transport";
 import type {
   IncomingMessage,
   StartListenerOptions,
@@ -99,13 +99,6 @@ function refreshTaskCache(state: SchedulerState): void {
 }
 
 function shouldFireTask(task: CronTask, now: Date): boolean {
-  // Check expiry for recurring tasks
-  if (task.recurring && task.expires_at) {
-    if (new Date(task.expires_at).getTime() <= now.getTime()) {
-      return false; // Will be handled by expiry check
-    }
-  }
-
   // One-shot: check if scheduled_for is now or past (jitter applied to scheduled time)
   if (!task.recurring && task.scheduled_for) {
     const scheduledMs =
@@ -121,7 +114,7 @@ function shouldFireTask(task: CronTask, now: Date): boolean {
 function fireCronTask(
   task: CronTask,
   now: Date,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
@@ -174,16 +167,6 @@ function fireCronTask(
   }
 }
 
-function handleExpiredRecurring(task: CronTask, now: Date): void {
-  if (!task.recurring || !task.expires_at) return;
-  if (new Date(task.expires_at).getTime() <= now.getTime()) {
-    updateTask(task.id, (t) => {
-      t.status = "cancelled";
-      t.cancel_reason = "expired";
-    });
-  }
-}
-
 /** Returns true if the task was marked as missed (caller should skip firing). */
 function handleMissedOneShot(task: CronTask, now: Date): boolean {
   if (task.recurring || !task.scheduled_for) return false;
@@ -202,7 +185,7 @@ function handleMissedOneShot(task: CronTask, now: Date): boolean {
 
 function tick(
   state: SchedulerState,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
@@ -225,10 +208,6 @@ function tick(
   refreshTaskCache(state);
 
   for (const task of state.cachedTasks) {
-    if (task.status !== "active") continue;
-
-    // Handle expiry
-    handleExpiredRecurring(task, now);
     if (task.status !== "active") continue;
 
     // Handle missed one-shots (skip firing if marked missed)
@@ -279,7 +258,7 @@ function tick(
  * No-ops if already running.
  */
 export function startScheduler(
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {

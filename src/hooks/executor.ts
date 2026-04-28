@@ -50,9 +50,19 @@ function trySpawnWithLauncher(
   // Extract agent_id if present (available on many hook input types)
   const agentId = "agent_id" in input ? input.agent_id : undefined;
 
-  // Build environment: start with parent env but exclude LETTA_AGENT_ID to prevent inheritance
-  // We only want to pass the agent ID that's explicitly provided in the hook input
-  const { LETTA_AGENT_ID: _, ...parentEnv } = process.env;
+  // Build environment: start with parent env but strip execution-scoped vars so
+  // hooks only inherit the scoped values we set explicitly for this run.
+  const {
+    LETTA_AGENT_ID: _lettaAgentId,
+    AGENT_ID: _agentId,
+    LETTA_CONVERSATION_ID: _lettaConversationId,
+    CONVERSATION_ID: _conversationId,
+    LETTA_MEMORY_DIR: _lettaMemoryDir,
+    MEMORY_DIR: _memoryDir,
+    USER_CWD: _userCwd,
+    LETTA_WORKING_DIR: _lettaWorkingDir,
+    ...parentEnv
+  } = process.env;
 
   return spawn(executable, args, {
     cwd: workingDirectory,
@@ -61,7 +71,11 @@ function trySpawnWithLauncher(
       // Add hook-specific environment variables
       LETTA_HOOK_EVENT: input.event_type,
       LETTA_WORKING_DIR: workingDirectory,
-      ...(agentId && { LETTA_AGENT_ID: agentId }),
+      USER_CWD: workingDirectory,
+      ...(agentId && {
+        LETTA_AGENT_ID: agentId,
+        AGENT_ID: agentId,
+      }),
     },
     stdio: ["pipe", "pipe", "pipe"],
   });

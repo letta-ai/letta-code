@@ -5,7 +5,6 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
 import {
   type ApprovalDecision,
   executeApprovalBatch,
@@ -13,14 +12,16 @@ import {
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
 import {
+  buildFreshDenialApprovals,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
-import { computeDiffPreviews } from "../../helpers/diffPreview";
+import { formatPermissionDenial } from "../../permissions/formatDenial";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type {
@@ -30,7 +31,6 @@ import type {
 } from "../../types/protocol_v2";
 import {
   applySuggestedPermissionsForApproval,
-  buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
 import {
@@ -39,6 +39,7 @@ import {
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
+  createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
@@ -49,17 +50,18 @@ import {
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
   emitInterruptedStatusDelta,
-  emitLoopErrorDelta,
   emitLoopStatusUpdate,
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
+import { emitLoopErrorNotice } from "./recoverable-notices";
 import {
   clearActiveRunState,
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
 } from "./runtime";
+import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -100,6 +102,7 @@ export function shouldAttemptPostStopApprovalRecovery(params: {
 export async function isRetriablePostStopError(
   stopReason: StopReasonType,
   lastRunId: string | null | undefined,
+  fallbackDetail?: string | null,
 ): Promise<boolean> {
   if (stopReason === "llm_api_error") {
     return true;
@@ -120,7 +123,7 @@ export async function isRetriablePostStopError(
   }
 
   if (!lastRunId) {
-    return false;
+    return shouldRetryRunMetadataError(undefined, fallbackDetail);
   }
 
   try {
@@ -138,13 +141,13 @@ export async function isRetriablePostStopError(
     const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
     return shouldRetryRunMetadataError(errorType, detail);
   } catch {
-    return false;
+    return shouldRetryRunMetadataError(undefined, fallbackDetail);
   }
 }
 
 export async function drainRecoveryStreamWithEmission(
   recoveryStream: Stream<LettaStreamingResponse>,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     agentId?: string | null;
@@ -176,13 +179,15 @@ export async function drainRecoveryStreamWithEmission(
       }
 
       if (errorInfo) {
-        emitLoopErrorDelta(socket, runtime, {
+        emitLoopErrorNotice(socket, runtime, {
           message: errorInfo.message || "Stream error",
           stopReason: (errorInfo.error_type as StopReasonType) || "error",
           isTerminal: false,
           runId: runtime.activeRunId || errorInfo.run_id,
           agentId: params.agentId ?? undefined,
           conversationId: params.conversationId,
+          errorInfo,
+          abortSignal: params.abortSignal,
         });
       }
 
@@ -213,7 +218,7 @@ export async function drainRecoveryStreamWithEmission(
 
 export function finalizeHandledRecoveryTurn(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   params: {
     drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
     agentId?: string | null;
@@ -256,7 +261,7 @@ export function finalizeHandledRecoveryTurn(
   const runId = runtime.activeRunId;
   clearActiveRunState(runtime);
   emitRuntimeStateUpdates(runtime, scope);
-  emitLoopErrorDelta(socket, runtime, {
+  emitLoopErrorNotice(socket, runtime, {
     message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
     stopReason: terminalStopReason,
     isTerminal: true,
@@ -351,7 +356,7 @@ function buildRecoveredAutoDecisions(
     ...autoDenied.map((ac) => ({
       type: "deny" as const,
       approval: ac.approval,
-      reason: ac.denyReason || ac.permission.reason || "Permission denied",
+      reason: formatPermissionDenial(ac.permission, ac.denyReason),
     })),
   ];
 }
@@ -419,83 +424,26 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  const workingDirectory = getConversationWorkingDirectory(
-    runtime.listener,
-    scope.agent_id,
-    scope.conversation_id,
+  runtime.pendingInterruptedResults = buildFreshDenialApprovals(
+    pendingApprovals,
+    STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   );
-  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
-    runtime.listener,
-    scope.agent_id,
-    scope.conversation_id,
-  );
-  const { needsUserInput, autoAllowed, autoDenied } =
-    await classifyApprovalsWithSuggestions(pendingApprovals, {
-      alwaysRequiresUserInput: isInteractiveApprovalTool,
-      requireArgsForAutoApprove: true,
-      missingNameReason: "Tool call incomplete - missing name",
-      workingDirectory,
-      permissionModeState,
-    });
-  const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);
-
-  if (needsUserInput.length === 0) {
-    clearRecoveredApprovalState(runtime);
-    return;
-  }
-
-  const approvalsByRequestId = new Map<string, RecoveredPendingApproval>();
-  await Promise.all(
-    needsUserInput.map(async (approvalEntry) => {
-      const approval = approvalEntry.approval;
-      const requestId = `perm-${approval.toolCallId}`;
-      const input = approvalEntry.parsedArgs;
-      const diffs = await computeDiffPreviews(
-        approval.toolName,
-        input,
-        workingDirectory,
-      );
-
-      approvalsByRequestId.set(requestId, {
-        approval,
-        approvalContext: approvalEntry.context,
-        controlRequest: {
-          type: "control_request",
-          request_id: requestId,
-          request: {
-            subtype: "can_use_tool",
-            tool_name: approval.toolName,
-            input,
-            tool_call_id: approval.toolCallId,
-            ...buildApprovalSuggestionPayload(approvalEntry.context),
-            blocked_path: null,
-            ...(diffs.length > 0 ? { diffs } : {}),
-          },
-          agent_id: scope.agent_id,
-          conversation_id: scope.conversation_id,
-        },
-      });
-    }),
-  );
-
-  runtime.recoveredApprovalState = {
+  runtime.pendingInterruptedContext = {
     agentId: scope.agent_id,
     conversationId: scope.conversation_id,
-    approvalsByRequestId,
-    pendingRequestIds: new Set(approvalsByRequestId.keys()),
-    responsesByRequestId: new Map(),
-    autoDecisions,
-    allApprovals: pendingApprovals,
+    continuationEpoch: runtime.continuationEpoch,
   };
+  runtime.pendingInterruptedToolCallIds = null;
+  clearRecoveredApprovalState(runtime);
 }
 
 export async function resolveRecoveredApprovalResponse(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   response: ApprovalResponseBody,
   processTurn: (
     msg: IncomingMessage,
-    socket: WebSocket,
+    socket: ListenerTransport,
     runtime: ConversationRuntime,
     onStatusChange?: (
       status: "idle" | "receiving" | "processing",
@@ -518,7 +466,7 @@ export async function resolveRecoveredApprovalResponse(
   }
 
   const recovered = runtime.recoveredApprovalState;
-  if (!recovered || !recovered.approvalsByRequestId.has(requestId)) {
+  if (!recovered?.approvalsByRequestId.has(requestId)) {
     return false;
   }
 
@@ -557,6 +505,7 @@ export async function resolveRecoveredApprovalResponse(
             recovered.agentId,
             recovered.conversationId,
           ),
+          agentId: recovered.agentId,
         },
       );
 
@@ -666,6 +615,15 @@ export async function resolveRecoveredApprovalResponse(
     agentId: recovered.agentId,
     conversationId: recovered.conversationId,
   });
+  const emitToolExecutionOutput = createToolExecutionOutputEmitter(
+    socket,
+    runtime,
+    {
+      runId: runtime.activeRunId ?? undefined,
+      agentId: recovered.agentId,
+      conversationId: recovered.conversationId,
+    },
+  );
   const recoveryAbortController = new AbortController();
   runtime.activeAbortController = recoveryAbortController;
   const preparedToolContext = await prepareToolExecutionContextForScope({
@@ -683,18 +641,24 @@ export async function resolveRecoveredApprovalResponse(
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
   try {
-    const approvalResults = await executeApprovalBatch(decisions, undefined, {
-      abortSignal: recoveryAbortController.signal,
-      toolContextId: preparedToolContext.preparedToolContext.contextId,
-      workingDirectory,
-      parentScope:
-        recovered.agentId && recovered.conversationId
-          ? {
-              agentId: recovered.agentId,
-              conversationId: recovered.conversationId,
-            }
-          : undefined,
-    });
+    let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
+    try {
+      approvalResults = await executeApprovalBatch(decisions, undefined, {
+        abortSignal: recoveryAbortController.signal,
+        onStreamingOutput: emitToolExecutionOutput,
+        toolContextId: preparedToolContext.preparedToolContext.contextId,
+        workingDirectory,
+        parentScope:
+          recovered.agentId && recovered.conversationId
+            ? {
+                agentId: recovered.agentId,
+                conversationId: recovered.conversationId,
+              }
+            : undefined,
+      });
+    } finally {
+      emitToolExecutionOutput.flush();
+    }
 
     emitToolExecutionFinishedEvents(socket, runtime, {
       approvals: approvalResults,
@@ -718,6 +682,7 @@ export async function resolveRecoveredApprovalResponse(
       {
         type: "approval",
         approvals: approvalResults,
+        otid: crypto.randomUUID(),
       },
     ];
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;

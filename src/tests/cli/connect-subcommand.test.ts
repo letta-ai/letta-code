@@ -12,6 +12,7 @@ function createIoDeps() {
       stdout: (message: string) => stdout.push(message),
       stderr: (message: string) => stderr.push(message),
       isTTY: () => true,
+      ensureSettingsReady: mock(() => Promise.resolve()),
       promptSecret: mock(() => Promise.resolve("prompted-key")),
       checkProviderApiKey: mock(() => Promise.resolve()),
       createOrUpdateProvider: mock(() => Promise.resolve({ id: "provider-1" })),
@@ -30,6 +31,7 @@ describe("connect subcommand", () => {
     const exitCode = await runConnectSubcommand(["codex"], deps);
 
     expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
     expect(deps.runChatGPTOAuthConnectFlow).toHaveBeenCalledTimes(1);
     expect(stdout.join("\n")).toContain(
       "Successfully connected to ChatGPT OAuth.",

@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { getClient } from "../../agent/client";
+import { settingsManager } from "../../settings-manager";
 
 type SearchMode = "vector" | "fts" | "hybrid";
 type ListOrder = "asc" | "desc";
@@ -152,6 +153,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
   }
 
   try {
+    await settingsManager.initialize();
     const client = await getClient();
 
     const renderText = (value: unknown): string => {

@@ -5,6 +5,7 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
 } from "../../providers/byok-providers";
+import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import {
   isConnectApiKeyProvider,
@@ -35,6 +36,7 @@ interface ConnectSubcommandDeps {
   stdout: (message: string) => void;
   stderr: (message: string) => void;
   isTTY: () => boolean;
+  ensureSettingsReady: () => Promise<void>;
   promptSecret: (label: string) => Promise<string>;
   checkProviderApiKey: (
     providerType: string,
@@ -70,6 +72,7 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   stdout: (message) => console.log(message),
   stderr: (message) => console.error(message),
   isTTY: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  ensureSettingsReady: () => settingsManager.initialize(),
   promptSecret: promptSecret,
   checkProviderApiKey,
   createOrUpdateProvider,
@@ -179,6 +182,8 @@ export async function runConnectSubcommand(
 
   if (isConnectOAuthProvider(provider)) {
     try {
+      await io.ensureSettingsReady();
+
       if (await io.isChatGPTOAuthConnected()) {
         io.stdout(
           "Already connected to ChatGPT via OAuth. Disconnect first if you want to re-authenticate.",

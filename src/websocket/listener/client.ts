@@ -4,7 +4,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
@@ -17,10 +17,16 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
+import {
+  type ChannelRegistryEvent,
+  getChannelRegistry,
+} from "../../channels/registry";
+import type { ChannelTurnSource } from "../../channels/types";
 import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
   getIndexRoot,
+  refreshFileIndex,
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
@@ -36,6 +42,10 @@ import {
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "../../cli/helpers/subagentState";
+import {
+  estimateSystemPromptTokensFromMemoryDir,
+  setSystemPromptDoctorState,
+} from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
   addTask as addCronTask,
@@ -48,6 +58,7 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
+import { experimentManager } from "../../experiments/manager";
 import {
   buildByokProviderAliases,
   listProviders,
@@ -57,34 +68,65 @@ import {
   createSharedReminderState,
   resetSharedReminderState,
 } from "../../reminders/state";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
 import { loadTools } from "../../tools/manager";
 import {
   ensureCorrectMemoryTool,
-  prepareToolExecutionContextForResolvedTarget,
+  prepareToolExecutionContextForScope,
   type ToolsetName,
+  type ToolsetPreference,
 } from "../../tools/toolset";
 import { formatToolsetName } from "../../tools/toolset-labels";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
+  ChannelAccountBindCommand,
+  ChannelAccountCreateCommand,
+  ChannelAccountDeleteCommand,
+  ChannelAccountStartCommand,
+  ChannelAccountStopCommand,
+  ChannelAccountsListCommand,
+  ChannelAccountUnbindCommand,
+  ChannelAccountUpdateCommand,
+  ChannelGetConfigCommand,
+  ChannelId,
+  ChannelPairingBindCommand,
+  ChannelPairingsListCommand,
+  ChannelRouteRemoveCommand,
+  ChannelRoutesListCommand,
+  ChannelRouteUpdateCommand,
+  ChannelSetConfigCommand,
+  ChannelStartCommand,
+  ChannelStopCommand,
+  ChannelsListCommand,
+  ChannelTargetBindCommand,
+  ChannelTargetsListCommand,
   CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  GetExperimentsCommand,
+  GetExperimentsResponseMessage,
   GetReflectionSettingsCommand,
+  ListMemoryCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
+  ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
+  ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
   ReflectionSettingsScope,
+  SetExperimentCommand,
+  SetExperimentResponseMessage,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
   UpdateModelResponseMessage,
+  UpdateToolsetResponseMessage,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -113,6 +155,7 @@ import {
   loadPersistedCwdMap,
   setConversationWorkingDirectory,
 } from "./cwd";
+import { runGrepInFiles } from "./grepInFiles";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
@@ -129,6 +172,26 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
 import {
+  isChannelAccountBindCommand,
+  isChannelAccountCreateCommand,
+  isChannelAccountDeleteCommand,
+  isChannelAccountStartCommand,
+  isChannelAccountStopCommand,
+  isChannelAccountsListCommand,
+  isChannelAccountUnbindCommand,
+  isChannelAccountUpdateCommand,
+  isChannelGetConfigCommand,
+  isChannelPairingBindCommand,
+  isChannelPairingsListCommand,
+  isChannelRouteRemoveCommand,
+  isChannelRoutesListCommand,
+  isChannelRouteUpdateCommand,
+  isChannelSetConfigCommand,
+  isChannelStartCommand,
+  isChannelStopCommand,
+  isChannelsListCommand,
+  isChannelTargetBindCommand,
+  isChannelTargetsListCommand,
   isCheckoutBranchCommand,
   isCreateAgentCommand,
   isCronAddCommand,
@@ -139,17 +202,28 @@ import {
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
+  isFileOpsCommand,
+  isGetExperimentsCommand,
   isGetReflectionSettingsCommand,
+  isGetTreeCommand,
+  isGrepInFilesCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
+  isMemoryCommitDiffCommand,
+  isMemoryFileAtRefCommand,
+  isMemoryHistoryCommand,
   isReadFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
+  isSetExperimentCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
+  isUnwatchFileCommand,
   isUpdateModelCommand,
+  isUpdateToolsetCommand,
+  isWatchFileCommand,
   isWriteFileCommand,
   parseServerMessage,
 } from "./protocol-inbound";
@@ -159,7 +233,6 @@ import {
   buildQueueSnapshot,
   emitDeviceStatusUpdate,
   emitInterruptedStatusDelta,
-  emitLoopErrorDelta,
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
@@ -179,6 +252,7 @@ import {
   scheduleQueuePump,
   shouldQueueInboundMessage,
 } from "./queue";
+import { emitLoopErrorNotice } from "./recoverable-notices";
 import {
   getApprovalContinuationRecoveryDisposition,
   recoverApprovalStateForSync,
@@ -210,6 +284,12 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import {
+  getListenerTransportKind,
+  isListenerTransportOpen,
+  type ListenerTransport,
+  LocalListenerTransport,
+} from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
   ChangeCwdMessage,
@@ -219,6 +299,40 @@ import type {
   ModeChangePayload,
   StartListenerOptions,
 } from "./types";
+import {
+  restartWorktreeWatcher,
+  stopAllWorktreeWatchers,
+} from "./worktree-watcher";
+
+type ChannelsServiceModule = typeof import("../../channels/service");
+
+let channelsServiceLoaderOverride:
+  | null
+  | (() => Promise<ChannelsServiceModule>) = null;
+
+/**
+ * Detect whether a directory is a git worktree root.
+ * Worktrees have a `.git` **file** (not directory) that points to the main
+ * repo's `.git/worktrees/<name>`.  This distinguishes them from normal repos
+ * where `.git` is a directory.
+ */
+async function isGitWorktreeRoot(dir: string): Promise<boolean> {
+  try {
+    const stats = await lstat(path.join(dir, ".git"));
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function loadChannelsService(): Promise<ChannelsServiceModule> {
+  if (channelsServiceLoaderOverride) {
+    return channelsServiceLoaderOverride();
+  }
+  return import("../../channels/service");
+}
+
+const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
 function trackListenerError(
   errorType: string,
@@ -256,6 +370,30 @@ function safeSocketSend(
   }
 }
 
+function safeTransportSend(
+  transport: ListenerTransport,
+  payload: unknown,
+  errorType: string,
+  context: string,
+): boolean {
+  if (!isListenerTransportOpen(transport)) {
+    return false;
+  }
+
+  try {
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    transport.send(serialized);
+    return true;
+  } catch (error) {
+    trackListenerError(errorType, error, context);
+    if (isDebugEnabled()) {
+      console.error(`[Listen] ${context} send failed:`, error);
+    }
+    return false;
+  }
+}
+
 function runDetachedListenerTask(
   commandName: string,
   task: () => Promise<void>,
@@ -270,6 +408,146 @@ function runDetachedListenerTask(
       console.error(`[Listen] ${commandName} failed:`, error);
     }
   });
+}
+
+async function replaySyncStateForRuntime(
+  listenerRuntime: ListenerRuntime,
+  socket: WebSocket,
+  scope: { agent_id: string; conversation_id: string },
+  opts?: {
+    recoverApprovals?: boolean;
+    recoverApprovalStateForSync?: (
+      runtime: ConversationRuntime,
+      scope: { agent_id: string; conversation_id: string },
+    ) => Promise<void>;
+  },
+): Promise<void> {
+  const syncScopedRuntime = getOrCreateScopedRuntime(
+    listenerRuntime,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  const recoverFn =
+    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
+
+  if (opts?.recoverApprovals ?? true) {
+    try {
+      await recoverFn(syncScopedRuntime, scope);
+    } catch (error) {
+      trackListenerError(
+        "listener_sync_recovery_failed",
+        error,
+        "listener_sync_recovery",
+      );
+      if (isDebugEnabled()) {
+        console.warn("[Listen] Sync approval recovery failed:", error);
+      }
+    }
+  }
+
+  emitStateSync(socket, listenerRuntime, scope);
+}
+
+async function recoverPendingChannelControlRequests(
+  listener: ListenerRuntime,
+  opts?: {
+    recoverApprovalStateForSync?: (
+      runtime: ConversationRuntime,
+      scope: { agent_id: string; conversation_id: string },
+    ) => Promise<void>;
+  },
+): Promise<void> {
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return;
+  }
+
+  const pendingEntries = registry.getPendingControlRequests();
+  if (pendingEntries.length === 0) {
+    return;
+  }
+
+  const recoverFn =
+    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
+  const entriesByScope = new Map<
+    string,
+    {
+      scope: { agent_id: string; conversation_id: string };
+      entries: typeof pendingEntries;
+    }
+  >();
+
+  for (const entry of pendingEntries) {
+    const scope = {
+      agent_id: entry.event.source.agentId,
+      conversation_id: entry.event.source.conversationId,
+    };
+    const scopeKey = `${scope.agent_id}:${scope.conversation_id}`;
+    const existing = entriesByScope.get(scopeKey);
+    if (existing) {
+      existing.entries.push(entry);
+      continue;
+    }
+    entriesByScope.set(scopeKey, {
+      scope,
+      entries: [entry],
+    });
+  }
+
+  for (const { scope, entries } of entriesByScope.values()) {
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    const livePendingRequestIds = new Set(
+      runtime.pendingApprovalResolvers.keys(),
+    );
+    const shouldRecoverFromBackend = entries.some(
+      (entry) => !livePendingRequestIds.has(entry.event.requestId),
+    );
+
+    if (shouldRecoverFromBackend) {
+      try {
+        await recoverFn(runtime, scope);
+      } catch (error) {
+        trackListenerError(
+          "listener_channel_control_request_recovery_failed",
+          error,
+          "listener_channel_control_request_recovery",
+        );
+        if (isDebugEnabled()) {
+          console.warn(
+            "[Listen] Channel control request recovery failed:",
+            error,
+          );
+        }
+        continue;
+      }
+    }
+
+    const recoveredPendingRequestIds =
+      getRecoveredApprovalStateForScope(listener, scope)?.pendingRequestIds ??
+      new Set<string>();
+
+    for (const entry of entries) {
+      const requestId = entry.event.requestId;
+      const stillPending =
+        livePendingRequestIds.has(requestId) ||
+        recoveredPendingRequestIds.has(requestId);
+
+      if (!stillPending) {
+        registry.clearPendingControlRequest(requestId);
+        continue;
+      }
+
+      if (entry.deliveredThisProcess) {
+        continue;
+      }
+
+      await registry.redeliverPendingControlRequest(requestId);
+    }
+  }
 }
 
 function getParsedRuntimeScope(
@@ -340,7 +618,7 @@ function handleModeChange(
 
     persistPermissionModeMapForRuntime(runtime);
 
-    emitDeviceStatusUpdate(socket, runtime, scope);
+    emitRuntimeStateUpdates(runtime, scope);
 
     if (isDebugEnabled()) {
       console.log(`[Listen] Mode changed to: ${msg.mode}`);
@@ -351,12 +629,13 @@ function handleModeChange(
       error,
       "listener_mode_change",
     );
-    emitLoopErrorDelta(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       message: error instanceof Error ? error.message : "Mode change failed",
       stopReason: "error",
       isTerminal: false,
       agentId: scope?.agent_id,
       conversationId: scope?.conversation_id,
+      error,
     });
 
     if (isDebugEnabled()) {
@@ -458,16 +737,21 @@ function formatToolsetStatusMessageForModelUpdate(params: {
   );
 }
 
-function formatEffortSuffix(updateArgs?: Record<string, unknown>): string {
+function formatEffortSuffix(
+  modelLabel: string,
+  updateArgs?: Record<string, unknown>,
+): string {
   if (!updateArgs) return "";
   const effort = updateArgs.reasoning_effort;
   if (typeof effort !== "string" || effort.length === 0) return "";
+  const xhighLabel = modelLabel.includes("Opus 4.7") ? "Extra-High" : "Max";
   const labels: Record<string, string> = {
     none: "No Reasoning",
     low: "Low",
     medium: "Medium",
     high: "High",
-    xhigh: "Max",
+    xhigh: xhighLabel,
+    max: "Max",
   };
   return ` (${labels[effort] ?? effort})`;
 }
@@ -488,7 +772,7 @@ function buildModelUpdateStatusMessage(params: {
     toolsetPreference,
     updateArgs,
   } = params;
-  let message = `Model updated to ${modelLabel}${formatEffortSuffix(updateArgs)}.`;
+  let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs)}.`;
   if (toolsetError) {
     message += ` Warning: toolset switch failed (${toolsetError}).`;
     return { message, level: "warning" };
@@ -549,6 +833,7 @@ async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgs,
+      { preserveContextWindow: false },
     );
     modelSettings =
       ((
@@ -567,11 +852,11 @@ async function applyModelUpdateForRuntime(params: {
 
   try {
     await ensureCorrectMemoryTool(agentId, model.handle);
-    const preparedToolContext =
-      await prepareToolExecutionContextForResolvedTarget({
-        modelIdentifier: model.handle,
-        toolsetPreference,
-      });
+    const preparedToolContext = await prepareToolExecutionContextForScope({
+      agentId,
+      conversationId,
+      overrideModel: model.handle,
+    });
     nextToolset = preparedToolContext.toolset;
     nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
     scopedRuntime.currentToolset = preparedToolContext.toolset;
@@ -622,6 +907,88 @@ async function applyModelUpdateForRuntime(params: {
     model_id: model.id,
     model_handle: model.handle,
     model_settings: modelSettings,
+  };
+}
+
+async function applyToolsetUpdateForRuntime(params: {
+  socket: WebSocket;
+  listener: ListenerRuntime;
+  scopedRuntime: ConversationRuntime;
+  requestId: string;
+  toolsetPreference: ToolsetPreference;
+}): Promise<UpdateToolsetResponseMessage> {
+  const { socket, listener, scopedRuntime, requestId, toolsetPreference } =
+    params;
+  const agentId = scopedRuntime.agentId;
+  const conversationId = scopedRuntime.conversationId;
+
+  if (!agentId) {
+    return {
+      type: "update_toolset_response",
+      request_id: requestId,
+      success: false,
+      error: "Missing agent_id in runtime scope",
+    };
+  }
+
+  const previousToolNames = scopedRuntime.currentLoadedTools;
+  let nextToolset: ToolsetName;
+  const previousToolsetPreference = (() => {
+    try {
+      return settingsManager.getToolsetPreference(agentId);
+    } catch {
+      return scopedRuntime.currentToolsetPreference;
+    }
+  })();
+
+  try {
+    settingsManager.setToolsetPreference(agentId, toolsetPreference);
+    const preparedToolContext = await prepareToolExecutionContextForScope({
+      agentId,
+      conversationId,
+    });
+    nextToolset = preparedToolContext.toolset;
+    scopedRuntime.currentToolset = preparedToolContext.toolset;
+    scopedRuntime.currentToolsetPreference =
+      preparedToolContext.toolsetPreference;
+    scopedRuntime.currentLoadedTools =
+      preparedToolContext.preparedToolContext.loadedToolNames;
+  } catch (error) {
+    settingsManager.setToolsetPreference(agentId, previousToolsetPreference);
+    throw error;
+  }
+
+  const toolsChanged =
+    JSON.stringify(previousToolNames) !==
+    JSON.stringify(scopedRuntime.currentLoadedTools);
+
+  const statusMessage =
+    toolsetPreference === "auto"
+      ? `Toolset mode set to auto (currently ${formatToolsetName(nextToolset)}).`
+      : `Switched toolset to ${formatToolsetName(nextToolset)} (manual override).`;
+
+  emitStatusDelta(socket, scopedRuntime, {
+    message: statusMessage,
+    level: toolsChanged ? "info" : "info",
+    agentId,
+    conversationId,
+  });
+
+  emitRuntimeStateUpdates(listener, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
+
+  return {
+    type: "update_toolset_response",
+    request_id: requestId,
+    success: true,
+    runtime: {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    },
+    current_toolset: nextToolset,
+    current_toolset_preference: toolsetPreference,
   };
 }
 
@@ -682,6 +1049,55 @@ type ReflectionSettingsCommand =
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand;
 
+type ExperimentCommand = GetExperimentsCommand | SetExperimentCommand;
+
+type ChannelsCommand =
+  | ChannelsListCommand
+  | ChannelAccountsListCommand
+  | ChannelAccountCreateCommand
+  | ChannelAccountUpdateCommand
+  | ChannelAccountBindCommand
+  | ChannelAccountUnbindCommand
+  | ChannelAccountDeleteCommand
+  | ChannelAccountStartCommand
+  | ChannelAccountStopCommand
+  | ChannelGetConfigCommand
+  | ChannelSetConfigCommand
+  | ChannelStartCommand
+  | ChannelStopCommand
+  | ChannelPairingsListCommand
+  | ChannelPairingBindCommand
+  | ChannelRoutesListCommand
+  | ChannelTargetsListCommand
+  | ChannelTargetBindCommand
+  | ChannelRouteUpdateCommand
+  | ChannelRouteRemoveCommand;
+
+function isDetachedChannelsCommand(parsed: unknown): parsed is ChannelsCommand {
+  return (
+    isChannelsListCommand(parsed) ||
+    isChannelAccountsListCommand(parsed) ||
+    isChannelAccountCreateCommand(parsed) ||
+    isChannelAccountUpdateCommand(parsed) ||
+    isChannelAccountBindCommand(parsed) ||
+    isChannelAccountUnbindCommand(parsed) ||
+    isChannelAccountDeleteCommand(parsed) ||
+    isChannelAccountStartCommand(parsed) ||
+    isChannelAccountStopCommand(parsed) ||
+    isChannelGetConfigCommand(parsed) ||
+    isChannelSetConfigCommand(parsed) ||
+    isChannelStartCommand(parsed) ||
+    isChannelStopCommand(parsed) ||
+    isChannelPairingsListCommand(parsed) ||
+    isChannelPairingBindCommand(parsed) ||
+    isChannelRoutesListCommand(parsed) ||
+    isChannelTargetsListCommand(parsed) ||
+    isChannelTargetBindCommand(parsed) ||
+    isChannelRouteUpdateCommand(parsed) ||
+    isChannelRouteRemoveCommand(parsed)
+  );
+}
+
 function emitCronsUpdated(
   socket: WebSocket,
   scope?: { agent_id?: string; conversation_id?: string | null },
@@ -699,6 +1115,355 @@ function emitCronsUpdated(
     "listener_cron_send_failed",
     "listener_cron_command",
   );
+}
+
+function emitChannelsUpdated(socket: WebSocket, channelId?: ChannelId): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channels_updated",
+      timestamp: Date.now(),
+      ...(channelId ? { channel_id: channelId } : {}),
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelAccountsUpdated(
+  socket: WebSocket,
+  params: { channelId: ChannelId; accountId?: string },
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_accounts_updated",
+      timestamp: Date.now(),
+      channel_id: params.channelId,
+      ...(params.accountId ? { account_id: params.accountId } : {}),
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelPairingsUpdated(
+  socket: WebSocket,
+  channelId: ChannelId,
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_pairings_updated",
+      timestamp: Date.now(),
+      channel_id: channelId,
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelRoutesUpdated(
+  socket: WebSocket,
+  params: {
+    channelId: ChannelId;
+    agentId?: string;
+    conversationId?: string | null;
+  },
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_routes_updated",
+      timestamp: Date.now(),
+      channel_id: params.channelId,
+      ...(params.agentId ? { agent_id: params.agentId } : {}),
+      ...(params.conversationId !== undefined
+        ? { conversation_id: params.conversationId }
+        : {}),
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+function emitChannelTargetsUpdated(
+  socket: WebSocket,
+  channelId: ChannelId,
+): void {
+  safeSocketSend(
+    socket,
+    {
+      type: "channel_targets_updated",
+      timestamp: Date.now(),
+      channel_id: channelId,
+    },
+    "listener_channels_send_failed",
+    "listener_channels_command",
+  );
+}
+
+type ListMemoryCommandTestOverrides = {
+  ensureLocalMemfsCheckout?: (agentId: string) => Promise<void>;
+  getMemoryFilesystemRoot?: (agentId: string) => string;
+  isMemfsEnabledOnServer?: (agentId: string) => Promise<boolean>;
+};
+
+async function handleListMemoryCommand(
+  parsed: ListMemoryCommand,
+  socket: WebSocket,
+  overrides: ListMemoryCommandTestOverrides = {},
+): Promise<boolean> {
+  try {
+    const {
+      ensureLocalMemfsCheckout: actualEnsureLocalMemfsCheckout,
+      getMemoryFilesystemRoot: actualGetMemoryFilesystemRoot,
+      isMemfsEnabledOnServer: actualIsMemfsEnabledOnServer,
+    } = await import("../../agent/memoryFilesystem");
+    const ensureLocalMemfsCheckout =
+      overrides.ensureLocalMemfsCheckout ?? actualEnsureLocalMemfsCheckout;
+    const getMemoryFilesystemRoot =
+      overrides.getMemoryFilesystemRoot ?? actualGetMemoryFilesystemRoot;
+    const isMemfsEnabledOnServer =
+      overrides.isMemfsEnabledOnServer ?? actualIsMemfsEnabledOnServer;
+    const { scanMemoryFilesystem, getFileNodes, readFileContent } =
+      await import("../../agent/memoryScanner");
+    const { parseFrontmatter } = await import("../../utils/frontmatter");
+
+    const { existsSync } = await import("node:fs");
+    const { join, posix } = await import("node:path");
+
+    const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+    let memfsInitialized = existsSync(join(memoryRoot, ".git"));
+    const memfsEnabled = memfsInitialized
+      ? true
+      : await isMemfsEnabledOnServer(parsed.agent_id);
+
+    if (!memfsEnabled) {
+      safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries: [],
+          done: true,
+          total: 0,
+          success: true,
+          memfs_enabled: false,
+          memfs_initialized: false,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+      return true;
+    }
+
+    if (!memfsInitialized) {
+      await ensureLocalMemfsCheckout(parsed.agent_id);
+      memfsInitialized = existsSync(join(memoryRoot, ".git"));
+    }
+
+    if (!memfsInitialized) {
+      throw new Error(
+        "MemFS is enabled, but the local memory checkout could not be initialized.",
+      );
+    }
+
+    const treeNodes = scanMemoryFilesystem(memoryRoot);
+    const fileNodes = getFileNodes(treeNodes).filter((n) =>
+      n.name.endsWith(".md"),
+    );
+    const includeReferences = parsed.include_references === true;
+
+    const allPaths = new Set(fileNodes.map((node) => node.relativePath));
+
+    const normalizeMemoryReference = (
+      rawReference: string,
+      sourcePath: string,
+    ): string | null => {
+      let target = rawReference.trim();
+      if (!target) {
+        return null;
+      }
+
+      if (
+        target.startsWith("http://") ||
+        target.startsWith("https://") ||
+        target.startsWith("mailto:")
+      ) {
+        return null;
+      }
+
+      target = target.replace(/^<|>$/g, "");
+      target = target.split("#")[0] ?? "";
+      target = target.split("?")[0] ?? "";
+      target = target.trim().replace(/\\/g, "/");
+
+      if (!target || target.startsWith("#")) {
+        return null;
+      }
+
+      if (target.includes("|")) {
+        target = target.split("|")[0] ?? "";
+      }
+
+      if (!target) {
+        return null;
+      }
+
+      const sourceDir = posix.dirname(sourcePath.replace(/\\/g, "/"));
+      const candidate =
+        target.startsWith("./") || target.startsWith("../")
+          ? posix.normalize(posix.join(sourceDir, target))
+          : posix.normalize(target.startsWith("/") ? target.slice(1) : target);
+
+      if (
+        !candidate ||
+        candidate.startsWith("../") ||
+        candidate === "." ||
+        candidate === ".."
+      ) {
+        return null;
+      }
+
+      const withExtension = candidate.endsWith(".md")
+        ? candidate
+        : `${candidate}.md`;
+
+      const candidates = new Set<string>([withExtension]);
+
+      const isExplicitRelative =
+        target.startsWith("./") || target.startsWith("../");
+      if (
+        !isExplicitRelative &&
+        !target.startsWith("/") &&
+        sourceDir &&
+        sourceDir !== "."
+      ) {
+        candidates.add(posix.normalize(posix.join(sourceDir, withExtension)));
+      }
+
+      if (!withExtension.startsWith("system/")) {
+        candidates.add(posix.normalize(`system/${withExtension}`));
+      }
+
+      for (const resolved of candidates) {
+        if (allPaths.has(resolved)) {
+          return resolved;
+        }
+      }
+
+      return null;
+    };
+
+    const extractMemoryReferences = (
+      body: string,
+      sourcePath: string,
+    ): string[] => {
+      if (!body.includes("[[")) {
+        return [];
+      }
+
+      const refs = new Set<string>();
+
+      for (const wikiMatch of body.matchAll(WIKI_LINK_REGEX)) {
+        const rawTarget = wikiMatch[1];
+        if (!rawTarget) continue;
+        const normalized = normalizeMemoryReference(rawTarget, sourcePath);
+        if (normalized && normalized !== sourcePath) {
+          refs.add(normalized);
+        }
+      }
+
+      return [...refs];
+    };
+
+    const CHUNK_SIZE = 5;
+    const total = fileNodes.length;
+
+    for (let i = 0; i < total; i += CHUNK_SIZE) {
+      const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
+      const entries = chunk.map((node) => {
+        const raw = readFileContent(node.fullPath);
+        const { frontmatter, body } = parseFrontmatter(raw);
+        const desc = frontmatter.description;
+        return {
+          relative_path: node.relativePath,
+          is_system:
+            node.relativePath.startsWith("system/") ||
+            node.relativePath.startsWith("system\\"),
+          description: typeof desc === "string" ? desc : null,
+          content: body,
+          size: body.length,
+          ...(includeReferences
+            ? {
+                references: extractMemoryReferences(body, node.relativePath),
+              }
+            : {}),
+        };
+      });
+
+      const done = i + CHUNK_SIZE >= total;
+      const sent = safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries,
+          done,
+          total,
+          success: true,
+          memfs_enabled: true,
+          memfs_initialized: true,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+      if (!sent) {
+        return true;
+      }
+    }
+
+    if (total === 0) {
+      safeSocketSend(
+        socket,
+        {
+          type: "list_memory_response",
+          request_id: parsed.request_id,
+          entries: [],
+          done: true,
+          total: 0,
+          success: true,
+          memfs_enabled: true,
+          memfs_initialized: true,
+        },
+        "listener_list_memory_send_failed",
+        "listener_list_memory",
+      );
+    }
+  } catch (err) {
+    trackListenerError(
+      "listener_list_memory_failed",
+      err,
+      "listener_memory_browser",
+    );
+    safeSocketSend(
+      socket,
+      {
+        type: "list_memory_response",
+        request_id: parsed.request_id,
+        entries: [],
+        done: true,
+        total: 0,
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to list memory",
+      },
+      "listener_list_memory_send_failed",
+      "listener_list_memory",
+    );
+  }
+
+  return true;
 }
 
 async function handleCronCommand(
@@ -895,6 +1660,1189 @@ async function handleCronCommand(
       "listener_cron_command",
     );
   }
+  return true;
+}
+
+async function handleChannelsProtocolCommand(
+  parsed: ChannelsCommand,
+  socket: WebSocket,
+  runtime: ListenerRuntime,
+  opts: Pick<StartListenerOptions, "onStatusChange" | "connectionId">,
+  processQueuedTurn: ProcessQueuedTurn,
+): Promise<boolean> {
+  const {
+    bindChannelPairing,
+    bindChannelAccountLive,
+    bindChannelTarget,
+    createChannelAccountLive,
+    refreshChannelAccountDisplayNameLive,
+    getChannelConfigSnapshot,
+    listChannelAccountSnapshots,
+    listChannelRouteSnapshots,
+    listChannelSummaries,
+    listPendingPairingSnapshots,
+    listChannelTargetSnapshots,
+    removeChannelAccountLive,
+    removeChannelRouteLive,
+    setChannelConfigLive,
+    startChannelAccountLive,
+    startChannelLive,
+    stopChannelAccountLive,
+    stopChannelLive,
+    unbindChannelAccountLive,
+    updateChannelAccountLive,
+    updateChannelRouteLive,
+  } = await loadChannelsService();
+
+  const mapChannelSummary = (
+    summary: ReturnType<typeof listChannelSummaries>[number],
+  ) => ({
+    channel_id: summary.channelId,
+    display_name: summary.displayName,
+    configured: summary.configured,
+    enabled: summary.enabled,
+    running: summary.running,
+    dm_policy: summary.dmPolicy,
+    pending_pairings_count: summary.pendingPairingsCount,
+    approved_users_count: summary.approvedUsersCount,
+    routes_count: summary.routesCount,
+  });
+
+  const mapChannelConfig = (
+    snapshot: ReturnType<typeof getChannelConfigSnapshot>,
+  ): ProtocolChannelConfigSnapshot | null => {
+    if (!snapshot) {
+      return null;
+    }
+    if (snapshot.channelId === "telegram") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        has_token: snapshot.hasToken,
+      };
+    }
+    if (snapshot.channelId === "discord") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        allowed_channels: snapshot.allowedChannels,
+        has_token: snapshot.hasToken,
+      };
+    }
+    return {
+      channel_id: snapshot.channelId,
+      account_id: snapshot.accountId,
+      display_name: snapshot.displayName,
+      enabled: snapshot.enabled,
+      mode: snapshot.mode,
+      dm_policy: snapshot.dmPolicy,
+      allowed_users: snapshot.allowedUsers,
+      has_bot_token: snapshot.hasBotToken,
+      has_app_token: snapshot.hasAppToken,
+    };
+  };
+
+  const mapChannelAccount = (
+    snapshot: ReturnType<typeof listChannelAccountSnapshots>[number],
+  ): ProtocolChannelAccountSnapshot => {
+    if (snapshot.channelId === "telegram") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        configured: snapshot.configured,
+        running: snapshot.running,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        has_token: snapshot.hasToken,
+        binding: {
+          agent_id: snapshot.binding.agentId,
+          conversation_id: snapshot.binding.conversationId,
+        },
+        created_at: snapshot.createdAt,
+        updated_at: snapshot.updatedAt,
+      };
+    }
+
+    if (snapshot.channelId === "discord") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        configured: snapshot.configured,
+        running: snapshot.running,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        allowed_channels: snapshot.allowedChannels,
+        has_token: snapshot.hasToken,
+        agent_id: snapshot.agentId,
+        created_at: snapshot.createdAt,
+        updated_at: snapshot.updatedAt,
+      };
+    }
+
+    return {
+      channel_id: snapshot.channelId,
+      account_id: snapshot.accountId,
+      display_name: snapshot.displayName,
+      enabled: snapshot.enabled,
+      configured: snapshot.configured,
+      running: snapshot.running,
+      mode: snapshot.mode,
+      dm_policy: snapshot.dmPolicy,
+      allowed_users: snapshot.allowedUsers,
+      has_bot_token: snapshot.hasBotToken,
+      has_app_token: snapshot.hasAppToken,
+      agent_id: snapshot.agentId,
+      default_permission_mode: snapshot.defaultPermissionMode,
+      created_at: snapshot.createdAt,
+      updated_at: snapshot.updatedAt,
+    };
+  };
+
+  const mapRouteSnapshot = (
+    route: ReturnType<typeof listChannelRouteSnapshots>[number],
+  ) => ({
+    channel_id: route.channelId,
+    account_id: route.accountId,
+    chat_id: route.chatId,
+    chat_type: route.chatType,
+    thread_id: route.threadId ?? null,
+    agent_id: route.agentId,
+    conversation_id: route.conversationId,
+    enabled: route.enabled,
+    created_at: route.createdAt,
+    updated_at: route.updatedAt,
+  });
+
+  const mapTargetSnapshot = (
+    target: ReturnType<typeof listChannelTargetSnapshots>[number],
+  ) => ({
+    channel_id: target.channelId,
+    account_id: target.accountId,
+    target_id: target.targetId,
+    target_type: target.targetType,
+    chat_id: target.chatId,
+    label: target.label,
+    discovered_at: target.discoveredAt,
+    last_seen_at: target.lastSeenAt,
+    ...(target.lastMessageId ? { last_message_id: target.lastMessageId } : {}),
+  });
+
+  if (parsed.type === "channels_list") {
+    try {
+      safeSocketSend(
+        socket,
+        {
+          type: "channels_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channels: listChannelSummaries().map(mapChannelSummary),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channels_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channels: [],
+          error: err instanceof Error ? err.message : "Failed to list channels",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_accounts_list") {
+    try {
+      const accounts = listChannelAccountSnapshots(parsed.channel_id);
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_accounts_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          accounts: accounts.map(mapChannelAccount),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+
+      const accountsNeedingRefresh = accounts.filter((account) =>
+        parsed.channel_id === "slack" ? true : !account.displayName,
+      );
+
+      if (accountsNeedingRefresh.length > 0) {
+        runDetachedListenerTask("channel_accounts_refresh", async () => {
+          const refreshResults = await Promise.allSettled(
+            accountsNeedingRefresh.map(async (account) => {
+              const refreshed =
+                parsed.channel_id === "slack"
+                  ? await refreshChannelAccountDisplayNameLive(
+                      parsed.channel_id,
+                      account.accountId,
+                      { force: true },
+                    )
+                  : await refreshChannelAccountDisplayNameLive(
+                      parsed.channel_id,
+                      account.accountId,
+                    );
+
+              return refreshed.displayName !== account.displayName;
+            }),
+          );
+
+          if (
+            refreshResults.some(
+              (result) => result.status === "fulfilled" && result.value,
+            )
+          ) {
+            emitChannelAccountsUpdated(socket, {
+              channelId: parsed.channel_id,
+            });
+            emitChannelsUpdated(socket, parsed.channel_id);
+          }
+        });
+      }
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_accounts_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          accounts: [],
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list channel accounts",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_create") {
+    try {
+      const created = createChannelAccountLive(
+        parsed.channel_id,
+        {
+          displayName:
+            "display_name" in parsed.account
+              ? parsed.account.display_name
+              : undefined,
+          enabled:
+            "enabled" in parsed.account ? parsed.account.enabled : undefined,
+          token: "token" in parsed.account ? parsed.account.token : undefined,
+          botToken:
+            "bot_token" in parsed.account
+              ? parsed.account.bot_token
+              : undefined,
+          appToken:
+            "app_token" in parsed.account
+              ? parsed.account.app_token
+              : undefined,
+          mode: "mode" in parsed.account ? parsed.account.mode : undefined,
+          agentId:
+            "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.account
+              ? parsed.account.default_permission_mode
+              : undefined,
+          dmPolicy: parsed.account.dm_policy,
+          allowedUsers: parsed.account.allowed_users,
+          allowedChannels:
+            "allowed_channels" in parsed.account
+              ? parsed.account.allowed_channels
+              : undefined,
+        },
+        {
+          accountId:
+            "account_id" in parsed.account
+              ? parsed.account.account_id
+              : undefined,
+        },
+      );
+      const account =
+        "display_name" in parsed.account
+          ? created
+          : await refreshChannelAccountDisplayNameLive(
+              parsed.channel_id,
+              created.accountId,
+              { force: true },
+            );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_create_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: account.accountId,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_create_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to create channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_update") {
+    try {
+      const updated = updateChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+        {
+          displayName:
+            "display_name" in parsed.patch
+              ? parsed.patch.display_name
+              : undefined,
+          enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
+          token: "token" in parsed.patch ? parsed.patch.token : undefined,
+          botToken:
+            "bot_token" in parsed.patch ? parsed.patch.bot_token : undefined,
+          appToken:
+            "app_token" in parsed.patch ? parsed.patch.app_token : undefined,
+          mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
+          agentId:
+            "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
+          defaultPermissionMode:
+            "default_permission_mode" in parsed.patch
+              ? parsed.patch.default_permission_mode
+              : undefined,
+          dmPolicy: parsed.patch.dm_policy,
+          allowedUsers: parsed.patch.allowed_users,
+          allowedChannels:
+            "allowed_channels" in parsed.patch
+              ? parsed.patch.allowed_channels
+              : undefined,
+        },
+      );
+      const shouldRefreshDisplayName =
+        !("display_name" in parsed.patch) &&
+        (parsed.channel_id === "telegram"
+          ? "token" in parsed.patch
+          : "bot_token" in parsed.patch || "app_token" in parsed.patch);
+      const account = shouldRefreshDisplayName
+        ? await refreshChannelAccountDisplayNameLive(
+            parsed.channel_id,
+            parsed.account_id,
+            { force: true },
+          )
+        : updated;
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_update_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_update_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to update channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_bind") {
+    try {
+      const account = bindChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_bind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_bind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to bind channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_unbind") {
+    try {
+      const account = unbindChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_unbind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_unbind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to unbind channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_delete") {
+    try {
+      const deleted = await removeChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_delete_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account_id: parsed.account_id,
+          deleted,
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      if (deleted) {
+        emitChannelAccountsUpdated(socket, {
+          channelId: parsed.channel_id,
+          accountId: parsed.account_id,
+        });
+        emitChannelPairingsUpdated(socket, parsed.channel_id);
+        emitChannelRoutesUpdated(socket, {
+          channelId: parsed.channel_id,
+        });
+        emitChannelTargetsUpdated(socket, parsed.channel_id);
+        emitChannelsUpdated(socket, parsed.channel_id);
+      }
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_delete_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account_id: parsed.account_id,
+          deleted: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to delete channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_start") {
+    try {
+      const account = await startChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      await wireChannelIngress(
+        runtime,
+        socket,
+        opts as StartListenerOptions,
+        processQueuedTurn,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_start_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_start_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to start channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_account_stop") {
+    try {
+      const account = await stopChannelAccountLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_stop_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          account: mapChannelAccount(account),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: parsed.account_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_account_stop_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          account: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to stop channel account",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_get_config") {
+    try {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_get_config_response",
+          request_id: parsed.request_id,
+          success: true,
+          config: mapChannelConfig(
+            getChannelConfigSnapshot(parsed.channel_id, parsed.account_id),
+          ),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_get_config_response",
+          request_id: parsed.request_id,
+          success: false,
+          config: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to read channel config",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_set_config") {
+    try {
+      const snapshot = await setChannelConfigLive(
+        parsed.channel_id,
+        {
+          token: "token" in parsed.config ? parsed.config.token : undefined,
+          botToken:
+            "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
+          appToken:
+            "app_token" in parsed.config ? parsed.config.app_token : undefined,
+          mode: "mode" in parsed.config ? parsed.config.mode : undefined,
+          dmPolicy: parsed.config.dm_policy,
+          allowedUsers: parsed.config.allowed_users,
+          allowedChannels:
+            "allowed_channels" in parsed.config
+              ? parsed.config.allowed_channels
+              : undefined,
+        },
+        parsed.account_id,
+      );
+
+      if (snapshot.enabled) {
+        await wireChannelIngress(
+          runtime,
+          socket,
+          opts as StartListenerOptions,
+          processQueuedTurn,
+        );
+      }
+
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_set_config_response",
+          request_id: parsed.request_id,
+          success: true,
+          config: mapChannelConfig(snapshot),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: snapshot.accountId,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_set_config_response",
+          request_id: parsed.request_id,
+          success: false,
+          config: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to update channel config",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_start") {
+    try {
+      const summary = await startChannelLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      await wireChannelIngress(
+        runtime,
+        socket,
+        opts as StartListenerOptions,
+        processQueuedTurn,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_start_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel: mapChannelSummary(summary),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_start_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel: null,
+          error: err instanceof Error ? err.message : "Failed to start channel",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_stop") {
+    try {
+      const summary = await stopChannelLive(
+        parsed.channel_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_stop_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel: mapChannelSummary(summary),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_stop_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel: null,
+          error: err instanceof Error ? err.message : "Failed to stop channel",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_pairings_list") {
+    try {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_pairings_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          pending: listPendingPairingSnapshots(
+            parsed.channel_id,
+            parsed.account_id,
+          ).map((pending) => ({
+            account_id: pending.accountId,
+            code: pending.code,
+            sender_id: pending.senderId,
+            sender_name: pending.senderName,
+            chat_id: pending.chatId,
+            created_at: pending.createdAt,
+            expires_at: pending.expiresAt,
+          })),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_pairings_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          pending: [],
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list pending pairings",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_pairing_bind") {
+    try {
+      const result = bindChannelPairing(
+        parsed.channel_id,
+        parsed.code,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_pairing_bind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          chat_id: result.chatId,
+          route: mapRouteSnapshot(result.route),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelPairingsUpdated(socket, parsed.channel_id);
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_pairing_bind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          route: null,
+          error: err instanceof Error ? err.message : "Failed to bind pairing",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_routes_list") {
+    try {
+      const channelId = parsed.channel_id ?? "telegram";
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_routes_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: channelId,
+          routes: listChannelRouteSnapshots({
+            channelId,
+            accountId: parsed.account_id,
+            agentId: parsed.agent_id,
+            conversationId: parsed.conversation_id,
+          }).map(mapRouteSnapshot),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_routes_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          routes: [],
+          error: err instanceof Error ? err.message : "Failed to list routes",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_targets_list") {
+    try {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_targets_list_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          targets: listChannelTargetSnapshots(
+            parsed.channel_id,
+            parsed.account_id,
+          ).map(mapTargetSnapshot),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_targets_list_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          targets: [],
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list channel targets",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_target_bind") {
+    try {
+      const result = bindChannelTarget(
+        parsed.channel_id,
+        parsed.target_id,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_target_bind_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          target_id: parsed.target_id,
+          chat_id: result.chatId,
+          route: mapRouteSnapshot(result.route),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelTargetsUpdated(socket, parsed.channel_id);
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_target_bind_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          target_id: parsed.target_id,
+          route: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to bind channel target",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "channel_route_update") {
+    try {
+      const route = updateChannelRouteLive(
+        parsed.channel_id,
+        parsed.chat_id,
+        parsed.runtime.agent_id,
+        parsed.runtime.conversation_id,
+        parsed.account_id,
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_route_update_response",
+          request_id: parsed.request_id,
+          success: true,
+          channel_id: parsed.channel_id,
+          chat_id: parsed.chat_id,
+          route: mapRouteSnapshot(route),
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+      emitChannelAccountsUpdated(socket, {
+        channelId: parsed.channel_id,
+        accountId: route.accountId,
+      });
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+        agentId: parsed.runtime.agent_id,
+        conversationId: parsed.runtime.conversation_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "channel_route_update_response",
+          request_id: parsed.request_id,
+          success: false,
+          channel_id: parsed.channel_id,
+          chat_id: parsed.chat_id,
+          route: null,
+          error: err instanceof Error ? err.message : "Failed to update route",
+        },
+        "listener_channels_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  try {
+    const found = removeChannelRouteLive(
+      parsed.channel_id,
+      parsed.chat_id,
+      parsed.account_id,
+    );
+    safeSocketSend(
+      socket,
+      {
+        type: "channel_route_remove_response",
+        request_id: parsed.request_id,
+        success: true,
+        channel_id: parsed.channel_id,
+        chat_id: parsed.chat_id,
+        found,
+      },
+      "listener_channels_send_failed",
+      "listener_channels_command",
+    );
+    if (found) {
+      emitChannelRoutesUpdated(socket, {
+        channelId: parsed.channel_id,
+      });
+      emitChannelsUpdated(socket, parsed.channel_id);
+    }
+  } catch (err) {
+    safeSocketSend(
+      socket,
+      {
+        type: "channel_route_remove_response",
+        request_id: parsed.request_id,
+        success: false,
+        channel_id: parsed.channel_id,
+        chat_id: parsed.chat_id,
+        found: false,
+        error: err instanceof Error ? err.message : "Failed to remove route",
+      },
+      "listener_channels_send_failed",
+      "listener_channels_command",
+    );
+  }
+
   return true;
 }
 
@@ -1213,6 +3161,62 @@ function resolveReflectionSettingsScope(
   };
 }
 
+async function handleExperimentCommand(
+  parsed: ExperimentCommand,
+  socket: WebSocket,
+  listener: ListenerRuntime,
+): Promise<boolean> {
+  if (parsed.type === "get_experiments") {
+    const response: GetExperimentsResponseMessage = {
+      type: "get_experiments_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+    return true;
+  }
+
+  try {
+    experimentManager.set(parsed.experiment_id, parsed.enabled);
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+
+    emitDeviceStatusUpdate(socket, listener);
+  } catch (err) {
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: false,
+      experiments: experimentManager.list(),
+      error: err instanceof Error ? err.message : "Failed to update experiment",
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+  }
+
+  return true;
+}
+
 async function handleReflectionSettingsCommand(
   parsed: ReflectionSettingsCommand,
   socket: WebSocket,
@@ -1314,6 +3318,186 @@ async function handleReflectionSettingsCommand(
   return true;
 }
 
+/**
+ * Wire channel ingress into the listener.
+ *
+ * Registers the ChannelRegistry's message handler and marks it as ready,
+ * allowing buffered and future inbound channel messages to flow through
+ * the queue pump.
+ *
+ * Called from the socket "open" handler — same pattern as startCronScheduler.
+ * Uses closure-scoped socket/opts/processQueuedTurn.
+ */
+async function wireChannelIngress(
+  listener: ListenerRuntime,
+  socket: ListenerTransport,
+  opts: StartListenerOptions,
+  processQueuedTurn: ProcessQueuedTurn,
+): Promise<void> {
+  const registry = getChannelRegistry();
+  if (!registry) return;
+
+  registry.setMessageHandler((delivery) => {
+    // Follow the same pattern as cron/scheduler.ts:131-157
+    const rawRuntime = getOrCreateConversationRuntime(
+      listener,
+      delivery.route.agentId,
+      delivery.route.conversationId,
+    );
+    if (!rawRuntime) return;
+
+    const conversationRuntime = ensureConversationQueueRuntime(
+      listener,
+      rawRuntime,
+    );
+
+    const enqueuedItem = enqueueChannelTurn(
+      conversationRuntime,
+      delivery.route,
+      delivery.content,
+      delivery.turnSources,
+    );
+    if (!enqueuedItem) {
+      return;
+    }
+
+    for (const turnSource of delivery.turnSources ?? []) {
+      void registry.dispatchTurnLifecycleEvent({
+        type: "queued",
+        source: turnSource,
+      });
+    }
+
+    scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
+  });
+
+  registry.setEventHandler((event) => {
+    handleChannelRegistryEvent(event, socket, listener);
+  });
+
+  await recoverPendingChannelControlRequests(listener);
+
+  registry.setApprovalResponseHandler(async ({ runtime, response }) =>
+    handleApprovalResponseInput(listener, {
+      runtime,
+      response,
+      socket,
+      opts,
+      processQueuedTurn,
+    }),
+  );
+
+  registry.setReady();
+}
+
+function handleChannelRegistryEvent(
+  event: ChannelRegistryEvent,
+  socket: ListenerTransport,
+  runtime: ListenerRuntime,
+): void {
+  if (event.type === "pairings_updated") {
+    if (socket instanceof WebSocket) {
+      emitChannelPairingsUpdated(socket, event.channelId as ChannelId);
+      emitChannelsUpdated(socket, event.channelId as ChannelId);
+    }
+    return;
+  }
+
+  if (event.type === "targets_updated") {
+    if (socket instanceof WebSocket) {
+      emitChannelTargetsUpdated(socket, event.channelId as ChannelId);
+      emitChannelsUpdated(socket, event.channelId as ChannelId);
+    }
+    return;
+  }
+
+  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+    runtime,
+    event.agentId,
+    event.conversationId,
+  );
+  permissionModeState.mode = event.defaultPermissionMode;
+  permissionModeState.planFilePath = null;
+  permissionModeState.modeBeforePlan = null;
+  persistPermissionModeMapForRuntime(runtime);
+}
+
+function stampInboundUserMessageOtids(
+  incoming: IncomingMessage,
+): IncomingMessage {
+  let didChange = false;
+  const messages = incoming.messages.map((payload) => {
+    if (!("content" in payload) || payload.otid) {
+      return payload;
+    }
+
+    didChange = true;
+    return {
+      ...payload,
+      otid:
+        "client_message_id" in payload &&
+        typeof payload.client_message_id === "string"
+          ? payload.client_message_id
+          : crypto.randomUUID(),
+    } satisfies MessageCreate & { client_message_id?: string };
+  });
+
+  if (!didChange) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    messages,
+  };
+}
+
+function enqueueChannelTurn(
+  runtime: ConversationRuntime,
+  route: {
+    agentId: string;
+    conversationId: string;
+  },
+  messageContent: MessageCreate["content"],
+  turnSources?: ChannelTurnSource[],
+): { id: string } | null {
+  const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
+  const enqueuedItem = runtime.queueRuntime.enqueue({
+    kind: "message",
+    source: "channel" as import("../../types/protocol").QueueItemSource,
+    content: messageContent,
+    clientMessageId,
+    agentId: route.agentId,
+    conversationId: route.conversationId,
+  } as Omit<
+    import("../../queue/queueRuntime").MessageQueueItem,
+    "id" | "enqueuedAt"
+  >);
+
+  if (!enqueuedItem) {
+    return null;
+  }
+
+  runtime.queuedMessagesByItemId.set(
+    enqueuedItem.id,
+    stampInboundUserMessageOtids({
+      type: "message",
+      agentId: route.agentId,
+      conversationId: route.conversationId,
+      ...(turnSources?.length ? { channelTurnSources: turnSources } : {}),
+      messages: [
+        {
+          role: "user",
+          content: messageContent,
+          client_message_id: clientMessageId,
+        } satisfies MessageCreate & { client_message_id?: string },
+      ],
+    }),
+  );
+
+  return enqueuedItem;
+}
+
 export function ensureConversationQueueRuntime(
   listener: ListenerRuntime,
   runtime: ConversationRuntime,
@@ -1407,7 +3591,7 @@ async function handleApprovalResponseInput(
       conversation_id?: string | null;
     };
     response: ApprovalResponseBody;
-    socket: WebSocket;
+    socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
       connectionId?: string;
@@ -1430,7 +3614,7 @@ async function handleApprovalResponseInput(
     ) => ConversationRuntime;
     resolveRecoveredApprovalResponse: (
       runtime: ConversationRuntime,
-      socket: WebSocket,
+      socket: ListenerTransport,
       response: ApprovalResponseBody,
       processTurn: typeof handleIncomingMessage,
       opts?: {
@@ -1440,7 +3624,7 @@ async function handleApprovalResponseInput(
     ) => Promise<boolean>;
     scheduleQueuePump: (
       runtime: ConversationRuntime,
-      socket: WebSocket,
+      socket: ListenerTransport,
       opts: StartListenerOptions,
       processQueuedTurn: ProcessQueuedTurn,
     ) => void;
@@ -1692,6 +3876,9 @@ async function handleAbortMessageInput(
 
   const interruptedRunId = scopedRuntime.activeRunId;
   scopedRuntime.cancelRequested = true;
+  const pendingRequestsSnapshot = hasPendingApprovals
+    ? resolvedDeps.getPendingControlRequests(listener, scope)
+    : [];
 
   if (
     scopedRuntime.activeExecutingToolCallIds.length > 0 &&
@@ -1767,23 +3954,27 @@ async function handleAbortMessageInput(
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
     });
-  } else if (hasPendingApprovals) {
+  } else if (
+    hasPendingApprovals &&
+    (!scopedRuntime.pendingInterruptedResults ||
+      scopedRuntime.pendingInterruptedResults.length === 0) &&
+    pendingRequestsSnapshot.length > 0
+  ) {
     // Populate interrupted cache to prevent stale approval recovery on sync
-    const pendingRequests = resolvedDeps.getPendingControlRequests(
-      listener,
-      scope,
+    scopedRuntime.pendingInterruptedResults = pendingRequestsSnapshot.map(
+      (req) => ({
+        type: "approval" as const,
+        tool_call_id: req.request.tool_call_id,
+        approve: false,
+        reason: "User interrupted the stream",
+      }),
     );
-    scopedRuntime.pendingInterruptedResults = pendingRequests.map((req) => ({
-      type: "approval" as const,
-      tool_call_id: req.request.tool_call_id,
-      approve: false,
-      reason: "User interrupted the stream",
-    }));
     scopedRuntime.pendingInterruptedContext = {
       agentId: scope.agent_id || "",
       conversationId: scope.conversation_id,
       continuationEpoch: scopedRuntime.continuationEpoch,
     };
+    scopedRuntime.pendingInterruptedToolCallIds = null;
     resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
       runId: interruptedRunId,
       agentId: scope.agent_id,
@@ -1854,21 +4045,39 @@ async function handleCwdChange(
     runtime.reminderState.hasSentSessionContext = false;
     runtime.reminderState.pendingSessionContextReason = "cwd_changed";
 
-    // If the new cwd is outside the current file-index root, re-root the
-    // index so file search covers the new workspace.  setIndexRoot()
-    // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
-    // keeping concurrent conversations safe.
+    // If the new cwd is outside the current file-index root, or is a git
+    // worktree nested under it, re-root the index so file search covers
+    // the new workspace.  setIndexRoot() triggers a non-blocking rebuild
+    // and does NOT mutate process.cwd(), keeping concurrent conversations safe.
     const currentRoot = getIndexRoot();
-    if (!normalizedPath.startsWith(currentRoot)) {
+    const needsReroot =
+      !normalizedPath.startsWith(currentRoot) ||
+      (normalizedPath !== currentRoot &&
+        (await isGitWorktreeRoot(normalizedPath)));
+    if (needsReroot) {
       setIndexRoot(normalizedPath);
     }
+
+    // Proactively warm the file index so @ file search is instant when
+    // the user first types "@".  ensureFileIndex() is idempotent — if the
+    // index was already built (or a rebuild is in-flight from setIndexRoot
+    // above), this returns immediately / joins the existing promise.
+    void ensureFileIndex();
 
     emitDeviceStatusUpdate(socket, runtime, {
       agent_id: agentId,
       conversation_id: conversationId,
     });
+
+    // Restart the worktree file watcher for the new CWD so we detect
+    // any future worktree creation under the updated directory.
+    restartWorktreeWatcher({
+      runtime: runtime.listener,
+      agentId,
+      conversationId,
+    });
   } catch (error) {
-    emitLoopErrorDelta(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       message:
         error instanceof Error
           ? error.message
@@ -1877,14 +4086,16 @@ async function handleCwdChange(
       isTerminal: false,
       agentId,
       conversationId,
+      error,
     });
   }
 }
 
 function createRuntime(): ListenerRuntime {
-  const bootWorkingDirectory = process.env.USER_CWD || process.cwd();
+  const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
     socket: null,
+    transport: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
     intentionallyClosed: false,
@@ -1899,6 +4110,7 @@ function createRuntime(): ListenerRuntime {
     reminderState: createSharedReminderState(),
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
+    worktreeWatcherByConversation: new Map(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
     reminderStateByConversation: new Map(),
     contextTrackerByConversation: new Map(),
@@ -1937,13 +4149,16 @@ function stopRuntime(
   runtime.contextTrackerByConversation.clear();
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();
+  stopAllWorktreeWatchers(runtime);
 
   if (!runtime.socket) {
+    runtime.transport = null;
     return;
   }
 
   const socket = runtime.socket;
   runtime.socket = null;
+  runtime.transport = null;
 
   // Stale runtimes being replaced should not emit callbacks/retries.
   if (suppressCallbacks) {
@@ -1956,6 +4171,180 @@ function stopRuntime(
   ) {
     socket.close();
   }
+}
+
+async function startConnectedListenerRuntime(
+  runtime: ListenerRuntime,
+  transport: ListenerTransport,
+  opts: Pick<
+    StartListenerOptions,
+    "connectionId" | "onConnected" | "onStatusChange" | "onWsEvent"
+  >,
+  processQueuedTurn: ProcessQueuedTurn,
+  options: {
+    startHeartbeat?: boolean;
+    startCronScheduler?: boolean;
+  } = {},
+): Promise<void> {
+  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+    return;
+  }
+
+  const shouldStartHeartbeat = options.startHeartbeat !== false;
+  const shouldStartCronScheduler = options.startCronScheduler !== false;
+
+  runtime.transport = transport;
+  safeEmitWsEvent("recv", "lifecycle", {
+    type:
+      getListenerTransportKind(transport) === "websocket"
+        ? "_ws_open"
+        : "_local_open",
+  });
+  runtime.hasSuccessfulConnection = true;
+  runtime.everConnected = true;
+  opts.onConnected(opts.connectionId);
+
+  if (runtime.conversationRuntimes.size === 0) {
+    // Don't emit device_status before the lookup store exists.
+    // Without a conversation runtime, the scope resolves to
+    // agent:__unknown__ which misses persisted CWD and permission
+    // mode entries. The web's sync command will create a scoped
+    // runtime and emit a properly-scoped device_status at that point.
+    emitLoopStatusUpdate(transport, runtime);
+  } else {
+    for (const reminderState of runtime.reminderStateByConversation.values()) {
+      // Reset bootstrap reminder state on (re)connect so session-context
+      // and agent-info fire on the first turn of the new connection.
+      // This is intentionally in the open handler, NOT the sync handler,
+      // because the Desktop UMI controller sends sync every ~5 s and
+      // resetting there would re-arm reminders on every periodic sync.
+      resetSharedReminderState(reminderState);
+    }
+    for (const contextTracker of runtime.contextTrackerByConversation.values()) {
+      resetContextHistory(contextTracker);
+    }
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      const scope = {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      };
+      emitDeviceStatusUpdate(transport, conversationRuntime, scope);
+      emitLoopStatusUpdate(transport, conversationRuntime, scope);
+    }
+  }
+
+  // Subscribe to subagent state changes and emit snapshots over the listener
+  // transport. Local channel mode intentionally discards these frames.
+  runtime._unsubscribeSubagentState?.();
+  runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
+    if (runtime.conversationRuntimes.size === 0) {
+      emitSubagentStateIfOpen(runtime);
+      return;
+    }
+
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      emitSubagentStateIfOpen(runtime, {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      });
+    }
+  });
+
+  // Subscribe to subagent stream events and forward as tagged stream_delta.
+  runtime._unsubscribeSubagentStreamEvents?.();
+  runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
+    (subagentId, event) => {
+      if (!isListenerTransportOpen(transport)) return;
+
+      const subagent = getSubagents().find((entry) => entry.id === subagentId);
+      if (subagent?.silent === true) {
+        // Reflection/background "silent" subagents should not stream their
+        // internal transcript into the parent conversation.
+        return;
+      }
+
+      // The event has { type: "message", message_type, ...LettaStreamingResponse }
+      // plus extra headless fields (session_id, uuid) that pass through harmlessly.
+      emitStreamDelta(
+        transport,
+        runtime,
+        event as unknown as import("../../types/protocol_v2").StreamDelta,
+        subagent?.parentAgentId
+          ? {
+              agent_id: subagent.parentAgentId,
+              conversation_id: subagent.parentConversationId ?? "default",
+            }
+          : undefined,
+        subagentId,
+      );
+    },
+  );
+
+  // Register the message queue bridge to route task notifications into the
+  // correct per-conversation QueueRuntime. This enables background Task
+  // completions to reach the agent in listen mode.
+  setMessageQueueAdder((queuedMessage) => {
+    const targetRuntime =
+      queuedMessage.agentId && queuedMessage.conversationId
+        ? getOrCreateScopedRuntime(
+            runtime,
+            queuedMessage.agentId,
+            queuedMessage.conversationId,
+          )
+        : findFallbackRuntime(runtime);
+
+    if (!targetRuntime?.queueRuntime) {
+      return; // No target — notification dropped
+    }
+
+    targetRuntime.queueRuntime.enqueue({
+      kind: "task_notification",
+      source: "task_notification",
+      text: queuedMessage.text,
+      agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
+      conversationId:
+        queuedMessage.conversationId ?? targetRuntime.conversationId,
+    } as Omit<
+      import("../../queue/queueRuntime").TaskNotificationQueueItem,
+      "id" | "enqueuedAt"
+    >);
+
+    // Kick the queue pump so the notification can trigger a standalone turn
+    // (see consumeQueuedTurn notification-aware path in queue.ts).
+    scheduleQueuePump(
+      targetRuntime,
+      transport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+  });
+
+  if (shouldStartHeartbeat) {
+    runtime.heartbeatInterval = setInterval(() => {
+      safeTransportSend(
+        transport,
+        { type: "ping" },
+        "listener_ping_send_failed",
+        "listener_heartbeat",
+      );
+    }, 30000);
+  }
+
+  if (shouldStartCronScheduler) {
+    startCronScheduler(
+      transport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+  }
+
+  // Wire channel ingress (if channels are active).
+  await wireChannelIngress(
+    runtime,
+    transport,
+    opts as StartListenerOptions,
+    processQueuedTurn,
+  );
 }
 
 /**
@@ -1976,8 +4365,153 @@ export async function startListenerClient(
   runtime.connectionName = opts.connectionName;
   setActiveRuntime(runtime);
   telemetry.setSurface("websocket");
+  telemetry.init();
 
   await connectWithRetry(runtime, opts);
+}
+
+export interface StartLocalChannelListenerOptions {
+  connectionId: string;
+  deviceId: string;
+  connectionName: string;
+  onConnected: (connectionId: string) => void;
+  onError: (error: Error) => void;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  onWsEvent?: StartListenerOptions["onWsEvent"];
+}
+
+/**
+ * Start a listener runtime for local channel adapters without environment
+ * registration or a remote WebSocket server.
+ */
+export async function startLocalChannelListener(
+  opts: StartLocalChannelListenerOptions,
+): Promise<void> {
+  const existingRuntime = getActiveRuntime();
+  if (existingRuntime) {
+    stopRuntime(existingRuntime, true);
+  }
+
+  const runtime = createRuntime();
+  runtime.onWsEvent = opts.onWsEvent;
+  runtime.connectionId = opts.connectionId;
+  runtime.connectionName = opts.connectionName;
+  setActiveRuntime(runtime);
+  telemetry.setSurface("websocket");
+  telemetry.init();
+
+  try {
+    await loadTools();
+    const transport = new LocalListenerTransport();
+    const processQueuedTurn: ProcessQueuedTurn = async (
+      queuedTurn: IncomingMessage,
+      dequeuedBatch: DequeuedBatch,
+    ): Promise<void> => {
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        queuedTurn.agentId,
+        queuedTurn.conversationId,
+      );
+      await handleIncomingMessage(
+        queuedTurn,
+        transport,
+        scopedRuntime,
+        opts.onStatusChange,
+        opts.connectionId,
+        dequeuedBatch.batchId,
+      );
+    };
+
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      opts,
+      processQueuedTurn,
+      { startHeartbeat: false, startCronScheduler: true },
+    );
+  } catch (error) {
+    stopRuntime(runtime, true);
+    if (getActiveRuntime() === runtime) {
+      setActiveRuntime(null);
+    }
+    opts.onError(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
+/** File/directory names filtered from directory listings (OS/VCS noise). */
+const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
+
+interface DirListing {
+  folders: string[];
+  files: string[];
+}
+
+/**
+ * List a single directory by merging the file index (instant) with readdir
+ * (to pick up `.lettaignore`'d entries). Shared by `list_in_directory` and
+ * `get_tree` handlers.
+ *
+ * @param absDir      Absolute path to the directory.
+ * @param indexRoot   Root of the file index (undefined if unavailable).
+ * @param includeFiles  Whether to include files (not just folders).
+ */
+async function listDirectoryHybrid(
+  absDir: string,
+  indexRoot: string | undefined,
+  includeFiles: boolean,
+): Promise<DirListing> {
+  // 1. Query file index (instant, from memory)
+  let indexedNames: Set<string> | undefined;
+  const indexedFolders: string[] = [];
+  const indexedFiles: string[] = [];
+
+  if (indexRoot !== undefined) {
+    const relPath = path.relative(indexRoot, absDir);
+    if (!relPath.startsWith("..")) {
+      const indexed = searchFileIndex({
+        searchDir: relPath || ".",
+        pattern: "",
+        deep: false,
+        maxResults: 10000,
+      });
+      indexedNames = new Set<string>();
+      for (const entry of indexed) {
+        const name = entry.path.split(path.sep).pop() ?? entry.path;
+        indexedNames.add(name);
+        if (entry.type === "dir") {
+          indexedFolders.push(name);
+        } else {
+          indexedFiles.push(name);
+        }
+      }
+    }
+  }
+
+  // 2. readdir to fill gaps (entries not in the index)
+  const { readdir } = await import("node:fs/promises");
+  const entries = await readdir(absDir, { withFileTypes: true });
+
+  const extraFolders: string[] = [];
+  const extraFiles: string[] = [];
+  for (const e of entries) {
+    if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
+    if (indexedNames?.has(e.name)) continue;
+    if (e.isDirectory()) {
+      extraFolders.push(e.name);
+    } else if (includeFiles) {
+      extraFiles.push(e.name);
+    }
+  }
+
+  // 3. Merge and sort
+  return {
+    folders: [...indexedFolders, ...extraFolders].sort((a, b) =>
+      a.localeCompare(b),
+    ),
+    files: includeFiles
+      ? [...indexedFiles, ...extraFiles].sort((a, b) => a.localeCompare(b))
+      : [],
+  };
 }
 
 /**
@@ -2051,7 +4585,24 @@ async function connectWithRetry(
     },
   });
 
+  // ── File watchers (keyed by absolute path) ─────────────────────────────
+  // Managed by watch_file / unwatch_file commands from the web client.
+  // Ref-counted so multiple windows watching the same file share one
+  // fs.watch() handle — the watcher is only closed when the count hits 0.
+  const fileWatchers = new Map<
+    string,
+    { watcher: import("node:fs").FSWatcher; refCount: number }
+  >();
+  // Debounce timers for fs.watch events — macOS/FSEvents can fire multiple
+  // rapid events for a single save (especially atomic write-then-rename).
+  const watchDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Tracks paths where unwatch_file arrived while the watch_file async task
+  // was still in flight.  The task checks this set after its await and bails
+  // out if present, preventing a leaked watcher.
+  const cancelledWatches = new Set<string>();
+
   runtime.socket = socket;
+  const transport = socket;
   const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,
     dequeuedBatch: DequeuedBatch,
@@ -2063,7 +4614,7 @@ async function connectWithRetry(
     );
     await handleIncomingMessage(
       queuedTurn,
-      socket,
+      transport,
       scopedRuntime,
       opts.onStatusChange,
       opts.connectionId,
@@ -2071,143 +4622,14 @@ async function connectWithRetry(
     );
   };
 
-  socket.on("open", () => {
-    if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-      return;
-    }
-
-    safeEmitWsEvent("recv", "lifecycle", { type: "_ws_open" });
-    runtime.hasSuccessfulConnection = true;
-    runtime.everConnected = true;
-    opts.onConnected(opts.connectionId);
-
-    if (runtime.conversationRuntimes.size === 0) {
-      // Don't emit device_status before the lookup store exists.
-      // Without a conversation runtime, the scope resolves to
-      // agent:__unknown__ which misses persisted CWD and permission
-      // mode entries. The web's sync command will create a scoped
-      // runtime and emit a properly-scoped device_status at that point.
-      emitLoopStatusUpdate(socket, runtime);
-    } else {
-      for (const reminderState of runtime.reminderStateByConversation.values()) {
-        // Reset bootstrap reminder state on (re)connect so session-context
-        // and agent-info fire on the first turn of the new connection.
-        // This is intentionally in the open handler, NOT the sync handler,
-        // because the Desktop UMI controller sends sync every ~5 s and
-        // resetting there would re-arm reminders on every periodic sync.
-        resetSharedReminderState(reminderState);
-      }
-      for (const contextTracker of runtime.contextTrackerByConversation.values()) {
-        resetContextHistory(contextTracker);
-      }
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-        const scope = {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        };
-        emitDeviceStatusUpdate(socket, conversationRuntime, scope);
-        emitLoopStatusUpdate(socket, conversationRuntime, scope);
-      }
-    }
-
-    // Subscribe to subagent state changes and emit snapshots over WS.
-    // Store the unsubscribe function on the runtime for cleanup on close.
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-      if (runtime.conversationRuntimes.size === 0) {
-        emitSubagentStateIfOpen(runtime);
-        return;
-      }
-
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-        emitSubagentStateIfOpen(runtime, {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        });
-      }
-    });
-
-    // Subscribe to subagent stream events and forward as tagged stream_delta.
-    // Events are raw JSON lines from the subagent's stdout (headless format):
-    //   { type: "message", message_type: "tool_call_message", ...LettaStreamingResponse fields }
-    // These are already MessageDelta-shaped (type:"message" + LettaStreamingResponse).
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
-      (subagentId, event) => {
-        if (socket.readyState !== WebSocket.OPEN) return;
-
-        const subagent = getSubagents().find(
-          (entry) => entry.id === subagentId,
-        );
-        if (subagent?.silent === true) {
-          // Reflection/background "silent" subagents should not stream their
-          // internal transcript into the parent conversation.
-          return;
-        }
-
-        // The event has { type: "message", message_type, ...LettaStreamingResponse }
-        // plus extra headless fields (session_id, uuid) that pass through harmlessly.
-        emitStreamDelta(
-          socket,
-          runtime,
-          event as unknown as import("../../types/protocol_v2").StreamDelta,
-          subagent?.parentAgentId
-            ? {
-                agent_id: subagent.parentAgentId,
-                conversation_id: subagent.parentConversationId ?? "default",
-              }
-            : undefined,
-          subagentId,
-        );
-      },
+  socket.on("open", async () => {
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      opts,
+      processQueuedTurn,
+      { startHeartbeat: true, startCronScheduler: true },
     );
-
-    // Register the message queue bridge to route task notifications into the
-    // correct per-conversation QueueRuntime. This enables background Task
-    // completions to reach the agent in listen mode.
-    setMessageQueueAdder((queuedMessage) => {
-      const targetRuntime =
-        queuedMessage.agentId && queuedMessage.conversationId
-          ? getOrCreateScopedRuntime(
-              runtime,
-              queuedMessage.agentId,
-              queuedMessage.conversationId,
-            )
-          : findFallbackRuntime(runtime);
-
-      if (!targetRuntime?.queueRuntime) {
-        return; // No target — notification dropped
-      }
-
-      targetRuntime.queueRuntime.enqueue({
-        kind: "task_notification",
-        source: "task_notification",
-        text: queuedMessage.text,
-        agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
-        conversationId:
-          queuedMessage.conversationId ?? targetRuntime.conversationId,
-      } as Omit<
-        import("../../queue/queueRuntime").TaskNotificationQueueItem,
-        "id" | "enqueuedAt"
-      >);
-
-      // Kick the queue pump so the notification can trigger a standalone turn
-      // (see consumeQueuedTurn notification-aware path in queue.ts).
-      scheduleQueuePump(targetRuntime, socket, opts, processQueuedTurn);
-    });
-    runtime.heartbeatInterval = setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        safeSocketSend(
-          socket,
-          { type: "ping" },
-          "listener_ping_send_failed",
-          "listener_heartbeat",
-        );
-      }
-    }, 30000);
-
-    // Start cron scheduler if tasks exist
-    startCronScheduler(socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -2237,7 +4659,7 @@ async function connectWithRetry(
       }
 
       if (parsed.type === "__invalid_input") {
-        emitLoopErrorDelta(socket, runtime, {
+        emitLoopErrorNotice(socket, runtime, {
           message: parsed.reason,
           stopReason: "error",
           isTerminal: false,
@@ -2255,14 +4677,9 @@ async function connectWithRetry(
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
           return;
         }
-        const syncScopedRuntime = getOrCreateScopedRuntime(
-          runtime,
-          parsed.runtime.agent_id,
-          parsed.runtime.conversation_id,
-        );
-        await recoverApprovalStateForSync(syncScopedRuntime, parsed.runtime);
-
-        emitStateSync(socket, runtime, parsed.runtime);
+        await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
+          recoverApprovals: parsed.recover_approvals !== false,
+        });
         return;
       }
 
@@ -2295,7 +4712,7 @@ async function connectWithRetry(
 
         const inputPayload = parsed.payload;
         if (inputPayload.kind !== "create_message") {
-          emitLoopErrorDelta(socket, runtime, {
+          emitLoopErrorNotice(socket, runtime, {
             message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
             stopReason: "error",
             isTerminal: false,
@@ -2316,7 +4733,7 @@ async function connectWithRetry(
             "type" in payload && payload.type === "approval",
         );
         if (hasApprovalPayload) {
-          emitLoopErrorDelta(socket, runtime, {
+          emitLoopErrorNotice(socket, runtime, {
             message:
               "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
             stopReason: "error",
@@ -2334,7 +4751,8 @@ async function connectWithRetry(
         );
 
         if (shouldQueueInboundMessage(incoming)) {
-          const firstUserPayload = incoming.messages.find(
+          const queuedIncoming = stampInboundUserMessageOtids(incoming);
+          const firstUserPayload = queuedIncoming.messages.find(
             (
               payload,
             ): payload is MessageCreate & { client_message_id?: string } =>
@@ -2354,7 +4772,7 @@ async function connectWithRetry(
             if (enqueuedItem) {
               scopedRuntime.queuedMessagesByItemId.set(
                 enqueuedItem.id,
-                incoming,
+                queuedIncoming,
               );
             }
           }
@@ -2423,16 +4841,31 @@ async function connectWithRetry(
       if (isSearchFilesCommand(parsed)) {
         runDetachedListenerTask("search_files", async () => {
           try {
+            // When the requested cwd lives outside the current index root
+            // (e.g. a persisted CWD restored on startup that was never fed
+            // through handleCwdChange), re-root the file index first so
+            // the search covers the correct workspace.
+            if (parsed.cwd) {
+              const currentRoot = getIndexRoot();
+              const needsReroot =
+                (!parsed.cwd.startsWith(currentRoot + path.sep) &&
+                  parsed.cwd !== currentRoot) ||
+                (parsed.cwd !== currentRoot &&
+                  (await isGitWorktreeRoot(parsed.cwd)));
+              if (needsReroot) {
+                setIndexRoot(parsed.cwd);
+              }
+            }
+
             await ensureFileIndex();
 
             // Scope search to the conversation's cwd when provided.
-            // The file index stores paths relative to process.cwd(), so we
-            // compute the relative path from the index root to the requested cwd.
+            // The file index stores paths relative to the index root.
             let searchDir = ".";
             if (parsed.cwd) {
               const rel = path.relative(getIndexRoot(), parsed.cwd);
               // Only scope if cwd is within the index root (not "../" etc.)
-              if (rel && !rel.startsWith("..")) {
+              if (rel && !rel.startsWith("..") && rel !== "") {
                 searchDir = rel;
               }
             }
@@ -2480,6 +4913,78 @@ async function connectWithRetry(
         return;
       }
 
+      // ── Find-in-files content search (no runtime scope required) ──────
+      if (isGrepInFilesCommand(parsed)) {
+        runDetachedListenerTask("grep_in_files", async () => {
+          try {
+            // Re-root the index if the requested cwd lives outside it, so
+            // "search root" matches what the user expects in the UI.
+            if (parsed.cwd) {
+              const currentRoot = getIndexRoot();
+              if (
+                !parsed.cwd.startsWith(currentRoot + path.sep) &&
+                parsed.cwd !== currentRoot
+              ) {
+                setIndexRoot(parsed.cwd);
+              }
+            }
+
+            const searchRoot = parsed.cwd ?? getIndexRoot();
+            const { matches, totalMatches, totalFiles, truncated } =
+              await runGrepInFiles({
+                searchRoot,
+                query: parsed.query,
+                isRegex: parsed.is_regex ?? false,
+                caseSensitive: parsed.case_sensitive ?? false,
+                wholeWord: parsed.whole_word ?? false,
+                glob: parsed.glob,
+                maxResults: parsed.max_results ?? 500,
+                contextLines: parsed.context_lines ?? 2,
+              });
+
+            safeSocketSend(
+              socket,
+              {
+                type: "grep_in_files_response",
+                request_id: parsed.request_id,
+                success: true,
+                matches,
+                total_matches: totalMatches,
+                total_files: totalFiles,
+                truncated,
+              },
+              "listener_grep_in_files_send_failed",
+              "listener_grep_in_files",
+            );
+          } catch (error) {
+            trackListenerError(
+              "listener_grep_in_files_failed",
+              error,
+              "listener_grep_in_files",
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "grep_in_files_response",
+                request_id: parsed.request_id,
+                success: false,
+                matches: [],
+                total_matches: 0,
+                total_files: 0,
+                truncated: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to search file contents",
+              },
+              "listener_grep_in_files_send_failed",
+              "listener_grep_in_files",
+            );
+          }
+        });
+        return;
+      }
+
       // ── Directory listing (no runtime scope required) ──────────────────
       if (isListInDirectoryCommand(parsed)) {
         console.log(
@@ -2487,33 +4992,21 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("list_in_directory", async () => {
           try {
-            const { readdir } = await import("node:fs/promises");
-            console.log(`[Listen] Reading directory: ${parsed.path}`);
-            const entries = await readdir(parsed.path, { withFileTypes: true });
-            console.log(
-              `[Listen] Directory read success, ${entries.length} entries`,
-            );
-
-            // Filter out OS/VCS noise before sorting
-            const IGNORED_NAMES = new Set([
-              ".DS_Store",
-              ".git",
-              ".gitignore",
-              "Thumbs.db",
-            ]);
-            const sortedEntries = entries
-              .filter((e) => !IGNORED_NAMES.has(e.name))
-              .sort((a, b) => a.name.localeCompare(b.name));
-
-            const allFolders: string[] = [];
-            const allFiles: string[] = [];
-            for (const e of sortedEntries) {
-              if (e.isDirectory()) {
-                allFolders.push(e.name);
-              } else if (parsed.include_files) {
-                allFiles.push(e.name);
-              }
+            let indexRoot: string | undefined;
+            try {
+              await ensureFileIndex();
+              indexRoot = getIndexRoot();
+            } catch {
+              // Index not available — readdir only
             }
+
+            console.log(`[Listen] Reading directory: ${parsed.path}`);
+            const { folders: allFolders, files: allFiles } =
+              await listDirectoryHybrid(
+                parsed.path,
+                indexRoot,
+                !!parsed.include_files,
+              );
 
             const total = allFolders.length + allFiles.length;
             const offset = parsed.offset ?? 0;
@@ -2522,8 +5015,9 @@ async function connectWithRetry(
             // Paginate over the combined [folders, files] list
             const combined = [...allFolders, ...allFiles];
             const page = combined.slice(offset, offset + limit);
-            const folders = page.filter((name) => allFolders.includes(name));
-            const files = page.filter((name) => allFiles.includes(name));
+            const folderSet = new Set(allFolders);
+            const folders = page.filter((name) => folderSet.has(name));
+            const files = page.filter((name) => !folderSet.has(name));
 
             const response: Record<string, unknown> = {
               type: "list_in_directory_response",
@@ -2571,6 +5065,113 @@ async function connectWithRetry(
               },
               "listener_list_directory_send_failed",
               "listener_list_in_directory",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Depth-limited subtree fetch (no runtime scope required) ──────
+      if (isGetTreeCommand(parsed)) {
+        console.log(
+          `[Listen] Received get_tree command: path=${parsed.path}, depth=${parsed.depth}`,
+        );
+        runDetachedListenerTask("get_tree", async () => {
+          try {
+            // Walk the directory tree up to the requested depth, combining
+            // file index results with readdir to include non-indexed entries.
+            interface TreeEntry {
+              path: string;
+              type: "file" | "dir";
+            }
+            const results: TreeEntry[] = [];
+            let hasMoreDepth = false;
+
+            // Warm the file index once before walking the tree.
+            let indexRoot: string | undefined;
+            try {
+              await ensureFileIndex();
+              indexRoot = getIndexRoot();
+            } catch {
+              // Index not available — readdir only for all directories
+            }
+
+            // BFS queue: [absolutePath, relativePath, currentDepth]
+            // Uses an index pointer for O(1) dequeue instead of shift().
+            const queue: [string, string, number][] = [[parsed.path, "", 0]];
+            let qi = 0;
+
+            while (qi < queue.length) {
+              const item = queue[qi++];
+              if (!item) break;
+              const [absDir, relDir, depth] = item;
+
+              if (depth >= parsed.depth) {
+                if (depth === parsed.depth && relDir !== "") {
+                  hasMoreDepth = true;
+                }
+                continue;
+              }
+
+              let listing: DirListing;
+              try {
+                listing = await listDirectoryHybrid(absDir, indexRoot, true);
+              } catch {
+                // Can't read directory — skip
+                continue;
+              }
+
+              // Relative paths always use '/' (converted to OS separator on the frontend)
+              for (const name of listing.folders) {
+                const entryRel = relDir === "" ? name : `${relDir}/${name}`;
+                results.push({ path: entryRel, type: "dir" });
+                queue.push([path.join(absDir, name), entryRel, depth + 1]);
+              }
+              for (const name of listing.files) {
+                const entryRel = relDir === "" ? name : `${relDir}/${name}`;
+                results.push({ path: entryRel, type: "file" });
+              }
+            }
+
+            console.log(
+              `[Listen] Sending get_tree_response: ${results.length} entries, has_more_depth=${hasMoreDepth}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "get_tree_response",
+                path: parsed.path,
+                request_id: parsed.request_id,
+                entries: results,
+                has_more_depth: hasMoreDepth,
+                success: true,
+              },
+              "listener_get_tree_send_failed",
+              "listener_get_tree",
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_get_tree_failed",
+              err,
+              "listener_file_browser",
+            );
+            console.error(
+              `[Listen] get_tree error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "get_tree_response",
+                path: parsed.path,
+                request_id: parsed.request_id,
+                entries: [],
+                has_more_depth: false,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to get tree",
+              },
+              "listener_get_tree_send_failed",
+              "listener_get_tree",
             );
           }
         });
@@ -2636,11 +5237,46 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("write_file", async () => {
           try {
-            const { writeFile } = await import("node:fs/promises");
-            await writeFile(parsed.path, parsed.content, "utf-8");
+            const { edit } = await import("../../tools/impl/Edit");
+            const { write } = await import("../../tools/impl/Write");
+            const { readFile } = await import("node:fs/promises");
+
+            // Read current content so we can use edit for an atomic
+            // read-modify-write that goes through the same code path as
+            // the agent's Edit tool (CRLF normalisation, rich errors, etc.).
+            let currentContent: string | null = null;
+            try {
+              currentContent = await readFile(parsed.path, "utf-8");
+            } catch (readErr) {
+              const e = readErr as NodeJS.ErrnoException;
+              if (e.code !== "ENOENT") throw readErr;
+              // ENOENT — new file, fall through to write below
+            }
+
+            if (currentContent === null) {
+              // New file — use write so directories are created as needed.
+              await write({ file_path: parsed.path, content: parsed.content });
+            } else {
+              // Existing file — use edit for a full-content replacement.
+              // Normalise line endings before comparing to avoid a spurious
+              // "no changes" error when the only difference is CRLF vs LF.
+              const normalizedCurrent = currentContent.replace(/\r\n/g, "\n");
+              const normalizedNew = parsed.content.replace(/\r\n/g, "\n");
+              if (normalizedCurrent !== normalizedNew) {
+                await edit({
+                  file_path: parsed.path,
+                  old_string: currentContent,
+                  new_string: parsed.content,
+                });
+              }
+              // else: content unchanged — no-op, still respond success below
+            }
+
             console.log(
               `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
             );
+            // Update the file index so the sidebar Merkle tree stays current
+            void refreshFileIndex();
             safeSocketSend(
               socket,
               {
@@ -2674,6 +5310,93 @@ async function connectWithRetry(
         return;
       }
 
+      // ── File watching (no runtime scope required) ─────────────────────
+      if (isWatchFileCommand(parsed)) {
+        runDetachedListenerTask("watch_file", async () => {
+          const existing = fileWatchers.get(parsed.path);
+          if (existing) {
+            existing.refCount++;
+            return;
+          }
+          try {
+            const { watch } = await import("node:fs");
+            const { stat } = await import("node:fs/promises");
+            // Check if unwatch arrived while we were awaiting imports
+            if (cancelledWatches.delete(parsed.path)) return;
+            const watcher = watch(
+              parsed.path,
+              { persistent: false },
+              (eventType) => {
+                // Handle both "change" (normal write) and "rename" (atomic
+                // write-then-rename, common on Linux).  We stat() the original
+                // path — if it still exists the content was updated; if not
+                // the file was deleted and the catch handler cleans up.
+                if (eventType !== "change" && eventType !== "rename") return;
+                // Debounce: macOS/FSEvents can fire multiple rapid events
+                // for a single save.  Collapse into one file_changed push.
+                const existing = watchDebounceTimers.get(parsed.path);
+                if (existing) clearTimeout(existing);
+                watchDebounceTimers.set(
+                  parsed.path,
+                  setTimeout(() => {
+                    watchDebounceTimers.delete(parsed.path);
+                    stat(parsed.path)
+                      .then((s) => {
+                        safeSocketSend(
+                          socket,
+                          {
+                            type: "file_changed",
+                            path: parsed.path,
+                            lastModified: Math.round(s.mtimeMs),
+                          },
+                          "listener_file_changed_send_failed",
+                          "listener_watch_file",
+                        );
+                      })
+                      .catch(() => {
+                        // File deleted — stop watching
+                        const entry = fileWatchers.get(parsed.path);
+                        if (entry) {
+                          entry.watcher.close();
+                          fileWatchers.delete(parsed.path);
+                        }
+                      });
+                  }, 150),
+                );
+              },
+            );
+            watcher.on("error", () => {
+              watcher.close();
+              fileWatchers.delete(parsed.path);
+            });
+            fileWatchers.set(parsed.path, { watcher, refCount: 1 });
+          } catch {
+            // fs.watch not supported or path invalid — silently ignore
+          }
+        });
+        return;
+      }
+
+      if (isUnwatchFileCommand(parsed)) {
+        const entry = fileWatchers.get(parsed.path);
+        if (entry) {
+          entry.refCount--;
+          if (entry.refCount <= 0) {
+            entry.watcher.close();
+            fileWatchers.delete(parsed.path);
+          }
+        } else {
+          // watch_file async task may still be in flight — mark for cancel
+          cancelledWatches.add(parsed.path);
+        }
+        const timer = watchDebounceTimers.get(parsed.path);
+        if (timer) {
+          clearTimeout(timer);
+          watchDebounceTimers.delete(parsed.path);
+        }
+        return;
+      }
+
       // ── File editing (no runtime scope required) ─────────────────────
       if (isEditFileCommand(parsed)) {
         console.log(
@@ -2681,7 +5404,9 @@ async function connectWithRetry(
         );
         runDetachedListenerTask("edit_file", async () => {
           try {
+            const { readFile } = await import("node:fs/promises");
             const { edit } = await import("../../tools/impl/Edit");
+
             console.log(
               `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,
             );
@@ -2695,6 +5420,33 @@ async function connectWithRetry(
             console.log(
               `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
             );
+            // Update the file index so the sidebar Merkle tree stays current
+            if (result.replacements > 0) {
+              void refreshFileIndex();
+            }
+
+            // Notify web clients of the new content so they can update live.
+            if (result.replacements > 0) {
+              try {
+                const contentAfter = await readFile(parsed.file_path, "utf-8");
+                safeSocketSend(
+                  socket,
+                  {
+                    type: "file_ops",
+                    path: parsed.file_path,
+                    cg_entries: [],
+                    ops: [],
+                    source: "agent",
+                    document_content: contentAfter,
+                  },
+                  "listener_edit_file_ops_send_failed",
+                  "listener_edit_file",
+                );
+              } catch {
+                // Non-fatal: content broadcast is best-effort.
+              }
+            }
+
             safeSocketSend(
               socket,
               {
@@ -2738,131 +5490,33 @@ async function connectWithRetry(
         return;
       }
 
+      // ── Egwalker CRDT ops (no runtime scope required) ─────────────────
+      if (isFileOpsCommand(parsed)) {
+        // Use document_content if provided (reliable, no race conditions).
+        // Falls back to applying ops character-by-character.
+        if (parsed.document_content !== undefined) {
+          runDetachedListenerTask("file_ops", async () => {
+            try {
+              const { writeFile } = await import("node:fs/promises");
+              const content = parsed.document_content as string;
+              await writeFile(parsed.path, content, "utf-8");
+              console.log(
+                `[Listen] file_ops: wrote ${content.length} bytes to ${parsed.path}`,
+              );
+            } catch (err) {
+              console.error(
+                `[Listen] file_ops error: ${err instanceof Error ? err.message : "Unknown error"}`,
+              );
+            }
+          });
+        }
+        return;
+      }
+
       // ── Memory index (no runtime scope required) ─────────────────────
       if (isListMemoryCommand(parsed)) {
         runDetachedListenerTask("list_memory", async () => {
-          try {
-            const { getMemoryFilesystemRoot } = await import(
-              "../../agent/memoryFilesystem"
-            );
-            const { scanMemoryFilesystem, getFileNodes, readFileContent } =
-              await import("../../agent/memoryScanner");
-            const { parseFrontmatter } = await import(
-              "../../utils/frontmatter"
-            );
-
-            const { existsSync } = await import("node:fs");
-            const { join } = await import("node:path");
-
-            const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
-
-            // If the memory directory doesn't have a git repo, memfs
-            // hasn't been initialized — tell the UI so it can show the
-            // enable button instead of an empty file list.
-            const memfsInitialized = existsSync(join(memoryRoot, ".git"));
-
-            if (!memfsInitialized) {
-              safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries: [],
-                  done: true,
-                  total: 0,
-                  success: true,
-                  memfs_initialized: false,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-              return;
-            }
-
-            const treeNodes = scanMemoryFilesystem(memoryRoot);
-            const fileNodes = getFileNodes(treeNodes).filter((n) =>
-              n.name.endsWith(".md"),
-            );
-
-            const CHUNK_SIZE = 5;
-            const total = fileNodes.length;
-
-            for (let i = 0; i < total; i += CHUNK_SIZE) {
-              const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
-              const entries = chunk.map((node) => {
-                const raw = readFileContent(node.fullPath);
-                const { frontmatter, body } = parseFrontmatter(raw);
-                const desc = frontmatter.description;
-                return {
-                  relative_path: node.relativePath,
-                  is_system:
-                    node.relativePath.startsWith("system/") ||
-                    node.relativePath.startsWith("system\\"),
-                  description: typeof desc === "string" ? desc : null,
-                  content: body,
-                  size: body.length,
-                };
-              });
-
-              const done = i + CHUNK_SIZE >= total;
-              const sent = safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries,
-                  done,
-                  total,
-                  success: true,
-                  memfs_initialized: true,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-              if (!sent) {
-                return;
-              }
-            }
-
-            // Edge case: no files at all (repo exists but empty)
-            if (total === 0) {
-              safeSocketSend(
-                socket,
-                {
-                  type: "list_memory_response",
-                  request_id: parsed.request_id,
-                  entries: [],
-                  done: true,
-                  total: 0,
-                  success: true,
-                  memfs_initialized: true,
-                },
-                "listener_list_memory_send_failed",
-                "listener_list_memory",
-              );
-            }
-          } catch (err) {
-            trackListenerError(
-              "listener_list_memory_failed",
-              err,
-              "listener_memory_browser",
-            );
-            safeSocketSend(
-              socket,
-              {
-                type: "list_memory_response",
-                request_id: parsed.request_id,
-                entries: [],
-                done: true,
-                total: 0,
-                success: false,
-                error:
-                  err instanceof Error ? err.message : "Failed to list memory",
-              },
-              "listener_list_memory_send_failed",
-              "listener_list_memory",
-            );
-          }
+          await handleListMemoryCommand(parsed, socket);
         });
         return;
       }
@@ -2996,6 +5650,7 @@ async function connectWithRetry(
           } catch (error) {
             const failure: UpdateModelResponseMessage = {
               type: "update_model_response",
+
               request_id: parsed.request_id,
               success: false,
               runtime: {
@@ -3020,6 +5675,220 @@ async function connectWithRetry(
         return;
       }
 
+      // ── Toolset update command (runtime scoped) ──────────────────────
+      if (isUpdateToolsetCommand(parsed)) {
+        runDetachedListenerTask("update_toolset", async () => {
+          const scopedRuntime = getOrCreateScopedRuntime(
+            runtime,
+            parsed.runtime.agent_id,
+            parsed.runtime.conversation_id,
+          );
+
+          try {
+            const response = await applyToolsetUpdateForRuntime({
+              socket,
+              listener: runtime,
+              scopedRuntime,
+              requestId: parsed.request_id,
+              toolsetPreference: parsed.toolset_preference,
+            });
+            safeSocketSend(
+              socket,
+              response,
+              "listener_update_toolset_send_failed",
+              "listener_update_toolset",
+            );
+          } catch (error) {
+            const failure: UpdateToolsetResponseMessage = {
+              type: "update_toolset_response",
+              request_id: parsed.request_id,
+              success: false,
+              runtime: {
+                agent_id: parsed.runtime.agent_id,
+                conversation_id: parsed.runtime.conversation_id,
+              },
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to update toolset",
+            };
+            safeSocketSend(
+              socket,
+              failure,
+              "listener_update_toolset_send_failed",
+              "listener_update_toolset",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Memory history (git log for a specific file) ─────────────────
+      if (isMemoryHistoryCommand(parsed)) {
+        runDetachedListenerTask("memory_history", async () => {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+          const limit = parsed.limit ?? 50;
+
+          const gitArgs = [
+            "log",
+            `--max-count=${limit}`,
+            "--format=%H|%s|%aI|%an",
+          ];
+          // When file_path is provided, scope to that file
+          if (parsed.file_path) {
+            gitArgs.push("--", parsed.file_path);
+          }
+
+          const { stdout } = await execFileAsync("git", gitArgs, {
+            cwd: memoryRoot,
+            timeout: 10000,
+          });
+
+          const commits = stdout
+            .trim()
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map((line) => {
+              const [sha, message, timestamp, authorName] = line.split("|");
+              return {
+                sha: sha ?? "",
+                message: message ?? "",
+                timestamp: timestamp ?? "",
+                author_name: authorName ?? null,
+              };
+            });
+
+          safeSocketSend(
+            socket,
+            {
+              type: "memory_history_response",
+              request_id: parsed.request_id,
+              file_path: parsed.file_path ?? "",
+              commits,
+              success: true,
+            },
+            "listener_memory_history_send_failed",
+            "listener_memory_history",
+          );
+        });
+        return;
+      }
+
+      // ── Memory file at ref (git show for content at a commit) ────────
+      if (isMemoryFileAtRefCommand(parsed)) {
+        runDetachedListenerTask("memory_file_at_ref", async () => {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+
+          try {
+            const { stdout } = await execFileAsync(
+              "git",
+              ["show", `${parsed.ref}:${parsed.file_path}`],
+              { cwd: memoryRoot, timeout: 10000 },
+            );
+
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_file_at_ref_response",
+                request_id: parsed.request_id,
+                file_path: parsed.file_path,
+                ref: parsed.ref,
+                content: stdout,
+                success: true,
+              },
+              "listener_memory_file_at_ref_send_failed",
+              "listener_memory_file_at_ref",
+            );
+          } catch (err) {
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_file_at_ref_response",
+                request_id: parsed.request_id,
+                file_path: parsed.file_path,
+                ref: parsed.ref,
+                content: null,
+                success: false,
+                error:
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to read file at ref",
+              },
+              "listener_memory_file_at_ref_send_failed",
+              "listener_memory_file_at_ref",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Memory commit diff (git show for full commit patch) ────────────
+      if (isMemoryCommitDiffCommand(parsed)) {
+        runDetachedListenerTask("memory_commit_diff", async () => {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+
+          try {
+            const { stdout } = await execFileAsync(
+              "git",
+              ["show", parsed.sha, "--format=", "--no-color"],
+              { cwd: memoryRoot, timeout: 10000 },
+            );
+
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_commit_diff_response",
+                request_id: parsed.request_id,
+                sha: parsed.sha,
+                diff: stdout,
+                success: true,
+              },
+              "listener_memory_commit_diff_send_failed",
+              "listener_memory_commit_diff",
+            );
+          } catch (err) {
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_commit_diff_response",
+                request_id: parsed.request_id,
+                sha: parsed.sha,
+                diff: null,
+                success: false,
+                error:
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to get commit diff",
+              },
+              "listener_memory_commit_diff_send_failed",
+              "listener_memory_commit_diff",
+            );
+          }
+        });
+        return;
+      }
+
       // ── Cron CRUD commands (no runtime scope required) ────────────────
       if (
         isCronListCommand(parsed) ||
@@ -3030,6 +5899,20 @@ async function connectWithRetry(
       ) {
         runDetachedListenerTask("cron_command", async () => {
           await handleCronCommand(parsed, socket);
+        });
+        return;
+      }
+
+      // ── Channels management commands (device/live management) ─────────
+      if (isDetachedChannelsCommand(parsed)) {
+        runDetachedListenerTask("channels_command", async () => {
+          await handleChannelsProtocolCommand(
+            parsed,
+            socket,
+            runtime,
+            opts,
+            processQueuedTurn,
+          );
         });
         return;
       }
@@ -3050,6 +5933,13 @@ async function connectWithRetry(
         return;
       }
 
+      if (isGetExperimentsCommand(parsed) || isSetExperimentCommand(parsed)) {
+        runDetachedListenerTask("experiment_command", async () => {
+          await handleExperimentCommand(parsed, socket, runtime);
+        });
+        return;
+      }
+
       if (
         isGetReflectionSettingsCommand(parsed) ||
         isSetReflectionSettingsCommand(parsed)
@@ -3062,6 +5952,25 @@ async function connectWithRetry(
 
       // ── Slash commands (execute_command) ────────────────────────────────
       if (isExecuteCommandCommand(parsed)) {
+        // Internal-only: refresh doctor state after recompile (no chat output)
+        if (parsed.command_id === "refresh_doctor_state") {
+          const agentId = parsed.runtime.agent_id;
+          if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+            try {
+              const { getMemoryFilesystemRoot } = await import(
+                "../../agent/memoryFilesystem"
+              );
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
+              setSystemPromptDoctorState(agentId, tokens);
+            } catch {
+              // best-effort
+            }
+          }
+          emitDeviceStatusUpdate(socket, runtime, parsed.runtime);
+          return;
+        }
+
         // Slash commands need a scoped runtime for the conversation context
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
@@ -3240,7 +6149,7 @@ async function connectWithRetry(
         return;
       }
 
-      emitLoopErrorDelta(socket, runtime, {
+      emitLoopErrorNotice(socket, runtime, {
         message:
           error instanceof Error
             ? error.message
@@ -3249,6 +6158,7 @@ async function connectWithRetry(
         isTerminal: false,
         agentId: parsedScope.agent_id,
         conversationId: parsedScope.conversation_id,
+        error,
       });
     }
   });
@@ -3264,8 +6174,26 @@ async function connectWithRetry(
       reason: reason.toString(),
     });
 
+    // Close all file watchers on disconnect
+    for (const { watcher } of fileWatchers.values()) {
+      watcher.close();
+    }
+    fileWatchers.clear();
+    for (const timer of watchDebounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    watchDebounceTimers.clear();
+    cancelledWatches.clear();
+
     // Stop cron scheduler on disconnect
     stopCronScheduler();
+
+    // Pause channel delivery on disconnect (adapters keep polling, messages buffer).
+    // On reconnect, wireChannelIngress() re-registers the handler and calls setReady().
+    const channelRegistry = getChannelRegistry();
+    if (channelRegistry) {
+      channelRegistry.pause();
+    }
 
     // Clear the bridge before queue clearing to prevent a race where a task
     // completion enqueues into a shutting-down runtime.
@@ -3353,7 +6281,7 @@ async function connectWithRetry(
  */
 export function isListenerActive(): boolean {
   const runtime = getActiveRuntime();
-  return runtime !== null && runtime.socket !== null;
+  return runtime !== null && runtime.transport !== null;
 }
 
 /**
@@ -3405,6 +6333,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+  worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
   const listener = createRuntime();
@@ -3439,6 +6368,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+    worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
   for (const [prop, getSet] of Object.entries({
@@ -3595,6 +6525,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.memfsSyncedAgents = value;
       },
     },
+    worktreeWatcherByConversation: {
+      get: () => listener.worktreeWatcherByConversation,
+      set: (value: ListenerRuntime["worktreeWatcherByConversation"]) => {
+        listener.worktreeWatcherByConversation = value;
+      },
+    },
     lastEmittedStatus: {
       get: () => listener.lastEmittedStatus,
       set: (value: ListenerRuntime["lastEmittedStatus"]) => {
@@ -3633,8 +6569,14 @@ export { parseServerMessage } from "./protocol-inbound";
 export { emitInterruptedStatusDelta } from "./protocol-outbound";
 
 export const __listenClientTestUtils = {
+  setChannelsServiceLoaderForTests: (
+    loader: null | (() => Promise<ChannelsServiceModule>),
+  ) => {
+    channelsServiceLoaderOverride = loader;
+  },
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
+  handleModeChange,
   getOrCreateScopedRuntime,
   buildListModelsEntries,
   buildListModelsResponse,
@@ -3683,10 +6625,18 @@ export const __listenClientTestUtils = {
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
   handleCronCommand,
+  handleListMemoryCommand,
+  isDetachedChannelsCommand,
+  handleChannelsProtocolCommand,
+  handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
+  handleExperimentCommand,
   handleReflectionSettingsCommand,
+  enqueueChannelTurn,
   scheduleQueuePump,
+  replaySyncStateForRuntime,
+  recoverPendingChannelControlRequests,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (
     runtime: ListenerRuntime | ConversationRuntime,

@@ -6,12 +6,13 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { MEMORY_SYSTEM_DIR } from "../../agent/memoryFilesystem";
+import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "../../agent/subagents/contextBudget";
 import { getDirectoryLimits } from "../../utils/directoryLimits";
 import { parseFrontmatter } from "../../utils/frontmatter";
-import { type Line, linesToTranscript } from "./accumulator";
+import type { Line } from "./accumulator";
 
 const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
@@ -27,6 +28,8 @@ type TranscriptEntry =
       kind: "user" | "assistant" | "reasoning" | "error";
       text: string;
       captured_at: string;
+      source_line_id?: string; // local transcript row id; may be synthetic
+      source_message_id?: string; // canonical backend message.id when known
     }
   | {
       kind: "tool_call";
@@ -35,6 +38,8 @@ type TranscriptEntry =
       resultText?: string;
       resultOk?: boolean;
       captured_at: string;
+      source_line_id?: string; // local transcript row id; may be synthetic
+      source_message_id?: string; // canonical backend message.id when known
     };
 
 export interface ReflectionTranscriptPaths {
@@ -46,6 +51,8 @@ export interface ReflectionTranscriptPaths {
 
 export interface AutoReflectionPayload {
   payloadPath: string;
+  startMessageId?: string;
+  endMessageId?: string;
   endSnapshotLine: number;
 }
 
@@ -85,6 +92,11 @@ interface ParentMemoryFile {
   relativePath: string;
   content: string;
   description?: string;
+}
+
+interface ParentMemorySnapshotOptions {
+  /** Maximum characters for the full rendered parent-memory preview. */
+  maxChars?: number;
 }
 
 function isSystemMemoryFile(relativePath: string): boolean {
@@ -287,13 +299,61 @@ function buildParentMemoryTree(files: ParentMemoryFile[]): string {
   return lines.join("\n");
 }
 
+function joinedLength(lines: string[]): number {
+  return lines.join("\n").length;
+}
+
+function canAppendWithinBudget(
+  lines: string[],
+  additions: string[],
+  maxChars: number,
+): boolean {
+  return joinedLength([...lines, ...additions, "</parent_memory>"]) <= maxChars;
+}
+
+function truncateMemoryContentToFit(
+  lines: string[],
+  prefix: string[],
+  content: string,
+  suffix: string[],
+  maxChars: number,
+): string | null {
+  const fixedLength = joinedLength([
+    ...lines,
+    ...prefix,
+    "",
+    ...suffix,
+    "</parent_memory>",
+  ]);
+  const budget = maxChars - fixedLength;
+  if (budget <= 0) {
+    return null;
+  }
+
+  return content.slice(0, budget).trimEnd();
+}
+
+function buildMemoryPreviewNotice(
+  relativePath: string,
+  absolutePath: string,
+  kind: "truncated" | "omitted",
+): string {
+  const action = kind === "truncated" ? "truncated" : "omitted";
+  return `[Memory preview ${action}: startup context is capped at ~16k estimated tokens. Full file available at ${absolutePath}; read it directly if needed. Relative path: ${relativePath}]`;
+}
+
 export async function buildParentMemorySnapshot(
   memoryDir: string,
+  options: ParentMemorySnapshotOptions = {},
 ): Promise<string> {
   const files = await collectParentMemoryFiles(memoryDir);
   const tree = buildParentMemoryTree(files);
   const systemFiles = files.filter((file) =>
     isSystemMemoryFile(file.relativePath),
+  );
+  const maxChars = Math.max(
+    1_000,
+    options.maxChars ?? REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
   );
 
   const lines = [
@@ -306,13 +366,63 @@ export async function buildParentMemorySnapshot(
   if (files.length === 0) {
     lines.push("(no memory markdown files found)");
   } else {
+    let omittedSystemFiles = 0;
+
     for (const file of systemFiles) {
       const normalizedPath = file.relativePath.replace(/\\/g, "/");
       const absolutePath = `${memoryDir.replace(/\\/g, "/")}/${normalizedPath}`;
-      lines.push("<memory>");
-      lines.push(`<path>${absolutePath}</path>`);
-      lines.push(file.content);
-      lines.push("</memory>");
+      const prefix = ["<memory>", `<path>${absolutePath}</path>`];
+      const suffix = ["</memory>"];
+      const fullEntry = [...prefix, file.content, ...suffix];
+
+      if (canAppendWithinBudget(lines, fullEntry, maxChars)) {
+        lines.push(...fullEntry);
+        continue;
+      }
+
+      const truncatedNotice = buildMemoryPreviewNotice(
+        normalizedPath,
+        absolutePath,
+        "truncated",
+      );
+      const truncatedContent = truncateMemoryContentToFit(
+        lines,
+        prefix,
+        file.content,
+        [truncatedNotice, ...suffix],
+        maxChars,
+      );
+
+      if (truncatedContent) {
+        const truncatedEntry = [
+          ...prefix,
+          truncatedContent,
+          truncatedNotice,
+          ...suffix,
+        ];
+        if (canAppendWithinBudget(lines, truncatedEntry, maxChars)) {
+          lines.push(...truncatedEntry);
+          continue;
+        }
+      }
+
+      const omittedEntry = [
+        ...prefix,
+        buildMemoryPreviewNotice(normalizedPath, absolutePath, "omitted"),
+        ...suffix,
+      ];
+      if (canAppendWithinBudget(lines, omittedEntry, maxChars)) {
+        lines.push(...omittedEntry);
+      } else {
+        omittedSystemFiles += 1;
+      }
+    }
+
+    if (omittedSystemFiles > 0) {
+      const notice = `[Memory preview omitted ${omittedSystemFiles.toLocaleString()} additional system file(s) because the reflection startup context budget was exhausted. Read files directly from ${memoryDir} if needed.]`;
+      if (canAppendWithinBudget(lines, [notice], maxChars)) {
+        lines.push(notice);
+      }
     }
   }
 
@@ -337,47 +447,99 @@ function defaultState(): ReflectionTranscriptState {
   return { auto_cursor_line: 0 };
 }
 
-function formatTaggedTranscript(entries: TranscriptEntry[]): string {
-  const lines: Line[] = [];
-  for (const [index, entry] of entries.entries()) {
-    const id = `transcript-${index}`;
+/** Maximum characters to keep for tool-call arguments in the reflection payload. */
+const TOOL_ARGS_TRUNCATE_LIMIT = 300;
+
+/**
+ * Truncate text to a character limit, appending a marker when content is cut.
+ */
+function truncateArgs(
+  text: string | undefined,
+  limit: number,
+): string | undefined {
+  if (text === undefined) return undefined;
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}…[truncated]`;
+}
+
+/**
+ * Strip inline base64 image data and data-URI image references from text.
+ * This is a safety net — the accumulator's `extractTextPart` already drops
+ * multimodal image_url parts, but pasted/inline base64 could still appear.
+ */
+function stripImagesFromText(text: string): string {
+  // Strip data:image URIs (including surrounding markdown image syntax)
+  return text.replace(
+    /!\[[^\]]*\]\(data:image\/[^)]+\)|data:image\/[^\s"')]+/g,
+    "[image]",
+  );
+}
+
+/**
+ * JSON message entry for the reflection payload.
+ * Follows the ChatML-style format from the reference transcript spec.
+ */
+type ReflectionMessage =
+  | { role: "system" | "user" | "reasoning" | "error"; content: string }
+  | {
+      role: "assistant";
+      content: string;
+    }
+  | {
+      role: "assistant";
+      content: null;
+      tool_calls: Array<{ name: string; args: string }>;
+    };
+
+/**
+ * Serialize transcript entries (and optional filtered system prompt) into a
+ * JSON message array for the reflection subagent.
+ *
+ * Output is a flat array of `{ role, content, tool_calls? }` objects.
+ */
+function formatTaggedTranscript(
+  entries: TranscriptEntry[],
+  filteredSystemPrompt?: string,
+): string {
+  const messages: ReflectionMessage[] = [];
+
+  if (filteredSystemPrompt) {
+    messages.push({ role: "system", content: filteredSystemPrompt });
+  }
+
+  for (const entry of entries) {
     switch (entry.kind) {
       case "user":
-        lines.push({ kind: "user", id, text: entry.text });
+        messages.push({
+          role: "user",
+          content: stripImagesFromText(entry.text),
+        });
         break;
       case "assistant":
-        lines.push({
-          kind: "assistant",
-          id,
-          text: entry.text,
-          phase: "finished",
+        messages.push({
+          role: "assistant",
+          content: stripImagesFromText(entry.text),
         });
         break;
       case "reasoning":
-        lines.push({
-          kind: "reasoning",
-          id,
-          text: entry.text,
-          phase: "finished",
-        });
+        messages.push({ role: "reasoning", content: entry.text });
         break;
       case "error":
-        lines.push({ kind: "error", id, text: entry.text });
+        messages.push({ role: "error", content: entry.text });
         break;
-      case "tool_call":
-        lines.push({
-          kind: "tool_call",
-          id,
-          name: entry.name,
-          argsText: entry.argsText,
-          resultText: entry.resultText,
-          resultOk: entry.resultOk,
-          phase: "finished",
+      case "tool_call": {
+        const args =
+          truncateArgs(entry.argsText, TOOL_ARGS_TRUNCATE_LIMIT) ?? "{}";
+        messages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: [{ name: entry.name ?? "unknown", args }],
         });
         break;
+      }
     }
   }
-  return linesToTranscript(lines);
+  return JSON.stringify(messages, null, 2);
 }
 
 function lineToTranscriptEntry(
@@ -386,13 +548,36 @@ function lineToTranscriptEntry(
 ): TranscriptEntry | null {
   switch (line.kind) {
     case "user":
-      return { kind: "user", text: line.text, captured_at: capturedAt };
+      return {
+        kind: "user",
+        text: line.text,
+        captured_at: capturedAt,
+        source_line_id: line.id,
+        source_message_id: line.messageId,
+      };
     case "assistant":
-      return { kind: "assistant", text: line.text, captured_at: capturedAt };
+      return {
+        kind: "assistant",
+        text: line.text,
+        captured_at: capturedAt,
+        source_line_id: line.id,
+        source_message_id: line.messageId,
+      };
     case "reasoning":
-      return { kind: "reasoning", text: line.text, captured_at: capturedAt };
+      return {
+        kind: "reasoning",
+        text: line.text,
+        captured_at: capturedAt,
+        source_line_id: line.id,
+        source_message_id: line.messageId,
+      };
     case "error":
-      return { kind: "error", text: line.text, captured_at: capturedAt };
+      return {
+        kind: "error",
+        text: line.text,
+        captured_at: capturedAt,
+        source_line_id: line.id,
+      };
     case "tool_call":
       return {
         kind: "tool_call",
@@ -401,6 +586,7 @@ function lineToTranscriptEntry(
         resultText: line.resultText,
         resultOk: line.resultOk,
         captured_at: capturedAt,
+        source_line_id: line.id,
       };
     default:
       return null;
@@ -469,9 +655,9 @@ async function readTranscriptLines(
   }
 }
 
-function buildPayloadPath(kind: "auto" | "remember"): string {
+function buildPayloadPath(rootDir: string, kind: "auto" | "remember"): string {
   const nonce = Math.random().toString(36).slice(2, 8);
-  return join(tmpdir(), `letta-${kind}-${nonce}.txt`);
+  return join(rootDir, `payload-${kind}-${nonce}.json`);
 }
 
 export function getReflectionTranscriptPaths(
@@ -511,9 +697,46 @@ export async function appendTranscriptDeltaJsonl(
   return entries.length;
 }
 
+/**
+ * Strip dynamic / noisy sections from a system prompt so the reflection agent
+ * sees only the core behavioural instructions.
+ *
+ * Removes:
+ * - XML blocks: `<memory>`, `<self>`, `<human>`, `<available_skills>`,
+ *   `<system-reminder>`, `<memory_metadata>`
+ * - The `# Memory` markdown section (operational memory-filesystem docs)
+ */
+export function filterSystemPromptForReflection(raw: string): string {
+  // Remove XML-style blocks that carry dynamic/ephemeral content.
+  // Using [\s\S] instead of . so we cross newlines.
+  const tagsToStrip = [
+    "memory",
+    "self",
+    "human",
+    "available_skills",
+    "system-reminder",
+    "memory_metadata",
+  ];
+  let filtered = raw;
+  for (const tag of tagsToStrip) {
+    filtered = filtered.replace(
+      new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, "g"),
+      "",
+    );
+  }
+  // Strip the "# Memory" markdown section (and everything after it).
+  // This section contains operational memory-filesystem docs that the
+  // reflection agent doesn't need.
+  filtered = filtered.replace(/\n# Memory\n[\s\S]*$/, "");
+  // Collapse runs of 3+ blank lines into 2
+  filtered = filtered.replace(/\n{3,}/g, "\n\n");
+  return filtered.trim();
+}
+
 export async function buildAutoReflectionPayload(
   agentId: string,
   conversationId: string,
+  systemPrompt?: string,
 ): Promise<AutoReflectionPayload | null> {
   const paths = getReflectionTranscriptPaths(agentId, conversationId);
   await ensurePaths(paths);
@@ -537,12 +760,25 @@ export async function buildAutoReflectionPayload(
   const entries = snapshotLines
     .map((line) => parseJsonLine<TranscriptEntry>(line))
     .filter((entry): entry is TranscriptEntry => entry !== null);
-  const transcript = formatTaggedTranscript(entries);
-  if (!transcript) {
+  // Reflection telemetry boundaries must use canonical backend message ids from
+  // user/assistant entries only. Tool rows use local transcript ids, and
+  // reasoning rows can share an assistant message id while still being a
+  // separate transcript row.
+  const messageIds = entries
+    .filter((entry) => entry.kind === "user" || entry.kind === "assistant")
+    .map((entry) => entry.source_message_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  const startMessageId = messageIds[0];
+  const endMessageId = messageIds[messageIds.length - 1];
+  const filteredSystemPrompt = systemPrompt
+    ? filterSystemPromptForReflection(systemPrompt) || undefined
+    : undefined;
+  const transcript = formatTaggedTranscript(entries, filteredSystemPrompt);
+  if (!transcript || transcript === "[]") {
     return null;
   }
 
-  const payloadPath = buildPayloadPath("auto");
+  const payloadPath = buildPayloadPath(paths.rootDir, "auto");
   await writeFile(payloadPath, transcript, "utf-8");
 
   state.last_auto_reflection_started_at = new Date().toISOString();
@@ -550,6 +786,8 @@ export async function buildAutoReflectionPayload(
 
   return {
     payloadPath,
+    startMessageId,
+    endMessageId,
     endSnapshotLine: lines.length,
   };
 }

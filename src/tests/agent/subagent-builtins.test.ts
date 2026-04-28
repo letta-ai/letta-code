@@ -42,6 +42,15 @@ describe("built-in subagents", () => {
     expect(configs.reflection?.name).toBe("reflection");
   });
 
+  test("memory-related built-ins use memory permission mode", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    expect(configs.reflection?.permissionMode).toBe("memory");
+    expect(configs["history-analyzer"]?.permissionMode).toBe("memory");
+    expect(configs.memory?.permissionMode).toBe("memory");
+    expect(configs.init?.permissionMode).toBe("memory");
+  });
+
   test("parses subagent mode and defaults missing mode to stateful", async () => {
     const configs = await getAllSubagentConfigs();
 

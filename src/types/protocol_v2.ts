@@ -9,7 +9,13 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type {
+  DmPolicy,
+  SlackChannelMode,
+  SlackDefaultPermissionMode,
+} from "../channels/types";
 import type { CronTask } from "../cron";
+import type { ExperimentId, ExperimentSnapshot } from "../experiments/types";
 
 /**
  * Runtime identity for all state and delta events.
@@ -33,6 +39,7 @@ export type DevicePermissionMode =
   | "default"
   | "acceptEdits"
   | "plan"
+  | "memory"
   | "bypassPermissions";
 
 export type ToolsetName =
@@ -135,6 +142,138 @@ export interface ReflectionSettingsSnapshot {
   step_count: number;
 }
 
+export type ChannelId = "telegram" | "slack" | "discord";
+
+export interface ChannelSummary {
+  channel_id: ChannelId;
+  display_name: string;
+  configured: boolean;
+  enabled: boolean;
+  running: boolean;
+  dm_policy: DmPolicy | null;
+  pending_pairings_count: number;
+  approved_users_count: number;
+  routes_count: number;
+}
+
+export type ChannelConfigSnapshot =
+  | {
+      channel_id: "telegram";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_token: boolean;
+    }
+  | {
+      channel_id: "slack";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      mode: SlackChannelMode;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_bot_token: boolean;
+      has_app_token: boolean;
+    }
+  | {
+      channel_id: "discord";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      allowed_channels: string[];
+      has_token: boolean;
+    };
+
+export type ChannelAccountSnapshot =
+  | {
+      channel_id: "telegram";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_token: boolean;
+      binding: {
+        agent_id: string | null;
+        conversation_id: string | null;
+      };
+      created_at: string;
+      updated_at: string;
+    }
+  | {
+      channel_id: "slack";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      mode: SlackChannelMode;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      has_bot_token: boolean;
+      has_app_token: boolean;
+      agent_id: string | null;
+      default_permission_mode: SlackDefaultPermissionMode;
+      created_at: string;
+      updated_at: string;
+    }
+  | {
+      channel_id: "discord";
+      account_id: string;
+      display_name?: string;
+      enabled: boolean;
+      configured: boolean;
+      running: boolean;
+      dm_policy: DmPolicy;
+      allowed_users: string[];
+      allowed_channels: string[];
+      has_token: boolean;
+      agent_id: string | null;
+      created_at: string;
+      updated_at: string;
+    };
+
+export interface ChannelPendingPairing {
+  account_id: string;
+  code: string;
+  sender_id: string;
+  sender_name?: string;
+  chat_id: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface ChannelRouteSnapshot {
+  channel_id: ChannelId;
+  account_id: string;
+  chat_id: string;
+  chat_type?: "direct" | "channel";
+  thread_id?: string | null;
+  agent_id: string;
+  conversation_id: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChannelTargetSnapshot {
+  channel_id: ChannelId;
+  account_id: string;
+  target_id: string;
+  target_type: "channel";
+  chat_id: string;
+  label: string;
+  discovered_at: string;
+  last_seen_at: string;
+  last_message_id?: string;
+}
+
 /**
  * Git repository state for the current working directory.
  * Null when the CWD is not inside a git repository.
@@ -164,7 +303,9 @@ export interface DeviceStatus {
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
+  experiments: ExperimentSnapshot[];
   memory_directory: string | null;
+  should_doctor?: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
   /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
   supported_commands: string[];
@@ -192,7 +333,8 @@ export type QueueMessageSource =
   | "task_notification"
   | "cron"
   | "subagent"
-  | "system";
+  | "system"
+  | "channel";
 
 export interface QueueMessage {
   id: string;
@@ -212,6 +354,7 @@ export interface QueueMessage {
 export interface LoopState {
   status: LoopStatus;
   active_run_ids: string[];
+  plan_file_path: string | null;
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
@@ -439,6 +582,12 @@ export interface AbortMessageCommand {
 export interface SyncCommand {
   type: "sync";
   runtime: RuntimeScope;
+  /**
+   * Whether the device should probe backend state for stale pending approvals.
+   * Defaults to true for older clients. Lightweight status/recovery syncs should
+   * set this false and only replay in-memory listener state.
+   */
+  recover_approvals?: boolean;
 }
 
 export interface TerminalSpawnCommand {
@@ -481,6 +630,51 @@ export interface SearchFilesCommand {
   cwd?: string;
 }
 
+/**
+ * Listener command — IntelliJ-style "find in files" content search.
+ * Returns line-level matches (text + line/column range) instead of
+ * just the file list so the client can render an IDE-grade results
+ * pane with snippet previews.
+ */
+export interface GrepInFilesCommand {
+  type: "grep_in_files";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Literal or regex pattern depending on `is_regex`. */
+  query: string;
+  /** When true, `query` is treated as a regex. Defaults to false. */
+  is_regex?: boolean;
+  /** Case-sensitive match. Defaults to false. */
+  case_sensitive?: boolean;
+  /** Whole-word match. Defaults to false. */
+  whole_word?: boolean;
+  /** Glob filter (e.g. "*.tsx" or "src/** /*.ts"). Empty = no filter. */
+  glob?: string;
+  /** Scope search to this absolute dir. Falls back to the index root. */
+  cwd?: string;
+  /** Max match lines returned (not files). Defaults to 500. */
+  max_results?: number;
+  /** Lines of context before/after each match. Defaults to 2. */
+  context_lines?: number;
+}
+
+export interface GrepInFilesMatch {
+  /** Path relative to the search root. */
+  path: string;
+  /** 1-based line number of the matched line. */
+  line: number;
+  /** 1-based column (character offset of match start, inclusive). */
+  column: number;
+  /** 1-based column of match end (exclusive). */
+  column_end: number;
+  /** The full matched line's text (no trailing newline). */
+  text: string;
+  /** Lines immediately before the match (up to context_lines). */
+  before?: string[];
+  /** Lines immediately after the match (up to context_lines). */
+  after?: string[];
+}
+
 export interface ListInDirectoryCommand {
   type: "list_in_directory";
   /** Absolute path to list entries in. */
@@ -493,6 +687,16 @@ export interface ListInDirectoryCommand {
   offset?: number;
   /** Echoed back in the response for request correlation. */
   request_id?: string;
+}
+
+export interface GetTreeCommand {
+  type: "get_tree";
+  /** Absolute path to the root of the subtree to fetch. */
+  path: string;
+  /** Maximum depth of the subtree to return (e.g. 3). */
+  depth: number;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
 }
 
 export interface ReadFileCommand {
@@ -511,6 +715,44 @@ export interface WriteFileCommand {
   content: string;
   /** Echoed back in the response for request correlation. */
   request_id: string;
+}
+
+export interface WatchFileCommand {
+  type: "watch_file";
+  /** Absolute path to the file to watch for external changes. */
+  path: string;
+  request_id: string;
+}
+
+export interface UnwatchFileCommand {
+  type: "unwatch_file";
+  /** Absolute path to the file to stop watching. */
+  path: string;
+  request_id: string;
+}
+
+/** Bidirectional: Egwalker CRDT ops for collaborative editing. */
+export interface FileOpsCommand {
+  type: "file_ops";
+  /** Absolute path to the file being edited. */
+  path: string;
+  /** Serialized causal-graph entries. */
+  cg_entries: {
+    agent: string;
+    seq: number;
+    len: number;
+    parents: [string, number][];
+  }[];
+  /** The operations (insert / delete). */
+  ops: {
+    type: "ins" | "del";
+    pos: number;
+    content?: string;
+  }[];
+  /** Who generated these ops (e.g. 'window-abc', 'agent-xyz'). */
+  source: string;
+  /** Full document content after these ops were applied. */
+  document_content?: string;
 }
 
 export interface EditFileCommand {
@@ -535,6 +777,42 @@ export interface ListMemoryCommand {
   request_id: string;
   /** The agent whose memory to list. */
   agent_id: string;
+  /** When true, include parsed file references for graph edges. */
+  include_references?: boolean;
+}
+
+export interface MemoryHistoryCommand {
+  type: "memory_history";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory history to fetch. */
+  agent_id: string;
+  /** Relative path within the memory directory (e.g. "system/persona.md"). Omit for global history across all files. */
+  file_path?: string;
+  /** Max commits to return (default 50). */
+  limit?: number;
+}
+
+export interface MemoryFileAtRefCommand {
+  type: "memory_file_at_ref";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to read. */
+  agent_id: string;
+  /** Relative path within the memory directory. */
+  file_path: string;
+  /** Git SHA to read the file at. */
+  ref: string;
+}
+
+export interface MemoryCommitDiffCommand {
+  type: "memory_commit_diff";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to read. */
+  agent_id: string;
+  /** Git SHA of the commit to show. */
+  sha: string;
 }
 
 export interface EnableMemfsCommand {
@@ -599,6 +877,26 @@ export interface UpdateModelResponseMessage {
   model_id?: string;
   model_handle?: string;
   model_settings?: Record<string, unknown> | null;
+  error?: string;
+}
+
+export interface UpdateToolsetCommand {
+  type: "update_toolset";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Runtime scope — identifies which agent + conversation this targets */
+  runtime: RuntimeScope;
+  /** The toolset preference to apply (e.g. "auto", "default", "codex", "gemini") */
+  toolset_preference: ToolsetPreference;
+}
+
+export interface UpdateToolsetResponseMessage {
+  type: "update_toolset_response";
+  request_id: string;
+  success: boolean;
+  runtime?: RuntimeScope;
+  current_toolset?: ToolsetName;
+  current_toolset_preference?: ToolsetPreference;
   error?: string;
 }
 
@@ -696,6 +994,239 @@ export interface SetReflectionSettingsCommand {
   scope?: ReflectionSettingsScope;
 }
 
+export interface GetExperimentsCommand {
+  type: "get_experiments";
+  request_id: string;
+}
+
+export interface SetExperimentCommand {
+  type: "set_experiment";
+  request_id: string;
+  experiment_id: ExperimentId;
+  enabled: boolean;
+}
+
+export interface ChannelsListCommand {
+  type: "channels_list";
+  request_id: string;
+}
+
+export interface ChannelAccountsListCommand {
+  type: "channel_accounts_list";
+  request_id: string;
+  channel_id: ChannelId;
+}
+
+export type ChannelAccountCreatePayload =
+  | {
+      account_id?: string;
+      display_name?: string;
+      enabled?: boolean;
+      token?: string;
+      dm_policy?: DmPolicy;
+      allowed_users?: string[];
+    }
+  | {
+      account_id?: string;
+      display_name?: string;
+      enabled?: boolean;
+      bot_token?: string;
+      app_token?: string;
+      mode?: SlackChannelMode;
+      agent_id?: string | null;
+      default_permission_mode?: SlackDefaultPermissionMode;
+      dm_policy?: DmPolicy;
+      allowed_users?: string[];
+    }
+  | {
+      account_id?: string;
+      display_name?: string;
+      enabled?: boolean;
+      token?: string;
+      agent_id?: string | null;
+      dm_policy?: DmPolicy;
+      allowed_users?: string[];
+      allowed_channels?: string[];
+    };
+
+export interface ChannelAccountCreateCommand {
+  type: "channel_account_create";
+  request_id: string;
+  channel_id: ChannelId;
+  account: ChannelAccountCreatePayload;
+}
+
+export interface ChannelAccountUpdateCommand {
+  type: "channel_account_update";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+  patch:
+    | {
+        display_name?: string;
+        enabled?: boolean;
+        token?: string;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+      }
+    | {
+        display_name?: string;
+        enabled?: boolean;
+        bot_token?: string;
+        app_token?: string;
+        mode?: SlackChannelMode;
+        agent_id?: string | null;
+        default_permission_mode?: SlackDefaultPermissionMode;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+      }
+    | {
+        display_name?: string;
+        enabled?: boolean;
+        token?: string;
+        agent_id?: string | null;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+        allowed_channels?: string[];
+      };
+}
+
+export interface ChannelAccountBindCommand {
+  type: "channel_account_bind";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+  runtime: RuntimeScope;
+}
+
+export interface ChannelAccountUnbindCommand {
+  type: "channel_account_unbind";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+}
+
+export interface ChannelAccountDeleteCommand {
+  type: "channel_account_delete";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+}
+
+export interface ChannelAccountStartCommand {
+  type: "channel_account_start";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+}
+
+export interface ChannelAccountStopCommand {
+  type: "channel_account_stop";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id: string;
+}
+
+export interface ChannelGetConfigCommand {
+  type: "channel_get_config";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+}
+
+export interface ChannelSetConfigCommand {
+  type: "channel_set_config";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+  config:
+    | {
+        token?: string;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+        allowed_channels?: string[];
+      }
+    | {
+        bot_token?: string;
+        app_token?: string;
+        mode?: SlackChannelMode;
+        dm_policy?: DmPolicy;
+        allowed_users?: string[];
+      };
+}
+
+export interface ChannelStartCommand {
+  type: "channel_start";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+}
+
+export interface ChannelStopCommand {
+  type: "channel_stop";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+}
+
+export interface ChannelPairingsListCommand {
+  type: "channel_pairings_list";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+}
+
+export interface ChannelPairingBindCommand {
+  type: "channel_pairing_bind";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+  runtime: RuntimeScope;
+  code: string;
+}
+
+export interface ChannelRoutesListCommand {
+  type: "channel_routes_list";
+  request_id: string;
+  channel_id?: ChannelId;
+  account_id?: string;
+  agent_id?: string;
+  conversation_id?: string;
+}
+
+export interface ChannelTargetsListCommand {
+  type: "channel_targets_list";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+}
+
+export interface ChannelTargetBindCommand {
+  type: "channel_target_bind";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+  runtime: RuntimeScope;
+  target_id: string;
+}
+
+export interface ChannelRouteRemoveCommand {
+  type: "channel_route_remove";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+  chat_id: string;
+}
+
+export interface ChannelRouteUpdateCommand {
+  type: "channel_route_update";
+  request_id: string;
+  channel_id: ChannelId;
+  account_id?: string;
+  chat_id: string;
+  runtime: RuntimeScope;
+}
+
 export interface CronListResponseMessage {
   type: "cron_list_response";
   request_id: string;
@@ -771,6 +1302,236 @@ export interface SetReflectionSettingsResponseMessage {
   reflection_settings: ReflectionSettingsSnapshot | null;
   scope: ReflectionSettingsScope;
   error?: string;
+}
+
+export interface GetExperimentsResponseMessage {
+  type: "get_experiments_response";
+  request_id: string;
+  success: boolean;
+  experiments: ExperimentSnapshot[];
+  error?: string;
+}
+
+export interface SetExperimentResponseMessage {
+  type: "set_experiment_response";
+  request_id: string;
+  success: boolean;
+  experiments: ExperimentSnapshot[];
+  error?: string;
+}
+
+export interface ChannelsListResponseMessage {
+  type: "channels_list_response";
+  request_id: string;
+  success: boolean;
+  channels: ChannelSummary[];
+  error?: string;
+}
+
+export interface ChannelAccountsListResponseMessage {
+  type: "channel_accounts_list_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  accounts: ChannelAccountSnapshot[];
+  error?: string;
+}
+
+export interface ChannelAccountCreateResponseMessage {
+  type: "channel_account_create_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountUpdateResponseMessage {
+  type: "channel_account_update_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountBindResponseMessage {
+  type: "channel_account_bind_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountUnbindResponseMessage {
+  type: "channel_account_unbind_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountDeleteResponseMessage {
+  type: "channel_account_delete_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account_id: string;
+  deleted: boolean;
+  error?: string;
+}
+
+export interface ChannelAccountStartResponseMessage {
+  type: "channel_account_start_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelAccountStopResponseMessage {
+  type: "channel_account_stop_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  account: ChannelAccountSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelGetConfigResponseMessage {
+  type: "channel_get_config_response";
+  request_id: string;
+  success: boolean;
+  config: ChannelConfigSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelSetConfigResponseMessage {
+  type: "channel_set_config_response";
+  request_id: string;
+  success: boolean;
+  config: ChannelConfigSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelStartResponseMessage {
+  type: "channel_start_response";
+  request_id: string;
+  success: boolean;
+  channel: ChannelSummary | null;
+  error?: string;
+}
+
+export interface ChannelStopResponseMessage {
+  type: "channel_stop_response";
+  request_id: string;
+  success: boolean;
+  channel: ChannelSummary | null;
+  error?: string;
+}
+
+export interface ChannelPairingsListResponseMessage {
+  type: "channel_pairings_list_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  pending: ChannelPendingPairing[];
+  error?: string;
+}
+
+export interface ChannelPairingBindResponseMessage {
+  type: "channel_pairing_bind_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  chat_id?: string;
+  route?: ChannelRouteSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelRoutesListResponseMessage {
+  type: "channel_routes_list_response";
+  request_id: string;
+  success: boolean;
+  channel_id?: ChannelId;
+  routes: ChannelRouteSnapshot[];
+  error?: string;
+}
+
+export interface ChannelRouteRemoveResponseMessage {
+  type: "channel_route_remove_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  chat_id: string;
+  found: boolean;
+  error?: string;
+}
+
+export interface ChannelRouteUpdateResponseMessage {
+  type: "channel_route_update_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  chat_id: string;
+  route?: ChannelRouteSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelTargetsListResponseMessage {
+  type: "channel_targets_list_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  targets: ChannelTargetSnapshot[];
+  error?: string;
+}
+
+export interface ChannelTargetBindResponseMessage {
+  type: "channel_target_bind_response";
+  request_id: string;
+  success: boolean;
+  channel_id: ChannelId;
+  target_id: string;
+  chat_id?: string;
+  route?: ChannelRouteSnapshot | null;
+  error?: string;
+}
+
+export interface ChannelsUpdatedMessage {
+  type: "channels_updated";
+  timestamp: number;
+  channel_id?: ChannelId;
+}
+
+export interface ChannelAccountsUpdatedMessage {
+  type: "channel_accounts_updated";
+  timestamp: number;
+  channel_id: ChannelId;
+  account_id?: string;
+}
+
+export interface ChannelPairingsUpdatedMessage {
+  type: "channel_pairings_updated";
+  timestamp: number;
+  channel_id: ChannelId;
+}
+
+export interface ChannelRoutesUpdatedMessage {
+  type: "channel_routes_updated";
+  timestamp: number;
+  channel_id: ChannelId;
+  agent_id?: string;
+  conversation_id?: string | null;
+}
+
+export interface ChannelTargetsUpdatedMessage {
+  type: "channel_targets_updated";
+  timestamp: number;
+  channel_id: ChannelId;
 }
 
 /**
@@ -851,14 +1612,23 @@ export type WsProtocolCommand =
   | TerminalResizeCommand
   | TerminalKillCommand
   | SearchFilesCommand
+  | GrepInFilesCommand
   | ListInDirectoryCommand
+  | GetTreeCommand
   | ReadFileCommand
   | WriteFileCommand
+  | WatchFileCommand
+  | UnwatchFileCommand
   | EditFileCommand
+  | FileOpsCommand
   | ListMemoryCommand
+  | MemoryHistoryCommand
+  | MemoryFileAtRefCommand
+  | MemoryCommitDiffCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand
+  | UpdateToolsetCommand
   | CronListCommand
   | CronAddCommand
   | CronGetCommand
@@ -869,6 +1639,28 @@ export type WsProtocolCommand =
   | CreateAgentCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
+  | GetExperimentsCommand
+  | SetExperimentCommand
+  | ChannelsListCommand
+  | ChannelAccountsListCommand
+  | ChannelAccountCreateCommand
+  | ChannelAccountUpdateCommand
+  | ChannelAccountBindCommand
+  | ChannelAccountUnbindCommand
+  | ChannelAccountDeleteCommand
+  | ChannelAccountStartCommand
+  | ChannelAccountStopCommand
+  | ChannelGetConfigCommand
+  | ChannelSetConfigCommand
+  | ChannelStartCommand
+  | ChannelStopCommand
+  | ChannelPairingsListCommand
+  | ChannelPairingBindCommand
+  | ChannelRoutesListCommand
+  | ChannelTargetsListCommand
+  | ChannelTargetBindCommand
+  | ChannelRouteRemoveCommand
+  | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand;
@@ -880,6 +1672,34 @@ export type WsProtocolMessage =
   | StreamDeltaMessage
   | SubagentStateUpdateMessage
   | ListModelsResponseMessage
-  | UpdateModelResponseMessage;
+  | UpdateModelResponseMessage
+  | UpdateToolsetResponseMessage
+  | GetExperimentsResponseMessage
+  | SetExperimentResponseMessage
+  | ChannelsListResponseMessage
+  | ChannelAccountsListResponseMessage
+  | ChannelAccountCreateResponseMessage
+  | ChannelAccountUpdateResponseMessage
+  | ChannelAccountBindResponseMessage
+  | ChannelAccountUnbindResponseMessage
+  | ChannelAccountDeleteResponseMessage
+  | ChannelAccountStartResponseMessage
+  | ChannelAccountStopResponseMessage
+  | ChannelGetConfigResponseMessage
+  | ChannelSetConfigResponseMessage
+  | ChannelStartResponseMessage
+  | ChannelStopResponseMessage
+  | ChannelPairingsListResponseMessage
+  | ChannelPairingBindResponseMessage
+  | ChannelRoutesListResponseMessage
+  | ChannelTargetsListResponseMessage
+  | ChannelTargetBindResponseMessage
+  | ChannelRouteRemoveResponseMessage
+  | ChannelRouteUpdateResponseMessage
+  | ChannelsUpdatedMessage
+  | ChannelAccountsUpdatedMessage
+  | ChannelPairingsUpdatedMessage
+  | ChannelRoutesUpdatedMessage
+  | ChannelTargetsUpdatedMessage;
 
 export type { StopReasonType };

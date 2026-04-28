@@ -90,4 +90,22 @@ describe("listener permission mode helpers", () => {
     // keep typechecker happy about intentionally unused ref
     expect(ref).toBeDefined();
   });
+
+  test("supports memory mode state", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const ref = getOrCreateConversationPermissionModeStateRef(
+      listener,
+      "agent-mem",
+      "conv-mem",
+    );
+
+    ref.mode = "memory";
+
+    const state = getConversationPermissionModeState(
+      listener,
+      "agent-mem",
+      "conv-mem",
+    );
+    expect(state.mode).toBe("memory");
+  });
 });

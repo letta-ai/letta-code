@@ -14,7 +14,7 @@ describe("reflection auto-launch wiring", () => {
     const engineSource = readFileSync(enginePath, "utf-8");
 
     expect(appSource).toContain("const maybeLaunchReflectionSubagent = async");
-    expect(appSource).toContain("hasActiveReflectionSubagent()");
+    expect(appSource).toContain("hasActiveReflectionSubagent(agentId,");
     expect(appSource).toContain("collectReflectionSweepSegments(");
     expect(appSource).toContain("finalizeReflectionSegmentReview(");
     expect(appSource).toContain("logReflectionTrigger(");

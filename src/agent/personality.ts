@@ -3,13 +3,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { settingsManager } from "../settings-manager";
+import { getClient } from "./client";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
 import {
+  commitAndSyncMemoryWrite,
   GIT_MEMORY_ENABLED_TAG,
   getMemoryRepoDir,
   pullMemory,
-  pushMemory,
 } from "./memoryGit";
 import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./promptAssets";
 
@@ -24,6 +25,8 @@ export interface PersonalityOption {
   id: "kawaii" | "codex" | "claude" | "linus" | "memo";
   label: string;
   description: string;
+  /** Model ID from models.json to use when no explicit model is provided. */
+  defaultModel?: string;
 }
 
 export const PERSONALITY_OPTIONS: PersonalityOption[] = [
@@ -41,6 +44,7 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
     id: "kawaii",
     label: "Letta-Chan",
     description: "sugoi~ (◕‿◕)✨",
+    defaultModel: "auto-chat",
   },
   {
     id: "claude",
@@ -362,7 +366,7 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   return {
     name: name ?? personality.label,
     description: description ?? personality.description,
-    model,
+    model: model ?? personality.defaultModel,
     tags,
     memoryPromptMode: "memfs",
     memoryBlocks: defaultMemoryBlocks.map((block) => {
@@ -483,38 +487,69 @@ export function detectPersonalityFromPersonaFile(
   return null;
 }
 
-function isExitCode(error: unknown, expectedCode: number): boolean {
-  if (!error || typeof error !== "object") return false;
-  const code = (error as { code?: unknown }).code;
-  return code === expectedCode;
-}
-
-async function runGit(cwd: string, args: string[]): Promise<string> {
-  const result = await execFile("git", args, {
-    cwd,
-    maxBuffer: 10 * 1024 * 1024,
-    timeout: 60_000,
-  });
-  return result.stdout?.toString() ?? "";
-}
-
-async function hasStagedChanges(
-  cwd: string,
-  relativePaths: string[],
-): Promise<boolean> {
-  if (relativePaths.length === 0) {
-    return false;
-  }
+async function getMemoryCommitAuthor(agentId: string): Promise<{
+  agentId: string;
+  authorName: string;
+  authorEmail: string;
+}> {
+  let authorName = agentId;
 
   try {
-    await runGit(cwd, ["diff", "--cached", "--quiet", "--", ...relativePaths]);
-    return false;
-  } catch (error) {
-    if (isExitCode(error, 1)) {
-      return true;
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+    if (agent.name?.trim()) {
+      authorName = agent.name.trim();
     }
-    throw error;
+  } catch {
+    // best-effort fallback to agent id
   }
+
+  return {
+    agentId,
+    authorName,
+    authorEmail: `${agentId}@letta.com`,
+  };
+}
+
+function applyPersonalityFiles(
+  filesToUpdate: Array<{
+    relativePath: string;
+    absolutePath: string;
+    templatePromptAssetName: string;
+    content: string;
+    description?: string;
+  }>,
+): string[] {
+  const changedPaths: string[] = [];
+
+  for (const file of filesToUpdate) {
+    const existingContent = existsSync(file.absolutePath)
+      ? readFileSync(file.absolutePath, "utf-8")
+      : null;
+    const nextContent = existingContent
+      ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
+          description: file.description,
+        })
+      : buildDefaultMemoryFile(
+          file.templatePromptAssetName,
+          file.content,
+          file.description,
+        );
+
+    if (
+      existingContent !== null &&
+      normalizeComparableContent(existingContent) ===
+        normalizeComparableContent(nextContent)
+    ) {
+      continue;
+    }
+
+    mkdirSync(dirname(file.absolutePath), { recursive: true });
+    writeFileSync(file.absolutePath, nextContent, "utf-8");
+    changedPaths.push(file.relativePath);
+  }
+
+  return changedPaths;
 }
 
 export async function applyPersonalityToMemory(
@@ -560,47 +595,9 @@ export async function applyPersonalityToMemory(
     },
   ];
 
-  const changedPaths: string[] = [];
-
-  for (const file of filesToUpdate) {
-    const existingContent = existsSync(file.absolutePath)
-      ? readFileSync(file.absolutePath, "utf-8")
-      : null;
-    const nextContent = existingContent
-      ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
-          description: file.description,
-        })
-      : buildDefaultMemoryFile(
-          file.templatePromptAssetName,
-          file.content,
-          file.description,
-        );
-
-    if (
-      existingContent !== null &&
-      normalizeComparableContent(existingContent) ===
-        normalizeComparableContent(nextContent)
-    ) {
-      continue;
-    }
-
-    mkdirSync(dirname(file.absolutePath), { recursive: true });
-    writeFileSync(file.absolutePath, nextContent, "utf-8");
-    changedPaths.push(file.relativePath);
-  }
+  const changedPaths = applyPersonalityFiles(filesToUpdate);
 
   if (changedPaths.length === 0) {
-    return {
-      changed: false,
-      personality,
-      personaRelativePath,
-      humanRelativePath,
-    };
-  }
-
-  await runGit(repoDir, ["add", "--", ...changedPaths]);
-
-  if (!(await hasStagedChanges(repoDir, changedPaths))) {
     return {
       changed: false,
       personality,
@@ -613,16 +610,23 @@ export async function applyPersonalityToMemory(
     params.commitMessage ??
     `chore(personality): switch to ${personality.label}`;
 
-  await runGit(repoDir, [
-    "commit",
-    "--only",
-    "-m",
-    commitMessage,
-    "--",
-    ...changedPaths,
-  ]);
+  const author = await getMemoryCommitAuthor(params.agentId);
+  const commitResult = await commitAndSyncMemoryWrite({
+    memoryDir: repoDir,
+    pathspecs: changedPaths,
+    reason: commitMessage,
+    author,
+    replay: async () => applyPersonalityFiles(filesToUpdate),
+  });
 
-  await pushMemory(params.agentId);
+  if (!commitResult.committed) {
+    return {
+      changed: false,
+      personality,
+      personaRelativePath,
+      humanRelativePath,
+    };
+  }
 
   return {
     changed: true,

@@ -5,52 +5,34 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
-import {
-  type ApprovalDecision,
-  executeApprovalBatch,
-} from "../../agent/approval-execution";
-import { fetchRunErrorDetail } from "../../agent/approval-recovery";
+import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
 import { sendMessageStream } from "../../agent/message";
 import {
+  buildFreshDenialApprovals,
   extractConflictDetail,
   getPreStreamErrorAction,
   getRetryDelayMs,
   parseRetryAfterHeaderMs,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "../../agent/turn-recovery-policy";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
-
-import { computeDiffPreviews } from "../../helpers/diffPreview";
-import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
-import type { ControlRequest } from "../../types/protocol_v2";
+import { createStreamAbortRelay } from "../../utils/streamAbortRelay";
 import {
   rememberPendingApprovalBatchIds,
-  requestApprovalOverWS,
   resolveRecoveryBatchId,
 } from "./approval";
-import {
-  applySuggestedPermissionsForApproval,
-  buildApprovalSuggestionPayload,
-  classifyApprovalsWithSuggestions,
-} from "./approval-suggestions";
 import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import {
-  emitInterruptToolReturnMessage,
-  emitToolExecutionFinishedEvents,
-  emitToolExecutionStartedEvents,
-} from "./interrupts";
 import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
 import {
   emitDequeuedUserMessage,
   emitRetryDelta,
-  emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
@@ -61,6 +43,7 @@ import {
   isApprovalToolCallDesyncError,
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
+import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime } from "./types";
 
 export function isApprovalOnlyInput(
@@ -90,7 +73,7 @@ export function markAwaitingAcceptedApprovalContinuationRunId(
  */
 export async function resolveStaleApprovals(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   abortSignal: AbortSignal,
   deps: {
     getResumeData?: typeof getResumeData;
@@ -170,191 +153,15 @@ export async function resolveStaleApprovals(
     }
     rememberPendingApprovalBatchIds(runtime, pendingApprovals, recoveryBatchId);
 
-    const permissionModeState = getOrCreateConversationPermissionModeStateRef(
-      runtime.listener,
-      runtime.agentId,
-      runtime.conversationId,
+    const approvalResults = buildFreshDenialApprovals(
+      pendingApprovals,
+      STALE_APPROVAL_RECOVERY_DENIAL_REASON,
     );
-    const { autoAllowed, autoDenied, needsUserInput } =
-      await classifyApprovalsWithSuggestions(pendingApprovals, {
-        alwaysRequiresUserInput: isInteractiveApprovalTool,
-        requireArgsForAutoApprove: true,
-        missingNameReason: "Tool call incomplete - missing name",
-        workingDirectory: recoveryWorkingDirectory,
-        permissionModeState,
-      });
-
-    const decisions: ApprovalDecision[] = [
-      ...autoAllowed.map((ac) => ({
-        type: "approve" as const,
-        approval: ac.approval,
-      })),
-      ...autoDenied.map((ac) => ({
-        type: "deny" as const,
-        approval: ac.approval,
-        reason: ac.denyReason || ac.permission.reason || "Permission denied",
-      })),
-    ];
-
-    let pendingNeedsUserInput = [...needsUserInput];
-    if (pendingNeedsUserInput.length > 0) {
-      runtime.lastStopReason = "requires_approval";
-      setLoopStatus(runtime, "WAITING_ON_APPROVAL", scope);
-      emitRuntimeStateUpdates(runtime, scope);
-
-      while (pendingNeedsUserInput.length > 0) {
-        const ac = pendingNeedsUserInput.shift();
-        if (!ac) {
-          break;
-        }
-
-        if (abortSignal.aborted) throw new Error("Cancelled");
-
-        const requestId = `perm-${ac.approval.toolCallId}`;
-        const diffs = await computeDiffPreviews(
-          ac.approval.toolName,
-          ac.parsedArgs,
-          recoveryWorkingDirectory,
-        );
-        const controlRequest: ControlRequest = {
-          type: "control_request",
-          request_id: requestId,
-          request: {
-            subtype: "can_use_tool",
-            tool_name: ac.approval.toolName,
-            input: ac.parsedArgs,
-            tool_call_id: ac.approval.toolCallId,
-            ...buildApprovalSuggestionPayload(ac.context),
-            blocked_path: null,
-            ...(diffs.length > 0 ? { diffs } : {}),
-          },
-          agent_id: runtime.agentId,
-          conversation_id: recoveryConversationId,
-        };
-
-        const responseBody = await requestApprovalOverWS(
-          runtime,
-          socket,
-          requestId,
-          controlRequest,
-        );
-
-        if ("decision" in responseBody) {
-          const response = responseBody.decision;
-          if (response.behavior === "allow") {
-            const savedSuggestions = await applySuggestedPermissionsForApproval(
-              {
-                decision: response,
-                context: ac.context,
-                workingDirectory: recoveryWorkingDirectory,
-              },
-            );
-            decisions.push({
-              type: "approve",
-              approval: response.updated_input
-                ? {
-                    ...ac.approval,
-                    toolArgs: JSON.stringify(response.updated_input),
-                  }
-                : ac.approval,
-              reason: response.message,
-            });
-
-            if (savedSuggestions && pendingNeedsUserInput.length > 0) {
-              const reclassified = await classifyApprovalsWithSuggestions(
-                pendingNeedsUserInput.map((entry) => entry.approval),
-                {
-                  alwaysRequiresUserInput: isInteractiveApprovalTool,
-                  requireArgsForAutoApprove: true,
-                  missingNameReason: "Tool call incomplete - missing name",
-                  workingDirectory: recoveryWorkingDirectory,
-                  permissionModeState,
-                },
-              );
-
-              decisions.push(
-                ...reclassified.autoAllowed.map((entry) => ({
-                  type: "approve" as const,
-                  approval: entry.approval,
-                })),
-                ...reclassified.autoDenied.map((entry) => ({
-                  type: "deny" as const,
-                  approval: entry.approval,
-                  reason:
-                    entry.denyReason ||
-                    entry.permission.reason ||
-                    "Permission denied",
-                })),
-              );
-              pendingNeedsUserInput = [...reclassified.needsUserInput];
-            }
-          } else {
-            decisions.push({
-              type: "deny",
-              approval: ac.approval,
-              reason: response.message || "Denied via WebSocket",
-            });
-          }
-        } else {
-          decisions.push({
-            type: "deny",
-            approval: ac.approval,
-            reason: responseBody.error,
-          });
-        }
-      }
-    }
-
-    if (decisions.length === 0) {
+    if (approvalResults.length === 0) {
       return null;
     }
 
-    const approvedToolCallIds = decisions
-      .filter(
-        (
-          decision,
-        ): decision is Extract<ApprovalDecision, { type: "approve" }> =>
-          decision.type === "approve",
-      )
-      .map((decision) => decision.approval.toolCallId);
-
-    runtime.activeExecutingToolCallIds = [...approvedToolCallIds];
-    setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", scope);
-    emitRuntimeStateUpdates(runtime, scope);
-    emitToolExecutionStartedEvents(socket, runtime, {
-      toolCallIds: approvedToolCallIds,
-      runId: runtime.activeRunId ?? undefined,
-      agentId: runtime.agentId ?? undefined,
-      conversationId: recoveryConversationId,
-    });
-
     try {
-      const approvalResults = await executeApprovalBatch(decisions, undefined, {
-        abortSignal,
-        toolContextId: preparedToolContext.preparedToolContext.contextId,
-        workingDirectory: recoveryWorkingDirectory,
-        parentScope:
-          runtime.agentId && runtime.conversationId
-            ? {
-                agentId: runtime.agentId,
-                conversationId: runtime.conversationId,
-              }
-            : undefined,
-      });
-      emitToolExecutionFinishedEvents(socket, runtime, {
-        approvals: approvalResults,
-        runId: runtime.activeRunId ?? undefined,
-        agentId: runtime.agentId ?? undefined,
-        conversationId: recoveryConversationId,
-      });
-      emitInterruptToolReturnMessage(
-        socket,
-        runtime,
-        approvalResults,
-        runtime.activeRunId ?? undefined,
-        "tool-return",
-      );
-
       const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
         {
           type: "approval",
@@ -428,7 +235,7 @@ export async function sendMessageStreamWithRetry(
   conversationId: string,
   messages: Parameters<typeof sendMessageStream>[1],
   opts: Parameters<typeof sendMessageStream>[2],
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   abortSignal?: AbortSignal,
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
@@ -502,10 +309,14 @@ export async function sendMessageStreamWithRetry(
           }
         }
 
-        const detail = await fetchRunErrorDetail(runtime.activeRunId);
-        throw new Error(
-          detail ||
-            `Pre-stream approval conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+        const runErrorInfo = await fetchRunErrorInfo(runtime.activeRunId);
+        throw Object.assign(
+          new Error(
+            runErrorInfo?.detail ||
+              runErrorInfo?.message ||
+              `Pre-stream approval conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+          ),
+          { runErrorInfo },
         );
       }
 
@@ -561,22 +372,36 @@ export async function sendMessageStreamWithRetry(
           const messageOtid = messages
             .map((item) => (item as Record<string, unknown>).otid)
             .find((value): value is string => typeof value === "string");
+          const resumeAbortRelay = createStreamAbortRelay(abortSignal);
 
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
           }
 
-          return await client.conversations.messages.stream(conversationId, {
-            agent_id:
-              conversationId === "default"
-                ? (runtime.agentId ?? undefined)
+          try {
+            const resumeStream = await client.conversations.messages.stream(
+              conversationId,
+              {
+                agent_id:
+                  conversationId === "default"
+                    ? (runtime.agentId ?? undefined)
+                    : undefined,
+                otid: messageOtid ?? undefined,
+                starting_after: 0,
+                batch_size: 1000,
+              } as unknown as Parameters<
+                typeof client.conversations.messages.stream
+              >[1],
+              resumeAbortRelay
+                ? { signal: resumeAbortRelay.signal }
                 : undefined,
-            otid: messageOtid ?? undefined,
-            starting_after: 0,
-            batch_size: 1000,
-          } as unknown as Parameters<
-            typeof client.conversations.messages.stream
-          >[1]);
+            );
+            resumeAbortRelay?.attach(resumeStream as object);
+            return resumeStream;
+          } catch (resumeError) {
+            resumeAbortRelay?.cleanup();
+            throw resumeError;
+          }
         } catch (resumeError) {
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
@@ -624,7 +449,7 @@ export async function sendApprovalContinuationWithRetry(
   conversationId: string,
   messages: Parameters<typeof sendMessageStream>[1],
   opts: Parameters<typeof sendMessageStream>[2],
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   abortSignal?: AbortSignal,
   retryOptions: {
@@ -714,10 +539,14 @@ export async function sendApprovalContinuationWithRetry(
           continue;
         }
 
-        const detail = await fetchRunErrorDetail(runtime.activeRunId);
-        throw new Error(
-          detail ||
-            `Approval continuation conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+        const runErrorInfo = await fetchRunErrorInfo(runtime.activeRunId);
+        throw Object.assign(
+          new Error(
+            runErrorInfo?.detail ||
+              runErrorInfo?.message ||
+              `Approval continuation conflict after ${preStreamRecoveryAttempts} recovery attempts`,
+          ),
+          { runErrorInfo },
         );
       }
 
@@ -741,6 +570,20 @@ export async function sendApprovalContinuationWithRetry(
           retryAfterMs,
         });
         transientRetries = attempt;
+
+        const retryMessage = getRetryStatusMessage(errorDetail);
+        if (retryMessage) {
+          emitRetryDelta(socket, runtime, {
+            message: retryMessage,
+            reason: "error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs,
+            agentId: runtime.agentId ?? undefined,
+            conversationId,
+          });
+        }
+
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         if (abortSignal?.aborted) {
           throw new Error("Cancelled by user");
@@ -761,22 +604,36 @@ export async function sendApprovalContinuationWithRetry(
           const messageOtid = messages
             .map((item) => (item as Record<string, unknown>).otid)
             .find((value): value is string => typeof value === "string");
+          const resumeAbortRelay = createStreamAbortRelay(abortSignal);
 
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
           }
 
-          return await client.conversations.messages.stream(conversationId, {
-            agent_id:
-              conversationId === "default"
-                ? (runtime.agentId ?? undefined)
+          try {
+            const resumeStream = await client.conversations.messages.stream(
+              conversationId,
+              {
+                agent_id:
+                  conversationId === "default"
+                    ? (runtime.agentId ?? undefined)
+                    : undefined,
+                otid: messageOtid ?? undefined,
+                starting_after: 0,
+                batch_size: 1000,
+              } as unknown as Parameters<
+                typeof client.conversations.messages.stream
+              >[1],
+              resumeAbortRelay
+                ? { signal: resumeAbortRelay.signal }
                 : undefined,
-            otid: messageOtid ?? undefined,
-            starting_after: 0,
-            batch_size: 1000,
-          } as unknown as Parameters<
-            typeof client.conversations.messages.stream
-          >[1]);
+            );
+            resumeAbortRelay?.attach(resumeStream as object);
+            return resumeStream;
+          } catch (resumeError) {
+            resumeAbortRelay?.cleanup();
+            throw resumeError;
+          }
         } catch (resumeError) {
           if (abortSignal?.aborted) {
             throw new Error("Cancelled by user");
@@ -795,6 +652,17 @@ export async function sendApprovalContinuationWithRetry(
           category: "conversation_busy",
           attempt: conversationBusyRetries,
         });
+
+        emitRetryDelta(socket, runtime, {
+          message: "Conversation is busy, waiting and retrying…",
+          reason: "error",
+          attempt: conversationBusyRetries,
+          maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
+          delayMs: retryDelayMs,
+          agentId: runtime.agentId ?? undefined,
+          conversationId,
+        });
+
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         if (abortSignal?.aborted) {
           throw new Error("Cancelled by user");

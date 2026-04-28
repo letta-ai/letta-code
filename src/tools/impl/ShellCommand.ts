@@ -1,6 +1,9 @@
-import { shell } from "./Shell.js";
+import { getCurrentAgentId } from "../../agent/context";
+import { isMemoryDirCommand } from "../../permissions/readOnlyShell";
+import { resolveShellWorkdir, type ShellResult, shell } from "./Shell.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
 import { ShellExecutionError } from "./shellRunner.js";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ShellCommandArgs {
@@ -17,8 +20,28 @@ interface ShellCommandArgs {
 
 interface ShellCommandResult {
   output: string;
-  stdout: string[];
-  stderr: string[];
+  stdout?: string[];
+  stderr?: string[];
+}
+
+function normalizeShellCommandResult(
+  result: ShellResult,
+  resolvedWorkdir: string,
+): ShellCommandResult {
+  const { content: truncatedOutput, wasTruncated } = truncateByChars(
+    result.output || "(Command completed with no output)",
+    LIMITS.BASH_OUTPUT_CHARS,
+    "Bash",
+    {
+      workingDirectory: resolvedWorkdir,
+      toolName: "Bash",
+    },
+  );
+
+  return {
+    output: truncatedOutput,
+    ...(wasTruncated ? {} : { stdout: result.stdout, stderr: result.stderr }),
+  };
 }
 
 /**
@@ -39,6 +62,8 @@ export async function shell_command(
     signal,
     onOutput,
   } = args;
+  const envOverrides = getMemoryGitIdentityEnvOverrides(command, workdir);
+  const resolvedWorkdir = resolveShellWorkdir(workdir);
   const launchers = buildShellLaunchers(command, { login });
   if (launchers.length === 0) {
     throw new Error("Command must be a non-empty string");
@@ -49,14 +74,16 @@ export async function shell_command(
 
   for (const launcher of launchers) {
     try {
-      return await shell({
+      const result = await shell({
         command: launcher,
-        workdir,
+        workdir: resolvedWorkdir,
+        env_overrides: envOverrides,
         timeout_ms,
         justification,
         signal,
         onOutput,
       });
+      return normalizeShellCommandResult(result, resolvedWorkdir);
     } catch (error) {
       if (error instanceof ShellExecutionError && error.code === "ENOENT") {
         tried.push(launcher[0] || "");
@@ -70,4 +97,125 @@ export async function shell_command(
   const suffix = tried.filter(Boolean).join(", ");
   const reason = lastError?.message || "Shell unavailable";
   throw new Error(suffix ? `${reason} (tried: ${suffix})` : reason);
+}
+
+function getMemoryGitIdentityEnvOverrides(
+  command: string,
+  workdir?: string,
+): NodeJS.ProcessEnv | undefined {
+  const agentId = getCurrentAgentIdOrEnv();
+  if (!agentId) {
+    return undefined;
+  }
+
+  if (!containsGitCommitInvocation(command)) {
+    return undefined;
+  }
+
+  const scopedToMemoryDir =
+    isMemoryDirCommand(command, agentId) ||
+    (workdir
+      ? isMemoryDirCommand(`cd ${shellQuote(workdir)} && ${command}`, agentId)
+      : false);
+
+  if (!scopedToMemoryDir) {
+    return undefined;
+  }
+
+  const agentName = (process.env.AGENT_NAME || "").trim() || agentId;
+  const agentEmail = `${agentId}@letta.com`;
+
+  return {
+    GIT_AUTHOR_NAME: agentName,
+    GIT_AUTHOR_EMAIL: agentEmail,
+    GIT_COMMITTER_NAME: agentName,
+    GIT_COMMITTER_EMAIL: agentEmail,
+  };
+}
+
+function getCurrentAgentIdOrEnv(): string {
+  try {
+    const agentId = getCurrentAgentId().trim();
+    if (agentId) {
+      return agentId;
+    }
+  } catch {
+    // Fall through to env fallback below.
+  }
+
+  return (process.env.LETTA_AGENT_ID || process.env.AGENT_ID || "").trim();
+}
+
+function containsGitCommitInvocation(command: string): boolean {
+  const segments = command
+    .split(/&&|\|\||;|\|/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  for (const segment of segments) {
+    const tokens = tokenizeSegment(segment);
+    if (tokens.length === 0) {
+      continue;
+    }
+
+    let index = 0;
+    while (
+      index < tokens.length &&
+      /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(tokens[index] ?? "")
+    ) {
+      index += 1;
+    }
+
+    if (tokens[index] !== "git") {
+      continue;
+    }
+
+    index += 1;
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (!token) {
+        index += 1;
+        continue;
+      }
+
+      if (token === "-c" || token === "-C") {
+        index += 2;
+        continue;
+      }
+
+      if (token.startsWith("-")) {
+        index += 1;
+        continue;
+      }
+
+      if (token === "commit") {
+        return true;
+      }
+      break;
+    }
+  }
+
+  return false;
+}
+
+function tokenizeSegment(segment: string): string[] {
+  const matches = segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g);
+  if (!matches) {
+    return [];
+  }
+  return matches.map(stripWrappingQuotes);
+}
+
+function stripWrappingQuotes(token: string): string {
+  if (
+    (token.startsWith('"') && token.endsWith('"')) ||
+    (token.startsWith("'") && token.endsWith("'"))
+  ) {
+    return token.slice(1, -1);
+  }
+  return token;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
+import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
 import type {
   ControlResponse,
   ErrorMessage,
@@ -11,6 +12,11 @@ import type {
   SystemInitMessage,
   WireMessage,
 } from "../types/protocol";
+import {
+  formatAttemptDiagnostics,
+  formatCapturedOutput,
+  summarizeRecentMessages,
+} from "./processDiagnostics";
 
 /**
  * Tests for --input-format stream-json bidirectional communication.
@@ -25,7 +31,7 @@ const FAST_PROMPT =
  * Helper to run bidirectional commands with stdin input.
  * Event-driven: waits for init message before sending input, waits for result before closing.
  */
-async function runBidirectional(
+async function runBidirectionalOnce(
   inputs: string[],
   extraArgs: string[] = [],
   timeoutMs = 180000, // 180s timeout - CI can be very slow
@@ -43,6 +49,7 @@ async function runBidirectional(
         "--output-format",
         "stream-json",
         "--new-agent",
+        "--no-memfs",
         "-m",
         "sonnet-4.6-low",
         "--yolo",
@@ -50,17 +57,13 @@ async function runBidirectional(
       ],
       {
         cwd: process.cwd(),
-        // Mark as subagent to prevent polluting user's LRU settings
-        env: {
-          ...process.env,
-          LETTA_CODE_AGENT_ROLE: "subagent",
-          ...extraEnv,
-        },
+        env: createIsolatedCliTestEnv(extraEnv),
       },
     );
 
     const objects: object[] = [];
     let buffer = "";
+    let stdout = "";
     let inputIndex = 0;
     let initReceived = false;
     let closing = false;
@@ -82,6 +85,7 @@ async function runBidirectional(
 
     let userResultsReceived = 0;
     let controlResponsesReceived = 0;
+    let errorResponsesReceived = 0;
 
     const maybeClose = () => {
       if (closing) return;
@@ -136,6 +140,7 @@ async function runBidirectional(
 
         // Check for error message (for invalid JSON input test)
         if (obj.type === "error" && hasInvalidInput) {
+          errorResponsesReceived++;
           closing = true;
           setTimeout(() => proc.stdin?.end(), 500);
         }
@@ -152,7 +157,9 @@ async function runBidirectional(
     };
 
     proc.stdout?.on("data", (data) => {
-      buffer += data.toString();
+      const chunk = data.toString();
+      stdout += chunk;
+      buffer += chunk;
       const lines = buffer.split("\n");
       buffer = lines.pop() || ""; // Keep incomplete line in buffer
       for (const line of lines) {
@@ -174,21 +181,42 @@ async function runBidirectional(
       // Check if we got enough results
       const gotExpectedResults =
         userResultsReceived >= expectedUserResults &&
-        controlResponsesReceived >= expectedControlResponses;
+        controlResponsesReceived >= expectedControlResponses &&
+        (!hasInvalidInput || errorResponsesReceived > 0);
 
       if (objects.length === 0 && code !== 0) {
         reject(
           new Error(
-            `Process exited with code ${code}, no output received. stderr: ${stderr}`,
+            `Process exited with code ${code}, no output received.\n${formatCapturedOutput(
+              {
+                stdout,
+                stderr,
+                extra: {
+                  args: extraArgs.join(" "),
+                },
+              },
+            )}`,
           ),
         );
-      } else if (!gotExpectedResults && code !== 0) {
+      } else if (!gotExpectedResults) {
         reject(
           new Error(
-            `Process exited with code ${code} before all results received. ` +
+            `Process exited with code ${code} before all expected responses were received. ` +
               `Got ${userResultsReceived}/${expectedUserResults} user results, ` +
-              `${controlResponsesReceived}/${expectedControlResponses} control responses. ` +
-              `inputIndex: ${inputIndex}, initReceived: ${initReceived}. stderr: ${stderr}`,
+              `${controlResponsesReceived}/${expectedControlResponses} control responses, ` +
+              `${errorResponsesReceived}/${hasInvalidInput ? 1 : 0} invalid-input error responses. ` +
+              `inputIndex: ${inputIndex}, initReceived: ${initReceived}.\n${formatCapturedOutput(
+                {
+                  stdout,
+                  stderr,
+                  extra: {
+                    args: extraArgs.join(" "),
+                    recent_messages: summarizeRecentMessages(
+                      objects as Array<Record<string, unknown>>,
+                    ),
+                  },
+                },
+              )}`,
           ),
         );
       } else {
@@ -201,13 +229,34 @@ async function runBidirectional(
       proc.kill();
       reject(
         new Error(
-          `Timeout after ${timeoutMs}ms. Received ${objects.length} objects, init: ${initReceived}, userResults: ${userResultsReceived}/${expectedUserResults}, controlResponses: ${controlResponsesReceived}/${expectedControlResponses}`,
+          `Timeout after ${timeoutMs}ms. Received ${objects.length} objects, init: ${initReceived}, userResults: ${userResultsReceived}/${expectedUserResults}, controlResponses: ${controlResponsesReceived}/${expectedControlResponses}.\n${formatCapturedOutput(
+            {
+              stdout,
+              stderr,
+              extra: {
+                args: extraArgs.join(" "),
+                recent_messages: summarizeRecentMessages(
+                  objects as Array<Record<string, unknown>>,
+                ),
+                saw_result_event: stdout.includes('"type":"result"'),
+              },
+            },
+          )}`,
         ),
       );
     }, timeoutMs);
 
     proc.on("close", () => clearTimeout(timeout));
   });
+}
+
+async function runBidirectional(
+  inputs: string[],
+  extraArgs: string[] = [],
+  timeoutMs = 180000,
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<object[]> {
+  return runBidirectionalWithRetry(inputs, extraArgs, timeoutMs, 1, extraEnv);
 }
 
 async function runBidirectionalWithRetry(
@@ -218,19 +267,36 @@ async function runBidirectionalWithRetry(
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<object[]> {
   let attempt = 0;
+  const failedAttempts: Array<{ attempt: number; message: string }> = [];
   while (true) {
     try {
-      return await runBidirectional(inputs, extraArgs, timeoutMs, extraEnv);
+      return await runBidirectionalOnce(inputs, extraArgs, timeoutMs, extraEnv);
     } catch (error) {
-      const isTimeoutError =
-        error instanceof Error && error.message.includes("Timeout after");
-      if (!isTimeoutError || attempt >= retryOnTimeouts) {
-        throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      failedAttempts.push({
+        attempt: attempt + 1,
+        message,
+      });
+      const isRetriableError =
+        error instanceof Error &&
+        (error.message.includes("Timeout after") ||
+          error.message.includes(
+            "before all expected responses were received",
+          ));
+      if (!isRetriableError || attempt >= retryOnTimeouts) {
+        throw new Error(
+          failedAttempts.length === 1
+            ? message
+            : `${message}\n${formatAttemptDiagnostics(
+                failedAttempts.slice(0, -1),
+              )}`,
+        );
       }
       attempt += 1;
-      // CI API latency can cause occasional long-tail timeouts.
+      // CI API runs can occasionally exit after emitting most, but not all,
+      // of the final response envelope. Retry those incomplete runs once.
       console.warn(
-        `[headless-input-format] retrying after timeout (${attempt}/${retryOnTimeouts})`,
+        `[headless-input-format] retrying after transient/incomplete run (${attempt}/${retryOnTimeouts})`,
       );
     }
   }
@@ -577,7 +643,7 @@ describe("input-format stream-json", () => {
   );
 
   test(
-    "Task tool with explore subagent works",
+    "Agent tool with general-purpose subagent works",
     async () => {
       const fixture = await createTaskExploreFixture();
 
@@ -589,7 +655,7 @@ describe("input-format stream-json", () => {
               message: {
                 role: "user",
                 content:
-                  "You MUST use the Task tool with subagent_type='explore' to recursively find all TypeScript files (*.ts) in the current working directory. " +
+                  "You MUST use the Agent tool with subagent_type='general-purpose' to recursively find all TypeScript files (*.ts) in the current working directory. " +
                   "Return only the matching relative file paths, one per line, and do not mention any non-TypeScript files.",
               },
             }),
@@ -610,7 +676,7 @@ describe("input-format stream-json", () => {
           (o) =>
             o.type === "auto_approval" &&
             "tool_call" in o &&
-            o.tool_call?.name === "Task",
+            o.tool_call?.name === "Agent",
         );
         expect(autoApprovals.length).toBeGreaterThan(0);
 

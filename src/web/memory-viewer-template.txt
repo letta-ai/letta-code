@@ -416,6 +416,48 @@ a:hover { text-decoration: underline; }
 }
 
 /* History view */
+.history-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.history-search-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.history-search-input,
+.history-search-select {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: inherit;
+}
+.history-search-input {
+  flex: 1;
+  min-width: 220px;
+}
+.history-search-input::placeholder {
+  color: var(--text-dim);
+}
+.history-search-select {
+  flex: 0 0 auto;
+}
+.history-search-status {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.history-search-note {
+  width: 100%;
+  margin-top: -4px;
+}
 .commit-list { list-style: none; }
 .commit-item {
   border: 1px solid var(--border);
@@ -508,6 +550,49 @@ a:hover { text-decoration: underline; }
 }
 .stat-file:hover { color: var(--accent); text-decoration: underline; }
 .stat-bar { display: inline-flex; gap: 1px; }
+
+/* Conversations view */
+.conversations-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  height: 100%;
+}
+.conversations-list {
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+.conversation-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.conversation-item:hover { background: var(--surface); }
+.conversation-item.active { background: var(--accent); color: white; }
+.conv-name { font-weight: 500; margin-bottom: 4px; }
+.conv-meta { font-size: 12px; color: var(--text-muted); }
+.messages-panel {
+  overflow-y: auto;
+  padding: 12px;
+}
+.message-item {
+  margin-bottom: 12px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.message-item.role-user { background: var(--panel); }
+.message-item.role-assistant { background: var(--accent-bg); }
+.msg-role {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.msg-content {
+  font-size: 14px;
+  line-height: 1.6;
+}
 .stat-plus { color: #1a7f37; }
 .stat-minus { color: #cf222e; }
 .stat-summary {
@@ -565,6 +650,19 @@ a:hover { text-decoration: underline; }
   padding: 24px;
   text-align: center;
   color: var(--text-dim);
+}
+
+@media (max-width: 700px) {
+  .history-search-group {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .history-search-input,
+  .history-search-select,
+  .history-search-status {
+    width: 100%;
+    white-space: normal;
+  }
 }
 .generated {
   margin-top: 14px;
@@ -833,12 +931,25 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     </section>
 
     <section id="tab-history" style="display:none">
+      <div class="history-toolbar">
+        <div class="history-search-group">
+          <input id="history-search" class="history-search-input" type="search" placeholder="Search commit history" aria-label="Search commit history">
+          <select id="history-search-mode" class="history-search-select" aria-label="History search mode">
+            <option value="content">Content</option>
+            <option value="message">Message</option>
+            <option value="committer">Committer</option>
+          </select>
+        </div>
+        <div id="history-search-status" class="history-search-status"></div>
+        <div id="history-search-coverage" class="note history-search-note" style="display:none"></div>
+      </div>
       <div id="history-cap" class="note" style="display:none"></div>
       <ul class="commit-list" id="commit-list"></ul>
       <button class="show-more" id="show-more" style="display:none">Show older commits</button>
       <div class="empty" id="history-empty" style="display:none">No history yet</div>
     </section>
 
+    <section id="tab-conversations" style="display:none">
     <div class="generated" id="generated-at"></div>
   </main>
 </div>
@@ -1091,6 +1202,22 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     sHtml += '<div class="ctx-bar-track"><div class="ctx-bar-fill" id="ctx-bar-fill" style="width:0%;background:' + barColor + '"></div></div>';
     sHtml += '<div class="ctx-bar-text">' + (total - used > 0 ? fmtK(total - used) + ' tokens remaining' : 'Context full') + '</div>';
 
+    // Add conversation info if available
+    var selectedConvId = DATA.selectedConversationId || (DATA.conversations && DATA.conversations[0] && DATA.conversations[0].id);
+    if (selectedConvId) {
+      var conv = DATA.conversations && DATA.conversations.find(function(c) { return c.id === selectedConvId; });
+      var convLabel = (conv && (conv.label || conv.id)) || selectedConvId;
+      var convDate = conv && (conv.last_run_completion || conv.created_at);
+      var convDateStr = convDate ? new Date(convDate).toLocaleDateString() : "";
+      sHtml += "<div class=\"ctx-conversation-info\" style=\"margin-top:12px;padding-top:12px;border-top:1px solid var(--border);\">";
+      sHtml += "<div class=\"ctx-conversation-label\" style=\"font-size:11px;color:var(--text-muted);margin-bottom:2px;text-transform:uppercase;\">Messages from</div>";
+      sHtml += "<div class=\"ctx-conversation-name\" style=\"font-weight:500;font-size:13px;word-break:break-all;\">" + escHtml(convLabel) + "</div>";
+      if (convDateStr) {
+        sHtml += "<div class=\"ctx-conversation-date\" style=\"font-size:11px;color:var(--text-muted);\">" + escHtml(convDateStr) + "</div>";
+      }
+      sHtml += "</div>";
+    }
+
     sHtml += '<div class="ctx-legend-title">Estimated usage</div>';
     cats.forEach(function(cat) {
       var cpct = total > 0 ? (cat.tokens / total * 100).toFixed(1) : '0';
@@ -1136,6 +1263,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     document.getElementById('tab-core').style.display = name === 'core' ? '' : 'none';
     document.getElementById('tab-external').style.display = name === 'external' ? '' : 'none';
     document.getElementById('tab-history').style.display = name === 'history' ? '' : 'none';
+    document.getElementById('tab-conversations').style.display = name === 'conversations' ? '' : 'none';
     location.hash = name;
   }
   tabs.forEach(function(el) {
@@ -1359,6 +1487,13 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   var showMore = document.getElementById('show-more');
   var historyEmpty = document.getElementById('history-empty');
   var historyCap = document.getElementById('history-cap');
+  var historySearch = document.getElementById('history-search');
+  var historySearchMode = document.getElementById('history-search-mode');
+  var historySearchStatus = document.getElementById('history-search-status');
+  var historySearchCoverage = document.getElementById('history-search-coverage');
+  var historyQuery = '';
+  var historyMode = 'content';
+  var filteredCommits = commits.slice();
   var visible = 0;
   var STEP = 50;
 
@@ -1474,21 +1609,8 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     if (lcBar) {
       var hash = lcBar.dataset.commitHash;
       activateTab('history');
-      // Ensure enough commits are rendered, then find and expand
       setTimeout(function() {
-        var commitEl = document.querySelector('.commit-item .commit-hash');
-        // Search all rendered commit hashes
-        var allHashes = commitList.querySelectorAll('.commit-hash');
-        for (var k = 0; k < allHashes.length; k++) {
-          if (allHashes[k].textContent.trim() === hash) {
-            var item = allHashes[k].closest('.commit-item');
-            if (item) {
-              item.classList.add('expanded');
-              item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-            break;
-          }
-        }
+        revealCommitByHash(hash);
       }, 50);
     }
   });
@@ -1540,12 +1662,101 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     return html;
   }
 
-  function renderCommitRange(start, end) {
+  function matchesCommitHash(commit, hash) {
+    if (!commit || !hash) return false;
+    return commit.shortHash === hash || commit.hash === hash;
+  }
+
+  function getHistoryModeLabel() {
+    if (historyMode === 'committer') return 'committer';
+    if (historyMode === 'content') return 'content';
+    return 'message';
+  }
+
+  function getHistoryMatchText(commit) {
+    if (historyMode === 'committer') {
+      return String(commit.author || '');
+    }
+    if (historyMode === 'content') {
+      var parts = [];
+      if (commit.stats) parts.push(String(commit.stats));
+      if (commit.diff) parts.push(String(commit.diff));
+      return parts.join('\n');
+    }
+    return String(commit.message || '');
+  }
+
+  function updateHistorySearchCoverage() {
+    if (!historySearchCoverage) return;
+    if (!commits.length || historyMode !== 'content') {
+      historySearchCoverage.style.display = 'none';
+      historySearchCoverage.textContent = '';
+      return;
+    }
+
+    var diffLoadedCount = 0;
+    var truncatedCount = 0;
+    for (var i = 0; i < commits.length; i++) {
+      if (commits[i].diff) diffLoadedCount++;
+      if (commits[i].truncated) truncatedCount++;
+    }
+
+    var statsOnlyCount = commits.length - diffLoadedCount;
+    var message = 'Content search scans diff text for ' + diffLoadedCount + ' recent commits';
+    if (statsOnlyCount > 0) {
+      message += ' and stats/file paths for ' + statsOnlyCount + ' older or capped commits';
+    }
+    if (truncatedCount > 0) {
+      message += '. Some loaded diffs are partial';
+    }
+    historySearchCoverage.textContent = message + '.';
+    historySearchCoverage.style.display = '';
+  }
+  function applyHistoryFilter() {
+    if (!historyQuery) {
+      filteredCommits = commits.slice();
+      return;
+    }
+    filteredCommits = commits.filter(function(commit) {
+      return getHistoryMatchText(commit).toLowerCase().indexOf(historyQuery) !== -1;
+    });
+  }
+
+  function updateHistorySearchStatus() {
+    if (!historySearchStatus) return;
+    if (!commits.length) {
+      historySearchStatus.textContent = '';
+      return;
+    }
+    if (!historyQuery) {
+      historySearchStatus.textContent = commits.length + ' commits';
+      return;
+    }
+    historySearchStatus.textContent = filteredCommits.length + ' of ' + commits.length + ' commits';
+  }
+
+  function updateHistoryEmptyState() {
+    if (commits.length === 0) {
+      historyEmpty.textContent = 'No history yet';
+      historyEmpty.style.display = '';
+      return true;
+    }
+    if (filteredCommits.length === 0) {
+      historyEmpty.textContent = 'No commits matched this ' + getHistoryModeLabel() + ' search';
+      historyEmpty.style.display = '';
+      return true;
+    }
+    historyEmpty.style.display = 'none';
+    historyEmpty.textContent = 'No history yet';
+    return false;
+  }
+
+  function renderCommitRange(commitSet, start, end) {
     var html = '';
     for (var i = start; i < end; i++) {
-      var c = commits[i];
+      var c = commitSet[i];
       var title = String(c.message || '').split('\n')[0];
-      html += '<li class="commit-item" data-idx="' + i + '">';
+      html += '<li class="commit-item" data-idx="' + i + '" data-commit-hash="' + escAttr(c.shortHash || c.hash || '') + '">';
       html += '<div class="commit-head">';
       var diffStats = parseDiffStats(c.stats);
       html += '<div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px">';
@@ -1579,7 +1790,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
         if (c.truncated) html += '<div class="note">[diff truncated]</div>';
       } else if (c.truncated) {
         html += '<div class="note">[diff not available due to payload cap]</div>';
-      } else if (i >= 50) {
+      } else if (commits.indexOf(c) >= 50) {
         html += '<div class="note">[diff not loaded for older commits]</div>';
       }
       html += '</div>';
@@ -1589,25 +1800,85 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   }
 
   function renderMore() {
-    var next = Math.min(visible + STEP, commits.length);
-    commitList.innerHTML += renderCommitRange(visible, next);
+    var next = Math.min(visible + STEP, filteredCommits.length);
+    commitList.innerHTML += renderCommitRange(filteredCommits, visible, next);
     visible = next;
 
-    if (visible >= commits.length) {
+    if (visible >= filteredCommits.length) {
       showMore.style.display = 'none';
     } else {
       showMore.style.display = '';
-      showMore.textContent = 'Show older commits (' + (commits.length - visible) + ' remaining)';
+      showMore.textContent = 'Show older commits (' + (filteredCommits.length - visible) + ' remaining)';
     }
   }
 
-  if (!commits.length) {
-    historyEmpty.style.display = '';
-  } else {
+  function rerenderHistory() {
+    visible = 0;
+    commitList.innerHTML = '';
+    updateHistorySearchStatus();
+    updateHistorySearchCoverage();
+    if (updateHistoryEmptyState()) {
+      showMore.style.display = 'none';
+      return;
+    }
     renderMore();
   }
 
+  function syncHistoryFilterFromControls() {
+    historyQuery = String(historySearch.value || '').trim().toLowerCase();
+    historyMode = historySearchMode.value === 'committer'
+      ? 'committer'
+      : historySearchMode.value === 'content'
+        ? 'content'
+        : 'message';
+    applyHistoryFilter();
+    rerenderHistory();
+  }
+
+  function revealCommitByHash(hash) {
+    if (!hash) return;
+    var targetIndex = -1;
+    for (var i = 0; i < filteredCommits.length; i++) {
+      if (matchesCommitHash(filteredCommits[i], hash)) {
+        targetIndex = i;
+        break;
+      }
+    }
+
+    if (targetIndex === -1 && historyQuery) {
+      historySearch.value = '';
+      historyQuery = '';
+      applyHistoryFilter();
+      rerenderHistory();
+      for (var j = 0; j < filteredCommits.length; j++) {
+        if (matchesCommitHash(filteredCommits[j], hash)) {
+          targetIndex = j;
+          break;
+        }
+      }
+    }
+
+    if (targetIndex === -1) return;
+    while (visible <= targetIndex) {
+      renderMore();
+    }
+
+    var items = commitList.querySelectorAll('.commit-item');
+    for (var k = 0; k < items.length; k++) {
+      if (items[k].dataset.commitHash === hash) {
+        items[k].classList.add('expanded');
+        items[k].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        break;
+      }
+    }
+  }
+
+  applyHistoryFilter();
+  rerenderHistory();
+
   showMore.addEventListener('click', renderMore);
+  historySearch.addEventListener('input', syncHistoryFilterFromControls);
+  historySearchMode.addEventListener('change', syncHistoryFilterFromControls);
 
   commitList.addEventListener('click', function(ev) {
     var head = ev.target.closest('.commit-head');
@@ -1616,6 +1887,74 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
     if (!item) return;
     item.classList.toggle('expanded');
   });
+
+
+  // ---- Conversations tab ----
+  var conversations = DATA.conversations || [];
+  var convListEl = document.getElementById('conversations-list');
+  var messagesPanelEl = document.getElementById('messages-panel');
+
+  function renderConversationsTab() {
+    if (!conversations.length) {
+      convListEl.innerHTML = '<div class="empty">No conversations found</div>';
+      return;
+    }
+
+    var html = '';
+    conversations.forEach(function(conv) {
+      var label = conv.label || conv.id;
+      var date = conv.last_run_completion || conv.created_at;
+      var dateStr = date ? new Date(date).toLocaleDateString() : '';
+      html += '<div class="conversation-item" data-conv-id="' + escAttr(conv.id) + '">';
+      html += '<div class="conv-name">' + escHtml(label) + '</div>';
+      html += '<div class="conv-meta">' + escHtml(dateStr) + '</div>';
+      html += '</div>';
+    });
+    convListEl.innerHTML = html;
+  }
+
+  convListEl.addEventListener('click', function(ev) {
+    var item = ev.target.closest('.conversation-item');
+    if (!item) return;
+    var convId = item.dataset.convId;
+    loadConversationMessages(convId);
+  });
+
+  function loadConversationMessages(convId) {
+    var msgs = DATA.messages || [];
+    var filtered = msgs.filter(function(m) { return m.conversation_id === convId; });
+
+    if (!filtered.length) {
+      messagesPanelEl.innerHTML = '<div class="empty">No messages in this conversation</div>';
+      return;
+    }
+
+    var html = '';
+    filtered.forEach(function(msg) {
+      html += '<div class="message-item role-' + escAttr(msg.role) + '">';
+      html += '<div class="msg-role">' + escHtml(msg.role) + '</div>';
+      html += '<div class="msg-content">' + renderContent(msg.content) + '</div>';
+      html += '</div>';
+    });
+    messagesPanelEl.innerHTML = html;
+  }
+
+  function renderContent(content) {
+    if (typeof content === 'string') {
+      return md.render(content);
+    }
+    if (Array.isArray(content)) {
+      return content.map(function(part) {
+        if (typeof part === 'string') return escHtml(part);
+        if (part && part.type === 'text') return md.render(part.text || '');
+        if (part && part.type === 'tool_use') return '<code>' + escHtml(part.name || 'tool') + '</code>';
+        return '';
+      }).join('');
+    }
+    return '';
+  }
+
+  renderConversationsTab();
 
   var hash = String(location.hash || '').replace('#', '');
   if (hash === 'context') activateTab('context');

@@ -161,6 +161,7 @@ export async function runPermissionRequestHooks(
   permissionType: "allow" | "deny" | "ask",
   scope?: "session" | "project" | "user",
   workingDirectory: string = process.cwd(),
+  agentId?: string,
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "PermissionRequest",
@@ -176,6 +177,7 @@ export async function runPermissionRequestHooks(
     working_directory: workingDirectory,
     tool_name: toolName,
     tool_input: toolInput,
+    agent_id: agentId,
     permission: {
       type: permissionType,
       scope,

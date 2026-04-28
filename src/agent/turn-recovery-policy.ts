@@ -9,7 +9,7 @@
 import { randomUUID } from "node:crypto";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { isCloudflareEdge52xHtmlError } from "../cli/helpers/errorFormatter";
+import { isCloudflareEdge52xErrorText } from "../cli/helpers/errorFormatter";
 import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
 
 // ── Error fragment constants ────────────────────────────────────────
@@ -72,7 +72,7 @@ const EMPTY_RESPONSE_RETRY_BASE_DELAY_MS = 500;
 
 function isCloudflareEdge52xDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
-  return isCloudflareEdge52xHtmlError(detail);
+  return isCloudflareEdge52xErrorText(detail);
 }
 
 /**
@@ -368,6 +368,21 @@ export interface PendingApprovalInfo {
   toolArgs: string;
 }
 
+export const STALE_APPROVAL_RECOVERY_DENIAL_REASON =
+  "Auto-denied: stale approval from interrupted session";
+
+export function buildFreshDenialApprovals(
+  serverApprovals: PendingApprovalInfo[],
+  denialReason: string,
+): NonNullable<ApprovalCreate["approvals"]> {
+  return serverApprovals.map((approval) => ({
+    type: "approval" as const,
+    tool_call_id: approval.toolCallId,
+    approve: false,
+    reason: denialReason,
+  }));
+}
+
 /**
  * Strip stale approval payloads from the message input array and optionally
  * prepend fresh denial results for the actual pending approvals from the server.
@@ -385,12 +400,7 @@ export function rebuildInputWithFreshDenials(
   if (serverApprovals.length > 0) {
     const denials: ApprovalCreate = {
       type: "approval",
-      approvals: serverApprovals.map((a) => ({
-        type: "approval" as const,
-        tool_call_id: a.toolCallId,
-        approve: false,
-        reason: denialReason,
-      })),
+      approvals: buildFreshDenialApprovals(serverApprovals, denialReason),
       otid: randomUUID(),
     };
     return [denials, ...stripped];

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
 interface EditArgs {
@@ -139,7 +140,7 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       "expected_replacements must be a positive integer when provided.",
     );
   }
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
     : path.resolve(userCwd, file_path);

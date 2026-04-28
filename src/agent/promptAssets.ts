@@ -1,7 +1,6 @@
 // Additional system prompts for /system command
 
 import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
-import autoInitReminder from "./prompts/auto_init_reminder.txt";
 import humanPrompt from "./prompts/human.mdx";
 import humanKawaiiPrompt from "./prompts/human_kawaii.mdx";
 import humanLinusPrompt from "./prompts/human_linus.mdx";
@@ -36,7 +35,6 @@ export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
 export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
-export const AUTO_INIT_REMINDER = autoInitReminder;
 export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
 export const SLEEPTIME_MEMORY_PERSONA = sleeptimePersona;
 
@@ -304,7 +302,7 @@ export async function resolveAndBuildSystemPrompt(
  * 3. Subagent name → subagent's system prompt
  * 4. Unknown → throws (callers should validate first via validateSystemPromptPreset)
  *
- * @param systemPromptPreset - The system prompt preset (e.g., "letta", "source-claude") or subagent name (e.g., "explore")
+ * @param systemPromptPreset - The system prompt preset (e.g., "letta", "source-claude") or subagent name (e.g., "recall")
  * @returns The resolved system prompt content
  * @throws Error if the ID doesn't match any preset or subagent
  */

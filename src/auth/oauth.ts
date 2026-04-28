@@ -37,29 +37,130 @@ export interface OAuthError {
   error_description?: string;
 }
 
+function getOAuthAuthHost(): string {
+  try {
+    return new URL(OAUTH_CONFIG.authBaseUrl).host;
+  } catch {
+    return OAUTH_CONFIG.authBaseUrl;
+  }
+}
+
+function getErrorLikeMessage(value: unknown): string | null {
+  if (value instanceof Error) {
+    return value.message.trim() || null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const message = (value as { message?: unknown }).message;
+  return typeof message === "string" && message.trim().length > 0
+    ? message.trim()
+    : null;
+}
+
+function getErrorLikeCode(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const code = (value as { code?: unknown }).code;
+  return typeof code === "string" && code.trim().length > 0
+    ? code.trim()
+    : null;
+}
+
+function isGenericFetchFailureMessage(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return (
+    normalized === "fetch failed" || normalized === "network request failed"
+  );
+}
+
+function isOAuthTransportError(error: unknown): error is Error {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if (isGenericFetchFailureMessage(error.message)) {
+    return true;
+  }
+
+  return error.name === "TypeError" && error.cause !== undefined;
+}
+
+function extractOAuthTransportDetail(error: Error): string | null {
+  const directMessage = isGenericFetchFailureMessage(error.message)
+    ? null
+    : error.message.trim() || null;
+  const causeMessage = getErrorLikeMessage(error.cause);
+  const causeCode = getErrorLikeCode(error.cause);
+
+  let detail = causeMessage ?? directMessage;
+  if (!detail && causeCode) {
+    detail = causeCode;
+  }
+
+  if (detail && causeCode && !detail.includes(causeCode)) {
+    detail = `${detail} (${causeCode})`;
+  }
+
+  return detail;
+}
+
+function toOAuthActionError(
+  action: string,
+  error: unknown,
+  options?: { browserHint?: boolean },
+): Error {
+  if (isOAuthTransportError(error)) {
+    const host = getOAuthAuthHost();
+    const detail = extractOAuthTransportDetail(error);
+    const reachabilityHint = options?.browserHint
+      ? "Browser authorization may have succeeded, but the CLI could not reach Letta auth servers from this machine."
+      : "The CLI could not reach Letta auth servers from this machine.";
+
+    return new Error(
+      `Failed to ${action} from ${host}${detail ? `: ${detail}` : ""}. ${reachabilityHint} Check your network, DNS, proxy, VPN, or TLS settings.`,
+    );
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(`Failed to ${action}: ${String(error)}`);
+}
+
 /**
  * Device Code Flow - Step 1: Request device code
  */
 export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
-  const response = await fetch(
-    `${OAUTH_CONFIG.authBaseUrl}/api/oauth/device/code`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: OAUTH_CONFIG.clientId,
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    const error = (await response.json()) as OAuthError;
-    throw new Error(
-      `Failed to request device code: ${error.error_description || error.error}`,
+  const authHost = getOAuthAuthHost();
+  try {
+    const response = await fetch(
+      `${OAUTH_CONFIG.authBaseUrl}/api/oauth/device/code`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: OAUTH_CONFIG.clientId,
+        }),
+      },
     );
-  }
 
-  return (await response.json()) as DeviceCodeResponse;
+    if (!response.ok) {
+      const error = (await response.json()) as OAuthError;
+      throw new Error(
+        `Failed to request device code from ${authHost}: ${error.error_description || error.error}`,
+      );
+    }
+
+    return (await response.json()) as DeviceCodeResponse;
+  } catch (error) {
+    throw toOAuthActionError("request device code", error);
+  }
 }
 
 /**
@@ -130,7 +231,9 @@ export async function pollForToken(
         context: "auth_oauth_token_poll",
       });
       if (error instanceof Error) {
-        throw error;
+        throw toOAuthActionError("poll for OAuth token", error, {
+          browserHint: true,
+        });
       }
       throw new Error(`Failed to poll for token: ${String(error)}`);
     }
@@ -147,27 +250,35 @@ export async function refreshAccessToken(
   deviceId: string,
   deviceName?: string,
 ): Promise<TokenResponse> {
-  const response = await fetch(`${OAUTH_CONFIG.authBaseUrl}/api/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      grant_type: "refresh_token",
-      client_id: OAUTH_CONFIG.clientId,
-      refresh_token: refreshToken,
-      refresh_token_mode: "new",
-      device_id: deviceId,
-      ...(deviceName && { device_name: deviceName }),
-    }),
-  });
-
-  if (!response.ok) {
-    const error = (await response.json()) as OAuthError;
-    throw new Error(
-      `Failed to refresh access token: ${error.error_description || error.error}`,
+  const authHost = getOAuthAuthHost();
+  try {
+    const response = await fetch(
+      `${OAUTH_CONFIG.authBaseUrl}/api/oauth/token`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          client_id: OAUTH_CONFIG.clientId,
+          refresh_token: refreshToken,
+          refresh_token_mode: "new",
+          device_id: deviceId,
+          ...(deviceName && { device_name: deviceName }),
+        }),
+      },
     );
-  }
 
-  return (await response.json()) as TokenResponse;
+    if (!response.ok) {
+      const error = (await response.json()) as OAuthError;
+      throw new Error(
+        `Failed to refresh access token from ${authHost}: ${error.error_description || error.error}`,
+      );
+    }
+
+    return (await response.json()) as TokenResponse;
+  } catch (error) {
+    throw toOAuthActionError("refresh access token", error);
+  }
 }
 
 /**

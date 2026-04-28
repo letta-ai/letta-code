@@ -7,7 +7,14 @@ import { getVersion } from "../version";
 export type TelemetrySurface = "tui" | "headless" | "websocket";
 
 export interface TelemetryEvent {
-  type: "session_start" | "session_end" | "tool_usage" | "error" | "user_input";
+  type:
+    | "session_start"
+    | "session_end"
+    | "tool_usage"
+    | "error"
+    | "user_input"
+    | "reflection_start"
+    | "reflection_end";
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -65,6 +72,44 @@ export interface UserInputData {
   model_id: string;
 }
 
+export interface ReflectionStartData {
+  trigger_source: "manual" | "step-count" | "compaction-event";
+  subagent_id?: string;
+  conversation_id?: string;
+  start_message_id?: string;
+  end_message_id?: string;
+}
+
+export interface ReflectionEndData {
+  trigger_source: "manual" | "step-count" | "compaction-event";
+  success: boolean;
+  subagent_id?: string;
+  conversation_id?: string;
+  error?: string;
+}
+
+/**
+ * Returns true for error messages that are non-actionable noise:
+ * - Billing/plan limit responses (premium-unavailable, usage-exceeded, not-enough-credits)
+ * - User-initiated actions (cancelled, Ctrl+Z)
+ * - Transient connection errors (DNS, SSL, socket hang up) — NOT Cloudflare 521/520 (filtered in PostHog)
+ * - Environment issues (git/npm not installed)
+ * - Expected concurrency (409 CONFLICT)
+ * - Placeholder agent names (@author/agent)
+ */
+function isNonActionableError(message: string): boolean {
+  return (
+    /premium-unavailable|not-enough-credits|usage-exceeded/i.test(message) ||
+    /Cancelled by user|SIGTSTP/i.test(message) ||
+    /ENOTFOUND|EAI_AGAIN|ECONNRESET|socket hang up|EPROTO/i.test(message) ||
+    /Connection error\./i.test(message) ||
+    /\{"isTrusted":\s*true\}/.test(message) ||
+    /spawn (git|npm) ENOENT/.test(message) ||
+    /\bCONFLICT\b/.test(message) ||
+    /@author\/agent not found/.test(message)
+  );
+}
+
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
   private sessionId: string;
@@ -78,6 +123,19 @@ class TelemetryManager {
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
   private serverVersion: string | null = null;
+
+  private async resolveTelemetryApiKey(): Promise<string | undefined> {
+    if (process.env.LETTA_API_KEY) {
+      return process.env.LETTA_API_KEY;
+    }
+
+    try {
+      const settings = await settingsManager.getSettingsWithSecureTokens();
+      return settings.env?.LETTA_API_KEY || undefined;
+    } catch {
+      return undefined;
+    }
+  }
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_BATCH_SIZE = 100;
   private sessionStatsGetter?: () => {
@@ -116,6 +174,21 @@ class TelemetryManager {
     }
 
     return true;
+  }
+
+  /**
+   * Check if the user is connected to Letta Cloud (api.letta.com)
+   */
+  private isCloudUser(): boolean {
+    try {
+      return getServerUrl().includes("api.letta.com");
+    } catch {
+      // Settings not initialized yet — check env var directly
+      return (
+        !process.env.LETTA_BASE_URL ||
+        process.env.LETTA_BASE_URL.includes("api.letta.com")
+      );
+    }
   }
 
   /**
@@ -166,9 +239,12 @@ class TelemetryManager {
 
     process.on("uncaughtException", (error) => {
       try {
+        const msg = error instanceof Error ? error.message : String(error);
+        // Broken pipe/TTY — not actionable (e.g. terminal closed while writing)
+        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
         this.trackError(
           "uncaught_exception",
-          error instanceof Error ? error.message : String(error),
+          msg,
           "process_uncaught_exception",
         );
         this.flush().catch(() => {
@@ -181,9 +257,14 @@ class TelemetryManager {
 
     process.on("unhandledRejection", (reason) => {
       try {
+        const msg = reason instanceof Error ? reason.message : String(reason);
+        // Broken pipe/TTY — not actionable
+        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
+        // Rate limits surfacing as unhandled rejections — expected under load
+        if (/\b429\b/.test(msg) && /rate.?limit/i.test(msg)) return;
         this.trackError(
           "unhandled_rejection",
-          reason instanceof Error ? reason.message : String(reason),
+          msg,
           "process_unhandled_rejection",
         );
         this.flush().catch(() => {
@@ -213,7 +294,9 @@ class TelemetryManager {
       | SessionEndData
       | ToolUsageData
       | ErrorData
-      | UserInputData,
+      | UserInputData
+      | ReflectionStartData
+      | ReflectionEndData,
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
@@ -449,6 +532,16 @@ class TelemetryManager {
       recentChunks?: Record<string, unknown>[];
     },
   ) {
+    // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
+    if (!this.isCloudUser()) {
+      return;
+    }
+
+    // Skip non-actionable errors that create noise
+    if (isNonActionableError(errorMessage)) {
+      return;
+    }
+
     const data: ErrorData = {
       error_type: errorType,
       error_message: errorMessage,
@@ -483,6 +576,50 @@ class TelemetryManager {
   }
 
   /**
+   * Track reflection start events (manual and auto-triggered).
+   */
+  trackReflectionStart(
+    triggerSource: "manual" | "step-count" | "compaction-event",
+    options?: {
+      subagentId?: string;
+      conversationId?: string;
+      startMessageId?: string;
+      endMessageId?: string;
+    },
+  ) {
+    const data: ReflectionStartData = {
+      trigger_source: triggerSource,
+      subagent_id: options?.subagentId,
+      conversation_id: options?.conversationId,
+      start_message_id: options?.startMessageId,
+      end_message_id: options?.endMessageId,
+    };
+    this.track("reflection_start", data);
+  }
+
+  /**
+   * Track reflection completion events.
+   */
+  trackReflectionEnd(
+    triggerSource: "manual" | "step-count" | "compaction-event",
+    success: boolean,
+    options?: {
+      subagentId?: string;
+      conversationId?: string;
+      error?: string;
+    },
+  ) {
+    const data: ReflectionEndData = {
+      trigger_source: triggerSource,
+      success,
+      subagent_id: options?.subagentId,
+      conversation_id: options?.conversationId,
+      error: options?.error,
+    };
+    this.track("reflection_end", data);
+  }
+
+  /**
    * Flush events to the server
    */
   async flush(): Promise<void> {
@@ -493,7 +630,7 @@ class TelemetryManager {
     const eventsToSend = [...this.events];
     this.events = [];
 
-    const apiKey = process.env.LETTA_API_KEY;
+    const apiKey = await this.resolveTelemetryApiKey();
 
     try {
       // Add 5 second timeout to prevent telemetry from blocking shutdown

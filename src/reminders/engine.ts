@@ -29,7 +29,6 @@ export interface AgentReminderContext {
   name: string | null;
   description?: string | null;
   lastRunAt?: string | null;
-  serverUrl?: string;
   conversationId?: string;
 }
 
@@ -37,7 +36,7 @@ export interface SharedReminderContext {
   mode: SharedReminderMode;
   agent: AgentReminderContext;
   state: SharedReminderState;
-  sessionContextReminderEnabled: boolean;
+  systemInfoReminderEnabled: boolean;
   reflectionSettings: ReflectionSettings;
   skillSources: SkillSource[];
   resolvePlanModeReminder: () => string | Promise<string>;
@@ -66,7 +65,7 @@ type SharedReminderProvider = (
 async function buildAgentInfoReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  if (context.state.hasSentAgentInfo) {
+  if (!context.systemInfoReminderEnabled || context.state.hasSentAgentInfo) {
     return null;
   }
 
@@ -77,7 +76,6 @@ async function buildAgentInfoReminder(
       description: context.agent.description,
       lastRunAt: context.agent.lastRunAt,
     },
-    serverUrl: context.agent.serverUrl,
     conversationId: context.agent.conversationId,
   });
 
@@ -102,7 +100,7 @@ async function buildSecretsInfoReminder(
     }
 
     const list = names.map((n) => `- \`$${n}\``).join("\n");
-    return `${SYSTEM_REMINDER_OPEN}Use \`$SECRET_NAME\` syntax in shell commands to reference these secrets:\n\n${list}\n\nThe actual secret value will be automatically substituted before the command runs, and scrubbed from the output. You never see the real value — just use \`$SECRET_NAME\` directly (e.g. \`curl -H "Authorization: Bearer $MY_API_KEY" ...\`).\n${SYSTEM_REMINDER_CLOSE}`;
+    return `${SYSTEM_REMINDER_OPEN}\nThe following secrets are set on your agent and available for use.\nReference them with \`$SECRET_NAME\` in shell commands — substitution happens automatically at exec time:\n${list}\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",
@@ -116,7 +114,7 @@ async function buildSessionContextReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
   if (
-    !context.sessionContextReminderEnabled ||
+    !context.systemInfoReminderEnabled ||
     context.state.hasSentSessionContext
   ) {
     return null;
@@ -157,6 +155,8 @@ const PERMISSION_MODE_DESCRIPTIONS = {
   default: "Normal approval flow.",
   acceptEdits: "File edits auto-approved.",
   plan: "Read-only mode. Focus on exploration and planning.",
+  memory:
+    "Memory-scoped mode. Reads are broad; mutations are limited to allowed memory roots.",
   bypassPermissions: "All tools auto-approved. Bias toward action.",
 } as const;
 
@@ -255,15 +255,6 @@ async function buildReflectionCompactionReminder(
   }
 
   return buildCompactionMemoryReminder(context.agent.id);
-}
-
-async function buildAutoInitReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (!context.state.pendingAutoInitReminder) return null;
-  context.state.pendingAutoInitReminder = false;
-  const { AUTO_INIT_REMINDER } = await import("../agent/promptAssets.js");
-  return AUTO_INIT_REMINDER;
 }
 
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
@@ -382,7 +373,6 @@ export const sharedReminderProviders: Record<
   "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
-  "auto-init": buildAutoInitReminder,
 };
 
 export function assertSharedReminderCoverage(): void {

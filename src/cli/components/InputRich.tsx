@@ -64,7 +64,8 @@ function getReasoningEffortTag(
   effort: ModelReasoningEffort | null | undefined,
 ): string | null {
   if (effort === "none") return null;
-  if (effort === "xhigh") return "max";
+  if (effort === "xhigh") return "xhigh";
+  if (effort === "max") return "max";
   if (effort === "minimal") return "minimal";
   if (effort === "low") return "low";
   if (effort === "medium") return "medium";
@@ -304,9 +305,10 @@ const InputFooter = memo(function InputFooter({
     const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
     const agentId =
       a.agentURL?.match(/\/(?:agents|chat)\/([^/?#]+)/)?.[1] ?? null;
+    const rawType = a.type.toLowerCase();
     return {
       id: a.id,
-      typeLabel: a.type.toLowerCase(),
+      typeLabel: rawType === "reflection" ? "dreaming" : rawType,
       chatUrl: agentId ? buildChatUrl(agentId) : null,
       elapsed: `${elapsedS}s`,
     };
@@ -758,6 +760,7 @@ export function Input({
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
+  inputDisabled = false,
   ralphActive = false,
   ralphPending = false,
   ralphPendingYolo = false,
@@ -774,7 +777,6 @@ export function Input({
   statusLinePadding = 0,
   statusLinePrompt,
   onCycleReasoningEffort,
-  onDraftChange,
   footerNotification,
 }: {
   visible?: boolean;
@@ -803,6 +805,7 @@ export function Input({
   messageQueue?: QueuedMessage[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
+  inputDisabled?: boolean;
   ralphActive?: boolean;
   ralphPending?: boolean;
   ralphPendingYolo?: boolean;
@@ -819,7 +822,6 @@ export function Input({
   statusLinePadding?: number;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
-  onDraftChange?: (draft: string) => void;
   footerNotification?: string | null;
 }) {
   const [value, setValue] = useState("");
@@ -886,7 +888,7 @@ export function Input({
   const promptVisualWidth = stringWidth(promptChar) + 1; // +1 for trailing space
   const contentWidth = Math.max(0, columns - promptVisualWidth);
 
-  const interactionEnabled = visible && inputEnabled;
+  const interactionEnabled = visible && inputEnabled && !inputDisabled;
   const reserveInputSpace = !collapseInputWhenDisabled;
   const hideFooter = !interactionEnabled || value.startsWith("/");
   const inputRowLines = useMemo(() => {
@@ -962,19 +964,10 @@ export function Input({
 
   // Restore input from error (only if current value is empty)
   useEffect(() => {
-    if (restoredInput === null || restoredInput === undefined) return;
-
-    // Empty string is a deliberate external clear request (e.g. draft consumed).
-    if (restoredInput === "") {
-      setValue("");
-      onRestoredInputConsumed?.();
-      return;
-    }
-
-    if (value === "") {
+    if (restoredInput && value === "") {
       setValue(restoredInput);
       onRestoredInputConsumed?.();
-    } else {
+    } else if (restoredInput && value !== "") {
       // Input has content, don't clobber - just consume the restored value
       onRestoredInputConsumed?.();
     }
@@ -1360,8 +1353,7 @@ export function Input({
       setAtEndBoundary(false);
     }
     previousValueRef.current = value;
-    onDraftChange?.(value);
-  }, [value, onDraftChange]);
+  }, [value]);
 
   // Exit history mode when user starts typing
   useEffect(() => {

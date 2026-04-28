@@ -1,4 +1,3 @@
-import WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import type {
   ApprovalResponseBody,
@@ -10,6 +9,7 @@ import {
   setLoopStatus,
 } from "./protocol-outbound";
 import { evictConversationRuntimeIfIdle } from "./runtime";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { ConversationRuntime } from "./types";
 
 export function rememberPendingApprovalBatchIds(
@@ -240,21 +240,66 @@ export function rejectPendingApprovalResolvers(
 
 export function requestApprovalOverWS(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   requestId: string,
   controlRequest: ControlRequest,
 ): Promise<ApprovalResponseBody> {
-  if (socket.readyState !== WebSocket.OPEN) {
+  if (!isListenerTransportOpen(socket)) {
     return Promise.reject(new Error("WebSocket not open"));
   }
 
+  const abortSignal = runtime.activeAbortController?.signal ?? null;
+  const isInterrupted = () =>
+    runtime.cancelRequested || abortSignal?.aborted === true;
+
+  if (isInterrupted()) {
+    return Promise.reject(new Error("Cancelled by user"));
+  }
+
   return new Promise<ApprovalResponseBody>((resolve, reject) => {
+    let settled = false;
+    const cleanupAbortListener = () => {
+      abortSignal?.removeEventListener("abort", handleAbort);
+    };
+    const wrappedResolve = (response: ApprovalResponseBody) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanupAbortListener();
+      resolve(response);
+    };
+    const wrappedReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanupAbortListener();
+      reject(error);
+    };
+    const handleAbort = () => {
+      runtime.pendingApprovalResolvers.delete(requestId);
+      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
+      wrappedReject(new Error("Cancelled by user"));
+    };
+
+    abortSignal?.addEventListener("abort", handleAbort, { once: true });
+    if (isInterrupted()) {
+      handleAbort();
+      return;
+    }
+
     runtime.pendingApprovalResolvers.set(requestId, {
-      resolve,
-      reject,
+      resolve: wrappedResolve,
+      reject: wrappedReject,
       controlRequest,
     });
     runtime.listener.approvalRuntimeKeyByRequestId.set(requestId, runtime.key);
+    if (isInterrupted()) {
+      handleAbort();
+      return;
+    }
+    runtime.lastStopReason = "requires_approval";
     setLoopStatus(runtime, "WAITING_ON_APPROVAL");
     emitLoopStatusIfOpen(runtime.listener, {
       agent_id: runtime.agentId,

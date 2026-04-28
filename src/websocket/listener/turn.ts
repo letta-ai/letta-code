@@ -4,12 +4,16 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
-import { fetchRunErrorDetail } from "../../agent/approval-recovery";
+import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
-import { setConversationId, setCurrentAgentId } from "../../agent/context";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  setConversationId,
+  setCurrentAgentId,
+} from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   getStreamToolContextId,
@@ -27,7 +31,7 @@ import {
   type ReflectionTrigger,
 } from "../../cli/helpers/memoryReminder";
 import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
-import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge";
+import { isReflectionSubagentActive } from "../../cli/helpers/reflectionGate";
 import {
   collectReflectionSweepSegments,
   finalizeReflectionSegmentReview,
@@ -48,7 +52,9 @@ import { buildListenReminderContext } from "../../reminders/listenContext";
 import { getPlanModeReminder } from "../../reminders/planModeReminder";
 import { syncReminderStateFromContextTracker } from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
+import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
+import { extractTelemetryInputText } from "../../telemetry/input";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
@@ -74,13 +80,16 @@ import {
   emitCanonicalMessageDelta,
   emitDeviceStatusIfOpen,
   emitInterruptedStatusDelta,
-  emitLoopErrorDelta,
   emitLoopStatusUpdate,
   emitRetryDelta,
   emitRuntimeStateUpdates,
-  emitStatusDelta,
   setLoopStatus,
 } from "./protocol-outbound";
+import {
+  emitLoopErrorNotice,
+  emitRecoverableRetryNotice,
+  emitRecoverableStatusNotice,
+} from "./recoverable-notices";
 import {
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
@@ -98,40 +107,62 @@ import {
   sendMessageStreamWithRetry,
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
-import type { ConversationRuntime, IncomingMessage } from "./types";
+import type {
+  ConversationRuntime,
+  InboundMessagePayload,
+  IncomingMessage,
+} from "./types";
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+
+function trackListenerUserInput(
+  messages: InboundMessagePayload[],
+  modelId: string,
+): void {
+  for (const message of messages) {
+    if (!("role" in message) || message.role !== "user") {
+      continue;
+    }
+
+    const inputText = extractTelemetryInputText(message.content);
+    if (inputText.length === 0) {
+      continue;
+    }
+
+    telemetry.trackUserInput(inputText, "user", modelId);
+  }
+}
+
+export const __listenerTurnTestUtils = {
+  trackListenerUserInput,
+};
 
 function hasActiveReflectionSubagent(
   agentId: string,
   conversationId: string,
 ): boolean {
-  return getSubagents().some((agent) => {
-    if (agent.type.toLowerCase() !== "reflection") {
-      return false;
-    }
-    if (agent.status !== "pending" && agent.status !== "running") {
-      return false;
-    }
-    if (!agent.parentAgentId) {
-      return false;
-    }
-    const parentConversationId = agent.parentConversationId ?? "default";
-    return (
-      agent.parentAgentId === agentId && parentConversationId === conversationId
-    );
-  });
+  return isReflectionSubagentActive(getSubagents(), agentId, conversationId);
+}
+
+function escapeTaskNotificationSummary(summary: string): string {
+  return summary
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
+  socket: ListenerTransport;
   agentId: string;
   conversationId: string;
   workingDirectory: string;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, agentId, conversationId, workingDirectory } = params;
+    const { runtime, socket, agentId, conversationId, workingDirectory } =
+      params;
 
     if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
       return false;
@@ -165,7 +196,6 @@ function buildMaybeLaunchReflectionSubagent(params: {
 
       const memoryDir = getMemoryFilesystemRoot(agentId);
       const parentMemory = await buildParentMemorySnapshot(memoryDir);
-
       const { spawnBackgroundSubagentTask } = await import(
         "../../tools/impl/Task"
       );
@@ -230,7 +260,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
               ...(error ? { error } : {}),
             });
 
-            const msg = await handleMemorySubagentCompletion(
+            const completionMessage = await handleMemorySubagentCompletion(
               {
                 agentId,
                 conversationId: segment.conversationId,
@@ -246,13 +276,24 @@ function buildMaybeLaunchReflectionSubagent(params: {
                 logRecompileFailure: (message) => debugWarn("memory", message),
               },
             );
-
-            addToMessageQueue({
-              kind: "task_notification",
-              text: `<task-notification><summary>${msg}</summary></task-notification>`,
-              agentId,
-              conversationId: segment.conversationId,
-            });
+            const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+              completionMessage,
+            )}</summary></task-notification>`;
+            emitCanonicalMessageDelta(
+              socket,
+              runtime,
+              {
+                type: "message",
+                id: `user-msg-${crypto.randomUUID()}`,
+                date: new Date().toISOString(),
+                message_type: "user_message",
+                content: [{ type: "text", text: notificationXml }],
+              } as StreamDelta,
+              {
+                agent_id: agentId,
+                conversation_id: segment.conversationId,
+              },
+            );
           },
         });
         launchedAny = true;
@@ -284,7 +325,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
 }
 
 function finalizeInterruptedTurn(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     runId?: string | null;
@@ -320,7 +361,7 @@ function finalizeInterruptedTurn(
 
 export async function handleIncomingMessage(
   msg: IncomingMessage,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
@@ -382,6 +423,8 @@ export async function handleIncomingMessage(
   });
 
   try {
+    telemetry.setCurrentAgentId(agentId ?? null);
+
     if (!agentId) {
       runtime.isProcessing = false;
       clearActiveRunState(runtime);
@@ -413,7 +456,15 @@ export async function handleIncomingMessage(
     }
 
     const { normalizeInboundMessages } = await import("./queue");
-    const normalizedMessages = await normalizeInboundMessages(msg.messages);
+    const normalizedMessages = await normalizeInboundMessages(
+      msg.messages,
+      undefined,
+      {
+        imageFailureMode:
+          (msg.channelTurnSources?.length ?? 0) > 0 ? "drop" : "strict",
+      },
+    );
+    trackListenerUserInput(normalizedMessages, "unknown");
     const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
     let queuedInterruptedToolCallIds: string[] = [];
@@ -430,7 +481,19 @@ export async function handleIncomingMessage(
 
     messagesToSend.push(
       ...normalizedMessages.map((m) =>
-        "content" in m && !m.otid ? { ...m, otid: crypto.randomUUID() } : m,
+        "content" in m && !m.otid
+          ? {
+              ...m,
+              // Ensure every client-originated message carries an OTID so the
+              // echoed user_message can reconcile optimistic local transcript
+              // rows with the later canonical backend message.id.
+              otid:
+                "client_message_id" in m &&
+                typeof m.client_message_id === "string"
+                  ? m.client_message_id
+                  : crypto.randomUUID(),
+            }
+          : m,
       ),
     );
 
@@ -484,6 +547,7 @@ export async function handleIncomingMessage(
             maybeLaunchReflectionSubagent: agentId
               ? buildMaybeLaunchReflectionSubagent({
                   runtime,
+                  socket,
                   agentId,
                   conversationId,
                   workingDirectory: turnWorkingDirectory,
@@ -620,13 +684,16 @@ export async function handleIncomingMessage(
 
           if (errorInfo) {
             latestErrorText = errorInfo.message || latestErrorText;
-            emitLoopErrorDelta(socket, runtime, {
+            emitLoopErrorNotice(socket, runtime, {
               message: errorInfo.message || "Stream error",
               stopReason: (errorInfo.error_type as StopReasonType) || "error",
               isTerminal: false,
               runId: runId || errorInfo.run_id,
               agentId,
               conversationId,
+              errorInfo,
+              cancelRequested: runtime.cancelRequested,
+              abortSignal: turnAbortSignal,
             });
           }
 
@@ -714,9 +781,14 @@ export async function handleIncomingMessage(
 
       if (stopReason !== "requires_approval") {
         const lastRunId = runId || msgRunIds[msgRunIds.length - 1] || null;
+        const runErrorInfo = lastRunId
+          ? await fetchRunErrorInfo(lastRunId)
+          : null;
         const errorDetail =
           latestErrorText ||
-          (lastRunId ? await fetchRunErrorDetail(lastRunId) : null);
+          runErrorInfo?.detail ||
+          runErrorInfo?.message ||
+          null;
 
         if (
           shouldAttemptPostStopApprovalRecovery({
@@ -728,7 +800,8 @@ export async function handleIncomingMessage(
           })
         ) {
           postStopApprovalRecoveryRetries += 1;
-          emitStatusDelta(socket, runtime, {
+          emitRecoverableStatusNotice(socket, runtime, {
+            kind: "stale_approval_conflict_recovery",
             message:
               "Recovering from stale approval conflict after interrupted/reconnected turn",
             level: "warning",
@@ -882,6 +955,7 @@ export async function handleIncomingMessage(
         const retriable = await isRetriablePostStopError(
           (stopReason as StopReasonType) || "error",
           lastRunId,
+          errorDetail,
         );
         if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           llmApiErrorRetries += 1;
@@ -894,7 +968,8 @@ export async function handleIncomingMessage(
           const retryMessage =
             getRetryStatusMessage(errorDetail) ||
             `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
-          emitRetryDelta(socket, runtime, {
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
             message: retryMessage,
             reason: "llm_api_error",
             attempt,
@@ -979,13 +1054,16 @@ export async function handleIncomingMessage(
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
 
-        emitLoopErrorDelta(socket, runtime, {
+        emitLoopErrorNotice(socket, runtime, {
           message: errorMessage,
           stopReason: effectiveStopReason,
           isTerminal: true,
           runId: runId,
           agentId,
           conversationId,
+          runErrorInfo: runErrorInfo ?? undefined,
+          cancelRequested: runtime.cancelRequested,
+          abortSignal: turnAbortSignal,
         });
         break;
       }
@@ -1084,12 +1162,15 @@ export async function handleIncomingMessage(
     });
 
     const errorMessage = error instanceof Error ? error.message : String(error);
-    emitLoopErrorDelta(socket, runtime, {
+    emitLoopErrorNotice(socket, runtime, {
       message: errorMessage,
       stopReason: "error",
       isTerminal: true,
       agentId: agentId || undefined,
       conversationId,
+      error,
+      cancelRequested: runtime.cancelRequested,
+      abortSignal: turnAbortSignal,
     });
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
@@ -1110,6 +1191,26 @@ export async function handleIncomingMessage(
       agent_id: agentId || null,
       conversation_id: conversationId,
     });
+
+    try {
+      const currentConversationId = getConversationId();
+      let currentAgentId: string | null = null;
+      try {
+        currentAgentId = getCurrentAgentId();
+      } catch {
+        currentAgentId = null;
+      }
+
+      if (
+        currentAgentId === (agentId ?? null) &&
+        currentConversationId === conversationId
+      ) {
+        setCurrentAgentId(null);
+        setConversationId(null);
+      }
+    } catch {
+      // Best-effort cleanup only. Never let teardown obscure the turn result.
+    }
 
     runtime.activeAbortController = null;
     runtime.cancelRequested = false;

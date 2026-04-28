@@ -4,27 +4,13 @@ import type {
   ImageContent,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth.js";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import { settingsManager } from "../../settings-manager.js";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { debugLog } from "../../utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
-
-/**
- * Check if the server supports images in tool responses.
- * Currently only api.letta.com supports this feature.
- */
-function serverSupportsImageToolReturns(): boolean {
-  const settings = settingsManager.getSettings();
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
-  return baseURL === LETTA_CLOUD_API_URL;
-}
 
 interface ReadArgs {
   file_path: string;
@@ -47,6 +33,8 @@ const IMAGE_EXTENSIONS = new Set([
   ".gif",
   ".webp",
   ".bmp",
+  ".heic",
+  ".heif",
 ]);
 
 function isImageFile(filePath: string): boolean {
@@ -62,6 +50,8 @@ function getMediaType(ext: string): string {
     ".gif": "image/gif",
     ".webp": "image/webp",
     ".bmp": "image/png", // Convert BMP to PNG
+    ".heic": "image/heic",
+    ".heif": "image/heif",
   };
   return types[ext] || "image/png";
 }
@@ -74,7 +64,13 @@ async function readImageFile(
   const mediaType = getMediaType(ext);
 
   // Use shared image resize utility
-  const result = await resizeImageIfNeeded(buffer, mediaType);
+  let result: Awaited<ReturnType<typeof resizeImageIfNeeded>>;
+  try {
+    result = await resizeImageIfNeeded(buffer, mediaType);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read image file: ${filePath} (${detail})`);
+  }
 
   return [
     {
@@ -211,7 +207,7 @@ function formatWithLineNumbers(
 export async function read(args: ReadArgs): Promise<ReadResult> {
   validateRequiredParams(args, ["file_path"], "Read");
   const { file_path, offset, limit } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
     : path.resolve(userCwd, file_path);
@@ -222,13 +218,6 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
 
     // Check if this is an image file
     if (isImageFile(resolvedPath)) {
-      // Check if server supports images in tool responses
-      if (!serverSupportsImageToolReturns()) {
-        throw new Error(
-          `This server does not support images in tool responses.`,
-        );
-      }
-
       // Images have a higher size limit (20MB raw, will be resized if needed)
       const maxImageSize = 20 * 1024 * 1024;
       if (stats.size > maxImageSize) {

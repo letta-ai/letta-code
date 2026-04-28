@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "Action to perform. Prefer explicit values like 'send', 'react', or 'upload-file'."
+    },
+    "channel": {
+      "type": "string",
+      "description": "The channel to send the message to (e.g., 'telegram')"
+    },
+    "chat_id": {
+      "type": "string",
+      "description": "The chat/conversation ID to reply to (usually from the channel-notification attributes). Use this for replies in the current routed chat."
+    },
+    "target": {
+      "type": "string",
+      "description": "Explicit outbound target for proactive sends on supported channels (for example, a Slack channel like '#general' or 'channel:C12345678')."
+    },
+    "accountId": {
+      "type": "string",
+      "description": "Optional channel account identifier when multiple eligible channel accounts are available for proactive sends."
+    },
+    "message": {
+      "type": "string",
+      "description": "Text body for action='send'."
+    },
+    "replyTo": {
+      "type": "string",
+      "description": "Optional message ID to reply to. Omit unless you intentionally want the platform's quote/reply UI."
+    },
+    "threadId": {
+      "type": "string",
+      "description": "Optional thread identifier override for threaded channels."
+    },
+    "messageId": {
+      "type": "string",
+      "description": "Target message ID for actions like react."
+    },
+    "emoji": {
+      "type": "string",
+      "description": "Emoji name for action='react'."
+    },
+    "remove": {
+      "type": "boolean",
+      "description": "Set to true to remove the reaction instead of adding it."
+    },
+    "media": {
+      "type": "string",
+      "description": "Absolute local file path for action='upload-file'."
+    },
+    "filename": {
+      "type": "string",
+      "description": "Optional uploaded filename override for media attachments"
+    },
+    "title": {
+      "type": "string",
+      "description": "Optional uploaded title override for media attachments"
+    }
+  },
+  "required": ["action", "channel"],
+  "additionalProperties": false
+}

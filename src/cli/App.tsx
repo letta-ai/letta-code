@@ -30,6 +30,7 @@ import {
   getDisplayableToolReturn,
 } from "../agent/approval-execution";
 import {
+  buildFreshDenialApprovals,
   extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
@@ -40,6 +41,7 @@ import {
   isQuotaLimitErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../agent/approval-recovery";
@@ -79,12 +81,13 @@ import { SessionStats } from "../agent/stats";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   INTERRUPTED_BY_USER,
-  MEMFS_CONFLICT_CHECK_INTERVAL,
   SYSTEM_ALERT_CLOSE,
   SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "../constants";
+import { experimentManager } from "../experiments/manager";
+import type { ExperimentId } from "../experiments/types";
 import {
   runNotificationHooks,
   runPreCompactHooks,
@@ -94,6 +97,7 @@ import {
   runUserPromptSubmitHooks,
 } from "../hooks";
 import type { ApprovalContext } from "../permissions/analyzer";
+import { formatPermissionDenial } from "../permissions/formatDenial";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import {
@@ -115,6 +119,7 @@ import {
   resetSharedReminderState,
   syncReminderStateFromContextTracker,
 } from "../reminders/state";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
 import { telemetry } from "../telemetry";
@@ -140,6 +145,7 @@ import {
   debugWarn,
   isDebugEnabled,
 } from "../utils/debug";
+import { recordTuiPerf } from "../utils/tuiPerf";
 import { getVersion } from "../version";
 import {
   handleMcpAdd,
@@ -168,6 +174,7 @@ import { ApprovalPreview } from "./components/ApprovalPreview";
 import { ApprovalSwitch } from "./components/ApprovalSwitch";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
+import { BtwPane, type BtwState } from "./components/BtwPane";
 import { CommandMessage } from "./components/CommandMessage";
 import { CompactionSelector } from "./components/CompactionSelector";
 import { ConversationSelector } from "./components/ConversationSelector";
@@ -175,6 +182,7 @@ import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { EventMessage } from "./components/EventMessage";
+import { ExperimentSelector } from "./components/ExperimentSelector";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
@@ -214,6 +222,7 @@ import {
   appendStreamingOutput,
   type Buffers,
   createBuffers,
+  extractTextPart,
   type Line,
   markIncompleteToolsAsCancelled,
   onChunk,
@@ -252,9 +261,9 @@ import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
   buildDoctorMessage,
   buildInitMessage,
-  fireAutoInit,
   gatherInitGitContext,
 } from "./helpers/initCommand";
+import { buildLogoutSuccessMessage } from "./helpers/logoutMessage";
 import {
   getReflectionSettings,
   parseMemoryPreference,
@@ -280,6 +289,7 @@ import {
   toQueuedMsg,
 } from "./helpers/queuedMessageParts";
 import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
+import { isReflectionSubagentActive } from "./helpers/reflectionGate";
 import {
   collectReflectionSweepSegments,
   finalizeReflectionSegmentReview,
@@ -295,7 +305,6 @@ import {
 } from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
-import { buildStartupSystemPromptWarning } from "./helpers/startupSystemPromptWarning";
 import {
   resolvePromptChar,
   resolveStatusLineConfig,
@@ -320,6 +329,7 @@ import {
   getActiveBackgroundAgents,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
+  getSubagents,
   hasActiveSubagents,
   interruptActiveSubagents,
   subscribe as subscribeToSubagents,
@@ -328,6 +338,11 @@ import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,
 } from "./helpers/subagentTurnStart";
+import {
+  buildStartupSystemPromptWarning,
+  estimateSystemTokens,
+  setSystemPromptDoctorState,
+} from "./helpers/systemPromptWarning.ts";
 import {
   appendTaskNotificationEventsToBuffer,
   extractTaskNotificationsForDisplay,
@@ -462,20 +477,22 @@ function deriveReasoningEffort(
       const effort = (modelSettings as { effort?: string | null }).effort;
       if (effort === "low" || effort === "medium" || effort === "high")
         return effort;
-      if (effort === "max") return "xhigh";
+      if (effort === "xhigh" || effort === "max")
+        return effort as ModelReasoningEffort;
     }
   }
   // Fallback: deprecated llm_config fields
-  const re = llmConfig?.reasoning_effort;
+  const re = llmConfig?.reasoning_effort as string | null | undefined;
   if (
     re === "none" ||
     re === "minimal" ||
     re === "low" ||
     re === "medium" ||
     re === "high" ||
-    re === "xhigh"
+    re === "xhigh" ||
+    re === "max"
   )
-    return re;
+    return re as ModelReasoningEffort;
   if (
     (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ===
     false
@@ -501,7 +518,8 @@ function inferReasoningEffortFromModelPreset(
     presetEffort === "low" ||
     presetEffort === "medium" ||
     presetEffort === "high" ||
-    presetEffort === "xhigh"
+    presetEffort === "xhigh" ||
+    presetEffort === "max"
   ) {
     return presetEffort;
   }
@@ -555,13 +573,20 @@ function getErrorHintForStopReason(
     return ERROR_FEEDBACK_HINT;
   }
 
-  const statusInfo = modelEndpointType
-    ? PROVIDER_STATUS_PAGES[modelEndpointType]
-    : undefined;
+  // When the user is on an auto-routed model (letta/auto*), the reported
+  // model_endpoint_type reflects whichever downstream provider the proxy chose,
+  // not a provider the user explicitly selected.  Don't blame a specific
+  // provider in that case — the issue may be on the proxy side.
+  const isAutoModel = currentModelId?.startsWith("auto") ?? false;
+  const statusInfo =
+    modelEndpointType && !isAutoModel
+      ? PROVIDER_STATUS_PAGES[modelEndpointType]
+      : undefined;
 
   // Build the /model swap suggestion — mention Bedrock Opus if applicable
+  const isOpus46 = currentModelId?.startsWith("opus-4.6") ?? false;
   const hasBedrockOpus =
-    currentModelId === "opus" &&
+    isOpus46 &&
     modelEndpointType === "anthropic" &&
     getModelInfo("bedrock-opus-4.6");
   const modelSwapSuffix = hasBedrockOpus
@@ -598,6 +623,7 @@ function extractErrorMeta(e: unknown) {
 // Any changes made in the overlay will be queued until end_turn
 const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/model",
+  "/experiments",
   "/toolset",
   "/system",
   "/personality",
@@ -623,6 +649,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
 const NON_STATE_COMMANDS = new Set([
   "/ade",
   "/bg",
+  "/btw",
   "/usage",
   "/help",
   "/hooks",
@@ -634,6 +661,10 @@ const NON_STATE_COMMANDS = new Set([
   "/statusline",
   "/reasoning-tab",
   "/secret",
+  "/palace", // read-only memory viewer
+  "/exit", // session exit
+  "/rename", // agent/convo rename
+  "/btw",
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
@@ -706,6 +737,35 @@ function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// OTIDs are client-generated correlation ids, not canonical backend message ids.
+// We use them to stitch together an optimistic local transcript row, the outbound
+// request payload, and the echoed user_message chunk that later arrives from the
+// server with the real message.id.
+function createClientOtid(): string {
+  return randomUUID();
+}
+
+function appendOptimisticUserLine(
+  buffers: Buffers,
+  text: string,
+  otid: string,
+): string | null {
+  if (!text) {
+    return null;
+  }
+
+  const userId = uid("user");
+  buffers.byId.set(userId, {
+    kind: "user",
+    id: userId,
+    text,
+    otid,
+  });
+  buffers.userLineIdByOtid.set(otid, userId);
+  buffers.order.push(userId);
+  return userId;
+}
+
 function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {
   return approvals
     .map((approval) => approval.toolCallId)
@@ -713,7 +773,7 @@ function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {
     .join("|");
 }
 
-function precomputeDiffsForApprovalBatch(
+function _precomputeDiffsForApprovalBatch(
   approvals: Array<Pick<ClassifiedApproval, "approval" | "parsedArgs">>,
   precomputedDiffs: Map<string, AdvancedDiffSuccess>,
 ): void {
@@ -801,6 +861,7 @@ function sendDesktopNotification(
 async function isRetriableError(
   stopReason: StopReasonType,
   lastRunId: string | null | undefined,
+  fallbackDetail?: string | null,
 ): Promise<boolean> {
   // Primary check: backend sets stop_reason=llm_api_error for LLMError exceptions
   if (stopReason === "llm_api_error") return true;
@@ -844,10 +905,10 @@ async function isRetriableError(
 
       return false;
     } catch {
-      return false;
+      return shouldRetryRunMetadataError(undefined, fallbackDetail);
     }
   }
-  return false;
+  return shouldRetryRunMetadataError(undefined, fallbackDetail);
 }
 
 // Save current agent + conversation as last session before exiting.
@@ -1030,28 +1091,10 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
 function hasActiveReflectionSubagent(
-  parentAgentId?: string,
-  parentConversationId?: string,
+  agentId: string,
+  conversationId: string,
 ): boolean {
-  const snapshot = getSubagentSnapshot();
-  return snapshot.agents.some((agent) => {
-    if (agent.type.toLowerCase() !== "reflection") {
-      return false;
-    }
-    if (agent.status !== "pending" && agent.status !== "running") {
-      return false;
-    }
-    if (parentAgentId && agent.parentAgentId !== parentAgentId) {
-      return false;
-    }
-    if (parentConversationId) {
-      const candidateConversationId = agent.parentConversationId ?? "default";
-      if (candidateConversationId !== parentConversationId) {
-        return false;
-      }
-    }
-    return true;
-  });
+  return isReflectionSubagentActive(getSubagents(), agentId, conversationId);
 }
 
 function buildTextParts(
@@ -1123,7 +1166,7 @@ export default function App({
   agentProvenance = null,
   releaseNotes = null,
   updateNotification = null,
-  sessionContextReminderEnabled = true,
+  systemInfoReminderEnabled = true,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -1145,7 +1188,7 @@ export default function App({
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
-  sessionContextReminderEnabled?: boolean;
+  systemInfoReminderEnabled?: boolean;
 }) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -1188,6 +1231,10 @@ export default function App({
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
+  const setConversationIdAndRef = useCallback((nextConversationId: string) => {
+    conversationIdRef.current = nextConversationId;
+    setConversationId(nextConversationId);
+  }, []);
 
   // Tracks the transcript start index for the current user turn across
   // approval continuations (requires_approval -> approval result round-trip).
@@ -1202,13 +1249,6 @@ export default function App({
   const pendingConversationSwitchRef = useRef<
     import("./helpers/conversationSwitchAlert").ConversationSwitchContext | null
   >(null);
-
-  // Pending auto-init for newly created agents — consumed on first user message.
-  // A Set so multiple agents created before any message is sent are all tracked.
-  const autoInitPendingAgentIdsRef = useRef<Set<string>>(new Set());
-  // Tracks whether we've already consumed the startup agentProvenance.isNew flag,
-  // so agent switches later in the session don't re-queue auto-init.
-  const startupAutoInitConsumedRef = useRef(false);
 
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
@@ -1235,10 +1275,9 @@ export default function App({
   useEffect(() => {
     if (initialConversationId !== prevInitialConversationIdRef.current) {
       prevInitialConversationIdRef.current = initialConversationId;
-      conversationIdRef.current = initialConversationId;
-      setConversationId(initialConversationId);
+      setConversationIdAndRef(initialConversationId);
     }
-  }, [initialConversationId]);
+  }, [initialConversationId, setConversationIdAndRef]);
 
   // Set agent context for tools (especially Task tool)
   useEffect(() => {
@@ -1348,6 +1387,9 @@ export default function App({
     [],
   );
 
+  // /btw state - ephemeral pane for forked conversation responses
+  const [btwState, setBtwState] = useState<BtwState>({ status: "idle" });
+
   // Sequential approval: track results as user reviews each approval
   const [approvalResults, setApprovalResults] = useState<
     Array<
@@ -1361,6 +1403,7 @@ export default function App({
   const [queuedApprovalResults, setQueuedApprovalResults] = useState<
     ApprovalResult[] | null
   >(null);
+  const queuedApprovalResultsRef = useRef<ApprovalResult[] | null>(null);
   const toolAbortControllerRef = useRef<AbortController | null>(null);
 
   // Bash mode state - track running commands for input locking and ESC cancellation
@@ -1415,6 +1458,7 @@ export default function App({
       results: ApprovalResult[] | null,
       metadata?: { conversationId: string; generation: number },
     ) => {
+      queuedApprovalResultsRef.current = results;
       setQueuedApprovalResults(results);
       if (results) {
         queuedApprovalMetadataRef.current = metadata ?? {
@@ -1547,6 +1591,7 @@ export default function App({
   // Overlay/selector state - only one can be open at a time
   type ActiveOverlay =
     | "model"
+    | "experiment"
     | "sleeptime"
     | "compaction"
     | "toolset"
@@ -1581,7 +1626,6 @@ export default function App({
   const memfsWatcherRef = useRef<ReturnType<
     typeof import("node:fs").watch
   > | null>(null);
-  const memfsGitCheckInFlightRef = useRef(false);
   const pendingGitReminderRef = useRef<{
     dirty: boolean;
     aheadOfRemote: boolean;
@@ -1616,6 +1660,12 @@ export default function App({
   type QueuedOverlayAction =
     | { type: "switch_agent"; agentId: string; commandId?: string }
     | { type: "switch_model"; modelId: string; commandId?: string }
+    | {
+        type: "set_experiment";
+        experimentId: ExperimentId;
+        enabled: boolean;
+        commandId?: string;
+      }
     | {
         type: "set_sleeptime";
         settings: ReflectionSettings;
@@ -1683,6 +1733,10 @@ export default function App({
     conversationOverrideModelSettings,
     setConversationOverrideModelSettings,
   ] = useState<AgentState["model_settings"] | null>(null);
+  const [
+    conversationOverrideContextWindowLimit,
+    setConversationOverrideContextWindowLimit,
+  ] = useState<number | null>(null);
   const agentStateRef = useRef(agentState);
   useEffect(() => {
     agentStateRef.current = agentState;
@@ -1751,6 +1805,7 @@ export default function App({
       enable_reasoner:
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
+      context_window: llmConfig?.context_window ?? null,
     });
     if (info) {
       return (info as { shortLabel?: string }).shortLabel ?? info.label;
@@ -1767,6 +1822,26 @@ export default function App({
       ? null
       : (derivedReasoningEffort ??
         inferReasoningEffortFromModelPreset(currentModelId, currentModelLabel));
+  const modelPresetContextWindow = useMemo(() => {
+    if (!currentModelLabel) return undefined;
+    const info = getModelInfoForLlmConfig(currentModelLabel, {
+      reasoning_effort: derivedReasoningEffort ?? null,
+      enable_reasoner:
+        (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
+        null,
+      context_window: llmConfig?.context_window ?? null,
+    });
+    const rawContextWindow = (
+      info?.updateArgs as { context_window?: unknown } | undefined
+    )?.context_window;
+    return typeof rawContextWindow === "number" ? rawContextWindow : undefined;
+  }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
+  const effectiveContextWindowSize =
+    (hasConversationModelOverride
+      ? (conversationOverrideContextWindowLimit ?? modelPresetContextWindow)
+      : undefined) ??
+    llmConfig?.context_window ??
+    modelPresetContextWindow;
 
   const hasTemporaryModelOverride = tempModelOverride !== null;
 
@@ -2123,22 +2198,22 @@ export default function App({
   }, []);
   const prepareScopedToolExecutionContext = useCallback(
     async (overrideModel?: string | null) => {
-      const workingDirectory = process.env.USER_CWD || process.cwd();
+      const workingDirectory = getCurrentWorkingDirectory();
       const desiredModel = overrideModel ?? currentModelHandle;
-
-      if (desiredModel) {
-        return prepareToolExecutionContextForResolvedTarget({
-          modelIdentifier: desiredModel,
-          toolsetPreference: currentToolsetPreference,
-          workingDirectory,
-        });
-      }
 
       if (agentIdRef.current) {
         return prepareToolExecutionContextForScope({
           agentId: agentIdRef.current,
           conversationId: conversationIdRef.current,
-          overrideModel,
+          overrideModel: desiredModel,
+          workingDirectory,
+        });
+      }
+
+      if (desiredModel) {
+        return prepareToolExecutionContextForResolvedTarget({
+          modelIdentifier: desiredModel,
+          toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
       }
@@ -2167,9 +2242,6 @@ export default function App({
 
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
-
-  // Track current input draft for approval dialogs
-  const currentDraftRef = useRef<string>("");
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
@@ -2758,7 +2830,6 @@ export default function App({
 
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
-  const contextWindowSize = llmConfigRef.current?.context_window;
   const reflectionSettings = getReflectionSettings(agentId);
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
   const memfsDirectory =
@@ -2781,7 +2852,7 @@ export default function App({
     totalApiDurationMs: sessionStatsSnapshot.totalApiMs,
     totalInputTokens: sessionStatsSnapshot.usage.promptTokens,
     totalOutputTokens: sessionStatsSnapshot.usage.completionTokens,
-    contextWindowSize,
+    contextWindowSize: effectiveContextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
     stepCount: sessionStatsSnapshot.usage.stepCount,
     turnCount: sharedReminderStateRef.current.turnCount,
@@ -2809,7 +2880,7 @@ export default function App({
     previousStreamingForStatusLineRef.current = streaming;
   }, [streaming, triggerStatusLineRefresh]);
 
-  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${contextWindowSize ?? ""}|${currentReasoningEffort ?? ""}|${currentSystemPromptId ?? ""}|${currentToolset ?? ""}`;
+  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${effectiveContextWindowSize ?? ""}|${currentReasoningEffort ?? ""}|${currentSystemPromptId ?? ""}|${currentToolset ?? ""}`;
 
   // Trigger status line when key session identity/display state changes.
   useEffect(() => {
@@ -3122,6 +3193,7 @@ export default function App({
     streamingRefreshTimeoutRef.current = setTimeout(() => {
       streamingRefreshTimeoutRef.current = null;
       if (!buffersRef.current.interrupted) {
+        recordTuiPerf("ui_refresh:tool_output");
         refreshDerived();
       }
     }, 100);
@@ -3139,6 +3211,10 @@ export default function App({
   // Helper to update streaming output for bash/shell tools
   const updateStreamingOutput = useCallback(
     (toolCallId: string, chunk: string, isStderr = false) => {
+      recordTuiPerf(`tool_output:${isStderr ? "stderr" : "stdout"}`, {
+        bytes: Buffer.byteLength(chunk),
+      });
+
       const lineId = buffersRef.current.toolCallIdToLineId.get(toolCallId);
       if (!lineId) return;
 
@@ -3180,6 +3256,7 @@ export default function App({
           !buffersRef.current.interrupted &&
           (buffersRef.current.commitGeneration || 0) === capturedGeneration
         ) {
+          recordTuiPerf("ui_refresh:stream");
           refreshDerived();
         }
       }, 16); // ~60fps
@@ -3559,16 +3636,28 @@ export default function App({
       const agentModelHandle = getPreferredAgentModelHandle(agentState);
       setHasConversationModelOverride(false);
       setConversationOverrideModelSettings(null);
+      setConversationOverrideContextWindowLimit(null);
       setLlmConfig(agentState.llm_config);
       setCurrentModelHandle(agentModelHandle ?? null);
 
-      const modelInfo = getModelInfoForLlmConfig(
-        agentModelHandle || "",
-        agentState.llm_config as unknown as {
+      // If the model handle hasn't changed, skip re-deriving the model ID.
+      // The current ID (set by handleModelSelect or a prior derivation) is
+      // already correct. Re-deriving is lossy for variants that share a
+      // handle but differ only by context_window (e.g. 1M vs 200k).
+      const currentHandle = buildModelHandleFromLlmConfig(llmConfigRef.current);
+      if (agentModelHandle && agentModelHandle === currentHandle) {
+        return;
+      }
+
+      const modelInfo = getModelInfoForLlmConfig(agentModelHandle || "", {
+        ...(agentState.llm_config as unknown as {
           reasoning_effort?: string | null;
           enable_reasoner?: boolean | null;
-        },
-      );
+        }),
+        context_window:
+          (agentState as unknown as { context_window_limit?: number | null })
+            .context_window_limit ?? null,
+      });
       setCurrentModelId(modelInfo?.id ?? (agentModelHandle || null));
     };
 
@@ -3601,6 +3690,9 @@ export default function App({
             model_settings?: AgentState["model_settings"] | null;
           }
         ).model_settings;
+        const conversationContextWindowLimit = (
+          conversation as { context_window_limit?: number | null }
+        ).context_window_limit;
         const hasOverride =
           conversationModel !== undefined && conversationModel !== null
             ? true
@@ -3624,9 +3716,6 @@ export default function App({
           agentState.llm_config,
         );
 
-        setHasConversationModelOverride(true);
-        setConversationOverrideModelSettings(conversationModelSettings ?? null);
-        setCurrentModelHandle(effectiveModelHandle);
         const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
           reasoning_effort: reasoningEffort,
           enable_reasoner:
@@ -3635,7 +3724,24 @@ export default function App({
                 enable_reasoner?: boolean | null;
               }
             ).enable_reasoner ?? null,
+          context_window: conversationContextWindowLimit ?? null,
         });
+        const modelPresetContextWindow = (
+          modelInfo?.updateArgs as { context_window?: unknown } | undefined
+        )?.context_window;
+        const resolvedConversationContextWindowLimit =
+          conversationContextWindowLimit === undefined
+            ? typeof modelPresetContextWindow === "number"
+              ? modelPresetContextWindow
+              : null
+            : conversationContextWindowLimit;
+
+        setHasConversationModelOverride(true);
+        setConversationOverrideModelSettings(conversationModelSettings ?? null);
+        setConversationOverrideContextWindowLimit(
+          resolvedConversationContextWindowLimit,
+        );
+        setCurrentModelHandle(effectiveModelHandle);
         setCurrentModelId(modelInfo?.id ?? effectiveModelHandle);
         setLlmConfig({
           ...agentState.llm_config,
@@ -3643,7 +3749,10 @@ export default function App({
           ...(typeof reasoningEffort === "string"
             ? { reasoning_effort: reasoningEffort }
             : {}),
-        });
+          ...(typeof resolvedConversationContextWindowLimit === "number"
+            ? { context_window: resolvedConversationContextWindowLimit }
+            : {}),
+        } as LlmConfig);
       } catch (error) {
         if (cancelled) return;
         debugLog(
@@ -3728,6 +3837,7 @@ export default function App({
           targetConversationId,
           modelHandle,
           Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
+          { preserveContextWindow: true },
         );
       } catch (error) {
         debugWarn(
@@ -3819,35 +3929,6 @@ export default function App({
     },
     [refreshDerived],
   );
-
-  const maybeCheckMemoryGitStatus = useCallback(async () => {
-    // Only check if memfs is enabled for this agent
-    if (!agentId || agentId === "loading") return;
-    if (!settingsManager.isMemfsEnabled(agentId)) return;
-
-    // Git-backed memory: check status periodically (fire-and-forget).
-    // Runs every N turns to detect uncommitted changes or unpushed commits.
-    const isIntervalTurn =
-      sharedReminderStateRef.current.turnCount > 0 &&
-      sharedReminderStateRef.current.turnCount %
-        MEMFS_CONFLICT_CHECK_INTERVAL ===
-        0;
-
-    if (isIntervalTurn && !memfsGitCheckInFlightRef.current) {
-      memfsGitCheckInFlightRef.current = true;
-
-      import("../agent/memoryGit")
-        .then(({ getMemoryGitStatus }) => getMemoryGitStatus(agentId))
-        .then((status) => {
-          pendingGitReminderRef.current =
-            status.dirty || status.aheadOfRemote ? status : null;
-        })
-        .catch(() => {})
-        .finally(() => {
-          memfsGitCheckInFlightRef.current = false;
-        });
-    }
-  }, [agentId]);
 
   useEffect(() => {
     if (loadingState !== "ready") {
@@ -4295,10 +4376,12 @@ export default function App({
             null;
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
+          let prefetchedAgent: AgentState | null = null;
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
             );
+            prefetchedAgent = preparedToolContext.agent;
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
@@ -4746,8 +4829,11 @@ export default function App({
           // This ensures the UI shows the correct model as early as possible
           const syncAgentState = async () => {
             try {
-              const client = await getClient();
-              const agent = await client.agents.retrieve(agentIdRef.current);
+              // Reuse the agent fetched by prepareToolExecutionContextForScope
+              // (avoids a redundant agents.retrieve per turn).
+              const agent =
+                prefetchedAgent ??
+                (await (await getClient()).agents.retrieve(agentIdRef.current));
 
               // Keep model UI in sync with the agent configuration.
               // Note: many tiers share the same handle (e.g. gpt-5.2-none/high), so we
@@ -4813,9 +4899,20 @@ export default function App({
             }
           };
 
+          const isAutoApprovalMode =
+            pinnedPermissionMode === "bypassPermissions";
+          const isUserInitiated = currentInput.some(
+            (item) => item.type === "message" && item.role === "user",
+          );
           const handleFirstMessage = () => {
             setNetworkPhase("download");
-            void syncAgentState();
+            // Only sync agent state on user messages or when manual approval
+            // mode is active (user may have changed model while reviewing).
+            // In bypass mode, tool-result continuations happen instantly —
+            // no time for the agent to have changed.
+            if (isUserInitiated || !isAutoApprovalMode) {
+              void syncAgentState();
+            }
           };
 
           const runTokenStart = buffersRef.current.tokenCount;
@@ -5104,8 +5201,6 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             }
-
-            await maybeCheckMemoryGitStatus();
 
             // === RALPH WIGGUM CONTINUATION CHECK ===
             // Check if ralph mode is active and should auto-continue
@@ -5409,13 +5504,7 @@ export default function App({
 
               // Create denial results for auto-denied tools and update buffers
               autoDeniedResults = autoDenied.map((ac) => {
-                // Prefer the detailed reason over the short matchedRule name
-                // (e.g., reason contains plan file path info, matchedRule is just "plan mode")
-                const reason = ac.permission.reason
-                  ? `Permission denied: ${ac.permission.reason}`
-                  : "matchedRule" in ac.permission && ac.permission.matchedRule
-                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : "Permission denied: Unknown reason";
+                const reason = formatPermissionDenial(ac.permission);
 
                 // Update buffers with tool rejection for UI
                 onChunk(buffersRef.current, {
@@ -5497,15 +5586,12 @@ export default function App({
                   ? buildQueuedUserText(queuedItemsToAppend)
                   : "";
 
-                if (queuedUserText) {
-                  const userId = uid("user");
-                  buffersRef.current.byId.set(userId, {
-                    kind: "user",
-                    id: userId,
-                    text: queuedUserText,
-                  });
-                  buffersRef.current.order.push(userId);
-                }
+                const queuedUserOtid = createClientOtid();
+                appendOptimisticUserLine(
+                  buffersRef.current,
+                  queuedUserText,
+                  queuedUserOtid,
+                );
 
                 if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
                   const queuedContentParts =
@@ -5518,13 +5604,13 @@ export default function App({
                       {
                         type: "approval",
                         approvals: allResults,
-                        otid: randomUUID(),
+                        otid: createClientOtid(),
                       },
                       {
                         type: "message",
                         role: "user",
                         content: queuedContentParts,
-                        otid: randomUUID(),
+                        otid: queuedUserOtid,
                       },
                     ],
                     { allowReentry: true },
@@ -5924,6 +6010,7 @@ export default function App({
           const retriable = await isRetriableError(
             stopReasonToHandle,
             lastRunId,
+            detailFromRun ?? latestErrorText ?? fallbackError,
           );
 
           if (
@@ -6312,7 +6399,6 @@ export default function App({
       queueApprovalResults,
       consumeQueuedMessages,
       appendTaskNotificationEvents,
-      maybeCheckMemoryGitStatus,
       clearApprovalToolContext,
       openTrajectorySegment,
       syncTrajectoryTokenBase,
@@ -6320,6 +6406,7 @@ export default function App({
       closeTrajectorySegment,
       resetTrajectoryBases,
       setUiPermissionMode,
+      prepareScopedToolExecutionContext,
     ],
   );
 
@@ -6361,7 +6448,7 @@ export default function App({
   const recoverRestoredPendingApprovals = useCallback(
     async (
       approvals: ApprovalRequest[],
-      options: { notifyOnManualApproval?: boolean } = {},
+      _options: { notifyOnManualApproval?: boolean } = {},
     ): Promise<void> => {
       if (approvals.length === 0) {
         return;
@@ -6384,27 +6471,20 @@ export default function App({
         status: "running",
       };
 
+      const queuedMetadata = queuedApprovalMetadataRef.current;
+      const hasQueuedRealResults =
+        queuedApprovalResultsRef.current !== null &&
+        queuedApprovalResultsRef.current.length > 0 &&
+        queuedMetadata?.conversationId === conversationIdRef.current &&
+        queuedMetadata.generation === generationAtStart;
+
       setApprovalResults([]);
       setAutoHandledResults([]);
       setAutoDeniedApprovals([]);
       setApprovalContexts([]);
       setPendingApprovals([]);
-      queueApprovalResults(null);
 
       try {
-        const desiredMode = uiPermissionModeRef.current;
-        if (permissionMode.getMode() !== desiredMode) {
-          permissionMode.setMode(desiredMode);
-        }
-
-        const { needsUserInput, autoAllowed, autoDenied } =
-          await classifyApprovals(approvals, {
-            getContext: analyzeToolApproval,
-            alwaysRequiresUserInput,
-            missingNameReason:
-              "Tool call incomplete - missing name or arguments",
-          });
-
         if (conversationGenerationRef.current !== generationAtStart) {
           restoredApprovalRecoveryRef.current = {
             batchKey,
@@ -6414,158 +6494,26 @@ export default function App({
           return;
         }
 
-        precomputeDiffsForApprovalBatch(
-          [...autoAllowed, ...needsUserInput],
-          precomputedDiffsRef.current,
-        );
+        if (hasQueuedRealResults) {
+          setNeedsEagerApprovalCheck(false);
+          restoredApprovalRecoveryRef.current = {
+            batchKey,
+            generation: generationAtStart,
+            status: "completed",
+          };
+          return;
+        }
 
-        const autoAllowedToolCallIds = autoAllowed.map(
-          (ac) => ac.approval.toolCallId,
-        );
-        const autoAllowedAbortController =
-          abortControllerRef.current ?? new AbortController();
-        const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
-        let autoAllowedResults: Array<{
-          toolCallId: string;
-          result: ToolExecutionResult;
-        }> = [];
-        let autoDeniedResults: Array<{
-          approval: ApprovalRequest;
-          reason: string;
-        }> = [];
-
-        if (shouldTrackAutoAllowed) {
-          setIsExecutingTool(true);
-          executingToolCallIdsRef.current = autoAllowedToolCallIds;
-          toolAbortControllerRef.current = autoAllowedAbortController;
-          autoAllowedExecutionRef.current = {
-            toolCallIds: autoAllowedToolCallIds,
-            results: null,
+        const staleDenials = buildFreshDenialApprovals(
+          approvals,
+          STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        ) as ApprovalResult[];
+        if (staleDenials.length > 0) {
+          queueApprovalResults(staleDenials, {
             conversationId: conversationIdRef.current,
             generation: generationAtStart,
-          };
-        }
-
-        try {
-          if (autoAllowedToolCallIds.length > 0) {
-            setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
-            refreshDerived();
-          }
-
-          const approvalToolContextId =
-            approvalToolContextIdRef.current ??
-            (
-              await prepareScopedToolExecutionContext(
-                tempModelOverrideRef.current ?? undefined,
-              )
-            ).preparedToolContext.contextId;
-          autoAllowedResults =
-            autoAllowed.length > 0
-              ? await executeAutoAllowedTools(
-                  autoAllowed,
-                  (chunk) => onChunk(buffersRef.current, chunk),
-                  {
-                    abortSignal: autoAllowedAbortController.signal,
-                    onStreamingOutput: updateStreamingOutput,
-                    toolContextId: approvalToolContextId,
-                  },
-                )
-              : [];
-
-          autoDeniedResults = autoDenied.map((ac) => {
-            const reason = ac.permission.reason
-              ? `Permission denied: ${ac.permission.reason}`
-              : "matchedRule" in ac.permission && ac.permission.matchedRule
-                ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                : "Permission denied: Unknown reason";
-
-            onChunk(buffersRef.current, {
-              message_type: "tool_return_message",
-              id: "dummy",
-              date: new Date().toISOString(),
-              tool_call_id: ac.approval.toolCallId,
-              tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-              status: "error",
-              stdout: null,
-              stderr: null,
-            });
-
-            return {
-              approval: ac.approval,
-              reason,
-            };
           });
-        } finally {
-          if (shouldTrackAutoAllowed) {
-            setIsExecutingTool(false);
-            toolAbortControllerRef.current = null;
-            executingToolCallIdsRef.current = [];
-            autoAllowedExecutionRef.current = null;
-            toolResultsInFlightRef.current = false;
-          }
-        }
-
-        if (conversationGenerationRef.current !== generationAtStart) {
-          restoredApprovalRecoveryRef.current = {
-            batchKey,
-            generation: generationAtStart,
-            status: "completed",
-          };
-          return;
-        }
-
-        if (needsUserInput.length > 0) {
-          await restorePendingApprovalUi(
-            needsUserInput.map((ac) => ac.approval),
-            needsUserInput
-              .map((ac) => ac.context)
-              .filter((ctx): ctx is ApprovalContext => ctx !== null),
-          );
-          setAutoHandledResults(autoAllowedResults);
-          setAutoDeniedApprovals(autoDeniedResults);
-          if (options.notifyOnManualApproval !== false) {
-            sendDesktopNotification("Approval needed");
-          }
-          restoredApprovalRecoveryRef.current = {
-            batchKey,
-            generation: generationAtStart,
-            status: "completed",
-          };
-          return;
-        }
-
-        const allResults = [
-          ...autoAllowedResults.map((ar) => ({
-            type: "tool" as const,
-            tool_call_id: ar.toolCallId,
-            tool_return: ar.result.toolReturn,
-            status: ar.result.status,
-            stdout: ar.result.stdout,
-            stderr: ar.result.stderr,
-          })),
-          ...autoDeniedResults.map((ad) => ({
-            type: "approval" as const,
-            tool_call_id: ad.approval.toolCallId,
-            approve: false,
-            reason: ad.reason,
-          })),
-        ];
-
-        if (allResults.length > 0) {
-          setThinkingMessage(getRandomThinkingVerb());
-          refreshDerived();
-          toolResultsInFlightRef.current = true;
-          await processConversation(
-            [
-              {
-                type: "approval",
-                approvals: allResults,
-                otid: randomUUID(),
-              },
-            ],
-            { allowReentry: true },
-          );
-          toolResultsInFlightRef.current = false;
+          setNeedsEagerApprovalCheck(false);
         }
 
         restoredApprovalRecoveryRef.current = {
@@ -6590,14 +6538,7 @@ export default function App({
         };
       }
     },
-    [
-      processConversation,
-      queueApprovalResults,
-      refreshDerived,
-      restorePendingApprovalUi,
-      prepareScopedToolExecutionContext,
-      updateStreamingOutput,
-    ],
+    [queueApprovalResults, restorePendingApprovalUi],
   );
 
   useEffect(() => {
@@ -7001,6 +6942,208 @@ export default function App({
     reasoningCyclePatchedAgentStateRef.current = false;
   }, []);
 
+  const handleBtwCommand = useCallback(
+    async (question: string) => {
+      debugLog("btw", "question=%s", question);
+
+      if (!conversationIdRef.current) {
+        debugWarn("btw", "no conversation to fork");
+        return;
+      }
+
+      setBtwState({ status: "forking", question });
+
+      try {
+        const client = await getClient();
+        const isDefault = conversationIdRef.current === "default";
+
+        // Fork the conversation
+        const forked = (await client.post(
+          `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/fork`,
+          { body: isDefault ? { agent_id: agentId } : {} },
+        )) as { id: string };
+
+        debugLog("btw", "forked conversationId=%s", forked.id);
+        setBtwState((prev) => ({
+          ...prev,
+          status: "streaming",
+          forkedConversationId: forked.id,
+        }));
+
+        // Send the question to the forked conversation
+        const stream = await client.conversations.messages.create(forked.id, {
+          messages: [{ role: "user", content: question }],
+          stream_tokens: true,
+        });
+
+        let responseText = "";
+        for await (const chunk of stream) {
+          if (chunk.message_type === "assistant_message") {
+            const delta = extractTextPart(chunk.content);
+            if (delta) {
+              responseText += delta;
+              setBtwState((prev) => ({
+                ...prev,
+                responseText,
+              }));
+            }
+          }
+        }
+
+        setBtwState((prev) => ({
+          ...prev,
+          status: "complete",
+          responseText,
+        }));
+      } catch (error) {
+        debugWarn("btw", "failed: %s", error);
+        setBtwState((prev) => ({
+          ...prev,
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    },
+    [agentId],
+  );
+
+  const handleBtwJump = useCallback(
+    async (conversationId: string) => {
+      debugLog("btw", "jump to conversationId=%s", conversationId);
+
+      // Clear btw state
+      setBtwState({ status: "idle" });
+
+      // Abort the current stream if running — bumping generation makes
+      // processConversation bail out on its next iteration check.
+      conversationGenerationRef.current += 1;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      userCancelledRef.current = true;
+      setStreaming(false);
+      setInterruptRequested(false);
+      setIsExecutingTool(false);
+
+      // Clear any pending approvals from the original conversation
+      setPendingApprovals([]);
+
+      // Switch to the forked conversation using existing pattern from /search
+      resetPendingReasoningCycle();
+      setCommandRunning(true);
+
+      await runEndHooks();
+
+      try {
+        if (!agentState) {
+          throw new Error("Agent state not available");
+        }
+
+        const client = await getClient();
+        const resumeData = await getResumeData(
+          client,
+          agentState,
+          conversationId,
+        );
+
+        await maybeCarryOverActiveConversationModel(conversationId);
+        setConversationIdAndRef(conversationId);
+
+        pendingConversationSwitchRef.current = {
+          origin: "fork",
+          conversationId,
+          isDefault: false,
+          messageCount: resumeData.messageHistory.length,
+          messageHistory: resumeData.messageHistory,
+        };
+
+        settingsManager.setLocalLastSession(
+          { agentId, conversationId },
+          process.cwd(),
+        );
+        settingsManager.setGlobalLastSession({ agentId, conversationId });
+
+        // Clear current transcript and static items (same pattern as /search)
+        buffersRef.current.byId.clear();
+        buffersRef.current.order = [];
+        buffersRef.current.tokenCount = 0;
+        resetContextHistory(contextTrackerRef.current);
+        resetBootstrapReminderState();
+        emittedIdsRef.current.clear();
+        resetDeferredToolCallCommits();
+        setStaticItems([]);
+        setStaticRenderEpoch((e) => e + 1);
+        resetTrajectoryBases();
+
+        // Backfill message history
+        if (resumeData.messageHistory.length > 0) {
+          hasBackfilledRef.current = false;
+          backfillBuffers(buffersRef.current, resumeData.messageHistory);
+          const backfilledItems: StaticItem[] = [];
+          for (const id of buffersRef.current.order) {
+            const ln = buffersRef.current.byId.get(id);
+            if (!ln) continue;
+            emittedIdsRef.current.add(id);
+            backfilledItems.push({ ...ln } as StaticItem);
+          }
+          const separator = { kind: "separator" as const, id: uid("sep") };
+          setStaticItems([separator, ...backfilledItems]);
+          setLines(toLines(buffersRef.current));
+          hasBackfilledRef.current = true;
+        } else {
+          setLines(toLines(buffersRef.current));
+        }
+
+        // Restore pending approvals if any
+        if (resumeData.pendingApprovals.length > 0) {
+          await recoverRestoredPendingApprovals(resumeData.pendingApprovals);
+        }
+
+        sessionHooksRanRef.current = false;
+        runSessionStartHooks(
+          true,
+          agentId,
+          agentName ?? undefined,
+          conversationId,
+        )
+          .then((result) => {
+            if (result.feedback.length > 0) {
+              sessionStartFeedbackRef.current = result.feedback;
+            }
+          })
+          .catch(() => {});
+        sessionHooksRanRef.current = true;
+
+        setCommandRunning(false);
+
+        // Allow dequeue after state updates flush
+        setTimeout(() => {
+          userCancelledRef.current = false;
+        }, 50);
+      } catch (error) {
+        debugWarn("btw", "failed to jump to conversation: %s", error);
+        setCommandRunning(false);
+        userCancelledRef.current = false;
+      }
+    },
+    [
+      agentId,
+      agentName,
+      agentState,
+      resetPendingReasoningCycle,
+      runEndHooks,
+      maybeCarryOverActiveConversationModel,
+      resetBootstrapReminderState,
+      setConversationIdAndRef,
+      setCommandRunning,
+      setStreaming,
+      recoverRestoredPendingApprovals,
+      resetDeferredToolCallCommits,
+      resetTrajectoryBases,
+    ],
+  );
+
   const handleAgentSelect = useCallback(
     async (
       targetAgentId: string,
@@ -7090,7 +7233,7 @@ export default function App({
         setLlmConfig(agent.llm_config);
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
-        setConversationId(targetConversationId);
+        setConversationIdAndRef(targetConversationId);
 
         // Ensure bootstrap reminders are re-injected on the first user turn
         // after switching to a different conversation/agent context.
@@ -7162,6 +7305,7 @@ export default function App({
       resetTrajectoryBases,
       resetBootstrapReminderState,
       resetPendingReasoningCycle,
+      setConversationIdAndRef,
     ],
   );
 
@@ -7212,13 +7356,9 @@ export default function App({
           memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
         });
 
-        // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-        await enableMemfsIfCloud(agent.id);
-
-        // Queue auto-init for first message if memfs is enabled
-        if (settingsManager.isMemfsEnabled(agent.id)) {
-          autoInitPendingAgentIdsRef.current.add(agent.id);
-        }
+        // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
+        // without blocking the new-agent UX on the initial clone.
+        void enableMemfsIfCloud(agent.id);
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
@@ -7231,9 +7371,8 @@ export default function App({
 
         // Build success message with hints
         const agentUrl = buildChatUrl(agent.id);
-        const memfsTip = settingsManager.isMemfsEnabled(agent.id)
-          ? "Memory will be auto-initialized on your first message."
-          : "Tip: use /init to initialize your agent's memory system!";
+        const memfsTip =
+          "Tip: use /init to initialize your agent's memory system!";
         const successOutput = [
           `Created **${agent.name || agent.id}** (use /pin to save)`,
           `⎿  ${agentUrl}`,
@@ -7266,7 +7405,7 @@ export default function App({
         setLlmConfig(agent.llm_config);
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
-        setConversationId(targetConversationId);
+        setConversationIdAndRef(targetConversationId);
 
         // Set conversation switch context for new agent switch
         pendingConversationSwitchRef.current = {
@@ -7315,6 +7454,7 @@ export default function App({
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       resetBootstrapReminderState,
+      setConversationIdAndRef,
     ],
   );
 
@@ -7478,6 +7618,17 @@ export default function App({
       return { blocked: false };
     }
 
+    const queuedMetadata = queuedApprovalMetadataRef.current;
+    const hasQueuedRealResults =
+      queuedApprovalResultsRef.current !== null &&
+      queuedApprovalResultsRef.current.length > 0 &&
+      queuedMetadata?.conversationId === conversationIdRef.current &&
+      queuedMetadata.generation === conversationGenerationRef.current;
+    if (hasQueuedRealResults) {
+      setNeedsEagerApprovalCheck(false);
+      return { blocked: false };
+    }
+
     try {
       const client = await getClient();
       const agent = await client.agents.retrieve(agentId);
@@ -7488,158 +7639,20 @@ export default function App({
       );
 
       if (!existingApprovals || existingApprovals.length === 0) {
+        setNeedsEagerApprovalCheck(false);
         return { blocked: false };
       }
 
-      // There are pending approvals - check permissions (respects yolo mode)
-      const desiredMode = uiPermissionModeRef.current;
-      if (permissionMode.getMode() !== desiredMode) {
-        permissionMode.setMode(desiredMode);
-      }
-
-      const { needsUserInput, autoAllowed, autoDenied } =
-        await classifyApprovals(existingApprovals, {
-          getContext: analyzeToolApproval,
-          alwaysRequiresUserInput,
-          missingNameReason: "Tool call incomplete - missing name",
-        });
-
-      // If any approvals need user input, show dialog
-      if (needsUserInput.length > 0) {
-        setPendingApprovals(needsUserInput.map((ac) => ac.approval));
-        setApprovalContexts(
-          needsUserInput
-            .map((ac) => ac.context)
-            .filter((ctx): ctx is ApprovalContext => ctx !== null),
-        );
-        return { blocked: true };
-      }
-
-      // All approvals can be auto-handled - execute them before proceeding
-      const allResults: ApprovalResult[] = [];
-
-      const autoAllowedToolCallIds = autoAllowed.map(
-        (ac) => ac.approval.toolCallId,
-      );
-      const autoAllowedAbortController =
-        abortControllerRef.current ?? new AbortController();
-      const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
-      let autoAllowedResults: Array<{
-        toolCallId: string;
-        result: ToolExecutionResult;
-      }> = [];
-
-      if (shouldTrackAutoAllowed) {
-        setIsExecutingTool(true);
-        executingToolCallIdsRef.current = autoAllowedToolCallIds;
-        toolAbortControllerRef.current = autoAllowedAbortController;
-        autoAllowedExecutionRef.current = {
-          toolCallIds: autoAllowedToolCallIds,
-          results: null,
+      const staleDenials = buildFreshDenialApprovals(
+        existingApprovals,
+        STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      ) as ApprovalResult[];
+      if (staleDenials.length > 0) {
+        queueApprovalResults(staleDenials, {
           conversationId: conversationIdRef.current,
           generation: conversationGenerationRef.current,
-        };
-      }
-
-      try {
-        // Execute auto-allowed tools
-        if (autoAllowed.length > 0) {
-          // Set phase to "running" for auto-allowed tools
-          setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
-          refreshDerived();
-
-          const approvalToolContextId =
-            approvalToolContextIdRef.current ??
-            (
-              await prepareScopedToolExecutionContext(
-                tempModelOverrideRef.current ?? undefined,
-              )
-            ).preparedToolContext.contextId;
-          autoAllowedResults = await executeAutoAllowedTools(
-            autoAllowed,
-            (chunk) => onChunk(buffersRef.current, chunk),
-            {
-              abortSignal: autoAllowedAbortController.signal,
-              onStreamingOutput: updateStreamingOutput,
-              toolContextId: approvalToolContextId,
-            },
-          );
-          // Map to ApprovalResult format (ToolReturn)
-          allResults.push(
-            ...autoAllowedResults.map((ar) => ({
-              type: "tool" as const,
-              tool_call_id: ar.toolCallId,
-              tool_return: ar.result.toolReturn,
-              status: ar.result.status,
-              stdout: ar.result.stdout,
-              stderr: ar.result.stderr,
-            })),
-          );
-        }
-
-        // Create denial results for auto-denied
-        for (const ac of autoDenied) {
-          const reason = ac.permission.reason || "Permission denied";
-          // Update UI with denial
-          onChunk(buffersRef.current, {
-            message_type: "tool_return_message",
-            id: "dummy",
-            date: new Date().toISOString(),
-            tool_call_id: ac.approval.toolCallId,
-            tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-            status: "error",
-            stdout: null,
-            stderr: null,
-          });
-          // Map to ApprovalResult format (ApprovalReturn)
-          allResults.push({
-            type: "approval" as const,
-            tool_call_id: ac.approval.toolCallId,
-            approve: false,
-            reason,
-          });
-        }
-
-        if (autoAllowedExecutionRef.current) {
-          autoAllowedExecutionRef.current.results = allResults;
-        }
-        const autoAllowedMetadata = autoAllowedExecutionRef.current
-          ? {
-              conversationId: autoAllowedExecutionRef.current.conversationId,
-              generation: conversationGenerationRef.current,
-            }
-          : undefined;
-
-        if (
-          userCancelledRef.current ||
-          autoAllowedAbortController.signal.aborted ||
-          interruptQueuedRef.current
-        ) {
-          if (allResults.length > 0) {
-            queueApprovalResults(allResults, autoAllowedMetadata);
-          }
-          return { blocked: false };
-        }
-
-        // Send all results to server if any
-        if (allResults.length > 0) {
-          toolResultsInFlightRef.current = true;
-          await processConversation([
-            { type: "approval", approvals: allResults, otid: randomUUID() },
-          ]);
-          toolResultsInFlightRef.current = false;
-
-          // Clear any stale queued results from previous interrupts.
-          queueApprovalResults(null);
-        }
-      } finally {
-        if (shouldTrackAutoAllowed) {
-          setIsExecutingTool(false);
-          toolAbortControllerRef.current = null;
-          executingToolCallIdsRef.current = [];
-          autoAllowedExecutionRef.current = null;
-          toolResultsInFlightRef.current = false;
-        }
+        });
+        setNeedsEagerApprovalCheck(false);
       }
 
       return { blocked: false };
@@ -7647,15 +7660,55 @@ export default function App({
       // If check fails, proceed anyway (don't block user)
       return { blocked: false };
     }
-  }, [
-    agentId,
-    processConversation,
-    refreshDerived,
-    updateStreamingOutput,
-    needsEagerApprovalCheck,
-    prepareScopedToolExecutionContext,
-    queueApprovalResults,
-  ]);
+  }, [agentId, needsEagerApprovalCheck, queueApprovalResults]);
+
+  const consumeQueuedApprovalInputForCurrentConversation = useCallback(
+    (otid: string = createClientOtid()): ApprovalCreate | null => {
+      const queuedResults = queuedApprovalResultsRef.current;
+      if (!queuedResults || queuedResults.length === 0) {
+        return null;
+      }
+
+      const queuedMetadata = queuedApprovalMetadataRef.current;
+      const isQueuedValid =
+        queuedMetadata &&
+        queuedMetadata.conversationId === conversationIdRef.current &&
+        queuedMetadata.generation === conversationGenerationRef.current;
+
+      queueApprovalResults(null);
+      interruptQueuedRef.current = false;
+
+      if (!isQueuedValid) {
+        debugWarn(
+          "queue",
+          "Dropping stale queued approval results for mismatched conversation or generation",
+        );
+        return null;
+      }
+
+      return {
+        type: "approval",
+        approvals: queuedResults,
+        otid,
+      };
+    },
+    [queueApprovalResults],
+  );
+
+  const processConversationWithQueuedApprovals = useCallback(
+    async (
+      input: Array<MessageCreate | ApprovalCreate>,
+      options?: Parameters<typeof processConversation>[1],
+    ): Promise<void> => {
+      const queuedApprovalInput =
+        consumeQueuedApprovalInputForCurrentConversation();
+      const nextInput = queuedApprovalInput
+        ? [queuedApprovalInput, ...input]
+        : input;
+      await processConversation(nextInput, options);
+    },
+    [consumeQueuedApprovalInputForCurrentConversation, processConversation],
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — same caveat as processConversation above. Omitted deps are mostly refs and stable callbacks, but this hides any genuinely missing reactive deps too.
   const onSubmit = useCallback(
@@ -7922,6 +7975,17 @@ export default function App({
           return { submitted: true };
         }
 
+        if (trimmed === "/experiments") {
+          startOverlayCommand(
+            "experiment",
+            "/experiments",
+            "Opening experiments selector...",
+            "Experiments dialog dismissed",
+          );
+          setActiveOverlay("experiment");
+          return { submitted: true };
+        }
+
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
           const adeUrl = buildChatUrl(agentId, {
@@ -8037,6 +8101,8 @@ export default function App({
           );
           generateAndOpenMemoryViewer(agentId, {
             agentName: agentName ?? undefined,
+            conversationId:
+              conversationId !== "default" ? conversationId : undefined,
           })
             .then((result) => {
               if (result.opened) {
@@ -8405,7 +8471,7 @@ export default function App({
                     totalApiDurationMs: stats.totalApiMs,
                     totalInputTokens: stats.usage.promptTokens,
                     totalOutputTokens: stats.usage.completionTokens,
-                    contextWindowSize: llmConfigRef.current?.context_window,
+                    contextWindowSize: effectiveContextWindowSize,
                     usedContextTokens:
                       contextTrackerRef.current.lastContextTokens,
                     stepCount: stats.usage.stepCount,
@@ -8549,7 +8615,7 @@ export default function App({
 
         // Special handling for /context command - show context window usage
         if (trimmed === "/context") {
-          const contextWindow = llmConfigRef.current?.context_window ?? 0;
+          const contextWindow = effectiveContextWindowSize ?? 0;
           const model = llmConfigRef.current?.model ?? "unknown";
 
           // Use most recent total tokens from usage_statistics as context size (after turn)
@@ -8627,9 +8693,13 @@ export default function App({
               currentConversationId === "default"
                 ? { agent_id: agentId }
                 : undefined;
-            await client.conversations.recompile(
+            const compiledSystemPrompt = await client.conversations.recompile(
               currentConversationId,
               conversationParams,
+            );
+            setSystemPromptDoctorState(
+              agentId,
+              estimateSystemTokens(compiledSystemPrompt),
             );
 
             cmd.finish(
@@ -8678,7 +8748,7 @@ export default function App({
             await settingsManager.logout();
 
             cmd.finish(
-              "✓ Logged out successfully. Run 'letta' to re-authenticate.",
+              buildLogoutSuccessMessage(Boolean(process.env.LETTA_API_KEY)),
               true,
             );
 
@@ -8765,7 +8835,7 @@ export default function App({
 
             // Send the prompt with ralph reminder prepended
             const systemMsg = buildRalphFirstTurnReminder(ralphState);
-            processConversation([
+            processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -8907,8 +8977,9 @@ export default function App({
             }
             await maybeCarryOverActiveConversationModel(conversation.id);
 
-            // Update conversationId state
-            setConversationId(conversation.id);
+            // Update conversationId state and ref together so the next turn
+            // cannot observe a stale conversation handoff.
+            setConversationIdAndRef(conversation.id);
 
             pendingConversationSwitchRef.current = {
               origin: "new",
@@ -8993,7 +9064,7 @@ export default function App({
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
-            setConversationId(forked.id);
+            setConversationIdAndRef(forked.id);
 
             pendingConversationSwitchRef.current = {
               origin: "fork",
@@ -9041,6 +9112,19 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /btw command - fork in background, stream response to ephemeral pane
+        const btwMatch = msg.trim().match(/^\/btw\s+(.+)$/);
+        if (btwMatch?.[1]) {
+          const question = btwMatch[1].trim();
+
+          // Don't await - run in background, user stays in current conversation
+          handleBtwCommand(question).catch((err) => {
+            debugWarn("btw", "unhandled error: %s", err);
+          });
+
+          return { submitted: true };
+        }
+
         // Special handling for /clear command - reset all agent messages (destructive)
         if (msg.trim() === "/clear") {
           const cmd = commandRunner.start(
@@ -9074,7 +9158,7 @@ export default function App({
             });
 
             await maybeCarryOverActiveConversationModel(conversation.id);
-            setConversationId(conversation.id);
+            setConversationIdAndRef(conversation.id);
 
             pendingConversationSwitchRef.current = {
               origin: "clear",
@@ -9471,7 +9555,7 @@ export default function App({
                 );
 
                 // Only update state after validation succeeds
-                setConversationId(targetConvId);
+                setConversationIdAndRef(targetConvId);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-direct",
@@ -9867,46 +9951,21 @@ export default function App({
             const { packageSkills } = await import("../agent/export");
             const skills = await packageSkills(agentId);
 
-            // Export agent with skills
-            let fileContent: unknown;
+            // Export agent via SDK (GET endpoint), then embed skills client-side
+            const baseContent = await client.agents.exportFile(
+              agentId,
+              exportParams,
+            );
+
+            // Parse if returned as a string, otherwise use as-is
+            const fileContent: Record<string, unknown> =
+              typeof baseContent === "string"
+                ? JSON.parse(baseContent)
+                : (baseContent as Record<string, unknown>);
+
+            // Embed skills into the .af JSON (client-side, no server support needed)
             if (skills.length > 0) {
-              // Use raw fetch with auth from settings
-              const { settingsManager } = await import("../settings-manager");
-              const { getServerUrl } = await import("../agent/client");
-              const settings =
-                await settingsManager.getSettingsWithSecureTokens();
-              const apiKey =
-                process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-              const baseUrl = getServerUrl();
-
-              const body: Record<string, unknown> = {
-                ...exportParams,
-                skills,
-              };
-
-              const response = await fetch(
-                `${baseUrl}/v1/agents/${agentId}/export`,
-                {
-                  method: "POST",
-                  headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify(body),
-                },
-              );
-
-              if (!response.ok) {
-                throw new Error(`Export failed: ${response.statusText}`);
-              }
-
-              fileContent = await response.json();
-            } else {
-              // No skills to include, use SDK
-              fileContent = await client.agents.exportFile(
-                agentId,
-                exportParams,
-              );
+              fileContent.skills = skills;
             }
 
             // Generate filename
@@ -10224,7 +10283,7 @@ export default function App({
             );
 
             // Process conversation with the skill-creation prompt
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10288,7 +10347,7 @@ export default function App({
             );
 
             // Process conversation with the remember prompt
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10317,7 +10376,8 @@ export default function App({
             return { submitted: true };
           }
 
-          if (hasActiveReflectionSubagent()) {
+          const reflectConversationId = conversationIdRef.current ?? "default";
+          if (hasActiveReflectionSubagent(agentId, reflectConversationId)) {
             cmd.fail(
               "A reflection agent is already running in the background.",
             );
@@ -10326,9 +10386,22 @@ export default function App({
 
           try {
             const reflectionConversationId = conversationIdRef.current;
+
+            // Fetch the agent's system prompt so the reflection payload includes
+            // the core behavioural instructions (filtered to strip dynamic content).
+            let systemPrompt: string | undefined;
+            try {
+              const client = await getClient();
+              const agent = await client.agents.retrieve(agentId);
+              systemPrompt = agent.system ?? undefined;
+            } catch {
+              // Non-fatal — the reflection payload will just omit the system prompt.
+            }
+
             const autoPayload = await buildAutoReflectionPayload(
               agentId,
               reflectionConversationId,
+              systemPrompt,
             );
 
             if (!autoPayload) {
@@ -10345,15 +10418,29 @@ export default function App({
               parentMemory,
             });
 
-            const { spawnBackgroundSubagentTask } = await import(
-              "../tools/impl/Task"
-            );
-            spawnBackgroundSubagentTask({
+            const {
+              spawnBackgroundSubagentTask,
+              waitForBackgroundSubagentAgentId,
+            } = await import("../tools/impl/Task");
+            const { subagentId } = spawnBackgroundSubagentTask({
               subagentType: "reflection",
               prompt: reflectionPrompt,
               description: "Reflecting on conversation",
               silentCompletion: true,
-              onComplete: async ({ success, error }) => {
+              parentScope: {
+                agentId,
+                conversationId: reflectionConversationId,
+              },
+              onComplete: async ({
+                success,
+                error,
+                agentId: reflectionAgentId,
+              }) => {
+                telemetry.trackReflectionEnd("manual", success, {
+                  subagentId: reflectionAgentId ?? undefined,
+                  conversationId: reflectionConversationId,
+                  error,
+                });
                 await finalizeAutoReflectionPayload(
                   agentId,
                   reflectionConversationId,
@@ -10381,6 +10468,16 @@ export default function App({
                 );
                 appendTaskNotificationEvents([msg]);
               },
+            });
+            const reflectionAgentId = await waitForBackgroundSubagentAgentId(
+              subagentId,
+              1000,
+            );
+            telemetry.trackReflectionStart("manual", {
+              subagentId: reflectionAgentId ?? undefined,
+              conversationId: reflectionConversationId,
+              startMessageId: autoPayload.startMessageId,
+              endMessageId: autoPayload.endMessageId,
             });
 
             cmd.finish(
@@ -10472,7 +10569,6 @@ export default function App({
 
           // Interactive init: the primary agent conducts the flow,
           // asks the user questions, and runs the initializing-memory skill.
-          autoInitPendingAgentIdsRef.current.delete(agentId);
           setCommandRunning(true);
           try {
             cmd.finish(
@@ -10490,7 +10586,7 @@ export default function App({
               memoryDir,
             });
 
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10536,7 +10632,7 @@ export default function App({
               memoryDir,
             });
 
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10597,7 +10693,7 @@ export default function App({
               "The page embeds a delivery config in a script tag:",
               "",
               "```json",
-              '{"homeBase":{"lat":32.9486,"lng":-96.7087},"radiusMiles":5}',
+              '{"homeBase":{"lat":32.9486,"lng":-96.7087},"radiusMiles":10}',
               "```",
               "",
               "It geocodes addresses via Nominatim and checks distance from the home base. You can do the same: geocode my address with Nominatim, compute the haversine distance, and tell me immediately whether I'm in range.",
@@ -10616,7 +10712,7 @@ export default function App({
                 ? `My delivery address: ${args}`
                 : "Ask me for my delivery address.",
               "",
-              "1. Geocode the address via Nominatim. Compute the haversine distance from (32.9486, -96.7087). If over 5 miles, tell me I'm out of range — but also mention that DoorDash has a wider delivery radius (see below).",
+              "1. Geocode the address via Nominatim. Compute the haversine distance from (32.9486, -96.7087). If over 10 miles, tell me I'm out of range — but also mention that DoorDash has a wider delivery radius (see below).",
               "2. Fetch https://empanadaempire.us with fetch_webpage. Parse the menu from the data attributes. Present it. Suggest a balanced order (savory + sweet). Let me adjust.",
               "3. POST to api/create-order.php with the selected items. Tell me what happened.",
               "4. If the API rejects it or needs payment info, stop and tell me.",
@@ -10625,7 +10721,7 @@ export default function App({
               "",
               "## If the address is out of range or the site doesn't work",
               "",
-              "DoorDash has a wider delivery radius than the 5-mile limit on the direct site. If I'm close to Richardson but outside 5 miles, or if the site is down, point me to:",
+              "DoorDash has a wider delivery radius than the 10-mile limit on the direct site. If I'm close to Richardson but outside 10 miles, or if the site is down, point me to:",
               "",
               "https://order.online/store/-40548503?hideModal=true",
               "",
@@ -10636,7 +10732,7 @@ export default function App({
               "Direct, a little playful. Don't overthink it.",
             ].join("\n");
 
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10692,7 +10788,7 @@ export default function App({
             // Send prompt to agent
             // NOTE: Unlike /remember, we DON'T append args separately because
             // they're already substituted into the prompt via $ARGUMENTS
-            await processConversation([
+            await processConversationWithQueuedApprovals([
               {
                 type: "message",
                 role: "user",
@@ -10737,43 +10833,6 @@ export default function App({
             registryCmd.finish(result.output, result.success);
           }
           return { submitted: true }; // Don't send commands to Letta agent
-        }
-      }
-
-      // Auto-init: fire background init on first message for newly created agents.
-      // Only remove from the pending set after a confirmed launch so that a blocked
-      // attempt (e.g. another /init subagent in flight) preserves the entry for retry.
-      if (autoInitPendingAgentIdsRef.current.has(agentId) && !isSystemOnly) {
-        try {
-          const fired = await fireAutoInit(
-            agentId,
-            async ({ success, error }) => {
-              const msg = await handleMemorySubagentCompletion(
-                {
-                  agentId,
-                  conversationId: conversationIdRef.current,
-                  subagentType: "init",
-                  success,
-                  error,
-                },
-                {
-                  recompileByConversation:
-                    systemPromptRecompileByConversationRef.current,
-                  recompileQueuedByConversation:
-                    queuedSystemPromptRecompileByConversationRef.current,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
-              );
-              appendTaskNotificationEvents([msg]);
-            },
-          );
-          if (fired) {
-            autoInitPendingAgentIdsRef.current.delete(agentId);
-            sharedReminderStateRef.current.pendingAutoInitReminder = true;
-          }
-        } catch {
-          // Non-blocking: swallow failures so the user's message still goes through
         }
       }
 
@@ -10890,7 +10949,6 @@ ${SYSTEM_REMINDER_CLOSE}
 
           const memoryDir = getMemoryFilesystemRoot(agentId);
           const parentMemory = await buildParentMemorySnapshot(memoryDir);
-
           const { spawnBackgroundSubagentTask } = await import(
             "../tools/impl/Task"
           );
@@ -11016,10 +11074,10 @@ ${SYSTEM_REMINDER_CLOSE}
           name: agentName,
           description: agentDescription,
           lastRunAt: agentLastRunAt,
-          conversationId,
+          conversationId: conversationIdRef.current,
         },
         state: sharedReminderStateRef.current,
-        sessionContextReminderEnabled,
+        systemInfoReminderEnabled,
         reflectionSettings,
         skillSources: getSkillSources(),
         resolvePlanModeReminder: getPlanModeReminder,
@@ -11057,16 +11115,14 @@ ${SYSTEM_REMINDER_CLOSE}
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
 
-      // Append the user message to transcript IMMEDIATELY (optimistic update)
-      const userId = uid("user");
-      if (userTextForInput) {
-        buffersRef.current.byId.set(userId, {
-          kind: "user",
-          id: userId,
-          text: userTextForInput,
-        });
-        buffersRef.current.order.push(userId);
-      }
+      // Append an optimistic user row now, then reconcile it with the echoed
+      // user_message chunk once the server returns the canonical message.id.
+      const userOtid = createClientOtid();
+      const optimisticUserLineId = appendOptimisticUserLine(
+        buffersRef.current,
+        userTextForInput,
+        userOtid,
+      );
       const transcriptStartLineIndex = userTextForInput
         ? Math.max(0, toLines(buffersRef.current).length - 1)
         : null;
@@ -11091,6 +11147,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).
       // Only do eager check when resuming a session (LET-7101) - otherwise lazy recovery handles it
+      let eagerRecoveryDenials: ApprovalResult[] | null = null;
       if (needsEagerApprovalCheck && !queuedApprovalResults) {
         // Log for debugging
         const eagerStatusId = uid("status");
@@ -11126,10 +11183,13 @@ ${SYSTEM_REMINDER_CLOSE}
             abortControllerRef.current?.signal.aborted
           ) {
             // User hit ESC during the check - abort and clean up
-            buffersRef.current.byId.delete(userId);
-            const orderIndex = buffersRef.current.order.indexOf(userId);
-            if (orderIndex !== -1) {
-              buffersRef.current.order.splice(orderIndex, 1);
+            if (optimisticUserLineId) {
+              buffersRef.current.byId.delete(optimisticUserLineId);
+              const orderIndex =
+                buffersRef.current.order.indexOf(optimisticUserLineId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
             }
             setStreaming(false);
             refreshDerived();
@@ -11137,510 +11197,12 @@ ${SYSTEM_REMINDER_CLOSE}
           }
 
           if (existingApprovals && existingApprovals.length > 0) {
-            // There are pending approvals - check permissions first (respects yolo mode)
-            const desiredMode = uiPermissionModeRef.current;
-            if (permissionMode.getMode() !== desiredMode) {
-              permissionMode.setMode(desiredMode);
-            }
-
-            const { needsUserInput, autoAllowed, autoDenied } =
-              await classifyApprovals(existingApprovals, {
-                getContext: analyzeToolApproval,
-                alwaysRequiresUserInput,
-                missingNameReason: "Tool call incomplete - missing name",
-              });
-
-            // Check if user cancelled during permission check
-            if (
-              userCancelledRef.current ||
-              abortControllerRef.current?.signal.aborted
-            ) {
-              buffersRef.current.byId.delete(userId);
-              const orderIndex = buffersRef.current.order.indexOf(userId);
-              if (orderIndex !== -1) {
-                buffersRef.current.order.splice(orderIndex, 1);
-              }
-              setStreaming(false);
-              refreshDerived();
-              return { submitted: false };
-            }
-
-            // If all approvals can be auto-handled (yolo mode), process them immediately
-            if (needsUserInput.length === 0) {
-              // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
-              for (const ac of [...autoAllowed, ...needsUserInput]) {
-                const toolName = ac.approval.toolName;
-                const toolCallId = ac.approval.toolCallId;
-                try {
-                  const args = JSON.parse(ac.approval.toolArgs || "{}");
-
-                  if (isFileWriteTool(toolName)) {
-                    const filePath = args.file_path as string | undefined;
-                    if (filePath) {
-                      const result = computeAdvancedDiff({
-                        kind: "write",
-                        filePath,
-                        content: (args.content as string) || "",
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(toolCallId, result);
-                      }
-                    }
-                  } else if (isFileEditTool(toolName)) {
-                    const filePath = args.file_path as string | undefined;
-                    if (filePath) {
-                      // Check if it's a multi-edit (has edits array) or single edit
-                      if (args.edits && Array.isArray(args.edits)) {
-                        const result = computeAdvancedDiff({
-                          kind: "multi_edit",
-                          filePath,
-                          edits: args.edits as Array<{
-                            old_string: string;
-                            new_string: string;
-                            replace_all?: boolean;
-                          }>,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(toolCallId, result);
-                        }
-                      } else {
-                        const result = computeAdvancedDiff({
-                          kind: "edit",
-                          filePath,
-                          oldString: (args.old_string as string) || "",
-                          newString: (args.new_string as string) || "",
-                          replaceAll: args.replace_all as boolean | undefined,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(toolCallId, result);
-                        }
-                      }
-                    }
-                  } else if (isPatchTool(toolName) && args.input) {
-                    // Patch tools - parse hunks directly (patches ARE diffs)
-                    const operations = parsePatchOperations(
-                      args.input as string,
-                    );
-                    for (const op of operations) {
-                      const key = `${toolCallId}:${op.path}`;
-                      if (op.kind === "add" || op.kind === "update") {
-                        const result = parsePatchToAdvancedDiff(
-                          op.patchLines,
-                          op.path,
-                        );
-                        if (result) {
-                          precomputedDiffsRef.current.set(key, result);
-                        }
-                      }
-                      // Delete operations don't need diffs
-                    }
-                  }
-                } catch {
-                  // Ignore errors in diff computation for auto-allowed tools
-                }
-              }
-
-              const autoAllowedToolCallIds = autoAllowed.map(
-                (ac) => ac.approval.toolCallId,
-              );
-              const autoAllowedAbortController =
-                abortControllerRef.current ?? new AbortController();
-              const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
-              let autoAllowedResults: Array<{
-                toolCallId: string;
-                result: ToolExecutionResult;
-              }> = [];
-              let autoDeniedResults: ApprovalResult[] = [];
-
-              if (shouldTrackAutoAllowed) {
-                setIsExecutingTool(true);
-                executingToolCallIdsRef.current = autoAllowedToolCallIds;
-                toolAbortControllerRef.current = autoAllowedAbortController;
-                autoAllowedExecutionRef.current = {
-                  toolCallIds: autoAllowedToolCallIds,
-                  results: null,
-                  conversationId: conversationIdRef.current,
-                  generation: conversationGenerationRef.current,
-                };
-              }
-
-              try {
-                if (autoAllowedToolCallIds.length > 0) {
-                  // Set phase to "running" for auto-allowed tools
-                  setToolCallsRunning(
-                    buffersRef.current,
-                    autoAllowedToolCallIds,
-                  );
-                  refreshDerived();
-                }
-
-                // Execute auto-allowed tools (sequential for writes, parallel for reads)
-                const approvalToolContextId =
-                  approvalToolContextIdRef.current ??
-                  (
-                    await prepareScopedToolExecutionContext(
-                      tempModelOverrideRef.current ?? undefined,
-                    )
-                  ).preparedToolContext.contextId;
-                autoAllowedResults =
-                  autoAllowed.length > 0
-                    ? await executeAutoAllowedTools(
-                        autoAllowed,
-                        (chunk) => onChunk(buffersRef.current, chunk),
-                        {
-                          abortSignal: autoAllowedAbortController.signal,
-                          onStreamingOutput: updateStreamingOutput,
-                          toolContextId: approvalToolContextId,
-                        },
-                      )
-                    : [];
-
-                // Create denial results for auto-denied and update UI
-                autoDeniedResults = autoDenied.map((ac) => {
-                  // Prefer the detailed reason over the short matchedRule name
-                  const reason = ac.permission.reason
-                    ? `Permission denied: ${ac.permission.reason}`
-                    : "matchedRule" in ac.permission &&
-                        ac.permission.matchedRule
-                      ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                      : "Permission denied: Unknown";
-
-                  // Update buffers with denial for UI
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-                    status: "error",
-                    stdout: null,
-                    stderr: null,
-                  });
-
-                  return {
-                    type: "approval" as const,
-                    tool_call_id: ac.approval.toolCallId,
-                    approve: false,
-                    reason,
-                  };
-                });
-
-                const queuedResults: ApprovalResult[] = [
-                  ...autoAllowedResults.map((ar) => ({
-                    type: "tool" as const,
-                    tool_call_id: ar.toolCallId,
-                    tool_return: ar.result.toolReturn,
-                    status: ar.result.status,
-                    stdout: ar.result.stdout,
-                    stderr: ar.result.stderr,
-                  })),
-                  ...autoDeniedResults,
-                ];
-
-                if (autoAllowedExecutionRef.current) {
-                  autoAllowedExecutionRef.current.results = queuedResults;
-                }
-                const autoAllowedMetadata = autoAllowedExecutionRef.current
-                  ? {
-                      conversationId:
-                        autoAllowedExecutionRef.current.conversationId,
-                      generation: conversationGenerationRef.current,
-                    }
-                  : undefined;
-
-                if (
-                  userCancelledRef.current ||
-                  autoAllowedAbortController.signal.aborted ||
-                  interruptQueuedRef.current
-                ) {
-                  if (queuedResults.length > 0) {
-                    queueApprovalResults(queuedResults, autoAllowedMetadata);
-                  }
-                  setStreaming(false);
-                  markIncompleteToolsAsCancelled(
-                    buffersRef.current,
-                    true,
-                    "user_interrupt",
-                  );
-                  refreshDerived();
-                  return { submitted: false };
-                }
-
-                refreshDerived();
-
-                // Combine results and send directly with the user's message
-                // (can't use state here as it won't be available until next render)
-                const recoveryApprovalResults = [
-                  ...autoAllowedResults.map((ar) => ({
-                    type: "tool" as const,
-                    tool_call_id: ar.toolCallId,
-                    tool_return: ar.result.toolReturn,
-                    status: ar.result.status,
-                    stdout: ar.result.stdout,
-                    stderr: ar.result.stderr,
-                  })),
-                  ...autoDeniedResults,
-                ];
-
-                // Build and send initialInput directly
-                const initialInput: Array<MessageCreate | ApprovalCreate> = [
-                  {
-                    type: "approval",
-                    approvals: recoveryApprovalResults,
-                    otid: randomUUID(),
-                  },
-                  {
-                    type: "message",
-                    role: "user",
-                    content:
-                      messageContent as unknown as MessageCreate["content"],
-                    otid: randomUUID(),
-                  },
-                ];
-
-                toolResultsInFlightRef.current = true;
-                await processConversation(initialInput);
-                toolResultsInFlightRef.current = false;
-                clearPlaceholdersInText(msg);
-                return { submitted: true };
-              } finally {
-                if (shouldTrackAutoAllowed) {
-                  setIsExecutingTool(false);
-                  toolAbortControllerRef.current = null;
-                  executingToolCallIdsRef.current = [];
-                  autoAllowedExecutionRef.current = null;
-                  toolResultsInFlightRef.current = false;
-                }
-              }
-            } else {
-              // Some approvals need user input - show dialog
-              // Remove the optimistic user message from transcript
-              buffersRef.current.byId.delete(userId);
-              const orderIndex = buffersRef.current.order.indexOf(userId);
-              if (orderIndex !== -1) {
-                buffersRef.current.order.splice(orderIndex, 1);
-              }
-
-              setStreaming(false);
-              setPendingApprovals(needsUserInput.map((ac) => ac.approval));
-              setApprovalContexts(
-                needsUserInput
-                  .map((ac) => ac.context)
-                  .filter(Boolean) as ApprovalContext[],
-              );
-
-              // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
-              for (const ac of [...autoAllowed, ...needsUserInput]) {
-                const toolName = ac.approval.toolName;
-                const toolCallId = ac.approval.toolCallId;
-                try {
-                  const args = JSON.parse(ac.approval.toolArgs || "{}");
-
-                  if (isFileWriteTool(toolName)) {
-                    const filePath = args.file_path as string | undefined;
-                    if (filePath) {
-                      const result = computeAdvancedDiff({
-                        kind: "write",
-                        filePath,
-                        content: (args.content as string) || "",
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(toolCallId, result);
-                      }
-                    }
-                  } else if (isFileEditTool(toolName)) {
-                    const filePath = args.file_path as string | undefined;
-                    if (filePath) {
-                      // Check if it's a multi-edit (has edits array) or single edit
-                      if (args.edits && Array.isArray(args.edits)) {
-                        const result = computeAdvancedDiff({
-                          kind: "multi_edit",
-                          filePath,
-                          edits: args.edits as Array<{
-                            old_string: string;
-                            new_string: string;
-                            replace_all?: boolean;
-                          }>,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(toolCallId, result);
-                        }
-                      } else {
-                        const result = computeAdvancedDiff({
-                          kind: "edit",
-                          filePath,
-                          oldString: (args.old_string as string) || "",
-                          newString: (args.new_string as string) || "",
-                          replaceAll: args.replace_all as boolean | undefined,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(toolCallId, result);
-                        }
-                      }
-                    }
-                  } else if (isPatchTool(toolName) && args.input) {
-                    // Patch tools - parse hunks directly (patches ARE diffs)
-                    const operations = parsePatchOperations(
-                      args.input as string,
-                    );
-                    for (const op of operations) {
-                      const key = `${toolCallId}:${op.path}`;
-                      if (op.kind === "add" || op.kind === "update") {
-                        const result = parsePatchToAdvancedDiff(
-                          op.patchLines,
-                          op.path,
-                        );
-                        if (result) {
-                          precomputedDiffsRef.current.set(key, result);
-                        }
-                      }
-                      // Delete operations don't need diffs
-                    }
-                  }
-                } catch {
-                  // Ignore errors in diff computation for auto-allowed tools
-                }
-              }
-
-              const autoAllowedToolCallIds = autoAllowed.map(
-                (ac) => ac.approval.toolCallId,
-              );
-              const autoAllowedAbortController =
-                abortControllerRef.current ?? new AbortController();
-              const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
-              let autoAllowedWithResults: Array<{
-                toolCallId: string;
-                result: ToolExecutionResult;
-              }> = [];
-              let autoDeniedWithReasons: Array<{
-                approval: ApprovalRequest;
-                reason: string;
-              }> = [];
-
-              if (shouldTrackAutoAllowed) {
-                setIsExecutingTool(true);
-                executingToolCallIdsRef.current = autoAllowedToolCallIds;
-                toolAbortControllerRef.current = autoAllowedAbortController;
-                autoAllowedExecutionRef.current = {
-                  toolCallIds: autoAllowedToolCallIds,
-                  results: null,
-                  conversationId: conversationIdRef.current,
-                  generation: conversationGenerationRef.current,
-                };
-              }
-
-              try {
-                // Execute auto-allowed tools (sequential for writes, parallel for reads)
-                const approvalToolContextId =
-                  approvalToolContextIdRef.current ??
-                  (
-                    await prepareScopedToolExecutionContext(
-                      tempModelOverrideRef.current ?? undefined,
-                    )
-                  ).preparedToolContext.contextId;
-                autoAllowedWithResults =
-                  autoAllowed.length > 0
-                    ? await executeAutoAllowedTools(
-                        autoAllowed,
-                        (chunk) => onChunk(buffersRef.current, chunk),
-                        {
-                          abortSignal: autoAllowedAbortController.signal,
-                          onStreamingOutput: updateStreamingOutput,
-                          toolContextId: approvalToolContextId,
-                        },
-                      )
-                    : [];
-
-                // Create denial reasons for auto-denied and update UI
-                autoDeniedWithReasons = autoDenied.map((ac) => {
-                  // Prefer the detailed reason over the short matchedRule name
-                  const reason = ac.permission.reason
-                    ? `Permission denied: ${ac.permission.reason}`
-                    : "matchedRule" in ac.permission &&
-                        ac.permission.matchedRule
-                      ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                      : "Permission denied: Unknown";
-
-                  // Update buffers with denial for UI
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-                    status: "error",
-                    stdout: null,
-                    stderr: null,
-                  });
-
-                  return {
-                    approval: ac.approval,
-                    reason,
-                  };
-                });
-
-                const queuedResults: ApprovalResult[] = [
-                  ...autoAllowedWithResults.map((ar) => ({
-                    type: "tool" as const,
-                    tool_call_id: ar.toolCallId,
-                    tool_return: ar.result.toolReturn,
-                    status: ar.result.status,
-                    stdout: ar.result.stdout,
-                    stderr: ar.result.stderr,
-                  })),
-                  ...autoDeniedWithReasons.map((ad) => ({
-                    type: "approval" as const,
-                    tool_call_id: ad.approval.toolCallId,
-                    approve: false,
-                    reason: ad.reason,
-                  })),
-                ];
-
-                if (autoAllowedExecutionRef.current) {
-                  autoAllowedExecutionRef.current.results = queuedResults;
-                }
-                const autoAllowedMetadata = autoAllowedExecutionRef.current
-                  ? {
-                      conversationId:
-                        autoAllowedExecutionRef.current.conversationId,
-                      generation: conversationGenerationRef.current,
-                    }
-                  : undefined;
-
-                if (
-                  userCancelledRef.current ||
-                  autoAllowedAbortController.signal.aborted ||
-                  interruptQueuedRef.current
-                ) {
-                  if (queuedResults.length > 0) {
-                    queueApprovalResults(queuedResults, autoAllowedMetadata);
-                  }
-                  setStreaming(false);
-                  markIncompleteToolsAsCancelled(
-                    buffersRef.current,
-                    true,
-                    "user_interrupt",
-                  );
-                  refreshDerived();
-                  return { submitted: false };
-                }
-
-                // Store auto-handled results to send along with user decisions
-                setAutoHandledResults(autoAllowedWithResults);
-                setAutoDeniedApprovals(autoDeniedWithReasons);
-
-                refreshDerived();
-                return { submitted: false };
-              } finally {
-                if (shouldTrackAutoAllowed) {
-                  setIsExecutingTool(false);
-                  toolAbortControllerRef.current = null;
-                  executingToolCallIdsRef.current = [];
-                  autoAllowedExecutionRef.current = null;
-                }
-              }
-            }
+            eagerRecoveryDenials = buildFreshDenialApprovals(
+              existingApprovals,
+              STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+            ) as ApprovalResult[];
           }
+          setNeedsEagerApprovalCheck(false);
         } catch (_error) {
           // If check fails, proceed anyway (don't block user)
         }
@@ -11650,34 +11212,25 @@ ${SYSTEM_REMINDER_CLOSE}
       // client-side execution, send them first before the new user message.
       const initialInput: Array<MessageCreate | ApprovalCreate> = [];
 
-      if (queuedApprovalResults) {
-        const queuedMetadata = queuedApprovalMetadataRef.current;
-        const isQueuedValid =
-          queuedMetadata &&
-          queuedMetadata.conversationId === conversationIdRef.current &&
-          queuedMetadata.generation === conversationGenerationRef.current;
+      if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
+        initialInput.push({
+          type: "approval",
+          approvals: eagerRecoveryDenials,
+          otid: randomUUID(),
+        });
+      }
 
-        if (isQueuedValid) {
-          initialInput.push({
-            type: "approval",
-            approvals: queuedApprovalResults,
-            otid: randomUUID(),
-          });
-        } else {
-          debugWarn(
-            "queue",
-            "Dropping stale queued approval results for mismatched conversation or generation",
-          );
-        }
-        queueApprovalResults(null);
-        interruptQueuedRef.current = false;
+      const queuedApprovalInput =
+        consumeQueuedApprovalInputForCurrentConversation();
+      if (queuedApprovalInput) {
+        initialInput.push(queuedApprovalInput);
       }
 
       initialInput.push({
         type: "message",
         role: "user",
         content: messageContent as unknown as MessageCreate["content"],
-        otid: randomUUID(),
+        otid: userOtid,
       });
 
       await processConversation(initialInput, {
@@ -11699,11 +11252,12 @@ ${SYSTEM_REMINDER_CLOSE}
       agentName,
       agentDescription,
       agentLastRunAt,
+      conversationId,
       commandRunner,
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
-      queueApprovalResults,
+      consumeQueuedApprovalInputForCurrentConversation,
       pendingApprovals,
       profileConfirmPending,
       handleAgentSelect,
@@ -11715,9 +11269,10 @@ ${SYSTEM_REMINDER_CLOSE}
       pendingRalphConfig,
       openTrajectorySegment,
       resetTrajectoryBases,
-      sessionContextReminderEnabled,
+      systemInfoReminderEnabled,
       appendTaskNotificationEvents,
       maybeCarryOverActiveConversationModel,
+      setConversationIdAndRef,
     ],
   );
 
@@ -12029,25 +11584,22 @@ ${SYSTEM_REMINDER_CLOSE}
             {
               type: "approval",
               approvals: allResults as ApprovalResult[],
-              otid: randomUUID(),
+              otid: createClientOtid(),
             },
           ];
           if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
             const queuedUserText = buildQueuedUserText(queuedItemsToAppend);
-            if (queuedUserText) {
-              const userId = uid("user");
-              buffersRef.current.byId.set(userId, {
-                kind: "user",
-                id: userId,
-                text: queuedUserText,
-              });
-              buffersRef.current.order.push(userId);
-            }
+            const queuedUserOtid = createClientOtid();
+            appendOptimisticUserLine(
+              buffersRef.current,
+              queuedUserText,
+              queuedUserOtid,
+            );
             input.push({
               type: "message",
               role: "user",
               content: buildQueuedContentParts(queuedItemsToAppend),
-              otid: randomUUID(),
+              otid: queuedUserOtid,
             });
             refreshDerived();
           } else if (hadNotifications) {
@@ -12551,13 +12103,20 @@ ${SYSTEM_REMINDER_CLOSE}
             ? rawReasoningEffort === "none"
               ? "no"
               : rawReasoningEffort === "xhigh"
-                ? "max"
+                ? model.label.includes("Opus 4.7")
+                  ? "extra-high"
+                  : "max"
                 : rawReasoningEffort
             : modelUpdateArgs?.enable_reasoner === false
               ? "no"
               : null;
-        const reasoningTierOptions =
-          getReasoningTierOptionsForHandle(modelHandle);
+        const selectedContextWindow = (
+          model.updateArgs as { context_window?: number } | undefined
+        )?.context_window;
+        const reasoningTierOptions = getReasoningTierOptionsForHandle(
+          modelHandle,
+          selectedContextWindow,
+        );
 
         if (
           !opts?.skipReasoningPrompt &&
@@ -12628,6 +12187,7 @@ ${SYSTEM_REMINDER_CLOSE}
             | AgentState["model_settings"]
             | null
             | undefined;
+          let conversationContextWindowLimit: number | null | undefined;
           let updatedAgent: AgentState | null = null;
           if (isDefaultConversation) {
             const { updateAgentLLMConfig } = await import("../agent/modify");
@@ -12645,12 +12205,18 @@ ${SYSTEM_REMINDER_CLOSE}
               conversationIdRef.current,
               modelHandle,
               model.updateArgs,
+              { preserveContextWindow: false },
             );
             conversationModelSettings = (
               updatedConversation as {
                 model_settings?: AgentState["model_settings"] | null;
               }
             ).model_settings;
+            conversationContextWindowLimit = (
+              updatedConversation as {
+                context_window_limit?: number | null;
+              }
+            ).context_window_limit;
           }
 
           // The API may not echo reasoning_effort back, so populate it from
@@ -12667,6 +12233,7 @@ ${SYSTEM_REMINDER_CLOSE}
           if (isDefaultConversation) {
             setHasConversationModelOverride(false);
             setConversationOverrideModelSettings(null);
+            setConversationOverrideContextWindowLimit(null);
             if (updatedAgent) {
               setAgentState(updatedAgent);
             }
@@ -12674,6 +12241,23 @@ ${SYSTEM_REMINDER_CLOSE}
             setHasConversationModelOverride(true);
             setConversationOverrideModelSettings(
               conversationModelSettings ?? null,
+            );
+          }
+
+          const presetContextWindow = (
+            model.updateArgs as { context_window?: unknown } | undefined
+          )?.context_window;
+          const resolvedContextWindow =
+            typeof conversationContextWindowLimit === "number"
+              ? conversationContextWindowLimit
+              : typeof presetContextWindow === "number"
+                ? presetContextWindow
+                : undefined;
+          if (!isDefaultConversation) {
+            setConversationOverrideContextWindowLimit(
+              typeof resolvedContextWindow === "number"
+                ? resolvedContextWindow
+                : null,
             );
           }
 
@@ -12688,7 +12272,10 @@ ${SYSTEM_REMINDER_CLOSE}
                     resolvedReasoningEffort as ModelReasoningEffort,
                 }
               : {}),
-          });
+            ...(typeof resolvedContextWindow === "number"
+              ? { context_window: resolvedContextWindow }
+              : {}),
+          } as LlmConfig);
           setCurrentModelId(modelId);
           setTempModelOverride(null);
 
@@ -13287,6 +12874,72 @@ ${SYSTEM_REMINDER_CLOSE}
     ],
   );
 
+  const handleExperimentSelect = useCallback(
+    async (
+      selection: { experimentId: ExperimentId; enabled: boolean },
+      commandId?: string | null,
+    ) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/experiments")
+        : consumeOverlayCommand("experiment");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/experiments",
+            "Experiment toggle queued – will update after current task completes",
+          );
+        cmd.update({
+          output:
+            "Experiment toggle queued – will update after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "set_experiment",
+          experimentId: selection.experimentId,
+          enabled: selection.enabled,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/experiments", "Updating experiment...");
+        cmd.update({
+          output: "Updating experiment...",
+          phase: "running",
+        });
+
+        try {
+          const snapshot = experimentManager.set(
+            selection.experimentId,
+            selection.enabled,
+          );
+          cmd.finish(
+            `Experiment "${snapshot.label}" ${snapshot.enabled ? "enabled" : "disabled"}`,
+            true,
+          );
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to update experiment: ${errorDetails}`);
+        } finally {
+          setActiveOverlay(null);
+        }
+      });
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
   // Process queued overlay actions when streaming ends
   // These are actions from interactive commands (like /agents, /model) that were
   // used while the agent was busy. The change is applied after end_turn.
@@ -13339,7 +12992,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   action.conversationId,
                 );
 
-                setConversationId(action.conversationId);
+                setConversationIdAndRef(action.conversationId);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-selector",
@@ -13378,6 +13031,14 @@ ${SYSTEM_REMINDER_CLOSE}
         })();
       } else if (action.type === "switch_toolset") {
         handleToolsetSelect(action.toolsetId, action.commandId);
+      } else if (action.type === "set_experiment") {
+        handleExperimentSelect(
+          {
+            experimentId: action.experimentId,
+            enabled: action.enabled,
+          },
+          action.commandId,
+        );
       } else if (action.type === "switch_system") {
         handleSystemPromptSelect(action.promptId, action.commandId);
       } else if (action.type === "switch_personality") {
@@ -13395,6 +13056,7 @@ ${SYSTEM_REMINDER_CLOSE}
     handleSleeptimeModeSelect,
     handleCompactionModeSelect,
     handleToolsetSelect,
+    handleExperimentSelect,
     handleSystemPromptSelect,
     handlePersonalitySelect,
     agentId,
@@ -13406,6 +13068,7 @@ ${SYSTEM_REMINDER_CLOSE}
     commandRunner.start,
     recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
+    setConversationIdAndRef,
   ]);
 
   // Handle escape when profile confirmation is pending
@@ -13606,6 +13269,7 @@ ${SYSTEM_REMINDER_CLOSE}
             | AgentState["model_settings"]
             | null
             | undefined;
+          let conversationContextWindowLimit: number | null | undefined;
           let updatedAgent: AgentState | null = null;
           if (isDefaultConversation) {
             const { updateAgentLLMConfig } = await import("../agent/modify");
@@ -13626,12 +13290,18 @@ ${SYSTEM_REMINDER_CLOSE}
               {
                 reasoning_effort: desired.effort,
               },
+              { preserveContextWindow: true },
             );
             conversationModelSettings = (
               updatedConversation as {
                 model_settings?: AgentState["model_settings"] | null;
               }
             ).model_settings;
+            conversationContextWindowLimit = (
+              updatedConversation as {
+                context_window_limit?: number | null;
+              }
+            ).context_window_limit;
           }
           const resolvedReasoningEffort =
             deriveReasoningEffort(
@@ -13640,10 +13310,17 @@ ${SYSTEM_REMINDER_CLOSE}
                 : conversationModelSettings,
               llmConfigRef.current,
             ) ?? desired.effort;
+          const resolvedConversationContextWindowLimit =
+            conversationContextWindowLimit === undefined
+              ? typeof llmConfigRef.current?.context_window === "number"
+                ? llmConfigRef.current.context_window
+                : null
+              : conversationContextWindowLimit;
 
           if (isDefaultConversation) {
             setHasConversationModelOverride(false);
             setConversationOverrideModelSettings(null);
+            setConversationOverrideContextWindowLimit(null);
             if (updatedAgent) {
               setAgentState(updatedAgent);
             }
@@ -13651,6 +13328,9 @@ ${SYSTEM_REMINDER_CLOSE}
             setHasConversationModelOverride(true);
             setConversationOverrideModelSettings(
               conversationModelSettings ?? null,
+            );
+            setConversationOverrideContextWindowLimit(
+              resolvedConversationContextWindowLimit,
             );
           }
 
@@ -13661,7 +13341,10 @@ ${SYSTEM_REMINDER_CLOSE}
               ({} as LlmConfig)),
             ...mapHandleToLlmConfigPatch(desired.modelHandle),
             reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
-          });
+            ...(typeof resolvedConversationContextWindowLimit === "number"
+              ? { context_window: resolvedConversationContextWindowLimit }
+              : {}),
+          } as LlmConfig);
           setCurrentModelId(desired.modelId);
           setCurrentModelHandle(desired.modelHandle);
 
@@ -13767,7 +13450,19 @@ ${SYSTEM_REMINDER_CLOSE}
       // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
 
-      const order = ["none", "minimal", "low", "medium", "high", "xhigh"];
+      const anthropicXHighEffort = modelHandle.includes("claude-opus-4-7")
+        ? "xhigh"
+        : "max";
+
+      const order = [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ];
       const rank = (effort: string): number => {
         const idx = order.indexOf(effort);
         return idx >= 0 ? idx : 999;
@@ -13821,15 +13516,14 @@ ${SYSTEM_REMINDER_CLOSE}
             ms.provider_type === "anthropic" ||
             ms.provider_type === "bedrock"
           ) {
-            // Map "xhigh" → "max": footer derivation only recognizes "max" for Anthropic effort.
-            // Cast needed: "max" is valid on the backend but not yet in the SDK type.
-            const anthropicEffort =
-              next.effort === "xhigh" ? "max" : next.effort;
+            // "xhigh" is only distinct on Opus 4.7; older Anthropic models map it to backend "max".
             return {
               ...prev,
               model_settings: {
                 ...ms,
-                effort: anthropicEffort as "low" | "medium" | "high" | "max",
+                effort: (next.effort === "xhigh"
+                  ? anthropicXHighEffort
+                  : next.effort) as "low" | "medium" | "high" | "xhigh" | "max",
               },
             } as AgentState;
           }
@@ -13882,7 +13576,9 @@ ${SYSTEM_REMINDER_CLOSE}
             ? "bypassPermissions"
             : acceptEdits
               ? "acceptEdits"
-              : (previousMode ?? "default");
+              : previousMode === "memory"
+                ? "default"
+                : (previousMode ?? "default");
         permissionMode.setMode(restoreMode);
         setUiPermissionMode(restoreMode);
       } else {
@@ -14069,11 +13765,6 @@ ${SYSTEM_REMINDER_CLOSE}
     refreshDerived,
     queueApprovalResults,
   ]);
-
-  const handleConsumeDraft = useCallback(() => {
-    currentDraftRef.current = "";
-    setRestoredInput("");
-  }, []);
 
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
@@ -14386,26 +14077,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     });
   }, [estimatedLiveHeight, terminalRows]);
 
-  // Queue auto-init for startup-created agents (--new-agent, --import, profile selector "new").
-  // The consumed ref ensures this fires at most once per app lifetime, so later
-  // agent switches (which change agentId but leave agentProvenance stale) don't
-  // accidentally re-queue auto-init for an existing agent. This also means if
-  // the user switches away from the startup agent and back, auto-init won't
-  // re-queue — that's intentional (init is a one-shot at creation time).
-  useEffect(() => {
-    if (
-      loadingState === "ready" &&
-      agentProvenance?.isNew &&
-      agentId &&
-      !startupAutoInitConsumedRef.current
-    ) {
-      startupAutoInitConsumedRef.current = true;
-      if (settingsManager.isMemfsEnabled(agentId)) {
-        autoInitPendingAgentIdsRef.current.add(agentId);
-      }
-    }
-  }, [loadingState, agentProvenance, agentId]);
-
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
   useEffect(() => {
@@ -14712,8 +14383,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                                 : undefined
                             }
                             agentName={agentName ?? undefined}
-                            initialDraft={currentDraftRef.current || undefined}
-                            onConsumeDraft={handleConsumeDraft}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -14811,8 +14480,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         : undefined
                     }
                     agentName={agentName ?? undefined}
-                    initialDraft={currentDraftRef.current || undefined}
-                    onConsumeDraft={handleConsumeDraft}
                   />
                 </Box>
               )}
@@ -14879,6 +14546,15 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 );
               })()}
 
+            {/* /btw ephemeral pane - shows forked conversation response */}
+            {btwState.status !== "idle" && (
+              <BtwPane
+                state={btwState}
+                onJumpToConversation={handleBtwJump}
+                onDismiss={() => setBtwState({ status: "idle" })}
+              />
+            )}
+
             {/* Input row - always mounted to preserve state */}
             <Box marginTop={1}>
               <Input
@@ -14917,6 +14593,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
+                inputDisabled={btwState.status === "complete"}
                 ralphActive={uiRalphActive}
                 ralphPending={pendingRalphConfig !== null}
                 ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
@@ -14925,9 +14602,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
-                onDraftChange={(draft) => {
-                  currentDraftRef.current = draft;
-                }}
                 networkPhase={networkPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
@@ -15113,6 +14787,15 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
               />
             )}
 
+            {/* Experiment Selector - conditionally mounted as overlay */}
+            {activeOverlay === "experiment" && (
+              <ExperimentSelector
+                experiments={experimentManager.list()}
+                onSelect={handleExperimentSelect}
+                onCancel={closeOverlay}
+              />
+            )}
+
             {/* Toolset Selector - conditionally mounted as overlay */}
             {activeOverlay === "toolset" && (
               <ToolsetSelector
@@ -15231,7 +14914,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       );
 
                       // Only update state after validation succeeds
-                      setConversationId(convId);
+                      setConversationIdAndRef(convId);
 
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
@@ -15382,7 +15065,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     await maybeCarryOverActiveConversationModel(
                       conversation.id,
                     );
-                    setConversationId(conversation.id);
+                    setConversationIdAndRef(conversation.id);
                     settingsManager.persistSession(agentId, conversation.id);
 
                     // Build success command with agent + conversation info
@@ -15509,7 +15192,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         actualTargetConv,
                       );
 
-                      setConversationId(actualTargetConv);
+                      setConversationIdAndRef(actualTargetConv);
 
                       pendingConversationSwitchRef.current = {
                         origin: "search",

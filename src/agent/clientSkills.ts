@@ -1,14 +1,79 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import { getSkillSources, getSkillsDirectory } from "./context";
+import { resolveScopedMemoryDir } from "./memoryFilesystem";
 import {
   compareSkills,
   discoverSkills,
   SKILLS_DIR,
   type Skill,
   type SkillDiscoveryError,
+  type SkillDiscoveryResult,
   type SkillSource,
 } from "./skills";
+
+function getMemorySkillsDirs(agentId?: string): string[] {
+  const dirs = new Set<string>();
+
+  const scopedMemoryDir = resolveScopedMemoryDir({ agentId });
+  if (
+    scopedMemoryDir &&
+    scopedMemoryDir.trim().length > 0 &&
+    existsSync(scopedMemoryDir)
+  ) {
+    dirs.add(join(scopedMemoryDir.trim(), "skills"));
+  } else {
+    const fallbackMemoryDir = (
+      process.env.LETTA_MEMORY_DIR ||
+      process.env.MEMORY_DIR ||
+      ""
+    ).trim();
+    if (fallbackMemoryDir) {
+      dirs.add(join(fallbackMemoryDir, "skills"));
+    }
+  }
+
+  return Array.from(dirs);
+}
+
+async function discoverMemorySkills(
+  agentId?: string,
+): Promise<SkillDiscoveryResult> {
+  const skillsById = new Map<string, Skill>();
+  const errors: SkillDiscoveryError[] = [];
+
+  for (const dir of getMemorySkillsDirs(agentId)) {
+    try {
+      // Reuse the canonical skill parser by scanning this path as a project scope.
+      // We remap source to "agent" because memory skill precedence should be:
+      // project > agent > memory > global > bundled.
+      const discovery = await discoverSkills(dir, undefined, {
+        sources: ["project"],
+        skipBundled: true,
+      });
+      errors.push(...discovery.errors);
+      for (const skill of discovery.skills) {
+        if (!skillsById.has(skill.id)) {
+          skillsById.set(skill.id, { ...skill, source: "agent" });
+        }
+      }
+    } catch (error) {
+      errors.push({
+        path: dir,
+        message:
+          error instanceof Error
+            ? error.message
+            : `Unknown error: ${String(error)}`,
+      });
+    }
+  }
+
+  return {
+    skills: [...skillsById.values()].sort(compareSkills),
+    errors,
+  };
+}
 
 export type ClientSkill = NonNullable<
   ConversationMessageCreateParams["client_skills"]
@@ -121,6 +186,25 @@ export async function buildClientSkillsPayload(
           ? error.message
           : `Unknown error: ${String(error)}`;
       errors.push({ path: run.path, message });
+    }
+  }
+
+  // MemFS skills are discovered by the Skill tool, so include them in
+  // client_skills as well. This keeps the model's available-skills list in
+  // sync with actual Skill(...) resolution in desktop/listen mode.
+  if (skillSources.length > 0) {
+    const memoryDiscovery = await discoverMemorySkills(options.agentId);
+    errors.push(...memoryDiscovery.errors);
+    for (const skill of memoryDiscovery.skills) {
+      const existing = skillsById.get(skill.id);
+
+      // Preserve higher-priority skills: project and agent-scoped.
+      // MemFS should override only global/bundled or fill missing ids.
+      if (existing?.source === "project" || existing?.source === "agent") {
+        continue;
+      }
+
+      skillsById.set(skill.id, skill);
     }
   }
 

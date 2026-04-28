@@ -207,6 +207,8 @@ export const ToolCallMessage = memo(
       // - Still streaming + phase "ready": args may be incomplete, show ellipsis
       // - Phase "running"/"finished" or stream done: args complete, show formatted
       let args: ReactNode = null;
+      let shellCommand: string | null = null;
+      let shellSemanticKind: "read" | "list" | "search" | "run" | null = null;
       if (!isQuestionTool(rawName)) {
         const parseArgs = (): {
           formatted: ReturnType<typeof formatArgsDisplay> | null;
@@ -236,6 +238,13 @@ export const ToolCallMessage = memo(
         } else {
           const formattedArgs =
             formatted ?? formatArgsDisplay(argsText, rawName);
+          if (formattedArgs.shellSemantic) {
+            shellSemanticKind = formattedArgs.shellSemantic.kind;
+            displayName = formattedArgs.shellSemantic.label;
+            if (formattedArgs.shellSemantic.kind === "run") {
+              shellCommand = formattedArgs.shellSemantic.rawCommand;
+            }
+          }
           // Normalize newlines to spaces to prevent forced line breaks
           const normalizedDisplay = formattedArgs.display.replace(/\n/g, " ");
           // For max 2 lines: boxWidth * 2, minus parens (2) and margin (2)
@@ -255,8 +264,12 @@ export const ToolCallMessage = memo(
         }
       }
 
-      let shellCommand: string | null = null;
-      if (isShellTool(rawName) && argsText.trim()) {
+      if (
+        !shellCommand &&
+        isShellTool(rawName) &&
+        argsText.trim() &&
+        (shellSemanticKind === null || shellSemanticKind === "run")
+      ) {
         try {
           const parsedArgs = JSON.parse(argsText);
           if (typeof parsedArgs.command === "string") {

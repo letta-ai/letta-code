@@ -13,6 +13,7 @@ import {
 } from "../../tools/impl/process_manager";
 import {
   spawnBackgroundSubagentTask,
+  waitForBackgroundSubagentAgentId,
   waitForBackgroundSubagentLink,
 } from "../../tools/impl/Task";
 
@@ -186,6 +187,77 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(formatTaskNotificationImpl).not.toHaveBeenCalled();
     // Hooks still run
     expect(runSubagentStopHooksImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test("emitCompletionNotification can re-enable notifications for silent completions", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-silent-notify",
+      conversationId: "default",
+      report: "reflection done",
+      success: true,
+      totalTokens: 31,
+    }));
+
+    spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      silentCompletion: true,
+      emitCompletionNotification: true,
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(queueMessages.length).toBe(1);
+    expect(formatTaskNotificationImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test("completionSummary overrides the notification summary", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-summary",
+      conversationId: "default",
+      report: "reflection done",
+      success: true,
+      totalTokens: 31,
+    }));
+
+    spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      silentCompletion: true,
+      emitCompletionNotification: true,
+      completionSummary:
+        "Reflected on the memory palace, the halls remember more now",
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(formatTaskNotificationImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: "Reflected on the memory palace, the halls remember more now",
+      }),
+    );
   });
 
   test("awaits async onComplete before queue notification and hooks", async () => {
@@ -428,5 +500,34 @@ describe("waitForBackgroundSubagentLink", () => {
     const elapsed = Date.now() - start;
 
     expect(elapsed).toBeGreaterThanOrEqual(50);
+  });
+
+  test("returns the Letta agent id after the subagent publishes it", async () => {
+    registerSubagent("subagent-link-3", "reflection", "Reflect", "tc-3", true);
+
+    setTimeout(() => {
+      updateSubagent("subagent-link-3", {
+        agentId: "agent-123",
+        agentURL: "https://app.letta.com/chat/agent-123",
+      });
+    }, 20);
+
+    const agentId = await waitForBackgroundSubagentAgentId(
+      "subagent-link-3",
+      300,
+    );
+
+    expect(agentId).toBe("agent-123");
+  });
+
+  test("returns null when the Letta agent id is unavailable", async () => {
+    registerSubagent("subagent-link-4", "reflection", "Reflect", "tc-4", true);
+
+    const agentId = await waitForBackgroundSubagentAgentId(
+      "subagent-link-4",
+      70,
+    );
+
+    expect(agentId).toBeNull();
   });
 });

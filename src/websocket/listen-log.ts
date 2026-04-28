@@ -1,7 +1,7 @@
 /**
- * Always-on file logger for letta server sessions.
- * Writes to ~/.letta/logs/remote/{timestamp}.log regardless of --debug mode.
- * Debug mode additionally prints to console; this file always captures the log.
+ * File logger for letta server sessions.
+ * Writes lifecycle/status lines to ~/.letta/logs/remote/{timestamp}.log.
+ * WS frame logging is optional and controlled by the caller.
  */
 
 import {

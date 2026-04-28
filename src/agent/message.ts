@@ -11,12 +11,17 @@ import type {
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import {
   type ClientTool,
-  captureToolExecutionContext,
   type PermissionModeState,
   type PreparedToolExecutionContext,
+  prepareCurrentToolExecutionContext,
   waitForToolsetReady,
 } from "../tools/manager";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
+import {
+  assertSupportedBase64ImageMediaTypes,
+  normalizeMessageImageParts,
+} from "../utils/messageImageNormalization";
+import { createStreamAbortRelay } from "../utils/streamAbortRelay";
 import { isTimingsEnabled } from "../utils/timing";
 import {
   type ApprovalNormalizationOptions,
@@ -24,7 +29,7 @@ import {
 } from "./approval-result-normalization";
 import { getClient } from "./client";
 import { buildClientSkillsPayload } from "./clientSkills";
-import { ALL_SKILL_SOURCES } from "./skillSources";
+import { getSkillSources } from "./context";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
@@ -132,6 +137,8 @@ export async function sendMessageStream(
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
   const client = await getClient();
+  const normalizedMessages = await normalizeMessageImageParts(messages);
+  assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext
     ? opts.preparedToolContext
@@ -139,22 +146,22 @@ export async function sendMessageStream(
         // Wait for any in-progress toolset switch to complete before reading tools
         // This prevents sending messages with stale tools during a switch
         await waitForToolsetReady();
-        return captureToolExecutionContext(
-          opts.workingDirectory,
-          opts.permissionModeState,
-        );
+        return await prepareCurrentToolExecutionContext({
+          workingDirectory: opts.workingDirectory,
+          permissionModeState: opts.permissionModeState,
+        });
       })();
   const { clientTools, contextId } = preparedToolContext;
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,
-      skillSources: ALL_SKILL_SOURCES,
+      skillSources: getSkillSources(),
     });
 
   const resolvedConversationId = conversationId;
   const requestBody = buildConversationMessagesCreateRequestBody(
     conversationId,
-    messages,
+    normalizedMessages,
     opts,
     clientTools,
     clientSkills,
@@ -195,7 +202,7 @@ export async function sendMessageStream(
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
   }
 
-  const messageSummary = messages
+  const messageSummary = normalizedMessages
     .map((item) => {
       if (item.type === "approval") {
         return `approval:${item.approvals?.length ?? 0}`;
@@ -211,7 +218,8 @@ export async function sendMessageStream(
     })
     .join(",");
 
-  const firstOtid = (messages[0] as unknown as { otid?: string })?.otid;
+  const firstOtid = (normalizedMessages[0] as unknown as { otid?: string })
+    ?.otid;
   debugLog(
     "send-message-stream",
     "request_start conversation_id=%s agent_id=%s messages=%s otid=%s stream_tokens=%s background=%s max_retries=%s",
@@ -225,12 +233,14 @@ export async function sendMessageStream(
   );
 
   let stream: Stream<LettaStreamingResponse>;
+  const abortRelay = createStreamAbortRelay(requestOptions.signal);
   try {
     stream = await client.conversations.messages.create(
       resolvedConversationId,
       requestBody,
       {
         ...requestOptions,
+        ...(abortRelay ? { signal: abortRelay.signal } : {}),
         headers: {
           ...((requestOptions.headers as Record<string, string>) ?? {}),
           ...extraHeaders,
@@ -238,6 +248,7 @@ export async function sendMessageStream(
       },
     );
   } catch (error) {
+    abortRelay?.cleanup();
     debugWarn(
       "send-message-stream",
       "request_error conversation_id=%s otid=%s status=%s error=%s",
@@ -255,6 +266,8 @@ export async function sendMessageStream(
     resolvedConversationId,
     firstOtid ?? "none",
   );
+
+  abortRelay?.attach(stream as object);
 
   if (requestStartTime !== undefined) {
     streamRequestStartTimes.set(stream as object, requestStartTime);

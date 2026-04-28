@@ -20,7 +20,7 @@ Selectable via the `/system` command. Each is a complete system prompt that gets
 - **Source:** Claude Code (Anthropic)
 - **Version:** ~v2.1.50 (Feb 2026) — assembled from modular prompt files
 - **Reference:** https://github.com/Piebald-AI/claude-code-system-prompts
-- **Notes:** Since v2.1.20 the prompt is composed from ~110 atomic files at runtime. This is the rendered assembly for a default session (no custom output style, standard tools, TodoWrite present, Explore subagent available).
+- **Notes:** Since v2.1.20 the prompt is composed from ~110 atomic files at runtime. This is the rendered assembly for a default session (no custom output style, standard tools, TodoWrite present, Task subagents available).
 
 #### source_codex.md
 
@@ -77,6 +77,5 @@ Short XML-wrapped messages injected into the conversation as system events.
 |------|------|-------------|
 | `plan_mode_reminder.txt` | Plan mode active | Prevents the agent from making changes until plan is confirmed |
 | `memory_check_reminder.txt` | Periodic during conversation | Prompts the agent to review and update memory blocks |
-| `auto_init_reminder.txt` | Background init in progress | Tells the agent memory is being set up |
 | `approval_recovery_alert.txt` | Keep-alive ping | Automated message to resume after approval timeout |
 | `interrupt_recovery_alert.txt` | User interrupts stream | Notifies the agent the stream was interrupted |

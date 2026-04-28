@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import * as path from "node:path";
 import type { SubagentConfig } from "../../agent/subagents";
+import {
+  estimateStartupContextTokens,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "../../agent/subagents/contextBudget";
 import {
   buildSubagentArgs,
   resolveSubagentLauncher,
   resolveSubagentModel,
+  resolveSubagentWorkingDirectory,
 } from "../../agent/subagents/manager";
 
 describe("resolveSubagentLauncher", () => {
@@ -54,6 +60,45 @@ describe("resolveSubagentLauncher", () => {
     expect(launcher).toEqual({
       command: "/opt/homebrew/bin/bun",
       args: ["/tmp/custom-runner.ts", "--output-format", "stream-json"],
+    });
+  });
+
+  test("resolves relative dev entrypoint against launcher cwd", () => {
+    const cwd =
+      process.platform === "win32"
+        ? path.win32.join("C:\\", "Users", "example", "dev", "letta-code-prod")
+        : path.posix.join("/", "Users", "example", "dev", "letta-code-prod");
+    const expectedScriptPath =
+      process.platform === "win32"
+        ? path.win32.join(cwd, "src", "index.ts")
+        : path.posix.join(cwd, "src", "index.ts");
+    const execPath =
+      process.platform === "win32"
+        ? "C:\\bun\\bun.exe"
+        : "/opt/homebrew/bin/bun";
+
+    const launcher = resolveSubagentLauncher(
+      ["--output-format", "stream-json"],
+      {
+        env: {} as NodeJS.ProcessEnv,
+        argv: ["bun", "src/index.ts"],
+        execPath,
+        platform: process.platform,
+        cwd,
+      },
+    );
+
+    expect(launcher).toEqual({
+      command: execPath,
+      args: [
+        "--loader:.md=text",
+        "--loader:.mdx=text",
+        "--loader:.txt=text",
+        "run",
+        expectedScriptPath,
+        "--output-format",
+        "stream-json",
+      ],
     });
   });
 
@@ -120,6 +165,28 @@ describe("resolveSubagentLauncher", () => {
   });
 });
 
+describe("resolveSubagentWorkingDirectory", () => {
+  test("prefers USER_CWD when present", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/fixture-dir",
+      } as NodeJS.ProcessEnv,
+      "/tmp/repo-root",
+    );
+
+    expect(cwd).toBe("/tmp/fixture-dir");
+  });
+
+  test("falls back to process cwd when USER_CWD is absent", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {} as NodeJS.ProcessEnv,
+      "/tmp/repo-root",
+    );
+
+    expect(cwd).toBe("/tmp/repo-root");
+  });
+});
+
 describe("buildSubagentArgs", () => {
   const baseConfig: SubagentConfig = {
     name: "test-subagent",
@@ -155,9 +222,78 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--new-agent");
     expect(args).not.toContain("--no-memfs");
   });
+
+  test("passes memory permission mode through when configured", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      {
+        ...baseConfig,
+        permissionMode: "memory",
+      },
+      null,
+      "hello",
+    );
+
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("memory");
+  });
+
+  test("caps reflection system prompt plus initial message to startup budget", () => {
+    const systemPrompt = "system ".repeat(1_000);
+    const memoryPreview = `<parent_memory>\n<memory_filesystem>\n/memory/\n└── system/\n</memory_filesystem>\n${"memory ".repeat(40_000)}\n</parent_memory>`;
+    const userPrompt = `Review transcript at /tmp/payload.json\n\n${memoryPreview}`;
+
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection", systemPrompt },
+      null,
+      userPrompt,
+    );
+    const promptArg = args[args.indexOf("-p") + 1] ?? "";
+
+    expect(
+      estimateStartupContextTokens(`${systemPrompt}\n${promptArg}`),
+    ).toBeLessThanOrEqual(REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT);
+    expect(promptArg).toContain("Review transcript at /tmp/payload.json");
+    expect(promptArg).toContain("<parent_memory>");
+    expect(promptArg).toContain("<memory_filesystem>");
+    expect(promptArg).toContain("Reflection startup context truncated");
+    expect(promptArg.length).toBeLessThan(userPrompt.length);
+  });
+
+  test("does not cap non-reflection initial messages", () => {
+    const longPrompt = "prompt ".repeat(40_000);
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      longPrompt,
+    );
+    const promptArg = args[args.indexOf("-p") + 1] ?? "";
+
+    expect(promptArg).toBe(longPrompt);
+  });
 });
 
 describe("resolveSubagentModel", () => {
+  async function withAutoMemory<T>(
+    value: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const original = process.env.AUTO_MEMORY;
+    process.env.AUTO_MEMORY = value;
+
+    try {
+      return await fn();
+    } finally {
+      if (original === undefined) {
+        delete process.env.AUTO_MEMORY;
+      } else {
+        process.env.AUTO_MEMORY = original;
+      }
+    }
+  }
+
   test("prefers BYOK-swapped handle when available", async () => {
     const cases = [
       { parentProvider: "lc-anthropic", baseProvider: "anthropic" },
@@ -300,5 +436,55 @@ describe("resolveSubagentModel", () => {
     });
 
     expect(result).toBe("openai/gpt-5");
+  });
+
+  test("uses letta/auto-memory for reflection subagents when AUTO_MEMORY=1", async () => {
+    const result = await withAutoMemory("1", () =>
+      resolveSubagentModel({
+        subagentType: "reflection",
+        recommendedModel: "anthropic/test-model",
+        parentModelHandle: "lc-anthropic/parent-model",
+        availableHandles: new Set(),
+      }),
+    );
+
+    expect(result).toBe("letta/auto-memory");
+  });
+
+  test("accepts AUTO_MEMORY=true for reflection subagents", async () => {
+    const result = await withAutoMemory("true", () =>
+      resolveSubagentModel({
+        subagentType: "reflection",
+        recommendedModel: "anthropic/test-model",
+        availableHandles: new Set(["anthropic/test-model"]),
+      }),
+    );
+
+    expect(result).toBe("letta/auto-memory");
+  });
+
+  test("does not override an explicit user model when AUTO_MEMORY is enabled", async () => {
+    const result = await withAutoMemory("1", () =>
+      resolveSubagentModel({
+        subagentType: "reflection",
+        userModel: "openai/gpt-5",
+        recommendedModel: "anthropic/test-model",
+        availableHandles: new Set(["openai/gpt-5", "letta/auto-memory"]),
+      }),
+    );
+
+    expect(result).toBe("openai/gpt-5");
+  });
+
+  test("does not affect non-reflection subagents", async () => {
+    const result = await withAutoMemory("1", () =>
+      resolveSubagentModel({
+        subagentType: "general-purpose",
+        recommendedModel: "anthropic/test-model",
+        availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
+      }),
+    );
+
+    expect(result).toBe("anthropic/test-model");
   });
 });

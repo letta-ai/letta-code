@@ -290,7 +290,7 @@ async function fetchConversationBackfillMessages(
       order: "desc",
       include_return_message_types: RESUME_BACKFILL_MESSAGE_TYPES,
       ...(cursorBefore ? { before: cursorBefore } : {}),
-    });
+    } as unknown as Parameters<typeof client.conversations.messages.list>[1]);
     const items = page.getPaginatedItems();
     if (items.length === 0) break;
 
@@ -485,7 +485,7 @@ export async function getResumeData(
             limit: listLimit,
             order: "desc",
             include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
-          });
+          } as unknown as Parameters<typeof client.agents.messages.list>[1]);
           defaultConversationMessages = sortChronological(
             messagesPage.getPaginatedItems(),
           );

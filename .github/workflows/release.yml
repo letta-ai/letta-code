@@ -56,16 +56,12 @@ jobs:
         with:
           bun-version: 1.3.0
 
-      - name: Setup Node (for npm OIDC publishing)
+      - name: Setup Node (bundled npm 11 for OIDC publishing)
         if: steps.detect.outputs.should_publish == 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.13.0"
           registry-url: "https://registry.npmjs.org"
-
-      - name: Upgrade npm for OIDC support
-        if: steps.detect.outputs.should_publish == 'true'
-        run: npm install -g npm@latest
 
       - name: Derive release metadata
         if: steps.detect.outputs.should_publish == 'true'

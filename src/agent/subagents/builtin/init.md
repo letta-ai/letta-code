@@ -4,7 +4,7 @@ description: Fast initialization of agent memory — reads key project files and
 tools: Read, Write, Edit, Bash, Glob
 model: auto-fast
 memoryBlocks: none
-permissionMode: bypassPermissions
+permissionMode: memory
 ---
 
 You are a fast memory initialization subagent. Your job is to quickly scan a project and create a **skeleton memory hierarchy** for the parent agent. This hierarchy starts minimal and gets fleshed out as the user keeps interacting with the agent.

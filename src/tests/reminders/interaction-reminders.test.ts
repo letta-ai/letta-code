@@ -23,7 +23,7 @@ function baseContext(
       lastRunAt: null,
     },
     state,
-    sessionContextReminderEnabled: false,
+    systemInfoReminderEnabled: false,
     reflectionSettings: {
       trigger: "off",
       stepCount: 25,

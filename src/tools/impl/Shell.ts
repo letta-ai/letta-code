@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
 import { ShellExecutionError, spawnWithLauncher } from "./shellRunner.js";
@@ -9,13 +10,25 @@ interface ShellArgs {
   command: string[];
   workdir?: string;
   timeout_ms?: number;
+  env_overrides?: NodeJS.ProcessEnv;
   with_escalated_permissions?: boolean;
   justification?: string;
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
 
-interface ShellResult {
+export function resolveShellWorkdir(workdir?: string): string {
+  const defaultCwd = getCurrentWorkingDirectory();
+  const requestedCwd = workdir
+    ? path.isAbsolute(workdir)
+      ? workdir
+      : path.resolve(defaultCwd, workdir)
+    : defaultCwd;
+
+  return isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
+}
+
+export interface ShellResult {
   output: string;
   stdout: string[];
   stderr: string[];
@@ -71,24 +84,22 @@ async function runProcess(context: SpawnContext): Promise<ShellResult> {
 export async function shell(args: ShellArgs): Promise<ShellResult> {
   validateRequiredParams(args, ["command"], "shell");
 
-  const { command, workdir, timeout_ms, signal, onOutput } = args;
+  const { command, workdir, timeout_ms, env_overrides, signal, onOutput } =
+    args;
   if (!Array.isArray(command) || command.length === 0) {
     throw new Error("command must be a non-empty array of strings");
   }
 
   const timeout = timeout_ms ?? DEFAULT_TIMEOUT;
-  const defaultCwd = process.env.USER_CWD || process.cwd();
-  const requestedCwd = workdir
-    ? path.isAbsolute(workdir)
-      ? workdir
-      : path.resolve(defaultCwd, workdir)
-    : defaultCwd;
-  const cwd = isUsableDirectory(requestedCwd) ? requestedCwd : defaultCwd;
+  const cwd = resolveShellWorkdir(workdir);
 
   const context: SpawnContext = {
     command,
     cwd,
-    env: getShellEnv(),
+    env: {
+      ...getShellEnv(),
+      ...(env_overrides ?? {}),
+    },
     timeout,
     signal,
     onOutput,

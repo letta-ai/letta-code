@@ -415,3 +415,30 @@ test("CLI allowedTools normalizes file alias family", () => {
   const tools = cliPermissions.getAllowedTools();
   expect(tools).toEqual(["Write(**)"]);
 });
+
+test("ShellCommand auto-allows captured read-only inspection scripts", () => {
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const capturedInspectionScripts = [
+    "printf '== apps/client-ui/vite.config.ts ==\\n'; sed -n '1,240p' apps/client-ui/vite.config.ts; printf '\\n== apps/client-ui/package.json ==\\n'; if [ -f apps/client-ui/package.json ]; then sed -n '1,240p' apps/client-ui/package.json; fi",
+    "printf '== workstation ui config files ==\\n'; rg --files apps/workstation/ui | rg '(vite\\.config|package\\.json|project\\.json|index\\.html|main\\.tsx|main\\.ts|tsconfig|sentry|source|map)' ; printf '\\n== apps/workstation/ui/project.json ==\\n'; sed -n '1,240p' apps/workstation/ui/project.json 2>/dev/null; printf '\\n== apps/workstation/ui/vite.config.* ==\\n'; for f in apps/workstation/ui/vite.config.*; do echo \"--- $f ---\"; sed -n '1,260p' \"$f\"; done",
+    "printf '== workstation packaging files ==\\n'; rg --files apps/workstation apps/workstation/electron | rg '(project\\.json|builder|forge|tsup|esbuild|vite\\.config|package\\.json|entitlements|plist|yaml|yml|desktop.*config|notarize|afterSign)' ; printf '\\n== relevant project/build files contents ==\\n'; for f in apps/workstation/project.json apps/workstation/electron/project.json apps/workstation/project.config.json apps/workstation/electron-builder.yml apps/workstation/electron/builder.yml; do if [ -f \"$f\" ]; then echo \"--- $f ---\"; sed -n '1,260p' \"$f\"; fi; done",
+    "printf '== stale asset summary ==\\n'; printf 'JS bundles: '; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.js' | wc -l; printf 'CSS bundles: '; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.css' | wc -l; printf 'All asset files: '; find apps/workstation/dist/assets -maxdepth 1 -type f | wc -l; printf '\\nRecent asset mtimes:\\n'; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.*' -exec stat -f '%Sm %N' -t '%Y-%m-%d %H:%M' {} \\; | sort | tail -n 20",
+  ] as const;
+
+  for (const command of capturedInspectionScripts) {
+    const result = checkPermission(
+      "ShellCommand",
+      { command },
+      permissions,
+      "/Users/test/project",
+    );
+
+    expect(result.decision).toBe("allow");
+    expect(result.reason).toBe("Read-only shell command");
+  }
+});

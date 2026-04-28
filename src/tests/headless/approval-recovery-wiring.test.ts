@@ -66,4 +66,62 @@ describe("headless approval recovery wiring", () => {
     const importBlock = source.slice(0, source.indexOf("export "));
     expect(importBlock).toContain("extractConflictDetail");
   });
+
+  test("resume approval recovery queues stale denials instead of replaying tools", () => {
+    const start = source.indexOf("let queuedRecoveredApprovalResults");
+    const end = source.indexOf(
+      "// Clear any pending approvals before starting a new turn",
+      start,
+    );
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain(
+      'mode: "queue_for_next_turn" | "send_immediately" = "send_immediately"',
+    );
+    expect(segment).toContain("buildFreshDenialApprovals(");
+    expect(segment).toContain(
+      "queuedRecoveredApprovalResults = denialResults;",
+    );
+    expect(segment).toContain("sendScopedApprovalMessages(");
+    expect(segment).not.toContain("executeApprovalBatch(");
+  });
+
+  test("recover_pending_approvals sends synthetic denials instead of rerunning approvals", () => {
+    const start = source.indexOf(
+      "async function recoverPendingApprovalsFromControlRequest(",
+    );
+    const end = source.indexOf("// Main processing loop", start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("buildFreshDenialApprovals(");
+    expect(segment).toContain("approvalsProcessed += denialResults.length;");
+    expect(segment).toContain("sendScopedApprovalMessages(");
+    expect(segment).not.toContain("executeApprovalBatch(");
+  });
+
+  test("approval-only recovery sends use scoped prepared tool context", () => {
+    expect(source).toContain("async function sendScopedApprovalMessages(");
+
+    const helperStart = source.indexOf(
+      "async function sendScopedApprovalMessages(",
+    );
+    const helperEnd = source.indexOf(
+      "async function flushAndExit(",
+      helperStart,
+    );
+
+    expect(helperStart).toBeGreaterThan(-1);
+    expect(helperEnd).toBeGreaterThan(helperStart);
+
+    const helperSegment = source.slice(helperStart, helperEnd);
+    expect(helperSegment).toContain("prepareHeadlessToolExecutionContext({");
+    expect(helperSegment).toContain("conversationId: params.conversationId,");
+    expect(helperSegment).toContain("preparedToolContext:");
+  });
 });

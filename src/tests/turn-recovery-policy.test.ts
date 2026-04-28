@@ -241,6 +241,16 @@ describe("provider detail retry helpers", () => {
     ).toBe(true);
   });
 
+  test("formatted Cloudflare 521 detail is retryable", () => {
+    const detail =
+      "Cloudflare 521: Web server is down for api.letta.com (Ray ID: 9e829917ee973824). This is usually a temporary edge/origin outage. Please retry in a moment.";
+
+    expect(shouldRetryRunMetadataError(undefined, detail)).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({ status: undefined, detail }),
+    ).toBe(true);
+  });
+
   test("pre-stream transient classifier handles status and detail", () => {
     expect(
       shouldRetryPreStreamTransientError({
@@ -330,6 +340,19 @@ describe("getRetryDelayMs", () => {
         detail,
       }),
     ).toBe(20000);
+  });
+
+  test("uses larger transient base for formatted Cloudflare 52x details", () => {
+    const detail =
+      "Cloudflare 521: Web server is down for api.letta.com (Ray ID: 9e829917ee973824). This is usually a temporary edge/origin outage. Please retry in a moment.";
+
+    expect(
+      getRetryDelayMs({
+        category: "transient_provider",
+        attempt: 1,
+        detail,
+      }),
+    ).toBe(5000);
   });
 
   test("uses Retry-After delay when provided for transient retries", () => {

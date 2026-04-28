@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import {
   backgroundProcesses,
   backgroundTasks,
@@ -276,7 +277,7 @@ async function getProcessOutput(
       .join("\n");
   }
 
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   // Apply character limit to prevent excessive token usage
   const { content: truncatedOutput } = truncateByChars(
@@ -381,7 +382,7 @@ async function getBackgroundTaskOutput(
       .join("\n");
   }
 
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   // Apply character limit to prevent excessive token usage
   const { content: truncatedOutput } = truncateByChars(

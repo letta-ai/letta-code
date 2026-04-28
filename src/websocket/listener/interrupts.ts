@@ -1,7 +1,7 @@
-import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { normalizeApprovalResultsForPersistence } from "../../agent/approval-result-normalization";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { LIMITS, truncateByChars } from "../../tools/impl/truncation";
 import type {
   ClientToolEndMessage,
   ClientToolStartMessage,
@@ -13,12 +13,88 @@ import {
   emitCanonicalMessageDelta,
 } from "./protocol-outbound";
 import { clearRecoveredApprovalState } from "./runtime";
+import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   InterruptPopulateInput,
   InterruptToolReturn,
   RecoveredApprovalState,
 } from "./types";
+
+const INTERRUPT_TOOL_RETURN_MAX_CHARS = LIMITS.BASH_OUTPUT_CHARS;
+
+const STREAMING_TOOL_OUTPUT_MAX_CHARS = LIMITS.BASH_OUTPUT_CHARS;
+const STREAMING_TOOL_OUTPUT_EMIT_INTERVAL_MS = 100;
+
+export type ToolExecutionOutputEmitter = ((
+  toolCallId: string,
+  chunk: string,
+  isStderr?: boolean,
+) => void) & {
+  flush: () => void;
+};
+
+type StreamingToolOutputState = {
+  messageId: string;
+  stdout: string;
+  stderr: string;
+  dirty: boolean;
+  lastEmittedAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+function truncateInterruptToolReturn(text: string): string {
+  const { content } = truncateByChars(
+    text,
+    INTERRUPT_TOOL_RETURN_MAX_CHARS,
+    "tool_return_message",
+  );
+  return content;
+}
+
+function normalizeInterruptOutputLines(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const filtered = value.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+  if (filtered.length === 0) {
+    return undefined;
+  }
+
+  const combinedLength = filtered.reduce((sum, entry) => sum + entry.length, 0);
+  return combinedLength <= INTERRUPT_TOOL_RETURN_MAX_CHARS
+    ? filtered
+    : undefined;
+}
+
+function appendStreamingOutputWithCap(current: string, chunk: string): string {
+  if (chunk.length === 0) {
+    return current;
+  }
+
+  const next = `${current}${chunk}`;
+  if (next.length <= STREAMING_TOOL_OUTPUT_MAX_CHARS) {
+    return next;
+  }
+
+  return next.slice(next.length - STREAMING_TOOL_OUTPUT_MAX_CHARS);
+}
+
+function normalizeStreamingOutputLines(text: string): string[] | undefined {
+  if (text.length === 0) {
+    return undefined;
+  }
+
+  const lines = text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => line.length > 0);
+
+  return lines.length > 0 ? lines : undefined;
+}
 
 export function asToolReturnStatus(value: unknown): "success" | "error" | null {
   if (value === "success" || value === "error") {
@@ -29,7 +105,7 @@ export function asToolReturnStatus(value: unknown): "success" | "error" | null {
 
 export function normalizeToolReturnValue(value: unknown): string {
   if (typeof value === "string") {
-    return value;
+    return truncateInterruptToolReturn(value);
   }
   if (Array.isArray(value)) {
     const textParts = value
@@ -49,7 +125,7 @@ export function normalizeToolReturnValue(value: unknown): string {
       )
       .map((part) => part.text);
     if (textParts.length > 0) {
-      return textParts.join("\n");
+      return truncateInterruptToolReturn(textParts.join("\n"));
     }
   }
   if (
@@ -60,15 +136,15 @@ export function normalizeToolReturnValue(value: unknown): string {
     "text" in value &&
     typeof value.text === "string"
   ) {
-    return value.text;
+    return truncateInterruptToolReturn(value.text);
   }
   if (value === null || value === undefined) {
     return "";
   }
   try {
-    return JSON.stringify(value);
+    return truncateInterruptToolReturn(JSON.stringify(value));
   } catch {
-    return String(value);
+    return truncateInterruptToolReturn(String(value));
   }
 }
 
@@ -117,16 +193,8 @@ export function extractCanonicalToolReturnsFromWire(
       if (!toolCallId || !status) {
         continue;
       }
-      const stdout = Array.isArray(rec.stdout)
-        ? rec.stdout.filter(
-            (entry): entry is string => typeof entry === "string",
-          )
-        : undefined;
-      const stderr = Array.isArray(rec.stderr)
-        ? rec.stderr.filter(
-            (entry): entry is string => typeof entry === "string",
-          )
-        : undefined;
+      const stdout = normalizeInterruptOutputLines(rec.stdout);
+      const stderr = normalizeInterruptOutputLines(rec.stderr);
       fromArray.push({
         tool_call_id: toolCallId,
         status,
@@ -146,16 +214,8 @@ export function extractCanonicalToolReturnsFromWire(
   if (!topLevelToolCallId || !topLevelStatus) {
     return [];
   }
-  const stdout = Array.isArray(payload.stdout)
-    ? payload.stdout.filter(
-        (entry): entry is string => typeof entry === "string",
-      )
-    : undefined;
-  const stderr = Array.isArray(payload.stderr)
-    ? payload.stderr.filter(
-        (entry): entry is string => typeof entry === "string",
-      )
-    : undefined;
+  const stdout = normalizeInterruptOutputLines(payload.stdout);
+  const stderr = normalizeInterruptOutputLines(payload.stderr);
   return [
     {
       tool_call_id: topLevelToolCallId,
@@ -220,16 +280,12 @@ export function extractInterruptToolReturns(
           ? "success"
           : "error";
       const stdout =
-        "stdout" in approval && Array.isArray(approval.stdout)
-          ? approval.stdout.filter(
-              (entry): entry is string => typeof entry === "string",
-            )
+        "stdout" in approval
+          ? normalizeInterruptOutputLines(approval.stdout)
           : undefined;
       const stderr =
-        "stderr" in approval && Array.isArray(approval.stderr)
-          ? approval.stderr.filter(
-              (entry): entry is string => typeof entry === "string",
-            )
+        "stderr" in approval
+          ? normalizeInterruptOutputLines(approval.stderr)
           : undefined;
 
       return [
@@ -272,7 +328,7 @@ export function extractInterruptToolReturns(
 }
 
 export function emitInterruptToolReturnMessage(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   approvals: ApprovalResult[] | null,
   runId?: string | null,
@@ -316,7 +372,7 @@ export function emitInterruptToolReturnMessage(
 }
 
 export function emitToolExecutionStartedEvents(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     toolCallIds: string[];
@@ -338,7 +394,7 @@ export function emitToolExecutionStartedEvents(
 }
 
 export function emitToolExecutionFinishedEvents(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     approvals: ApprovalResult[] | null;
@@ -359,6 +415,134 @@ export function emitToolExecutionFinishedEvents(
       conversation_id: params.conversationId,
     });
   }
+}
+
+export function createToolExecutionOutputEmitter(
+  socket: ListenerTransport,
+  runtime: ConversationRuntime,
+  params: {
+    runId?: string | null;
+    agentId?: string;
+    conversationId?: string;
+  },
+): ToolExecutionOutputEmitter {
+  const outputByToolCallId = new Map<string, StreamingToolOutputState>();
+
+  const emitToolOutput = (
+    toolCallId: string,
+    outputState: StreamingToolOutputState,
+  ) => {
+    if (!outputState.dirty) {
+      return;
+    }
+
+    outputState.dirty = false;
+    outputState.lastEmittedAt = Date.now();
+
+    const stdout = normalizeStreamingOutputLines(outputState.stdout);
+    const stderr = normalizeStreamingOutputLines(outputState.stderr);
+    const toolReturn = [stdout?.join("\n"), stderr?.join("\n")]
+      .filter(
+        (part): part is string => typeof part === "string" && part.length > 0,
+      )
+      .join("\n");
+
+    emitCanonicalMessageDelta(
+      socket,
+      runtime,
+      {
+        type: "message",
+        message_type: "tool_return_message",
+        id: outputState.messageId,
+        date: new Date().toISOString(),
+        run_id: params.runId ?? runtime.activeRunId ?? undefined,
+        status: "success",
+        tool_call_id: toolCallId,
+        tool_return: toolReturn,
+        tool_returns: [
+          {
+            tool_call_id: toolCallId,
+            status: "success",
+            tool_return: toolReturn,
+            ...(stdout ? { stdout } : {}),
+            ...(stderr ? { stderr } : {}),
+          },
+        ],
+      },
+      {
+        agent_id: params.agentId,
+        conversation_id: params.conversationId,
+      },
+    );
+  };
+
+  const flushToolOutput = (
+    toolCallId: string,
+    outputState: StreamingToolOutputState,
+  ) => {
+    if (outputState.timer) {
+      clearTimeout(outputState.timer);
+      outputState.timer = null;
+    }
+    emitToolOutput(toolCallId, outputState);
+  };
+
+  const emitter = ((
+    toolCallId: string,
+    chunk: string,
+    isStderr: boolean = false,
+  ) => {
+    if (!toolCallId || chunk.length === 0) {
+      return;
+    }
+
+    const existing = outputByToolCallId.get(toolCallId);
+    const outputState = existing ?? {
+      messageId: `message-tool-return-stream-${toolCallId}`,
+      stdout: "",
+      stderr: "",
+      dirty: false,
+      lastEmittedAt: 0,
+      timer: null,
+    };
+
+    if (isStderr) {
+      outputState.stderr = appendStreamingOutputWithCap(
+        outputState.stderr,
+        chunk,
+      );
+    } else {
+      outputState.stdout = appendStreamingOutputWithCap(
+        outputState.stdout,
+        chunk,
+      );
+    }
+
+    outputByToolCallId.set(toolCallId, outputState);
+    outputState.dirty = true;
+
+    const now = Date.now();
+    const elapsed = now - outputState.lastEmittedAt;
+    if (elapsed >= STREAMING_TOOL_OUTPUT_EMIT_INTERVAL_MS) {
+      flushToolOutput(toolCallId, outputState);
+      return;
+    }
+
+    if (!outputState.timer) {
+      outputState.timer = setTimeout(() => {
+        outputState.timer = null;
+        emitToolOutput(toolCallId, outputState);
+      }, STREAMING_TOOL_OUTPUT_EMIT_INTERVAL_MS - elapsed);
+    }
+  }) as ToolExecutionOutputEmitter;
+
+  emitter.flush = () => {
+    for (const [toolCallId, outputState] of outputByToolCallId.entries()) {
+      flushToolOutput(toolCallId, outputState);
+    }
+  };
+
+  return emitter;
 }
 
 export function getInterruptApprovalsForEmission(
@@ -478,14 +662,25 @@ export function consumeInterruptQueue(
   };
   interruptedToolCallIds: string[];
 } | null {
+  const ctx = runtime.pendingInterruptedContext;
+  const matchingContext =
+    !!ctx &&
+    ctx.agentId === agentId &&
+    ctx.conversationId === conversationId &&
+    ctx.continuationEpoch === runtime.continuationEpoch;
+
   if (
     !runtime.pendingInterruptedResults ||
     runtime.pendingInterruptedResults.length === 0
   ) {
+    if (matchingContext) {
+      runtime.pendingInterruptedResults = null;
+      runtime.pendingInterruptedContext = null;
+      runtime.pendingInterruptedToolCallIds = null;
+    }
     return null;
   }
 
-  const ctx = runtime.pendingInterruptedContext;
   let result: {
     approvalMessage: {
       type: "approval";
@@ -495,12 +690,7 @@ export function consumeInterruptQueue(
     interruptedToolCallIds: string[];
   } | null = null;
 
-  if (
-    ctx &&
-    ctx.agentId === agentId &&
-    ctx.conversationId === conversationId &&
-    ctx.continuationEpoch === runtime.continuationEpoch
-  ) {
+  if (matchingContext) {
     result = {
       approvalMessage: {
         type: "approval",

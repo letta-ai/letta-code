@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
 import {
+  extractPrimaryShellCommand,
   normalizeBashRulePayload,
   unwrapShellLauncherCommand,
 } from "./shell-command-normalization";
@@ -218,30 +219,6 @@ export function matchesFilePattern(
  * @param query - The bash query to check (e.g., "Bash(git diff HEAD)")
  * @param pattern - The permission pattern (e.g., "Bash(git diff:*)")
  */
-/**
- * Extract the "actual" command from a compound command by stripping cd prefixes.
- * e.g., "cd /path && bun run check" → "bun run check"
- */
-function extractActualCommand(command: string): string {
-  // If command contains &&, |, or ;, split and find the actual command (skip cd)
-  if (
-    command.includes("&&") ||
-    command.includes("|") ||
-    command.includes(";")
-  ) {
-    const segments = command.split(/\s*(?:&&|\||;)\s*/);
-    for (const segment of segments) {
-      const trimmed = segment.trim();
-      const firstToken = trimmed.split(/\s+/)[0];
-      // Skip cd commands - we want the actual command
-      if (firstToken !== "cd") {
-        return trimmed;
-      }
-    }
-  }
-  return command;
-}
-
 export function matchesBashPattern(
   query: string,
   pattern: string,
@@ -261,8 +238,7 @@ export function matchesBashPattern(
     return false;
   }
   const rawCommand = queryMatch[2];
-  // Extract actual command by stripping cd prefixes from compound commands
-  const command = extractActualCommand(rawCommand);
+  const command = extractPrimaryShellCommand(rawCommand);
   const normalizedRawCommand = normalizeBashRulePayload(rawCommand);
   const normalizedCommand = normalizeBashRulePayload(command);
   const legacyRawCommand = unwrapShellLauncherCommand(rawCommand).trim();

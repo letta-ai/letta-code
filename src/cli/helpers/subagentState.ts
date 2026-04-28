@@ -18,9 +18,10 @@ export interface ToolCall {
 
 export interface SubagentState {
   id: string;
-  type: string; // "Explore", "Plan", "code-reviewer", etc.
+  type: string; // "General-purpose", "Recall", "code-reviewer", etc.
   description: string;
   status: "pending" | "running" | "completed" | "error";
+  agentId?: string | null;
   agentURL: string | null;
   toolCalls: ToolCall[];
   // Monotonic counter to avoid transient regressions in rendered tool usage.
@@ -171,7 +172,7 @@ export function registerSubagent(
     conversationId?: string | null;
   },
 ): void {
-  // Capitalize type for display (explore -> Explore)
+  // Capitalize type for display (recall -> Recall)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
 
   const agent: SubagentState = {
@@ -179,6 +180,7 @@ export function registerSubagent(
     type: displayType,
     description,
     status: "pending",
+    agentId: null,
     agentURL: null,
     toolCalls: [],
     maxToolCallsSeen: 0,

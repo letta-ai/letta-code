@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { LIMITS, truncateArray } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -65,7 +66,7 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
   if (!pattern) {
     throw new Error("Glob tool missing required parameter: pattern");
   }
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   const baseDir = searchPath
     ? path.isAbsolute(searchPath)

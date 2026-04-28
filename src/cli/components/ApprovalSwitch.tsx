@@ -69,7 +69,6 @@ type Props = {
   ) => void;
   onDeny: (reason: string) => void;
   onCancel?: () => void;
-  onConsumeDraft?: () => void;
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
@@ -95,8 +94,6 @@ type Props = {
   planContent?: string;
   planFilePath?: string;
   agentName?: string;
-  // Draft text from input buffer when approval appeared
-  initialDraft?: string;
 };
 
 // Parse bash info from approval args
@@ -345,7 +342,6 @@ export const ApprovalSwitch = memo(
     onApproveAlways,
     onDeny,
     onCancel,
-    onConsumeDraft,
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
@@ -361,7 +357,6 @@ export const ApprovalSwitch = memo(
     planContent,
     planFilePath,
     agentName,
-    initialDraft,
   }: Props) => {
     const toolName = approval.toolName;
 
@@ -376,13 +371,11 @@ export const ApprovalSwitch = memo(
           onApproveAndAcceptEdits={() => onPlanApprove(true)}
           onKeepPlanning={onPlanKeepPlanning}
           onCancel={onCancel ?? (() => {})}
-          onConsumeDraft={onConsumeDraft}
           showAcceptEditsOption={showAcceptEditsOption}
           isFocused={isFocused}
           planContent={planContent}
           planFilePath={planFilePath}
           agentName={agentName}
-          initialDraft={initialDraft}
         />
       );
     }
@@ -461,9 +454,7 @@ export const ApprovalSwitch = memo(
             questions={questions}
             onSubmit={onQuestionSubmit}
             onCancel={onCancel}
-            onConsumeDraft={onConsumeDraft}
             isFocused={isFocused}
-            initialDraft={initialDraft}
           />
         );
       }

@@ -18,7 +18,6 @@ import {
 import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 
 // Built-in subagent definitions (embedded at build time)
-import exploreAgentMd from "./builtin/explore.md";
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
@@ -29,7 +28,6 @@ import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 
 const BUILTIN_SOURCES = [
-  exploreAgentMd,
   forkAgentMd,
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,
@@ -72,7 +70,7 @@ export interface SubagentConfig {
   fork: boolean;
   /** Whether this subagent should run in the background by default. */
   background: boolean;
-  /** Permission mode for this subagent (default, acceptEdits, plan, bypassPermissions) */
+  /** Permission mode for this subagent (default, acceptEdits, plan, memory, bypassPermissions) */
   permissionMode?: string;
 }
 

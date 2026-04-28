@@ -109,12 +109,18 @@ export function translatePasteForImages(paste: string): string {
     });
   } catch {}
 
-  // 3) Single image file path paste
+  // 3) Single image file path paste (including drag-and-drop from Finder/screenshot)
   try {
     const trimmed = s.trim();
     const singleLine = countLines(trimmed) <= 1;
     if (singleLine) {
       let filePath = trimmed;
+
+      // Strip surrounding quotes and shell-escape characters that terminals
+      // add when drag-dropping files (e.g. '/path/to/file.png' or path\ with\ spaces)
+      filePath = filePath.replace(/^['"]|['"]$/g, "");
+      filePath = filePath.replace(/\\(?=[ '()&])/g, "");
+
       if (/^file:\/\//i.test(filePath)) {
         try {
           // Decode file:// URL
@@ -129,41 +135,68 @@ export function translatePasteForImages(paste: string): string {
       // If relative, resolve against CWD
       if (!isAbsolute(filePath)) filePath = resolve(process.cwd(), filePath);
       const ext = extname(filePath || "").toLowerCase();
-      if (
-        IMAGE_EXTS.has(ext) &&
-        existsSync(filePath) &&
-        statSync(filePath).isFile()
-      ) {
-        const buf = readFileSync(filePath);
-        const b64 = buf.toString("base64");
-        const mt =
-          ext === ".png"
-            ? "image/png"
-            : ext === ".jpg" || ext === ".jpeg"
-              ? "image/jpeg"
-              : ext === ".gif"
-                ? "image/gif"
-                : ext === ".webp"
-                  ? "image/webp"
-                  : ext === ".bmp"
-                    ? "image/bmp"
-                    : ext === ".svg"
-                      ? "image/svg+xml"
-                      : ext === ".tif" || ext === ".tiff"
-                        ? "image/tiff"
-                        : ext === ".heic"
-                          ? "image/heic"
-                          : ext === ".heif"
-                            ? "image/heif"
-                            : ext === ".avif"
-                              ? "image/avif"
-                              : "application/octet-stream";
-        const id = allocateImage({
-          data: b64,
-          mediaType: mt,
-          filename: basename(filePath),
-        });
-        s = `[Image #${id}]`;
+      if (IMAGE_EXTS.has(ext)) {
+        let buf: Buffer | null = null;
+        try {
+          const stat = statSync(filePath);
+          if (stat.isFile()) buf = readFileSync(filePath);
+        } catch {
+          // File may not exist (e.g. macOS cleaned up temp screenshot)
+        }
+
+        // macOS screenshot temp files (TemporaryItems/NSIRD_screencaptureui_*)
+        // may be cleaned up before we can read them. Fall back to reading the
+        // image directly from the clipboard via NSPasteboard.
+        let clipboardMediaType: string | null = null;
+        if (
+          !buf &&
+          process.platform === "darwin" &&
+          /TemporaryItems\/.*screencaptureui/i.test(filePath)
+        ) {
+          const clipResult = getClipboardImageToTempFile();
+          if (clipResult) {
+            try {
+              buf = readFileSync(clipResult.tempPath);
+              clipboardMediaType = UTI_TO_MEDIA_TYPE[clipResult.uti] || null;
+              try {
+                unlinkSync(clipResult.tempPath);
+              } catch {}
+            } catch {}
+          }
+        }
+
+        if (buf && buf.length > 0) {
+          const b64 = buf.toString("base64");
+          const mt =
+            clipboardMediaType ||
+            (ext === ".png"
+              ? "image/png"
+              : ext === ".jpg" || ext === ".jpeg"
+                ? "image/jpeg"
+                : ext === ".gif"
+                  ? "image/gif"
+                  : ext === ".webp"
+                    ? "image/webp"
+                    : ext === ".bmp"
+                      ? "image/bmp"
+                      : ext === ".svg"
+                        ? "image/svg+xml"
+                        : ext === ".tif" || ext === ".tiff"
+                          ? "image/tiff"
+                          : ext === ".heic"
+                            ? "image/heic"
+                            : ext === ".heif"
+                              ? "image/heif"
+                              : ext === ".avif"
+                                ? "image/avif"
+                                : "application/octet-stream");
+          const id = allocateImage({
+            data: b64,
+            mediaType: mt,
+            filename: basename(filePath),
+          });
+          s = `[Image #${id}]`;
+        }
       }
     }
   } catch {}

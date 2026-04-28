@@ -19,6 +19,9 @@ export interface MemoryViewerData {
   files: MemoryFile[];
   commits: MemoryCommit[];
   context?: ContextData; // from GET /v1/agents/{id}/context
+  conversations?: ConversationInfo[]; // recent conversations for this agent
+  messages?: MessageInfo[]; // messages from context (with conversation_id)
+  selectedConversationId?: string | null; // currently selected conversation
 }
 
 export interface MemoryFile {
@@ -45,4 +48,20 @@ export interface MemoryCommit {
   diff?: string; // full unified diff patch (only for recent N commits)
   truncated?: boolean; // diff was truncated due to size cap
   isReflection: boolean; // commit message matches reflection/sleeptime pattern
+}
+
+// Conversation data for memory palace viewer
+export interface ConversationInfo {
+  id: string;
+  created_at: string;
+  last_run_completion?: string | null;
+  label?: string | null;
+}
+
+export interface MessageInfo {
+  id: string;
+  role: string;
+  content: string | unknown[];
+  conversation_id?: string | null;
+  created_at: string;
 }

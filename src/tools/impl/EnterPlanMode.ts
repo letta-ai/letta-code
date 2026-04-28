@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { permissionMode } from "../../permissions/mode";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { getExecutionContextPermissionModeState } from "../manager";
 
 interface EnterPlanModeArgs {
@@ -47,7 +48,7 @@ export async function enter_plan_mode(
 
   const planFilePath =
     scopedState?.planFilePath ?? permissionMode.getPlanFilePath();
-  const cwd = process.env.USER_CWD || process.cwd();
+  const cwd = getCurrentWorkingDirectory();
   const applyPatchRelativePath = planFilePath
     ? relative(cwd, planFilePath).replace(/\\/g, "/")
     : null;

@@ -327,7 +327,7 @@ describe("reflection trigger orchestration", () => {
       mode: "interactive",
       agent: { id: "test-agent", name: "test" },
       state,
-      sessionContextReminderEnabled: false,
+      systemInfoReminderEnabled: false,
       reflectionSettings: {
         trigger: overrides.trigger ?? "step-count",
         stepCount: overrides.stepCount ?? 1,

@@ -75,6 +75,10 @@ describe("model preset refresh wiring", () => {
       "client.conversations.update(conversationId, payload)",
     );
     expect(updateSegment).toContain("model: modelHandle");
+    expect(updateSegment).toContain("options?: UpdateAgentLLMConfigOptions");
+    expect(updateSegment).toContain("shouldPreserveContextWindow");
+    expect(updateSegment).toContain("getModelContextWindow(modelHandle)");
+    expect(updateSegment).toContain("context_window_limit");
     expect(updateSegment).not.toContain("client.agents.update(");
   });
 
@@ -95,6 +99,7 @@ describe("model preset refresh wiring", () => {
     expect(segment).toContain("updateAgentLLMConfig(");
     expect(segment).toContain("conversationIdRef.current");
     expect(segment).toContain('conversationIdRef.current === "default"');
+    expect(segment).toContain("preserveContextWindow: false");
   });
 
   test("App defines helper to carry over active conversation model", () => {
@@ -116,6 +121,7 @@ describe("model preset refresh wiring", () => {
     expect(segment).toContain("buildModelHandleFromLlmConfig");
     expect(segment).toContain("getModelInfoForLlmConfig(");
     expect(segment).toContain("updateConversationLLMConfig(");
+    expect(segment).toContain("preserveContextWindow: true");
     expect(segment).toContain(
       "Failed to carry over active model to new conversation",
     );
@@ -140,6 +146,28 @@ describe("model preset refresh wiring", () => {
     // snapshot when deriving reasoning effort (not the base agent llm_config).
     expect(source).toMatch(
       /const effectiveModelSettings = hasConversationModelOverride\s*\?\s*conversationOverrideModelSettings\s*:\s*agentState\?\.model_settings;/,
+    );
+  });
+
+  test("App derives effective context window from active conversation override", () => {
+    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
+    const source = readFileSync(path, "utf-8");
+
+    expect(source).toContain("conversationOverrideContextWindowLimit");
+    expect(source).toContain("setConversationOverrideContextWindowLimit(");
+    expect(source).toContain(
+      "const modelPresetContextWindow = useMemo(() => {",
+    );
+    expect(source).toContain("const effectiveContextWindowSize =");
+    expect(source).toMatch(
+      /\?\s*\(?conversationOverrideContextWindowLimit\s*\?\?\s*modelPresetContextWindow\)?/,
+    );
+    expect(source).toContain("contextWindowSize: effectiveContextWindowSize");
+    expect(source).toContain(
+      "const contextWindow = effectiveContextWindowSize ?? 0;",
+    );
+    expect(source).not.toMatch(
+      /setConversationOverrideContextWindowLimit\(\(prev\)\s*=>\s*conversationContextWindowLimit === undefined\s*\?\s*prev/s,
     );
   });
 

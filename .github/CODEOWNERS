@@ -2,3 +2,12 @@
 # Memory filesystem and git-backed memory
 /src/agent/memoryFilesystem.ts @letta-ai/system-prompt-owners
 /src/agent/memoryGit.ts @letta-ai/system-prompt-owners
+
+# WebSocket listener and protocol code
+/src/websocket/ @cpacker @4shub
+
+# Headless mode runtime
+/src/headless.ts @cpacker @4shub @kl2806 @devanshrj @sarahwooders @jnjpng
+
+# TUI/CLI runtime and UI
+/src/cli/ @cpacker @4shub @sarahwooders @jnjpng

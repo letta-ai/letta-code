@@ -1,13 +1,15 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getCurrentAgentId, getSkillsDirectory } from "../../agent/context";
+import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
 import {
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
   getBundledSkills,
   SKILLS_DIR,
 } from "../../agent/skills";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { queueSkillContent } from "./skillContentRegistry";
 import { validateRequiredParams } from "./validation.js";
 
@@ -16,10 +18,36 @@ interface SkillArgs {
   args?: string;
   /** Injected by executeTool - the tool_call_id for this invocation */
   toolCallId?: string;
+  /** Injected by executeTool in listener mode for scoped agent resolution. */
+  parentScope?: { agentId: string; conversationId: string };
 }
 
 interface SkillResult {
   message: string;
+}
+
+function getMemorySkillsDirs(agentId?: string): string[] {
+  const dirs = new Set<string>();
+
+  const scopedMemoryDir = resolveScopedMemoryDir({ agentId });
+  if (
+    scopedMemoryDir &&
+    scopedMemoryDir.trim().length > 0 &&
+    existsSync(scopedMemoryDir)
+  ) {
+    dirs.add(join(scopedMemoryDir.trim(), "skills"));
+  } else {
+    const fallbackMemoryDir = (
+      process.env.LETTA_MEMORY_DIR ||
+      process.env.MEMORY_DIR ||
+      ""
+    ).trim();
+    if (fallbackMemoryDir) {
+      dirs.add(join(fallbackMemoryDir, "skills"));
+    }
+  }
+
+  return Array.from(dirs);
 }
 
 /**
@@ -42,8 +70,9 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
  * Search order (highest priority first):
  * 1. Project skills (.skills/)
  * 2. Agent skills (~/.letta/agents/{id}/skills/)
- * 3. Global skills (~/.letta/skills/)
- * 4. Bundled skills
+ * 3. Agent memory skills ($MEMORY_DIR/skills/ or ~/.letta/agents/{id}/memory/skills/)
+ * 4. Global skills (~/.letta/skills/)
+ * 5. Bundled skills
  */
 async function readSkillContent(
   skillId: string,
@@ -74,7 +103,18 @@ async function readSkillContent(
     }
   }
 
-  // 3. Try global skills directory
+  // 3. Try agent memory skills directories
+  for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
+    const memorySkillPath = join(memorySkillsDir, skillId, "SKILL.md");
+    try {
+      const content = await readFile(memorySkillPath, "utf-8");
+      return { content, path: memorySkillPath };
+    } catch {
+      // Not in this memory skills dir, continue
+    }
+  }
+
+  // 4. Try global skills directory
   const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
   try {
     const content = await readFile(globalSkillPath, "utf-8");
@@ -83,7 +123,7 @@ async function readSkillContent(
     // Not in global, continue
   }
 
-  // 4. Try bundled skills (lowest priority)
+  // 5. Try bundled skills (lowest priority)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path) {
@@ -118,8 +158,20 @@ async function getResolvedSkillsDir(): Promise<string> {
     return skillsDir;
   }
 
-  // Fall back to default .skills directory in cwd
-  return join(process.cwd(), SKILLS_DIR);
+  // Fall back to the execution working directory when available.
+  return join(getCurrentWorkingDirectory(), SKILLS_DIR);
+}
+
+function getResolvedAgentId(args: SkillArgs): string | undefined {
+  if (args.parentScope?.agentId) {
+    return args.parentScope.agentId;
+  }
+
+  try {
+    return getCurrentAgentId();
+  } catch {
+    return undefined;
+  }
 }
 
 export async function skill(args: SkillArgs): Promise<SkillResult> {
@@ -133,7 +185,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
   }
 
   try {
-    const agentId = getCurrentAgentId();
+    const agentId = getResolvedAgentId(args);
     const skillsDir = await getResolvedSkillsDir();
 
     // Read the SKILL.md content

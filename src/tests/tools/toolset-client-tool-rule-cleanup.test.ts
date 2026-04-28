@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
 const retrieveMock = mock((_agentId: string, _opts?: Record<string, unknown>) =>
   Promise.resolve({
@@ -36,6 +36,10 @@ describe("client tool rule cleanup", () => {
     retrieveMock.mockClear();
     updateMock.mockClear();
     mockGetClient.mockClear();
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test("marks Letta Code agents with any persisted tool rules for cleanup", () => {

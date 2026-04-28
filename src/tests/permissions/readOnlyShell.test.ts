@@ -3,12 +3,136 @@ import { homedir } from "node:os";
 import {
   isMemoryDirCommand,
   isReadOnlyShellCommand,
+  isScopedMemoryShellCommand,
 } from "../../permissions/readOnlyShell";
 
 describe("isReadOnlyShellCommand", () => {
   describe("always safe commands", () => {
     test("allows cat", () => {
       expect(isReadOnlyShellCommand("cat file.txt")).toBe(true);
+    });
+
+    describe("isScopedMemoryShellCommand", () => {
+      const roots = [
+        "/Users/test/.letta/agents/agent-1/memory",
+        "/Users/test/.letta/agents/agent-1/memory-worktrees",
+      ];
+
+      test("allows memory-scoped git commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git status && git pull --ff-only && git push",
+            roots,
+          ),
+        ).toBe(true);
+      });
+
+      test("allows builtin-required worktree and backoff commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git worktree remove ../memory-worktrees/foo && git branch -d foo && sleep 2",
+            roots,
+          ),
+        ).toBe(true);
+      });
+
+      test("denies wrong-cwd git commit", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/project && git commit -m 'oops'",
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("denies path escape via git -C", () => {
+        expect(
+          isScopedMemoryShellCommand("git -C /Users/test/project push", roots),
+        ).toBe(false);
+      });
+
+      test("denies arbitrary shell mutation under memory cwd", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && python script.py",
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("allows git push from an allowed working directory without explicit cd", () => {
+        expect(
+          isScopedMemoryShellCommand("git push", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+          }),
+        ).toBe(true);
+      });
+
+      test("allows env-based memory/worktree commands used by builtins", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              'BRANCH="defrag-123"',
+              'mkdir -p "$WORKTREE_DIR"',
+              'cd "$MEMORY_DIR"',
+              'git worktree add "$WORKTREE_DIR/$BRANCH" -b "$BRANCH"',
+            ].join("\n"),
+            roots,
+            {
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+                WORKTREE_DIR:
+                  "/Users/test/.letta/agents/agent-1/memory-worktrees",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("denies command substitution in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "$(touch /tmp/pwn)"',
+            roots,
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "`touch /tmp/pwn`"',
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("denies git rebase exec hooks in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git rebase --exec "touch /tmp/pwn" main',
+            roots,
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd /Users/test/.letta/agents/agent-1/memory && git rebase -x "touch /tmp/pwn" main',
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("allows safe git rebase continuation in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git rebase --continue",
+            roots,
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git rebase --abort",
+            roots,
+          ),
+        ).toBe(true);
+      });
     });
 
     test("allows grep", () => {
@@ -42,6 +166,18 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("date")).toBe(true);
       expect(isReadOnlyShellCommand("hostname")).toBe(true);
     });
+
+    test("handles env safely", () => {
+      expect(isReadOnlyShellCommand("env")).toBe(true);
+      expect(isReadOnlyShellCommand("env --help")).toBe(true);
+      expect(isReadOnlyShellCommand("env ls -la")).toBe(true);
+      expect(isReadOnlyShellCommand("env bash -lc 'touch /tmp/pwn'")).toBe(
+        false,
+      );
+      expect(
+        isReadOnlyShellCommand("env FOO=1 bash -lc 'touch /tmp/pwn'"),
+      ).toBe(false);
+    });
   });
 
   describe("sed command", () => {
@@ -69,11 +205,97 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git branch -a")).toBe(true);
     });
 
+    test("allows additional read-only git subcommands", () => {
+      expect(isReadOnlyShellCommand("git rev-parse --abbrev-ref HEAD")).toBe(
+        true,
+      );
+      expect(isReadOnlyShellCommand("git rev-parse HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git ls-files")).toBe(true);
+      expect(isReadOnlyShellCommand("git ls-files --modified")).toBe(true);
+      expect(isReadOnlyShellCommand("git ls-tree -r HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git cat-file -p HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git describe --tags")).toBe(true);
+      expect(isReadOnlyShellCommand("git blame src/file.ts")).toBe(true);
+      expect(isReadOnlyShellCommand("git shortlog -sn")).toBe(true);
+      expect(isReadOnlyShellCommand("git name-rev HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git rev-list --count HEAD")).toBe(true);
+      expect(
+        isReadOnlyShellCommand("git for-each-ref --format='%(refname)'"),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("git count-objects -v")).toBe(true);
+      expect(isReadOnlyShellCommand("git verify-commit HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git verify-tag v1.0")).toBe(true);
+      expect(
+        isReadOnlyShellCommand("git grep -n StreamMode HEAD~1 -- src"),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand(
+          'git grep -n "stream mode\\|StreamMode\\|conversationMode\\|continuousMode\\|AutoReadIcon\\|ChatInfoIcon" HEAD~1 -- libs/ui-ade-components/src/lib/ade/panels/AgentSimulator/AgentMessenger libs/ui-ade-components/src/translations/en.json | sed -n "1,220p"',
+        ),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("git grep -f patterns.txt -- src")).toBe(
+        true,
+      );
+    });
+
+    test("allows compound commands with read-only git subcommands", () => {
+      expect(
+        isReadOnlyShellCommand("pwd && git rev-parse --abbrev-ref HEAD && ls"),
+      ).toBe(true);
+    });
+
     test("blocks write git commands", () => {
       expect(isReadOnlyShellCommand("git push")).toBe(false);
       expect(isReadOnlyShellCommand("git commit -m 'msg'")).toBe(false);
       expect(isReadOnlyShellCommand("git reset --hard")).toBe(false);
       expect(isReadOnlyShellCommand("git checkout branch")).toBe(false);
+    });
+
+    test("blocks mutating git branch operations", () => {
+      expect(isReadOnlyShellCommand("git branch feature/foo")).toBe(false);
+      expect(isReadOnlyShellCommand("git branch -m old new")).toBe(false);
+      expect(isReadOnlyShellCommand("git branch -D stale")).toBe(false);
+      expect(isReadOnlyShellCommand("git branch --list")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --list 'feature/*'")).toBe(
+        true,
+      );
+      // Filter flags combined with listing flags
+      expect(isReadOnlyShellCommand("git branch -a --contains 63dd7483")).toBe(
+        true,
+      );
+      expect(isReadOnlyShellCommand("git branch -r --contains abc123")).toBe(
+        true,
+      );
+      expect(isReadOnlyShellCommand("git branch --contains HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --merged main")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --no-merged")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --points-at HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch -a --no-contains abc")).toBe(
+        true,
+      );
+    });
+
+    test("blocks unsafe git flags on read-only subcommands", () => {
+      expect(isReadOnlyShellCommand("git show --output=/tmp/out HEAD")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("git show --ext-diff")).toBe(false);
+      expect(isReadOnlyShellCommand("git status --paginate")).toBe(false);
+      expect(
+        isReadOnlyShellCommand("git -c core.pager='sh -c \"echo pwn\"' status"),
+      ).toBe(false);
+      expect(
+        isReadOnlyShellCommand("git --config-env=core.pager=GIT_PAGER status"),
+      ).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --open-files-in-pager foo")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("git grep -Oless foo")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --ext-grep foo")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --no-index foo .")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep -f /tmp/patterns foo")).toBe(
+        false,
+      );
     });
 
     test("blocks bare git", () => {
@@ -126,6 +348,22 @@ describe("isReadOnlyShellCommand", () => {
       ).toBe(true);
     });
 
+    test("blocks mutating gh api commands", () => {
+      expect(
+        isReadOnlyShellCommand(
+          "gh api -X POST repos/owner/repo/issues -f title=test",
+        ),
+      ).toBe(false);
+      expect(
+        isReadOnlyShellCommand(
+          "gh api --method DELETE repos/owner/repo/issues/1",
+        ),
+      ).toBe(false);
+      expect(
+        isReadOnlyShellCommand("gh api repos/owner/repo --field foo=bar"),
+      ).toBe(false);
+    });
+
     test("allows gh status command", () => {
       expect(isReadOnlyShellCommand("gh status")).toBe(true);
     });
@@ -157,8 +395,18 @@ describe("isReadOnlyShellCommand", () => {
       );
     });
 
-    test("blocks find with -exec", () => {
+    test("blocks find with command execution options", () => {
       expect(isReadOnlyShellCommand("find . -exec rm {} \\;")).toBe(false);
+      expect(isReadOnlyShellCommand("find . -execdir rm {} \\;")).toBe(false);
+      expect(isReadOnlyShellCommand("find . -ok rm {} \\;")).toBe(false);
+      expect(isReadOnlyShellCommand("find . -okdir rm {} \\;")).toBe(false);
+    });
+
+    test("blocks find options that write output files", () => {
+      expect(isReadOnlyShellCommand("find . -fprint out.txt")).toBe(false);
+      expect(isReadOnlyShellCommand("find . -fprintf out.txt '%p\\n'")).toBe(
+        false,
+      );
     });
   });
 
@@ -197,10 +445,89 @@ describe("isReadOnlyShellCommand", () => {
     });
   });
 
+  describe("letta CLI commands", () => {
+    test("allows letta memory tokens", () => {
+      expect(isReadOnlyShellCommand("letta memory tokens")).toBe(true);
+    });
+
+    test("allows letta memory tokens with flags", () => {
+      expect(
+        isReadOnlyShellCommand("letta memory tokens --quiet --format json"),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand(
+          "letta memory tokens --memory-dir /tmp/mem --top 10",
+        ),
+      ).toBe(true);
+    });
+
+    test("allows letta memory help", () => {
+      expect(isReadOnlyShellCommand("letta memory help")).toBe(true);
+    });
+
+    test("blocks unknown letta memory action", () => {
+      // restore/backup/pull/diff mutate state — not in read-only allowlist
+      expect(isReadOnlyShellCommand("letta memory restore")).toBe(false);
+      expect(isReadOnlyShellCommand("letta memory pull")).toBe(false);
+      expect(isReadOnlyShellCommand("letta memory delete")).toBe(false);
+    });
+
+    test("blocks letta memory with no action", () => {
+      expect(isReadOnlyShellCommand("letta memory")).toBe(false);
+    });
+
+    test("blocks unknown letta group", () => {
+      expect(isReadOnlyShellCommand("letta install plugin")).toBe(false);
+      expect(isReadOnlyShellCommand("letta doctor")).toBe(false);
+    });
+
+    test("allows legacy letta memfs alias", () => {
+      expect(isReadOnlyShellCommand("letta memfs tokens")).toBe(true);
+    });
+
+    test("allows letta memory tokens piped to a safe command", () => {
+      expect(
+        isReadOnlyShellCommand("letta memory tokens --format json | head -5"),
+      ).toBe(true);
+    });
+  });
+
   describe("dangerous operators", () => {
-    test("blocks output redirection", () => {
+    test("blocks output redirection to files", () => {
       expect(isReadOnlyShellCommand("cat file > output.txt")).toBe(false);
       expect(isReadOnlyShellCommand("cat file >> output.txt")).toBe(false);
+      expect(isReadOnlyShellCommand("cmd > /tmp/out")).toBe(false);
+      expect(isReadOnlyShellCommand("cmd 2>/tmp/err")).toBe(false);
+    });
+
+    test("allows safe redirects to /dev/null", () => {
+      expect(isReadOnlyShellCommand("rg -n pattern src/ 2>/dev/null")).toBe(
+        true,
+      );
+      expect(
+        isReadOnlyShellCommand(
+          'rg -n "pattern" src/ 2>/dev/null | head -n 200',
+        ),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("git status 2>/dev/null")).toBe(true);
+      expect(isReadOnlyShellCommand("ls >/dev/null")).toBe(true);
+      expect(isReadOnlyShellCommand("cat file.txt 1>/dev/null")).toBe(true);
+      expect(isReadOnlyShellCommand("ls 2>>/dev/null")).toBe(true);
+      expect(isReadOnlyShellCommand("ls 2> /dev/null")).toBe(true);
+    });
+
+    test("does not misclassify commands with trailing digits before redirect", () => {
+      // "ls3>/dev/null" should evaluate as command "ls3" (not "ls")
+      // ls3 is not in the safe list, so it must be blocked
+      expect(isReadOnlyShellCommand("ls3>/dev/null")).toBe(false);
+      expect(isReadOnlyShellCommand("git branch3>/dev/null")).toBe(false);
+      expect(isReadOnlyShellCommand("evil9>/dev/null")).toBe(false);
+    });
+
+    test("allows fd duplication redirects", () => {
+      expect(isReadOnlyShellCommand("ls 2>&1")).toBe(true);
+      expect(isReadOnlyShellCommand("ls 2>&1 | grep error")).toBe(true);
+      expect(isReadOnlyShellCommand("git status 2>&1")).toBe(true);
     });
 
     test("blocks command chaining", () => {
@@ -219,6 +546,19 @@ describe("isReadOnlyShellCommand", () => {
     test("allows literal redirects inside quotes", () => {
       expect(isReadOnlyShellCommand('echo "a > b"')).toBe(true);
       expect(isReadOnlyShellCommand("echo 'a >> b'")).toBe(true);
+    });
+  });
+
+  describe("rg safety flags", () => {
+    test("blocks ripgrep flags that can execute external programs", () => {
+      expect(isReadOnlyShellCommand("rg --pre 'python pre.py' foo .")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("rg --hostname-bin /bin/echo foo .")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("rg --search-zip foo .")).toBe(false);
+      expect(isReadOnlyShellCommand("rg -z foo .")).toBe(false);
     });
   });
 
@@ -353,6 +693,49 @@ describe("isReadOnlyShellCommand", () => {
           allowedPathRoots: ["/Users/test/project"],
         }),
       ).toBe(true);
+    });
+
+    test("allows captured read-only inspection scripts with conditionals, loops, and safe find execs", () => {
+      const capturedInspectionScripts = [
+        [
+          "printf '== apps/client-ui/vite.config.ts ==\\n'; sed -n '1,240p' apps/client-ui/vite.config.ts; printf '\\n== apps/client-ui/package.json ==\\n'; if [ -f apps/client-ui/package.json ]; then sed -n '1,240p' apps/client-ui/package.json; fi",
+          true,
+        ],
+        [
+          "printf '== workstation ui config files ==\\n'; rg --files apps/workstation/ui | rg '(vite\\.config|package\\.json|project\\.json|index\\.html|main\\.tsx|main\\.ts|tsconfig|sentry|source|map)' ; printf '\\n== apps/workstation/ui/project.json ==\\n'; sed -n '1,240p' apps/workstation/ui/project.json 2>/dev/null; printf '\\n== apps/workstation/ui/vite.config.* ==\\n'; for f in apps/workstation/ui/vite.config.*; do echo \"--- $f ---\"; sed -n '1,260p' \"$f\"; done",
+          true,
+        ],
+        [
+          "printf '== workstation packaging files ==\\n'; rg --files apps/workstation apps/workstation/electron | rg '(project\\.json|builder|forge|tsup|esbuild|vite\\.config|package\\.json|entitlements|plist|yaml|yml|desktop.*config|notarize|afterSign)' ; printf '\\n== relevant project/build files contents ==\\n'; for f in apps/workstation/project.json apps/workstation/electron/project.json apps/workstation/project.config.json apps/workstation/electron-builder.yml apps/workstation/electron/builder.yml; do if [ -f \"$f\" ]; then echo \"--- $f ---\"; sed -n '1,260p' \"$f\"; fi; done",
+          true,
+        ],
+        [
+          "printf '== stale asset summary ==\\n'; printf 'JS bundles: '; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.js' | wc -l; printf 'CSS bundles: '; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.css' | wc -l; printf 'All asset files: '; find apps/workstation/dist/assets -maxdepth 1 -type f | wc -l; printf '\\nRecent asset mtimes:\\n'; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.*' -exec stat -f '%Sm %N' -t '%Y-%m-%d %H:%M' {} \\; | sort | tail -n 20",
+          true,
+        ],
+        [
+          "printf '== referenced renderer asset sizes ==\\n'; node - <<'NODE'\\nconst fs = require('fs');\\nconst html = fs.readFileSync('apps/workstation/dist/index.html', 'utf8');\\nconst js = html.match(/src=\"\\.\\/([^\"]+)\"/)?.[1];\\nconst css = html.match(/href=\"\\.\\/([^\"]+)\"/)?.[1];\\nfor (const f of [js, css]) {\\n  if (!f) continue;\\n  const st = fs.statSync('apps/workstation/dist/' + f);\\n  console.log(f, st.size);\\n}\\nNODE",
+          false,
+        ],
+      ] as const;
+
+      for (const [command, expected] of capturedInspectionScripts) {
+        expect(isReadOnlyShellCommand(command)).toBe(expected);
+      }
+    });
+
+    test("rejects supported control flow when any branch body is unsafe", () => {
+      expect(
+        isReadOnlyShellCommand(
+          "if [ -f package.json ]; then sed -n '1,20p' package.json; rm package.json; fi",
+        ),
+      ).toBe(false);
+
+      expect(
+        isReadOnlyShellCommand(
+          'for f in package.json bun.lock; do sed -n \'1,20p\' "$f"; rm "$f"; done',
+        ),
+      ).toBe(false);
     });
   });
 });

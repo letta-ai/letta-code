@@ -25,10 +25,7 @@ function withStubbedProviders(fn: () => Promise<void>): () => Promise<void> {
 
   return async () => {
     sharedReminderProviders["session-context"] = async (ctx) => {
-      if (
-        !ctx.sessionContextReminderEnabled ||
-        ctx.state.hasSentSessionContext
-      ) {
+      if (!ctx.systemInfoReminderEnabled || ctx.state.hasSentSessionContext) {
         return null;
       }
       ctx.state.hasSentSessionContext = true;

@@ -7,6 +7,19 @@ console.log("🔍 Running lint and type checks...\n");
 
 let failed = false;
 
+// Run test mock isolation check
+console.log("🧪 Checking Bun module mock isolation...");
+try {
+  await $`bun run check:test-mock-isolation`;
+  console.log("✅ Mock isolation check passed\n");
+} catch (error) {
+  console.error("❌ Mock isolation check failed\n");
+  console.error(
+    "Add a top-level mock.restore() teardown hook to any test file using mock.module(), or remove the module mock.\n",
+  );
+  failed = true;
+}
+
 // Run lint
 console.log("📝 Running Biome linter...");
 try {

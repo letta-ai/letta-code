@@ -1,35 +1,132 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { runWithRuntimeContext } from "../../runtime-context";
 
 const execFile = promisify(execFileCb);
 
 const TEST_AGENT_ID = "agent-test-memory-tool";
 const TEST_AGENT_NAME = "Bob";
 
-mock.module("../../agent/context", () => ({
-  getCurrentAgentId: () => TEST_AGENT_ID,
-}));
+let mockClientOverride: (() => Promise<unknown>) | null = null;
+
+async function getMockClient() {
+  if (mockClientOverride) {
+    return mockClientOverride();
+  }
+
+  return {
+    _options: { apiKey: process.env.LETTA_API_KEY ?? "" },
+    agents: {
+      retrieve: mock(() => Promise.resolve({ name: TEST_AGENT_NAME })),
+    },
+  };
+}
+
+function getMockMemfsServerUrl(): string {
+  return process.env.LETTA_MEMFS_BASE_URL || "https://api.letta.com";
+}
+
+function isMockLocalhostUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function getMockMemfsGitProxyRewriteConfig() {
+  const rawProxyBaseUrl = process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL?.trim();
+  if (!rawProxyBaseUrl || !isMockLocalhostUrl(rawProxyBaseUrl)) {
+    return null;
+  }
+
+  const memfsBaseUrl = getMockMemfsServerUrl().trim().replace(/\/+$/, "");
+  if (!memfsBaseUrl.includes("api.letta.com")) {
+    return null;
+  }
+
+  const proxyBaseUrl = rawProxyBaseUrl.replace(/\/+$/, "");
+  const proxyPrefix = `${proxyBaseUrl}/v1/git/`;
+  const memfsPrefix = `${memfsBaseUrl}/v1/git/`;
+  return {
+    proxyBaseUrl,
+    memfsBaseUrl,
+    proxyPrefix,
+    memfsPrefix,
+    configKey: `url.${proxyPrefix}.insteadOf`,
+    configValue: memfsPrefix,
+  };
+}
 
 mock.module("../../agent/client", () => ({
-  getClient: mock(() =>
-    Promise.resolve({
-      agents: {
-        retrieve: mock(() => Promise.resolve({ name: TEST_AGENT_NAME })),
-      },
-    }),
-  ),
+  __testOverrideGetClient: (factory: (() => Promise<unknown>) | null) => {
+    mockClientOverride = factory;
+  },
+  getClient: mock(getMockClient),
+  LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV: "LETTA_MEMFS_GIT_PROXY_BASE_URL",
+  getMemfsGitProxyRewriteConfig: getMockMemfsGitProxyRewriteConfig,
+  getMemfsServerUrl: getMockMemfsServerUrl,
+  getServerUrl: () => "http://localhost:8283",
 }));
 
 const { memory } = await import("../../tools/impl/Memory");
 
+function runScopedMemory(args: Parameters<typeof memory>[0]) {
+  return runWithRuntimeContext({ agentId: TEST_AGENT_ID }, () => memory(args));
+}
+
 async function runGit(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFile("git", args, { cwd });
   return String(stdout ?? "").trim();
+}
+
+async function cloneRemoteRepo(
+  remoteDir: string,
+  cloneDir: string,
+): Promise<void> {
+  await execFile("git", ["clone", "--branch", "main", remoteDir, cloneDir]);
+  await runGit(cloneDir, ["config", "user.name", "remote-user"]);
+  await runGit(cloneDir, ["config", "user.email", "remote-user@example.com"]);
+}
+
+async function initTrackedMemoryRepo(
+  repoDir: string,
+  remoteDir: string,
+): Promise<void> {
+  await execFile("git", ["init", "--bare", remoteDir]);
+  await execFile("git", ["init", "-b", "main", repoDir]);
+  await runGit(repoDir, ["config", "user.name", "setup"]);
+  await runGit(repoDir, ["config", "user.email", "setup@example.com"]);
+  await runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+
+  writeFileSync(join(repoDir, ".gitkeep"), "", "utf8");
+  await runGit(repoDir, ["add", ".gitkeep"]);
+  await runGit(repoDir, ["commit", "-m", "initial"]);
+  await runGit(repoDir, ["push", "-u", "origin", "main"]);
+}
+
+async function listRescueRefs(cwd: string): Promise<string[]> {
+  const output = await runGit(cwd, [
+    "for-each-ref",
+    "--format=%(refname)",
+    "refs/letta-conflicts",
+  ]);
+  return output ? output.split("\n").filter(Boolean) : [];
 }
 
 describe("memory tool", () => {
@@ -37,29 +134,23 @@ describe("memory tool", () => {
   let memoryDir: string;
   let remoteDir: string;
 
+  // Deliberately avoid mock.module("../../agent/context") here so this suite
+  // doesn't leak agent identity into unrelated tests through Bun's shared
+  // module graph.
+
   const originalMemoryDir = process.env.MEMORY_DIR;
   const originalAgentId = process.env.AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
+  const originalHome = process.env.HOME;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-memory-tool-"));
-    memoryDir = join(tempRoot, "memory");
+    memoryDir = join(tempRoot, ".letta", "agents", TEST_AGENT_ID, "memory");
     remoteDir = join(tempRoot, "remote.git");
 
-    // Bare remote
-    await execFile("git", ["init", "--bare", remoteDir]);
+    await initTrackedMemoryRepo(memoryDir, remoteDir);
 
-    // Local memory repo
-    await execFile("git", ["init", "-b", "main", memoryDir]);
-    await runGit(memoryDir, ["config", "user.name", "setup"]);
-    await runGit(memoryDir, ["config", "user.email", "setup@example.com"]);
-    await runGit(memoryDir, ["remote", "add", "origin", remoteDir]);
-
-    writeFileSync(join(memoryDir, ".gitkeep"), "", "utf8");
-    await runGit(memoryDir, ["add", ".gitkeep"]);
-    await runGit(memoryDir, ["commit", "-m", "initial"]);
-    await runGit(memoryDir, ["push", "-u", "origin", "main"]);
-
+    process.env.HOME = tempRoot;
     process.env.MEMORY_DIR = memoryDir;
     process.env.AGENT_ID = TEST_AGENT_ID;
     process.env.AGENT_NAME = TEST_AGENT_NAME;
@@ -75,16 +166,23 @@ describe("memory tool", () => {
     if (originalAgentName === undefined) delete process.env.AGENT_NAME;
     else process.env.AGENT_NAME = originalAgentName;
 
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
 
+  afterAll(() => {
+    mock.restore();
+  });
+
   test("requires reason", async () => {
     await expect(
-      memory({
+      runScopedMemory({
         command: "create",
-        path: "system/test.md",
+        file_path: "system/test.md",
         description: "test desc",
       } as Parameters<typeof memory>[0]),
     ).rejects.toThrow(/missing required parameter/i);
@@ -93,10 +191,10 @@ describe("memory tool", () => {
   test("uses reason as commit message and agent identity as commit author", async () => {
     const reason = "Create coding preferences block";
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason,
-      path: "system/human/prefs/coding.md",
+      file_path: "system/human/prefs/coding.md",
       description: "The user's coding preferences.",
       file_text: "The user likes explicit types.",
     });
@@ -120,11 +218,37 @@ describe("memory tool", () => {
     expect(remoteSubject).toBe(reason);
   });
 
+  test("prefers scoped agent memory over stale MEMORY_DIR env", async () => {
+    const scopedMemoryDir = memoryDir;
+    const staleMemoryDir = join(tempRoot, "stale-memory");
+    const scopedRemoteDir = join(tempRoot, "scoped-remote.git");
+
+    await initTrackedMemoryRepo(staleMemoryDir, scopedRemoteDir);
+    process.env.MEMORY_DIR = staleMemoryDir;
+
+    await runScopedMemory({
+      command: "create",
+      reason: "Create scoped memory file",
+      file_path: "system/scoped.md",
+      description: "Scoped file",
+      file_text: "scoped body",
+    });
+
+    const scopedContent = await runGit(scopedMemoryDir, [
+      "show",
+      "HEAD:system/scoped.md",
+    ]);
+    expect(scopedContent).toContain("scoped body");
+
+    const staleStatus = await runGit(staleMemoryDir, ["status", "--short"]);
+    expect(staleStatus).not.toContain("scoped.md");
+  });
+
   test("returns error when push fails but keeps local commit", async () => {
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Seed notes",
-      path: "reference/history/notes.md",
+      file_path: "reference/history/notes.md",
       description: "Notes block",
       file_text: "old value",
     });
@@ -139,10 +263,10 @@ describe("memory tool", () => {
     const reason = "Update notes after remote failure";
 
     await expect(
-      memory({
+      runScopedMemory({
         command: "str_replace",
         reason,
-        path: "reference/history/notes.md",
+        file_path: "reference/history/notes.md",
         old_string: "old value",
         new_string: "new value",
       }),
@@ -156,15 +280,125 @@ describe("memory tool", () => {
     expect(subject).toBe(reason);
   });
 
+  test("replays str_replace on top of newer remote memory", async () => {
+    await runScopedMemory({
+      command: "create",
+      reason: "Seed replay notes",
+      file_path: "reference/history/notes.md",
+      description: "Notes block",
+      file_text: "old value\nlocal line",
+    });
+
+    const remoteCloneDir = join(tempRoot, "remote-clone");
+    await cloneRemoteRepo(remoteDir, remoteCloneDir);
+    writeFileSync(
+      join(remoteCloneDir, "reference", "history", "notes.md"),
+      [
+        "---",
+        "description: Notes block",
+        "---",
+        "old value",
+        "local line",
+        "remote line",
+      ].join("\n"),
+      "utf8",
+    );
+    await runGit(remoteCloneDir, ["add", "reference/history/notes.md"]);
+    await runGit(remoteCloneDir, ["commit", "-m", "Remote update notes"]);
+    await runGit(remoteCloneDir, ["push", "origin", "main"]);
+
+    const result = await runScopedMemory({
+      command: "str_replace",
+      reason: "Replay local replacement",
+      file_path: "reference/history/notes.md",
+      old_string: "old value",
+      new_string: "new value",
+    });
+
+    expect(result.message).toContain(
+      "reapplied on top of newer remote memory and pushed",
+    );
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:reference/history/notes.md",
+    ]);
+    expect(content).toContain("new value");
+    expect(content).toContain("remote line");
+
+    const divergence = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "@{u}...HEAD",
+    ]);
+    expect(divergence).toBe("0\t0");
+  });
+
+  test("fails closed when replay cannot be applied safely", async () => {
+    await runScopedMemory({
+      command: "create",
+      reason: "Seed conflicting notes",
+      file_path: "reference/history/notes.md",
+      description: "Notes block",
+      file_text: "old value",
+    });
+
+    const remoteCloneDir = join(tempRoot, "remote-conflict-clone");
+    await cloneRemoteRepo(remoteDir, remoteCloneDir);
+    writeFileSync(
+      join(remoteCloneDir, "reference", "history", "notes.md"),
+      ["---", "description: Notes block", "---", "remote value"].join("\n"),
+      "utf8",
+    );
+    await runGit(remoteCloneDir, ["add", "reference/history/notes.md"]);
+    await runGit(remoteCloneDir, ["commit", "-m", "Remote conflicting update"]);
+    await runGit(remoteCloneDir, ["push", "origin", "main"]);
+
+    await expect(
+      runScopedMemory({
+        command: "str_replace",
+        reason: "Attempt conflicting replacement",
+        file_path: "reference/history/notes.md",
+        old_string: "old value",
+        new_string: "new value",
+      }),
+    ).rejects.toThrow(/could not be replayed safely/i);
+
+    const divergence = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "@{u}...HEAD",
+    ]);
+    expect(divergence).toBe("0\t0");
+
+    const content = await runGit(memoryDir, [
+      "show",
+      "HEAD:reference/history/notes.md",
+    ]);
+    expect(content).toContain("remote value");
+    expect(content).not.toContain("new value");
+
+    const rescueRefs = await listRescueRefs(memoryDir);
+    expect(rescueRefs.length).toBeGreaterThan(0);
+
+    const rescuedContent = await runGit(memoryDir, [
+      "show",
+      `${rescueRefs[0]}:reference/history/notes.md`,
+    ]);
+    expect(rescuedContent).toContain("new value");
+  });
+
   test("falls back to context agent id when AGENT_ID env is missing", async () => {
     delete process.env.AGENT_ID;
     delete process.env.LETTA_AGENT_ID;
 
     const reason = "Create identity via context fallback";
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason,
-      path: "system/human/identity.md",
+      file_path: "system/human/identity.md",
       description: "Identity block",
       file_text: "Name: Bob",
     });
@@ -180,10 +414,10 @@ describe("memory tool", () => {
   test("accepts relative file paths like system/contacts.md", async () => {
     const reason = "Create contacts via relative path";
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason,
-      path: "system/contacts.md",
+      file_path: "system/contacts.md",
       description: "Contacts memory",
       file_text: "Sarah: +1-555-0100",
     });
@@ -199,10 +433,10 @@ describe("memory tool", () => {
   test("accepts absolute file paths under MEMORY_DIR", async () => {
     const absolutePath = join(memoryDir, "system", "contacts.md");
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create contacts via absolute path",
-      path: absolutePath,
+      file_path: absolutePath,
       description: "Contacts memory absolute",
       file_text: "Timber: good dog",
     });
@@ -216,18 +450,18 @@ describe("memory tool", () => {
   });
 
   test("updates frontmatter description via update_description command", async () => {
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create coding prefs",
-      path: "system/human/prefs/coding.md",
+      file_path: "system/human/prefs/coding.md",
       description: "Old description",
       file_text: "keep body unchanged",
     });
 
-    await memory({
+    await runScopedMemory({
       command: "update_description",
       reason: "Update coding prefs description",
-      path: "system/human/prefs/coding.md",
+      file_path: "system/human/prefs/coding.md",
       description: "New description",
     });
 
@@ -241,36 +475,36 @@ describe("memory tool", () => {
 
   test("rename requires old_path and new_path", async () => {
     await expect(
-      memory({
+      runScopedMemory({
         command: "rename",
         reason: "should fail",
-        path: "system/contacts.md",
+        file_path: "system/contacts.md",
         description: "Should not update description via rename",
       } as Parameters<typeof memory>[0]),
     ).rejects.toThrow(/memory rename: 'old_path' must be a non-empty string/i);
   });
 
   test("delete supports recursive directory removal", async () => {
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create draft note one",
-      path: "reference/history/draft-one.md",
+      file_path: "reference/history/draft-one.md",
       description: "Draft one",
       file_text: "one",
     });
 
-    await memory({
+    await runScopedMemory({
       command: "create",
       reason: "Create draft note two",
-      path: "reference/history/draft-two.md",
+      file_path: "reference/history/draft-two.md",
       description: "Draft two",
       file_text: "two",
     });
 
-    await memory({
+    await runScopedMemory({
       command: "delete",
       reason: "Delete history directory",
-      path: "reference/history",
+      file_path: "reference/history",
     });
 
     const fileTree = await runGit(memoryDir, [
@@ -285,10 +519,10 @@ describe("memory tool", () => {
 
   test("rejects absolute paths outside MEMORY_DIR", async () => {
     await expect(
-      memory({
+      runScopedMemory({
         command: "create",
         reason: "should fail",
-        path: "/memories/contacts",
+        file_path: "/memories/contacts",
         description: "Contacts memory",
       }),
     ).rejects.toThrow(

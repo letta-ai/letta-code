@@ -53,6 +53,64 @@ test("Git -C remote suggests safe subcommand rule", () => {
   expect(context.safetyLevel).toBe("safe");
 });
 
+test("Git branch --list suggests safe subcommand rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git branch --list 'feature/*'" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git branch:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("Git grep pipeline suggests safe subcommand rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        'git grep -n "stream mode\\|StreamMode\\|conversationMode\\|continuousMode\\|AutoReadIcon\\|ChatInfoIcon" HEAD~1 -- libs/ui-ade-components/src/lib/ade/panels/AgentSimulator/AgentMessenger libs/ui-ade-components/src/translations/en.json | sed -n "1,220p"',
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git grep:*)");
+  expect(context.safetyLevel).toBe("safe");
+});
+
+test("Git branch mutation suggests moderate safety rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git branch feature/new-work" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git branch:*)");
+  expect(context.safetyLevel).toBe("moderate");
+});
+
+test("Git read-only subcommand with unsafe flag suggests moderate safety rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git show --ext-diff HEAD" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git show:*)");
+  expect(context.safetyLevel).toBe("moderate");
+});
+
+test("Git global config override is parsed to true subcommand and remains moderate", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git -c core.pager=cat status" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(git status:*)");
+  expect(context.safetyLevel).toBe("moderate");
+});
+
 test("Git push suggests moderate safety rule", () => {
   const context = analyzeApprovalContext(
     "Bash",
@@ -154,6 +212,29 @@ test("Command with --hard flag blocks persistence", () => {
 
   expect(context.allowPersistence).toBe(false);
   expect(context.safetyLevel).toBe("dangerous");
+});
+
+test("Standalone -f force flag still blocks persistence", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "git push -f origin main" },
+    "/Users/test/project",
+  );
+
+  expect(context.allowPersistence).toBe(false);
+  expect(context.safetyLevel).toBe("dangerous");
+});
+
+test("cut -f2 does not trigger dangerous flag classification", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: "cut -d= -f2 .env" },
+    "/Users/test/project",
+  );
+
+  expect(context.allowPersistence).toBe(true);
+  expect(context.safetyLevel).toBe("moderate");
+  expect(context.recommendedRule).toBe("Bash(cut -d= -f2 .env)");
 });
 
 test("npm run commands suggest safe rule", () => {
@@ -261,6 +342,22 @@ test("Read-only rg command suggests wildcard rule", () => {
 
   expect(context.recommendedRule).toBe("Bash(rg:*)");
   expect(context.safetyLevel).toBe("safe");
+});
+
+test("Export setup plus curl lookup suggests reusable curl rule", () => {
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        'export EXAMPLE_API_KEY=$(grep -E "^EXAMPLE_API_KEY=" .env | cut -d= -f2) && curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001" | jq -r "{id, email, name, description}"',
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.allowPersistence).toBe(true);
+  expect(context.safetyLevel).toBe("safe");
+  expect(context.recommendedRule).toBe("Bash(curl:*)");
+  expect(context.approveAlwaysText).toContain("curl");
 });
 
 test("Skill script in bundled skill suggests bundled-scope message", () => {

@@ -4,8 +4,10 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
+import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
@@ -88,6 +90,7 @@ export interface Settings {
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
   statusLine?: StatusLineConfig; // Configurable status line command
   env?: Record<string, string>;
+  experiments?: Partial<Record<ExperimentId, boolean>>;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
   pinnedAgentsByServer?: Record<string, string[]>; // DEPRECATED: use agents array
@@ -168,6 +171,13 @@ function isSubagentProcess(): boolean {
   return process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 }
 
+export function shouldPersistSessionState(): boolean {
+  return (
+    process.env.LETTA_CODE_AGENT_ROLE !== "subagent" &&
+    process.env.LETTA_DISABLE_SESSION_PERSIST !== "1"
+  );
+}
+
 /**
  * Normalize a base URL for use as a settings key.
  * Strips protocol (https://, http://) and returns host:port.
@@ -196,6 +206,20 @@ function getCurrentServerKey(settings?: Settings | null): string {
   return normalizeBaseUrl(baseUrl);
 }
 
+/**
+ * Get the current memfs server key for memfs-related agent settings.
+ * Uses LETTA_MEMFS_BASE_URL and falls back to api.letta.com.
+ * @param settings - Optional settings object to check for env overrides
+ * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
+ */
+function getCurrentMemfsServerKey(settings?: Settings | null): string {
+  const baseUrl =
+    process.env.LETTA_MEMFS_BASE_URL ||
+    settings?.env?.LETTA_MEMFS_BASE_URL ||
+    DEFAULT_LETTA_API_URL;
+  return normalizeBaseUrl(baseUrl);
+}
+
 class SettingsManager {
   private settings: Settings | null = null;
   private projectSettings: Map<string, ProjectSettings> = new Map();
@@ -210,6 +234,7 @@ class SettingsManager {
   // Keys explicitly changed by this process. Only these keys are written back,
   // preventing stale in-memory values from clobbering external updates.
   private dirtyKeys = new Set<string>();
+  private secureTokensCache: SecureTokens = {};
 
   // Mark keys as managed AND dirty (i.e. this process owns the value and it
   // should be written back on persist). The only call-site that should add to
@@ -220,6 +245,19 @@ class SettingsManager {
       this.managedKeys.add(key);
       this.dirtyKeys.add(key);
     }
+  }
+
+  private updateSecureTokensCache(tokens: SecureTokens): void {
+    if (tokens.apiKey) {
+      this.secureTokensCache.apiKey = tokens.apiKey;
+    }
+    if (tokens.refreshToken) {
+      this.secureTokensCache.refreshToken = tokens.refreshToken;
+    }
+  }
+
+  private clearSecureTokensCache(): void {
+    this.secureTokensCache = {};
   }
 
   /**
@@ -353,6 +391,7 @@ class SettingsManager {
         if (available) {
           try {
             await setSecureTokens(tokensToMigrate);
+            this.updateSecureTokensCache(tokensToMigrate);
 
             // Remove tokens from settings file
             const updatedSettings = { ...this.settings };
@@ -457,12 +496,19 @@ class SettingsManager {
    */
   async getSettingsWithSecureTokens(): Promise<Settings> {
     const baseSettings = this.getSettings();
-    let secureTokens: SecureTokens = {};
+    let secureTokens: SecureTokens = { ...this.secureTokensCache };
 
-    // Try to get tokens from secrets first
-    const secretsAvailable = await this.isKeychainAvailable();
-    if (secretsAvailable) {
-      secureTokens = await this.getSecureTokens();
+    // Bun 1.3.0 can crash when keychain reads happen while AsyncLocalStorage
+    // runtime scope is active. Reuse cached tokens in that case and let callers
+    // fall back to env/file-backed settings if no cache is available yet.
+    if (!getRuntimeContext()) {
+      const secretsAvailable = await this.isKeychainAvailable();
+      if (secretsAvailable) {
+        secureTokens = {
+          ...secureTokens,
+          ...(await this.getSecureTokens()),
+        };
+      }
     }
 
     // Fallback to tokens in settings file if secrets are not available
@@ -491,6 +537,10 @@ class SettingsManager {
    */
   getSetting<K extends keyof Settings>(key: K): Settings[K] {
     return this.getSettings()[key];
+  }
+
+  getCachedSecureTokens(): SecureTokens {
+    return { ...this.secureTokensCache };
   }
 
   /**
@@ -1516,9 +1566,12 @@ class SettingsManager {
    * Get settings for a specific agent on the current server.
    * Returns undefined if agent not found in settings.
    */
-  private getAgentSettings(agentId: string): AgentSettings | undefined {
+  private getAgentSettings(
+    agentId: string,
+    serverKeyOverride?: string,
+  ): AgentSettings | undefined {
     const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
+    const serverKey = serverKeyOverride ?? getCurrentServerKey(settings);
     const normalizedBaseUrl =
       serverKey === "api.letta.com" ? undefined : serverKey;
 
@@ -1534,9 +1587,10 @@ class SettingsManager {
   private upsertAgentSettings(
     agentId: string,
     updates: Partial<Omit<AgentSettings, "agentId" | "baseUrl">>,
+    serverKeyOverride?: string,
   ): void {
     const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
+    const serverKey = serverKeyOverride ?? getCurrentServerKey(settings);
     const normalizedBaseUrl =
       serverKey === "api.letta.com" ? undefined : serverKey;
 
@@ -1597,14 +1651,18 @@ class SettingsManager {
    * Check if memory filesystem is enabled for an agent on the current server.
    */
   isMemfsEnabled(agentId: string): boolean {
-    return this.getAgentSettings(agentId)?.memfs === true;
+    const settings = this.getSettings();
+    const memfsServerKey = getCurrentMemfsServerKey(settings);
+    return this.getAgentSettings(agentId, memfsServerKey)?.memfs === true;
   }
 
   /**
    * Enable or disable memory filesystem for an agent on the current server.
    */
   setMemfsEnabled(agentId: string, enabled: boolean): void {
-    this.upsertAgentSettings(agentId, { memfs: enabled });
+    const settings = this.getSettings();
+    const memfsServerKey = getCurrentMemfsServerKey(settings);
+    this.upsertAgentSettings(agentId, { memfs: enabled }, memfsServerKey);
   }
 
   /**
@@ -1742,7 +1800,9 @@ class SettingsManager {
     }
 
     try {
-      return await getSecureTokens();
+      const tokens = await getSecureTokens();
+      this.updateSecureTokensCache(tokens);
+      return tokens;
     } catch (error) {
       trackBoundaryError({
         errorType: "secrets_retrieve_tokens_failed",
@@ -1758,6 +1818,7 @@ class SettingsManager {
    * Store secure tokens in secrets
    */
   async setSecureTokens(tokens: SecureTokens): Promise<void> {
+    this.updateSecureTokensCache(tokens);
     const available = await this.isKeychainAvailable();
     if (!available) {
       debugWarn(
@@ -1787,6 +1848,7 @@ class SettingsManager {
    * Delete secure tokens from secrets
    */
   async deleteSecureTokens(): Promise<void> {
+    this.clearSecureTokensCache();
     const available = await this.isKeychainAvailable();
     if (!available) {
       return;
@@ -1870,6 +1932,7 @@ class SettingsManager {
     this.secretsAvailable = null;
     this.managedKeys.clear();
     this.dirtyKeys.clear();
+    this.clearSecureTokensCache();
   }
 }
 

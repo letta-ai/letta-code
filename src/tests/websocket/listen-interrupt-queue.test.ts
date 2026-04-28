@@ -13,6 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
+import { LIMITS } from "../../tools/impl/truncation";
 import {
   __listenClientTestUtils,
   rejectPendingApprovalResolvers,
@@ -285,6 +286,45 @@ describe("extractInterruptToolReturns", () => {
     expect(toolReturnFrames[1].delta.tool_return).toBe(
       "User interrupted the stream",
     );
+  });
+
+  test("emitInterruptToolReturnMessage truncates oversized tool returns and drops oversized stdout metadata", () => {
+    const runtime = createRuntime();
+    const socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
+    runtime.activeAgentId = "agent-1";
+    runtime.activeConversationId = "default";
+
+    const hugeOutput = "x".repeat(LIMITS.BASH_OUTPUT_CHARS + 500);
+    const approvals: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-huge",
+        status: "success",
+        tool_return: hugeOutput,
+        stdout: [hugeOutput],
+      } as ApprovalResult,
+    ];
+
+    emitInterruptToolReturnMessage(socket, runtime, approvals, "run-1");
+
+    const parsed = (socket as unknown as MockSocket).sentPayloads.map((raw) =>
+      JSON.parse(raw),
+    );
+    const toolReturnFrame = parsed.find(
+      (payload) =>
+        payload.type === "stream_delta" &&
+        payload.delta?.message_type === "tool_return_message",
+    );
+
+    expect(toolReturnFrame).toBeDefined();
+    expect(toolReturnFrame.delta.tool_return).toContain("[Output truncated:");
+    expect(toolReturnFrame.delta.tool_return.length).toBeLessThan(
+      hugeOutput.length,
+    );
+    expect(toolReturnFrame.delta.tool_returns[0].tool_return).toContain(
+      "[Output truncated:",
+    );
+    expect("stdout" in toolReturnFrame.delta.tool_returns[0]).toBe(false);
   });
 });
 

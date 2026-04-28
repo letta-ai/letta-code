@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
 interface Edit {
@@ -27,7 +28,7 @@ export async function multi_edit(
 ): Promise<MultiEditResult> {
   validateRequiredParams(args, ["file_path", "edits"], "MultiEdit");
   const { file_path, edits } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
     : path.resolve(userCwd, file_path);

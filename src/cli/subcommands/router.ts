@@ -1,9 +1,10 @@
 import { runAgentsSubcommand } from "./agents";
 import { runBlocksSubcommand } from "./blocks";
+import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runListenSubcommand } from "./listen.tsx";
-import { runMemfsSubcommand } from "./memfs";
+import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 
 export async function runSubcommand(argv: string[]): Promise<number | null> {
@@ -14,8 +15,9 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
   }
 
   switch (command) {
-    case "memfs":
-      return runMemfsSubcommand(rest);
+    case "memory":
+    case "memfs": // legacy alias
+      return runMemorySubcommand(rest);
     case "agents":
       return runAgentsSubcommand(rest);
     case "messages":
@@ -29,6 +31,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runConnectSubcommand(rest);
     case "cron":
       return runCronSubcommand(rest);
+    case "channels":
+      return runChannelsSubcommand(rest);
     default:
       return null;
   }

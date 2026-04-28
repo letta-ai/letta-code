@@ -49,8 +49,9 @@ describe("QueueItemEnqueuedEvent wire shape", () => {
       cron: true,
       subagent: true,
       system: true,
+      channel: true,
     } satisfies Record<QueueItemSource, true>;
-    expect(Object.keys(sources)).toHaveLength(5);
+    expect(Object.keys(sources)).toHaveLength(6);
   });
 
   test("kind covers all content types", () => {

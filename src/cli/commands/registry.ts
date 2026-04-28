@@ -1,6 +1,7 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
 type CommandHandler = (args: string[]) => Promise<string> | string;
@@ -202,6 +203,14 @@ export const commands: Record<string, Command> = {
       return "Forking conversation...";
     },
   },
+  "/btw": {
+    desc: "Fork conversation and ask a side question (/btw <question>)",
+    order: 20.6,
+    handler: () => {
+      // Handled specially in App.tsx to fork and ask in background
+      return "Forking conversation...";
+    },
+  },
   "/pin": {
     desc: "Pin current agent globally, or use -l for local only",
     order: 22,
@@ -250,6 +259,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";
+    },
+  },
+  "/experiments": {
+    desc: "Toggle experiments",
+    order: 27.1,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open experiments selector
+      return "Opening experiments selector...";
     },
   },
   "/ade": {
@@ -304,6 +322,15 @@ export const commands: Record<string, Command> = {
     args: "<set|list|unset> [key] [value]",
     handler: async (args: string[]) => {
       const result = await handleSecretCommand(args);
+      return result.output;
+    },
+  },
+  "/memory-repository": {
+    desc: "Push this agent's memory repo to an additional git remote",
+    order: 33.1,
+    args: "<set|unset|status|push> [url]",
+    handler: async (args: string[]) => {
+      const result = await handleMemoryRepositoryCommand(args);
       return result.output;
     },
   },
@@ -491,7 +518,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/logout": {
-    desc: "Clear credentials and exit",
+    desc: "Clear saved credentials and exit",
     order: 44,
     noArgs: true,
     handler: () => {
