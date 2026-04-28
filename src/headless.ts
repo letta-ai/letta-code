@@ -49,14 +49,21 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
 import {
+  appendOptimisticUserLine,
   createBuffers,
+  extractTextPart,
   type Line,
   markIncompleteToolsAsCancelled,
   toLines,
 } from "./cli/helpers/accumulator";
 import { classifyApprovals } from "./cli/helpers/approvalClassification";
+import {
+  launchReflectionSubagent,
+  type ReflectionRecompileContext,
+} from "./cli/helpers/autoReflection";
 import { createContextTracker } from "./cli/helpers/contextTracker";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
+import { maybeStartIdleReflectionSweep } from "./cli/helpers/idleReflectionSweep";
 import {
   getReflectionSettings,
   mergeReflectionSettingsPatch,
@@ -68,6 +75,7 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "./cli/helpers/messageQueueBridge";
+import { appendTranscriptDeltaJsonl } from "./cli/helpers/reflectionTranscript";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -136,6 +144,58 @@ import {
   measureSinceMilestone,
   reportAllMilestones,
 } from "./utils/timing";
+
+// Process-shared recompile context for reflection completions. Headless has
+// no persistent system-prompt recompile loop, so a single Map+Set per process
+// is enough to dedupe overlapping recompiles without leaking across runs.
+const headlessReflectionRecompileContext: ReflectionRecompileContext = {
+  recompileByConversation: new Map<string, Promise<void>>(),
+  recompileQueuedByConversation: new Set<string>(),
+  logRecompileFailure: (message) => debugWarn("memory", message),
+};
+
+function buildHeadlessReflectionCallbacks(input: {
+  agentId: string;
+  conversationId: string;
+  workingDirectory: string;
+  reflectionSettings: ReflectionSettings;
+}): {
+  maybeLaunchReflectionSubagent: (
+    triggerSource: "step-count" | "compaction-event",
+  ) => Promise<boolean>;
+  maybeStartIdleReflectionSweep: () => void;
+} {
+  const emitCompletionNotification = (message: string) => {
+    debugLog("memory", `Reflection completion: ${message}`);
+  };
+  const maybeLaunch = async (
+    triggerSource: "step-count" | "compaction-event",
+  ) => {
+    const result = await launchReflectionSubagent({
+      agentId: input.agentId,
+      conversationId: input.conversationId,
+      workingDirectory: input.workingDirectory,
+      triggerSource,
+      waitUntil: "queued",
+      recompileContext: headlessReflectionRecompileContext,
+      emitCompletionNotification,
+    });
+    return result.status !== "skipped" && result.status !== "failed";
+  };
+  const maybeStartSweep = () => {
+    maybeStartIdleReflectionSweep({
+      agentId: input.agentId,
+      workingDirectory: input.workingDirectory,
+      reflectionSettings: input.reflectionSettings,
+      recompileContext: headlessReflectionRecompileContext,
+      emitCompletionNotification,
+    });
+  };
+  return {
+    maybeLaunchReflectionSubagent: maybeLaunch,
+    maybeStartIdleReflectionSweep: maybeStartSweep,
+  };
+}
 
 // Maximum number of times to retry a turn when the backend
 // reports an `llm_api_error` stop reason. This helps smooth
@@ -263,7 +323,29 @@ type ReflectionOverrides = {
   trigger?: ReflectionTrigger;
   deprecatedBehaviorRaw?: string;
   stepCount?: number;
+  passiveSweepEnabled?: boolean;
+  passiveSweepIntervalHours?: number;
+  passiveConversationMinIdleHours?: number;
+  passiveConversationMinUnreflectedTurns?: number;
 };
+
+function parsePositiveNumberFlag(rawValue: string, flagName: string): number {
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(
+      `Invalid --${flagName} "${rawValue}". Expected a positive number.`,
+    );
+  }
+  return parsed;
+}
+
+function parseBooleanFlag(rawValue: string, flagName: string): boolean {
+  if (rawValue === "true" || rawValue === "1") return true;
+  if (rawValue === "false" || rawValue === "0") return false;
+  throw new Error(
+    `Invalid --${flagName} "${rawValue}". Expected true|false|1|0.`,
+  );
+}
 
 function parseReflectionOverrides(
   values: ParsedCliArgs["values"],
@@ -271,8 +353,22 @@ function parseReflectionOverrides(
   const triggerRaw = values["reflection-trigger"];
   const behaviorRaw = values["reflection-behavior"];
   const stepCountRaw = values["reflection-step-count"];
+  const passiveEnabledRaw = values["reflection-passive-sweep-enabled"];
+  const passiveIntervalRaw = values["reflection-passive-sweep-interval-hours"];
+  const passiveConvIdleRaw =
+    values["reflection-passive-conversation-min-idle-hours"];
+  const passiveConvTurnsRaw =
+    values["reflection-passive-conversation-min-unreflected-turns"];
 
-  if (!triggerRaw && !behaviorRaw && !stepCountRaw) {
+  if (
+    !triggerRaw &&
+    !behaviorRaw &&
+    !stepCountRaw &&
+    !passiveEnabledRaw &&
+    !passiveIntervalRaw &&
+    !passiveConvIdleRaw &&
+    !passiveConvTurnsRaw
+  ) {
     return {};
   }
 
@@ -313,6 +409,31 @@ function parseReflectionOverrides(
     }
   }
 
+  if (passiveEnabledRaw !== undefined) {
+    overrides.passiveSweepEnabled = parseBooleanFlag(
+      passiveEnabledRaw,
+      "reflection-passive-sweep-enabled",
+    );
+  }
+  if (passiveIntervalRaw !== undefined) {
+    overrides.passiveSweepIntervalHours = parsePositiveNumberFlag(
+      passiveIntervalRaw,
+      "reflection-passive-sweep-interval-hours",
+    );
+  }
+  if (passiveConvIdleRaw !== undefined) {
+    overrides.passiveConversationMinIdleHours = parsePositiveNumberFlag(
+      passiveConvIdleRaw,
+      "reflection-passive-conversation-min-idle-hours",
+    );
+  }
+  if (passiveConvTurnsRaw !== undefined) {
+    overrides.passiveConversationMinUnreflectedTurns = parsePositiveIntFlag({
+      rawValue: passiveConvTurnsRaw,
+      flagName: "reflection-passive-conversation-min-unreflected-turns",
+    });
+  }
+
   return overrides;
 }
 
@@ -320,7 +441,11 @@ function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
   return (
     overrides.trigger !== undefined ||
     overrides.deprecatedBehaviorRaw !== undefined ||
-    overrides.stepCount !== undefined
+    overrides.stepCount !== undefined ||
+    overrides.passiveSweepEnabled !== undefined ||
+    overrides.passiveSweepIntervalHours !== undefined ||
+    overrides.passiveConversationMinIdleHours !== undefined ||
+    overrides.passiveConversationMinUnreflectedTurns !== undefined
   );
 }
 
@@ -332,6 +457,16 @@ async function applyReflectionOverrides(
   const merged: ReflectionSettings = mergeReflectionSettingsPatch(current, {
     trigger: overrides.trigger ?? current.trigger,
     stepCount: overrides.stepCount ?? current.stepCount,
+    passiveSweepEnabled:
+      overrides.passiveSweepEnabled ?? current.passiveSweepEnabled,
+    passiveSweepIntervalHours:
+      overrides.passiveSweepIntervalHours ?? current.passiveSweepIntervalHours,
+    passiveConversationMinIdleHours:
+      overrides.passiveConversationMinIdleHours ??
+      current.passiveConversationMinIdleHours,
+    passiveConversationMinUnreflectedTurns:
+      overrides.passiveConversationMinUnreflectedTurns ??
+      current.passiveConversationMinUnreflectedTurns,
   });
 
   if (!hasReflectionOverrides(overrides)) {
@@ -3614,6 +3749,14 @@ async function runBidirectionalMode(
         );
         const lastRunAt = (agent as { last_run_completion?: string })
           .last_run_completion;
+        const reflectionCallbacks = isSubagent
+          ? null
+          : buildHeadlessReflectionCallbacks({
+              agentId: agent.id,
+              conversationId,
+              workingDirectory: getCurrentWorkingDirectory(),
+              reflectionSettings,
+            });
         const { parts: sharedReminderParts } = await buildSharedReminderParts({
           mode: isSubagent ? "subagent" : "headless-bidirectional",
           agent: {
@@ -3632,15 +3775,34 @@ async function runBidirectionalMode(
             const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
             return PLAN_MODE_REMINDER;
           },
+          maybeLaunchReflectionSubagent:
+            reflectionCallbacks?.maybeLaunchReflectionSubagent,
+          maybeStartIdleReflectionSweep:
+            reflectionCallbacks?.maybeStartIdleReflectionSweep,
         });
         const enrichedContent = prependReminderPartsToContent(
           userContent,
           sharedReminderParts,
         );
 
+        // Inject an optimistic user row so the transcript captures user turns
+        // even when the server does not echo `user_message`. Without this the
+        // step-count cadence (which derives from `total_completed_turns -
+        // reflected_completed_turns`) would never advance in headless. The
+        // same otid is attached to the outgoing message so a later echo can
+        // reconcile via `userLineIdByOtid`.
+        const userOtid = randomUUID();
+        if (!isSubagent) {
+          appendOptimisticUserLine(
+            buffers,
+            extractTextPart(userContent),
+            userOtid,
+          );
+        }
+
         // Initial input is the user message
         let currentInput: MessageCreate[] = [
-          { role: "user", content: enrichedContent },
+          { role: "user", content: enrichedContent, otid: userOtid },
         ];
 
         // Approval handling loop - continue until end_turn or error
@@ -3827,6 +3989,27 @@ async function runBidirectionalMode(
 
           // Case 1: Turn ended normally - break out of loop
           if (stopReason === "end_turn") {
+            if (!isSubagent) {
+              try {
+                const transcriptLines = toLines(buffers);
+                if (transcriptLines.length > 0) {
+                  await appendTranscriptDeltaJsonl(
+                    agent.id,
+                    conversationId,
+                    transcriptLines,
+                  );
+                }
+              } catch (transcriptError) {
+                debugWarn(
+                  "memory",
+                  `Failed to append transcript delta: ${
+                    transcriptError instanceof Error
+                      ? transcriptError.message
+                      : String(transcriptError)
+                  }`,
+                );
+              }
+            }
             break;
           }
 
