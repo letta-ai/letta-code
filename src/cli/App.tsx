@@ -4850,11 +4850,20 @@ export default function App({
                 }
               )?.enable_reasoner;
 
+              const modelChanged = currentModel !== agentModel;
+              const endpointChanged = currentEndpoint !== agentEndpoint;
+              const effortChanged = currentEffort !== agentEffort;
+              const reasonerChanged = currentEnableReasoner !== agentEnableReasoner;
+              if (process.env.LETTA_COUNT_CALLS && (modelChanged || endpointChanged || effortChanged || reasonerChanged)) {
+                const { appendFileSync } = require("node:fs") as typeof import("node:fs");
+                appendFileSync("/tmp/letta-calls.log",
+                  `[${new Date().toISOString()}] syncAgentState MISMATCH | model: "${currentModel}" → "${agentModel}" (${modelChanged}) | endpoint: "${currentEndpoint}" → "${agentEndpoint}" (${endpointChanged}) | effort: "${currentEffort}" → ${agentEffort === undefined ? "undefined" : `"${agentEffort}"`} (${effortChanged}) | reasoner: ${currentEnableReasoner} → ${agentEnableReasoner} (${reasonerChanged})\n`);
+              }
               if (
-                currentModel !== agentModel ||
-                currentEndpoint !== agentEndpoint ||
-                currentEffort !== agentEffort ||
-                currentEnableReasoner !== agentEnableReasoner
+                modelChanged ||
+                endpointChanged ||
+                effortChanged ||
+                reasonerChanged
               ) {
                 if (!hasConversationModelOverrideRef.current) {
                   // Model has changed at the agent level - update local state.

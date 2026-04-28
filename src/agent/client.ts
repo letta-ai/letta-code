@@ -332,7 +332,7 @@ export async function getClient() {
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
-  return new Letta({
+  const client = new Letta({
     apiKey,
     baseURL,
     logger: sdkLogger,
@@ -341,4 +341,48 @@ export async function getClient() {
     // Use instrumented fetch for timing logs when LETTA_DEBUG_TIMINGS is enabled
     ...(isTimingsEnabled() && { fetch: createTimingFetch(fetch) }),
   });
+
+  // ── LETTA_COUNT_CALLS instrumentation ──
+  // Logs every SDK API call to /tmp/letta-calls.log with caller stack trace.
+  // Enable: LETTA_COUNT_CALLS=1 letta ...
+  if (process.env.LETTA_COUNT_CALLS) {
+    const { appendFileSync } = require("node:fs") as typeof import("node:fs");
+    const sessionCounts: Record<string, number> = {};
+    const turnCounts: Record<string, number> = {};
+    const logFile = "/tmp/letta-calls.log";
+
+    const wrapMethod = (ns: string, obj: unknown, method: string) => {
+      const target = obj as Record<string, Function>;
+      const orig = target[method];
+      if (typeof orig !== "function") return;
+      target[method] = function (...args: unknown[]) {
+        const tag = `${ns}.${method}`;
+        sessionCounts[tag] = (sessionCounts[tag] || 0) + 1;
+        turnCounts[tag] = (turnCounts[tag] || 0) + 1;
+        const stack = new Error().stack?.split("\n").slice(2, 5).map(l => l.trim().replace(/^at /, "")).join(" <- ") ?? "";
+        appendFileSync(logFile, `[${new Date().toISOString()}] ${tag} | ${stack}\n`);
+        return orig.apply(this, args);
+      };
+    };
+
+    for (const m of ["retrieve", "list", "create", "update", "delete"]) {
+      wrapMethod("agents", client.agents, m);
+      wrapMethod("conversations", client.conversations, m);
+    }
+    for (const m of ["retrieve", "list", "create", "cancel"]) {
+      wrapMethod("agents.messages", client.agents.messages, m);
+      wrapMethod("conversations.messages", client.conversations.messages, m);
+    }
+    wrapMethod("messages", client.messages, "retrieve");
+
+    // end_turn marker — logs per-turn and session totals
+    (client as unknown as Record<string, unknown>).__endTurn = () => {
+      const turnSummary = Object.entries(turnCounts).map(([k, v]) => `${k}=${v}`).join(" ");
+      const sessionSummary = Object.entries(sessionCounts).map(([k, v]) => `${k}=${v}`).join(" ");
+      appendFileSync(logFile, `[${new Date().toISOString()}] end_turn | turn: ${turnSummary} | session: ${sessionSummary}\n`);
+      for (const k of Object.keys(turnCounts)) delete turnCounts[k];
+    };
+  }
+
+  return client;
 }
