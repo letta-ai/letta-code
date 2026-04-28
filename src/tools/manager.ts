@@ -1,5 +1,6 @@
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
+import stripAnsi from "strip-ansi";
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import {
   getConversationId,
@@ -1619,7 +1620,10 @@ export async function executeTool(
           enhancedArgs = {
             ...enhancedArgs,
             onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(scrubSecretsFromString(chunk), stream);
+              options.onOutput?.(
+                stripAnsi(scrubSecretsFromString(chunk)),
+                stream,
+              );
             },
           };
         }
@@ -1712,14 +1716,17 @@ export async function executeTool(
       // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
-      // Scrub secret values from tool output so they don't leak into agent context
+      // Scrub secret values + ANSI escape sequences from tool output so they
+      // don't leak into agent context or render as garbage in downstream UIs.
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
+        const sanitize = (text: string) =>
+          stripAnsi(scrubSecretsFromString(text));
         if (typeof flattenedResponse === "string") {
-          flattenedResponse = scrubSecretsFromString(flattenedResponse);
+          flattenedResponse = sanitize(flattenedResponse);
         } else if (Array.isArray(flattenedResponse)) {
           flattenedResponse = flattenedResponse.map((block) =>
             block.type === "text"
-              ? { ...block, text: scrubSecretsFromString(block.text) }
+              ? { ...block, text: sanitize(block.text) }
               : block,
           );
         }
@@ -1727,7 +1734,7 @@ export async function executeTool(
           for (let i = 0; i < stdout.length; i++) {
             const line = stdout[i];
             if (line !== undefined) {
-              stdout[i] = scrubSecretsFromString(line);
+              stdout[i] = sanitize(line);
             }
           }
         }
@@ -1735,7 +1742,7 @@ export async function executeTool(
           for (let i = 0; i < stderr.length; i++) {
             const line = stderr[i];
             if (line !== undefined) {
-              stderr[i] = scrubSecretsFromString(line);
+              stderr[i] = sanitize(line);
             }
           }
         }
