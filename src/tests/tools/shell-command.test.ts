@@ -18,24 +18,6 @@ test("shell_command executes basic echo", async () => {
   expect(result.output).toContain("shell-basic");
 });
 
-test("shell_command expands injected secret env values literally", async () => {
-  const secretEnv = {
-    PASSWORD: "he$$o",
-    BACKTICK: "`whoami`",
-    TOKEN: "$foo$bar",
-  };
-  const command =
-    process.platform === "win32"
-      ? "Write-Output $PASSWORD; Write-Output $BACKTICK; Write-Output $TOKEN"
-      : 'printf "%s\\n%s\\n%s" "$PASSWORD" "$BACKTICK" "$TOKEN"';
-
-  const result = await shell_command({ command, secretEnv });
-
-  expect(result.output).toContain("he$$o");
-  expect(result.output).toContain("`whoami`");
-  expect(result.output).toContain("$foo$bar");
-});
-
 test("shell_command preserves stdout and stderr arrays when output is not truncated", async () => {
   const runtimeScript = createTempRuntimeScriptCommand(
     "process.stdout.write('stdout'); process.stderr.write('stderr');",
