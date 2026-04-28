@@ -404,7 +404,10 @@ async function runReflectionLaunch(
     endMessageId: autoPayload.endMessageId,
   });
 
-  debugLog("memory", `Auto-launched reflection subagent (${triggerSource})`);
+  debugLog(
+    "memory",
+    `Auto-launched reflection subagent (${triggerSource}) reflectionAgentId=${reflectionAgentId ?? "unknown"}`,
+  );
   return await completionPromise;
 }
 
