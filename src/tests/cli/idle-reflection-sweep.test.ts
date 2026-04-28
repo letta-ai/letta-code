@@ -154,58 +154,6 @@ describe("idle reflection sweep candidate discovery", () => {
     ).toEqual(["passive-good", "quiet-recently"]);
   });
 
-  test("uses reflection staleness separately from transcript quiet time", async () => {
-    await appendCompletedTurns("stale-and-quiet", 3);
-    await appendCompletedTurns("recent-reflection", 3);
-    const reflectedPayload = await buildAutoReflectionPayload(
-      agentId,
-      "recent-reflection",
-    );
-    expect(reflectedPayload).not.toBeNull();
-    if (!reflectedPayload) return;
-    await finalizeAutoReflectionPayload(
-      agentId,
-      "recent-reflection",
-      reflectedPayload.payloadPath,
-      reflectedPayload.endSnapshotLine,
-      true,
-      "idle-time",
-    );
-    await appendCompletedTurns("recent-reflection", 3, 3);
-
-    await setTranscriptMetadata("stale-and-quiet", {
-      transcriptAppendedMinutesAgo: 20,
-      reflectionSucceededHoursAgo: 25,
-    });
-    await setTranscriptMetadata("recent-reflection", {
-      transcriptAppendedMinutesAgo: 20,
-      reflectionSucceededHoursAgo: 1,
-    });
-
-    const candidates =
-      await __idleReflectionSweepTestUtils.discoverIdleReflectionCandidates({
-        agentId,
-        workingDirectory: "/tmp/work",
-        reflectionSettings: normalizeReflectionSettings({
-          trigger: "step-count",
-          stepCount: 25,
-          passiveSweepEnabled: true,
-          passiveSweepIntervalHours: 24,
-          passiveMinQuietMinutes: 15,
-          passiveMinUnreflectedTurns: 3,
-        }),
-        recompileContext: {
-          recompileByConversation: new Map(),
-          recompileQueuedByConversation: new Set(),
-        },
-        now: () => nowMs,
-      });
-
-    expect(candidates.map((candidate) => candidate.conversationId)).toEqual([
-      "stale-and-quiet",
-    ]);
-  });
-
   test("skips candidates with active reflection subagents or busy runtimes", async () => {
     await appendCompletedTurns("passive-good", 3);
     await appendCompletedTurns("reflection-active", 3);

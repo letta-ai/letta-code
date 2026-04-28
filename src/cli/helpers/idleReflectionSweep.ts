@@ -84,17 +84,6 @@ async function writeIdleSweepState(
   );
 }
 
-function hoursSince(iso: string | undefined, nowMs: number): number {
-  if (!iso) {
-    return Number.POSITIVE_INFINITY;
-  }
-  const parsed = Date.parse(iso);
-  if (!Number.isFinite(parsed)) {
-    return Number.POSITIVE_INFINITY;
-  }
-  return (nowMs - parsed) / (60 * 60 * 1000);
-}
-
 function minutesSince(iso: string | undefined, nowMs: number): number {
   if (!iso) {
     return Number.POSITIVE_INFINITY;
@@ -168,12 +157,6 @@ async function discoverIdleReflectionCandidates(
         state.total_completed_turns - state.reflected_completed_turns,
       );
       if (unreflectedTurns < settings.passiveMinUnreflectedTurns) {
-        return null;
-      }
-      if (
-        hoursSince(state.last_reflection_succeeded_at, nowMs) <
-        settings.passiveSweepIntervalHours
-      ) {
         return null;
       }
       if (

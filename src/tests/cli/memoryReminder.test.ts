@@ -74,7 +74,7 @@ describe("memoryReminder", () => {
         activeTrigger: "compaction-event",
         activeStepCount: 33,
         passiveSweepEnabled: true,
-        passiveMinQuietMinutes: 60,
+        passiveMinQuietMinutes: 720,
       }),
     );
   });
