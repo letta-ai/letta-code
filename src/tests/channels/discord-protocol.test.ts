@@ -21,9 +21,23 @@ describe("discord protocol-inbound validators", () => {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
-      account: { token: "test-token", agent_id: "a-1" },
+      account: {
+        token: "test-token",
+        agent_id: "a-1",
+        allowed_channels: ["channel-1"],
+      },
     };
     expect(isChannelAccountCreateCommand(msg)).toBe(true);
+  });
+
+  test("discord account create rejects non-string allowed_channels", () => {
+    const msg = {
+      type: "channel_account_create",
+      channel_id: "discord",
+      request_id: "r1",
+      account: { token: "test-token", allowed_channels: ["channel-1", 42] },
+    };
+    expect(isChannelAccountCreateCommand(msg)).toBe(false);
   });
 
   test("discord account create without discord fields still passes (validator only checks discord-specific fields)", () => {
@@ -54,7 +68,7 @@ describe("discord protocol-inbound validators", () => {
       type: "channel_set_config",
       channel_id: "discord",
       request_id: "r1",
-      config: { token: "new-token" },
+      config: { token: "new-token", allowed_channels: ["channel-1"] },
     };
     expect(isChannelSetConfigCommand(msg)).toBe(true);
   });

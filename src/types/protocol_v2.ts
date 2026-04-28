@@ -1124,6 +1124,7 @@ export interface ChannelSetConfigCommand {
         token?: string;
         dm_policy?: DmPolicy;
         allowed_users?: string[];
+        allowed_channels?: string[];
       }
     | {
         bot_token?: string;

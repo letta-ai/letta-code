@@ -196,6 +196,8 @@ export interface ChannelConfigPatch {
   mode?: SlackChannelMode;
   dmPolicy?: DmPolicy;
   allowedUsers?: string[];
+  /** Discord-only: allowlist of guild channel IDs (parent channel for threads). */
+  allowedChannels?: string[];
 }
 
 export interface ChannelAccountPatch {
@@ -713,6 +715,7 @@ export async function setChannelConfigLive(
       mode: patch.mode,
       dmPolicy: patch.dmPolicy,
       allowedUsers: patch.allowedUsers,
+      allowedChannels: patch.allowedChannels,
       displayName: existing.displayName,
     });
     shouldRefreshDisplayName =
@@ -730,6 +733,7 @@ export async function setChannelConfigLive(
         mode: patch.mode,
         dmPolicy: patch.dmPolicy,
         allowedUsers: patch.allowedUsers,
+        allowedChannels: patch.allowedChannels,
       },
       accountId ? { accountId } : undefined,
     );
