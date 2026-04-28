@@ -207,6 +207,11 @@ export async function getClient() {
     defaultHeaders: {
       "X-Letta-Source": "letta-code",
       "User-Agent": `letta-code/${packageJson.version}`,
+      // Identify this device on user-message turns so the cloud can
+      // persist the (agent, conversation) → device association and
+      // restore it on other browsers/sessions. The cloud middleware
+      // ignores this header on non-message routes.
+      "X-Letta-Environment-Device-Id": settingsManager.getOrCreateDeviceId(),
       ...(process.env.LETTA_NODE === "1" && {
         "x-letta-node": "1",
       }),
