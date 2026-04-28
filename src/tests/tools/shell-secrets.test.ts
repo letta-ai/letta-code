@@ -4,6 +4,11 @@ import { run_shell_command } from "../../tools/impl/RunShellCommandGemini";
 import { shell_command } from "../../tools/impl/ShellCommand.js";
 import { buildPowerShellCommand } from "../../tools/impl/shellLaunchers";
 import {
+  executeTool,
+  prepareToolExecutionContextForSpecificTools,
+  type ToolReturnContent,
+} from "../../tools/manager";
+import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "../../tools/secret-substitution";
@@ -40,6 +45,14 @@ function expectLiteralSecrets(output: string): void {
   expect(output).toContain("he$$o");
   expect(output).toContain("`whoami`");
   expect(output).toContain("$foo$bar");
+}
+
+function toolReturnText(toolReturn: ToolReturnContent): string {
+  return typeof toolReturn === "string"
+    ? toolReturn
+    : toolReturn
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .join("\n");
 }
 
 describe("shell secret env extraction", () => {
@@ -117,5 +130,36 @@ describe("shell secret execution", () => {
     });
 
     expectLiteralSecrets(result.message);
+  });
+
+  test("executeTool injects and scrubs referenced shell secrets", async () => {
+    const command = literalSecretCommand();
+    const context = await prepareToolExecutionContextForSpecificTools([
+      "Bash",
+      "shell_command",
+      "ShellCommand",
+      "run_shell_command",
+    ]);
+    const calls = [
+      ["Bash", { command, description: "Test shell secrets" }],
+      ["shell_command", { command }],
+      ["ShellCommand", { command }],
+      ["run_shell_command", { command }],
+    ] as const;
+
+    for (const [toolName, args] of calls) {
+      const result = await executeTool(toolName, args, {
+        toolContextId: context.contextId,
+      });
+      const output = toolReturnText(result.toolReturn);
+
+      expect(result.status).toBe("success");
+      expect(output).toContain("PASSWORD=<REDACTED>");
+      expect(output).toContain("BACKTICK=<REDACTED>");
+      expect(output).toContain("TOKEN=<REDACTED>");
+      expect(output).not.toContain("he$$o");
+      expect(output).not.toContain("`whoami`");
+      expect(output).not.toContain("$foo$bar");
+    }
   });
 });
