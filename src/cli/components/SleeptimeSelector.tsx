@@ -12,8 +12,8 @@ import { Text } from "./Text";
 const SOLID_LINE = "─";
 const DEFAULT_STEP_COUNT = "25";
 const DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS = "24";
-const DEFAULT_PASSIVE_MIN_QUIET_MINUTES = "720";
-const DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS = "3";
+const DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS = "12";
+const DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS = "3";
 const TRIGGER_LABELS: Record<ReflectionTrigger, string> = {
   off: "Off",
   "step-count": "Step count",
@@ -60,8 +60,8 @@ function parseInitialState(initialSettings: ReflectionSettings): {
   stepCount: string;
   passiveSweepEnabled: boolean;
   passiveSweepIntervalHours: string;
-  passiveMinQuietMinutes: string;
-  passiveMinUnreflectedTurns: string;
+  passiveConversationMinIdleHours: string;
+  passiveConversationMinUnreflectedTurns: string;
 } {
   const normalized = normalizeReflectionSettings(initialSettings);
   return {
@@ -83,16 +83,16 @@ function parseInitialState(initialSettings: ReflectionSettings): {
         ? normalized.passiveSweepIntervalHours
         : DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
     ),
-    passiveMinQuietMinutes: String(
-      normalized.passiveMinQuietMinutes > 0
-        ? normalized.passiveMinQuietMinutes
-        : DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
+    passiveConversationMinIdleHours: String(
+      normalized.passiveConversationMinIdleHours > 0
+        ? normalized.passiveConversationMinIdleHours
+        : DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS,
     ),
-    passiveMinUnreflectedTurns: String(
-      Number.isInteger(normalized.passiveMinUnreflectedTurns) &&
-        normalized.passiveMinUnreflectedTurns > 0
-        ? normalized.passiveMinUnreflectedTurns
-        : DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
+    passiveConversationMinUnreflectedTurns: String(
+      Number.isInteger(normalized.passiveConversationMinUnreflectedTurns) &&
+        normalized.passiveConversationMinUnreflectedTurns > 0
+        ? normalized.passiveConversationMinUnreflectedTurns
+        : DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS,
     ),
   };
 }
@@ -139,11 +139,13 @@ export function SleeptimeSelector({
   const [passiveSweepIntervalInput, setPassiveSweepIntervalInput] = useState(
     initialState.passiveSweepIntervalHours,
   );
-  const [passiveQuietMinutesInput, setPassiveQuietMinutesInput] = useState(
-    initialState.passiveMinQuietMinutes,
+  const [passiveConvIdleHoursInput, setPassiveConvIdleHoursInput] = useState(
+    initialState.passiveConversationMinIdleHours,
   );
-  const [passiveMinUnreflectedTurnsInput, setPassiveMinUnreflectedTurnsInput] =
-    useState(initialState.passiveMinUnreflectedTurns);
+  const [
+    passiveConvMinUnreflectedTurnsInput,
+    setPassiveConvMinUnreflectedTurnsInput,
+  ] = useState(initialState.passiveConversationMinUnreflectedTurns);
   const [focusRow, setFocusRow] = useState<FocusRow>("trigger");
   const [validationError, setValidationError] = useState<string | null>(null);
   const triggerOptions = useMemo(
@@ -167,9 +169,9 @@ export function SleeptimeSelector({
     focusRow === "step-count" && trigger === "step-count";
   const isEditingPassiveInterval =
     focusRow === "idle-interval" && passiveSweepEnabled;
-  const isEditingPassiveQuiet =
+  const isEditingPassiveConvIdle =
     focusRow === "idle-min-age" && passiveSweepEnabled;
-  const isEditingPassiveMinTurns =
+  const isEditingPassiveConvMinTurns =
     focusRow === "idle-min-turns" && passiveSweepEnabled;
 
   useEffect(() => {
@@ -188,24 +190,28 @@ export function SleeptimeSelector({
     const passiveSweepIntervalHours =
       parsePositiveNumber(passiveSweepIntervalInput) ??
       Number(DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS);
-    const passiveMinQuietMinutes =
-      parsePositiveNumber(passiveQuietMinutesInput) ??
-      Number(DEFAULT_PASSIVE_MIN_QUIET_MINUTES);
-    const passiveMinUnreflectedTurns =
-      parseStepCount(passiveMinUnreflectedTurnsInput) ??
-      Number(DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS);
+    const passiveConversationMinIdleHours =
+      parsePositiveNumber(passiveConvIdleHoursInput) ??
+      Number(DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS);
+    const passiveConversationMinUnreflectedTurns =
+      parseStepCount(passiveConvMinUnreflectedTurnsInput) ??
+      Number(DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS);
 
     if (passiveSweepEnabled) {
       if (parsePositiveNumber(passiveSweepIntervalInput) === null) {
         setValidationError("passive sweep interval must be a positive number");
         return;
       }
-      if (parsePositiveNumber(passiveQuietMinutesInput) === null) {
-        setValidationError("passive quiet minutes must be a positive number");
+      if (parsePositiveNumber(passiveConvIdleHoursInput) === null) {
+        setValidationError(
+          "conversation min idle hours must be a positive number",
+        );
         return;
       }
-      if (parseStepCount(passiveMinUnreflectedTurnsInput) === null) {
-        setValidationError("passive min turns must be a positive integer");
+      if (parseStepCount(passiveConvMinUnreflectedTurnsInput) === null) {
+        setValidationError(
+          "conversation min unreflected turns must be a positive integer",
+        );
         return;
       }
     }
@@ -218,8 +224,8 @@ export function SleeptimeSelector({
         activeStepCount: stepCount,
         passiveSweepEnabled: memfsEnabled ? passiveSweepEnabled : false,
         passiveSweepIntervalHours,
-        passiveMinQuietMinutes,
-        passiveMinUnreflectedTurns,
+        passiveConversationMinIdleHours,
+        passiveConversationMinUnreflectedTurns,
       }),
     );
   };
@@ -285,8 +291,8 @@ export function SleeptimeSelector({
     if (
       !isEditingStepCount &&
       !isEditingPassiveInterval &&
-      !isEditingPassiveQuiet &&
-      !isEditingPassiveMinTurns
+      !isEditingPassiveConvIdle &&
+      !isEditingPassiveConvMinTurns
     ) {
       return;
     }
@@ -296,10 +302,10 @@ export function SleeptimeSelector({
         setStepCountInput((prev) => prev.slice(0, -1));
       } else if (isEditingPassiveInterval) {
         setPassiveSweepIntervalInput((prev) => prev.slice(0, -1));
-      } else if (isEditingPassiveQuiet) {
-        setPassiveQuietMinutesInput((prev) => prev.slice(0, -1));
-      } else if (isEditingPassiveMinTurns) {
-        setPassiveMinUnreflectedTurnsInput((prev) => prev.slice(0, -1));
+      } else if (isEditingPassiveConvIdle) {
+        setPassiveConvIdleHoursInput((prev) => prev.slice(0, -1));
+      } else if (isEditingPassiveConvMinTurns) {
+        setPassiveConvMinUnreflectedTurnsInput((prev) => prev.slice(0, -1));
       }
       setValidationError(null);
       return;
@@ -321,10 +327,10 @@ export function SleeptimeSelector({
         setStepCountInput((prev) => `${prev}${input}`);
       } else if (isEditingPassiveInterval) {
         setPassiveSweepIntervalInput((prev) => `${prev}${input}`);
-      } else if (isEditingPassiveQuiet) {
-        setPassiveQuietMinutesInput((prev) => `${prev}${input}`);
-      } else if (isEditingPassiveMinTurns) {
-        setPassiveMinUnreflectedTurnsInput((prev) => `${prev}${input}`);
+      } else if (isEditingPassiveConvIdle) {
+        setPassiveConvIdleHoursInput((prev) => `${prev}${input}`);
+      } else if (isEditingPassiveConvMinTurns) {
+        setPassiveConvMinUnreflectedTurnsInput((prev) => `${prev}${input}`);
       }
       setValidationError(null);
     }
@@ -410,15 +416,15 @@ export function SleeptimeSelector({
               </Box>
               <Box flexDirection="row">
                 <Text>{focusRow === "idle-min-age" ? "> " : "  "}</Text>
-                <Text bold>Passive quiet minutes: </Text>
-                <Text>{passiveQuietMinutesInput}</Text>
-                {isEditingPassiveQuiet && <Text>█</Text>}
+                <Text bold>Conversation min idle hours: </Text>
+                <Text>{passiveConvIdleHoursInput}</Text>
+                {isEditingPassiveConvIdle && <Text>█</Text>}
               </Box>
               <Box flexDirection="row">
                 <Text>{focusRow === "idle-min-turns" ? "> " : "  "}</Text>
-                <Text bold>Passive min unreflected turns: </Text>
-                <Text>{passiveMinUnreflectedTurnsInput}</Text>
-                {isEditingPassiveMinTurns && <Text>█</Text>}
+                <Text bold>Conversation min unreflected turns: </Text>
+                <Text>{passiveConvMinUnreflectedTurnsInput}</Text>
+                {isEditingPassiveConvMinTurns && <Text>█</Text>}
               </Box>
               {validationError && focusRow !== "step-count" && (
                 <Text color={colors.error.text}>

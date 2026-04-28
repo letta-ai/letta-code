@@ -24,8 +24,8 @@ export interface StatusLinePayloadBuildInput {
   reflectionStepCount?: number;
   reflectionPassiveSweepEnabled?: boolean;
   reflectionPassiveSweepIntervalHours?: number;
-  reflectionPassiveMinQuietMinutes?: number;
-  reflectionPassiveMinUnreflectedTurns?: number;
+  reflectionPassiveConversationMinIdleHours?: number;
+  reflectionPassiveConversationMinUnreflectedTurns?: number;
   memfsEnabled?: boolean;
   memfsDirectory?: string | null;
   permissionMode?: string;
@@ -101,8 +101,8 @@ export interface StatusLinePayload {
     active_step_count: number;
     passive_sweep_enabled: boolean;
     passive_sweep_interval_hours: number;
-    passive_min_quiet_minutes: number;
-    passive_min_unreflected_turns: number;
+    passive_conversation_min_idle_hours: number;
+    passive_conversation_min_unreflected_turns: number;
   };
   memfs: {
     enabled: boolean;
@@ -164,13 +164,13 @@ export function buildStatusLinePayload(
     0,
     input.reflectionPassiveSweepIntervalHours ?? 0,
   );
-  const reflectionPassiveMinQuietMinutes = Math.max(
+  const reflectionPassiveConversationMinIdleHours = Math.max(
     0,
-    input.reflectionPassiveMinQuietMinutes ?? 0,
+    input.reflectionPassiveConversationMinIdleHours ?? 0,
   );
-  const reflectionPassiveMinUnreflectedTurns = Math.max(
+  const reflectionPassiveConversationMinUnreflectedTurns = Math.max(
     0,
-    Math.floor(input.reflectionPassiveMinUnreflectedTurns ?? 0),
+    Math.floor(input.reflectionPassiveConversationMinUnreflectedTurns ?? 0),
   );
 
   const percentages =
@@ -228,8 +228,10 @@ export function buildStatusLinePayload(
       active_step_count: reflectionStepCount,
       passive_sweep_enabled: input.reflectionPassiveSweepEnabled ?? false,
       passive_sweep_interval_hours: reflectionPassiveSweepIntervalHours,
-      passive_min_quiet_minutes: reflectionPassiveMinQuietMinutes,
-      passive_min_unreflected_turns: reflectionPassiveMinUnreflectedTurns,
+      passive_conversation_min_idle_hours:
+        reflectionPassiveConversationMinIdleHours,
+      passive_conversation_min_unreflected_turns:
+        reflectionPassiveConversationMinUnreflectedTurns,
     },
     memfs: {
       enabled: input.memfsEnabled ?? false,

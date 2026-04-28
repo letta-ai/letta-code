@@ -84,7 +84,7 @@ async function writeIdleSweepState(
   );
 }
 
-function minutesSince(iso: string | undefined, nowMs: number): number {
+function hoursSince(iso: string | undefined, nowMs: number): number {
   if (!iso) {
     return Number.POSITIVE_INFINITY;
   }
@@ -92,7 +92,7 @@ function minutesSince(iso: string | undefined, nowMs: number): number {
   if (!Number.isFinite(parsed)) {
     return Number.POSITIVE_INFINITY;
   }
-  return (nowMs - parsed) / (60 * 1000);
+  return (nowMs - parsed) / (60 * 60 * 1000);
 }
 
 function isConversationRuntimeBusy(
@@ -156,12 +156,12 @@ async function discoverIdleReflectionCandidates(
         0,
         state.total_completed_turns - state.reflected_completed_turns,
       );
-      if (unreflectedTurns < settings.passiveMinUnreflectedTurns) {
+      if (unreflectedTurns < settings.passiveConversationMinUnreflectedTurns) {
         return null;
       }
       if (
-        minutesSince(state.last_transcript_appended_at, nowMs) <
-        settings.passiveMinQuietMinutes
+        hoursSince(state.last_transcript_appended_at, nowMs) <
+        settings.passiveConversationMinIdleHours
       ) {
         return null;
       }

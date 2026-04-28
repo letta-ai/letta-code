@@ -779,8 +779,8 @@ export function isSetReflectionSettingsCommand(
     active_step_count?: unknown;
     passive_sweep_enabled?: unknown;
     passive_sweep_interval_hours?: unknown;
-    passive_min_quiet_minutes?: unknown;
-    passive_min_unreflected_turns?: unknown;
+    passive_conversation_min_idle_hours?: unknown;
+    passive_conversation_min_unreflected_turns?: unknown;
   };
   const hasSettingsField =
     "trigger" in settings ||
@@ -789,8 +789,8 @@ export function isSetReflectionSettingsCommand(
     "active_step_count" in settings ||
     "passive_sweep_enabled" in settings ||
     "passive_sweep_interval_hours" in settings ||
-    "passive_min_quiet_minutes" in settings ||
-    "passive_min_unreflected_turns" in settings;
+    "passive_conversation_min_idle_hours" in settings ||
+    "passive_conversation_min_unreflected_turns" in settings;
   const isTrigger = (value: unknown) =>
     value === "off" || value === "step-count" || value === "compaction-event";
   const isPositiveNumber = (value: unknown) =>
@@ -810,10 +810,10 @@ export function isSetReflectionSettingsCommand(
       typeof settings.passive_sweep_enabled === "boolean") &&
     (settings.passive_sweep_interval_hours === undefined ||
       isPositiveNumber(settings.passive_sweep_interval_hours)) &&
-    (settings.passive_min_quiet_minutes === undefined ||
-      isPositiveNumber(settings.passive_min_quiet_minutes)) &&
-    (settings.passive_min_unreflected_turns === undefined ||
-      isPositiveInteger(settings.passive_min_unreflected_turns)) &&
+    (settings.passive_conversation_min_idle_hours === undefined ||
+      isPositiveNumber(settings.passive_conversation_min_idle_hours)) &&
+    (settings.passive_conversation_min_unreflected_turns === undefined ||
+      isPositiveInteger(settings.passive_conversation_min_unreflected_turns)) &&
     (c.scope === undefined ||
       c.scope === "local_project" ||
       c.scope === "global" ||

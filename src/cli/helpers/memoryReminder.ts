@@ -9,8 +9,8 @@ const MEMORY_INTERVAL_FREQUENT = 5;
 const MEMORY_INTERVAL_OCCASIONAL = 10;
 const DEFAULT_STEP_COUNT = 25;
 const DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS = 24;
-const DEFAULT_PASSIVE_MIN_QUIET_MINUTES = 720;
-const DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS = 3;
+const DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS = 12;
+const DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS = 3;
 
 export type MemoryReminderMode =
   | number
@@ -29,8 +29,8 @@ export interface ReflectionSettings {
   activeStepCount?: number;
   passiveSweepEnabled?: boolean;
   passiveSweepIntervalHours?: number;
-  passiveMinQuietMinutes?: number;
-  passiveMinUnreflectedTurns?: number;
+  passiveConversationMinIdleHours?: number;
+  passiveConversationMinUnreflectedTurns?: number;
 }
 
 export type NormalizedReflectionSettings = Required<ReflectionSettings>;
@@ -43,8 +43,8 @@ type PersistedReflectionSettings = {
   activeStepCount?: unknown;
   passiveSweepEnabled?: unknown;
   passiveSweepIntervalHours?: unknown;
-  passiveMinQuietMinutes?: unknown;
-  passiveMinUnreflectedTurns?: unknown;
+  passiveConversationMinIdleHours?: unknown;
+  passiveConversationMinUnreflectedTurns?: unknown;
 };
 
 interface ReflectionSettingsCarrier {
@@ -55,8 +55,8 @@ interface ReflectionSettingsCarrier {
   reflectionActiveStepCount?: unknown;
   reflectionPassiveSweepEnabled?: unknown;
   reflectionPassiveSweepIntervalHours?: unknown;
-  reflectionPassiveMinQuietMinutes?: unknown;
-  reflectionPassiveMinUnreflectedTurns?: unknown;
+  reflectionPassiveConversationMinIdleHours?: unknown;
+  reflectionPassiveConversationMinUnreflectedTurns?: unknown;
   reflectionSettingsByAgent?: Record<string, PersistedReflectionSettings>;
 }
 
@@ -67,8 +67,9 @@ const DEFAULT_REFLECTION_SETTINGS: NormalizedReflectionSettings = {
   activeStepCount: DEFAULT_STEP_COUNT,
   passiveSweepEnabled: true,
   passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
-  passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
-  passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
+  passiveConversationMinIdleHours: DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS,
+  passiveConversationMinUnreflectedTurns:
+    DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS,
 };
 
 export function normalizeReflectionSettings(
@@ -97,13 +98,13 @@ export function normalizeReflectionSettings(
       raw.passiveSweepIntervalHours,
       DEFAULT_REFLECTION_SETTINGS.passiveSweepIntervalHours,
     ),
-    passiveMinQuietMinutes: normalizePositiveNumber(
-      raw.passiveMinQuietMinutes,
-      DEFAULT_REFLECTION_SETTINGS.passiveMinQuietMinutes,
+    passiveConversationMinIdleHours: normalizePositiveNumber(
+      raw.passiveConversationMinIdleHours,
+      DEFAULT_REFLECTION_SETTINGS.passiveConversationMinIdleHours,
     ),
-    passiveMinUnreflectedTurns: normalizePositiveInteger(
-      raw.passiveMinUnreflectedTurns,
-      DEFAULT_REFLECTION_SETTINGS.passiveMinUnreflectedTurns,
+    passiveConversationMinUnreflectedTurns: normalizePositiveInteger(
+      raw.passiveConversationMinUnreflectedTurns,
+      DEFAULT_REFLECTION_SETTINGS.passiveConversationMinUnreflectedTurns,
     ),
   };
 }
@@ -135,13 +136,13 @@ export function mergeReflectionSettingsPatch(
       patch.passiveSweepIntervalHours,
       normalizedCurrent.passiveSweepIntervalHours,
     ),
-    passiveMinQuietMinutes: normalizePositiveNumber(
-      patch.passiveMinQuietMinutes,
-      normalizedCurrent.passiveMinQuietMinutes,
+    passiveConversationMinIdleHours: normalizePositiveNumber(
+      patch.passiveConversationMinIdleHours,
+      normalizedCurrent.passiveConversationMinIdleHours,
     ),
-    passiveMinUnreflectedTurns: normalizePositiveInteger(
-      patch.passiveMinUnreflectedTurns,
-      normalizedCurrent.passiveMinUnreflectedTurns,
+    passiveConversationMinUnreflectedTurns: normalizePositiveInteger(
+      patch.passiveConversationMinUnreflectedTurns,
+      normalizedCurrent.passiveConversationMinUnreflectedTurns,
     ),
   });
 }
@@ -192,8 +193,8 @@ function applyExplicitReflectionOverrides(
     reflectionActiveStepCount?: unknown;
     reflectionPassiveSweepEnabled?: unknown;
     reflectionPassiveSweepIntervalHours?: unknown;
-    reflectionPassiveMinQuietMinutes?: unknown;
-    reflectionPassiveMinUnreflectedTurns?: unknown;
+    reflectionPassiveConversationMinIdleHours?: unknown;
+    reflectionPassiveConversationMinUnreflectedTurns?: unknown;
   },
 ): NormalizedReflectionSettings {
   const activeTrigger = normalizeTrigger(
@@ -218,13 +219,13 @@ function applyExplicitReflectionOverrides(
       raw.reflectionPassiveSweepIntervalHours,
       base.passiveSweepIntervalHours,
     ),
-    passiveMinQuietMinutes: normalizePositiveNumber(
-      raw.reflectionPassiveMinQuietMinutes,
-      base.passiveMinQuietMinutes,
+    passiveConversationMinIdleHours: normalizePositiveNumber(
+      raw.reflectionPassiveConversationMinIdleHours,
+      base.passiveConversationMinIdleHours,
     ),
-    passiveMinUnreflectedTurns: normalizePositiveInteger(
-      raw.reflectionPassiveMinUnreflectedTurns,
-      base.passiveMinUnreflectedTurns,
+    passiveConversationMinUnreflectedTurns: normalizePositiveInteger(
+      raw.reflectionPassiveConversationMinUnreflectedTurns,
+      base.passiveConversationMinUnreflectedTurns,
     ),
   };
 }
@@ -259,13 +260,13 @@ function applyPersistedAgentScopedSettings(
       raw.passiveSweepIntervalHours,
       base.passiveSweepIntervalHours,
     ),
-    passiveMinQuietMinutes: normalizePositiveNumber(
-      raw.passiveMinQuietMinutes,
-      base.passiveMinQuietMinutes,
+    passiveConversationMinIdleHours: normalizePositiveNumber(
+      raw.passiveConversationMinIdleHours,
+      base.passiveConversationMinIdleHours,
     ),
-    passiveMinUnreflectedTurns: normalizePositiveInteger(
-      raw.passiveMinUnreflectedTurns,
-      base.passiveMinUnreflectedTurns,
+    passiveConversationMinUnreflectedTurns: normalizePositiveInteger(
+      raw.passiveConversationMinUnreflectedTurns,
+      base.passiveConversationMinUnreflectedTurns,
     ),
   };
 }
@@ -282,8 +283,10 @@ function legacyModeToReflectionSettings(
       activeStepCount: stepCount,
       passiveSweepEnabled: true,
       passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
-      passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
-      passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
+      passiveConversationMinIdleHours:
+        DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS,
+      passiveConversationMinUnreflectedTurns:
+        DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -295,8 +298,10 @@ function legacyModeToReflectionSettings(
       activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
       passiveSweepEnabled: false,
       passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
-      passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
-      passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
+      passiveConversationMinIdleHours:
+        DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS,
+      passiveConversationMinUnreflectedTurns:
+        DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -308,8 +313,10 @@ function legacyModeToReflectionSettings(
       activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
       passiveSweepEnabled: true,
       passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
-      passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
-      passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
+      passiveConversationMinIdleHours:
+        DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS,
+      passiveConversationMinUnreflectedTurns:
+        DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -321,8 +328,10 @@ function legacyModeToReflectionSettings(
       activeStepCount: DEFAULT_REFLECTION_SETTINGS.activeStepCount,
       passiveSweepEnabled: true,
       passiveSweepIntervalHours: DEFAULT_PASSIVE_SWEEP_INTERVAL_HOURS,
-      passiveMinQuietMinutes: DEFAULT_PASSIVE_MIN_QUIET_MINUTES,
-      passiveMinUnreflectedTurns: DEFAULT_PASSIVE_MIN_UNREFLECTED_TURNS,
+      passiveConversationMinIdleHours:
+        DEFAULT_PASSIVE_CONVERSATION_MIN_IDLE_HOURS,
+      passiveConversationMinUnreflectedTurns:
+        DEFAULT_PASSIVE_CONVERSATION_MIN_UNREFLECTED_TURNS,
     };
   }
 
@@ -523,10 +532,10 @@ export async function persistReflectionSettingsForAgent(
         reflectionPassiveSweepEnabled: normalizedSettings.passiveSweepEnabled,
         reflectionPassiveSweepIntervalHours:
           normalizedSettings.passiveSweepIntervalHours,
-        reflectionPassiveMinQuietMinutes:
-          normalizedSettings.passiveMinQuietMinutes,
-        reflectionPassiveMinUnreflectedTurns:
-          normalizedSettings.passiveMinUnreflectedTurns,
+        reflectionPassiveConversationMinIdleHours:
+          normalizedSettings.passiveConversationMinIdleHours,
+        reflectionPassiveConversationMinUnreflectedTurns:
+          normalizedSettings.passiveConversationMinUnreflectedTurns,
         reflectionSettingsByAgent: {
           ...(localSettings.reflectionSettingsByAgent ?? {}),
           [agentId]: {
@@ -537,9 +546,10 @@ export async function persistReflectionSettingsForAgent(
             passiveSweepEnabled: normalizedSettings.passiveSweepEnabled,
             passiveSweepIntervalHours:
               normalizedSettings.passiveSweepIntervalHours,
-            passiveMinQuietMinutes: normalizedSettings.passiveMinQuietMinutes,
-            passiveMinUnreflectedTurns:
-              normalizedSettings.passiveMinUnreflectedTurns,
+            passiveConversationMinIdleHours:
+              normalizedSettings.passiveConversationMinIdleHours,
+            passiveConversationMinUnreflectedTurns:
+              normalizedSettings.passiveConversationMinUnreflectedTurns,
           },
         },
       },
@@ -558,10 +568,10 @@ export async function persistReflectionSettingsForAgent(
       reflectionPassiveSweepEnabled: normalizedSettings.passiveSweepEnabled,
       reflectionPassiveSweepIntervalHours:
         normalizedSettings.passiveSweepIntervalHours,
-      reflectionPassiveMinQuietMinutes:
-        normalizedSettings.passiveMinQuietMinutes,
-      reflectionPassiveMinUnreflectedTurns:
-        normalizedSettings.passiveMinUnreflectedTurns,
+      reflectionPassiveConversationMinIdleHours:
+        normalizedSettings.passiveConversationMinIdleHours,
+      reflectionPassiveConversationMinUnreflectedTurns:
+        normalizedSettings.passiveConversationMinUnreflectedTurns,
       reflectionSettingsByAgent: {
         ...(globalSettings.reflectionSettingsByAgent ?? {}),
         [agentId]: {
@@ -572,9 +582,10 @@ export async function persistReflectionSettingsForAgent(
           passiveSweepEnabled: normalizedSettings.passiveSweepEnabled,
           passiveSweepIntervalHours:
             normalizedSettings.passiveSweepIntervalHours,
-          passiveMinQuietMinutes: normalizedSettings.passiveMinQuietMinutes,
-          passiveMinUnreflectedTurns:
-            normalizedSettings.passiveMinUnreflectedTurns,
+          passiveConversationMinIdleHours:
+            normalizedSettings.passiveConversationMinIdleHours,
+          passiveConversationMinUnreflectedTurns:
+            normalizedSettings.passiveConversationMinUnreflectedTurns,
         },
       },
     });

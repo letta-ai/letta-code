@@ -77,8 +77,8 @@ export interface Settings {
   reflectionActiveStepCount?: number;
   reflectionPassiveSweepEnabled?: boolean;
   reflectionPassiveSweepIntervalHours?: number;
-  reflectionPassiveMinQuietMinutes?: number;
-  reflectionPassiveMinUnreflectedTurns?: number;
+  reflectionPassiveConversationMinIdleHours?: number;
+  reflectionPassiveConversationMinUnreflectedTurns?: number;
   reflectionSettingsByAgent?: Record<
     string,
     {
@@ -88,8 +88,8 @@ export interface Settings {
       activeStepCount?: number;
       passiveSweepEnabled?: boolean;
       passiveSweepIntervalHours?: number;
-      passiveMinQuietMinutes?: number;
-      passiveMinUnreflectedTurns?: number;
+      passiveConversationMinIdleHours?: number;
+      passiveConversationMinUnreflectedTurns?: number;
     }
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
@@ -143,8 +143,8 @@ export interface LocalProjectSettings {
   reflectionActiveStepCount?: number;
   reflectionPassiveSweepEnabled?: boolean;
   reflectionPassiveSweepIntervalHours?: number;
-  reflectionPassiveMinQuietMinutes?: number;
-  reflectionPassiveMinUnreflectedTurns?: number;
+  reflectionPassiveConversationMinIdleHours?: number;
+  reflectionPassiveConversationMinUnreflectedTurns?: number;
   reflectionSettingsByAgent?: Record<
     string,
     {
@@ -154,8 +154,8 @@ export interface LocalProjectSettings {
       activeStepCount?: number;
       passiveSweepEnabled?: boolean;
       passiveSweepIntervalHours?: number;
-      passiveMinQuietMinutes?: number;
-      passiveMinUnreflectedTurns?: number;
+      passiveConversationMinIdleHours?: number;
+      passiveConversationMinUnreflectedTurns?: number;
     }
   >;
   // Server-indexed settings (agent IDs are server-specific)

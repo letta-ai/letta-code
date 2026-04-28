@@ -21,8 +21,10 @@ export function reflectionSettingsPatchFromProtocol(
     activeStepCount: settings.active_step_count,
     passiveSweepEnabled: settings.passive_sweep_enabled,
     passiveSweepIntervalHours: settings.passive_sweep_interval_hours,
-    passiveMinQuietMinutes: settings.passive_min_quiet_minutes,
-    passiveMinUnreflectedTurns: settings.passive_min_unreflected_turns,
+    passiveConversationMinIdleHours:
+      settings.passive_conversation_min_idle_hours,
+    passiveConversationMinUnreflectedTurns:
+      settings.passive_conversation_min_unreflected_turns,
   };
 }
 
@@ -49,7 +51,9 @@ export function toReflectionSettingsSnapshot(
     active_step_count: normalized.activeStepCount,
     passive_sweep_enabled: normalized.passiveSweepEnabled,
     passive_sweep_interval_hours: normalized.passiveSweepIntervalHours,
-    passive_min_quiet_minutes: normalized.passiveMinQuietMinutes,
-    passive_min_unreflected_turns: normalized.passiveMinUnreflectedTurns,
+    passive_conversation_min_idle_hours:
+      normalized.passiveConversationMinIdleHours,
+    passive_conversation_min_unreflected_turns:
+      normalized.passiveConversationMinUnreflectedTurns,
   };
 }

@@ -74,7 +74,7 @@ describe("memoryReminder", () => {
         activeTrigger: "compaction-event",
         activeStepCount: 33,
         passiveSweepEnabled: true,
-        passiveMinQuietMinutes: 720,
+        passiveConversationMinIdleHours: 12,
       }),
     );
   });
@@ -238,8 +238,8 @@ describe("memoryReminder", () => {
         activeStepCount: 9,
         passiveSweepEnabled: true,
         passiveSweepIntervalHours: 12,
-        passiveMinQuietMinutes: 20,
-        passiveMinUnreflectedTurns: 4,
+        passiveConversationMinIdleHours: 20,
+        passiveConversationMinUnreflectedTurns: 4,
       },
       {
         passiveSweepEnabled: false,
@@ -251,8 +251,8 @@ describe("memoryReminder", () => {
       activeStepCount: 9,
       passiveSweepEnabled: false,
       passiveSweepIntervalHours: 12,
-      passiveMinQuietMinutes: 20,
-      passiveMinUnreflectedTurns: 4,
+      passiveConversationMinIdleHours: 20,
+      passiveConversationMinUnreflectedTurns: 4,
     });
 
     const mergedActive = mergeReflectionSettingsPatch(mergedPassive, {
@@ -264,8 +264,8 @@ describe("memoryReminder", () => {
       activeStepCount: 9,
       passiveSweepEnabled: false,
       passiveSweepIntervalHours: 12,
-      passiveMinQuietMinutes: 20,
-      passiveMinUnreflectedTurns: 4,
+      passiveConversationMinIdleHours: 20,
+      passiveConversationMinUnreflectedTurns: 4,
     });
   });
 

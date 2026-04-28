@@ -1068,7 +1068,7 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
         ? "Compaction event"
         : `Step count (every ${settings.activeStepCount} turns since last reflection)`;
   const passive = settings.passiveSweepEnabled
-    ? `passive sweep every ${settings.passiveSweepIntervalHours}h, min ${settings.passiveMinUnreflectedTurns} turns, quiet >= ${settings.passiveMinQuietMinutes}m`
+    ? `passive sweep every ${settings.passiveSweepIntervalHours}h, min ${settings.passiveConversationMinUnreflectedTurns} unreflected turns, conv idle >= ${settings.passiveConversationMinIdleHours}h`
     : "passive sweep off";
   return `${active}; ${passive}`;
 }
@@ -2830,9 +2830,10 @@ export default function App({
     reflectionPassiveSweepEnabled: reflectionSettings.passiveSweepEnabled,
     reflectionPassiveSweepIntervalHours:
       reflectionSettings.passiveSweepIntervalHours,
-    reflectionPassiveMinQuietMinutes: reflectionSettings.passiveMinQuietMinutes,
-    reflectionPassiveMinUnreflectedTurns:
-      reflectionSettings.passiveMinUnreflectedTurns,
+    reflectionPassiveConversationMinIdleHours:
+      reflectionSettings.passiveConversationMinIdleHours,
+    reflectionPassiveConversationMinUnreflectedTurns:
+      reflectionSettings.passiveConversationMinUnreflectedTurns,
     memfsEnabled,
     memfsDirectory,
     permissionMode: uiPermissionMode,
@@ -8426,10 +8427,12 @@ export default function App({
                       getReflectionSettings(agentId).passiveSweepEnabled,
                     reflectionPassiveSweepIntervalHours:
                       getReflectionSettings(agentId).passiveSweepIntervalHours,
-                    reflectionPassiveMinQuietMinutes:
-                      getReflectionSettings(agentId).passiveMinQuietMinutes,
-                    reflectionPassiveMinUnreflectedTurns:
-                      getReflectionSettings(agentId).passiveMinUnreflectedTurns,
+                    reflectionPassiveConversationMinIdleHours:
+                      getReflectionSettings(agentId)
+                        .passiveConversationMinIdleHours,
+                    reflectionPassiveConversationMinUnreflectedTurns:
+                      getReflectionSettings(agentId)
+                        .passiveConversationMinUnreflectedTurns,
                     memfsEnabled:
                       agentId !== "loading"
                         ? settingsManager.isMemfsEnabled(agentId)

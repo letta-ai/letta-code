@@ -859,8 +859,8 @@ describe("listen-client parseServerMessage", () => {
             step_count: 9,
             passive_sweep_enabled: true,
             passive_sweep_interval_hours: 12,
-            passive_min_quiet_minutes: 20,
-            passive_min_unreflected_turns: 4,
+            passive_conversation_min_idle_hours: 20,
+            passive_conversation_min_unreflected_turns: 4,
           },
           scope: "local_project",
         }),
@@ -2042,8 +2042,8 @@ describe("listen-client reflection settings command handling", () => {
             step_count: 9,
             passive_sweep_enabled: true,
             passive_sweep_interval_hours: 12,
-            passive_min_quiet_minutes: 20,
-            passive_min_unreflected_turns: 4,
+            passive_conversation_min_idle_hours: 20,
+            passive_conversation_min_unreflected_turns: 4,
           },
           scope: "local_project",
         },
@@ -2064,8 +2064,8 @@ describe("listen-client reflection settings command handling", () => {
           step_count: 9,
           passive_sweep_enabled: true,
           passive_sweep_interval_hours: 12,
-          passive_min_quiet_minutes: 20,
-          passive_min_unreflected_turns: 4,
+          passive_conversation_min_idle_hours: 20,
+          passive_conversation_min_unreflected_turns: 4,
         },
       });
       expect(deviceStatusUpdate).toMatchObject({
@@ -2077,8 +2077,8 @@ describe("listen-client reflection settings command handling", () => {
             step_count: 9,
             passive_sweep_enabled: true,
             passive_sweep_interval_hours: 12,
-            passive_min_quiet_minutes: 20,
-            passive_min_unreflected_turns: 4,
+            passive_conversation_min_idle_hours: 20,
+            passive_conversation_min_unreflected_turns: 4,
           },
         },
       });
@@ -2109,8 +2109,8 @@ describe("listen-client reflection settings command handling", () => {
           step_count: 9,
           passive_sweep_enabled: false,
           passive_sweep_interval_hours: 12,
-          passive_min_quiet_minutes: 20,
-          passive_min_unreflected_turns: 4,
+          passive_conversation_min_idle_hours: 20,
+          passive_conversation_min_unreflected_turns: 4,
         },
       });
 
@@ -2141,8 +2141,8 @@ describe("listen-client reflection settings command handling", () => {
           step_count: 17,
           passive_sweep_enabled: false,
           passive_sweep_interval_hours: 12,
-          passive_min_quiet_minutes: 20,
-          passive_min_unreflected_turns: 4,
+          passive_conversation_min_idle_hours: 20,
+          passive_conversation_min_unreflected_turns: 4,
         },
       });
     } finally {

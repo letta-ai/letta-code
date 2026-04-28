@@ -25,8 +25,8 @@ describe("statusLinePayload", () => {
       reflectionStepCount: 10,
       reflectionPassiveSweepEnabled: true,
       reflectionPassiveSweepIntervalHours: 24,
-      reflectionPassiveMinQuietMinutes: 15,
-      reflectionPassiveMinUnreflectedTurns: 3,
+      reflectionPassiveConversationMinIdleHours: 15,
+      reflectionPassiveConversationMinUnreflectedTurns: 3,
       memfsEnabled: true,
       memfsDirectory: "/Users/test/.letta/agents/agent-123/memory",
       permissionMode: "default",
@@ -47,8 +47,10 @@ describe("statusLinePayload", () => {
     expect(payload.reflection.step_count).toBe(10);
     expect(payload.reflection.passive_sweep_enabled).toBe(true);
     expect(payload.reflection.passive_sweep_interval_hours).toBe(24);
-    expect(payload.reflection.passive_min_quiet_minutes).toBe(15);
-    expect(payload.reflection.passive_min_unreflected_turns).toBe(3);
+    expect(payload.reflection.passive_conversation_min_idle_hours).toBe(15);
+    expect(payload.reflection.passive_conversation_min_unreflected_turns).toBe(
+      3,
+    );
     expect(payload.memfs.enabled).toBe(true);
     expect(payload.memfs.memory_dir).toBe(
       "/Users/test/.letta/agents/agent-123/memory",
@@ -73,8 +75,10 @@ describe("statusLinePayload", () => {
     expect(payload.reflection.step_count).toBe(0);
     expect(payload.reflection.passive_sweep_enabled).toBe(false);
     expect(payload.reflection.passive_sweep_interval_hours).toBe(0);
-    expect(payload.reflection.passive_min_quiet_minutes).toBe(0);
-    expect(payload.reflection.passive_min_unreflected_turns).toBe(0);
+    expect(payload.reflection.passive_conversation_min_idle_hours).toBe(0);
+    expect(payload.reflection.passive_conversation_min_unreflected_turns).toBe(
+      0,
+    );
     expect(payload.memfs.enabled).toBe(false);
     expect(payload.memfs.memory_dir).toBeNull();
     expect(payload.cost.total_cost_usd).toBeNull();
