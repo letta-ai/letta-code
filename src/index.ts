@@ -91,7 +91,7 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
-  letta memfs ...       Memory filesystem subcommands (JSON-only)
+  letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta blocks ...      Blocks subcommands (JSON-only)
@@ -100,14 +100,16 @@ USAGE
 OPTIONS
 ${renderCliOptionsHelp()}
 
-SUBCOMMANDS (JSON-only)
-  letta memfs status --agent <id>
-  letta memfs diff --agent <id>
-  letta memfs resolve --agent <id> --resolutions '<JSON>'
-  letta memfs backup --agent <id>
-  letta memfs backups --agent <id>
-  letta memfs restore --agent <id> --from <backup> --force
-  letta memfs export --agent <id> --out <dir>
+SUBCOMMANDS
+  letta memory status --agent <id>
+  letta memory diff --agent <id>
+  letta memory resolve --agent <id> --resolutions '<JSON>'
+  letta memory backup --agent <id>
+  letta memory backups --agent <id>
+  letta memory restore --agent <id> --from <backup> --force
+  letta memory export --agent <id> --out <dir>
+  letta memory pull --agent <id>
+  letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
@@ -355,7 +357,7 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
-  // Early exit for CLI subcommands (e.g., `letta server`, `letta memfs`).
+  // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
   const subcommandResult = await runSubcommand(process.argv.slice(2));
@@ -798,6 +800,22 @@ async function main(): Promise<void> {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
+  // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
+  // Stored OAuth credentials (interactive session tokens) are not accepted for
+  // automated/headless use — get an API key at https://app.letta.com/api-keys
+  if (
+    isHeadless &&
+    baseURL === LETTA_CLOUD_API_URL &&
+    !process.env.LETTA_API_KEY
+  ) {
+    console.error("Missing LETTA_API_KEY");
+    console.error(
+      "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
+    );
+    console.error("Get an API key at https://app.letta.com/api-keys");
+    process.exit(1);
+  }
+
   // Check if refresh token is missing for Letta Cloud (only when not using env var)
   // Skip this check if we already have an API key from env
   if (
@@ -824,15 +842,6 @@ async function main(): Promise<void> {
   }
 
   if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-    // For headless mode, error out (assume automation context)
-    if (isHeadless) {
-      console.error("Missing LETTA_API_KEY");
-      console.error(
-        "Run 'letta' in interactive mode to authenticate or export the missing environment variable",
-      );
-      process.exit(1);
-    }
-
     // For interactive mode, show setup flow
     console.log("No credentials found. Let's get you set up!\n");
     const { runSetup } = await import("./auth/setup");
@@ -1469,14 +1478,33 @@ async function main(): Promise<void> {
     ]);
 
     // Main initialization effect - runs after profile selection
+    const initStartedRef = React.useRef(false);
     useEffect(() => {
-      if (loadingState !== "assembling") return;
+      if (loadingState !== "assembling") {
+        // If init bounced back to a picker, allow the next user selection to
+        // start a fresh assembling phase.
+        if (
+          loadingState === "selecting" ||
+          loadingState === "selecting_global" ||
+          loadingState === "selecting_conversation"
+        ) {
+          initStartedRef.current = false;
+        }
+        return;
+      }
+      // Guard against double-fire from dependency churn in the same
+      // "assembling" phase.  Only the first invocation should run.
+      if (initStartedRef.current) return;
+      initStartedRef.current = true;
 
       async function init() {
         const client = await getClient();
 
         // Determine which agent we'll be using (before loading tools)
         let resumingAgentId: string | null = null;
+        // Track agent fetched during ID resolution so we can reuse it later
+        // (validatedAgent React state may not be committed yet).
+        let resolvedAgent: AgentState | null = null;
 
         // Priority 1: --agent flag
         if (agentIdArg) {
@@ -1485,8 +1513,11 @@ async function main(): Promise<void> {
             resumingAgentId = agentIdArg;
           } else {
             try {
-              const agent = await client.agents.retrieve(agentIdArg);
+              const agent = await client.agents.retrieve(agentIdArg, {
+                include: ["agent.secrets", "agent.tools"],
+              });
               setValidatedAgent(agent);
+              resolvedAgent = agent;
               resumingAgentId = agentIdArg;
             } catch {
               // Agent doesn't exist, will create new later
@@ -1508,8 +1539,14 @@ async function main(): Promise<void> {
             resumingAgentId = selectedGlobalAgentId;
           } else {
             try {
-              const agent = await client.agents.retrieve(selectedGlobalAgentId);
+              const agent = await client.agents.retrieve(
+                selectedGlobalAgentId,
+                {
+                  include: ["agent.secrets", "agent.tools"],
+                },
+              );
               setValidatedAgent(agent);
+              resolvedAgent = agent;
               resumingAgentId = selectedGlobalAgentId;
             } catch {
               // Selected agent doesn't exist - show selector again
@@ -1685,9 +1722,11 @@ async function main(): Promise<void> {
         if (!agent && resumingAgentId) {
           try {
             agent =
-              validatedAgent && validatedAgent.id === resumingAgentId
-                ? validatedAgent
-                : await client.agents.retrieve(resumingAgentId);
+              resolvedAgent && resolvedAgent.id === resumingAgentId
+                ? resolvedAgent
+                : validatedAgent && validatedAgent.id === resumingAgentId
+                  ? validatedAgent
+                  : await client.agents.retrieve(resumingAgentId);
           } catch (error) {
             // Agent disappeared between validation and now - show selector
             console.error(
@@ -1755,7 +1794,8 @@ async function main(): Promise<void> {
 
         // Init secrets cache — runs in parallel with memfs sync below.
         const secretsInitPromise = import("./utils/secretsStore").then(
-          ({ initSecretsFromServer }) => initSecretsFromServer(agentId),
+          ({ initSecretsFromServer }) =>
+            initSecretsFromServer(agentId, agent ?? undefined),
         );
 
         // Check if we're resuming an existing agent
@@ -1834,7 +1874,7 @@ async function main(): Promise<void> {
         }
 
         const startupAgentId = agent.id;
-        void clearPersistedClientToolRules(startupAgentId)
+        void clearPersistedClientToolRules(startupAgentId, agent)
           .then((cleanup) => {
             if (cleanup) {
               const count = cleanup.removedToolNames.length;

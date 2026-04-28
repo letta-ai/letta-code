@@ -641,19 +641,24 @@ export async function resolveRecoveredApprovalResponse(
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
   try {
-    const approvalResults = await executeApprovalBatch(decisions, undefined, {
-      abortSignal: recoveryAbortController.signal,
-      onStreamingOutput: emitToolExecutionOutput,
-      toolContextId: preparedToolContext.preparedToolContext.contextId,
-      workingDirectory,
-      parentScope:
-        recovered.agentId && recovered.conversationId
-          ? {
-              agentId: recovered.agentId,
-              conversationId: recovered.conversationId,
-            }
-          : undefined,
-    });
+    let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
+    try {
+      approvalResults = await executeApprovalBatch(decisions, undefined, {
+        abortSignal: recoveryAbortController.signal,
+        onStreamingOutput: emitToolExecutionOutput,
+        toolContextId: preparedToolContext.preparedToolContext.contextId,
+        workingDirectory,
+        parentScope:
+          recovered.agentId && recovered.conversationId
+            ? {
+                agentId: recovered.agentId,
+                conversationId: recovered.conversationId,
+              }
+            : undefined,
+      });
+    } finally {
+      emitToolExecutionOutput.flush();
+    }
 
     emitToolExecutionFinishedEvents(socket, runtime, {
       approvals: approvalResults,
@@ -677,6 +682,7 @@ export async function resolveRecoveredApprovalResponse(
       {
         type: "approval",
         approvals: approvalResults,
+        otid: crypto.randomUUID(),
       },
     ];
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;

@@ -118,14 +118,14 @@ export async function memory_apply_patch(
   const memoryDir = resolveMemoryDir();
   ensureMemoryRepo(memoryDir);
 
-  await assertMemoryRepoReadyForWrite(memoryDir);
+  const { agentId, agentName } = await getAgentIdentity();
+  await assertMemoryRepoReadyForWrite(memoryDir, agentId);
 
   const pathspecs = await applyMemoryPatch(memoryDir, input);
   if (pathspecs.length === 0) {
     return { message: "memory_apply_patch completed with no changed paths." };
   }
 
-  const { agentId, agentName } = await getAgentIdentity();
   const commitResult = await commitAndSyncMemoryWrite({
     memoryDir,
     pathspecs,

@@ -24,11 +24,12 @@ Below are additional common issues with context and how they can be resolved:
 #### System prompt bloat
 Memories compiled into the system prompt (contained in `system/`) should take up about 10% of the total context size (usually ~15-20K tokens). This is a soft target, not a hard requirement.
 
-Use the following script to evaluate the token usage of the system prompt:
+Use the built-in CLI to evaluate token usage of the system prompt:
 ```bash
-npx tsx <SKILL_DIR>/scripts/estimate_system_tokens.ts --memory-dir "$MEMORY_DIR"
+letta memory tokens --format json --quiet
 ```
-Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
+
+The command reports `total_tokens` and per-file estimates for `system/`. It is only a measurement tool; decide whether to intervene based on the actual context and the guidance below.
 
 **Why detail is load-bearing (read this before cutting anything)**: In-context detail does more than carry information. It does at least four things, and byte-counting sweeps only see the first:
 1. **Information** — the literal facts stated

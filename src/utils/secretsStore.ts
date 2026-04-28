@@ -54,12 +54,17 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
  * Fetches secrets via GET /v1/agents/{agent_id}?include=agent.secrets
  * and populates the in-memory cache.
  */
-export async function initSecretsFromServer(agentId: string): Promise<void> {
-  const client = await getClient();
-
-  const agent = await client.agents.retrieve(agentId, {
-    include: ["agent.secrets"],
-  });
+export async function initSecretsFromServer(
+  agentId: string,
+  cachedAgent?: { secrets?: Array<{ key?: string; value?: string }> | null },
+): Promise<void> {
+  const agent =
+    cachedAgent ??
+    (await (
+      await getClient()
+    ).agents.retrieve(agentId, {
+      include: ["agent.secrets"],
+    }));
 
   const secrets: Record<string, string> = {};
   if (agent.secrets && Array.isArray(agent.secrets)) {

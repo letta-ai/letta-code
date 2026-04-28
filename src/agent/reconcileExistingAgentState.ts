@@ -28,23 +28,6 @@ export interface ReconcileAgentStateResult {
   skippedTweaks: string[];
 }
 
-function areToolSetsEqual(
-  currentToolIds: string[],
-  desiredToolIds: string[],
-): boolean {
-  if (currentToolIds.length !== desiredToolIds.length) {
-    return false;
-  }
-
-  const currentSet = new Set(currentToolIds);
-  for (const toolId of desiredToolIds) {
-    if (!currentSet.has(toolId)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function getToolName(tool: Tool): string {
   if (typeof tool.name !== "string") {
     return "";

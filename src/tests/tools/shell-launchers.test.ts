@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { buildShellLaunchers } from "../../tools/impl/shellLaunchers";
+import {
+  buildPowerShellCommand,
+  buildShellLaunchers,
+} from "../../tools/impl/shellLaunchers";
 
 describe("Shell Launchers", () => {
   test("builds launchers for a command", () => {
@@ -16,6 +19,26 @@ describe("Shell Launchers", () => {
   test("returns empty array for whitespace-only command", () => {
     const launchers = buildShellLaunchers("   ");
     expect(launchers).toEqual([]);
+  });
+
+  test("PowerShell command aliases common Letta environment variables", () => {
+    const command = buildPowerShellCommand('ls "$MEMORY_DIR/system/human/"');
+
+    expect(command).toContain("$MEMORY_DIR = $env:MEMORY_DIR");
+    expect(command).toContain("$LETTA_MEMORY_DIR = $env:LETTA_MEMORY_DIR");
+    expect(command).toContain("$AGENT_ID = $env:AGENT_ID");
+    expect(command).toContain("$CONVERSATION_ID = $env:CONVERSATION_ID");
+    expect(command.endsWith('ls "$MEMORY_DIR/system/human/"')).toBe(true);
+  });
+
+  test("PowerShell command preserves quoted executable invocation", () => {
+    const command = buildPowerShellCommand(
+      '"C:/Program Files/Git/bin/git.exe" status',
+    );
+
+    expect(
+      command.endsWith('& "C:/Program Files/Git/bin/git.exe" status'),
+    ).toBe(true);
   });
 
   if (process.platform === "win32") {

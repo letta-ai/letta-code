@@ -86,6 +86,8 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "../constants";
+import { experimentManager } from "../experiments/manager";
+import type { ExperimentId } from "../experiments/types";
 import {
   runNotificationHooks,
   runPreCompactHooks,
@@ -143,6 +145,7 @@ import {
   debugWarn,
   isDebugEnabled,
 } from "../utils/debug";
+import { recordTuiPerf } from "../utils/tuiPerf";
 import { getVersion } from "../version";
 import {
   handleMcpAdd,
@@ -179,6 +182,7 @@ import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { EventMessage } from "./components/EventMessage";
+import { ExperimentSelector } from "./components/ExperimentSelector";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
@@ -613,6 +617,7 @@ function extractErrorMeta(e: unknown) {
 // Any changes made in the overlay will be queued until end_turn
 const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/model",
+  "/experiments",
   "/toolset",
   "/system",
   "/personality",
@@ -1580,6 +1585,7 @@ export default function App({
   // Overlay/selector state - only one can be open at a time
   type ActiveOverlay =
     | "model"
+    | "experiment"
     | "sleeptime"
     | "compaction"
     | "toolset"
@@ -1648,6 +1654,12 @@ export default function App({
   type QueuedOverlayAction =
     | { type: "switch_agent"; agentId: string; commandId?: string }
     | { type: "switch_model"; modelId: string; commandId?: string }
+    | {
+        type: "set_experiment";
+        experimentId: ExperimentId;
+        enabled: boolean;
+        commandId?: string;
+      }
     | {
         type: "set_sleeptime";
         settings: ReflectionSettings;
@@ -3175,6 +3187,7 @@ export default function App({
     streamingRefreshTimeoutRef.current = setTimeout(() => {
       streamingRefreshTimeoutRef.current = null;
       if (!buffersRef.current.interrupted) {
+        recordTuiPerf("ui_refresh:tool_output");
         refreshDerived();
       }
     }, 100);
@@ -3192,6 +3205,10 @@ export default function App({
   // Helper to update streaming output for bash/shell tools
   const updateStreamingOutput = useCallback(
     (toolCallId: string, chunk: string, isStderr = false) => {
+      recordTuiPerf(`tool_output:${isStderr ? "stderr" : "stdout"}`, {
+        bytes: Buffer.byteLength(chunk),
+      });
+
       const lineId = buffersRef.current.toolCallIdToLineId.get(toolCallId);
       if (!lineId) return;
 
@@ -3233,6 +3250,7 @@ export default function App({
           !buffersRef.current.interrupted &&
           (buffersRef.current.commitGeneration || 0) === capturedGeneration
         ) {
+          recordTuiPerf("ui_refresh:stream");
           refreshDerived();
         }
       }, 16); // ~60fps
@@ -4352,10 +4370,12 @@ export default function App({
             null;
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
+          let prefetchedAgent: AgentState | null = null;
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
             );
+            prefetchedAgent = preparedToolContext.agent;
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
@@ -4803,8 +4823,11 @@ export default function App({
           // This ensures the UI shows the correct model as early as possible
           const syncAgentState = async () => {
             try {
-              const client = await getClient();
-              const agent = await client.agents.retrieve(agentIdRef.current);
+              // Reuse the agent fetched by prepareToolExecutionContextForScope
+              // (avoids a redundant agents.retrieve per turn).
+              const agent =
+                prefetchedAgent ??
+                (await (await getClient()).agents.retrieve(agentIdRef.current));
 
               // Keep model UI in sync with the agent configuration.
               // Note: many tiers share the same handle (e.g. gpt-5.2-none/high), so we
@@ -4870,9 +4893,20 @@ export default function App({
             }
           };
 
+          const isAutoApprovalMode =
+            pinnedPermissionMode === "bypassPermissions";
+          const isUserInitiated = currentInput.some(
+            (item) => item.type === "message" && item.role === "user",
+          );
           const handleFirstMessage = () => {
             setNetworkPhase("download");
-            void syncAgentState();
+            // Only sync agent state on user messages or when manual approval
+            // mode is active (user may have changed model while reviewing).
+            // In bypass mode, tool-result continuations happen instantly —
+            // no time for the agent to have changed.
+            if (isUserInitiated || !isAutoApprovalMode) {
+              void syncAgentState();
+            }
           };
 
           const runTokenStart = buffersRef.current.tokenCount;
@@ -7932,6 +7966,17 @@ export default function App({
             "Toolset dialog dismissed",
           );
           setActiveOverlay("toolset");
+          return { submitted: true };
+        }
+
+        if (trimmed === "/experiments") {
+          startOverlayCommand(
+            "experiment",
+            "/experiments",
+            "Opening experiments selector...",
+            "Experiments dialog dismissed",
+          );
+          setActiveOverlay("experiment");
           return { submitted: true };
         }
 
@@ -12756,6 +12801,72 @@ ${SYSTEM_REMINDER_CLOSE}
     ],
   );
 
+  const handleExperimentSelect = useCallback(
+    async (
+      selection: { experimentId: ExperimentId; enabled: boolean },
+      commandId?: string | null,
+    ) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/experiments")
+        : consumeOverlayCommand("experiment");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/experiments",
+            "Experiment toggle queued – will update after current task completes",
+          );
+        cmd.update({
+          output:
+            "Experiment toggle queued – will update after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "set_experiment",
+          experimentId: selection.experimentId,
+          enabled: selection.enabled,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/experiments", "Updating experiment...");
+        cmd.update({
+          output: "Updating experiment...",
+          phase: "running",
+        });
+
+        try {
+          const snapshot = experimentManager.set(
+            selection.experimentId,
+            selection.enabled,
+          );
+          cmd.finish(
+            `Experiment "${snapshot.label}" ${snapshot.enabled ? "enabled" : "disabled"}`,
+            true,
+          );
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to update experiment: ${errorDetails}`);
+        } finally {
+          setActiveOverlay(null);
+        }
+      });
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
   // Process queued overlay actions when streaming ends
   // These are actions from interactive commands (like /agents, /model) that were
   // used while the agent was busy. The change is applied after end_turn.
@@ -12847,6 +12958,14 @@ ${SYSTEM_REMINDER_CLOSE}
         })();
       } else if (action.type === "switch_toolset") {
         handleToolsetSelect(action.toolsetId, action.commandId);
+      } else if (action.type === "set_experiment") {
+        handleExperimentSelect(
+          {
+            experimentId: action.experimentId,
+            enabled: action.enabled,
+          },
+          action.commandId,
+        );
       } else if (action.type === "switch_system") {
         handleSystemPromptSelect(action.promptId, action.commandId);
       } else if (action.type === "switch_personality") {
@@ -12864,6 +12983,7 @@ ${SYSTEM_REMINDER_CLOSE}
     handleSleeptimeModeSelect,
     handleCompactionModeSelect,
     handleToolsetSelect,
+    handleExperimentSelect,
     handleSystemPromptSelect,
     handlePersonalitySelect,
     agentId,
@@ -14591,6 +14711,15 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     setActiveConnectCommandId(null);
                   }
                 }}
+              />
+            )}
+
+            {/* Experiment Selector - conditionally mounted as overlay */}
+            {activeOverlay === "experiment" && (
+              <ExperimentSelector
+                experiments={experimentManager.list()}
+                onSelect={handleExperimentSelect}
+                onCancel={closeOverlay}
               />
             )}
 

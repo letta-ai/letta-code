@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { getRuntimeContext } from "./runtime-context";
@@ -89,6 +90,7 @@ export interface Settings {
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
   statusLine?: StatusLineConfig; // Configurable status line command
   env?: Record<string, string>;
+  experiments?: Partial<Record<ExperimentId, boolean>>;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
   pinnedAgentsByServer?: Record<string, string[]>; // DEPRECATED: use agents array

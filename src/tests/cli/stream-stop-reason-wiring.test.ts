@@ -134,4 +134,28 @@ describe("drainStream stop reason wiring", () => {
     expect(result.stopReason).toBe("end_turn");
     expect(getEventListeners(parent.signal, "abort")).toHaveLength(0);
   });
+
+  test("drainStream tolerates stream controllers without abort()", async () => {
+    const parent = new AbortController();
+    parent.abort();
+
+    const fakeStream = {
+      controller: { signal: { aborted: false } },
+      async *[Symbol.asyncIterator]() {
+        yield {
+          message_type: "stop_reason",
+          stop_reason: "end_turn",
+        } as LettaStreamingResponse;
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+
+    const result = await drainStream(
+      fakeStream,
+      createBuffers("agent-test"),
+      () => {},
+      parent.signal,
+    );
+
+    expect(result.stopReason).toBe("cancelled");
+  });
 });
