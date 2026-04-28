@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { noteExpectedWorktreeForLauncher } from "../../websocket/listener/worktree-ownership";
 
 export class ShellExecutionError extends Error {
   code?: string;
@@ -29,6 +30,8 @@ export function spawnWithLauncher(
       reject(new ShellExecutionError("Executable is required"));
       return;
     }
+
+    noteExpectedWorktreeForLauncher(launcher, options.cwd);
 
     const childProcess = spawn(executable, args, {
       cwd: options.cwd,

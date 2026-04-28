@@ -77,7 +77,7 @@ describe("Task background infrastructure", () => {
 
     const bgTask: BackgroundTask = {
       description: "Test task",
-      subagentType: "explore",
+      subagentType: "general-purpose",
       subagentId: "subagent_1",
       status: "running",
       output: [],
@@ -109,7 +109,7 @@ describe("TaskOutput with background tasks", () => {
 
     const bgTask: BackgroundTask = {
       description: "Test retrieval",
-      subagentType: "explore",
+      subagentType: "general-purpose",
       subagentId: "subagent_2",
       status: "completed",
       output: ["Task completed successfully", "Found 5 files"],
@@ -170,7 +170,7 @@ describe("TaskOutput with background tasks", () => {
 
     const bgTask: BackgroundTask = {
       description: "Test blocking",
-      subagentType: "explore",
+      subagentType: "general-purpose",
       subagentId: "subagent_4",
       status: "running",
       output: [],
@@ -209,7 +209,7 @@ describe("TaskOutput with background tasks", () => {
 
     const bgTask: BackgroundTask = {
       description: "Test timeout",
-      subagentType: "explore",
+      subagentType: "general-purpose",
       subagentId: "subagent_5",
       status: "running",
       output: ["Still running..."],
@@ -258,7 +258,7 @@ describe("TaskOutput with background tasks", () => {
 
     const bgTask: BackgroundTask = {
       description: "Large file fallback",
-      subagentType: "explore",
+      subagentType: "general-purpose",
       subagentId: "subagent_large_file",
       status: "completed",
       output: ["recent buffered line"],
@@ -328,7 +328,7 @@ describe("TaskStop with background tasks", () => {
 
     const bgTask: BackgroundTask = {
       description: "Completed task",
-      subagentType: "explore",
+      subagentType: "general-purpose",
       subagentId: "subagent_7",
       status: "completed",
       output: ["Done"],
@@ -354,7 +354,7 @@ describe("TaskStop with background tasks", () => {
 
     const bgTask: BackgroundTask = {
       description: "Task without abort",
-      subagentType: "explore",
+      subagentType: "general-purpose",
       subagentId: "subagent_8",
       status: "running",
       output: [],
@@ -391,10 +391,10 @@ describe("Output file integration", () => {
 
     // Simulate the output that Task.ts writes
     appendToOutputFile(outputFile, `[Task started: Find auth code]\n`);
-    appendToOutputFile(outputFile, `[subagent_type: explore]\n\n`);
+    appendToOutputFile(outputFile, `[subagent_type: general-purpose]\n\n`);
     appendToOutputFile(
       outputFile,
-      `subagent_type=explore agent_id=agent-123\n\n`,
+      `subagent_type=general-purpose agent_id=agent-123\n\n`,
     );
     appendToOutputFile(outputFile, `Found authentication code in src/auth/\n`);
     appendToOutputFile(outputFile, `\n[Task completed]\n`);
@@ -402,7 +402,7 @@ describe("Output file integration", () => {
     const content = fs.readFileSync(outputFile, "utf-8");
 
     expect(content).toContain("[Task started: Find auth code]");
-    expect(content).toContain("[subagent_type: explore]");
+    expect(content).toContain("[subagent_type: general-purpose]");
     expect(content).toContain("agent_id=agent-123");
     expect(content).toContain("Found authentication code");
     expect(content).toContain("[Task completed]");

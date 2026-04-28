@@ -78,6 +78,11 @@ export async function runTelegramSetup(): Promise<boolean> {
         .filter(Boolean);
     }
 
+    const transcriptionInput = await rl.question(
+      "Auto-transcribe voice memos when OPENAI_API_KEY is set? [y/N]: ",
+    );
+    const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
+
     // Step 5: Write account
     const now = new Date().toISOString();
     const account: TelegramChannelAccount = {
@@ -88,6 +93,7 @@ export async function runTelegramSetup(): Promise<boolean> {
       token: token.trim(),
       dmPolicy: policy,
       allowedUsers,
+      transcribeVoice,
       binding: {
         agentId: null,
         conversationId: null,

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { runWithRuntimeContext } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import {
   ensureLettaShimDir,
@@ -29,6 +30,35 @@ function withTemporaryAgentEnv<T>(agentId: string, fn: () => T): T {
       delete process.env.LETTA_AGENT_ID;
     } else {
       process.env.LETTA_AGENT_ID = originalLettaAgentId;
+    }
+  }
+}
+
+function withTemporaryEnv<T>(
+  updates: Record<string, string | undefined>,
+  fn: () => T,
+): T {
+  const original = Object.fromEntries(
+    Object.keys(updates).map((key) => [key, process.env[key]]),
+  ) as Record<string, string | undefined>;
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
   }
 }
@@ -81,6 +111,39 @@ describe("shellEnv letta shim", () => {
         "--loader:.txt=text",
         "run",
         "/Users/example/dev/letta-code-prod/src/index.ts",
+      ],
+    });
+  });
+
+  test("resolveLettaInvocation resolves relative dev entrypoint against cwd", () => {
+    const cwd =
+      process.platform === "win32"
+        ? path.win32.join("C:\\", "Users", "example", "dev", "letta-code-prod")
+        : path.posix.join("/", "Users", "example", "dev", "letta-code-prod");
+    const expectedScriptPath =
+      process.platform === "win32"
+        ? path.win32.join(cwd, "src", "index.ts")
+        : path.posix.join(cwd, "src", "index.ts");
+    const execPath =
+      process.platform === "win32"
+        ? "C:\\bun\\bun.exe"
+        : "/opt/homebrew/bin/bun";
+
+    const invocation = resolveLettaInvocation(
+      {},
+      ["bun", "src/index.ts"],
+      execPath,
+      cwd,
+    );
+
+    expect(invocation).toEqual({
+      command: execPath,
+      args: [
+        "--loader:.md=text",
+        "--loader:.mdx=text",
+        "--loader:.txt=text",
+        "run",
+        expectedScriptPath,
       ],
     });
   });
@@ -192,6 +255,63 @@ test("getShellEnv injects AGENT_ID aliases", () => {
   });
 });
 
+test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
+  const env = runWithRuntimeContext(
+    {
+      agentId: "agent-runtime-scope",
+      conversationId: "conv-runtime-scope",
+      workingDirectory: "/tmp/runtime-scope-cwd",
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.AGENT_ID).toBe("agent-runtime-scope");
+  expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
+  expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
+  expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
+  expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
+});
+
+test("getShellEnv isolates overlapping runtime scopes", async () => {
+  let releaseAgentA!: () => void;
+  const waitForAgentA = new Promise<void>((resolve) => {
+    releaseAgentA = resolve;
+  });
+
+  const taskA = runWithRuntimeContext(
+    {
+      agentId: "agent-a",
+      conversationId: "conv-a",
+      workingDirectory: "/tmp/agent-a",
+    },
+    async () => {
+      await waitForAgentA;
+      return getShellEnv();
+    },
+  );
+
+  const taskB = runWithRuntimeContext(
+    {
+      agentId: "agent-b",
+      conversationId: "conv-b",
+      workingDirectory: "/tmp/agent-b",
+    },
+    async () => {
+      releaseAgentA();
+      return getShellEnv();
+    },
+  );
+
+  const [envA, envB] = await Promise.all([taskA, taskB]);
+
+  expect(envA.AGENT_ID).toBe("agent-a");
+  expect(envA.CONVERSATION_ID).toBe("conv-a");
+  expect(envA.USER_CWD).toBe("/tmp/agent-a");
+  expect(envB.AGENT_ID).toBe("agent-b");
+  expect(envB.CONVERSATION_ID).toBe("conv-b");
+  expect(envB.USER_CWD).toBe("/tmp/agent-b");
+});
+
 test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", () => {
   withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
     const originalIsMemfsEnabled =
@@ -252,4 +372,51 @@ test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
       ).isMemfsEnabled = original;
     }
   });
+});
+
+test("getShellEnv injects transient MemFS git proxy config for Desktop Bash commands", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_BASE_URL: "http://localhost:57294",
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: "http://localhost:57294",
+      GIT_CONFIG_COUNT: undefined,
+      GIT_CONFIG_KEY_0: undefined,
+      GIT_CONFIG_VALUE_0: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBe("1");
+  expect(env.GIT_CONFIG_KEY_0).toBe(
+    "url.http://localhost:57294/v1/git/.insteadOf",
+  );
+  expect(env.GIT_CONFIG_VALUE_0).toBe("https://api.letta.com/v1/git/");
+  expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+  expect(env.GCM_INTERACTIVE).toBe("never");
+  expect(env.GIT_ASKPASS).toBe("");
+  expect(env.SSH_ASKPASS).toBe("");
+});
+
+test("getShellEnv appends MemFS git proxy config without clobbering existing git config env", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: "http://localhost:57294",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "safe.directory",
+      GIT_CONFIG_VALUE_0: "*",
+      GIT_CONFIG_KEY_1: undefined,
+      GIT_CONFIG_VALUE_1: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBe("2");
+  expect(env.GIT_CONFIG_KEY_0).toBe("safe.directory");
+  expect(env.GIT_CONFIG_VALUE_0).toBe("*");
+  expect(env.GIT_CONFIG_KEY_1).toBe(
+    "url.http://localhost:57294/v1/git/.insteadOf",
+  );
+  expect(env.GIT_CONFIG_VALUE_1).toBe("https://api.letta.com/v1/git/");
 });

@@ -84,6 +84,7 @@ export const SAFE_GIT_SUBCOMMAND_LIST = [
   "diff",
   "log",
   "show",
+  "grep",
   "branch",
   "tag",
   "remote",
@@ -168,7 +169,9 @@ const SAFE_MEMORY_COMMANDS = new Set([
 
 // letta CLI read-only subcommands: group -> allowed actions
 const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
-  memfs: new Set(["status", "help", "backups", "export"]),
+  memory: new Set(["status", "help", "backups", "export", "tokens"]),
+  // Legacy alias for `letta memory ...`.
+  memfs: new Set(["status", "help", "backups", "export", "tokens"]),
   agents: new Set(["list", "help"]),
   messages: new Set(["search", "list", "help"]),
   blocks: new Set(["list", "help"]),
@@ -408,6 +411,16 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
     "--verbose",
   ]);
 
+  // Filter flags that narrow which branches are listed — purely read-only.
+  // Each optionally accepts a commit/object as the next positional argument.
+  const readOnlyFilterFlags = new Set([
+    "--contains",
+    "--no-contains",
+    "--merged",
+    "--no-merged",
+    "--points-at",
+  ]);
+
   let sawReadOnlyFlag = false;
   let sawListFlag = false;
 
@@ -439,6 +452,16 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
       continue;
     }
 
+    // Filter flags like --contains, --merged, etc. take an optional commit arg.
+    if (readOnlyFilterFlags.has(arg)) {
+      sawReadOnlyFlag = true;
+      // Consume the optional commit/branch argument if present.
+      if (typeof args[i + 1] === "string" && !args[i + 1]?.startsWith("-")) {
+        i += 1;
+      }
+      continue;
+    }
+
     // Pattern arguments are read-only only when listing explicitly.
     if (sawListFlag && !arg.startsWith("-")) {
       sawReadOnlyFlag = true;
@@ -449,6 +472,64 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
   }
 
   return sawReadOnlyFlag;
+}
+
+function isReadOnlyGitGrepArgs(
+  args: string[],
+  options: ReadOnlyShellOptions,
+): boolean {
+  let inPathspecs = false;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg) {
+      continue;
+    }
+
+    if (arg === "--") {
+      inPathspecs = true;
+      continue;
+    }
+
+    if (arg === "--no-index") {
+      return false;
+    }
+
+    if (
+      arg === "-O" ||
+      arg.startsWith("-O") ||
+      arg === "--open-files-in-pager" ||
+      arg.startsWith("--open-files-in-pager=") ||
+      arg === "--ext-grep"
+    ) {
+      return false;
+    }
+
+    if (arg === "-f") {
+      const patternFile = args[i + 1];
+      if (!patternFile) {
+        return false;
+      }
+      if (hasDisallowedPathArg(patternFile, options)) {
+        return false;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("-f") && arg.length > 2) {
+      if (hasDisallowedPathArg(arg.slice(2), options)) {
+        return false;
+      }
+      continue;
+    }
+
+    if (inPathspecs && hasDisallowedPathArg(arg, options)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function isSafeEnvInvocation(
@@ -676,6 +757,9 @@ function isSafeSegment(
     }
     if (!SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
       return false;
+    }
+    if (subcommand === "grep") {
+      return isReadOnlyGitGrepArgs(tokens.slice(subcommandIndex + 1), options);
     }
     if (subcommand === "branch") {
       return isReadOnlyGitBranchArgs(tokens.slice(subcommandIndex + 1));

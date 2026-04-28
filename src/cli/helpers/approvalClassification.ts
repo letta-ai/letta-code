@@ -38,6 +38,7 @@ export type ClassifyApprovalsOptions<TContext = ApprovalContext | null> = {
   missingArgsReason?: (missing: string[]) => string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  agentId?: string;
 };
 
 export async function getMissingRequiredArgs(
@@ -86,6 +87,7 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       parsedArgs,
       opts.workingDirectory,
       opts.permissionModeState,
+      opts.agentId,
     );
     const context = opts.getContext
       ? await opts.getContext(toolName, parsedArgs, opts.workingDirectory)

@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { debugLog } from "../../utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
@@ -32,6 +33,8 @@ const IMAGE_EXTENSIONS = new Set([
   ".gif",
   ".webp",
   ".bmp",
+  ".heic",
+  ".heif",
 ]);
 
 function isImageFile(filePath: string): boolean {
@@ -47,6 +50,8 @@ function getMediaType(ext: string): string {
     ".gif": "image/gif",
     ".webp": "image/webp",
     ".bmp": "image/png", // Convert BMP to PNG
+    ".heic": "image/heic",
+    ".heif": "image/heif",
   };
   return types[ext] || "image/png";
 }
@@ -59,7 +64,13 @@ async function readImageFile(
   const mediaType = getMediaType(ext);
 
   // Use shared image resize utility
-  const result = await resizeImageIfNeeded(buffer, mediaType);
+  let result: Awaited<ReturnType<typeof resizeImageIfNeeded>>;
+  try {
+    result = await resizeImageIfNeeded(buffer, mediaType);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read image file: ${filePath} (${detail})`);
+  }
 
   return [
     {
@@ -196,7 +207,7 @@ function formatWithLineNumbers(
 export async function read(args: ReadArgs): Promise<ReadResult> {
   validateRequiredParams(args, ["file_path"], "Read");
   const { file_path, offset, limit } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
     : path.resolve(userCwd, file_path);

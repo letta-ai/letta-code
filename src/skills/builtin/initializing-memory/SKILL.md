@@ -292,7 +292,7 @@ If the worker output is generic, the worker failed. "User is direct" or "project
 **IMPORTANT**: Use this prompt template to ensure workers extract all required categories:
 
 ```
-Task({
+Agent({
   subagent_type: "history-analyzer",
   description: "Process chunk [N] of [SOURCE] history",
   prompt: `## Assignment
@@ -535,7 +535,7 @@ Explore based on chosen depth.
 
 For medium-to-large repos, parallel exploration is the preferred strategy after your initial scan.
 
-Use parallel subagents to investigate different subsystems simultaneously. Prefer a **read-only exploration subagent** when available. If your environment or user instructions discourage using an exploration subagent, do the equivalent exploration directly with Bash/Glob/Grep/Read.
+Use parallel `general-purpose` subagents to investigate different subsystems simultaneously. If your environment or user instructions discourage using subagents, do the equivalent exploration directly with Bash/Glob/Grep/Read.
 
 Good subsystem boundaries include:
 - `server/`, `client/`, `shared/`
@@ -560,8 +560,8 @@ Launch exploration subagents in a **single message** so they run concurrently.
 
 ```
 # After initial scan reveals key areas, launch parallel explorers in the background:
-Task({
-  subagent_type: "explore",
+Agent({
+  subagent_type: "general-purpose",
   description: "Explore API layer",
   run_in_background: true,
   prompt: `Read the implementation in src/api/.
@@ -573,8 +573,8 @@ Return:
 4. gotchas or deprecated paths
 5. file paths worth storing in memory`
 })
-Task({
-  subagent_type: "explore",
+Agent({
+  subagent_type: "general-purpose",
   description: "Explore frontend layer",
   run_in_background: true,
   prompt: `Read the implementation in src/ui/.
@@ -586,8 +586,8 @@ Return:
 4. gotchas or fragile areas
 5. file paths worth storing in memory`
 })
-Task({
-  subagent_type: "explore",
+Agent({
+  subagent_type: "general-purpose",
   description: "Explore shared systems",
   run_in_background: true,
   prompt: `Read the implementation in src/shared/.

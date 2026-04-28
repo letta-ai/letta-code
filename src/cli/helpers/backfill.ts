@@ -69,14 +69,10 @@ function removeSystemContextBlocks(text: string): string {
 export function extractCompactionSummary(text: string): string | null {
   try {
     const parsed = JSON.parse(text);
-    if (
-      parsed.type === "system_alert" &&
-      typeof parsed.message === "string" &&
-      parsed.message.includes("prior messages have been hidden")
-    ) {
-      // Extract the summary part after the header
+    if (parsed.type === "system_alert" && typeof parsed.message === "string") {
+      // Extract the summary part after the header (handles both old and new server formats)
       const summaryMatch = parsed.message.match(
-        /The following is a summary of the previous messages:\s*([\s\S]*)/,
+        /The following is an? (?:in-context recursive )?summary(?: of the (?:previous|prior) messages)?:\s*([\s\S]*)/,
       );
       if (summaryMatch?.[1]) {
         return summaryMatch[1].trim();
@@ -137,6 +133,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
   buffers.byId.clear();
   buffers.toolCallIdToLineId.clear();
   buffers.pendingToolByRun.clear();
+  buffers.userLineIdByOtid.clear();
   buffers.lastOtid = null;
   buffers.assistantCanonicalByMessageId.clear();
   buffers.assistantCanonicalByOtid.clear();
@@ -193,11 +190,17 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
 
         if (cleanedText) {
           const exists = buffers.byId.has(lineId);
+          const otid = "otid" in msg ? msg.otid || undefined : undefined;
           buffers.byId.set(lineId, {
             kind: "user",
             id: lineId,
             text: cleanedText,
+            messageId: msg.id,
+            otid,
           });
+          if (otid) {
+            buffers.userLineIdByOtid.set(otid, lineId);
+          }
           if (!exists) buffers.order.push(lineId);
         }
         break;
@@ -211,6 +214,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           id: lineId,
           text: msg.reasoning,
           phase: "finished",
+          messageId: msg.id,
         });
         if (!exists) buffers.order.push(lineId);
         break;
@@ -224,6 +228,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           id: lineId,
           text: renderAssistantContentParts(msg.content),
           phase: "finished",
+          messageId: msg.id,
         });
         if (!exists) buffers.order.push(lineId);
         break;

@@ -1,6 +1,7 @@
 import type {
   ChannelAccount,
   ChannelAdapter,
+  ChannelChatType,
   ChannelRoute,
   OutboundChannelMessage,
   SupportedChannelId,
@@ -49,6 +50,13 @@ export interface ChannelMessageActionRequest {
   title?: string;
 }
 
+export interface ChannelResolvedMessageTarget {
+  chatId: string;
+  chatType?: ChannelChatType;
+  threadId?: string | null;
+  label?: string;
+}
+
 export interface ChannelMessageActionContext {
   request: ChannelMessageActionRequest;
   route: ChannelRoute;
@@ -67,6 +75,10 @@ export interface ChannelMessageActionAdapter {
   describeMessageTool(params: {
     accountId?: string | null;
   }): ChannelMessageToolDiscovery;
+  resolveMessageTarget?(params: {
+    account: ChannelAccount;
+    target: string;
+  }): Promise<ChannelResolvedMessageTarget>;
   handleAction(ctx: ChannelMessageActionContext): Promise<string>;
 }
 

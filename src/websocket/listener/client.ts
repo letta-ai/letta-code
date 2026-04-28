@@ -42,6 +42,10 @@ import {
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "../../cli/helpers/subagentState";
+import {
+  estimateSystemPromptTokensFromMemoryDir,
+  setSystemPromptDoctorState,
+} from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
   addTask as addCronTask,
@@ -54,6 +58,7 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
+import { experimentManager } from "../../experiments/manager";
 import {
   buildByokProviderAliases,
   listProviders,
@@ -63,6 +68,7 @@ import {
   createSharedReminderState,
   resetSharedReminderState,
 } from "../../reminders/state";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
@@ -71,6 +77,7 @@ import {
   ensureCorrectMemoryTool,
   prepareToolExecutionContextForScope,
   type ToolsetName,
+  type ToolsetPreference,
 } from "../../tools/toolset";
 import { formatToolsetName } from "../../tools/toolset-labels";
 import type {
@@ -86,6 +93,7 @@ import type {
   ChannelAccountUnbindCommand,
   ChannelAccountUpdateCommand,
   ChannelGetConfigCommand,
+  ChannelId,
   ChannelPairingBindCommand,
   ChannelPairingsListCommand,
   ChannelRouteRemoveCommand,
@@ -103,15 +111,22 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  GetExperimentsCommand,
+  GetExperimentsResponseMessage,
   GetReflectionSettingsCommand,
   ListMemoryCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
+  ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
+  ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
   ReflectionSettingsScope,
+  SetExperimentCommand,
+  SetExperimentResponseMessage,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
   UpdateModelResponseMessage,
+  UpdateToolsetResponseMessage,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -140,6 +155,7 @@ import {
   loadPersistedCwdMap,
   setConversationWorkingDirectory,
 } from "./cwd";
+import { runGrepInFiles } from "./grepInFiles";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
@@ -187,21 +203,26 @@ import {
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isFileOpsCommand,
+  isGetExperimentsCommand,
   isGetReflectionSettingsCommand,
   isGetTreeCommand,
+  isGrepInFilesCommand,
   isListInDirectoryCommand,
   isListMemoryCommand,
   isListModelsCommand,
+  isMemoryCommitDiffCommand,
   isMemoryFileAtRefCommand,
   isMemoryHistoryCommand,
   isReadFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
+  isSetExperimentCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
   isUnwatchFileCommand,
   isUpdateModelCommand,
+  isUpdateToolsetCommand,
   isWatchFileCommand,
   isWriteFileCommand,
   parseServerMessage,
@@ -263,6 +284,12 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import {
+  getListenerTransportKind,
+  isListenerTransportOpen,
+  type ListenerTransport,
+  LocalListenerTransport,
+} from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
   ChangeCwdMessage,
@@ -343,6 +370,30 @@ function safeSocketSend(
   }
 }
 
+function safeTransportSend(
+  transport: ListenerTransport,
+  payload: unknown,
+  errorType: string,
+  context: string,
+): boolean {
+  if (!isListenerTransportOpen(transport)) {
+    return false;
+  }
+
+  try {
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    transport.send(serialized);
+    return true;
+  } catch (error) {
+    trackListenerError(errorType, error, context);
+    if (isDebugEnabled()) {
+      console.error(`[Listen] ${context} send failed:`, error);
+    }
+    return false;
+  }
+}
+
 function runDetachedListenerTask(
   commandName: string,
   task: () => Promise<void>,
@@ -364,6 +415,7 @@ async function replaySyncStateForRuntime(
   socket: WebSocket,
   scope: { agent_id: string; conversation_id: string },
   opts?: {
+    recoverApprovals?: boolean;
     recoverApprovalStateForSync?: (
       runtime: ConversationRuntime,
       scope: { agent_id: string; conversation_id: string },
@@ -378,16 +430,18 @@ async function replaySyncStateForRuntime(
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
 
-  try {
-    await recoverFn(syncScopedRuntime, scope);
-  } catch (error) {
-    trackListenerError(
-      "listener_sync_recovery_failed",
-      error,
-      "listener_sync_recovery",
-    );
-    if (isDebugEnabled()) {
-      console.warn("[Listen] Sync approval recovery failed:", error);
+  if (opts?.recoverApprovals ?? true) {
+    try {
+      await recoverFn(syncScopedRuntime, scope);
+    } catch (error) {
+      trackListenerError(
+        "listener_sync_recovery_failed",
+        error,
+        "listener_sync_recovery",
+      );
+      if (isDebugEnabled()) {
+        console.warn("[Listen] Sync approval recovery failed:", error);
+      }
     }
   }
 
@@ -856,6 +910,88 @@ async function applyModelUpdateForRuntime(params: {
   };
 }
 
+async function applyToolsetUpdateForRuntime(params: {
+  socket: WebSocket;
+  listener: ListenerRuntime;
+  scopedRuntime: ConversationRuntime;
+  requestId: string;
+  toolsetPreference: ToolsetPreference;
+}): Promise<UpdateToolsetResponseMessage> {
+  const { socket, listener, scopedRuntime, requestId, toolsetPreference } =
+    params;
+  const agentId = scopedRuntime.agentId;
+  const conversationId = scopedRuntime.conversationId;
+
+  if (!agentId) {
+    return {
+      type: "update_toolset_response",
+      request_id: requestId,
+      success: false,
+      error: "Missing agent_id in runtime scope",
+    };
+  }
+
+  const previousToolNames = scopedRuntime.currentLoadedTools;
+  let nextToolset: ToolsetName;
+  const previousToolsetPreference = (() => {
+    try {
+      return settingsManager.getToolsetPreference(agentId);
+    } catch {
+      return scopedRuntime.currentToolsetPreference;
+    }
+  })();
+
+  try {
+    settingsManager.setToolsetPreference(agentId, toolsetPreference);
+    const preparedToolContext = await prepareToolExecutionContextForScope({
+      agentId,
+      conversationId,
+    });
+    nextToolset = preparedToolContext.toolset;
+    scopedRuntime.currentToolset = preparedToolContext.toolset;
+    scopedRuntime.currentToolsetPreference =
+      preparedToolContext.toolsetPreference;
+    scopedRuntime.currentLoadedTools =
+      preparedToolContext.preparedToolContext.loadedToolNames;
+  } catch (error) {
+    settingsManager.setToolsetPreference(agentId, previousToolsetPreference);
+    throw error;
+  }
+
+  const toolsChanged =
+    JSON.stringify(previousToolNames) !==
+    JSON.stringify(scopedRuntime.currentLoadedTools);
+
+  const statusMessage =
+    toolsetPreference === "auto"
+      ? `Toolset mode set to auto (currently ${formatToolsetName(nextToolset)}).`
+      : `Switched toolset to ${formatToolsetName(nextToolset)} (manual override).`;
+
+  emitStatusDelta(socket, scopedRuntime, {
+    message: statusMessage,
+    level: toolsChanged ? "info" : "info",
+    agentId,
+    conversationId,
+  });
+
+  emitRuntimeStateUpdates(listener, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
+
+  return {
+    type: "update_toolset_response",
+    request_id: requestId,
+    success: true,
+    runtime: {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    },
+    current_toolset: nextToolset,
+    current_toolset_preference: toolsetPreference,
+  };
+}
+
 function buildListModelsEntries(): ListModelsResponseModelEntry[] {
   return models.map((model) => ({
     id: model.id,
@@ -912,6 +1048,8 @@ async function buildListModelsResponse(
 type ReflectionSettingsCommand =
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand;
+
+type ExperimentCommand = GetExperimentsCommand | SetExperimentCommand;
 
 type ChannelsCommand =
   | ChannelsListCommand
@@ -979,10 +1117,7 @@ function emitCronsUpdated(
   );
 }
 
-function emitChannelsUpdated(
-  socket: WebSocket,
-  channelId?: "telegram" | "slack",
-): void {
+function emitChannelsUpdated(socket: WebSocket, channelId?: ChannelId): void {
   safeSocketSend(
     socket,
     {
@@ -997,7 +1132,7 @@ function emitChannelsUpdated(
 
 function emitChannelAccountsUpdated(
   socket: WebSocket,
-  params: { channelId: "telegram" | "slack"; accountId?: string },
+  params: { channelId: ChannelId; accountId?: string },
 ): void {
   safeSocketSend(
     socket,
@@ -1014,7 +1149,7 @@ function emitChannelAccountsUpdated(
 
 function emitChannelPairingsUpdated(
   socket: WebSocket,
-  channelId: "telegram" | "slack",
+  channelId: ChannelId,
 ): void {
   safeSocketSend(
     socket,
@@ -1031,7 +1166,7 @@ function emitChannelPairingsUpdated(
 function emitChannelRoutesUpdated(
   socket: WebSocket,
   params: {
-    channelId: "telegram" | "slack";
+    channelId: ChannelId;
     agentId?: string;
     conversationId?: string | null;
   },
@@ -1054,7 +1189,7 @@ function emitChannelRoutesUpdated(
 
 function emitChannelTargetsUpdated(
   socket: WebSocket,
-  channelId: "telegram" | "slack",
+  channelId: ChannelId,
 ): void {
   safeSocketSend(
     socket,
@@ -1575,7 +1710,7 @@ async function handleChannelsProtocolCommand(
 
   const mapChannelConfig = (
     snapshot: ReturnType<typeof getChannelConfigSnapshot>,
-  ) => {
+  ): ProtocolChannelConfigSnapshot | null => {
     if (!snapshot) {
       return null;
     }
@@ -1587,6 +1722,18 @@ async function handleChannelsProtocolCommand(
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
+        has_token: snapshot.hasToken,
+      };
+    }
+    if (snapshot.channelId === "discord") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        allowed_channels: snapshot.allowedChannels,
         has_token: snapshot.hasToken,
       };
     }
@@ -1605,7 +1752,7 @@ async function handleChannelsProtocolCommand(
 
   const mapChannelAccount = (
     snapshot: ReturnType<typeof listChannelAccountSnapshots>[number],
-  ) => {
+  ): ProtocolChannelAccountSnapshot => {
     if (snapshot.channelId === "telegram") {
       return {
         channel_id: snapshot.channelId,
@@ -1621,6 +1768,24 @@ async function handleChannelsProtocolCommand(
           agent_id: snapshot.binding.agentId,
           conversation_id: snapshot.binding.conversationId,
         },
+        created_at: snapshot.createdAt,
+        updated_at: snapshot.updatedAt,
+      };
+    }
+
+    if (snapshot.channelId === "discord") {
+      return {
+        channel_id: snapshot.channelId,
+        account_id: snapshot.accountId,
+        display_name: snapshot.displayName,
+        enabled: snapshot.enabled,
+        configured: snapshot.configured,
+        running: snapshot.running,
+        dm_policy: snapshot.dmPolicy,
+        allowed_users: snapshot.allowedUsers,
+        allowed_channels: snapshot.allowedChannels,
+        has_token: snapshot.hasToken,
+        agent_id: snapshot.agentId,
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
@@ -1806,6 +1971,10 @@ async function handleChannelsProtocolCommand(
               : undefined,
           dmPolicy: parsed.account.dm_policy,
           allowedUsers: parsed.account.allowed_users,
+          allowedChannels:
+            "allowed_channels" in parsed.account
+              ? parsed.account.allowed_channels
+              : undefined,
         },
         {
           accountId:
@@ -1886,6 +2055,10 @@ async function handleChannelsProtocolCommand(
               : undefined,
           dmPolicy: parsed.patch.dm_policy,
           allowedUsers: parsed.patch.allowed_users,
+          allowedChannels:
+            "allowed_channels" in parsed.patch
+              ? parsed.patch.allowed_channels
+              : undefined,
         },
       );
       const shouldRefreshDisplayName =
@@ -2227,6 +2400,10 @@ async function handleChannelsProtocolCommand(
           mode: "mode" in parsed.config ? parsed.config.mode : undefined,
           dmPolicy: parsed.config.dm_policy,
           allowedUsers: parsed.config.allowed_users,
+          allowedChannels:
+            "allowed_channels" in parsed.config
+              ? parsed.config.allowed_channels
+              : undefined,
         },
         parsed.account_id,
       );
@@ -2984,6 +3161,62 @@ function resolveReflectionSettingsScope(
   };
 }
 
+async function handleExperimentCommand(
+  parsed: ExperimentCommand,
+  socket: WebSocket,
+  listener: ListenerRuntime,
+): Promise<boolean> {
+  if (parsed.type === "get_experiments") {
+    const response: GetExperimentsResponseMessage = {
+      type: "get_experiments_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+    return true;
+  }
+
+  try {
+    experimentManager.set(parsed.experiment_id, parsed.enabled);
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+
+    emitDeviceStatusUpdate(socket, listener);
+  } catch (err) {
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: false,
+      experiments: experimentManager.list(),
+      error: err instanceof Error ? err.message : "Failed to update experiment",
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+  }
+
+  return true;
+}
+
 async function handleReflectionSettingsCommand(
   parsed: ReflectionSettingsCommand,
   socket: WebSocket,
@@ -3097,7 +3330,7 @@ async function handleReflectionSettingsCommand(
  */
 async function wireChannelIngress(
   listener: ListenerRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): Promise<void> {
@@ -3159,18 +3392,22 @@ async function wireChannelIngress(
 
 function handleChannelRegistryEvent(
   event: ChannelRegistryEvent,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ListenerRuntime,
 ): void {
   if (event.type === "pairings_updated") {
-    emitChannelPairingsUpdated(socket, event.channelId as "telegram" | "slack");
-    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    if (socket instanceof WebSocket) {
+      emitChannelPairingsUpdated(socket, event.channelId as ChannelId);
+      emitChannelsUpdated(socket, event.channelId as ChannelId);
+    }
     return;
   }
 
   if (event.type === "targets_updated") {
-    emitChannelTargetsUpdated(socket, event.channelId as "telegram" | "slack");
-    emitChannelsUpdated(socket, event.channelId as "telegram" | "slack");
+    if (socket instanceof WebSocket) {
+      emitChannelTargetsUpdated(socket, event.channelId as ChannelId);
+      emitChannelsUpdated(socket, event.channelId as ChannelId);
+    }
     return;
   }
 
@@ -3354,7 +3591,7 @@ async function handleApprovalResponseInput(
       conversation_id?: string | null;
     };
     response: ApprovalResponseBody;
-    socket: WebSocket;
+    socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
       connectionId?: string;
@@ -3377,7 +3614,7 @@ async function handleApprovalResponseInput(
     ) => ConversationRuntime;
     resolveRecoveredApprovalResponse: (
       runtime: ConversationRuntime,
-      socket: WebSocket,
+      socket: ListenerTransport,
       response: ApprovalResponseBody,
       processTurn: typeof handleIncomingMessage,
       opts?: {
@@ -3387,7 +3624,7 @@ async function handleApprovalResponseInput(
     ) => Promise<boolean>;
     scheduleQueuePump: (
       runtime: ConversationRuntime,
-      socket: WebSocket,
+      socket: ListenerTransport,
       opts: StartListenerOptions,
       processQueuedTurn: ProcessQueuedTurn,
     ) => void;
@@ -3855,9 +4092,10 @@ async function handleCwdChange(
 }
 
 function createRuntime(): ListenerRuntime {
-  const bootWorkingDirectory = process.env.USER_CWD || process.cwd();
+  const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
     socket: null,
+    transport: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
     intentionallyClosed: false,
@@ -3914,11 +4152,13 @@ function stopRuntime(
   stopAllWorktreeWatchers(runtime);
 
   if (!runtime.socket) {
+    runtime.transport = null;
     return;
   }
 
   const socket = runtime.socket;
   runtime.socket = null;
+  runtime.transport = null;
 
   // Stale runtimes being replaced should not emit callbacks/retries.
   if (suppressCallbacks) {
@@ -3931,6 +4171,180 @@ function stopRuntime(
   ) {
     socket.close();
   }
+}
+
+async function startConnectedListenerRuntime(
+  runtime: ListenerRuntime,
+  transport: ListenerTransport,
+  opts: Pick<
+    StartListenerOptions,
+    "connectionId" | "onConnected" | "onStatusChange" | "onWsEvent"
+  >,
+  processQueuedTurn: ProcessQueuedTurn,
+  options: {
+    startHeartbeat?: boolean;
+    startCronScheduler?: boolean;
+  } = {},
+): Promise<void> {
+  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+    return;
+  }
+
+  const shouldStartHeartbeat = options.startHeartbeat !== false;
+  const shouldStartCronScheduler = options.startCronScheduler !== false;
+
+  runtime.transport = transport;
+  safeEmitWsEvent("recv", "lifecycle", {
+    type:
+      getListenerTransportKind(transport) === "websocket"
+        ? "_ws_open"
+        : "_local_open",
+  });
+  runtime.hasSuccessfulConnection = true;
+  runtime.everConnected = true;
+  opts.onConnected(opts.connectionId);
+
+  if (runtime.conversationRuntimes.size === 0) {
+    // Don't emit device_status before the lookup store exists.
+    // Without a conversation runtime, the scope resolves to
+    // agent:__unknown__ which misses persisted CWD and permission
+    // mode entries. The web's sync command will create a scoped
+    // runtime and emit a properly-scoped device_status at that point.
+    emitLoopStatusUpdate(transport, runtime);
+  } else {
+    for (const reminderState of runtime.reminderStateByConversation.values()) {
+      // Reset bootstrap reminder state on (re)connect so session-context
+      // and agent-info fire on the first turn of the new connection.
+      // This is intentionally in the open handler, NOT the sync handler,
+      // because the Desktop UMI controller sends sync every ~5 s and
+      // resetting there would re-arm reminders on every periodic sync.
+      resetSharedReminderState(reminderState);
+    }
+    for (const contextTracker of runtime.contextTrackerByConversation.values()) {
+      resetContextHistory(contextTracker);
+    }
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      const scope = {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      };
+      emitDeviceStatusUpdate(transport, conversationRuntime, scope);
+      emitLoopStatusUpdate(transport, conversationRuntime, scope);
+    }
+  }
+
+  // Subscribe to subagent state changes and emit snapshots over the listener
+  // transport. Local channel mode intentionally discards these frames.
+  runtime._unsubscribeSubagentState?.();
+  runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
+    if (runtime.conversationRuntimes.size === 0) {
+      emitSubagentStateIfOpen(runtime);
+      return;
+    }
+
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      emitSubagentStateIfOpen(runtime, {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      });
+    }
+  });
+
+  // Subscribe to subagent stream events and forward as tagged stream_delta.
+  runtime._unsubscribeSubagentStreamEvents?.();
+  runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
+    (subagentId, event) => {
+      if (!isListenerTransportOpen(transport)) return;
+
+      const subagent = getSubagents().find((entry) => entry.id === subagentId);
+      if (subagent?.silent === true) {
+        // Reflection/background "silent" subagents should not stream their
+        // internal transcript into the parent conversation.
+        return;
+      }
+
+      // The event has { type: "message", message_type, ...LettaStreamingResponse }
+      // plus extra headless fields (session_id, uuid) that pass through harmlessly.
+      emitStreamDelta(
+        transport,
+        runtime,
+        event as unknown as import("../../types/protocol_v2").StreamDelta,
+        subagent?.parentAgentId
+          ? {
+              agent_id: subagent.parentAgentId,
+              conversation_id: subagent.parentConversationId ?? "default",
+            }
+          : undefined,
+        subagentId,
+      );
+    },
+  );
+
+  // Register the message queue bridge to route task notifications into the
+  // correct per-conversation QueueRuntime. This enables background Task
+  // completions to reach the agent in listen mode.
+  setMessageQueueAdder((queuedMessage) => {
+    const targetRuntime =
+      queuedMessage.agentId && queuedMessage.conversationId
+        ? getOrCreateScopedRuntime(
+            runtime,
+            queuedMessage.agentId,
+            queuedMessage.conversationId,
+          )
+        : findFallbackRuntime(runtime);
+
+    if (!targetRuntime?.queueRuntime) {
+      return; // No target — notification dropped
+    }
+
+    targetRuntime.queueRuntime.enqueue({
+      kind: "task_notification",
+      source: "task_notification",
+      text: queuedMessage.text,
+      agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
+      conversationId:
+        queuedMessage.conversationId ?? targetRuntime.conversationId,
+    } as Omit<
+      import("../../queue/queueRuntime").TaskNotificationQueueItem,
+      "id" | "enqueuedAt"
+    >);
+
+    // Kick the queue pump so the notification can trigger a standalone turn
+    // (see consumeQueuedTurn notification-aware path in queue.ts).
+    scheduleQueuePump(
+      targetRuntime,
+      transport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+  });
+
+  if (shouldStartHeartbeat) {
+    runtime.heartbeatInterval = setInterval(() => {
+      safeTransportSend(
+        transport,
+        { type: "ping" },
+        "listener_ping_send_failed",
+        "listener_heartbeat",
+      );
+    }, 30000);
+  }
+
+  if (shouldStartCronScheduler) {
+    startCronScheduler(
+      transport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+  }
+
+  // Wire channel ingress (if channels are active).
+  await wireChannelIngress(
+    runtime,
+    transport,
+    opts as StartListenerOptions,
+    processQueuedTurn,
+  );
 }
 
 /**
@@ -3954,6 +4368,74 @@ export async function startListenerClient(
   telemetry.init();
 
   await connectWithRetry(runtime, opts);
+}
+
+export interface StartLocalChannelListenerOptions {
+  connectionId: string;
+  deviceId: string;
+  connectionName: string;
+  onConnected: (connectionId: string) => void;
+  onError: (error: Error) => void;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  onWsEvent?: StartListenerOptions["onWsEvent"];
+}
+
+/**
+ * Start a listener runtime for local channel adapters without environment
+ * registration or a remote WebSocket server.
+ */
+export async function startLocalChannelListener(
+  opts: StartLocalChannelListenerOptions,
+): Promise<void> {
+  const existingRuntime = getActiveRuntime();
+  if (existingRuntime) {
+    stopRuntime(existingRuntime, true);
+  }
+
+  const runtime = createRuntime();
+  runtime.onWsEvent = opts.onWsEvent;
+  runtime.connectionId = opts.connectionId;
+  runtime.connectionName = opts.connectionName;
+  setActiveRuntime(runtime);
+  telemetry.setSurface("websocket");
+  telemetry.init();
+
+  try {
+    await loadTools();
+    const transport = new LocalListenerTransport();
+    const processQueuedTurn: ProcessQueuedTurn = async (
+      queuedTurn: IncomingMessage,
+      dequeuedBatch: DequeuedBatch,
+    ): Promise<void> => {
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        queuedTurn.agentId,
+        queuedTurn.conversationId,
+      );
+      await handleIncomingMessage(
+        queuedTurn,
+        transport,
+        scopedRuntime,
+        opts.onStatusChange,
+        opts.connectionId,
+        dequeuedBatch.batchId,
+      );
+    };
+
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      opts,
+      processQueuedTurn,
+      { startHeartbeat: false, startCronScheduler: true },
+    );
+  } catch (error) {
+    stopRuntime(runtime, true);
+    if (getActiveRuntime() === runtime) {
+      setActiveRuntime(null);
+    }
+    opts.onError(error instanceof Error ? error : new Error(String(error)));
+  }
 }
 
 /** File/directory names filtered from directory listings (OS/VCS noise). */
@@ -4120,6 +4602,7 @@ async function connectWithRetry(
   const cancelledWatches = new Set<string>();
 
   runtime.socket = socket;
+  const transport = socket;
   const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,
     dequeuedBatch: DequeuedBatch,
@@ -4131,7 +4614,7 @@ async function connectWithRetry(
     );
     await handleIncomingMessage(
       queuedTurn,
-      socket,
+      transport,
       scopedRuntime,
       opts.onStatusChange,
       opts.connectionId,
@@ -4140,145 +4623,13 @@ async function connectWithRetry(
   };
 
   socket.on("open", async () => {
-    if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-      return;
-    }
-
-    safeEmitWsEvent("recv", "lifecycle", { type: "_ws_open" });
-    runtime.hasSuccessfulConnection = true;
-    runtime.everConnected = true;
-    opts.onConnected(opts.connectionId);
-
-    if (runtime.conversationRuntimes.size === 0) {
-      // Don't emit device_status before the lookup store exists.
-      // Without a conversation runtime, the scope resolves to
-      // agent:__unknown__ which misses persisted CWD and permission
-      // mode entries. The web's sync command will create a scoped
-      // runtime and emit a properly-scoped device_status at that point.
-      emitLoopStatusUpdate(socket, runtime);
-    } else {
-      for (const reminderState of runtime.reminderStateByConversation.values()) {
-        // Reset bootstrap reminder state on (re)connect so session-context
-        // and agent-info fire on the first turn of the new connection.
-        // This is intentionally in the open handler, NOT the sync handler,
-        // because the Desktop UMI controller sends sync every ~5 s and
-        // resetting there would re-arm reminders on every periodic sync.
-        resetSharedReminderState(reminderState);
-      }
-      for (const contextTracker of runtime.contextTrackerByConversation.values()) {
-        resetContextHistory(contextTracker);
-      }
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-        const scope = {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        };
-        emitDeviceStatusUpdate(socket, conversationRuntime, scope);
-        emitLoopStatusUpdate(socket, conversationRuntime, scope);
-      }
-    }
-
-    // Subscribe to subagent state changes and emit snapshots over WS.
-    // Store the unsubscribe function on the runtime for cleanup on close.
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-      if (runtime.conversationRuntimes.size === 0) {
-        emitSubagentStateIfOpen(runtime);
-        return;
-      }
-
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-        emitSubagentStateIfOpen(runtime, {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        });
-      }
-    });
-
-    // Subscribe to subagent stream events and forward as tagged stream_delta.
-    // Events are raw JSON lines from the subagent's stdout (headless format):
-    //   { type: "message", message_type: "tool_call_message", ...LettaStreamingResponse fields }
-    // These are already MessageDelta-shaped (type:"message" + LettaStreamingResponse).
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
-      (subagentId, event) => {
-        if (socket.readyState !== WebSocket.OPEN) return;
-
-        const subagent = getSubagents().find(
-          (entry) => entry.id === subagentId,
-        );
-        if (subagent?.silent === true) {
-          // Reflection/background "silent" subagents should not stream their
-          // internal transcript into the parent conversation.
-          return;
-        }
-
-        // The event has { type: "message", message_type, ...LettaStreamingResponse }
-        // plus extra headless fields (session_id, uuid) that pass through harmlessly.
-        emitStreamDelta(
-          socket,
-          runtime,
-          event as unknown as import("../../types/protocol_v2").StreamDelta,
-          subagent?.parentAgentId
-            ? {
-                agent_id: subagent.parentAgentId,
-                conversation_id: subagent.parentConversationId ?? "default",
-              }
-            : undefined,
-          subagentId,
-        );
-      },
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      opts,
+      processQueuedTurn,
+      { startHeartbeat: true, startCronScheduler: true },
     );
-
-    // Register the message queue bridge to route task notifications into the
-    // correct per-conversation QueueRuntime. This enables background Task
-    // completions to reach the agent in listen mode.
-    setMessageQueueAdder((queuedMessage) => {
-      const targetRuntime =
-        queuedMessage.agentId && queuedMessage.conversationId
-          ? getOrCreateScopedRuntime(
-              runtime,
-              queuedMessage.agentId,
-              queuedMessage.conversationId,
-            )
-          : findFallbackRuntime(runtime);
-
-      if (!targetRuntime?.queueRuntime) {
-        return; // No target — notification dropped
-      }
-
-      targetRuntime.queueRuntime.enqueue({
-        kind: "task_notification",
-        source: "task_notification",
-        text: queuedMessage.text,
-        agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
-        conversationId:
-          queuedMessage.conversationId ?? targetRuntime.conversationId,
-      } as Omit<
-        import("../../queue/queueRuntime").TaskNotificationQueueItem,
-        "id" | "enqueuedAt"
-      >);
-
-      // Kick the queue pump so the notification can trigger a standalone turn
-      // (see consumeQueuedTurn notification-aware path in queue.ts).
-      scheduleQueuePump(targetRuntime, socket, opts, processQueuedTurn);
-    });
-    runtime.heartbeatInterval = setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        safeSocketSend(
-          socket,
-          { type: "ping" },
-          "listener_ping_send_failed",
-          "listener_heartbeat",
-        );
-      }
-    }, 30000);
-
-    // Start cron scheduler if tasks exist
-    startCronScheduler(socket, opts, processQueuedTurn);
-
-    // Wire channel ingress (if channels are active)
-    await wireChannelIngress(runtime, socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -4326,7 +4677,9 @@ async function connectWithRetry(
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
           return;
         }
-        await replaySyncStateForRuntime(runtime, socket, parsed.runtime);
+        await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
+          recoverApprovals: parsed.recover_approvals !== false,
+        });
         return;
       }
 
@@ -4554,6 +4907,78 @@ async function connectWithRetry(
               },
               "listener_search_files_send_failed",
               "listener_search_files",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Find-in-files content search (no runtime scope required) ──────
+      if (isGrepInFilesCommand(parsed)) {
+        runDetachedListenerTask("grep_in_files", async () => {
+          try {
+            // Re-root the index if the requested cwd lives outside it, so
+            // "search root" matches what the user expects in the UI.
+            if (parsed.cwd) {
+              const currentRoot = getIndexRoot();
+              if (
+                !parsed.cwd.startsWith(currentRoot + path.sep) &&
+                parsed.cwd !== currentRoot
+              ) {
+                setIndexRoot(parsed.cwd);
+              }
+            }
+
+            const searchRoot = parsed.cwd ?? getIndexRoot();
+            const { matches, totalMatches, totalFiles, truncated } =
+              await runGrepInFiles({
+                searchRoot,
+                query: parsed.query,
+                isRegex: parsed.is_regex ?? false,
+                caseSensitive: parsed.case_sensitive ?? false,
+                wholeWord: parsed.whole_word ?? false,
+                glob: parsed.glob,
+                maxResults: parsed.max_results ?? 500,
+                contextLines: parsed.context_lines ?? 2,
+              });
+
+            safeSocketSend(
+              socket,
+              {
+                type: "grep_in_files_response",
+                request_id: parsed.request_id,
+                success: true,
+                matches,
+                total_matches: totalMatches,
+                total_files: totalFiles,
+                truncated,
+              },
+              "listener_grep_in_files_send_failed",
+              "listener_grep_in_files",
+            );
+          } catch (error) {
+            trackListenerError(
+              "listener_grep_in_files_failed",
+              error,
+              "listener_grep_in_files",
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "grep_in_files_response",
+                request_id: parsed.request_id,
+                success: false,
+                matches: [],
+                total_matches: 0,
+                total_files: 0,
+                truncated: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to search file contents",
+              },
+              "listener_grep_in_files_send_failed",
+              "listener_grep_in_files",
             );
           }
         });
@@ -5250,6 +5675,54 @@ async function connectWithRetry(
         return;
       }
 
+      // ── Toolset update command (runtime scoped) ──────────────────────
+      if (isUpdateToolsetCommand(parsed)) {
+        runDetachedListenerTask("update_toolset", async () => {
+          const scopedRuntime = getOrCreateScopedRuntime(
+            runtime,
+            parsed.runtime.agent_id,
+            parsed.runtime.conversation_id,
+          );
+
+          try {
+            const response = await applyToolsetUpdateForRuntime({
+              socket,
+              listener: runtime,
+              scopedRuntime,
+              requestId: parsed.request_id,
+              toolsetPreference: parsed.toolset_preference,
+            });
+            safeSocketSend(
+              socket,
+              response,
+              "listener_update_toolset_send_failed",
+              "listener_update_toolset",
+            );
+          } catch (error) {
+            const failure: UpdateToolsetResponseMessage = {
+              type: "update_toolset_response",
+              request_id: parsed.request_id,
+              success: false,
+              runtime: {
+                agent_id: parsed.runtime.agent_id,
+                conversation_id: parsed.runtime.conversation_id,
+              },
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to update toolset",
+            };
+            safeSocketSend(
+              socket,
+              failure,
+              "listener_update_toolset_send_failed",
+              "listener_update_toolset",
+            );
+          }
+        });
+        return;
+      }
+
       // ── Memory history (git log for a specific file) ─────────────────
       if (isMemoryHistoryCommand(parsed)) {
         runDetachedListenerTask("memory_history", async () => {
@@ -5263,17 +5736,20 @@ async function connectWithRetry(
           const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
           const limit = parsed.limit ?? 50;
 
-          const { stdout } = await execFileAsync(
-            "git",
-            [
-              "log",
-              `--max-count=${limit}`,
-              "--format=%H|%s|%aI|%an",
-              "--",
-              parsed.file_path,
-            ],
-            { cwd: memoryRoot, timeout: 10000 },
-          );
+          const gitArgs = [
+            "log",
+            `--max-count=${limit}`,
+            "--format=%H|%s|%aI|%an",
+          ];
+          // When file_path is provided, scope to that file
+          if (parsed.file_path) {
+            gitArgs.push("--", parsed.file_path);
+          }
+
+          const { stdout } = await execFileAsync("git", gitArgs, {
+            cwd: memoryRoot,
+            timeout: 10000,
+          });
 
           const commits = stdout
             .trim()
@@ -5294,7 +5770,7 @@ async function connectWithRetry(
             {
               type: "memory_history_response",
               request_id: parsed.request_id,
-              file_path: parsed.file_path,
+              file_path: parsed.file_path ?? "",
               commits,
               success: true,
             },
@@ -5360,6 +5836,59 @@ async function connectWithRetry(
         return;
       }
 
+      // ── Memory commit diff (git show for full commit patch) ────────────
+      if (isMemoryCommitDiffCommand(parsed)) {
+        runDetachedListenerTask("memory_commit_diff", async () => {
+          const { getMemoryFilesystemRoot } = await import(
+            "../../agent/memoryFilesystem"
+          );
+          const { execFile: execFileCb } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFileCb);
+
+          const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+
+          try {
+            const { stdout } = await execFileAsync(
+              "git",
+              ["show", parsed.sha, "--format=", "--no-color"],
+              { cwd: memoryRoot, timeout: 10000 },
+            );
+
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_commit_diff_response",
+                request_id: parsed.request_id,
+                sha: parsed.sha,
+                diff: stdout,
+                success: true,
+              },
+              "listener_memory_commit_diff_send_failed",
+              "listener_memory_commit_diff",
+            );
+          } catch (err) {
+            safeSocketSend(
+              socket,
+              {
+                type: "memory_commit_diff_response",
+                request_id: parsed.request_id,
+                sha: parsed.sha,
+                diff: null,
+                success: false,
+                error:
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to get commit diff",
+              },
+              "listener_memory_commit_diff_send_failed",
+              "listener_memory_commit_diff",
+            );
+          }
+        });
+        return;
+      }
+
       // ── Cron CRUD commands (no runtime scope required) ────────────────
       if (
         isCronListCommand(parsed) ||
@@ -5404,6 +5933,13 @@ async function connectWithRetry(
         return;
       }
 
+      if (isGetExperimentsCommand(parsed) || isSetExperimentCommand(parsed)) {
+        runDetachedListenerTask("experiment_command", async () => {
+          await handleExperimentCommand(parsed, socket, runtime);
+        });
+        return;
+      }
+
       if (
         isGetReflectionSettingsCommand(parsed) ||
         isSetReflectionSettingsCommand(parsed)
@@ -5416,6 +5952,25 @@ async function connectWithRetry(
 
       // ── Slash commands (execute_command) ────────────────────────────────
       if (isExecuteCommandCommand(parsed)) {
+        // Internal-only: refresh doctor state after recompile (no chat output)
+        if (parsed.command_id === "refresh_doctor_state") {
+          const agentId = parsed.runtime.agent_id;
+          if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+            try {
+              const { getMemoryFilesystemRoot } = await import(
+                "../../agent/memoryFilesystem"
+              );
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
+              setSystemPromptDoctorState(agentId, tokens);
+            } catch {
+              // best-effort
+            }
+          }
+          emitDeviceStatusUpdate(socket, runtime, parsed.runtime);
+          return;
+        }
+
         // Slash commands need a scoped runtime for the conversation context
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
@@ -5726,7 +6281,7 @@ async function connectWithRetry(
  */
 export function isListenerActive(): boolean {
   const runtime = getActiveRuntime();
-  return runtime !== null && runtime.socket !== null;
+  return runtime !== null && runtime.transport !== null;
 }
 
 /**
@@ -6076,6 +6631,7 @@ export const __listenClientTestUtils = {
   handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
+  handleExperimentCommand,
   handleReflectionSettingsCommand,
   enqueueChannelTurn,
   scheduleQueuePump,

@@ -88,6 +88,28 @@ export interface ReflectionEndData {
   error?: string;
 }
 
+/**
+ * Returns true for error messages that are non-actionable noise:
+ * - Billing/plan limit responses (premium-unavailable, usage-exceeded, not-enough-credits)
+ * - User-initiated actions (cancelled, Ctrl+Z)
+ * - Transient connection errors (DNS, SSL, socket hang up) — NOT Cloudflare 521/520 (filtered in PostHog)
+ * - Environment issues (git/npm not installed)
+ * - Expected concurrency (409 CONFLICT)
+ * - Placeholder agent names (@author/agent)
+ */
+function isNonActionableError(message: string): boolean {
+  return (
+    /premium-unavailable|not-enough-credits|usage-exceeded/i.test(message) ||
+    /Cancelled by user|SIGTSTP/i.test(message) ||
+    /ENOTFOUND|EAI_AGAIN|ECONNRESET|socket hang up|EPROTO/i.test(message) ||
+    /Connection error\./i.test(message) ||
+    /\{"isTrusted":\s*true\}/.test(message) ||
+    /spawn (git|npm) ENOENT/.test(message) ||
+    /\bCONFLICT\b/.test(message) ||
+    /@author\/agent not found/.test(message)
+  );
+}
+
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
   private sessionId: string;
@@ -217,9 +239,12 @@ class TelemetryManager {
 
     process.on("uncaughtException", (error) => {
       try {
+        const msg = error instanceof Error ? error.message : String(error);
+        // Broken pipe/TTY — not actionable (e.g. terminal closed while writing)
+        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
         this.trackError(
           "uncaught_exception",
-          error instanceof Error ? error.message : String(error),
+          msg,
           "process_uncaught_exception",
         );
         this.flush().catch(() => {
@@ -232,9 +257,14 @@ class TelemetryManager {
 
     process.on("unhandledRejection", (reason) => {
       try {
+        const msg = reason instanceof Error ? reason.message : String(reason);
+        // Broken pipe/TTY — not actionable
+        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
+        // Rate limits surfacing as unhandled rejections — expected under load
+        if (/\b429\b/.test(msg) && /rate.?limit/i.test(msg)) return;
         this.trackError(
           "unhandled_rejection",
-          reason instanceof Error ? reason.message : String(reason),
+          msg,
           "process_unhandled_rejection",
         );
         this.flush().catch(() => {
@@ -504,6 +534,11 @@ class TelemetryManager {
   ) {
     // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
     if (!this.isCloudUser()) {
+      return;
+    }
+
+    // Skip non-actionable errors that create noise
+    if (isNonActionableError(errorMessage)) {
       return;
     }
 

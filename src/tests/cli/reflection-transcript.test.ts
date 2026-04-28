@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import {
+  estimateStartupContextTokens,
+  REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "../../agent/subagents/contextBudget";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
@@ -48,12 +53,13 @@ describe("reflectionTranscript helper", () => {
 
   test("auto payload advances cursor on success", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "hello" },
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
       {
         kind: "assistant",
         id: "a1",
         text: "hi there",
         phase: "finished",
+        messageId: "a1",
       },
     ]);
 
@@ -62,6 +68,11 @@ describe("reflectionTranscript helper", () => {
     if (!payload) return;
     expect(payload.startMessageId).toBe("u1");
     expect(payload.endMessageId).toBe("a1");
+
+    expect(payload.payloadPath.endsWith(".json")).toBe(true);
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    expect(payload.payloadPath.startsWith(paths.rootDir)).toBe(true);
+    expect(dirname(payload.payloadPath)).toBe(paths.rootDir);
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
@@ -79,7 +90,6 @@ describe("reflectionTranscript helper", () => {
 
     expect(existsSync(payload.payloadPath)).toBe(true);
 
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
     const stateRaw = await readFile(paths.statePath, "utf-8");
     const state = JSON.parse(stateRaw) as { auto_cursor_line: number };
     expect(state.auto_cursor_line).toBe(payload.endSnapshotLine);
@@ -93,7 +103,7 @@ describe("reflectionTranscript helper", () => {
 
   test("auto payload keeps cursor on failure", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "remember this" },
+      { kind: "user", id: "u1", text: "remember this", messageId: "u1" },
     ]);
 
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
@@ -121,7 +131,7 @@ describe("reflectionTranscript helper", () => {
 
   test("auto payload clamps out-of-range cursor and resumes on new transcript lines", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "first" },
+      { kind: "user", id: "u1", text: "first", messageId: "u1" },
     ]);
 
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
@@ -142,7 +152,13 @@ describe("reflectionTranscript helper", () => {
     expect(clamped.auto_cursor_line).toBe(1);
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "assistant", id: "a2", text: "second", phase: "finished" },
+      {
+        kind: "assistant",
+        id: "a2",
+        text: "second",
+        phase: "finished",
+        messageId: "a2",
+      },
     ]);
 
     const secondAttempt = await buildAutoReflectionPayload(
@@ -157,6 +173,49 @@ describe("reflectionTranscript helper", () => {
     const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
     expect(messages).toContainEqual({ role: "assistant", content: "second" });
+  });
+
+  test("auto payload uses actual message ids instead of transcript line ids", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "user",
+        id: "user-local-1",
+        text: "hello",
+        messageId: "message-user-1",
+        otid: "otid-user-1",
+      },
+      {
+        kind: "reasoning",
+        id: "reasoning:message-assistant-1",
+        text: "thinking",
+        phase: "finished",
+        messageId: "message-assistant-1",
+      },
+      {
+        kind: "tool_call",
+        id: "tool-call-1",
+        toolCallId: "tool-call-1",
+        name: "Read",
+        argsText: "{}",
+        resultText: "done",
+        resultOk: true,
+        phase: "finished",
+      },
+      {
+        kind: "assistant",
+        id: "assistant:message-assistant-1",
+        text: "answer",
+        phase: "finished",
+        messageId: "message-assistant-1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    expect(payload.startMessageId).toBe("message-user-1");
+    expect(payload.endMessageId).toBe("message-assistant-1");
   });
 
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
@@ -239,9 +298,45 @@ describe("reflectionTranscript helper", () => {
     expect(snapshot).not.toContain("user_09.md");
   });
 
+  test("buildParentMemorySnapshot truncates large system memory previews", async () => {
+    const memoryDir = join(testRoot, "memory-large-system");
+    const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");
+    await mkdir(join(memoryDir, "system"), { recursive: true });
+
+    const largeContent = `---\ndescription: Large system memory\n---\nSTART\n${"x".repeat(60_000)}\nEND_SHOULD_BE_TRUNCATED\n`;
+    await writeFile(
+      join(memoryDir, "system", "large.md"),
+      largeContent,
+      "utf-8",
+    );
+    await writeFile(
+      join(memoryDir, "system", "small.md"),
+      "---\ndescription: Small system memory\n---\nsmall content\n",
+      "utf-8",
+    );
+
+    const snapshot = await buildParentMemorySnapshot(memoryDir);
+
+    expect(snapshot.length).toBeLessThanOrEqual(
+      REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
+    );
+    expect(estimateStartupContextTokens(snapshot)).toBeLessThanOrEqual(
+      REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+    );
+    expect(snapshot).toContain("<memory_filesystem>");
+    expect(snapshot).toContain("large.md");
+    expect(snapshot).toContain(
+      `<path>${normalizedMemoryDir}/system/large.md</path>`,
+    );
+    expect(snapshot).toContain("START");
+    expect(snapshot).toContain("Memory preview truncated");
+    expect(snapshot).not.toContain("END_SHOULD_BE_TRUNCATED");
+    expect(snapshot).toContain("</parent_memory>");
+  });
+
   test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {
     const prompt = buildReflectionSubagentPrompt({
-      transcriptPath: "/tmp/transcript.txt",
+      transcriptPath: "/tmp/transcript.json",
       memoryDir: "/tmp/memory",
       cwd: "/tmp/work",
       parentMemory: "<parent_memory>snapshot</parent_memory>",
@@ -264,7 +359,7 @@ describe("reflectionTranscript helper", () => {
   test("reflection payload drops tool call results and truncates args", async () => {
     const longArgs = "a".repeat(500);
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "run a search" },
+      { kind: "user", id: "u1", text: "run a search", messageId: "u1" },
       {
         kind: "tool_call",
         id: "tc1",
@@ -280,6 +375,7 @@ describe("reflectionTranscript helper", () => {
         id: "a1",
         text: "Found results",
         phase: "finished",
+        messageId: "a1",
       },
     ]);
 
@@ -312,7 +408,7 @@ describe("reflectionTranscript helper", () => {
     const userTextWithImage =
       "Check this: ![screenshot](data:image/png;base64,iVBORw0KGgoAAAANS) and tell me what you see";
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: userTextWithImage },
+      { kind: "user", id: "u1", text: userTextWithImage, messageId: "u1" },
     ]);
 
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
@@ -330,7 +426,7 @@ describe("reflectionTranscript helper", () => {
 
   test("reflection payload prepends filtered system prompt when provided", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "hello" },
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
     ]);
 
     const systemPrompt = [

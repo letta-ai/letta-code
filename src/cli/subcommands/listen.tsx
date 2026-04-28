@@ -27,6 +27,26 @@ import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
+type ListenerOAuthDeps = {
+  LETTA_CLOUD_API_URL: string;
+  pollForToken: typeof pollForToken;
+  refreshAccessToken: typeof refreshAccessToken;
+  requestDeviceCode: typeof requestDeviceCode;
+};
+
+const defaultListenerOAuthDeps: ListenerOAuthDeps = {
+  LETTA_CLOUD_API_URL,
+  pollForToken,
+  refreshAccessToken,
+  requestDeviceCode,
+};
+
+let listenerOAuthDepsOverride: ListenerOAuthDeps | null = null;
+
+function getListenerOAuthDeps(): ListenerOAuthDeps {
+  return listenerOAuthDepsOverride ?? defaultListenerOAuthDeps;
+}
+
 class MissingListenerApiKeyError extends Error {
   constructor() {
     super("LETTA_API_KEY not found");
@@ -78,11 +98,45 @@ async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
 function getListenerServerUrl(settings: {
   env?: Record<string, string>;
 }): string {
+  const oauthDeps = getListenerOAuthDeps();
   return (
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL
+    oauthDeps.LETTA_CLOUD_API_URL
   );
+}
+
+type ListenerStartupMode =
+  | { kind: "remote"; serverUrl: string }
+  | { kind: "local-channels"; serverUrl: string }
+  | { kind: "unsupported-self-hosted"; serverUrl: string };
+
+function normalizeListenerBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function isCloudListenerServerUrl(serverUrl: string): boolean {
+  return (
+    normalizeListenerBaseUrl(serverUrl) ===
+    normalizeListenerBaseUrl(getListenerOAuthDeps().LETTA_CLOUD_API_URL)
+  );
+}
+
+async function resolveListenerStartupMode(
+  channelNames: string[],
+): Promise<ListenerStartupMode> {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const serverUrl = getListenerServerUrl(settings);
+
+  if (isCloudListenerServerUrl(serverUrl)) {
+    return { kind: "remote", serverUrl };
+  }
+
+  if (channelNames.length > 0) {
+    return { kind: "local-channels", serverUrl };
+  }
+
+  return { kind: "unsupported-self-hosted", serverUrl };
 }
 
 async function refreshListenerAccessToken(
@@ -92,11 +146,12 @@ async function refreshListenerAccessToken(
   deviceId: string,
   connectionName: string,
 ): Promise<string> {
+  const oauthDeps = getListenerOAuthDeps();
   const now = Date.now();
 
   console.log("Access token expired, refreshing...");
 
-  const tokens = await refreshAccessToken(
+  const tokens = await oauthDeps.refreshAccessToken(
     settings.refreshToken as string,
     deviceId,
     connectionName,
@@ -122,9 +177,10 @@ async function runListenerOAuthLogin(
   deviceId: string,
   connectionName: string,
 ): Promise<string> {
+  const oauthDeps = getListenerOAuthDeps();
   console.log("No API key found. Starting OAuth login...\n");
 
-  const deviceData = await requestDeviceCode();
+  const deviceData = await oauthDeps.requestDeviceCode();
 
   console.log(
     `To authenticate, visit: ${deviceData.verification_uri_complete}`,
@@ -132,7 +188,7 @@ async function runListenerOAuthLogin(
   console.log(`Your code: ${deviceData.user_code}\n`);
   console.log("Waiting for authorization...\n");
 
-  const tokens = await pollForToken(
+  const tokens = await oauthDeps.pollForToken(
     deviceData.device_code,
     deviceData.interval,
     deviceData.expires_in,
@@ -175,7 +231,7 @@ async function resolveListenerRegistrationOptions(
 
   let apiKey = settings.env?.LETTA_API_KEY;
 
-  if (serverUrl === LETTA_CLOUD_API_URL) {
+  if (isCloudListenerServerUrl(serverUrl)) {
     const expiresAt = settings.tokenExpiresAt;
     if (settings.refreshToken && expiresAt) {
       const now = Date.now();
@@ -222,7 +278,16 @@ async function resolveListenerRegistrationOptions(
 export const __listenSubcommandTestUtils = {
   flushListenerTelemetryEnd,
   getListenerServerUrl,
+  resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
+  setOAuthDepsForTests(overrides: Partial<ListenerOAuthDeps> | null) {
+    listenerOAuthDepsOverride = overrides
+      ? {
+          ...defaultListenerOAuthDeps,
+          ...overrides,
+        }
+      : null;
+  },
 };
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
@@ -399,6 +464,73 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
+    const startupMode = await resolveListenerStartupMode(channelNames);
+
+    if (startupMode.kind === "unsupported-self-hosted") {
+      console.error(
+        `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
+      );
+      console.error(
+        "Start with --channels to run local channel adapters, or unset LETTA_BASE_URL to use Letta API remote environments.",
+      );
+      await flushListenerTelemetryEnd("listener_self_hosted_no_channels");
+      return 1;
+    }
+
+    sessionLog.log(`Session started (debug=${debugMode})`);
+    sessionLog.log(`deviceId: ${deviceId}`);
+    sessionLog.log(`connectionName: ${connectionName}`);
+
+    if (startupMode.kind === "local-channels") {
+      const connectionId = `local-${deviceId}`;
+      sessionLog.log(
+        `Starting local channel listener for ${startupMode.serverUrl}`,
+      );
+      sessionLog.log("Skipping environment registration");
+      console.log(
+        `Starting local channel listener for self-hosted server ${startupMode.serverUrl}`,
+      );
+      console.log("Skipping environment registration. Press Ctrl+C to stop.\n");
+
+      const { startLocalChannelListener } = await import(
+        "../../websocket/listen-client"
+      );
+
+      await startLocalChannelListener({
+        connectionId,
+        deviceId,
+        connectionName,
+        onWsEvent:
+          process.env.LETTA_LOG_WS_EVENTS === "1"
+            ? (direction, label, event) => {
+                sessionLog.wsEvent(direction, label, event);
+              }
+            : undefined,
+        onStatusChange: (status) => {
+          sessionLog.log(`status: ${status}`);
+          if (debugMode) {
+            console.log(`[${formatTimestamp()}] status: ${status}`);
+          }
+        },
+        onConnected: () => {
+          sessionLog.log("Local channel listener ready.");
+          if (debugMode) {
+            console.log(`[${formatTimestamp()}] Local channel listener ready.`);
+            console.log("");
+          }
+        },
+        onError: (error: Error) => {
+          sessionLog.log(`Error: ${error.message}`);
+          console.error(`[${formatTimestamp()}] Error: ${error.message}`);
+          void exitWithTelemetry(1, "listener_error");
+        },
+      });
+
+      return new Promise<number>(() => {
+        // Never resolves - runs until Ctrl+C
+      });
+    }
+
     let registerOptions: RegisterOptions;
 
     try {
@@ -421,10 +553,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       await flushListenerTelemetryEnd("listener_oauth_failed");
       return 1;
     }
-
-    sessionLog.log(`Session started (debug=${debugMode})`);
-    sessionLog.log(`deviceId: ${deviceId}`);
-    sessionLog.log(`connectionName: ${connectionName}`);
 
     if (debugMode) {
       console.log(

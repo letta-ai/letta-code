@@ -1,22 +1,78 @@
 // Image resizing utilities for clipboard paste
 // Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
 import sharp from "sharp";
+import {
+  assertImageHasDimensions,
+  assertImageWithinBounds,
+  buildResizeResult,
+  canonicalizeOutputMediaType,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_HEIGHT,
+  MAX_IMAGE_INPUT_PIXELS,
+  MAX_IMAGE_WIDTH,
+  type ResizeResult,
+} from "./imageResize.shared";
 
-// Anthropic limits: 8000x8000 for single images, but 2000x2000 for many-image requests
-// We use 2000 to stay safe when conversation history accumulates multiple images
-export const MAX_IMAGE_WIDTH = 2000;
-export const MAX_IMAGE_HEIGHT = 2000;
+function createSharpInstance(buffer: Buffer) {
+  return sharp(buffer, {
+    failOn: "warning",
+    limitInputPixels: MAX_IMAGE_INPUT_PIXELS,
+  });
+}
 
-// Anthropic's API enforces a 5MB limit on image bytes (not base64 string)
-// We enforce this in the client to avoid API errors
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB = 5,242,880 bytes
+function wrapSharpImageError(error: unknown): Error {
+  if (
+    error instanceof Error &&
+    error.message.toLowerCase().includes("pixel limit")
+  ) {
+    return new Error(
+      `Image exceeds the ${MAX_IMAGE_INPUT_PIXELS.toLocaleString()} pixel input limit`,
+    );
+  }
 
-export interface ResizeResult {
-  data: string; // base64 encoded
-  mediaType: string;
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+async function inspectImageBuffer(
+  buffer: Buffer,
+  context: string,
+): Promise<{
   width: number;
   height: number;
-  resized: boolean;
+  format?: string;
+  orientation?: number;
+}> {
+  const metadata = await createSharpInstance(buffer)
+    .metadata()
+    .catch((error) => {
+      throw wrapSharpImageError(error);
+    });
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+  assertImageHasDimensions(width, height, context);
+  return {
+    width,
+    height,
+    format: metadata.format,
+    orientation: metadata.orientation,
+  };
+}
+
+async function buildVerifiedResizeResult(
+  buffer: Buffer,
+  mediaType: string,
+  resized: boolean,
+  context: string,
+): Promise<ResizeResult> {
+  const { width, height, format } = await inspectImageBuffer(buffer, context);
+  assertImageWithinBounds(width, height, context);
+  return buildResizeResult(
+    buffer,
+    canonicalizeOutputMediaType(format, mediaType),
+    width,
+    height,
+    resized,
+  );
 }
 
 /**
@@ -37,16 +93,16 @@ async function compressToFitByteLimit(
   // Try progressive JPEG quality reduction
   const qualities = [85, 70, 55, 40];
   for (const quality of qualities) {
-    const compressed = await sharp(buffer).jpeg({ quality }).toBuffer();
+    const compressed = await createSharpInstance(buffer)
+      .jpeg({ quality })
+      .toBuffer();
     if (compressed.length <= MAX_IMAGE_BYTES) {
-      const meta = await sharp(compressed).metadata();
-      return {
-        data: compressed.toString("base64"),
-        mediaType: "image/jpeg",
-        width: meta.width ?? currentWidth,
-        height: meta.height ?? currentHeight,
-        resized: true,
-      };
+      return buildVerifiedResizeResult(
+        compressed,
+        "image/jpeg",
+        true,
+        "compressed image output",
+      );
     }
   }
 
@@ -55,7 +111,7 @@ async function compressToFitByteLimit(
   for (const scale of scales) {
     const scaledWidth = Math.floor(currentWidth * scale);
     const scaledHeight = Math.floor(currentHeight * scale);
-    const reduced = await sharp(buffer)
+    const reduced = await createSharpInstance(buffer)
       .resize(scaledWidth, scaledHeight, {
         fit: "inside",
         withoutEnlargement: true,
@@ -63,14 +119,12 @@ async function compressToFitByteLimit(
       .jpeg({ quality: 70 })
       .toBuffer();
     if (reduced.length <= MAX_IMAGE_BYTES) {
-      const meta = await sharp(reduced).metadata();
-      return {
-        data: reduced.toString("base64"),
-        mediaType: "image/jpeg",
-        width: meta.width ?? scaledWidth,
-        height: meta.height ?? scaledHeight,
-        resized: true,
-      };
+      return buildVerifiedResizeResult(
+        reduced,
+        "image/jpeg",
+        true,
+        "dimension-reduced image output",
+      );
     }
   }
 
@@ -89,11 +143,16 @@ export async function resizeImageIfNeeded(
   buffer: Buffer,
   inputMediaType: string,
 ): Promise<ResizeResult> {
-  const image = sharp(buffer);
-  const metadata = await image.metadata();
-  const width = metadata.width ?? 0;
-  const height = metadata.height ?? 0;
-  const format = metadata.format;
+  const sourceMetadata = await inspectImageBuffer(buffer, "source image");
+  const normalizedBuffer =
+    sourceMetadata.orientation && sourceMetadata.orientation !== 1
+      ? await createSharpInstance(buffer).rotate().toBuffer()
+      : buffer;
+  const image = createSharpInstance(normalizedBuffer);
+  const { width, height, format } = await inspectImageBuffer(
+    normalizedBuffer,
+    "normalized source image",
+  );
 
   const needsResize = width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT;
 
@@ -102,17 +161,20 @@ export async function resizeImageIfNeeded(
 
   if (!needsResize && isPassthroughFormat) {
     // No resize needed and format is supported - but check byte limit
-    const compressed = await compressToFitByteLimit(buffer, width, height);
+    const compressed = await compressToFitByteLimit(
+      normalizedBuffer,
+      width,
+      height,
+    );
     if (compressed) {
       return compressed;
     }
-    return {
-      data: buffer.toString("base64"),
-      mediaType: inputMediaType,
-      width,
-      height,
-      resized: false,
-    };
+    return buildVerifiedResizeResult(
+      normalizedBuffer,
+      inputMediaType,
+      false,
+      "passthrough image output",
+    );
   }
 
   if (needsResize) {
@@ -137,9 +199,8 @@ export async function resizeImageIfNeeded(
       outputMediaType = "image/png";
     }
 
-    const resizedMeta = await sharp(outputBuffer).metadata();
-    const resizedWidth = resizedMeta.width ?? 0;
-    const resizedHeight = resizedMeta.height ?? 0;
+    const { width: resizedWidth, height: resizedHeight } =
+      await inspectImageBuffer(outputBuffer, "resized image output");
 
     // Check byte limit after dimension resize
     const compressed = await compressToFitByteLimit(
@@ -151,13 +212,12 @@ export async function resizeImageIfNeeded(
       return compressed;
     }
 
-    return {
-      data: outputBuffer.toString("base64"),
-      mediaType: outputMediaType,
-      width: resizedWidth,
-      height: resizedHeight,
-      resized: true,
-    };
+    return buildVerifiedResizeResult(
+      outputBuffer,
+      outputMediaType,
+      true,
+      "resized image output",
+    );
   }
 
   // No resize needed but format needs conversion (e.g., HEIC, TIFF, etc.)
@@ -169,11 +229,10 @@ export async function resizeImageIfNeeded(
     return compressed;
   }
 
-  return {
-    data: outputBuffer.toString("base64"),
-    mediaType: "image/png",
-    width,
-    height,
-    resized: false,
-  };
+  return buildVerifiedResizeResult(
+    outputBuffer,
+    "image/png",
+    false,
+    "converted image output",
+  );
 }

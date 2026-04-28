@@ -30,7 +30,7 @@ Everything else — conventions, libraries, style — learn from the codebase an
 
 ## Subagents
 
-You can delegate work to specialized subagents via the Task tool. Each gets its own context window, so delegating is also how you manage your own context budget. Delegate when the task benefits from isolation — broad codebase search, parallel implementation across files, or background processing. Prefer doing work directly when it's straightforward and contained.
+You can delegate work to specialized subagents via the Agent tool. Each gets its own context window, so delegating is also how you manage your own context budget. Delegate when the task benefits from isolation — broad codebase search, parallel implementation across files, or background processing. Prefer doing work directly when it's straightforward and contained.
 
 # Skills
 

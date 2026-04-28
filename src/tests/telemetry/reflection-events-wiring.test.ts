@@ -27,6 +27,7 @@ describe("reflection telemetry wiring", () => {
     expect(appSource).toContain('telemetry.trackReflectionEnd("manual"');
     expect(appSource).toContain("telemetry.trackReflectionStart(triggerSource");
     expect(appSource).toContain("telemetry.trackReflectionEnd(triggerSource");
+    expect(appSource).toContain("waitForBackgroundSubagentAgentId");
     expect(appSource).toContain("startMessageId: autoPayload.startMessageId");
     expect(appSource).toContain("endMessageId: autoPayload.endMessageId");
   });
@@ -41,6 +42,7 @@ describe("reflection telemetry wiring", () => {
       "telemetry.trackReflectionStart(triggerSource",
     );
     expect(turnSource).toContain("telemetry.trackReflectionEnd(triggerSource");
+    expect(turnSource).toContain("waitForBackgroundSubagentAgentId");
     expect(turnSource).toContain("startMessageId: autoPayload.startMessageId");
     expect(turnSource).toContain("endMessageId: autoPayload.endMessageId");
   });

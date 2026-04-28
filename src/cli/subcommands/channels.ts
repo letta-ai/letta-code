@@ -402,7 +402,32 @@ function handleRouteRemove(
   }
 
   loadRoutes(channelId);
-  const removed = removeRoute(channelId, chatId, resolvedAccountId);
+  const routes = getRoutesForChannel(channelId, resolvedAccountId).filter(
+    (route) => route.chatId === chatId,
+  );
+  if (routes.length === 0) {
+    console.log(JSON.stringify({ success: false }, null, 2));
+    return 1;
+  }
+  if (routes.length > 1) {
+    console.error(
+      `Channel "${channelId}" has multiple routes for chat "${chatId}". Remove the route from Letta Code so thread_id can be selected explicitly.`,
+    );
+    return 1;
+  }
+
+  const route = routes[0];
+  if (!route) {
+    console.log(JSON.stringify({ success: false }, null, 2));
+    return 1;
+  }
+
+  const removed = removeRoute(
+    channelId,
+    chatId,
+    resolvedAccountId,
+    route.threadId,
+  );
   console.log(JSON.stringify({ success: removed }, null, 2));
   if (removed) {
     console.warn(
@@ -476,9 +501,9 @@ function handleBind(
     console.error("Error: --channel is required.");
     return 1;
   }
-  if (channelId !== "slack") {
+  if (channelId !== "slack" && channelId !== "discord") {
     console.error(
-      `"bind" is only supported for Slack. Telegram binding is route-scoped — use "pair" or "route add" instead.`,
+      `"bind" is only supported for Slack and Discord. Telegram binding is route-scoped — use "pair" or "route add" instead.`,
     );
     return 1;
   }

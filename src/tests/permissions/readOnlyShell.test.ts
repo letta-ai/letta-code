@@ -225,6 +225,17 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git count-objects -v")).toBe(true);
       expect(isReadOnlyShellCommand("git verify-commit HEAD")).toBe(true);
       expect(isReadOnlyShellCommand("git verify-tag v1.0")).toBe(true);
+      expect(
+        isReadOnlyShellCommand("git grep -n StreamMode HEAD~1 -- src"),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand(
+          'git grep -n "stream mode\\|StreamMode\\|conversationMode\\|continuousMode\\|AutoReadIcon\\|ChatInfoIcon" HEAD~1 -- libs/ui-ade-components/src/lib/ade/panels/AgentSimulator/AgentMessenger libs/ui-ade-components/src/translations/en.json | sed -n "1,220p"',
+        ),
+      ).toBe(true);
+      expect(isReadOnlyShellCommand("git grep -f patterns.txt -- src")).toBe(
+        true,
+      );
     });
 
     test("allows compound commands with read-only git subcommands", () => {
@@ -248,6 +259,20 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git branch --list 'feature/*'")).toBe(
         true,
       );
+      // Filter flags combined with listing flags
+      expect(isReadOnlyShellCommand("git branch -a --contains 63dd7483")).toBe(
+        true,
+      );
+      expect(isReadOnlyShellCommand("git branch -r --contains abc123")).toBe(
+        true,
+      );
+      expect(isReadOnlyShellCommand("git branch --contains HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --merged main")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --no-merged")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch --points-at HEAD")).toBe(true);
+      expect(isReadOnlyShellCommand("git branch -a --no-contains abc")).toBe(
+        true,
+      );
     });
 
     test("blocks unsafe git flags on read-only subcommands", () => {
@@ -262,6 +287,15 @@ describe("isReadOnlyShellCommand", () => {
       expect(
         isReadOnlyShellCommand("git --config-env=core.pager=GIT_PAGER status"),
       ).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --open-files-in-pager foo")).toBe(
+        false,
+      );
+      expect(isReadOnlyShellCommand("git grep -Oless foo")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --ext-grep foo")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep --no-index foo .")).toBe(false);
+      expect(isReadOnlyShellCommand("git grep -f /tmp/patterns foo")).toBe(
+        false,
+      );
     });
 
     test("blocks bare git", () => {
@@ -408,6 +442,53 @@ describe("isReadOnlyShellCommand", () => {
     test("blocks pipes with unsafe commands", () => {
       expect(isReadOnlyShellCommand("cat file | rm")).toBe(false);
       expect(isReadOnlyShellCommand("echo test | bash")).toBe(false);
+    });
+  });
+
+  describe("letta CLI commands", () => {
+    test("allows letta memory tokens", () => {
+      expect(isReadOnlyShellCommand("letta memory tokens")).toBe(true);
+    });
+
+    test("allows letta memory tokens with flags", () => {
+      expect(
+        isReadOnlyShellCommand("letta memory tokens --quiet --format json"),
+      ).toBe(true);
+      expect(
+        isReadOnlyShellCommand(
+          "letta memory tokens --memory-dir /tmp/mem --top 10",
+        ),
+      ).toBe(true);
+    });
+
+    test("allows letta memory help", () => {
+      expect(isReadOnlyShellCommand("letta memory help")).toBe(true);
+    });
+
+    test("blocks unknown letta memory action", () => {
+      // restore/backup/pull/diff mutate state — not in read-only allowlist
+      expect(isReadOnlyShellCommand("letta memory restore")).toBe(false);
+      expect(isReadOnlyShellCommand("letta memory pull")).toBe(false);
+      expect(isReadOnlyShellCommand("letta memory delete")).toBe(false);
+    });
+
+    test("blocks letta memory with no action", () => {
+      expect(isReadOnlyShellCommand("letta memory")).toBe(false);
+    });
+
+    test("blocks unknown letta group", () => {
+      expect(isReadOnlyShellCommand("letta install plugin")).toBe(false);
+      expect(isReadOnlyShellCommand("letta doctor")).toBe(false);
+    });
+
+    test("allows legacy letta memfs alias", () => {
+      expect(isReadOnlyShellCommand("letta memfs tokens")).toBe(true);
+    });
+
+    test("allows letta memory tokens piped to a safe command", () => {
+      expect(
+        isReadOnlyShellCommand("letta memory tokens --format json | head -5"),
+      ).toBe(true);
     });
   });
 

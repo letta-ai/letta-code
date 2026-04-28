@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runWithRuntimeContext } from "../../runtime-context";
 import { consumeQueuedSkillContent } from "../../tools/impl/skillContentRegistry";
 import {
   clearTools,
@@ -12,12 +13,21 @@ import {
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;
 
-mock.module("../../agent/context", () => ({
-  getCurrentAgentId: () => TEST_AGENT_ID,
-  getSkillsDirectory: () => currentSkillsDirectory,
-}));
-
 const { skill } = await import("../../tools/impl/Skill");
+
+function withSkillContext<T>(fn: () => Promise<T>) {
+  return runWithRuntimeContext(
+    {
+      agentId: TEST_AGENT_ID,
+      skillsDirectory: currentSkillsDirectory,
+    },
+    fn,
+  );
+}
+
+function runScopedSkill(args: Parameters<typeof skill>[0]) {
+  return withSkillContext(() => skill(args));
+}
 
 describe("Skill tool memory filesystem lookup", () => {
   let tempRoot: string;
@@ -79,7 +89,7 @@ describe("Skill tool memory filesystem lookup", () => {
     process.env.MEMORY_DIR = memoryDir;
     delete process.env.LETTA_MEMORY_DIR;
 
-    const result = await skill({
+    const result = await runScopedSkill({
       skill: skillName,
       toolCallId: "tc-memory-dir",
     });
@@ -88,6 +98,84 @@ describe("Skill tool memory filesystem lookup", () => {
     const queued = consumeQueuedSkillContent();
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toContain("Loaded from MEMORY_DIR.");
+  });
+
+  test("prefers scoped agent memory skills over stale MEMORY_DIR env", async () => {
+    const skillName = "scoped-over-stale-memory-skill";
+    const staleMemoryDir = join(tempRoot, "stale-memory");
+    const staleSkillDir = join(staleMemoryDir, "skills", skillName);
+    const scopedSkillDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+      "skills",
+      skillName,
+    );
+
+    mkdirSync(staleSkillDir, { recursive: true });
+    mkdirSync(scopedSkillDir, { recursive: true });
+    writeFileSync(
+      join(staleSkillDir, "SKILL.md"),
+      "---\nname: scoped-over-stale-memory-skill\ndescription: stale\n---\n\nLoaded from stale MEMORY_DIR.",
+      "utf8",
+    );
+    writeFileSync(
+      join(scopedSkillDir, "SKILL.md"),
+      "---\nname: scoped-over-stale-memory-skill\ndescription: scoped\n---\n\nLoaded from scoped agent memory.",
+      "utf8",
+    );
+
+    process.env.MEMORY_DIR = staleMemoryDir;
+    delete process.env.LETTA_MEMORY_DIR;
+    process.env.HOME = tempRoot;
+
+    const result = await runScopedSkill({
+      skill: skillName,
+      toolCallId: "tc-scoped-over-stale",
+    });
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from scoped agent memory.");
+    expect(queued[0]?.content).not.toContain("Loaded from stale MEMORY_DIR.");
+  });
+
+  test("does not load env-only memory skill when scoped agent memory is present", async () => {
+    const skillName = "env-only-stale-skill";
+    const staleMemoryDir = join(tempRoot, "stale-memory");
+    const staleSkillDir = join(staleMemoryDir, "skills", skillName);
+    const scopedMemorySkillsDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+      "skills",
+    );
+
+    mkdirSync(staleSkillDir, { recursive: true });
+    mkdirSync(scopedMemorySkillsDir, { recursive: true });
+    writeFileSync(
+      join(staleSkillDir, "SKILL.md"),
+      "---\nname: env-only-stale-skill\ndescription: stale\n---\n\nLoaded from stale MEMORY_DIR only.",
+      "utf8",
+    );
+
+    process.env.MEMORY_DIR = staleMemoryDir;
+    delete process.env.LETTA_MEMORY_DIR;
+    process.env.HOME = tempRoot;
+
+    await expect(
+      runScopedSkill({
+        skill: skillName,
+        toolCallId: "tc-env-only-stale",
+      }),
+    ).rejects.toThrow(skillName);
+
+    expect(consumeQueuedSkillContent()).toHaveLength(0);
   });
 
   test("falls back to ~/.letta/agents/<id>/memory/skills when MEMORY_DIR is unset", async () => {
@@ -113,7 +201,7 @@ describe("Skill tool memory filesystem lookup", () => {
     delete process.env.LETTA_MEMORY_DIR;
     process.env.HOME = tempRoot;
 
-    const result = await skill({
+    const result = await runScopedSkill({
       skill: skillName,
       toolCallId: "tc-memory-fallback",
     });
@@ -148,7 +236,7 @@ describe("Skill tool memory filesystem lookup", () => {
     delete process.env.LETTA_MEMORY_DIR;
     process.env.HOME = tempRoot;
 
-    const result = await skill({
+    const result = await runScopedSkill({
       skill: skillName,
       toolCallId: "tc-scoped-agent",
       parentScope: {
@@ -178,7 +266,7 @@ describe("Skill tool memory filesystem lookup", () => {
 
     process.env.USER_CWD = projectRoot;
 
-    const result = await skill({
+    const result = await runScopedSkill({
       skill: skillName,
       toolCallId: "tc-user-cwd",
     });
@@ -218,16 +306,18 @@ describe("Skill tool memory filesystem lookup", () => {
     clearTools();
     await loadSpecificTools(["Skill"]);
 
-    const result = await executeTool(
-      "Skill",
-      { skill: skillName },
-      {
-        toolCallId: "tc-execute-tool-scoped",
-        parentScope: {
-          agentId: injectedAgentId,
-          conversationId: "conversation-execute-tool",
+    const result = await withSkillContext(() =>
+      executeTool(
+        "Skill",
+        { skill: skillName },
+        {
+          toolCallId: "tc-execute-tool-scoped",
+          parentScope: {
+            agentId: injectedAgentId,
+            conversationId: "conversation-execute-tool",
+          },
         },
-      },
+      ),
     );
 
     expect(result.status).toBe("success");

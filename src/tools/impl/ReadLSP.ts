@@ -2,6 +2,7 @@
  * LSP-enhanced Read tool - wraps the base Read tool and adds LSP diagnostics
  * This is used when LETTA_ENABLE_LSP is set
  */
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { read as baseRead, type ToolReturnContent } from "./Read.js";
 
 // Format a single diagnostic in opencode style: "ERROR [line:col] message"
@@ -63,7 +64,7 @@ export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
     const path = await import("node:path");
 
     // Resolve the path
-    const userCwd = process.env.USER_CWD || process.cwd();
+    const userCwd = getCurrentWorkingDirectory();
     const resolvedPath = path.default.isAbsolute(args.file_path)
       ? args.file_path
       : path.default.resolve(userCwd, args.file_path);

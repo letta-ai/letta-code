@@ -2,7 +2,7 @@
 // Integration tests for all 11 hook types
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -19,6 +19,7 @@ import {
   runSubagentStopHooks,
   runUserPromptSubmitHooks,
 } from "../../hooks";
+import { checkPermissionWithHooks } from "../../permissions/checker";
 import { settingsManager } from "../../settings-manager";
 
 // Skip on Windows - test commands use bash syntax (&&, >&2, etc.)
@@ -483,7 +484,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(result.feedback[0]).toContain("Denied: dangerous command");
     });
 
-    test("receives permission type and scope in input", async () => {
+    test("receives permission type, scope, and agent_id in input", async () => {
       createHooksConfig({
         PermissionRequest: [
           {
@@ -499,11 +500,41 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         "allow",
         "project",
         tempDir,
+        "agent-permission-input",
       );
 
       const parsed = JSON.parse(result.results[0]?.stdout || "{}");
       expect(parsed.permission?.type).toBe("allow");
       expect(parsed.permission?.scope).toBe("project");
+      expect(parsed.agent_id).toBe("agent-permission-input");
+    });
+
+    test("checkPermissionWithHooks passes agent_id through the permission-request path", async () => {
+      createHooksConfig({
+        PermissionRequest: [
+          {
+            matcher: "Bash",
+            hooks: [
+              { type: "command", command: "cat > permission-request.json" },
+            ],
+          },
+        ],
+      });
+
+      const result = await checkPermissionWithHooks(
+        "Bash",
+        { command: "touch permission-trigger.txt" },
+        { allow: [], deny: [], ask: [] },
+        tempDir,
+        undefined,
+        "agent-checker-path",
+      );
+
+      const parsed = JSON.parse(
+        readFileSync(join(tempDir, "permission-request.json"), "utf8"),
+      );
+      expect(result.decision).toBe("allow");
+      expect(parsed.agent_id).toBe("agent-checker-path");
     });
   });
 
@@ -734,7 +765,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       });
 
       const result = await runSubagentStopHooks(
-        "explore",
+        "general-purpose",
         "subagent-123",
         true,
         undefined,
@@ -757,7 +788,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       });
 
       const result = await runSubagentStopHooks(
-        "explore",
+        "general-purpose",
         "subagent-abc",
         false,
         "Task failed",
@@ -767,7 +798,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       );
 
       const parsed = JSON.parse(result.results[0]?.stdout || "{}");
-      expect(parsed.subagent_type).toBe("explore");
+      expect(parsed.subagent_type).toBe("general-purpose");
       expect(parsed.subagent_id).toBe("subagent-abc");
       expect(parsed.success).toBe(false);
       expect(parsed.error).toBe("Task failed");

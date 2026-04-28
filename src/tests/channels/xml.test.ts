@@ -68,6 +68,31 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain("Current local time on this device:");
   });
 
+  test("mentions toolset-dependent local file/image inspection for attachment paths", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "see image",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "image",
+          localPath: "/tmp/photo.heic",
+          name: "photo.heic",
+          mimeType: "image/heic",
+        },
+      ],
+    };
+
+    const reminder = buildChannelReminderText(msg);
+
+    expect(reminder).toContain("current toolset");
+    expect(reminder).toContain("Read");
+    expect(reminder).toContain("ViewImage");
+    expect(reminder).not.toContain("ReadFileGemini");
+  });
+
   test("adds Slack thread guidance for channel notifications", () => {
     const msg: InboundChannelMessage = {
       channel: "slack",
@@ -173,6 +198,81 @@ describe("formatChannelNotification", () => {
     expect(xml).toContain(
       '<reaction action="added" emoji="eyes" target_message_id="1712800000.000100" target_sender_id="U999" />',
     );
+  });
+
+  test("renders attempted_transcription child node when transcription is present", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/voice.ogg",
+          name: "voice.ogg",
+          mimeType: "audio/ogg",
+          transcription: "Hello, this is a voice memo test.",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain(
+      "<attempted_transcription>Hello, this is a voice memo test.</attempted_transcription>",
+    );
+    expect(xml).toContain("</attachment>");
+    expect(xml).not.toMatch(/<attachment[^>]*\/>/);
+    expect(xml).toMatch(/<attachment[^>]*>\n/);
+  });
+
+  test("renders self-closing attachment when transcription is absent", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/voice.ogg",
+          name: "voice.ogg",
+          mimeType: "audio/ogg",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toMatch(/<attachment[^>]*\/>/);
+    expect(xml).not.toContain("<attempted_transcription>");
+    expect(xml).not.toContain("</attachment>");
+  });
+
+  test("escapes XML in transcription text", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/voice.ogg",
+          transcription: "He said <hello> & goodbye",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain("&lt;hello&gt;");
+    expect(xml).toContain("&amp;");
+    expect(xml).not.toContain("<hello>");
   });
 
   test("includes Slack thread starter and history context in the notification xml", () => {

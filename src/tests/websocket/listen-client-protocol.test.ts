@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { models } from "../../agent/model";
 import {
@@ -24,6 +25,7 @@ import {
   clearAllSubagents,
   registerSubagent,
 } from "../../cli/helpers/subagentState";
+import { setSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { LocalProjectSettings, Settings } from "../../settings-manager";
@@ -369,10 +371,15 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "sync",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
+          recover_approvals: false,
         }),
       ),
     );
     expect(sync?.type).toBe("sync");
+    if (sync?.type !== "sync") {
+      throw new Error("expected sync command");
+    }
+    expect(sync.recover_approvals).toBe(false);
   });
 
   test("parses cron CRUD commands", () => {
@@ -707,6 +714,22 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed).toBeNull();
   });
 
+  test("parses update_toolset command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "update_toolset",
+          request_id: "update-toolset-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          toolset_preference: "gemini",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("update_toolset");
+  });
+
   test("parses skill enable/disable commands", () => {
     const skillEnable = parseServerMessage(
       Buffer.from(
@@ -847,6 +870,30 @@ describe("listen-client parseServerMessage", () => {
 
     expect(getSettings?.type).toBe("get_reflection_settings");
     expect(setSettings?.type).toBe("set_reflection_settings");
+  });
+
+  test("parses experiment commands", () => {
+    const getExperiments = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "get_experiments",
+          request_id: "experiments-get-1",
+        }),
+      ),
+    );
+    const setExperiment = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "set_experiment",
+          request_id: "experiment-set-1",
+          experiment_id: "node",
+          enabled: true,
+        }),
+      ),
+    );
+
+    expect(getExperiments?.type).toBe("get_experiments");
+    expect(setExperiment?.type).toBe("set_experiment");
   });
 
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
@@ -1259,6 +1306,7 @@ describe("listen-client channels command handling", () => {
           dmPolicy: "pairing" as const,
           allowedUsers: [],
           hasToken: true,
+          transcribeVoice: false,
           binding: {
             agentId: "agent-1",
             conversationId: "default",
@@ -1705,6 +1753,7 @@ describe("listen-client channels command handling", () => {
         dmPolicy: "pairing" as const,
         allowedUsers: [],
         hasToken: true,
+        transcribeVoice: false,
         binding: {
           agentId: null,
           conversationId: null,
@@ -1722,6 +1771,7 @@ describe("listen-client channels command handling", () => {
         dmPolicy: "pairing" as const,
         allowedUsers: [],
         hasToken: true,
+        transcribeVoice: false,
         binding: {
           agentId: null,
           conversationId: null,
@@ -2020,6 +2070,110 @@ describe("listen-client reflection settings command handling", () => {
       (settingsManager as typeof settingsManager).updateLocalProjectSettings =
         originalUpdateLocalProjectSettings;
       await rm(tempProjectDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listen-client experiment command handling", () => {
+  test("wraps typed experiment reads and writes over WS", async () => {
+    const originalGetSettings = settingsManager.getSettings;
+    const originalUpdateSettings = settingsManager.updateSettings;
+    const originalNodeFlag = process.env.LETTA_NODE;
+    const globalSettings = {} as Settings;
+
+    try {
+      delete process.env.LETTA_NODE;
+      (settingsManager as typeof settingsManager).getSettings = (() =>
+        globalSettings) as typeof settingsManager.getSettings;
+      (settingsManager as typeof settingsManager).updateSettings = ((
+        updates: Record<string, unknown>,
+      ) => {
+        Object.assign(
+          globalSettings as unknown as Record<string, unknown>,
+          updates,
+        );
+      }) as typeof settingsManager.updateSettings;
+
+      const socket = new MockSocket(WebSocket.OPEN);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+
+      await __listenClientTestUtils.handleExperimentCommand(
+        {
+          type: "get_experiments",
+          request_id: "experiments-get-1",
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const getResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(getResponse).toMatchObject({
+        type: "get_experiments_response",
+        request_id: "experiments-get-1",
+        success: true,
+        experiments: [
+          expect.objectContaining({
+            id: "node",
+            enabled: false,
+            source: "default",
+          }),
+        ],
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleExperimentCommand(
+        {
+          type: "set_experiment",
+          request_id: "experiment-set-1",
+          experiment_id: "node",
+          enabled: true,
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const setResponse = JSON.parse(socket.sentPayloads[0] as string);
+      const deviceStatusUpdate = JSON.parse(socket.sentPayloads[1] as string);
+      expect(setResponse).toMatchObject({
+        type: "set_experiment_response",
+        request_id: "experiment-set-1",
+        success: true,
+        experiments: [
+          expect.objectContaining({
+            id: "node",
+            enabled: true,
+            source: "override",
+          }),
+        ],
+      });
+      expect(deviceStatusUpdate).toMatchObject({
+        type: "update_device_status",
+        device_status: {
+          experiments: [
+            expect.objectContaining({
+              id: "node",
+              enabled: true,
+              source: "override",
+            }),
+          ],
+        },
+      });
+    } finally {
+      if (originalNodeFlag === undefined) {
+        delete process.env.LETTA_NODE;
+      } else {
+        process.env.LETTA_NODE = originalNodeFlag;
+      }
+      (settingsManager as typeof settingsManager).getSettings =
+        originalGetSettings;
+      (settingsManager as typeof settingsManager).updateSettings =
+        originalUpdateSettings;
     }
   });
 });
@@ -2466,13 +2620,68 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
+    const originalNodeFlag = process.env.LETTA_NODE;
+    delete process.env.LETTA_NODE;
     const runtime = __listenClientTestUtils.createRuntime();
-    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
-    expect(typeof deviceStatus.current_working_directory).toBe("string");
-    expect(
-      (deviceStatus.current_working_directory ?? "").length,
-    ).toBeGreaterThan(0);
-    expect(deviceStatus.current_toolset_preference).toBe("auto");
+    try {
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+      expect(typeof deviceStatus.current_working_directory).toBe("string");
+      expect(
+        (deviceStatus.current_working_directory ?? "").length,
+      ).toBeGreaterThan(0);
+      expect(deviceStatus.current_toolset_preference).toBe("auto");
+      expect(deviceStatus.experiments).toEqual([
+        expect.objectContaining({
+          id: "node",
+          source: "default",
+        }),
+      ]);
+    } finally {
+      if (originalNodeFlag === undefined) {
+        delete process.env.LETTA_NODE;
+      } else {
+        process.env.LETTA_NODE = originalNodeFlag;
+      }
+    }
+  });
+
+  test("buildDeviceStatus includes should_doctor state when available", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    setSystemPromptDoctorState("agent-doctor-status", 31000);
+
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-doctor-status",
+      conversation_id: "default",
+    });
+
+    expect(deviceStatus.should_doctor).toBe(true);
+  });
+
+  test("buildDeviceStatus does not cold-refresh should_doctor from stray memfs", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const agentId = `agent-doctor-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const memoryDir = getMemoryFilesystemRoot(agentId);
+    const systemDir = join(memoryDir, "system");
+    const originalIsMemfsEnabled = settingsManager.isMemfsEnabled;
+
+    await mkdir(systemDir, { recursive: true });
+
+    try {
+      (settingsManager as typeof settingsManager).isMemfsEnabled = (() =>
+        false) as typeof settingsManager.isMemfsEnabled;
+      await writeFile(join(systemDir, "context.md"), "x".repeat(120_000));
+
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+        agent_id: agentId,
+        conversation_id: "default",
+      });
+
+      expect(deviceStatus.should_doctor).toBe(false);
+    } finally {
+      (settingsManager as typeof settingsManager).isMemfsEnabled =
+        originalIsMemfsEnabled;
+      await rm(memoryDir, { recursive: true, force: true });
+    }
   });
 
   test("buildDeviceStatus includes only active bash and task background processes", () => {
@@ -2704,6 +2913,41 @@ describe("listen-client v2 status builders", () => {
     ).toBe(false);
   });
 
+  test("sync replay can skip backend approval recovery for lightweight state sync", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const recoverApprovalStateForSync = mock(async () => {});
+
+    await __listenClientTestUtils.replaySyncStateForRuntime(
+      listener,
+      socket as unknown as WebSocket,
+      {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      },
+      {
+        recoverApprovals: false,
+        recoverApprovalStateForSync,
+      },
+    );
+
+    expect(recoverApprovalStateForSync).not.toHaveBeenCalled();
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    expect(outbound.map((message) => message.type)).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
+  });
+
   test("sync includes silent background reflection subagents in update_subagent_state", () => {
     clearAllSubagents();
     try {
@@ -2868,22 +3112,24 @@ describe("listen-client v2 status builders", () => {
     });
   });
 
-  test("sync wiring only surfaces recovered approvals that still need user input", () => {
+  test("sync wiring converts recovered stale approvals into queued denials", () => {
     const recoveryPath = fileURLToPath(
       new URL("../../websocket/listener/recovery.ts", import.meta.url),
     );
     const source = readFileSync(recoveryPath, "utf-8");
+    const recoverySection =
+      source
+        .split("export async function recoverApprovalStateForSync")[1]
+        ?.split("export async function resolveRecoveredApprovalResponse")[0] ??
+      "";
 
-    expect(source).toContain(
-      "const { needsUserInput, autoAllowed, autoDenied } =",
+    expect(recoverySection).toContain(
+      "runtime.pendingInterruptedResults = buildFreshDenialApprovals(",
     );
-    expect(source).toContain("classifyApprovalsWithSuggestions(");
-    expect(source).toContain(
-      "const autoDecisions = buildRecoveredAutoDecisions(autoAllowed, autoDenied);",
-    );
-    expect(source).toContain("if (needsUserInput.length === 0) {");
-    expect(source).toContain("needsUserInput.map(async (approvalEntry) => {");
-    expect(source).not.toContain("pendingApprovals.map(async (approval) => {");
+    expect(recoverySection).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
+    expect(recoverySection).toContain("clearRecoveredApprovalState(runtime);");
+    expect(recoverySection).not.toContain("classifyApprovalsWithSuggestions(");
+    expect(recoverySection).not.toContain("buildRecoveredAutoDecisions(");
   });
 
   test("sync ignores backend recovered approvals while a live turn is already processing", async () => {

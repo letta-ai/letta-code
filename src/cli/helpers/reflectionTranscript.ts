@@ -6,9 +6,10 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { MEMORY_SYSTEM_DIR } from "../../agent/memoryFilesystem";
+import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "../../agent/subagents/contextBudget";
 import { getDirectoryLimits } from "../../utils/directoryLimits";
 import { parseFrontmatter } from "../../utils/frontmatter";
 import type { Line } from "./accumulator";
@@ -27,7 +28,8 @@ type TranscriptEntry =
       kind: "user" | "assistant" | "reasoning" | "error";
       text: string;
       captured_at: string;
-      source_line_id?: string;
+      source_line_id?: string; // local transcript row id; may be synthetic
+      source_message_id?: string; // canonical backend message.id when known
     }
   | {
       kind: "tool_call";
@@ -36,7 +38,8 @@ type TranscriptEntry =
       resultText?: string;
       resultOk?: boolean;
       captured_at: string;
-      source_line_id?: string;
+      source_line_id?: string; // local transcript row id; may be synthetic
+      source_message_id?: string; // canonical backend message.id when known
     };
 
 export interface ReflectionTranscriptPaths {
@@ -89,6 +92,11 @@ interface ParentMemoryFile {
   relativePath: string;
   content: string;
   description?: string;
+}
+
+interface ParentMemorySnapshotOptions {
+  /** Maximum characters for the full rendered parent-memory preview. */
+  maxChars?: number;
 }
 
 function isSystemMemoryFile(relativePath: string): boolean {
@@ -291,13 +299,61 @@ function buildParentMemoryTree(files: ParentMemoryFile[]): string {
   return lines.join("\n");
 }
 
+function joinedLength(lines: string[]): number {
+  return lines.join("\n").length;
+}
+
+function canAppendWithinBudget(
+  lines: string[],
+  additions: string[],
+  maxChars: number,
+): boolean {
+  return joinedLength([...lines, ...additions, "</parent_memory>"]) <= maxChars;
+}
+
+function truncateMemoryContentToFit(
+  lines: string[],
+  prefix: string[],
+  content: string,
+  suffix: string[],
+  maxChars: number,
+): string | null {
+  const fixedLength = joinedLength([
+    ...lines,
+    ...prefix,
+    "",
+    ...suffix,
+    "</parent_memory>",
+  ]);
+  const budget = maxChars - fixedLength;
+  if (budget <= 0) {
+    return null;
+  }
+
+  return content.slice(0, budget).trimEnd();
+}
+
+function buildMemoryPreviewNotice(
+  relativePath: string,
+  absolutePath: string,
+  kind: "truncated" | "omitted",
+): string {
+  const action = kind === "truncated" ? "truncated" : "omitted";
+  return `[Memory preview ${action}: startup context is capped at ~16k estimated tokens. Full file available at ${absolutePath}; read it directly if needed. Relative path: ${relativePath}]`;
+}
+
 export async function buildParentMemorySnapshot(
   memoryDir: string,
+  options: ParentMemorySnapshotOptions = {},
 ): Promise<string> {
   const files = await collectParentMemoryFiles(memoryDir);
   const tree = buildParentMemoryTree(files);
   const systemFiles = files.filter((file) =>
     isSystemMemoryFile(file.relativePath),
+  );
+  const maxChars = Math.max(
+    1_000,
+    options.maxChars ?? REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
   );
 
   const lines = [
@@ -310,13 +366,63 @@ export async function buildParentMemorySnapshot(
   if (files.length === 0) {
     lines.push("(no memory markdown files found)");
   } else {
+    let omittedSystemFiles = 0;
+
     for (const file of systemFiles) {
       const normalizedPath = file.relativePath.replace(/\\/g, "/");
       const absolutePath = `${memoryDir.replace(/\\/g, "/")}/${normalizedPath}`;
-      lines.push("<memory>");
-      lines.push(`<path>${absolutePath}</path>`);
-      lines.push(file.content);
-      lines.push("</memory>");
+      const prefix = ["<memory>", `<path>${absolutePath}</path>`];
+      const suffix = ["</memory>"];
+      const fullEntry = [...prefix, file.content, ...suffix];
+
+      if (canAppendWithinBudget(lines, fullEntry, maxChars)) {
+        lines.push(...fullEntry);
+        continue;
+      }
+
+      const truncatedNotice = buildMemoryPreviewNotice(
+        normalizedPath,
+        absolutePath,
+        "truncated",
+      );
+      const truncatedContent = truncateMemoryContentToFit(
+        lines,
+        prefix,
+        file.content,
+        [truncatedNotice, ...suffix],
+        maxChars,
+      );
+
+      if (truncatedContent) {
+        const truncatedEntry = [
+          ...prefix,
+          truncatedContent,
+          truncatedNotice,
+          ...suffix,
+        ];
+        if (canAppendWithinBudget(lines, truncatedEntry, maxChars)) {
+          lines.push(...truncatedEntry);
+          continue;
+        }
+      }
+
+      const omittedEntry = [
+        ...prefix,
+        buildMemoryPreviewNotice(normalizedPath, absolutePath, "omitted"),
+        ...suffix,
+      ];
+      if (canAppendWithinBudget(lines, omittedEntry, maxChars)) {
+        lines.push(...omittedEntry);
+      } else {
+        omittedSystemFiles += 1;
+      }
+    }
+
+    if (omittedSystemFiles > 0) {
+      const notice = `[Memory preview omitted ${omittedSystemFiles.toLocaleString()} additional system file(s) because the reflection startup context budget was exhausted. Read files directly from ${memoryDir} if needed.]`;
+      if (canAppendWithinBudget(lines, [notice], maxChars)) {
+        lines.push(notice);
+      }
     }
   }
 
@@ -447,6 +553,7 @@ function lineToTranscriptEntry(
         text: line.text,
         captured_at: capturedAt,
         source_line_id: line.id,
+        source_message_id: line.messageId,
       };
     case "assistant":
       return {
@@ -454,6 +561,7 @@ function lineToTranscriptEntry(
         text: line.text,
         captured_at: capturedAt,
         source_line_id: line.id,
+        source_message_id: line.messageId,
       };
     case "reasoning":
       return {
@@ -461,6 +569,7 @@ function lineToTranscriptEntry(
         text: line.text,
         captured_at: capturedAt,
         source_line_id: line.id,
+        source_message_id: line.messageId,
       };
     case "error":
       return {
@@ -546,9 +655,9 @@ async function readTranscriptLines(
   }
 }
 
-function buildPayloadPath(kind: "auto" | "remember"): string {
+function buildPayloadPath(rootDir: string, kind: "auto" | "remember"): string {
   const nonce = Math.random().toString(36).slice(2, 8);
-  return join(tmpdir(), `letta-${kind}-${nonce}.txt`);
+  return join(rootDir, `payload-${kind}-${nonce}.json`);
 }
 
 export function getReflectionTranscriptPaths(
@@ -651,8 +760,13 @@ export async function buildAutoReflectionPayload(
   const entries = snapshotLines
     .map((line) => parseJsonLine<TranscriptEntry>(line))
     .filter((entry): entry is TranscriptEntry => entry !== null);
+  // Reflection telemetry boundaries must use canonical backend message ids from
+  // user/assistant entries only. Tool rows use local transcript ids, and
+  // reasoning rows can share an assistant message id while still being a
+  // separate transcript row.
   const messageIds = entries
-    .map((entry) => entry.source_line_id)
+    .filter((entry) => entry.kind === "user" || entry.kind === "assistant")
+    .map((entry) => entry.source_message_id)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
   const startMessageId = messageIds[0];
   const endMessageId = messageIds[messageIds.length - 1];
@@ -664,7 +778,7 @@ export async function buildAutoReflectionPayload(
     return null;
   }
 
-  const payloadPath = buildPayloadPath("auto");
+  const payloadPath = buildPayloadPath(paths.rootDir, "auto");
   await writeFile(payloadPath, transcript, "utf-8");
 
   state.last_auto_reflection_started_at = new Date().toISOString();

@@ -1,6 +1,7 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
 type CommandHandler = (args: string[]) => Promise<string> | string;
@@ -251,6 +252,15 @@ export const commands: Record<string, Command> = {
       return "Opening toolset selector...";
     },
   },
+  "/experiments": {
+    desc: "Toggle experiments",
+    order: 27.1,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open experiments selector
+      return "Opening experiments selector...";
+    },
+  },
   "/ade": {
     desc: "Open agent in ADE (browser)",
     order: 28,
@@ -303,6 +313,15 @@ export const commands: Record<string, Command> = {
     args: "<set|list|unset> [key] [value]",
     handler: async (args: string[]) => {
       const result = await handleSecretCommand(args);
+      return result.output;
+    },
+  },
+  "/memory-repository": {
+    desc: "Push this agent's memory repo to an additional git remote",
+    order: 33.1,
+    args: "<set|unset|status|push> [url]",
+    handler: async (args: string[]) => {
+      const result = await handleMemoryRepositoryCommand(args);
       return result.output;
     },
   },
@@ -490,7 +509,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/logout": {
-    desc: "Clear credentials and exit",
+    desc: "Clear saved credentials and exit",
     order: 44,
     noArgs: true,
     handler: () => {

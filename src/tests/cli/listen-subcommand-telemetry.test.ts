@@ -56,7 +56,7 @@ describe("listen subcommand telemetry", () => {
     telemetry.flush = originalFlush;
   });
 
-  test("tracks and flushes session end on missing API key", async () => {
+  test("tracks and flushes session end for unsupported self-hosted listener startup", async () => {
     const trackSessionEndMock = mock(() => {});
     const flushMock = mock(async () => {});
     telemetry.trackSessionEnd =
@@ -69,7 +69,7 @@ describe("listen subcommand telemetry", () => {
     expect(exitCode).toBe(1);
     expect(trackSessionEndMock).toHaveBeenCalledWith(
       undefined,
-      "listener_missing_api_key",
+      "listener_self_hosted_no_channels",
     );
     expect(flushMock).toHaveBeenCalledTimes(1);
   });

@@ -18,7 +18,7 @@ function baseContext(
       lastRunAt: null,
     },
     state: createSharedReminderState(),
-    sessionContextReminderEnabled: true,
+    systemInfoReminderEnabled: true,
     reflectionSettings: {
       trigger: "off",
       stepCount: 25,

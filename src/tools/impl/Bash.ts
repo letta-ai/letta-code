@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { resolveGitWorktreeAddTargetPath } from "../../websocket/listener/worktree-ownership";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
@@ -22,19 +24,16 @@ import { validateRequiredParams } from "./validation.js";
  * Returns an error message if the path is invalid, or null if OK.
  */
 function validateWorktreePath(command: string, cwd: string): string | null {
-  // Match `git worktree add` with optional flags before the path
-  const match = command.match(/\bgit\s+worktree\s+add\s+(?:-b\s+\S+\s+)?(\S+)/);
-  if (!match?.[1]) return null;
+  const resolved = resolveGitWorktreeAddTargetPath(command, cwd);
+  if (!resolved) return null;
 
-  const targetPath = match[1];
-  const resolved = resolve(cwd, targetPath);
   const requiredPrefix = resolve(cwd, ".letta/worktrees");
 
   if (!resolved.startsWith(requiredPrefix)) {
     return (
       `Error: Worktrees must be created under .letta/worktrees/. ` +
       `Use: git worktree add -b <branch> .letta/worktrees/<name> main\n` +
-      `Got: ${targetPath}`
+      `Got: ${resolved}`
     );
   }
   return null;
@@ -43,6 +42,19 @@ function validateWorktreePath(command: string, cwd: string): string | null {
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
 
+function rebuildCachedLauncher(command: string): string[] | null {
+  if (!cachedWorkingLauncher) return null;
+  const cachedExecutable = cachedWorkingLauncher[0]?.toLowerCase();
+  if (!cachedExecutable) return null;
+
+  const launchers = buildShellLaunchers(command);
+  return (
+    launchers.find(
+      (launcher) => launcher[0]?.toLowerCase() === cachedExecutable,
+    ) ?? null
+  );
+}
+
 /**
  * Get the first working shell launcher for background processes.
  * Uses cached launcher if available, otherwise returns first launcher from buildShellLaunchers.
@@ -50,12 +62,9 @@ let cachedWorkingLauncher: string[] | null = null;
  * from previous foreground commands or the default launcher order.
  */
 function getBackgroundLauncher(command: string): string[] {
-  if (cachedWorkingLauncher) {
-    const [executable, ...launcherArgs] = cachedWorkingLauncher;
-    if (executable) {
-      return [executable, ...launcherArgs.slice(0, -1), command];
-    }
-  }
+  const cachedLauncher = rebuildCachedLauncher(command);
+  if (cachedLauncher) return cachedLauncher;
+
   const launchers = buildShellLaunchers(command);
   return launchers[0] || [];
 }
@@ -92,9 +101,8 @@ export async function spawnCommand(
 
   // On Windows, use fallback logic to handle PowerShell ENOENT errors (PR #482)
   if (cachedWorkingLauncher) {
-    const [executable, ...launcherArgs] = cachedWorkingLauncher;
-    if (executable) {
-      const newLauncher = [executable, ...launcherArgs.slice(0, -1), command];
+    const newLauncher = rebuildCachedLauncher(command);
+    if (newLauncher) {
       try {
         const result = await spawnWithLauncher(newLauncher, {
           cwd: options.cwd,
@@ -176,7 +184,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     signal,
     onOutput,
   } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
 
   // Block worktree creation outside .letta/worktrees/
   const worktreeError = validateWorktreePath(command, userCwd);

@@ -76,6 +76,11 @@ You can create, delete, or modify files — including their contents, names, and
 - Why did the agent make the mistakes it did? What was missing from context?
 - Why did the user have to make corrections?
 - Does anything in memory contradict the observed conversation history, or need updating?
+- Check the current size of `system/` before adding or expanding in-context memory:
+  ```bash
+  letta memory tokens --format json --quiet
+  ```
+  This command is memory-mode safe. Treat it as measurement only: decide whether a size is concerning based on the actual context and the value of the proposed change. Prefer adding durable detail to external memory unless the information is important enough to stay in-context.
 
 ### Step 4: Update memory files (if needed)
 
@@ -94,6 +99,8 @@ echo "PARENT_AGENT_ID=$LETTA_PARENT_AGENT_ID"
 ```
 
 Use the printed values (e.g., `agent-abc123...`) in the trailers. If a variable is empty or unset, omit that trailer. Never write a literal variable name like `$LETTA_AGENT_ID` or `$AGENT_ID` in the commit message.
+
+**Shell syntax constraint:** You run in memory mode, which statically validates every Bash command. Command substitution (`$(...)`) and backticks are **always denied** because they can execute arbitrary code at runtime. Use plain `-m "..."` with an embedded multi-line string exactly as shown below — do NOT wrap the message in `$(cat <<'EOF' ... EOF)` or any other subshell form.
 
 ```bash
 cd $MEMORY_DIR

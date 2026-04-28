@@ -182,6 +182,183 @@ export function splitShellSegments(input: string): string[] | null {
   return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
+/**
+ * Split a shell command into segments on top-level separators while tolerating
+ * `$(...)` command substitutions. This is useful for approval rule generation
+ * and matching, where we still want to identify the outer command even when a
+ * setup segment contains an inner pipe (e.g. `export FOO=$(grep ... | cut ...)`).
+ *
+ * Unlike `splitShellSegments`, this still rejects unsafe redirects, but it does
+ * not reject `$()` command substitutions.
+ */
+export function splitShellSegmentsAllowCommandSubstitution(
+  input: string,
+): string[] | null {
+  const segments: string[] = [];
+  let current = "";
+  let i = 0;
+  let quote: "single" | "double" | null = null;
+  let commandSubstitutionDepth = 0;
+
+  while (i < input.length) {
+    const ch = input[i];
+
+    if (!ch) {
+      i += 1;
+      continue;
+    }
+
+    if (quote === "single") {
+      current += ch;
+      if (ch === "'") {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (quote === "double") {
+      if (ch === "\\" && i + 1 < input.length) {
+        current += input.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+
+      if (ch === "$" && input.startsWith("$(", i)) {
+        current += "$(";
+        commandSubstitutionDepth += 1;
+        i += 2;
+        continue;
+      }
+
+      current += ch;
+      if (commandSubstitutionDepth > 0 && ch === ")") {
+        commandSubstitutionDepth -= 1;
+        i += 1;
+        continue;
+      }
+      if (ch === '"') {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (commandSubstitutionDepth > 0) {
+      if (ch === "\\" && i + 1 < input.length) {
+        current += input.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+
+      if (ch === "$" && input.startsWith("$(", i)) {
+        current += "$(";
+        commandSubstitutionDepth += 1;
+        i += 2;
+        continue;
+      }
+
+      current += ch;
+      if (ch === '"') {
+        quote = "double";
+        i += 1;
+        continue;
+      }
+      if (ch === "'") {
+        quote = "single";
+        i += 1;
+        continue;
+      }
+      if (ch === ")") {
+        commandSubstitutionDepth -= 1;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === "'") {
+      quote = "single";
+      current += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      quote = "double";
+      current += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "\\" && i + 1 < input.length) {
+      current += input.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+
+    if (input.startsWith(">>", i) || ch === ">") {
+      const skipLen = tryConsumeSafeRedirect(input, i);
+      if (skipLen > 0) {
+        i += skipLen;
+        continue;
+      }
+      return null;
+    }
+
+    if (ch === "$" && input.startsWith("$(", i)) {
+      current += "$(";
+      commandSubstitutionDepth += 1;
+      i += 2;
+      continue;
+    }
+
+    if (ch === "`") {
+      return null;
+    }
+
+    if (input.startsWith("&&", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+
+    if (input.startsWith("||", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+
+    if (ch === ";") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    if (ch === "\n" || ch === "\r") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    if (ch === "|") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    current += ch;
+    i += 1;
+  }
+
+  segments.push(current);
+  return segments.map((segment) => segment.trim()).filter(Boolean);
+}
+
 export function isShellExecutor(command: string): boolean {
   return command === "bash" || command === "sh";
 }

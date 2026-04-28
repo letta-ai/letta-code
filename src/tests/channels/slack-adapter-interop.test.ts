@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { afterAll, expect, mock, test } from "bun:test";
 
 class FakeSlackApp {
   readonly client = {
@@ -55,10 +55,19 @@ mock.module("../../channels/slack/runtime", () => ({
       },
     },
   }),
+  loadSlackWebApiModule: async () => ({
+    WebClient: class {},
+    default: {
+      WebClient: class {},
+    },
+  }),
 }));
 
 mock.module("../../channels/slack/media", () => ({
+  resolveSlackChannelHistory: async () => [],
   resolveSlackInboundAttachments: async () => [],
+  resolveSlackThreadStarter: async () => null,
+  resolveSlackThreadHistory: async () => [],
 }));
 
 test("resolveSlackAccountDisplayName supports nested default Slack Bolt exports", async () => {
@@ -74,4 +83,8 @@ test("resolveSlackAccountDisplayName supports nested default Slack Bolt exports"
       "xapp-test-token-1234567890",
     ),
   ).resolves.toBe("Interop Slack Bot");
+});
+
+afterAll(() => {
+  mock.restore();
 });

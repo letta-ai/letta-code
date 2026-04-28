@@ -17,6 +17,10 @@ import {
   waitForToolsetReady,
 } from "../tools/manager";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
+import {
+  assertSupportedBase64ImageMediaTypes,
+  normalizeMessageImageParts,
+} from "../utils/messageImageNormalization";
 import { createStreamAbortRelay } from "../utils/streamAbortRelay";
 import { isTimingsEnabled } from "../utils/timing";
 import {
@@ -133,6 +137,8 @@ export async function sendMessageStream(
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
   const client = await getClient();
+  const normalizedMessages = await normalizeMessageImageParts(messages);
+  assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext
     ? opts.preparedToolContext
@@ -155,7 +161,7 @@ export async function sendMessageStream(
   const resolvedConversationId = conversationId;
   const requestBody = buildConversationMessagesCreateRequestBody(
     conversationId,
-    messages,
+    normalizedMessages,
     opts,
     clientTools,
     clientSkills,
@@ -196,7 +202,7 @@ export async function sendMessageStream(
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
   }
 
-  const messageSummary = messages
+  const messageSummary = normalizedMessages
     .map((item) => {
       if (item.type === "approval") {
         return `approval:${item.approvals?.length ?? 0}`;
@@ -212,7 +218,8 @@ export async function sendMessageStream(
     })
     .join(",");
 
-  const firstOtid = (messages[0] as unknown as { otid?: string })?.otid;
+  const firstOtid = (normalizedMessages[0] as unknown as { otid?: string })
+    ?.otid;
   debugLog(
     "send-message-stream",
     "request_start conversation_id=%s agent_id=%s messages=%s otid=%s stream_tokens=%s background=%s max_retries=%s",

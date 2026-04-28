@@ -6,6 +6,7 @@ import {
 } from "./config";
 import type {
   ChannelAccount,
+  DiscordChannelAccount,
   SlackChannelAccount,
   SlackDefaultPermissionMode,
   SupportedChannelId,
@@ -37,6 +38,12 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     (cloned as TelegramChannelAccount).binding = { ...account.binding };
   }
 
+  if (account.channel === "discord" && account.allowedChannels) {
+    (cloned as DiscordChannelAccount).allowedChannels = [
+      ...account.allowedChannels,
+    ];
+  }
+
   return cloned;
 }
 
@@ -48,7 +55,10 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
         next.displayName === "Migrated Telegram bot")) ||
     (next.channel === "slack" &&
       (next.displayName === "Slack app" ||
-        next.displayName === "Migrated Slack app"))
+        next.displayName === "Migrated Slack app")) ||
+    (next.channel === "discord" &&
+      (next.displayName === "Discord bot" ||
+        next.displayName === "Migrated Discord bot"))
   ) {
     next.displayName = undefined;
   }
@@ -62,7 +72,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
 
 function makeDefaultLegacyAccount(
   channelId: SupportedChannelId,
-): TelegramChannelAccount | SlackChannelAccount {
+): ChannelAccount {
   const config = readChannelConfig(channelId);
   const now = new Date().toISOString();
 
@@ -78,10 +88,28 @@ function makeDefaultLegacyAccount(
       token: config.token,
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
+      transcribeVoice: config.transcribeVoice === true,
       binding: {
         agentId: null,
         conversationId: null,
       },
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  if (config.channel === "discord") {
+    return {
+      channel: "discord",
+      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
+      enabled: config.enabled,
+      token: config.token,
+      dmPolicy: config.dmPolicy,
+      allowedUsers: [...config.allowedUsers],
+      allowedChannels: config.allowedChannels
+        ? [...config.allowedChannels]
+        : undefined,
+      agentId: null,
       createdAt: now,
       updatedAt: now,
     };

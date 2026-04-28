@@ -227,6 +227,7 @@ export function createTelegramAdapter(
       token: config.token,
       bot: telegramBot,
       messages,
+      transcribeVoice: config.transcribeVoice,
     });
 
     if (text.length === 0 && attachments.length === 0) {

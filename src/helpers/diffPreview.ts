@@ -6,6 +6,7 @@
 
 import path, { basename } from "node:path";
 import type { AdvancedDiffResult, AdvancedHunk } from "../cli/helpers/diff";
+import { getCurrentWorkingDirectory } from "../runtime-context";
 import type { DiffHunk, DiffHunkLine, DiffPreview } from "../types/protocol_v2";
 
 function parseHunkLinePrefix(raw: string): DiffHunkLine | null {
@@ -124,7 +125,7 @@ async function getDiffDeps(): Promise<DiffDeps> {
 export async function computeDiffPreviews(
   toolName: string,
   toolArgs: Record<string, unknown>,
-  workingDirectory: string = process.env.USER_CWD || process.cwd(),
+  workingDirectory: string = getCurrentWorkingDirectory(),
 ): Promise<DiffPreview[]> {
   const {
     computeAdvancedDiff,

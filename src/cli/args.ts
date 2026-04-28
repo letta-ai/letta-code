@@ -129,6 +129,19 @@ export const CLI_FLAG_CATALOG = {
   allowedTools: { parser: { type: "string" }, mode: "both" },
   disallowedTools: { parser: { type: "string" }, mode: "both" },
   "permission-mode": { parser: { type: "string" }, mode: "both" },
+  "memory-scope": {
+    parser: { type: "string" },
+    mode: "both",
+    help: {
+      argLabel: "<ids>",
+      description:
+        "Comma-separated agent IDs this session may access in addition to self.",
+      continuationLines: [
+        "Example: --memory-scope agent-abc,agent-def",
+        "Required to read or write another agent's memory directory.",
+      ],
+    },
+  },
   yolo: { parser: { type: "boolean" }, mode: "both" },
   "output-format": {
     parser: { type: "string" },

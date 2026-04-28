@@ -6,26 +6,26 @@ import {
 } from "../agent/model";
 
 describe("getModelInfoForLlmConfig", () => {
-  test("selects gpt-5.2 tier by reasoning_effort", () => {
-    const handle = "openai/gpt-5.2";
+  test("selects gpt-5.4 tier by reasoning_effort", () => {
+    const handle = "openai/gpt-5.4";
 
     const high = getModelInfoForLlmConfig(handle, { reasoning_effort: "high" });
-    expect(high?.id).toBe("gpt-5.2-high");
+    expect(high?.id).toBe("gpt-5.4-high");
 
     const none = getModelInfoForLlmConfig(handle, { reasoning_effort: "none" });
-    expect(none?.id).toBe("gpt-5.2-none");
+    expect(none?.id).toBe("gpt-5.4-none");
 
     const xhigh = getModelInfoForLlmConfig(handle, {
       reasoning_effort: "xhigh",
     });
-    expect(xhigh?.id).toBe("gpt-5.2-xhigh");
+    expect(xhigh?.id).toBe("gpt-5.4-xhigh");
   });
 
   test("falls back to first handle match when effort missing", () => {
-    const handle = "openai/gpt-5.2";
+    const handle = "openai/gpt-5.4";
     const info = getModelInfoForLlmConfig(handle, null);
-    // models.json order currently lists gpt-5.2-none first.
-    expect(info?.id).toBe("gpt-5.2-none");
+    // models.json order currently lists gpt-5.4-none first.
+    expect(info?.id).toBe("gpt-5.4-none");
   });
 
   test("selects opus 1M variant by context_window", () => {
@@ -67,8 +67,8 @@ describe("getModelInfoForLlmConfig", () => {
 });
 
 describe("getReasoningTierOptionsForHandle", () => {
-  test("returns ordered reasoning options for gpt-5.2-codex", () => {
-    const options = getReasoningTierOptionsForHandle("openai/gpt-5.2-codex");
+  test("returns ordered reasoning options for gpt-5.4", () => {
+    const options = getReasoningTierOptionsForHandle("openai/gpt-5.4");
     expect(options.map((option) => option.effort)).toEqual([
       "none",
       "low",
@@ -77,11 +77,11 @@ describe("getReasoningTierOptionsForHandle", () => {
       "xhigh",
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
-      "gpt-5.2-codex-none",
-      "gpt-5.2-codex-low",
-      "gpt-5.2-codex-medium",
-      "gpt-5.2-codex-high",
-      "gpt-5.2-codex-xhigh",
+      "gpt-5.4-none",
+      "gpt-5.4-low",
+      "gpt-5.4-medium",
+      "gpt-5.4-high",
+      "gpt-5.4-xhigh",
     ]);
   });
 
@@ -120,6 +120,46 @@ describe("getReasoningTierOptionsForHandle", () => {
       "gpt-5.3-codex-plus-pro-medium",
       "gpt-5.3-codex-plus-pro-high",
       "gpt-5.3-codex-plus-pro-xhigh",
+    ]);
+  });
+
+  test("returns byok reasoning options for chatgpt-plus-pro gpt-5.5", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "chatgpt-plus-pro/gpt-5.5",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "gpt-5.5-plus-pro-none",
+      "gpt-5.5-plus-pro-low",
+      "gpt-5.5-plus-pro-medium",
+      "gpt-5.5-plus-pro-high",
+      "gpt-5.5-plus-pro-xhigh",
+    ]);
+  });
+
+  test("returns byok reasoning options for chatgpt-plus-pro gpt-5.5-fast", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "chatgpt-plus-pro/gpt-5.5-fast",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "gpt-5.5-fast-plus-pro-none",
+      "gpt-5.5-fast-plus-pro-low",
+      "gpt-5.5-fast-plus-pro-medium",
+      "gpt-5.5-fast-plus-pro-high",
+      "gpt-5.5-fast-plus-pro-xhigh",
     ]);
   });
 

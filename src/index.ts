@@ -91,7 +91,7 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
-  letta memfs ...       Memory filesystem subcommands (JSON-only)
+  letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta blocks ...      Blocks subcommands (JSON-only)
@@ -100,14 +100,16 @@ USAGE
 OPTIONS
 ${renderCliOptionsHelp()}
 
-SUBCOMMANDS (JSON-only)
-  letta memfs status --agent <id>
-  letta memfs diff --agent <id>
-  letta memfs resolve --agent <id> --resolutions '<JSON>'
-  letta memfs backup --agent <id>
-  letta memfs backups --agent <id>
-  letta memfs restore --agent <id> --from <backup> --force
-  letta memfs export --agent <id> --out <dir>
+SUBCOMMANDS
+  letta memory status --agent <id>
+  letta memory diff --agent <id>
+  letta memory resolve --agent <id> --resolutions '<JSON>'
+  letta memory backup --agent <id>
+  letta memory backups --agent <id>
+  letta memory restore --agent <id> --from <backup> --force
+  letta memory export --agent <id> --out <dir>
+  letta memory pull --agent <id>
+  letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
@@ -141,7 +143,7 @@ EXAMPLES
   /profiles                # Open profile selector
   /pin                     # Pin current profile to project
   /unpin                   # Unpin profile from project
-  /logout                  # Clear credentials and exit
+  /logout                  # Clear saved credentials and exit
 
   # headless with JSON output (includes stats)
   letta -p "hello" --output-format json
@@ -355,7 +357,7 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
-  // Early exit for CLI subcommands (e.g., `letta server`, `letta memfs`).
+  // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
   const subcommandResult = await runSubcommand(process.argv.slice(2));
@@ -798,6 +800,22 @@ async function main(): Promise<void> {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
+  // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
+  // Stored OAuth credentials (interactive session tokens) are not accepted for
+  // automated/headless use — get an API key at https://app.letta.com/api-keys
+  if (
+    isHeadless &&
+    baseURL === LETTA_CLOUD_API_URL &&
+    !process.env.LETTA_API_KEY
+  ) {
+    console.error("Missing LETTA_API_KEY");
+    console.error(
+      "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
+    );
+    console.error("Get an API key at https://app.letta.com/api-keys");
+    process.exit(1);
+  }
+
   // Check if refresh token is missing for Letta Cloud (only when not using env var)
   // Skip this check if we already have an API key from env
   if (
@@ -824,15 +842,6 @@ async function main(): Promise<void> {
   }
 
   if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-    // For headless mode, error out (assume automation context)
-    if (isHeadless) {
-      console.error("Missing LETTA_API_KEY");
-      console.error(
-        "Run 'letta' in interactive mode to authenticate or export the missing environment variable",
-      );
-      process.exit(1);
-    }
-
     // For interactive mode, show setup flow
     console.log("No credentials found. Let's get you set up!\n");
     const { runSetup } = await import("./auth/setup");
@@ -917,13 +926,16 @@ async function main(): Promise<void> {
   }
 
   // Set CLI permission overrides if provided
-  if (values.allowedTools || values.disallowedTools) {
+  if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
     const { cliPermissions } = await import("./permissions/cli");
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
     }
     if (values.disallowedTools) {
       cliPermissions.setDisallowedTools(values.disallowedTools);
+    }
+    if (values["memory-scope"]) {
+      cliPermissions.setMemoryScope(values["memory-scope"]);
     }
   }
 
@@ -1466,14 +1478,33 @@ async function main(): Promise<void> {
     ]);
 
     // Main initialization effect - runs after profile selection
+    const initStartedRef = React.useRef(false);
     useEffect(() => {
-      if (loadingState !== "assembling") return;
+      if (loadingState !== "assembling") {
+        // If init bounced back to a picker, allow the next user selection to
+        // start a fresh assembling phase.
+        if (
+          loadingState === "selecting" ||
+          loadingState === "selecting_global" ||
+          loadingState === "selecting_conversation"
+        ) {
+          initStartedRef.current = false;
+        }
+        return;
+      }
+      // Guard against double-fire from dependency churn in the same
+      // "assembling" phase.  Only the first invocation should run.
+      if (initStartedRef.current) return;
+      initStartedRef.current = true;
 
       async function init() {
         const client = await getClient();
 
         // Determine which agent we'll be using (before loading tools)
         let resumingAgentId: string | null = null;
+        // Track agent fetched during ID resolution so we can reuse it later
+        // (validatedAgent React state may not be committed yet).
+        let resolvedAgent: AgentState | null = null;
 
         // Priority 1: --agent flag
         if (agentIdArg) {
@@ -1482,8 +1513,11 @@ async function main(): Promise<void> {
             resumingAgentId = agentIdArg;
           } else {
             try {
-              const agent = await client.agents.retrieve(agentIdArg);
+              const agent = await client.agents.retrieve(agentIdArg, {
+                include: ["agent.secrets", "agent.tools"],
+              });
               setValidatedAgent(agent);
+              resolvedAgent = agent;
               resumingAgentId = agentIdArg;
             } catch {
               // Agent doesn't exist, will create new later
@@ -1505,8 +1539,14 @@ async function main(): Promise<void> {
             resumingAgentId = selectedGlobalAgentId;
           } else {
             try {
-              const agent = await client.agents.retrieve(selectedGlobalAgentId);
+              const agent = await client.agents.retrieve(
+                selectedGlobalAgentId,
+                {
+                  include: ["agent.secrets", "agent.tools"],
+                },
+              );
               setValidatedAgent(agent);
+              resolvedAgent = agent;
               resumingAgentId = selectedGlobalAgentId;
             } catch {
               // Selected agent doesn't exist - show selector again
@@ -1682,9 +1722,11 @@ async function main(): Promise<void> {
         if (!agent && resumingAgentId) {
           try {
             agent =
-              validatedAgent && validatedAgent.id === resumingAgentId
-                ? validatedAgent
-                : await client.agents.retrieve(resumingAgentId);
+              resolvedAgent && resolvedAgent.id === resumingAgentId
+                ? resolvedAgent
+                : validatedAgent && validatedAgent.id === resumingAgentId
+                  ? validatedAgent
+                  : await client.agents.retrieve(resumingAgentId);
           } catch (error) {
             // Agent disappeared between validation and now - show selector
             console.error(
@@ -1719,23 +1761,41 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
-        // Start memfs sync early — awaited in parallel with getResumeData below
+        // Start memfs sync early. Interactive startup is optimistic: keep the
+        // session moving and let memfs clone/pull finish in the background
+        // unless the user explicitly requested a memfs mode toggle.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
         const startupMemfsFlag = autoEnableMemfsForFreshAgent
           ? true
           : memfsFlag;
+        const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
         const memfsSyncPromise = import("./agent/memoryFilesystem").then(
           ({ applyMemfsFlags }) =>
             applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
+              pullOnExistingRepo: true,
               agentTags,
               skipPromptUpdate: shouldCreateNew,
             }),
         );
+        const memfsSyncBackgroundPromise = memfsSyncPromise.catch((error) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          debugWarn(
+            "startup",
+            `Background memfs sync failed for ${agentId}: ${message}`,
+          );
+          console.warn(`[memfs background sync] ${message}`);
+          return null;
+        });
+        if (!shouldBlockOnMemfsStartup) {
+          void memfsSyncBackgroundPromise;
+        }
 
         // Init secrets cache — runs in parallel with memfs sync below.
         const secretsInitPromise = import("./utils/secretsStore").then(
-          ({ initSecretsFromServer }) => initSecretsFromServer(agentId),
+          ({ initSecretsFromServer }) =>
+            initSecretsFromServer(agentId, agent ?? undefined),
         );
 
         // Check if we're resuming an existing agent
@@ -1790,8 +1850,8 @@ async function main(): Promise<void> {
           }
 
           if (systemPromptPreset) {
-            // Await memfs sync first so isMemfsEnabled() reflects the final state
-            // before updateAgentSystemPrompt reads it to pick the memory addon.
+            // Rebuilding the prompt needs the reconciled memory mode so we
+            // still wait here for this explicit override path.
             try {
               await memfsSyncPromise;
             } catch (error) {
@@ -1814,7 +1874,7 @@ async function main(): Promise<void> {
         }
 
         const startupAgentId = agent.id;
-        void clearPersistedClientToolRules(startupAgentId)
+        void clearPersistedClientToolRules(startupAgentId, agent)
           .then((cleanup) => {
             if (cleanup) {
               const count = cleanup.removedToolNames.length;
@@ -1920,27 +1980,22 @@ async function main(): Promise<void> {
           // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";
 
-          // Load message history and memfs sync in parallel — they're independent
+          // Load message history without waiting on memfs sync.
           setLoadingState("checking");
-          const [data] = await Promise.all([
-            getResumeData(client, agent, "default"),
-            memfsSyncPromise.catch((error) => {
-              console.error(
-                error instanceof Error ? error.message : String(error),
-              );
-              process.exit(1);
-            }),
-          ]);
+          const data = await getResumeData(client, agent, "default");
           setResumeData(data);
           setResumedExistingConversation(data.messageHistory.length > 0);
         }
 
-        // Ensure memfs sync completed (already resolved for default path via Promise.all above)
-        try {
-          await memfsSyncPromise;
-        } catch (error) {
-          console.error(error instanceof Error ? error.message : String(error));
-          process.exit(1);
+        if (shouldBlockOnMemfsStartup) {
+          try {
+            await memfsSyncPromise;
+          } catch (error) {
+            console.error(
+              error instanceof Error ? error.message : String(error),
+            );
+            process.exit(1);
+          }
         }
 
         // Ensure secrets cache is populated (non-fatal).
@@ -1956,7 +2011,8 @@ async function main(): Promise<void> {
         }
 
         // Auto-heal system prompt drift (rebuild from stored recipe).
-        // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+        // Runs after memfs flag reconciliation so isMemfsEnabled() reflects
+        // the target memory mode even if clone/pull is still in flight.
         if (resuming && !systemPromptPreset) {
           let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
 
@@ -2123,7 +2179,7 @@ async function main(): Promise<void> {
         showCompactions: settings.showCompactions,
         agentProvenance,
         releaseNotes,
-        sessionContextReminderEnabled: !noSystemInfoReminderFlag,
+        systemInfoReminderEnabled: !noSystemInfoReminderFlag,
       });
     }
 
@@ -2143,7 +2199,7 @@ async function main(): Promise<void> {
       agentProvenance,
       releaseNotes,
       updateNotification,
-      sessionContextReminderEnabled: !noSystemInfoReminderFlag,
+      systemInfoReminderEnabled: !noSystemInfoReminderFlag,
     });
   }
 

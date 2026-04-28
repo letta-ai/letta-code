@@ -184,8 +184,9 @@ export async function ensureDefaultAgents(
     await addTagToAgent(client, agent.id, MEMO_TAG);
     settingsManager.pinGlobal(agent.id);
 
-    // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-    await enableMemfsIfCloud(agent.id);
+    // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
+    // without blocking startup on the initial clone.
+    void enableMemfsIfCloud(agent.id);
 
     return agent;
   } catch (err) {

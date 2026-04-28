@@ -163,6 +163,10 @@ async function runHeadlessCommand(
 const FAST_PROMPT =
   "This is a test. Do not call any tools. Just respond with the word OK and nothing else.";
 
+// ISO 8601 UTC with ms precision + Z suffix (e.g. "2026-04-21T23:40:15.123Z").
+// Matches the format emitted by new Date().toISOString() and by Claude Code / Codex.
+const ISO_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 describe("stream-json format", () => {
   test(
     "init message has type 'system' with subtype 'init'",
@@ -185,6 +189,8 @@ describe("stream-json format", () => {
       expect(init.tools).toBeInstanceOf(Array);
       expect(init.cwd).toBeDefined();
       expect(init.uuid).toBe(`init-${init.agent_id}`);
+      // Every emitted wire line must carry an ISO 8601 UTC timestamp.
+      expect(init.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
     },
     { timeout: 200000 },
   );
@@ -206,11 +212,13 @@ describe("stream-json format", () => {
       const msg = JSON.parse(messageLine) as {
         session_id: string;
         uuid: string;
+        timestamp: string;
       };
       expect(msg.session_id).toBeDefined();
       expect(msg.uuid).toBeDefined();
       // uuid should be otid or id from the Letta SDK chunk
       expect(msg.uuid).toBeTruthy();
+      expect(msg.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
     },
     { timeout: 200000 },
   );
@@ -236,6 +244,9 @@ describe("stream-json format", () => {
       expect(result.duration_ms).toBeGreaterThan(0);
       expect(result.uuid).toContain("result-");
       expect(result.result).toBeDefined();
+      // Result lines must also carry a wall-clock timestamp in addition
+      // to duration_ms (which is measured from turn start).
+      expect(result.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
     },
     { timeout: 200000 },
   );
@@ -270,6 +281,7 @@ describe("stream-json format", () => {
         expect(event.event).toBeDefined();
         expect(event.session_id).toBeDefined();
         expect(event.uuid).toBeDefined();
+        expect(event.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
       }
 
       const contentEvent = streamEventLines
@@ -318,6 +330,25 @@ describe("stream-json format", () => {
         return obj.type === "result";
       });
       expect(resultLine).toBeDefined();
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "every emitted line carries an ISO 8601 UTC timestamp",
+    async () => {
+      // Regression guard: if a new emit site is added in headless.ts that
+      // bypasses writeWireMessage, this test will catch it.
+      const lines = await runHeadlessCommand(FAST_PROMPT);
+      expect(lines.length).toBeGreaterThan(0);
+
+      for (const line of lines) {
+        const obj = JSON.parse(line) as { type: string; timestamp?: string };
+        expect(
+          obj.timestamp,
+          `message of type "${obj.type}" is missing a timestamp: ${line}`,
+        ).toMatch(ISO_TIMESTAMP_REGEX);
+      }
     },
     { timeout: 200000 },
   );

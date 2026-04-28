@@ -2,7 +2,8 @@ import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
-import { settingsManager } from "../settings-manager";
+import { experimentManager } from "../experiments/manager";
+import { type Settings, settingsManager } from "../settings-manager";
 import { trackBoundaryError } from "../telemetry/errorReporting";
 import { isDebugEnabled } from "../utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
@@ -21,6 +22,13 @@ let lastSDKDiagnostic: SDKDiagnostic | null = null;
 // whenever the OAuth refresh obtains a new token. Used as a fallback so
 // transient keychain failures don't crash the process mid-session.
 let _cachedApiKey: string | undefined;
+let _testClientOverride: (() => Promise<unknown>) | null = null;
+
+export function __testOverrideGetClient(
+  factory: (() => Promise<unknown>) | null,
+): void {
+  _testClientOverride = factory;
+}
 
 function safeDiagnosticString(value: unknown): string {
   if (value === null || value === undefined) {
@@ -110,8 +118,139 @@ export function getServerUrl(): string {
   );
 }
 
+function isLocalhostUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export const LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV =
+  "LETTA_MEMFS_GIT_PROXY_BASE_URL";
+
+export interface MemfsGitProxyRewriteConfig {
+  /** Ephemeral proxy base URL used only for git transport. */
+  proxyBaseUrl: string;
+  /** Canonical memfs base URL that remains persisted in git config/settings. */
+  memfsBaseUrl: string;
+  /** Git URL prefix for the ephemeral transport. */
+  proxyPrefix: string;
+  /** Git URL prefix for the canonical remote. */
+  memfsPrefix: string;
+  /** Git config key for url.<proxyPrefix>.insteadOf. */
+  configKey: string;
+  /** Git config value for url.<proxyPrefix>.insteadOf. */
+  configValue: string;
+}
+
+function trimBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+/**
+ * Resolve Desktop's transient MemFS git proxy rewrite, if configured.
+ *
+ * LETTA_MEMFS_GIT_PROXY_BASE_URL is intentionally transport-only: it should
+ * never be used for settings keys, persisted remotes, or credential helper
+ * config. It lets Desktop route git network traffic through its localhost
+ * proxy while keeping the local repo's origin canonical and stable.
+ */
+export function getMemfsGitProxyRewriteConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): MemfsGitProxyRewriteConfig | null {
+  const rawProxyBaseUrl = env[LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV]?.trim();
+  if (!rawProxyBaseUrl || !isLocalhostUrl(rawProxyBaseUrl)) {
+    return null;
+  }
+
+  const memfsBaseUrl = trimBaseUrl(getMemfsServerUrl());
+  if (!memfsBaseUrl.includes("api.letta.com")) {
+    return null;
+  }
+
+  const proxyBaseUrl = trimBaseUrl(rawProxyBaseUrl);
+  const proxyPrefix = `${proxyBaseUrl}/v1/git/`;
+  const memfsPrefix = `${memfsBaseUrl}/v1/git/`;
+
+  return {
+    proxyBaseUrl,
+    memfsBaseUrl,
+    proxyPrefix,
+    memfsPrefix,
+    configKey: `url.${proxyPrefix}.insteadOf`,
+    configValue: memfsPrefix,
+  };
+}
+
+/**
+ * Get the current Letta memfs server URL from environment or settings.
+ * Falls back to Letta Cloud when no memfs-specific URL is set.
+ *
+ * Intentionally ignores LETTA_BASE_URL: Desktop sets LETTA_BASE_URL to an
+ * ephemeral localhost proxy port, but MemFS git config/settings must stay
+ * keyed by a stable canonical URL. Desktop's transient git transport proxy is
+ * handled separately by LETTA_MEMFS_GIT_PROXY_BASE_URL.
+ */
+export function getMemfsServerUrl(): string {
+  let settings: Settings | null = null;
+  try {
+    settings = settingsManager.getSettings();
+  } catch {
+    // Settings may be unavailable in isolated tests that only rely on env.
+  }
+
+  const configuredMemfsUrl =
+    process.env.LETTA_MEMFS_BASE_URL || settings?.env?.LETTA_MEMFS_BASE_URL;
+  if (configuredMemfsUrl) {
+    return configuredMemfsUrl;
+  }
+
+  return LETTA_CLOUD_API_URL;
+}
+
+export function getClientDefaultHeaders(): Record<string, string> {
+  const nodeExperiment = experimentManager.getSnapshot("node");
+
+  return {
+    "X-Letta-Source": "letta-code",
+    "User-Agent": `letta-code/${packageJson.version}`,
+    // Identify this device on user-message turns so the cloud can
+    // persist the (agent, conversation) → device association and
+    // restore it on other browsers/sessions. The cloud middleware
+    // ignores this header on non-message routes.
+    "X-Letta-Environment-Device-Id": settingsManager.getOrCreateDeviceId(),
+    ...(nodeExperiment.source === "override"
+      ? { "x-letta-node": nodeExperiment.enabled ? "1" : "0" }
+      : nodeExperiment.enabled
+        ? { "x-letta-node": "1" }
+        : {}),
+  };
+}
+
 export async function getClient() {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
+  if (_testClientOverride) {
+    return (await _testClientOverride()) as Letta;
+  }
+
+  const baseSettings = settingsManager.getSettings();
+  const cachedTokens = settingsManager.getCachedSecureTokens();
+  const cachedSettings: Settings = {
+    ...baseSettings,
+    env: {
+      ...baseSettings.env,
+      ...(cachedTokens.apiKey && { LETTA_API_KEY: cachedTokens.apiKey }),
+    },
+    refreshToken: cachedTokens.refreshToken ?? baseSettings.refreshToken,
+  };
+  const settings =
+    process.env.LETTA_API_KEY ||
+    cachedSettings.env?.LETTA_API_KEY ||
+    cachedSettings.refreshToken
+      ? cachedSettings
+      : await settingsManager.getSettingsWithSecureTokens();
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
@@ -198,24 +337,12 @@ export async function getClient() {
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
-
   return new Letta({
     apiKey,
     baseURL,
     logger: sdkLogger,
     timeout: Number(process.env.LETTA_REQUEST_TIMEOUT_MS) || 10 * 60 * 1000, // default 10 min; override via env for slow local inference
-    defaultHeaders: {
-      "X-Letta-Source": "letta-code",
-      "User-Agent": `letta-code/${packageJson.version}`,
-      // Identify this device on user-message turns so the cloud can
-      // persist the (agent, conversation) → device association and
-      // restore it on other browsers/sessions. The cloud middleware
-      // ignores this header on non-message routes.
-      "X-Letta-Environment-Device-Id": settingsManager.getOrCreateDeviceId(),
-      ...(process.env.LETTA_NODE === "1" && {
-        "x-letta-node": "1",
-      }),
-    },
+    defaultHeaders: getClientDefaultHeaders(),
     // Use instrumented fetch for timing logs when LETTA_DEBUG_TIMINGS is enabled
     ...(isTimingsEnabled() && { fetch: createTimingFetch(fetch) }),
   });

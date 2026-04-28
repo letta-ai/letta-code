@@ -203,7 +203,7 @@ export function SleeptimeSelector({
       <Box height={1} />
 
       <Text bold color={colors.selector.title}>
-        Configure your sleep-time (reflection) settings
+        Configure your sleep-time (dream) settings
       </Text>
 
       <Box height={1} />

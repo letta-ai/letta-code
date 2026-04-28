@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
 import type { ResumeData } from "../../agent/check-approval";
@@ -213,6 +221,9 @@ mock.module("../../agent/approval-recovery", () => ({
 }));
 
 const listenClientModule = await import("../../websocket/listen-client");
+const { sendApprovalContinuationWithRetry } = await import(
+  "../../websocket/listener/send"
+);
 const {
   __listenClientTestUtils,
   requestApprovalOverWS,
@@ -327,6 +338,10 @@ describe("listen-client multi-worker concurrency", () => {
     if (registry) {
       await registry.stopAll();
     }
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test("processes simultaneous turns for two named conversations under one agent", async () => {
@@ -1114,7 +1129,7 @@ describe("listen-client multi-worker concurrency", () => {
     ]);
   });
 
-  test("resolveStaleApprovals injects queued turns and marks recovery drain as processing", async () => {
+  test("resolveStaleApprovals injects stale denials and queued turns without replaying tools", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.agentId = "agent-1";
     runtime.conversationId = "conv-1";
@@ -1129,30 +1144,11 @@ describe("listen-client multi-worker concurrency", () => {
       toolName: "Write",
       toolArgs: '{"file_path":"foo.ts"}',
     };
-    const approvalResult = {
-      type: "tool",
-      tool_call_id: "tool-call-1",
-      tool_return: "ok",
-      status: "success",
-    };
-
     getResumeDataMock.mockResolvedValueOnce({
       pendingApproval: approval,
       pendingApprovals: [approval],
       messageHistory: [],
     });
-    // biome-ignore lint/suspicious/noExplicitAny: mock method access
-    (classifyApprovalsMock as any).mockResolvedValueOnce({
-      autoAllowed: [
-        {
-          approval,
-          parsedArgs: { file_path: "foo.ts" },
-        },
-      ],
-      autoDenied: [],
-      needsUserInput: [],
-    } as never);
-    executeApprovalBatchMock.mockResolvedValueOnce([approvalResult] as never);
 
     const queuedMessageInput = {
       kind: "message",
@@ -1206,7 +1202,14 @@ describe("listen-client multi-worker concurrency", () => {
     expect(continuationMessages?.[0]).toEqual(
       expect.objectContaining({
         type: "approval",
-        approvals: [approvalResult],
+        approvals: [
+          {
+            type: "approval",
+            tool_call_id: "tool-call-1",
+            approve: false,
+            reason: "Auto-denied: stale approval from interrupted session",
+          },
+        ],
         otid: expect.any(String),
       }),
     );
@@ -1242,6 +1245,8 @@ describe("listen-client multi-worker concurrency", () => {
         payload.includes("<task-notification>done</task-notification>"),
       ),
     ).toBe(true);
+    expect(classifyApprovalsMock).not.toHaveBeenCalled();
+    expect(executeApprovalBatchMock).not.toHaveBeenCalled();
 
     drain.resolve({
       stopReason: "end_turn",
@@ -1373,6 +1378,7 @@ describe("listen-client multi-worker concurrency", () => {
       "tool-call-recovered-1",
       "<searching-messages>recovered skill content</searching-messages>",
     );
+    executeApprovalBatchMock.mockResolvedValueOnce([] as never);
 
     await resolveRecoveredApprovalResponse(
       runtime,
@@ -1394,6 +1400,7 @@ describe("listen-client multi-worker concurrency", () => {
     expect(firstSendMessages?.[0]).toMatchObject({
       type: "approval",
       approvals: [],
+      otid: expect.any(String),
     });
     expect(firstSendMessages?.[1]).toEqual({
       role: "user",
@@ -1407,7 +1414,7 @@ describe("listen-client multi-worker concurrency", () => {
     });
   });
 
-  test("sync replay preserves hidden auto decisions while only surfacing manual recovered approvals", async () => {
+  test("sync replay queues stale denials instead of restoring approval UI", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.setActiveRuntime(listener);
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
@@ -1460,86 +1467,43 @@ describe("listen-client multi-worker concurrency", () => {
         ],
       },
     ]);
-    // biome-ignore lint/suspicious/noExplicitAny: mock method access
-    (classifyApprovalsMock as any).mockResolvedValueOnce({
-      autoAllowed: [
-        {
-          approval: autoAllowedApproval,
-          parsedArgs: { file_path: "foo.ts" },
-          permission: { decision: "allow", reason: "auto" },
-        },
-      ],
-      autoDenied: [
-        {
-          approval: autoDeniedApproval,
-          parsedArgs: { file_path: "denied.ts", content: "nope" },
-          permission: { decision: "deny", reason: "blocked" },
-          denyReason: "blocked by policy",
-        },
-      ],
-      needsUserInput: [
-        {
-          approval: manualApproval,
-          parsedArgs: { command: "rm -rf tmp" },
-          permission: { decision: "ask", reason: "needs approval" },
-          context: {
-            recommendedRule: "Bash(rm:*)",
-            ruleDescription: "rm commands",
-            approveAlwaysText:
-              "Yes, and don't ask again for 'rm' commands in this project",
-            defaultScope: "project",
-            allowPersistence: true,
-            safetyLevel: "moderate",
-          },
-        },
-      ],
-    } as never);
-
     await __listenClientTestUtils.recoverApprovalStateForSync(runtime, {
       agent_id: "agent-1",
       conversation_id: "conv-mixed-sync",
     });
 
-    expect(runtime.recoveredApprovalState?.pendingRequestIds).toEqual(
-      new Set(["perm-tool-manual"]),
-    );
-    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+    expect(runtime.recoveredApprovalState).toBeNull();
+    expect(runtime.pendingInterruptedResults).toEqual([
       {
-        type: "approve",
-        approval: autoAllowedApproval,
+        type: "approval",
+        tool_call_id: autoAllowedApproval.toolCallId,
+        approve: false,
+        reason: "Auto-denied: stale approval from interrupted session",
       },
       {
-        type: "deny",
-        approval: autoDeniedApproval,
-        reason: "blocked by policy",
+        type: "approval",
+        tool_call_id: manualApproval.toolCallId,
+        approve: false,
+        reason: "Auto-denied: stale approval from interrupted session",
+      },
+      {
+        type: "approval",
+        tool_call_id: autoDeniedApproval.toolCallId,
+        approve: false,
+        reason: "Auto-denied: stale approval from interrupted session",
       },
     ]);
-    expect(runtime.recoveredApprovalState?.allApprovals).toEqual([
-      autoAllowedApproval,
-      manualApproval,
-      autoDeniedApproval,
-    ]);
+    expect(runtime.pendingInterruptedContext).toEqual({
+      agentId: "agent-1",
+      conversationId: "conv-mixed-sync",
+      continuationEpoch: runtime.continuationEpoch,
+    });
 
     const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
       agent_id: "agent-1",
       conversation_id: "conv-mixed-sync",
     });
-    expect(deviceStatus.pending_control_requests).toEqual([
-      {
-        request_id: "perm-tool-manual",
-        request: expect.objectContaining({
-          subtype: "can_use_tool",
-          tool_name: "Bash",
-          tool_call_id: "tool-manual",
-          permission_suggestions: [
-            {
-              id: "save-default",
-              text: "Yes, and don't ask again for 'rm' commands in this project",
-            },
-          ],
-        }),
-      },
-    ]);
+    expect(deviceStatus.pending_control_requests).toEqual([]);
   });
 
   test("recovered approval continuation executes hidden auto decisions together with manual responses", async () => {
@@ -1671,6 +1635,7 @@ describe("listen-client multi-worker concurrency", () => {
       expect.objectContaining({
         type: "approval",
         approvals: approvalResults,
+        otid: expect.any(String),
       }),
     );
   });
@@ -2075,6 +2040,13 @@ describe("listen-client multi-worker concurrency", () => {
     await turnPromise;
 
     expect(capturedModeAtClassification === "bypassPermissions").toBe(true);
+    const continuationMessages = sendMessageStreamMock.mock.calls[1]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(continuationMessages?.[0]).toMatchObject({
+      type: "approval",
+      otid: expect.any(String),
+    });
   });
 
   test("change_device_state does not prune default-state entry mid-turn", async () => {
@@ -2337,5 +2309,91 @@ describe("listen-client multi-worker concurrency", () => {
       signal: expect.any(AbortSignal),
     });
     expect(firstCall?.[2]?.signal).not.toBe(parentAbortController.signal);
+  });
+
+  test("approval continuation busy retry emits retry delta before waiting", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-approval-busy",
+      "conv-approval-busy",
+    );
+    const socket = new MockSocket();
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+    conversationMessagesStreamMock.mockRejectedValueOnce(
+      new Error("resume unavailable"),
+    );
+
+    const originalSetTimeout = globalThis.setTimeout;
+    type SetTimeoutParams = Parameters<typeof setTimeout>;
+    globalThis.setTimeout = ((
+      handler: SetTimeoutParams[0],
+      _timeout?: SetTimeoutParams[1],
+      ...args: unknown[]
+    ) => originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+    try {
+      const stream = await sendApprovalContinuationWithRetry(
+        "conv-approval-busy",
+        [
+          {
+            type: "approval",
+            approvals: [],
+            otid: "approval-otid",
+          },
+        ],
+        {
+          agentId: "agent-approval-busy",
+          streamTokens: true,
+          background: true,
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        new AbortController().signal,
+      );
+
+      expect(stream as unknown as MockStream).toEqual({
+        conversationId: "conv-approval-busy",
+        agentId: "agent-approval-busy",
+      });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(conversationMessagesStreamMock.mock.calls[0]?.[1]).toMatchObject({
+      otid: "approval-otid",
+      starting_after: 0,
+      batch_size: 1000,
+    });
+
+    const retryPayload = socket.sentPayloads
+      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+      .find(
+        (payload) =>
+          payload.type === "stream_delta" &&
+          (payload.delta as { message_type?: unknown } | undefined)
+            ?.message_type === "retry",
+      );
+
+    expect(retryPayload?.delta).toMatchObject({
+      message_type: "retry",
+      message: "Conversation is busy, waiting and retrying…",
+      reason: "error",
+      attempt: 1,
+      max_attempts: 3,
+      delay_ms: 10000,
+    });
   });
 });

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import * as path from "node:path";
 import type { SubagentConfig } from "../../agent/subagents";
+import {
+  estimateStartupContextTokens,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "../../agent/subagents/contextBudget";
 import {
   buildSubagentArgs,
   resolveSubagentLauncher,
@@ -55,6 +60,45 @@ describe("resolveSubagentLauncher", () => {
     expect(launcher).toEqual({
       command: "/opt/homebrew/bin/bun",
       args: ["/tmp/custom-runner.ts", "--output-format", "stream-json"],
+    });
+  });
+
+  test("resolves relative dev entrypoint against launcher cwd", () => {
+    const cwd =
+      process.platform === "win32"
+        ? path.win32.join("C:\\", "Users", "example", "dev", "letta-code-prod")
+        : path.posix.join("/", "Users", "example", "dev", "letta-code-prod");
+    const expectedScriptPath =
+      process.platform === "win32"
+        ? path.win32.join(cwd, "src", "index.ts")
+        : path.posix.join(cwd, "src", "index.ts");
+    const execPath =
+      process.platform === "win32"
+        ? "C:\\bun\\bun.exe"
+        : "/opt/homebrew/bin/bun";
+
+    const launcher = resolveSubagentLauncher(
+      ["--output-format", "stream-json"],
+      {
+        env: {} as NodeJS.ProcessEnv,
+        argv: ["bun", "src/index.ts"],
+        execPath,
+        platform: process.platform,
+        cwd,
+      },
+    );
+
+    expect(launcher).toEqual({
+      command: execPath,
+      args: [
+        "--loader:.md=text",
+        "--loader:.mdx=text",
+        "--loader:.txt=text",
+        "run",
+        expectedScriptPath,
+        "--output-format",
+        "stream-json",
+      ],
     });
   });
 
@@ -192,6 +236,42 @@ describe("buildSubagentArgs", () => {
 
     expect(args).toContain("--permission-mode");
     expect(args).toContain("memory");
+  });
+
+  test("caps reflection system prompt plus initial message to startup budget", () => {
+    const systemPrompt = "system ".repeat(1_000);
+    const memoryPreview = `<parent_memory>\n<memory_filesystem>\n/memory/\n└── system/\n</memory_filesystem>\n${"memory ".repeat(40_000)}\n</parent_memory>`;
+    const userPrompt = `Review transcript at /tmp/payload.json\n\n${memoryPreview}`;
+
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection", systemPrompt },
+      null,
+      userPrompt,
+    );
+    const promptArg = args[args.indexOf("-p") + 1] ?? "";
+
+    expect(
+      estimateStartupContextTokens(`${systemPrompt}\n${promptArg}`),
+    ).toBeLessThanOrEqual(REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT);
+    expect(promptArg).toContain("Review transcript at /tmp/payload.json");
+    expect(promptArg).toContain("<parent_memory>");
+    expect(promptArg).toContain("<memory_filesystem>");
+    expect(promptArg).toContain("Reflection startup context truncated");
+    expect(promptArg.length).toBeLessThan(userPrompt.length);
+  });
+
+  test("does not cap non-reflection initial messages", () => {
+    const longPrompt = "prompt ".repeat(40_000);
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      longPrompt,
+    );
+    const promptArg = args[args.indexOf("-p") + 1] ?? "";
+
+    expect(promptArg).toBe(longPrompt);
   });
 });
 

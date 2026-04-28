@@ -288,4 +288,52 @@ describe("accumulator usage statistics", () => {
       "Final answer",
     );
   });
+
+  test("stores the actual assistant message id even when the line id is synthetic", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "shared-stream-id",
+      reasoning: "Thinking... ",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "shared-stream-id",
+      content: [{ type: "text", text: "Final answer" }],
+    } as unknown as LettaStreamingResponse);
+
+    const assistant = buffers.byId.get("assistant:shared-stream-id");
+    expect(assistant?.kind).toBe("assistant");
+    expect(
+      assistant && "messageId" in assistant ? assistant.messageId : undefined,
+    ).toBe("shared-stream-id");
+  });
+
+  test("reconciles optimistic user lines to the backend message id via otid", () => {
+    const buffers = createBuffers();
+    buffers.byId.set("user-local-1", {
+      kind: "user",
+      id: "user-local-1",
+      text: "hello",
+      otid: "user-otid-1",
+    });
+    buffers.userLineIdByOtid.set("user-otid-1", "user-local-1");
+    buffers.order.push("user-local-1");
+
+    onChunk(buffers, {
+      message_type: "user_message",
+      id: "message-user-1",
+      otid: "user-otid-1",
+      content: "hello",
+    } as unknown as LettaStreamingResponse);
+
+    const userLine = buffers.byId.get("user-local-1");
+    expect(userLine?.kind).toBe("user");
+    expect(
+      userLine && "messageId" in userLine ? userLine.messageId : undefined,
+    ).toBe("message-user-1");
+    expect(buffers.byId.get("message-user-1")).toBeUndefined();
+  });
 });

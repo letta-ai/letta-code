@@ -51,6 +51,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     `This message originated from an external ${escapedChannel} channel.`,
     `If you want to ensure the user on ${escapedChannel} will see your reply, you must call the MessageChannel tool to send a message back on the same channel.`,
     `Use action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}" when calling MessageChannel, and put your reply text in message.`,
+    "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
     "Only pass replyTo if you intentionally want the platform's quote/reply UI.",
     `Current local time on this device: ${localTime}`,
     SYSTEM_REMINDER_CLOSE,
@@ -73,11 +74,18 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       'On Telegram, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media.',
     );
   }
+  if (msg.channel === "discord") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.',
+    );
+  }
   if (msg.attachments?.length) {
     lines.splice(
       lines.length - 2,
       0,
-      "If this notification includes attachment local_path values, you can inspect those files with the Read tool.",
+      "If this notification includes attachment local_path values, you may be able to inspect those files using local file or image tools available in your current toolset (for example Read or ViewImage), using the local_path.",
     );
   }
 
@@ -101,6 +109,11 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
   }
   if (typeof attachment.sizeBytes === "number") {
     attrs.push(`size_bytes="${attachment.sizeBytes}"`);
+  }
+
+  if (attachment.transcription) {
+    const escapedTranscription = escapeXmlText(attachment.transcription);
+    return `<attachment ${attrs.join(" ")}>\n  <attempted_transcription>${escapedTranscription}</attempted_transcription>\n</attachment>`;
   }
 
   return `<attachment ${attrs.join(" ")} />`;

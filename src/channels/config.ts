@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   ChannelConfig,
+  DiscordChannelConfig,
   DmPolicy,
   SlackChannelConfig,
   TelegramChannelConfig,
@@ -136,6 +137,7 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
       token: String(parsed.token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      transcribeVoice: parsed.transcribe_voice === true,
     };
   },
 };
@@ -154,11 +156,28 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
   },
 };
 
+const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
+  parse(parsed) {
+    const rawAllowedChannels = parsed.allowed_channels;
+    return {
+      channel: "discord",
+      enabled: parsed.enabled !== false,
+      token: String(parsed.token ?? ""),
+      dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
+      allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      allowedChannels: Array.isArray(rawAllowedChannels)
+        ? (rawAllowedChannels as string[])
+        : undefined,
+    };
+  },
+};
+
 const CHANNEL_CONFIG_CODECS: Partial<
   Record<string, ChannelConfigCodec<ChannelConfig>>
 > = {
   telegram: telegramConfigCodec as ChannelConfigCodec<ChannelConfig>,
   slack: slackConfigCodec as ChannelConfigCodec<ChannelConfig>,
+  discord: discordConfigCodec as ChannelConfigCodec<ChannelConfig>,
 };
 
 function getChannelConfigCodec(

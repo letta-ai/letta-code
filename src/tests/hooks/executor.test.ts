@@ -162,10 +162,10 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       expect(result.stdout).toBe("PreToolUse");
     });
 
-    test("receives LETTA_AGENT_ID environment variable when agent_id is provided", async () => {
+    test("receives scoped agent aliases and cwd environment variables when agent_id is provided", async () => {
       const hook: HookCommand = {
         type: "command",
-        command: "echo $LETTA_AGENT_ID",
+        command: 'echo "$LETTA_AGENT_ID:$AGENT_ID:$USER_CWD"',
       };
 
       const input: PreToolUseHookInput = {
@@ -179,7 +179,9 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       const result = await executeHookCommand(hook, input, tempDir);
 
       expect(result.exitCode).toBe(HookExitCode.ALLOW);
-      expect(result.stdout).toBe("agent-test-12345");
+      expect(result.stdout).toBe(
+        `agent-test-12345:agent-test-12345:${tempDir}`,
+      );
     });
 
     test("LETTA_AGENT_ID is not set when agent_id is not provided", async () => {

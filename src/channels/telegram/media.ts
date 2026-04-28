@@ -83,6 +83,8 @@ export type TelegramAttachmentCandidate = {
   name?: string;
   mimeType?: string;
   sizeBytes?: number;
+  /** True when the attachment originated from a Telegram voice memo. */
+  isVoice?: boolean;
 };
 
 export type TelegramUploadMethod =
@@ -261,6 +263,7 @@ export function collectTelegramAttachmentCandidates(
       name: `voice-${message.voice.file_unique_id ?? message.voice.file_id}.ogg`,
       mimeType: message.voice.mime_type,
       sizeBytes: coerceSizeBytes(message.voice.file_size),
+      isVoice: true,
     });
   }
 
@@ -497,6 +500,7 @@ async function downloadTelegramAttachment(params: {
   token: string;
   bot: TelegramFileLookup;
   candidate: TelegramAttachmentCandidate;
+  transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment | null> {
   const { candidate } = params;
 
@@ -560,7 +564,7 @@ async function downloadTelegramAttachment(params: {
     buffer,
   });
 
-  return {
+  const attachment: ChannelMessageAttachment = {
     id: candidate.fileId,
     name: fileName,
     mimeType,
@@ -571,6 +575,21 @@ async function downloadTelegramAttachment(params: {
       ? { imageDataBase64: buffer.toString("base64") }
       : {}),
   };
+
+  // Auto-transcribe voice memos when enabled and an API key is available.
+  if (candidate.isVoice && params.transcribeVoice) {
+    const { isTranscriptionConfigured, transcribeAudioFile } = await import(
+      "../transcription/index"
+    );
+    if (isTranscriptionConfigured()) {
+      const result = await transcribeAudioFile(localPath);
+      if (result.success && result.text) {
+        attachment.transcription = result.text;
+      }
+    }
+  }
+
+  return attachment;
 }
 
 export async function resolveTelegramInboundAttachments(params: {
@@ -578,6 +597,7 @@ export async function resolveTelegramInboundAttachments(params: {
   token: string;
   bot: TelegramFileLookup;
   messages: TelegramLikeMessage[];
+  transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment[]> {
   const deduped = new Map<string, TelegramAttachmentCandidate>();
 
@@ -598,6 +618,7 @@ export async function resolveTelegramInboundAttachments(params: {
         token: params.token,
         bot: params.bot,
         candidate,
+        transcribeVoice: params.transcribeVoice,
       }).catch(() => null),
     ),
   );

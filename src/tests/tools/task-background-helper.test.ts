@@ -13,6 +13,7 @@ import {
 } from "../../tools/impl/process_manager";
 import {
   spawnBackgroundSubagentTask,
+  waitForBackgroundSubagentAgentId,
   waitForBackgroundSubagentLink,
 } from "../../tools/impl/Task";
 
@@ -499,5 +500,34 @@ describe("waitForBackgroundSubagentLink", () => {
     const elapsed = Date.now() - start;
 
     expect(elapsed).toBeGreaterThanOrEqual(50);
+  });
+
+  test("returns the Letta agent id after the subagent publishes it", async () => {
+    registerSubagent("subagent-link-3", "reflection", "Reflect", "tc-3", true);
+
+    setTimeout(() => {
+      updateSubagent("subagent-link-3", {
+        agentId: "agent-123",
+        agentURL: "https://app.letta.com/chat/agent-123",
+      });
+    }, 20);
+
+    const agentId = await waitForBackgroundSubagentAgentId(
+      "subagent-link-3",
+      300,
+    );
+
+    expect(agentId).toBe("agent-123");
+  });
+
+  test("returns null when the Letta agent id is unavailable", async () => {
+    registerSubagent("subagent-link-4", "reflection", "Reflect", "tc-4", true);
+
+    const agentId = await waitForBackgroundSubagentAgentId(
+      "subagent-link-4",
+      70,
+    );
+
+    expect(agentId).toBeNull();
   });
 });

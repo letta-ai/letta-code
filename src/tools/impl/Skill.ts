@@ -1,13 +1,15 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getCurrentAgentId, getSkillsDirectory } from "../../agent/context";
+import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
 import {
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
   getBundledSkills,
   SKILLS_DIR,
 } from "../../agent/skills";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { queueSkillContent } from "./skillContentRegistry";
 import { validateRequiredParams } from "./validation.js";
 
@@ -27,21 +29,22 @@ interface SkillResult {
 function getMemorySkillsDirs(agentId?: string): string[] {
   const dirs = new Set<string>();
 
-  const memoryDir = process.env.MEMORY_DIR || process.env.LETTA_MEMORY_DIR;
-  if (memoryDir && memoryDir.trim().length > 0) {
-    dirs.add(join(memoryDir.trim(), "skills"));
-  }
-
-  if (agentId) {
-    dirs.add(
-      join(
-        process.env.HOME || process.env.USERPROFILE || "~",
-        ".letta/agents",
-        agentId,
-        "memory",
-        "skills",
-      ),
-    );
+  const scopedMemoryDir = resolveScopedMemoryDir({ agentId });
+  if (
+    scopedMemoryDir &&
+    scopedMemoryDir.trim().length > 0 &&
+    existsSync(scopedMemoryDir)
+  ) {
+    dirs.add(join(scopedMemoryDir.trim(), "skills"));
+  } else {
+    const fallbackMemoryDir = (
+      process.env.LETTA_MEMORY_DIR ||
+      process.env.MEMORY_DIR ||
+      ""
+    ).trim();
+    if (fallbackMemoryDir) {
+      dirs.add(join(fallbackMemoryDir, "skills"));
+    }
   }
 
   return Array.from(dirs);
@@ -156,9 +159,7 @@ async function getResolvedSkillsDir(): Promise<string> {
   }
 
   // Fall back to the execution working directory when available.
-  // executeTool() temporarily sets USER_CWD for the duration of the tool call,
-  // which keeps listener/desktop project skill lookup scoped correctly.
-  return join(process.env.USER_CWD || process.cwd(), SKILLS_DIR);
+  return join(getCurrentWorkingDirectory(), SKILLS_DIR);
 }
 
 function getResolvedAgentId(args: SkillArgs): string | undefined {

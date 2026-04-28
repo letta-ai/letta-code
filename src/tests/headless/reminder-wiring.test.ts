@@ -10,9 +10,7 @@ describe("headless shared reminder wiring", () => {
     const source = readFileSync(headlessPath, "utf-8");
 
     expect(source).toContain('isSubagent ? "subagent" : "headless-one-shot"');
-    expect(source).toContain(
-      "sessionContextReminderEnabled: systemInfoReminderEnabled",
-    );
+    expect(source).toContain("systemInfoReminderEnabled,");
   });
 
   test("bidirectional mode builds shared reminders with plan-mode resolver", () => {
@@ -75,7 +73,9 @@ describe("headless shared reminder wiring", () => {
     );
     const source = readFileSync(headlessPath, "utf-8");
 
-    expect(source).toContain("const approvalStream = await sendMessageStream(");
+    expect(source).toContain(
+      "const approvalStream = await sendScopedApprovalMessages(",
+    );
     expect(source).toContain("await drainStreamWithResume(");
     expect(source).not.toContain("for await (const _ of approvalStream)");
   });

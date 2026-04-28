@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandHookConfig, HookCommand } from "../hooks/types";
+import { runWithRuntimeContext } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 
 // Type-safe helper to extract command from a hook (tests only use command hooks)
@@ -16,6 +17,7 @@ function asCommand(
 }
 
 import {
+  __setSecretGetOverrideForTests,
   deleteSecureTokens,
   isKeychainAvailable,
   setServiceName,
@@ -264,6 +266,44 @@ describe("Settings Manager - Global Settings", () => {
       expect(typeof settingsWithTokens.tokenExpiresAt).toBe("number");
     },
   );
+
+  test("runtime-scoped lookups reuse cached secure tokens without re-reading secrets", async () => {
+    const originalIsKeychainAvailable =
+      settingsManager.isKeychainAvailable.bind(settingsManager);
+
+    try {
+      settingsManager.isKeychainAvailable = async () => true;
+      __setSecretGetOverrideForTests(async ({ name }) => {
+        if (name === "letta-api-key") {
+          return "sk-runtime-cache";
+        }
+        if (name === "letta-refresh-token") {
+          return "rt-runtime-cache";
+        }
+        return null;
+      });
+
+      const initialSettings =
+        await settingsManager.getSettingsWithSecureTokens();
+      expect(initialSettings.env?.LETTA_API_KEY).toBe("sk-runtime-cache");
+      expect(initialSettings.refreshToken).toBe("rt-runtime-cache");
+
+      __setSecretGetOverrideForTests(async () => {
+        throw new Error("runtime-scoped lookup should reuse cached tokens");
+      });
+
+      const runtimeSettings = await runWithRuntimeContext(
+        { agentId: "agent-runtime-test" },
+        () => settingsManager.getSettingsWithSecureTokens(),
+      );
+
+      expect(runtimeSettings.env?.LETTA_API_KEY).toBe("sk-runtime-cache");
+      expect(runtimeSettings.refreshToken).toBe("rt-runtime-cache");
+    } finally {
+      settingsManager.isKeychainAvailable = originalIsKeychainAvailable;
+      __setSecretGetOverrideForTests(null);
+    }
+  });
 
   test("LETTA_BASE_URL should not be cached in settings", () => {
     // This test verifies that LETTA_BASE_URL is NOT persisted to settings
@@ -1103,6 +1143,151 @@ describe("Settings Manager - Agents Array Migration", () => {
 
     settingsManager.setMemfsEnabled("agent-test", false);
     expect(settingsManager.isMemfsEnabled("agent-test")).toBe(false);
+  });
+
+  test("isMemfsEnabled uses LETTA_MEMFS_BASE_URL before LETTA_BASE_URL", async () => {
+    await settingsManager.initialize();
+
+    settingsManager.updateSettings({
+      agents: [
+        {
+          agentId: "agent-memfs-url",
+          baseUrl: "selfhost.example.com",
+          memfs: true,
+        },
+      ],
+    });
+
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    const originalMemfsBaseUrl = process.env.LETTA_MEMFS_BASE_URL;
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    process.env.LETTA_MEMFS_BASE_URL = "https://selfhost.example.com";
+
+    try {
+      expect(settingsManager.isMemfsEnabled("agent-memfs-url")).toBe(true);
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+      if (originalMemfsBaseUrl === undefined) {
+        delete process.env.LETTA_MEMFS_BASE_URL;
+      } else {
+        process.env.LETTA_MEMFS_BASE_URL = originalMemfsBaseUrl;
+      }
+    }
+  });
+
+  test("isMemfsEnabled ignores LETTA_BASE_URL when LETTA_MEMFS_BASE_URL is unset", async () => {
+    await settingsManager.initialize();
+
+    settingsManager.updateSettings({
+      agents: [
+        { agentId: "agent-cloud-memfs", memfs: true },
+        {
+          agentId: "agent-local-memfs",
+          baseUrl: "localhost:54085",
+          memfs: true,
+        },
+      ],
+    });
+
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    const originalMemfsBaseUrl = process.env.LETTA_MEMFS_BASE_URL;
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    delete process.env.LETTA_MEMFS_BASE_URL;
+
+    try {
+      expect(settingsManager.isMemfsEnabled("agent-cloud-memfs")).toBe(true);
+      expect(settingsManager.isMemfsEnabled("agent-local-memfs")).toBe(false);
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+      if (originalMemfsBaseUrl === undefined) {
+        delete process.env.LETTA_MEMFS_BASE_URL;
+      } else {
+        process.env.LETTA_MEMFS_BASE_URL = originalMemfsBaseUrl;
+      }
+    }
+  });
+
+  test("setMemfsEnabled stores agent settings under LETTA_MEMFS_BASE_URL server key", async () => {
+    await settingsManager.initialize();
+
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    const originalMemfsBaseUrl = process.env.LETTA_MEMFS_BASE_URL;
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    process.env.LETTA_MEMFS_BASE_URL = "https://selfhost.example.com";
+
+    try {
+      settingsManager.setMemfsEnabled("agent-memfs-write", true);
+
+      const settings = settingsManager.getSettings();
+      expect(settings.agents).toContainEqual({
+        agentId: "agent-memfs-write",
+        baseUrl: "selfhost.example.com",
+        memfs: true,
+      });
+      expect(
+        settings.agents?.some(
+          (agent) =>
+            agent.agentId === "agent-memfs-write" &&
+            agent.baseUrl === "localhost:54085",
+        ),
+      ).toBe(false);
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+      if (originalMemfsBaseUrl === undefined) {
+        delete process.env.LETTA_MEMFS_BASE_URL;
+      } else {
+        process.env.LETTA_MEMFS_BASE_URL = originalMemfsBaseUrl;
+      }
+    }
+  });
+
+  test("setMemfsEnabled defaults to api.letta.com key when LETTA_MEMFS_BASE_URL is unset", async () => {
+    await settingsManager.initialize();
+
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    const originalMemfsBaseUrl = process.env.LETTA_MEMFS_BASE_URL;
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    delete process.env.LETTA_MEMFS_BASE_URL;
+
+    try {
+      settingsManager.setMemfsEnabled("agent-memfs-default-cloud", true);
+
+      const settings = settingsManager.getSettings();
+      expect(settings.agents).toContainEqual({
+        agentId: "agent-memfs-default-cloud",
+        memfs: true,
+      });
+      expect(
+        settings.agents?.some(
+          (agent) =>
+            agent.agentId === "agent-memfs-default-cloud" &&
+            agent.baseUrl === "localhost:54085",
+        ),
+      ).toBe(false);
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+      if (originalMemfsBaseUrl === undefined) {
+        delete process.env.LETTA_MEMFS_BASE_URL;
+      } else {
+        process.env.LETTA_MEMFS_BASE_URL = originalMemfsBaseUrl;
+      }
+    }
   });
 
   test("setMemfsEnabled persists to disk", async () => {

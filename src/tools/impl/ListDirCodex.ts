@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { getDirectoryLimits } from "../../utils/directoryLimits.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -53,7 +54,7 @@ export async function list_dir(
     limit = DEFAULT_LIMIT,
     depth = DEFAULT_DEPTH,
   } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
+  const userCwd = getCurrentWorkingDirectory();
   const resolvedPath = path.isAbsolute(dir_path)
     ? dir_path
     : path.resolve(userCwd, dir_path);

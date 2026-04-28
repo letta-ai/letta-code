@@ -71,6 +71,16 @@ export type SystemPromptConfig = string | SystemPromptPresetConfig;
 export interface MessageEnvelope {
   session_id: string;
   uuid: string;
+  /**
+   * ISO 8601 UTC timestamp (ms precision) stamped at the moment the JSON
+   * line is serialized to stdout. CLI-emit time, not server-creation time.
+   *
+   * Always present on the wire; typed optional because `writeWireMessage`
+   * is the single source of truth for stamping — don't emit via raw
+   * `console.log`. Use `event_seq` for ordering; `timestamp` is
+   * non-monotonic (system clock can shift).
+   */
+  timestamp?: string;
   /** Monotonic per-session event sequence. Optional for backward compatibility. */
   event_seq?: number;
   /** Agent that triggered this event. Used with default conversation scoping. */
@@ -159,12 +169,8 @@ export type ContentMessage =
  * Generic message wrapper for spreading LettaStreamingResponse chunks.
  * Used when the exact message type is determined at runtime.
  */
-export type MessageWire = {
+export type MessageWire = MessageEnvelope & {
   type: "message";
-  session_id: string;
-  uuid: string;
-  agent_id?: string;
-  conversation_id?: string;
 } & LettaStreamingResponse;
 
 // ═══════════════════════════════════════════════════════════════
@@ -516,6 +522,12 @@ export interface ControlRequest {
   type: "control_request";
   request_id: string;
   request: ControlRequestBody;
+  /**
+   * ISO 8601 UTC timestamp (ms precision) when the CLI emitted this request
+   * onto the stream-json wire. Optional because SDK-originated inbound
+   * control requests are not stamped by the CLI.
+   */
+  timestamp?: string;
   /** Agent that triggered this control request. */
   agent_id?: string;
   /** Conversation that triggered this control request. */
@@ -863,6 +875,7 @@ export interface TranscriptSupplementMessage extends MessageEnvelope {
 export type WireMessage =
   | SystemMessage
   | ContentMessage
+  | MessageWire
   | StreamEvent
   | ApprovalRequestedMessage
   | ApprovalReceivedMessage

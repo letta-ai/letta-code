@@ -52,14 +52,21 @@ import type {
   ChannelRoute,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
+  DiscordChannelAccount,
   InboundChannelMessage,
   SlackChannelAccount,
   SlackDefaultPermissionMode,
 } from "./types";
 import { formatChannelNotification } from "./xml";
 
+function channelDisplayName(channelId: string): string {
+  if (channelId === "slack") return "Slack";
+  if (channelId === "discord") return "Discord";
+  return "Telegram";
+}
+
 function buildPairingInstructions(channelId: string, code: string): string {
-  const displayName = channelId === "slack" ? "Slack" : "Telegram";
+  const displayName = channelDisplayName(channelId);
   return (
     `To connect this chat to a Letta Code agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
     `Pairing code: ${code}\n\n` +
@@ -71,7 +78,7 @@ function buildUnboundRouteInstructions(
   channelId: string,
   chatId: string,
 ): string {
-  const displayName = channelId === "slack" ? "Slack" : "Telegram";
+  const displayName = channelDisplayName(channelId);
   return (
     `This chat isn't bound to a Letta Code agent yet.\n\n` +
     `Open Channels > ${displayName} in Letta Code and connect this chat there.\n\n` +
@@ -119,6 +126,27 @@ export function buildSlackConversationSummary(
   }
 
   return `[Slack] Thread${channelLabel || ` ${msg.chatId}`}`;
+}
+
+function buildDiscordConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Discord] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const preview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (preview) {
+    return `[Discord] Thread${channelLabel}: ${preview}`;
+  }
+
+  return `[Discord] Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
 function buildChannelTurnSource(
@@ -754,9 +782,39 @@ export class ChannelRegistry {
       return;
     }
 
+    // Discord guild messages and account-bound DMs use auto-routing (like
+    // Slack). DMs configured with explicit pairing fall through to the
+    // standard pairing flow below.
+    if (
+      msg.channel === "discord" &&
+      config.channel === "discord" &&
+      (msg.chatType === "channel" || config.dmPolicy !== "pairing")
+    ) {
+      const discordResult = await this.ensureDiscordRoute(adapter, msg, config);
+      if (!discordResult) {
+        return;
+      }
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: discordResult.isFirstRouteTurn,
+          })
+        : msg;
+      this.deliverOrBuffer({
+        route: discordResult.route,
+        content: formatChannelNotification(preparedMessage),
+        turnSources: [
+          buildChannelTurnSource(discordResult.route, preparedMessage),
+        ],
+      });
+      return;
+    }
+
     // 1. Check pairing/allowlist policy
     if (config.dmPolicy === "allowlist") {
       if (!config.allowedUsers.includes(msg.senderId)) {
+        if (msg.reaction) {
+          return;
+        }
         await adapter.sendDirectReply(
           msg.chatId,
           "You are not on the allowed users list for this bot.",
@@ -769,6 +827,9 @@ export class ChannelRegistry {
         loadPairingStore(msg.channel);
       }
       if (!isUserApproved(msg.channel, msg.senderId, accountId)) {
+        if (msg.reaction) {
+          return;
+        }
         // Generate pairing code
         const code = createPairingCode(
           msg.channel,
@@ -963,6 +1024,98 @@ export class ChannelRegistry {
 
     return {
       route: await this.createSlackRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
+  private async createDiscordRoute(
+    config: DiscordChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.agentId) {
+      throw new Error("Discord bot is missing an agent binding.");
+    }
+
+    const conversationId = await this.createConversationForAgent(
+      config.agentId,
+      buildDiscordConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: msg.threadId ?? null,
+      agentId: config.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  private async ensureDiscordRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: DiscordChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.agentId) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "This Discord bot isn't connected to a Letta agent yet.\n\n" +
+          "Open Channels > Discord in Letta Code, choose which agent this bot should represent, and try again.",
+      );
+      return null;
+    }
+
+    if (
+      msg.chatType === "direct" &&
+      config.dmPolicy === "allowlist" &&
+      !config.allowedUsers.includes(msg.senderId)
+    ) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "You are not on the allowed users list for this Discord bot.",
+      );
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const routeThreadId = msg.threadId ?? null;
+    let route = getRouteFromStore(
+      msg.channel,
+      msg.chatId,
+      accountId,
+      routeThreadId,
+    );
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        routeThreadId,
+      );
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    // In guild channels, only create routes from explicit mentions.
+    // Existing routed threads continue above via the route lookup path.
+    if (msg.chatType === "channel" && !msg.isMention) {
+      return null;
+    }
+
+    return {
+      route: await this.createDiscordRoute(config, msg),
       isFirstRouteTurn: true,
     };
   }
