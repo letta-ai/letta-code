@@ -4,7 +4,6 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
@@ -104,6 +103,7 @@ import {
   sendMessageStreamWithRetry,
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import type {
   ConversationRuntime,
@@ -165,7 +165,7 @@ function escapeTaskNotificationSummary(summary: string): string {
 
 function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
-  socket: WebSocket;
+  socket: ListenerTransport;
   agentId: string;
   conversationId: string;
   workingDirectory: string;
@@ -311,7 +311,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
 }
 
 function finalizeInterruptedTurn(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     runId?: string | null;
@@ -347,7 +347,7 @@ function finalizeInterruptedTurn(
 
 export async function handleIncomingMessage(
   msg: IncomingMessage,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",

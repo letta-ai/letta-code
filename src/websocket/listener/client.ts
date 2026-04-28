@@ -282,6 +282,12 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import {
+  getListenerTransportKind,
+  isListenerTransportOpen,
+  type ListenerTransport,
+  LocalListenerTransport,
+} from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
   ChangeCwdMessage,
@@ -352,6 +358,30 @@ function safeSocketSend(
     const serialized =
       typeof payload === "string" ? payload : JSON.stringify(payload);
     socket.send(serialized);
+    return true;
+  } catch (error) {
+    trackListenerError(errorType, error, context);
+    if (isDebugEnabled()) {
+      console.error(`[Listen] ${context} send failed:`, error);
+    }
+    return false;
+  }
+}
+
+function safeTransportSend(
+  transport: ListenerTransport,
+  payload: unknown,
+  errorType: string,
+  context: string,
+): boolean {
+  if (!isListenerTransportOpen(transport)) {
+    return false;
+  }
+
+  try {
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    transport.send(serialized);
     return true;
   } catch (error) {
     trackListenerError(errorType, error, context);
@@ -3284,7 +3314,7 @@ async function handleReflectionSettingsCommand(
  */
 async function wireChannelIngress(
   listener: ListenerRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): Promise<void> {
@@ -3346,18 +3376,22 @@ async function wireChannelIngress(
 
 function handleChannelRegistryEvent(
   event: ChannelRegistryEvent,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ListenerRuntime,
 ): void {
   if (event.type === "pairings_updated") {
-    emitChannelPairingsUpdated(socket, event.channelId as ChannelId);
-    emitChannelsUpdated(socket, event.channelId as ChannelId);
+    if (socket instanceof WebSocket) {
+      emitChannelPairingsUpdated(socket, event.channelId as ChannelId);
+      emitChannelsUpdated(socket, event.channelId as ChannelId);
+    }
     return;
   }
 
   if (event.type === "targets_updated") {
-    emitChannelTargetsUpdated(socket, event.channelId as ChannelId);
-    emitChannelsUpdated(socket, event.channelId as ChannelId);
+    if (socket instanceof WebSocket) {
+      emitChannelTargetsUpdated(socket, event.channelId as ChannelId);
+      emitChannelsUpdated(socket, event.channelId as ChannelId);
+    }
     return;
   }
 
@@ -3541,7 +3575,7 @@ async function handleApprovalResponseInput(
       conversation_id?: string | null;
     };
     response: ApprovalResponseBody;
-    socket: WebSocket;
+    socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
       connectionId?: string;
@@ -3564,7 +3598,7 @@ async function handleApprovalResponseInput(
     ) => ConversationRuntime;
     resolveRecoveredApprovalResponse: (
       runtime: ConversationRuntime,
-      socket: WebSocket,
+      socket: ListenerTransport,
       response: ApprovalResponseBody,
       processTurn: typeof handleIncomingMessage,
       opts?: {
@@ -3574,7 +3608,7 @@ async function handleApprovalResponseInput(
     ) => Promise<boolean>;
     scheduleQueuePump: (
       runtime: ConversationRuntime,
-      socket: WebSocket,
+      socket: ListenerTransport,
       opts: StartListenerOptions,
       processQueuedTurn: ProcessQueuedTurn,
     ) => void;
@@ -4045,6 +4079,7 @@ function createRuntime(): ListenerRuntime {
   const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
     socket: null,
+    transport: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
     intentionallyClosed: false,
@@ -4101,11 +4136,13 @@ function stopRuntime(
   stopAllWorktreeWatchers(runtime);
 
   if (!runtime.socket) {
+    runtime.transport = null;
     return;
   }
 
   const socket = runtime.socket;
   runtime.socket = null;
+  runtime.transport = null;
 
   // Stale runtimes being replaced should not emit callbacks/retries.
   if (suppressCallbacks) {
@@ -4118,6 +4155,180 @@ function stopRuntime(
   ) {
     socket.close();
   }
+}
+
+async function startConnectedListenerRuntime(
+  runtime: ListenerRuntime,
+  transport: ListenerTransport,
+  opts: Pick<
+    StartListenerOptions,
+    "connectionId" | "onConnected" | "onStatusChange" | "onWsEvent"
+  >,
+  processQueuedTurn: ProcessQueuedTurn,
+  options: {
+    startHeartbeat?: boolean;
+    startCronScheduler?: boolean;
+  } = {},
+): Promise<void> {
+  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+    return;
+  }
+
+  const shouldStartHeartbeat = options.startHeartbeat !== false;
+  const shouldStartCronScheduler = options.startCronScheduler !== false;
+
+  runtime.transport = transport;
+  safeEmitWsEvent("recv", "lifecycle", {
+    type:
+      getListenerTransportKind(transport) === "websocket"
+        ? "_ws_open"
+        : "_local_open",
+  });
+  runtime.hasSuccessfulConnection = true;
+  runtime.everConnected = true;
+  opts.onConnected(opts.connectionId);
+
+  if (runtime.conversationRuntimes.size === 0) {
+    // Don't emit device_status before the lookup store exists.
+    // Without a conversation runtime, the scope resolves to
+    // agent:__unknown__ which misses persisted CWD and permission
+    // mode entries. The web's sync command will create a scoped
+    // runtime and emit a properly-scoped device_status at that point.
+    emitLoopStatusUpdate(transport, runtime);
+  } else {
+    for (const reminderState of runtime.reminderStateByConversation.values()) {
+      // Reset bootstrap reminder state on (re)connect so session-context
+      // and agent-info fire on the first turn of the new connection.
+      // This is intentionally in the open handler, NOT the sync handler,
+      // because the Desktop UMI controller sends sync every ~5 s and
+      // resetting there would re-arm reminders on every periodic sync.
+      resetSharedReminderState(reminderState);
+    }
+    for (const contextTracker of runtime.contextTrackerByConversation.values()) {
+      resetContextHistory(contextTracker);
+    }
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      const scope = {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      };
+      emitDeviceStatusUpdate(transport, conversationRuntime, scope);
+      emitLoopStatusUpdate(transport, conversationRuntime, scope);
+    }
+  }
+
+  // Subscribe to subagent state changes and emit snapshots over the listener
+  // transport. Local channel mode intentionally discards these frames.
+  runtime._unsubscribeSubagentState?.();
+  runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
+    if (runtime.conversationRuntimes.size === 0) {
+      emitSubagentStateIfOpen(runtime);
+      return;
+    }
+
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      emitSubagentStateIfOpen(runtime, {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      });
+    }
+  });
+
+  // Subscribe to subagent stream events and forward as tagged stream_delta.
+  runtime._unsubscribeSubagentStreamEvents?.();
+  runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
+    (subagentId, event) => {
+      if (!isListenerTransportOpen(transport)) return;
+
+      const subagent = getSubagents().find((entry) => entry.id === subagentId);
+      if (subagent?.silent === true) {
+        // Reflection/background "silent" subagents should not stream their
+        // internal transcript into the parent conversation.
+        return;
+      }
+
+      // The event has { type: "message", message_type, ...LettaStreamingResponse }
+      // plus extra headless fields (session_id, uuid) that pass through harmlessly.
+      emitStreamDelta(
+        transport,
+        runtime,
+        event as unknown as import("../../types/protocol_v2").StreamDelta,
+        subagent?.parentAgentId
+          ? {
+              agent_id: subagent.parentAgentId,
+              conversation_id: subagent.parentConversationId ?? "default",
+            }
+          : undefined,
+        subagentId,
+      );
+    },
+  );
+
+  // Register the message queue bridge to route task notifications into the
+  // correct per-conversation QueueRuntime. This enables background Task
+  // completions to reach the agent in listen mode.
+  setMessageQueueAdder((queuedMessage) => {
+    const targetRuntime =
+      queuedMessage.agentId && queuedMessage.conversationId
+        ? getOrCreateScopedRuntime(
+            runtime,
+            queuedMessage.agentId,
+            queuedMessage.conversationId,
+          )
+        : findFallbackRuntime(runtime);
+
+    if (!targetRuntime?.queueRuntime) {
+      return; // No target — notification dropped
+    }
+
+    targetRuntime.queueRuntime.enqueue({
+      kind: "task_notification",
+      source: "task_notification",
+      text: queuedMessage.text,
+      agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
+      conversationId:
+        queuedMessage.conversationId ?? targetRuntime.conversationId,
+    } as Omit<
+      import("../../queue/queueRuntime").TaskNotificationQueueItem,
+      "id" | "enqueuedAt"
+    >);
+
+    // Kick the queue pump so the notification can trigger a standalone turn
+    // (see consumeQueuedTurn notification-aware path in queue.ts).
+    scheduleQueuePump(
+      targetRuntime,
+      transport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+  });
+
+  if (shouldStartHeartbeat) {
+    runtime.heartbeatInterval = setInterval(() => {
+      safeTransportSend(
+        transport,
+        { type: "ping" },
+        "listener_ping_send_failed",
+        "listener_heartbeat",
+      );
+    }, 30000);
+  }
+
+  if (shouldStartCronScheduler) {
+    startCronScheduler(
+      transport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+  }
+
+  // Wire channel ingress (if channels are active).
+  await wireChannelIngress(
+    runtime,
+    transport,
+    opts as StartListenerOptions,
+    processQueuedTurn,
+  );
 }
 
 /**
@@ -4141,6 +4352,74 @@ export async function startListenerClient(
   telemetry.init();
 
   await connectWithRetry(runtime, opts);
+}
+
+export interface StartLocalChannelListenerOptions {
+  connectionId: string;
+  deviceId: string;
+  connectionName: string;
+  onConnected: (connectionId: string) => void;
+  onError: (error: Error) => void;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  onWsEvent?: StartListenerOptions["onWsEvent"];
+}
+
+/**
+ * Start a listener runtime for local channel adapters without environment
+ * registration or a remote WebSocket server.
+ */
+export async function startLocalChannelListener(
+  opts: StartLocalChannelListenerOptions,
+): Promise<void> {
+  const existingRuntime = getActiveRuntime();
+  if (existingRuntime) {
+    stopRuntime(existingRuntime, true);
+  }
+
+  const runtime = createRuntime();
+  runtime.onWsEvent = opts.onWsEvent;
+  runtime.connectionId = opts.connectionId;
+  runtime.connectionName = opts.connectionName;
+  setActiveRuntime(runtime);
+  telemetry.setSurface("websocket");
+  telemetry.init();
+
+  try {
+    await loadTools();
+    const transport = new LocalListenerTransport();
+    const processQueuedTurn: ProcessQueuedTurn = async (
+      queuedTurn: IncomingMessage,
+      dequeuedBatch: DequeuedBatch,
+    ): Promise<void> => {
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        queuedTurn.agentId,
+        queuedTurn.conversationId,
+      );
+      await handleIncomingMessage(
+        queuedTurn,
+        transport,
+        scopedRuntime,
+        opts.onStatusChange,
+        opts.connectionId,
+        dequeuedBatch.batchId,
+      );
+    };
+
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      opts,
+      processQueuedTurn,
+      { startHeartbeat: false, startCronScheduler: true },
+    );
+  } catch (error) {
+    stopRuntime(runtime, true);
+    if (getActiveRuntime() === runtime) {
+      setActiveRuntime(null);
+    }
+    opts.onError(error instanceof Error ? error : new Error(String(error)));
+  }
 }
 
 /** File/directory names filtered from directory listings (OS/VCS noise). */
@@ -4307,6 +4586,7 @@ async function connectWithRetry(
   const cancelledWatches = new Set<string>();
 
   runtime.socket = socket;
+  const transport = socket;
   const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,
     dequeuedBatch: DequeuedBatch,
@@ -4318,7 +4598,7 @@ async function connectWithRetry(
     );
     await handleIncomingMessage(
       queuedTurn,
-      socket,
+      transport,
       scopedRuntime,
       opts.onStatusChange,
       opts.connectionId,
@@ -4327,145 +4607,13 @@ async function connectWithRetry(
   };
 
   socket.on("open", async () => {
-    if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-      return;
-    }
-
-    safeEmitWsEvent("recv", "lifecycle", { type: "_ws_open" });
-    runtime.hasSuccessfulConnection = true;
-    runtime.everConnected = true;
-    opts.onConnected(opts.connectionId);
-
-    if (runtime.conversationRuntimes.size === 0) {
-      // Don't emit device_status before the lookup store exists.
-      // Without a conversation runtime, the scope resolves to
-      // agent:__unknown__ which misses persisted CWD and permission
-      // mode entries. The web's sync command will create a scoped
-      // runtime and emit a properly-scoped device_status at that point.
-      emitLoopStatusUpdate(socket, runtime);
-    } else {
-      for (const reminderState of runtime.reminderStateByConversation.values()) {
-        // Reset bootstrap reminder state on (re)connect so session-context
-        // and agent-info fire on the first turn of the new connection.
-        // This is intentionally in the open handler, NOT the sync handler,
-        // because the Desktop UMI controller sends sync every ~5 s and
-        // resetting there would re-arm reminders on every periodic sync.
-        resetSharedReminderState(reminderState);
-      }
-      for (const contextTracker of runtime.contextTrackerByConversation.values()) {
-        resetContextHistory(contextTracker);
-      }
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-        const scope = {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        };
-        emitDeviceStatusUpdate(socket, conversationRuntime, scope);
-        emitLoopStatusUpdate(socket, conversationRuntime, scope);
-      }
-    }
-
-    // Subscribe to subagent state changes and emit snapshots over WS.
-    // Store the unsubscribe function on the runtime for cleanup on close.
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-      if (runtime.conversationRuntimes.size === 0) {
-        emitSubagentStateIfOpen(runtime);
-        return;
-      }
-
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-        emitSubagentStateIfOpen(runtime, {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        });
-      }
-    });
-
-    // Subscribe to subagent stream events and forward as tagged stream_delta.
-    // Events are raw JSON lines from the subagent's stdout (headless format):
-    //   { type: "message", message_type: "tool_call_message", ...LettaStreamingResponse fields }
-    // These are already MessageDelta-shaped (type:"message" + LettaStreamingResponse).
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
-      (subagentId, event) => {
-        if (socket.readyState !== WebSocket.OPEN) return;
-
-        const subagent = getSubagents().find(
-          (entry) => entry.id === subagentId,
-        );
-        if (subagent?.silent === true) {
-          // Reflection/background "silent" subagents should not stream their
-          // internal transcript into the parent conversation.
-          return;
-        }
-
-        // The event has { type: "message", message_type, ...LettaStreamingResponse }
-        // plus extra headless fields (session_id, uuid) that pass through harmlessly.
-        emitStreamDelta(
-          socket,
-          runtime,
-          event as unknown as import("../../types/protocol_v2").StreamDelta,
-          subagent?.parentAgentId
-            ? {
-                agent_id: subagent.parentAgentId,
-                conversation_id: subagent.parentConversationId ?? "default",
-              }
-            : undefined,
-          subagentId,
-        );
-      },
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      opts,
+      processQueuedTurn,
+      { startHeartbeat: true, startCronScheduler: true },
     );
-
-    // Register the message queue bridge to route task notifications into the
-    // correct per-conversation QueueRuntime. This enables background Task
-    // completions to reach the agent in listen mode.
-    setMessageQueueAdder((queuedMessage) => {
-      const targetRuntime =
-        queuedMessage.agentId && queuedMessage.conversationId
-          ? getOrCreateScopedRuntime(
-              runtime,
-              queuedMessage.agentId,
-              queuedMessage.conversationId,
-            )
-          : findFallbackRuntime(runtime);
-
-      if (!targetRuntime?.queueRuntime) {
-        return; // No target — notification dropped
-      }
-
-      targetRuntime.queueRuntime.enqueue({
-        kind: "task_notification",
-        source: "task_notification",
-        text: queuedMessage.text,
-        agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
-        conversationId:
-          queuedMessage.conversationId ?? targetRuntime.conversationId,
-      } as Omit<
-        import("../../queue/queueRuntime").TaskNotificationQueueItem,
-        "id" | "enqueuedAt"
-      >);
-
-      // Kick the queue pump so the notification can trigger a standalone turn
-      // (see consumeQueuedTurn notification-aware path in queue.ts).
-      scheduleQueuePump(targetRuntime, socket, opts, processQueuedTurn);
-    });
-    runtime.heartbeatInterval = setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        safeSocketSend(
-          socket,
-          { type: "ping" },
-          "listener_ping_send_failed",
-          "listener_heartbeat",
-        );
-      }
-    }, 30000);
-
-    // Start cron scheduler if tasks exist
-    startCronScheduler(socket, opts, processQueuedTurn);
-
-    // Wire channel ingress (if channels are active)
-    await wireChannelIngress(runtime, socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -6117,7 +6265,7 @@ async function connectWithRetry(
  */
 export function isListenerActive(): boolean {
   const runtime = getActiveRuntime();
-  return runtime !== null && runtime.socket !== null;
+  return runtime !== null && runtime.transport !== null;
 }
 
 /**

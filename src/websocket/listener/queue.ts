@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type WebSocket from "ws";
 import { getChannelRegistry } from "../../channels/registry";
 import type {
   ChannelTurnOutcome,
@@ -28,6 +27,7 @@ import {
   getPendingControlRequestCount,
 } from "./runtime";
 import { resolveRuntimeScope } from "./scope";
+import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   InboundMessagePayload,
@@ -410,7 +410,7 @@ function computeListenerQueueBlockedReason(
 
 async function drainQueuedMessages(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: (
     queuedTurn: IncomingMessage,
@@ -502,7 +502,7 @@ async function drainQueuedMessages(
 
 export function scheduleQueuePump(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: (
     queuedTurn: IncomingMessage,

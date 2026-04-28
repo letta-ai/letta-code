@@ -5,7 +5,6 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
 import {
   type ApprovalDecision,
   executeApprovalBatch,
@@ -62,6 +61,7 @@ import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
 } from "./runtime";
+import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -147,7 +147,7 @@ export async function isRetriablePostStopError(
 
 export async function drainRecoveryStreamWithEmission(
   recoveryStream: Stream<LettaStreamingResponse>,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     agentId?: string | null;
@@ -218,7 +218,7 @@ export async function drainRecoveryStreamWithEmission(
 
 export function finalizeHandledRecoveryTurn(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   params: {
     drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
     agentId?: string | null;
@@ -439,11 +439,11 @@ export async function recoverApprovalStateForSync(
 
 export async function resolveRecoveredApprovalResponse(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   response: ApprovalResponseBody,
   processTurn: (
     msg: IncomingMessage,
-    socket: WebSocket,
+    socket: ListenerTransport,
     runtime: ConversationRuntime,
     onStatusChange?: (
       status: "idle" | "receiving" | "processing",

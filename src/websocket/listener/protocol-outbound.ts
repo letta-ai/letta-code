@@ -3,7 +3,6 @@ import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { getGitContext } from "../../cli/helpers/gitContext";
 import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
@@ -54,6 +53,7 @@ import {
   resolveScopedAgentId,
   resolveScopedConversationId,
 } from "./scope";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -438,10 +438,11 @@ export function buildDeviceStatus(
   const systemPromptDoctorState = scopedAgentId
     ? getSystemPromptDoctorState(scopedAgentId)
     : null;
+  const transport = listener.transport ?? listener.socket;
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
-    is_online: listener.socket?.readyState === WebSocket.OPEN,
+    is_online: transport ? isListenerTransportOpen(transport) : false,
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
     current_working_directory: resolvedCwd,
@@ -573,7 +574,7 @@ export function setLoopStatus(
 }
 
 export function emitProtocolV2Message(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   message: Omit<
     WsProtocolMessage,
@@ -584,7 +585,7 @@ export function emitProtocolV2Message(
     conversation_id?: string | null;
   },
 ): void {
-  if (socket.readyState !== WebSocket.OPEN) {
+  if (!isListenerTransportOpen(socket)) {
     return;
   }
   const listener = getListenerRuntime(runtime);
@@ -646,7 +647,7 @@ export function emitProtocolV2Message(
 }
 
 export function emitDeviceStatusUpdate(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
@@ -664,7 +665,7 @@ export function emitDeviceStatusUpdate(
 }
 
 export function emitLoopStatusUpdate(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
@@ -689,8 +690,9 @@ export function emitLoopStatusIfOpen(
   },
 ): void {
   const listener = getListenerRuntime(runtime);
-  if (listener?.socket?.readyState === WebSocket.OPEN) {
-    emitLoopStatusUpdate(listener.socket, runtime, scope);
+  const transport = listener?.transport ?? listener?.socket;
+  if (transport && isListenerTransportOpen(transport)) {
+    emitLoopStatusUpdate(transport, runtime, scope);
   }
 }
 
@@ -702,13 +704,14 @@ export function emitDeviceStatusIfOpen(
   },
 ): void {
   const listener = getListenerRuntime(runtime);
-  if (listener?.socket?.readyState === WebSocket.OPEN) {
-    emitDeviceStatusUpdate(listener.socket, runtime, scope);
+  const transport = listener?.transport ?? listener?.socket;
+  if (transport && isListenerTransportOpen(transport)) {
+    emitDeviceStatusUpdate(transport, runtime, scope);
   }
 }
 
 export function emitQueueUpdate(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
@@ -749,7 +752,7 @@ export function isSystemReminderPart(part: unknown): boolean {
 }
 
 export function emitDequeuedUserMessage(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   incoming: IncomingMessage,
   batch: DequeuedBatch,
@@ -808,13 +811,14 @@ export function emitQueueUpdateIfOpen(
   },
 ): void {
   const listener = getListenerRuntime(runtime);
-  if (listener?.socket?.readyState === WebSocket.OPEN) {
-    emitQueueUpdate(listener.socket, runtime, scope);
+  const transport = listener?.transport ?? listener?.socket;
+  if (transport && isListenerTransportOpen(transport)) {
+    emitQueueUpdate(transport, runtime, scope);
   }
 }
 
 export function emitStateSync(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope: RuntimeScope,
 ): void {
@@ -891,7 +895,7 @@ export function buildSubagentSnapshot(
 }
 
 export function emitSubagentStateUpdate(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
@@ -916,8 +920,9 @@ export function emitSubagentStateIfOpen(
   },
 ): void {
   const listener = getListenerRuntime(runtime);
-  if (listener?.socket?.readyState === WebSocket.OPEN) {
-    emitSubagentStateUpdate(listener.socket, runtime, scope);
+  const transport = listener?.transport ?? listener?.socket;
+  if (transport && isListenerTransportOpen(transport)) {
+    emitSubagentStateUpdate(transport, runtime, scope);
   }
 }
 
@@ -959,7 +964,7 @@ export function createLifecycleMessageBase<TMessageType extends string>(
 }
 
 export function emitCanonicalMessageDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   delta: StreamDelta,
   scope?: {
@@ -971,7 +976,7 @@ export function emitCanonicalMessageDelta(
 }
 
 export function emitLoopErrorDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   params: {
     message: string;
@@ -1001,7 +1006,7 @@ export function emitLoopErrorDelta(
 }
 
 export function emitRetryDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   params: {
     message: string;
@@ -1029,7 +1034,7 @@ export function emitRetryDelta(
 }
 
 export function emitStatusDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   params: {
     message: string;
@@ -1051,7 +1056,7 @@ export function emitStatusDelta(
 }
 
 export function emitInterruptedStatusDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   params: {
     runId?: string | null;
@@ -1069,7 +1074,7 @@ export function emitInterruptedStatusDelta(
 }
 
 export function emitStreamDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   delta: StreamDelta,
   scope?: {

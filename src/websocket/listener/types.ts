@@ -24,6 +24,7 @@ import type {
   RuntimeScope,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
+import type { ListenerTransport } from "./transport";
 
 export interface StartListenerOptions {
   connectionId: string;
@@ -153,6 +154,7 @@ export type ConversationRuntime = {
 
 export type ListenerRuntime = {
   socket: WebSocket | null;
+  transport?: ListenerTransport | null;
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
   intentionallyClosed: boolean;

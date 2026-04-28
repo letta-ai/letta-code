@@ -5,7 +5,6 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
 import { getClient } from "../../agent/client";
@@ -44,6 +43,7 @@ import {
   isApprovalToolCallDesyncError,
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
+import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime } from "./types";
 
 export function isApprovalOnlyInput(
@@ -73,7 +73,7 @@ export function markAwaitingAcceptedApprovalContinuationRunId(
  */
 export async function resolveStaleApprovals(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   abortSignal: AbortSignal,
   deps: {
     getResumeData?: typeof getResumeData;
@@ -235,7 +235,7 @@ export async function sendMessageStreamWithRetry(
   conversationId: string,
   messages: Parameters<typeof sendMessageStream>[1],
   opts: Parameters<typeof sendMessageStream>[2],
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   abortSignal?: AbortSignal,
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
@@ -449,7 +449,7 @@ export async function sendApprovalContinuationWithRetry(
   conversationId: string,
   messages: Parameters<typeof sendMessageStream>[1],
   opts: Parameters<typeof sendMessageStream>[2],
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   abortSignal?: AbortSignal,
   retryOptions: {

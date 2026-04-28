@@ -1,4 +1,3 @@
-import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { normalizeApprovalResultsForPersistence } from "../../agent/approval-result-normalization";
 import { INTERRUPTED_BY_USER } from "../../constants";
@@ -14,6 +13,7 @@ import {
   emitCanonicalMessageDelta,
 } from "./protocol-outbound";
 import { clearRecoveredApprovalState } from "./runtime";
+import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   InterruptPopulateInput,
@@ -328,7 +328,7 @@ export function extractInterruptToolReturns(
 }
 
 export function emitInterruptToolReturnMessage(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   approvals: ApprovalResult[] | null,
   runId?: string | null,
@@ -372,7 +372,7 @@ export function emitInterruptToolReturnMessage(
 }
 
 export function emitToolExecutionStartedEvents(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     toolCallIds: string[];
@@ -394,7 +394,7 @@ export function emitToolExecutionStartedEvents(
 }
 
 export function emitToolExecutionFinishedEvents(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     approvals: ApprovalResult[] | null;
@@ -418,7 +418,7 @@ export function emitToolExecutionFinishedEvents(
 }
 
 export function createToolExecutionOutputEmitter(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     runId?: string | null;
