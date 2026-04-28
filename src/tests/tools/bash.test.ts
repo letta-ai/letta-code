@@ -22,6 +22,29 @@ describe("Bash tool", () => {
     expect(result.content[0]?.text).toContain("error message");
   });
 
+  test("expands injected secret env values literally", async () => {
+    const secretEnv = {
+      PASSWORD: "he$$o",
+      BACKTICK: "`whoami`",
+      TOKEN: "$foo$bar",
+    };
+    const command =
+      process.platform === "win32"
+        ? "Write-Output $PASSWORD; Write-Output $BACKTICK; Write-Output $TOKEN"
+        : 'printf "%s\\n%s\\n%s" "$PASSWORD" "$BACKTICK" "$TOKEN"';
+
+    const result = await bash({
+      command,
+      description: "Test secret env expansion",
+      secretEnv,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.content[0]?.text).toContain("he$$o");
+    expect(result.content[0]?.text).toContain("`whoami`");
+    expect(result.content[0]?.text).toContain("$foo$bar");
+  });
+
   test("returns error for failed command", async () => {
     const result = await bash({
       command: "exit 1",

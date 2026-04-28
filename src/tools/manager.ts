@@ -36,8 +36,8 @@ import {
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import {
+  extractSecretEnvFromCommand,
   scrubSecretsFromString,
-  substituteSecretsInArgs,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
@@ -1630,8 +1630,15 @@ export async function executeTool(
           };
         }
 
-        // Substitute $SECRET_NAME patterns with actual secret values
-        enhancedArgs = substituteSecretsInArgs(enhancedArgs);
+        // Inject secrets as environment variables instead of substituting into
+        // the command string. This prevents shell metacharacters in secrets
+        // (e.g. $$, backticks, quotes) from being interpreted by the shell.
+        const command =
+          typeof enhancedArgs.command === "string" ? enhancedArgs.command : "";
+        const secretEnv = extractSecretEnvFromCommand(command);
+        if (Object.keys(secretEnv).length > 0) {
+          enhancedArgs = { ...enhancedArgs, secretEnv };
+        }
       }
 
       // Inject toolCallId, abort signal, and parent scope for Task tool

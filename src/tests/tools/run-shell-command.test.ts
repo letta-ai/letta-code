@@ -16,6 +16,24 @@ describe("RunShellCommand tool (Gemini)", () => {
     expect(result.message).toBeTruthy();
   });
 
+  test("expands injected secret env values literally", async () => {
+    const secretEnv = {
+      PASSWORD: "he$$o",
+      BACKTICK: "`whoami`",
+      TOKEN: "$foo$bar",
+    };
+    const command =
+      process.platform === "win32"
+        ? "Write-Output $PASSWORD; Write-Output $BACKTICK; Write-Output $TOKEN"
+        : 'printf "%s\\n%s\\n%s" "$PASSWORD" "$BACKTICK" "$TOKEN"';
+
+    const result = await run_shell_command({ command, secretEnv });
+
+    expect(result.message).toContain("he$$o");
+    expect(result.message).toContain("`whoami`");
+    expect(result.message).toContain("$foo$bar");
+  });
+
   test("executes command with description", async () => {
     const result = await run_shell_command({
       command: "echo 'test'",

@@ -31,6 +31,17 @@ describe("Shell Launchers", () => {
     expect(command.endsWith('ls "$MEMORY_DIR/system/human/"')).toBe(true);
   });
 
+  test("PowerShell command aliases dynamically injected secret env vars", () => {
+    const command = buildPowerShellCommand("Write-Output $API_KEY", [
+      "API_KEY",
+      "BAD;Write-Output pwned",
+    ]);
+
+    expect(command).toContain("$API_KEY = $env:API_KEY");
+    expect(command).not.toContain("BAD;Write-Output pwned");
+    expect(command.endsWith("Write-Output $API_KEY")).toBe(true);
+  });
+
   test("PowerShell command preserves quoted executable invocation", () => {
     const command = buildPowerShellCommand(
       '"C:/Program Files/Git/bin/git.exe" status',

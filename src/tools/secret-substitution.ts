@@ -12,36 +12,22 @@ import { loadSecrets } from "../utils/secretsStore";
 const SECRET_PATTERN = /\$([A-Z_][A-Z0-9_]*)/g;
 
 /**
- * Substitute $SECRET_NAME patterns in a string with actual secret values.
- * If a secret is not found, the pattern is left unchanged.
+ * Scan a command string for `$SECRET_NAME` references and build an env map
+ * of matching secrets from the store. The shell will expand these vars
+ * natively, so secret values never get injected into the command string.
  */
-export function substituteSecretsInString(input: string): string {
+export function extractSecretEnvFromCommand(
+  command: string,
+): Record<string, string> {
   const secrets = loadSecrets();
-  return input.replace(SECRET_PATTERN, (match, name) => {
-    const value = secrets[name];
-    return value !== undefined ? value : match;
-  });
-}
-
-/**
- * Substitute secrets in tool arguments.
- * Only processes string values; other types are passed through unchanged.
- * Only applies to shell tools (checked by caller in manager.ts).
- */
-export function substituteSecretsInArgs(
-  args: Record<string, unknown>,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(args)) {
-    if (typeof value === "string") {
-      result[key] = substituteSecretsInString(value);
-    } else {
-      result[key] = value;
+  const env: Record<string, string> = {};
+  for (const match of command.matchAll(SECRET_PATTERN)) {
+    const name = match[1];
+    if (name !== undefined && secrets[name] !== undefined) {
+      env[name] = secrets[name];
     }
   }
-
-  return result;
+  return env;
 }
 
 /**
