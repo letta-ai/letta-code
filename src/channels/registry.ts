@@ -35,7 +35,11 @@ import {
   removePendingControlRequest as removePersistedPendingControlRequest,
   upsertPendingControlRequest as upsertPersistedPendingControlRequest,
 } from "./pendingControlRequests";
-import { getChannelDisplayName, loadChannelPlugin } from "./pluginRegistry";
+import {
+  getChannelDisplayName,
+  isFirstPartyChannelPlugin,
+  loadChannelPlugin,
+} from "./pluginRegistry";
 import {
   addRoute,
   getRoute as getRouteFromStore,
@@ -68,8 +72,31 @@ function channelDisplayName(channelId: string): string {
   }
 }
 
-function buildPairingInstructions(channelId: string, code: string): string {
+function isCommunityChannel(channelId: string): boolean {
+  // First-party channels (telegram, slack, discord) have UI in the desktop
+  // app. Community plugins installed under ~/.letta/channels/<id>/ do not,
+  // so the user-facing copy needs to point to CLI commands instead.
+  try {
+    return !isFirstPartyChannelPlugin(channelId);
+  } catch {
+    return false;
+  }
+}
+
+export function buildPairingInstructions(
+  channelId: string,
+  code: string,
+): string {
   const displayName = channelDisplayName(channelId);
+  if (isCommunityChannel(channelId)) {
+    return (
+      `This chat isn't bound to a Letta Code agent yet (community channel).\n\n` +
+      `Pairing code: ${code}\n\n` +
+      `Approve this pairing by running:\n` +
+      `letta channels pair approve --channel ${channelId} --code ${code}\n\n` +
+      `This code expires in 15 minutes.`
+    );
+  }
   return (
     `To connect this chat to a Letta Code agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
     `Pairing code: ${code}\n\n` +
@@ -77,11 +104,19 @@ function buildPairingInstructions(channelId: string, code: string): string {
   );
 }
 
-function buildUnboundRouteInstructions(
+export function buildUnboundRouteInstructions(
   channelId: string,
   chatId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
+  if (isCommunityChannel(channelId)) {
+    return (
+      `This chat isn't bound to a Letta Code agent yet (community channel).\n\n` +
+      `Bind it by running:\n` +
+      `letta channels route add --channel ${channelId} --chat-id ${chatId} --agent <agent-id>\n\n` +
+      `Or paste a route into ~/.letta/channels/${channelId}/routing.yaml.`
+    );
+  }
   return (
     `This chat isn't bound to a Letta Code agent yet.\n\n` +
     `Open Channels > ${displayName} in Letta Code and connect this chat there.\n\n` +
