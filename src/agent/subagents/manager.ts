@@ -133,6 +133,14 @@ function isProviderNotSupportedError(errorOutput: string): boolean {
   );
 }
 
+function isConversationNotFoundError(errorOutput: string): boolean {
+  return /Conversation .+ not found/.test(errorOutput);
+}
+
+function isAgentNotFoundError(errorOutput: string): boolean {
+  return /Agent .+ not found/.test(errorOutput);
+}
+
 const BYOK_PROVIDER_TO_BASE: Record<string, string> = {
   "lc-anthropic": "anthropic",
   "lc-openai": "openai",
@@ -1029,6 +1037,47 @@ async function executeSubagent(
             signal,
             undefined, // existingAgentId
             undefined, // existingConversationId
+            maxTurns,
+            parentAgentIdOverride,
+          );
+        }
+      }
+
+      // Re-init new convo (or agent) if needed for stateful reflection if 404
+      if (!isRetry && type === "reflection") {
+        // Conversation gone but agent still exists — new conversation on same agent
+        if (existingAgentId && isConversationNotFoundError(stderr)) {
+          return executeSubagent(
+            type,
+            config,
+            model,
+            userPrompt,
+            baseURL,
+            subagentId,
+            true,
+            signal,
+            existingAgentId, // keep agent
+            undefined, // new conversation
+            maxTurns,
+            parentAgentIdOverride,
+          );
+        }
+        // Agent itself gone — spawn completely fresh
+        if (
+          (existingAgentId || existingConversationId) &&
+          isAgentNotFoundError(stderr)
+        ) {
+          return executeSubagent(
+            type,
+            config,
+            model,
+            userPrompt,
+            baseURL,
+            subagentId,
+            true,
+            signal,
+            undefined, // fresh agent
+            undefined, // fresh conversation
             maxTurns,
             parentAgentIdOverride,
           );

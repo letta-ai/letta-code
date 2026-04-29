@@ -80,12 +80,14 @@ export interface ReflectionReviewCheckpoint {
   last_reviewed_message_id: string | null;
   last_reviewed_timestamp: string | null;
   last_messaged_at: string | null;
-  reflection_agent_id: string | null;
+  reflection_conversation_id: string | null;
 }
 
 interface ReflectionReviewState {
   version: 1;
   agent_id: string;
+  /** Shared reflection agent across all conversations for this main agent */
+  reflection_agent_id: string | null;
   conversations: ReflectionReviewCheckpoint[];
 }
 
@@ -110,6 +112,8 @@ export interface ReflectionReviewSegment {
   startTimestamp: string;
   endTimestamp: string;
   lastMessagedAt: string;
+  /** Agent-level reflection agent ID shared across all conversations */
+  reflectionAgentId: string | null;
   checkpointBefore: ReflectionReviewCheckpoint;
 }
 
@@ -194,7 +198,7 @@ function defaultCheckpoint(
     last_reviewed_message_id: null,
     last_reviewed_timestamp: null,
     last_messaged_at: null,
-    reflection_agent_id: null,
+    reflection_conversation_id: null,
   };
 }
 
@@ -202,6 +206,7 @@ function defaultState(agentId: string): ReflectionReviewState {
   return {
     version: 1,
     agent_id: agentId,
+    reflection_agent_id: null,
     conversations: [],
   };
 }
@@ -228,9 +233,9 @@ function normalizeCheckpoint(
         : null,
     last_messaged_at:
       typeof raw.last_messaged_at === "string" ? raw.last_messaged_at : null,
-    reflection_agent_id:
-      typeof raw.reflection_agent_id === "string"
-        ? raw.reflection_agent_id
+    reflection_conversation_id:
+      typeof raw.reflection_conversation_id === "string"
+        ? raw.reflection_conversation_id
         : null,
   };
 }
@@ -247,6 +252,10 @@ async function readState(agentId: string): Promise<ReflectionReviewState> {
     return {
       version: 1,
       agent_id: agentId,
+      reflection_agent_id:
+        typeof parsed.reflection_agent_id === "string"
+          ? parsed.reflection_agent_id
+          : null,
       conversations: checkpoints,
     };
   } catch {
@@ -705,6 +714,7 @@ export async function collectReflectionSweepSegments(
       startTimestamp,
       endTimestamp,
       lastMessagedAt: candidate.lastMessagedAt,
+      reflectionAgentId: state.reflection_agent_id,
       checkpointBefore: { ...checkpoint },
     });
   }
@@ -739,6 +749,7 @@ export async function finalizeReflectionSegmentReview(params: {
   triggerSource: "step-count" | "compaction-event";
   success: boolean;
   reflectionAgentId: string | null;
+  reflectionConversationId?: string | null;
   error?: string;
 }): Promise<void> {
   await queueStateUpdate(params.agentId, async () => {
@@ -746,9 +757,14 @@ export async function finalizeReflectionSegmentReview(params: {
     const checkpoint = getCheckpoint(state, params.segment.conversationId);
 
     checkpoint.last_messaged_at = params.segment.lastMessagedAt;
-    checkpoint.reflection_agent_id = params.reflectionAgentId;
 
     if (params.success) {
+      // Agent-level: shared reflection agent across all conversations
+      state.reflection_agent_id = params.reflectionAgentId;
+      // Conversation-level: which conversation within the reflection agent
+      if (params.reflectionConversationId !== undefined) {
+        checkpoint.reflection_conversation_id = params.reflectionConversationId;
+      }
       checkpoint.last_reviewed_message_id = params.segment.endMessageId;
       checkpoint.last_reviewed_timestamp = params.segment.endTimestamp;
     }

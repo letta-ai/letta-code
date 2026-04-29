@@ -17,26 +17,32 @@ export type MemoryReminderMode =
 
 export type ReflectionTrigger = "off" | "step-count" | "compaction-event";
 
+export type ReflectionMode = "stateless" | "stateful";
+
 export interface ReflectionSettings {
   trigger: ReflectionTrigger;
   stepCount: number;
+  mode?: ReflectionMode;
 }
 
 type PersistedReflectionSettings = {
   trigger?: unknown;
   stepCount?: unknown;
+  mode?: unknown;
 };
 
 interface ReflectionSettingsCarrier {
   memoryReminderInterval?: MemoryReminderMode;
   reflectionTrigger?: unknown;
   reflectionStepCount?: unknown;
+  reflectionMode?: unknown;
   reflectionSettingsByAgent?: Record<string, PersistedReflectionSettings>;
 }
 
 const DEFAULT_REFLECTION_SETTINGS: ReflectionSettings = {
   trigger: "compaction-event",
   stepCount: DEFAULT_STEP_COUNT,
+  mode: "stateless",
 };
 
 function isValidStepCount(value: unknown): value is number {
@@ -50,6 +56,16 @@ function isValidStepCount(value: unknown): value is number {
 
 function normalizeStepCount(value: unknown, fallback: number): number {
   return isValidStepCount(value) ? value : fallback;
+}
+
+function normalizeMode(
+  value: unknown,
+  fallback: ReflectionMode,
+): ReflectionMode {
+  if (value === "stateless" || value === "stateful") {
+    return value;
+  }
+  return fallback;
 }
 
 function normalizeTrigger(
@@ -71,11 +87,13 @@ function applyExplicitReflectionOverrides(
   raw: {
     reflectionTrigger?: unknown;
     reflectionStepCount?: unknown;
+    reflectionMode?: unknown;
   },
 ): ReflectionSettings {
   return {
     trigger: normalizeTrigger(raw.reflectionTrigger, base.trigger),
     stepCount: normalizeStepCount(raw.reflectionStepCount, base.stepCount),
+    mode: normalizeMode(raw.reflectionMode, base.mode ?? "stateless"),
   };
 }
 
@@ -90,6 +108,7 @@ function applyPersistedAgentScopedSettings(
   return {
     trigger: normalizeTrigger(raw.trigger, base.trigger),
     stepCount: normalizeStepCount(raw.stepCount, base.stepCount),
+    mode: normalizeMode(raw.mode, base.mode ?? "stateless"),
   };
 }
 
@@ -301,11 +320,13 @@ export async function persistReflectionSettingsForAgent(
         memoryReminderInterval: legacyMode,
         reflectionTrigger: settings.trigger,
         reflectionStepCount: settings.stepCount,
+        reflectionMode: settings.mode,
         reflectionSettingsByAgent: {
           ...(localSettings.reflectionSettingsByAgent ?? {}),
           [agentId]: {
             trigger: settings.trigger,
             stepCount: settings.stepCount,
+            mode: settings.mode,
           },
         },
       },
@@ -319,11 +340,13 @@ export async function persistReflectionSettingsForAgent(
       memoryReminderInterval: legacyMode,
       reflectionTrigger: settings.trigger,
       reflectionStepCount: settings.stepCount,
+      reflectionMode: settings.mode,
       reflectionSettingsByAgent: {
         ...(globalSettings.reflectionSettingsByAgent ?? {}),
         [agentId]: {
           trigger: settings.trigger,
           stepCount: settings.stepCount,
+          mode: settings.mode,
         },
       },
     });

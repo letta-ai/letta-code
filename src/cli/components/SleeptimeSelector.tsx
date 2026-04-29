@@ -1,6 +1,7 @@
 import { Box, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import type {
+  ReflectionMode,
   ReflectionSettings,
   ReflectionTrigger,
 } from "../helpers/memoryReminder";
@@ -10,8 +11,9 @@ import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 const DEFAULT_STEP_COUNT = "25";
+const MODE_OPTIONS: ReflectionMode[] = ["stateless", "stateful"];
 
-type FocusRow = "trigger" | "step-count";
+type FocusRow = "trigger" | "step-count" | "mode";
 
 interface SleeptimeSelectorProps {
   initialSettings: ReflectionSettings;
@@ -43,6 +45,7 @@ function cycleOption<T extends string>(
 function parseInitialState(initialSettings: ReflectionSettings): {
   trigger: ReflectionTrigger;
   stepCount: string;
+  mode: ReflectionMode;
 } {
   return {
     trigger:
@@ -57,6 +60,7 @@ function parseInitialState(initialSettings: ReflectionSettings): {
         ? initialSettings.stepCount
         : Number(DEFAULT_STEP_COUNT),
     ),
+    mode: initialSettings.mode ?? "stateless",
   };
 }
 
@@ -88,6 +92,7 @@ export function SleeptimeSelector({
     return initialState.trigger;
   });
   const [stepCountInput, setStepCountInput] = useState(initialState.stepCount);
+  const [mode, setMode] = useState<ReflectionMode>(initialState.mode);
   const [focusRow, setFocusRow] = useState<FocusRow>("trigger");
   const [validationError, setValidationError] = useState<string | null>(null);
   const triggerOptions = useMemo(
@@ -98,6 +103,9 @@ export function SleeptimeSelector({
     const rows: FocusRow[] = ["trigger"];
     if (trigger === "step-count") {
       rows.push("step-count");
+    }
+    if (trigger !== "off") {
+      rows.push("mode");
     }
     return rows;
   }, [trigger]);
@@ -117,19 +125,13 @@ export function SleeptimeSelector({
         setValidationError("must be a positive integer");
         return;
       }
-      onSave({
-        trigger,
-        stepCount,
-      });
+      onSave({ trigger, stepCount, mode });
       return;
     }
 
     const fallbackStepCount =
       parseStepCount(stepCountInput) ?? Number(DEFAULT_STEP_COUNT);
-    onSave({
-      trigger,
-      stepCount: fallbackStepCount,
-    });
+    onSave({ trigger, stepCount: fallbackStepCount, mode });
   };
 
   useInput((input, key) => {
@@ -166,6 +168,8 @@ export function SleeptimeSelector({
       const direction: -1 | 1 = key.leftArrow ? -1 : 1;
       if (focusRow === "trigger") {
         setTrigger((prev) => cycleOption(triggerOptions, prev, direction));
+      } else if (focusRow === "mode") {
+        setMode((prev) => cycleOption(MODE_OPTIONS, prev, direction));
       }
       return;
     }
@@ -311,6 +315,40 @@ export function SleeptimeSelector({
               </Box>
             </>
           )}
+        </>
+      )}
+
+      {trigger !== "off" && (
+        <>
+          <Box height={1} />
+          <Box flexDirection="row">
+            <Text>{focusRow === "mode" ? "> " : "  "}</Text>
+            <Text bold>Reflection mode:</Text>
+            <Text>{"  "}</Text>
+            <Text
+              backgroundColor={
+                mode === "stateless"
+                  ? colors.selector.itemHighlighted
+                  : undefined
+              }
+              color={mode === "stateless" ? "black" : undefined}
+              bold={mode === "stateless"}
+            >
+              {" Stateless "}
+            </Text>
+            <Text> </Text>
+            <Text
+              backgroundColor={
+                mode === "stateful"
+                  ? colors.selector.itemHighlighted
+                  : undefined
+              }
+              color={mode === "stateful" ? "black" : undefined}
+              bold={mode === "stateful"}
+            >
+              {" Stateful "}
+            </Text>
+          </Box>
         </>
       )}
 

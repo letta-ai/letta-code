@@ -74,11 +74,13 @@ export interface Settings {
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionStepCount: number;
+  reflectionMode?: "stateless" | "stateful";
   reflectionSettingsByAgent?: Record<
     string,
     {
       trigger: "off" | "step-count" | "compaction-event";
       stepCount: number;
+      mode?: "stateless" | "stateful";
     }
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
@@ -129,11 +131,13 @@ export interface LocalProjectSettings {
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger?: "off" | "step-count" | "compaction-event";
   reflectionStepCount?: number;
+  reflectionMode?: "stateless" | "stateful";
   reflectionSettingsByAgent?: Record<
     string,
     {
       trigger: "off" | "step-count" | "compaction-event";
       stepCount: number;
+      mode?: "stateless" | "stateful";
     }
   >;
   // Server-indexed settings (agent IDs are server-specific)
