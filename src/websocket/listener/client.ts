@@ -5139,15 +5139,23 @@ async function connectWithRetry(
 
       // ── File reading (no runtime scope required) ─────────────────────
       if (isReadFileCommand(parsed)) {
+        const readEncoding = parsed.encoding ?? "utf8";
         console.log(
-          `[Listen] Received read_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+          `[Listen] Received read_file command: path=${parsed.path}, request_id=${parsed.request_id}, encoding=${readEncoding}`,
         );
         runDetachedListenerTask("read_file", async () => {
           try {
             const { readFile } = await import("node:fs/promises");
-            const content = await readFile(parsed.path, "utf-8");
+            let content: string;
+            if (readEncoding === "base64") {
+              // Binary read: load as Buffer, base64-encode for wire transit.
+              const buffer = await readFile(parsed.path);
+              content = buffer.toString("base64");
+            } else {
+              content = await readFile(parsed.path, "utf-8");
+            }
             console.log(
-              `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
+              `[Listen] read_file success: ${parsed.path} (${content.length} chars, encoding=${readEncoding})`,
             );
             safeSocketSend(
               socket,
@@ -5157,6 +5165,11 @@ async function connectWithRetry(
                 path: parsed.path,
                 content,
                 success: true,
+                // Echo encoding only when non-default so utf8 wire shape is
+                // unchanged for older consumers.
+                ...(readEncoding === "base64"
+                  ? { encoding: readEncoding }
+                  : {}),
               },
               "listener_read_file_send_failed",
               "listener_read_file",
@@ -5191,11 +5204,40 @@ async function connectWithRetry(
 
       // ── File writing (no runtime scope required) ──────────────────────
       if (isWriteFileCommand(parsed)) {
+        const writeEncoding = parsed.encoding ?? "utf8";
         console.log(
-          `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
+          `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}, encoding=${writeEncoding}`,
         );
         runDetachedListenerTask("write_file", async () => {
           try {
+            if (writeEncoding === "base64") {
+              // Binary write: bypass Edit/Write tools, which CRLF-normalize
+              // their inputs and would corrupt binary bytes. Decode base64,
+              // ensure parent dirs exist, write the buffer directly.
+              const { writeFile, mkdir } = await import("node:fs/promises");
+              const { dirname } = await import("node:path");
+              const buffer = Buffer.from(parsed.content, "base64");
+              await mkdir(dirname(parsed.path), { recursive: true });
+              await writeFile(parsed.path, buffer);
+              console.log(
+                `[Listen] write_file success: ${parsed.path} (${buffer.byteLength} bytes, base64)`,
+              );
+              // Refresh index so the sidebar Merkle tree picks up the new file.
+              void refreshFileIndex();
+              safeSocketSend(
+                socket,
+                {
+                  type: "write_file_response",
+                  request_id: parsed.request_id,
+                  path: parsed.path,
+                  success: true,
+                },
+                "listener_write_file_send_failed",
+                "listener_write_file",
+              );
+              return;
+            }
+
             const { edit } = await import("../../tools/impl/Edit");
             const { write } = await import("../../tools/impl/Write");
             const { readFile } = await import("node:fs/promises");

@@ -370,13 +370,28 @@ export function isGetTreeCommand(value: unknown): value is GetTreeCommand {
   );
 }
 
+/**
+ * Validates the optional `encoding` field shared by read_file and write_file.
+ * Omitted is valid (defaults to 'utf8'). When present, must be exactly
+ * 'utf8' or 'base64' — anything else is rejected.
+ */
+function isValidFileEncoding(value: unknown): boolean {
+  return value === undefined || value === "utf8" || value === "base64";
+}
+
 export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    request_id?: unknown;
+    encoding?: unknown;
+  };
   return (
     c.type === "read_file" &&
     typeof c.path === "string" &&
-    typeof c.request_id === "string"
+    typeof c.request_id === "string" &&
+    isValidFileEncoding(c.encoding)
   );
 }
 
@@ -387,12 +402,14 @@ export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
     path?: unknown;
     content?: unknown;
     request_id?: unknown;
+    encoding?: unknown;
   };
   return (
     c.type === "write_file" &&
     typeof c.path === "string" &&
     typeof c.content === "string" &&
-    typeof c.request_id === "string"
+    typeof c.request_id === "string" &&
+    isValidFileEncoding(c.encoding)
   );
 }
 

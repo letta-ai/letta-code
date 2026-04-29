@@ -646,22 +646,38 @@ export interface GetTreeCommand {
   request_id: string;
 }
 
+/**
+ * Encoding used for the `content` field on read_file/write_file commands.
+ * - 'utf8' (default): content is a plain text string.
+ * - 'base64': content is base64-encoded bytes (used for binary files like
+ *   images). Devices that don't advertise `binary_file_io` capability will
+ *   not honor this.
+ */
+export type FileContentEncoding = "utf8" | "base64";
+
 export interface ReadFileCommand {
   type: "read_file";
   /** Absolute path to the file to read. */
   path: string;
   /** Echoed back in the response for request correlation. */
   request_id: string;
+  /** Defaults to 'utf8' if omitted. */
+  encoding?: FileContentEncoding;
 }
 
 export interface WriteFileCommand {
   type: "write_file";
   /** Absolute path to the file to write. */
   path: string;
-  /** The full file content to write. */
+  /**
+   * The full file content to write. When `encoding` is 'base64', this is a
+   * base64-encoded byte string; the device decodes before writing.
+   */
   content: string;
   /** Echoed back in the response for request correlation. */
   request_id: string;
+  /** Defaults to 'utf8' if omitted. */
+  encoding?: FileContentEncoding;
 }
 
 export interface WatchFileCommand {
