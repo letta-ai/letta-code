@@ -4,6 +4,7 @@ export * from "./conversations";
 export * from "./generate";
 export * from "./health";
 export * from "./http-headers";
+export * from "./memfs-git-proxy";
 export * from "./metadata";
 export * from "./providers";
 export * from "./request";

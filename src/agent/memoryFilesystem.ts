@@ -494,7 +494,7 @@ function getServerHostLabel(serverUrl: string): string {
  * Whether the MemFS sync endpoint is backed by the Letta API.
  */
 export async function isLettaMemfsServer(): Promise<boolean> {
-  const { getMemfsServerUrl } = await import("../backend/api/client");
+  const { getMemfsServerUrl } = await import("../backend/api/memfs-git-proxy");
   const memfsServerUrl = getMemfsServerUrl();
 
   return (
@@ -505,7 +505,7 @@ export async function isLettaMemfsServer(): Promise<boolean> {
 }
 
 async function getMemfsSyncUnavailableMessage(): Promise<string> {
-  const { getMemfsServerUrl } = await import("../backend/api/client");
+  const { getMemfsServerUrl } = await import("../backend/api/memfs-git-proxy");
   const memfsServerUrl = getMemfsServerUrl();
   return `MemFS sync failed (expected api.letta.com, got ${getServerHostLabel(memfsServerUrl)})`;
 }
