@@ -90,11 +90,10 @@ export function buildPairingInstructions(
   const displayName = channelDisplayName(channelId);
   if (isCommunityChannel(channelId)) {
     return (
-      `This chat isn't bound to a Letta Code agent yet (community channel).\n\n` +
-      `Pairing code: ${code}\n\n` +
-      `Approve this pairing by running:\n` +
-      `letta channels pair approve --channel ${channelId} --code ${code}\n\n` +
-      `This code expires in 15 minutes.`
+      `This chat isn't connected to a Letta agent yet.\n\n` +
+      `Pairing code: ${code} (expires in 15 minutes)\n\n` +
+      `Approve this pairing by running this on the machine running your listener:\n\n` +
+      `letta channels pair approve --channel ${channelId} --code ${code}`
     );
   }
   return (
@@ -111,10 +110,10 @@ export function buildUnboundRouteInstructions(
   const displayName = channelDisplayName(channelId);
   if (isCommunityChannel(channelId)) {
     return (
-      `This chat isn't bound to a Letta Code agent yet (community channel).\n\n` +
-      `Bind it by running:\n` +
+      `This chat isn't connected to a Letta agent yet.\n\n` +
+      `Connect it by running this on the machine running your listener:\n\n` +
       `letta channels route add --channel ${channelId} --chat-id ${chatId} --agent <agent-id>\n\n` +
-      `Or paste a route into ~/.letta/channels/${channelId}/routing.yaml.`
+      `Find your agent id with \`letta agents list\`.`
     );
   }
   return (

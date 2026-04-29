@@ -36,12 +36,14 @@ describe("registry copy: community channels", () => {
 
   test("pairing instructions surface the CLI command for community channels", () => {
     const text = buildPairingInstructions("whatsapp", "ABC123");
-    expect(text).toContain("(community channel)");
-    expect(text).toContain("Pairing code: ABC123");
+    expect(text).toContain("isn't connected to a Letta agent yet");
+    expect(text).toContain("Pairing code: ABC123 (expires in 15 minutes)");
+    expect(text).toContain("on the machine running your listener");
     expect(text).toContain(
       "letta channels pair approve --channel whatsapp --code ABC123",
     );
     expect(text).not.toContain("open Channels >");
+    expect(text).not.toContain("(community channel)");
   });
 
   test("unbound route instructions surface the CLI command for community channels", () => {
@@ -49,26 +51,30 @@ describe("registry copy: community channels", () => {
       "whatsapp",
       "15551234567@s.whatsapp.net",
     );
-    expect(text).toContain("(community channel)");
+    expect(text).toContain("isn't connected to a Letta agent yet");
+    expect(text).toContain("on the machine running your listener");
     expect(text).toContain(
       "letta channels route add --channel whatsapp --chat-id 15551234567@s.whatsapp.net --agent <agent-id>",
     );
-    expect(text).toContain("~/.letta/channels/whatsapp/routing.yaml");
+    expect(text).toContain("`letta agents list`");
     expect(text).not.toContain("Open Channels >");
+    expect(text).not.toContain("(community channel)");
+    expect(text).not.toContain("paste a route");
+    expect(text).not.toContain("routing.yaml");
   });
 
   test("any non-first-party channel id triggers community copy", () => {
     const text = buildPairingInstructions("imessage", "QQQ");
-    expect(text).toContain("(community channel)");
+    expect(text).toContain("isn't connected to a Letta agent yet");
     expect(text).toContain(
       "letta channels pair approve --channel imessage --code QQQ",
     );
   });
 
-  test("community unbound copy embeds the channel id in both the CLI hint and the path", () => {
+  test("community unbound copy embeds the channel id and chat id in the CLI command", () => {
     const text = buildUnboundRouteInstructions("signal", "+15551234567");
     expect(text).toContain("--channel signal");
     expect(text).toContain("--chat-id +15551234567");
-    expect(text).toContain("~/.letta/channels/signal/routing.yaml");
+    expect(text).toContain("--agent <agent-id>");
   });
 });
