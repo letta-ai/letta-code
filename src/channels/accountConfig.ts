@@ -32,39 +32,27 @@ export function getChannelAccountConfigAdapter(
   return CHANNEL_ACCOUNT_CONFIG_ADAPTERS[channelId];
 }
 
-function getNestedConfig(
+export function getChannelPluginConfig(
   input: Record<string, unknown>,
+  key: "config" | "plugin_config" = "config",
 ): ChannelProtocolConfig | null {
-  if (!("config" in input) || input.config === undefined) {
+  const value = input[key];
+  if (value === undefined) {
     return {};
   }
-  return isRecord(input.config) ? input.config : null;
-}
-
-export function getMergedChannelPluginConfig(
-  channelId: SupportedChannelId,
-  input: Record<string, unknown>,
-): ChannelProtocolConfig | null {
-  const nestedConfig = getNestedConfig(input);
-  if (!nestedConfig) {
-    return null;
-  }
-  const adapter = getChannelAccountConfigAdapter(channelId);
-  return {
-    ...adapter.extractLegacyConfig(input),
-    ...nestedConfig,
-  };
+  return isRecord(value) ? value : null;
 }
 
 export function isValidChannelPluginConfigPayload(
   channelId: SupportedChannelId,
   input: Record<string, unknown>,
+  key: "config" | "plugin_config" = "config",
 ): boolean {
-  const mergedConfig = getMergedChannelPluginConfig(channelId, input);
-  if (!mergedConfig) {
+  const config = getChannelPluginConfig(input, key);
+  if (!config) {
     return false;
   }
-  return getChannelAccountConfigAdapter(channelId).isValidConfig(mergedConfig);
+  return getChannelAccountConfigAdapter(channelId).isValidConfig(config);
 }
 
 export function normalizeChannelAccountPatch(

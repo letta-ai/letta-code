@@ -53,9 +53,7 @@ export type ChannelConfigPatch = Pick<
   };
 
 export interface ChannelAccountConfigAdapter<TAccount extends ChannelAccount> {
-  /** Extract deprecated top-level websocket fields for backwards compatibility. */
-  extractLegacyConfig(input: Record<string, unknown>): ChannelProtocolConfig;
-  /** Validate plugin-owned config payloads after legacy + nested config merging. */
+  /** Validate plugin-owned config payloads. */
   isValidConfig(config: ChannelProtocolConfig): boolean;
   /** Convert protocol snake_case config into the internal account patch shape. */
   toAccountPatch(config: ChannelProtocolConfig): ChannelPluginAccountPatch;

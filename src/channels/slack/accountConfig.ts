@@ -29,26 +29,6 @@ function isDefaultPermissionMode(
 
 export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannelAccount> =
   {
-    extractLegacyConfig(input) {
-      const config: Record<string, unknown> = {};
-      if ("bot_token" in input) {
-        config.bot_token = input.bot_token;
-      }
-      if ("app_token" in input) {
-        config.app_token = input.app_token;
-      }
-      if ("mode" in input) {
-        config.mode = input.mode;
-      }
-      if ("agent_id" in input) {
-        config.agent_id = input.agent_id;
-      }
-      if ("default_permission_mode" in input) {
-        config.default_permission_mode = input.default_permission_mode;
-      }
-      return config;
-    },
-
     isValidConfig(config) {
       for (const key of Object.keys(config)) {
         if (!SLACK_CONFIG_KEYS.has(key)) {

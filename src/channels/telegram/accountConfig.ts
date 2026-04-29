@@ -13,17 +13,6 @@ function isBoolean(value: unknown): value is boolean {
 
 export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramChannelAccount> =
   {
-    extractLegacyConfig(input) {
-      const config: Record<string, unknown> = {};
-      if ("token" in input) {
-        config.token = input.token;
-      }
-      if ("transcribe_voice" in input) {
-        config.transcribe_voice = input.transcribe_voice;
-      }
-      return config;
-    },
-
     isValidConfig(config) {
       for (const key of Object.keys(config)) {
         if (!TELEGRAM_CONFIG_KEYS.has(key)) {

@@ -9,11 +9,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type {
-  DmPolicy,
-  SlackChannelMode,
-  SlackDefaultPermissionMode,
-} from "../channels/types";
+import type { DmPolicy } from "../channels/types";
 import type { CronTask } from "../cron";
 import type { ExperimentId, ExperimentSnapshot } from "../experiments/types";
 
@@ -167,20 +163,6 @@ export interface ChannelConfigSnapshot {
   allowed_users: string[];
   /** Plugin-owned redacted config/settings payload. */
   config: ChannelPluginConfig;
-  /** @deprecated Use config.has_token. */
-  has_token?: boolean;
-  /** @deprecated Use config.mode. */
-  mode?: SlackChannelMode;
-  /** @deprecated Use config.has_bot_token. */
-  has_bot_token?: boolean;
-  /** @deprecated Use config.has_app_token. */
-  has_app_token?: boolean;
-  /** @deprecated Use config.agent_id. */
-  agent_id?: string | null;
-  /** @deprecated Use config.default_permission_mode. */
-  default_permission_mode?: SlackDefaultPermissionMode;
-  /** @deprecated Use config.allowed_channels. */
-  allowed_channels?: string[];
 }
 
 export interface ChannelAccountSnapshot {
@@ -194,27 +176,6 @@ export interface ChannelAccountSnapshot {
   allowed_users: string[];
   /** Plugin-owned redacted config/settings payload. */
   config: ChannelPluginConfig;
-  /** @deprecated Use config.has_token. */
-  has_token?: boolean;
-  /** @deprecated Use config.transcribe_voice. */
-  transcribe_voice?: boolean;
-  /** @deprecated Use config.binding. */
-  binding?: {
-    agent_id: string | null;
-    conversation_id: string | null;
-  };
-  /** @deprecated Use config.mode. */
-  mode?: SlackChannelMode;
-  /** @deprecated Use config.has_bot_token. */
-  has_bot_token?: boolean;
-  /** @deprecated Use config.has_app_token. */
-  has_app_token?: boolean;
-  /** @deprecated Use config.agent_id. */
-  agent_id?: string | null;
-  /** @deprecated Use config.default_permission_mode. */
-  default_permission_mode?: SlackDefaultPermissionMode;
-  /** @deprecated Use config.allowed_channels. */
-  allowed_channels?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -1005,22 +966,6 @@ export interface ChannelAccountCreatePayload {
   allowed_users?: string[];
   /** Plugin-owned account config. New fields should be added here, not centrally. */
   config?: ChannelPluginConfig;
-  /** @deprecated Use config.token. */
-  token?: string;
-  /** @deprecated Use config.transcribe_voice. */
-  transcribe_voice?: boolean;
-  /** @deprecated Use config.bot_token. */
-  bot_token?: string;
-  /** @deprecated Use config.app_token. */
-  app_token?: string;
-  /** @deprecated Use config.mode. */
-  mode?: SlackChannelMode;
-  /** @deprecated Use config.agent_id. */
-  agent_id?: string | null;
-  /** @deprecated Use config.default_permission_mode. */
-  default_permission_mode?: SlackDefaultPermissionMode;
-  /** @deprecated Use config.allowed_channels. */
-  allowed_channels?: string[];
 }
 
 export interface ChannelAccountCreateCommand {
@@ -1089,24 +1034,7 @@ export interface ChannelSetConfigCommand {
   config: {
     dm_policy?: DmPolicy;
     allowed_users?: string[];
-    /** Optional nested plugin config. Direct plugin fields are still accepted. */
-    config?: ChannelPluginConfig;
-    /** @deprecated Use config.token. */
-    token?: string;
-    /** @deprecated Use config.transcribe_voice. */
-    transcribe_voice?: boolean;
-    /** @deprecated Use config.bot_token. */
-    bot_token?: string;
-    /** @deprecated Use config.app_token. */
-    app_token?: string;
-    /** @deprecated Use config.mode. */
-    mode?: SlackChannelMode;
-    /** @deprecated Use config.agent_id. */
-    agent_id?: string | null;
-    /** @deprecated Use config.default_permission_mode. */
-    default_permission_mode?: SlackDefaultPermissionMode;
-    /** @deprecated Use config.allowed_channels. */
-    allowed_channels?: string[];
+    plugin_config?: ChannelPluginConfig;
   };
 }
 

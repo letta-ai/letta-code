@@ -11,7 +11,7 @@ describe("discord protocol-inbound validators", () => {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
-      account: { token: "test-token" },
+      account: { config: { token: "test-token" } },
     };
     expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
@@ -22,9 +22,11 @@ describe("discord protocol-inbound validators", () => {
       channel_id: "discord",
       request_id: "r1",
       account: {
-        token: "test-token",
-        agent_id: "a-1",
-        allowed_channels: ["channel-1"],
+        config: {
+          token: "test-token",
+          agent_id: "a-1",
+          allowed_channels: ["channel-1"],
+        },
       },
     };
     expect(isChannelAccountCreateCommand(msg)).toBe(true);
@@ -51,7 +53,9 @@ describe("discord protocol-inbound validators", () => {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
-      account: { token: "test-token", allowed_channels: ["channel-1", 42] },
+      account: {
+        config: { token: "test-token", allowed_channels: ["channel-1", 42] },
+      },
     };
     expect(isChannelAccountCreateCommand(msg)).toBe(false);
   });
@@ -66,16 +70,14 @@ describe("discord protocol-inbound validators", () => {
     expect(isChannelAccountCreateCommand(msg)).toBe(false);
   });
 
-  test("discord account create without discord fields still passes (validator only checks discord-specific fields)", () => {
+  test("discord account create rejects legacy top-level plugin fields", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
-      account: { bot_token: "xoxb-test" },
+      account: { token: "test-token" },
     };
-    // validator only rejects discord-specific-field violations; Slack-style
-    // extra fields should not cause rejection by the discord validator.
-    expect(isChannelAccountCreateCommand(msg)).toBe(true);
+    expect(isChannelAccountCreateCommand(msg)).toBe(false);
   });
 
   test("valid discord account update passes", () => {
@@ -84,7 +86,7 @@ describe("discord protocol-inbound validators", () => {
       channel_id: "discord",
       account_id: "acc-1",
       request_id: "r1",
-      patch: { token: "new-token" },
+      patch: { config: { token: "new-token" } },
     };
     expect(isChannelAccountUpdateCommand(msg)).toBe(true);
   });
@@ -94,7 +96,9 @@ describe("discord protocol-inbound validators", () => {
       type: "channel_set_config",
       channel_id: "discord",
       request_id: "r1",
-      config: { token: "new-token", allowed_channels: ["channel-1"] },
+      config: {
+        plugin_config: { token: "new-token", allowed_channels: ["channel-1"] },
+      },
     };
     expect(isChannelSetConfigCommand(msg)).toBe(true);
   });
@@ -105,7 +109,7 @@ describe("discord protocol-inbound validators", () => {
       channel_id: "discord",
       request_id: "r1",
       config: {
-        config: { token: "new-token", allowed_channels: ["channel-1"] },
+        plugin_config: { token: "new-token", allowed_channels: ["channel-1"] },
       },
     };
     expect(isChannelSetConfigCommand(msg)).toBe(true);
@@ -116,7 +120,7 @@ describe("discord protocol-inbound validators", () => {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
-      account: { token: "t" },
+      account: { config: { token: "t" } },
     };
     expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });

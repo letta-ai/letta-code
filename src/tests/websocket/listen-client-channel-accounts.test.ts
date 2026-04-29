@@ -118,7 +118,6 @@ describe("channel account list responses", () => {
             enabled: true,
             configured: true,
             running: false,
-            mode: "socket",
             dm_policy: "pairing",
             allowed_users: [],
             config: {
@@ -128,10 +127,6 @@ describe("channel account list responses", () => {
               agent_id: "agent-1",
               default_permission_mode: "acceptEdits",
             },
-            has_bot_token: true,
-            has_app_token: true,
-            agent_id: "agent-1",
-            default_permission_mode: "acceptEdits",
             created_at: "2026-04-13T00:00:00.000Z",
             updated_at: "2026-04-13T00:00:00.000Z",
           },

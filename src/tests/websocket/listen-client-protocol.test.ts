@@ -109,10 +109,12 @@ describe("listen-client channel command dispatch", () => {
         channel_id: "slack",
         account: {
           display_name: "DocsBot Slack",
-          bot_token: "xoxb-test",
-          app_token: "xapp-test",
-          mode: "socket",
           dm_policy: "pairing",
+          config: {
+            bot_token: "xoxb-test",
+            app_token: "xapp-test",
+            mode: "socket",
+          },
         },
       }),
     ).toBe(true);
@@ -477,11 +479,13 @@ describe("listen-client parseServerMessage", () => {
           channel_id: "slack",
           account: {
             display_name: "DocsBot Slack",
-            bot_token: "xoxb-test",
-            app_token: "xapp-test",
-            mode: "socket",
             dm_policy: "pairing",
             allowed_users: ["user-1"],
+            config: {
+              bot_token: "xoxb-test",
+              app_token: "xapp-test",
+              mode: "socket",
+            },
           },
         }),
       ),
@@ -495,8 +499,10 @@ describe("listen-client parseServerMessage", () => {
           account_id: "bot-1",
           patch: {
             display_name: "@docsbot",
-            token: "telegram-token",
             dm_policy: "open",
+            config: {
+              token: "telegram-token",
+            },
           },
         }),
       ),
@@ -559,11 +565,13 @@ describe("listen-client parseServerMessage", () => {
           request_id: "channel-set-config-1",
           channel_id: "slack",
           config: {
-            bot_token: "xoxb-test",
-            app_token: "xapp-test",
-            mode: "socket",
             dm_policy: "pairing",
             allowed_users: ["user-1"],
+            plugin_config: {
+              bot_token: "xoxb-test",
+              app_token: "xapp-test",
+              mode: "socket",
+            },
           },
         }),
       ),
@@ -1355,10 +1363,12 @@ describe("listen-client channels command handling", () => {
             configured: true,
             running: true,
             dm_policy: "pairing",
-            has_token: true,
-            binding: {
-              agent_id: "agent-1",
-              conversation_id: "default",
+            config: {
+              has_token: true,
+              binding: {
+                agent_id: "agent-1",
+                conversation_id: "default",
+              },
             },
             created_at: "2026-04-11T00:00:00.000Z",
             updated_at: "2026-04-11T01:00:00.000Z",
@@ -1699,8 +1709,10 @@ describe("listen-client channels command handling", () => {
         channel_id: "slack",
         account: {
           account_id: "acct-1",
-          agent_id: "agent-1",
-          default_permission_mode: "acceptEdits",
+          config: {
+            agent_id: "agent-1",
+            default_permission_mode: "acceptEdits",
+          },
         },
       });
       expect(messages[1]).toMatchObject({
@@ -1741,8 +1753,10 @@ describe("listen-client channels command handling", () => {
         channel_id: "slack",
         account: {
           account_id: "acct-1",
-          agent_id: null,
-          default_permission_mode: "acceptEdits",
+          config: {
+            agent_id: null,
+            default_permission_mode: "acceptEdits",
+          },
         },
       });
       expect(messages[1]).toMatchObject({
@@ -1828,8 +1842,10 @@ describe("listen-client channels command handling", () => {
           channel_id: "telegram",
           account: {
             display_name: "@docsbot",
-            token: "telegram-token",
             dm_policy: "pairing",
+            config: {
+              token: "telegram-token",
+            },
           },
         },
         socket as unknown as WebSocket,
@@ -1852,7 +1868,9 @@ describe("listen-client channels command handling", () => {
         account: {
           account_id: "bot-1",
           display_name: "@docsbot",
-          has_token: true,
+          config: {
+            has_token: true,
+          },
         },
       });
       expect(messages[1]).toMatchObject({

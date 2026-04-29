@@ -19,7 +19,7 @@ import {
 } from "../../agent/modify";
 import {
   channelPluginConfigShouldRefreshDisplayName,
-  getMergedChannelPluginConfig,
+  getChannelPluginConfig,
 } from "../../channels/accountConfig";
 import {
   type ChannelRegistryEvent,
@@ -1727,7 +1727,6 @@ async function handleChannelsProtocolCommand(
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
         config: snapshot.config ?? {},
-        has_token: snapshot.hasToken,
       };
     }
     if (snapshot.channelId === "discord") {
@@ -1739,9 +1738,6 @@ async function handleChannelsProtocolCommand(
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
         config: snapshot.config ?? {},
-        allowed_channels: snapshot.allowedChannels,
-        has_token: snapshot.hasToken,
-        agent_id: snapshot.agentId,
       };
     }
     return {
@@ -1749,14 +1745,9 @@ async function handleChannelsProtocolCommand(
       account_id: snapshot.accountId,
       display_name: snapshot.displayName,
       enabled: snapshot.enabled,
-      mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
       config: snapshot.config ?? {},
-      has_bot_token: snapshot.hasBotToken,
-      has_app_token: snapshot.hasAppToken,
-      agent_id: snapshot.agentId,
-      default_permission_mode: snapshot.defaultPermissionMode,
     };
   };
 
@@ -1774,12 +1765,6 @@ async function handleChannelsProtocolCommand(
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
         config: snapshot.config ?? {},
-        has_token: snapshot.hasToken,
-        transcribe_voice: snapshot.transcribeVoice,
-        binding: {
-          agent_id: snapshot.binding.agentId,
-          conversation_id: snapshot.binding.conversationId,
-        },
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
@@ -1796,9 +1781,6 @@ async function handleChannelsProtocolCommand(
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
         config: snapshot.config ?? {},
-        allowed_channels: snapshot.allowedChannels,
-        has_token: snapshot.hasToken,
-        agent_id: snapshot.agentId,
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
@@ -1811,14 +1793,9 @@ async function handleChannelsProtocolCommand(
       enabled: snapshot.enabled,
       configured: snapshot.configured,
       running: snapshot.running,
-      mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
       config: snapshot.config ?? {},
-      has_bot_token: snapshot.hasBotToken,
-      has_app_token: snapshot.hasAppToken,
-      agent_id: snapshot.agentId,
-      default_permission_mode: snapshot.defaultPermissionMode,
       created_at: snapshot.createdAt,
       updated_at: snapshot.updatedAt,
     };
@@ -1959,10 +1936,7 @@ async function handleChannelsProtocolCommand(
   if (parsed.type === "channel_account_create") {
     try {
       const pluginConfig =
-        getMergedChannelPluginConfig(
-          parsed.channel_id,
-          parsed.account as Record<string, unknown>,
-        ) ?? {};
+        getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
       const created = createChannelAccountLive(
         parsed.channel_id,
         {
@@ -2033,10 +2007,7 @@ async function handleChannelsProtocolCommand(
   if (parsed.type === "channel_account_update") {
     try {
       const pluginConfig =
-        getMergedChannelPluginConfig(
-          parsed.channel_id,
-          parsed.patch as Record<string, unknown>,
-        ) ?? {};
+        getChannelPluginConfig(parsed.patch as Record<string, unknown>) ?? {};
       const updated = updateChannelAccountLive(
         parsed.channel_id,
         parsed.account_id,
@@ -2380,9 +2351,9 @@ async function handleChannelsProtocolCommand(
   if (parsed.type === "channel_set_config") {
     try {
       const pluginConfig =
-        getMergedChannelPluginConfig(
-          parsed.channel_id,
+        getChannelPluginConfig(
           parsed.config as Record<string, unknown>,
+          "plugin_config",
         ) ?? {};
       const snapshot = await setChannelConfigLive(
         parsed.channel_id,

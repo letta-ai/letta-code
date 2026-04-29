@@ -858,6 +858,36 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
   );
 }
 
+function hasOnlyFields(
+  value: Record<string, unknown>,
+  allowedFields: ReadonlySet<string>,
+): boolean {
+  return Object.keys(value).every((field) => allowedFields.has(field));
+}
+
+const CHANNEL_ACCOUNT_CREATE_FIELDS = new Set([
+  "account_id",
+  "display_name",
+  "enabled",
+  "dm_policy",
+  "allowed_users",
+  "config",
+]);
+
+const CHANNEL_ACCOUNT_UPDATE_FIELDS = new Set([
+  "display_name",
+  "enabled",
+  "dm_policy",
+  "allowed_users",
+  "config",
+]);
+
+const CHANNEL_SET_CONFIG_FIELDS = new Set([
+  "dm_policy",
+  "allowed_users",
+  "plugin_config",
+]);
+
 export function isChannelsListCommand(
   value: unknown,
 ): value is ChannelsListCommand {
@@ -906,7 +936,8 @@ export function isChannelAccountCreateCommand(
   if (
     (account.account_id !== undefined &&
       typeof account.account_id !== "string") ||
-    !hasValidChannelPolicyFields(account)
+    !hasValidChannelPolicyFields(account) ||
+    !hasOnlyFields(account, CHANNEL_ACCOUNT_CREATE_FIELDS)
   ) {
     return false;
   }
@@ -937,7 +968,10 @@ export function isChannelAccountUpdateCommand(
   }
 
   const patch = c.patch as Record<string, unknown>;
-  if (!hasValidChannelPolicyFields(patch)) {
+  if (
+    !hasValidChannelPolicyFields(patch) ||
+    !hasOnlyFields(patch, CHANNEL_ACCOUNT_UPDATE_FIELDS)
+  ) {
     return false;
   }
 
@@ -1076,11 +1110,18 @@ export function isChannelSetConfigCommand(
     return false;
   }
   const config = c.config as Record<string, unknown>;
-  if (!hasValidChannelPolicyFields(config)) {
+  if (
+    !hasValidChannelPolicyFields(config) ||
+    !hasOnlyFields(config, CHANNEL_SET_CONFIG_FIELDS)
+  ) {
     return false;
   }
 
-  return isValidChannelPluginConfigPayload(c.channel_id, config);
+  return isValidChannelPluginConfigPayload(
+    c.channel_id,
+    config,
+    "plugin_config",
+  );
 }
 
 export function isChannelStartCommand(

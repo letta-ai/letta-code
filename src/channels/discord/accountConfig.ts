@@ -19,20 +19,6 @@ function isStringArray(value: unknown): value is string[] {
 
 export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordChannelAccount> =
   {
-    extractLegacyConfig(input) {
-      const config: Record<string, unknown> = {};
-      if ("token" in input) {
-        config.token = input.token;
-      }
-      if ("agent_id" in input) {
-        config.agent_id = input.agent_id;
-      }
-      if ("allowed_channels" in input) {
-        config.allowed_channels = input.allowed_channels;
-      }
-      return config;
-    },
-
     isValidConfig(config) {
       for (const key of Object.keys(config)) {
         if (!DISCORD_CONFIG_KEYS.has(key)) {
