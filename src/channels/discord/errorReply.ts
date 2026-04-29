@@ -25,6 +25,10 @@ function readTrimmedString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function escapeDiscordInlineCode(value: string): string {
+  return value.replace(/`/g, "\\`").replace(/\r?\n/g, " ");
+}
+
 /**
  * Pull the most useful human-readable detail out of an unknown error,
  * falling back through the Letta SDK shape, the standard Error.message,
@@ -75,5 +79,6 @@ export function formatDiscordDeliveryError(error: unknown): string {
   const MAX_DETAIL = 200;
   const truncated =
     detail.length > MAX_DETAIL ? `${detail.slice(0, MAX_DETAIL)}…` : detail;
-  return `Sorry, something went wrong while forwarding your message: \`${truncated}\``;
+  const safeDetail = escapeDiscordInlineCode(truncated);
+  return `Sorry, something went wrong while forwarding your message: \`${safeDetail}\``;
 }
