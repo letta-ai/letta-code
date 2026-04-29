@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { isValidChannelPluginConfigPayload } from "../../channels/accountConfig";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
@@ -843,10 +844,6 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
     config.allowed_users === undefined ||
     (Array.isArray(config.allowed_users) &&
       config.allowed_users.every((entry) => typeof entry === "string"));
-  const hasValidAllowedChannels =
-    config.allowed_channels === undefined ||
-    (Array.isArray(config.allowed_channels) &&
-      config.allowed_channels.every((entry) => typeof entry === "string"));
   const hasValidDisplayName =
     config.display_name === undefined ||
     typeof config.display_name === "string";
@@ -856,7 +853,6 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
   return (
     hasValidDmPolicy &&
     hasValidAllowedUsers &&
-    hasValidAllowedChannels &&
     hasValidDisplayName &&
     hasValidEnabled
   );
@@ -915,29 +911,7 @@ export function isChannelAccountCreateCommand(
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return account.token === undefined || typeof account.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return (
-      (account.token === undefined || typeof account.token === "string") &&
-      (account.agent_id === undefined ||
-        account.agent_id === null ||
-        typeof account.agent_id === "string")
-    );
-  }
-
-  return (
-    (account.bot_token === undefined ||
-      typeof account.bot_token === "string") &&
-    (account.app_token === undefined ||
-      typeof account.app_token === "string") &&
-    (account.mode === undefined || account.mode === "socket") &&
-    (account.agent_id === undefined ||
-      account.agent_id === null ||
-      typeof account.agent_id === "string")
-  );
+  return isValidChannelPluginConfigPayload(c.channel_id, account);
 }
 
 export function isChannelAccountUpdateCommand(
@@ -967,27 +941,7 @@ export function isChannelAccountUpdateCommand(
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return patch.token === undefined || typeof patch.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return (
-      (patch.token === undefined || typeof patch.token === "string") &&
-      (patch.agent_id === undefined ||
-        patch.agent_id === null ||
-        typeof patch.agent_id === "string")
-    );
-  }
-
-  return (
-    (patch.bot_token === undefined || typeof patch.bot_token === "string") &&
-    (patch.app_token === undefined || typeof patch.app_token === "string") &&
-    (patch.mode === undefined || patch.mode === "socket") &&
-    (patch.agent_id === undefined ||
-      patch.agent_id === null ||
-      typeof patch.agent_id === "string")
-  );
+  return isValidChannelPluginConfigPayload(c.channel_id, patch);
 }
 
 export function isChannelAccountBindCommand(
@@ -1126,19 +1080,7 @@ export function isChannelSetConfigCommand(
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return config.token === undefined || typeof config.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return config.token === undefined || typeof config.token === "string";
-  }
-
-  return (
-    (config.bot_token === undefined || typeof config.bot_token === "string") &&
-    (config.app_token === undefined || typeof config.app_token === "string") &&
-    (config.mode === undefined || config.mode === "socket")
-  );
+  return isValidChannelPluginConfigPayload(c.channel_id, config);
 }
 
 export function isChannelStartCommand(

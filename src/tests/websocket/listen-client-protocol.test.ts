@@ -1305,6 +1305,14 @@ describe("listen-client channels command handling", () => {
           running: true,
           dmPolicy: "pairing" as const,
           allowedUsers: [],
+          config: {
+            has_token: true,
+            transcribe_voice: false,
+            binding: {
+              agent_id: "agent-1",
+              conversation_id: "default",
+            },
+          },
           hasToken: true,
           transcribeVoice: false,
           binding: {
@@ -1620,6 +1628,13 @@ describe("listen-client channels command handling", () => {
         mode: "socket" as const,
         dmPolicy: "pairing" as const,
         allowedUsers: [],
+        config: {
+          mode: "socket",
+          has_bot_token: true,
+          has_app_token: true,
+          agent_id: "agent-1",
+          default_permission_mode: "acceptEdits",
+        },
         hasBotToken: true,
         hasAppToken: true,
         agentId: "agent-1",
@@ -1637,6 +1652,13 @@ describe("listen-client channels command handling", () => {
         mode: "socket" as const,
         dmPolicy: "pairing" as const,
         allowedUsers: [],
+        config: {
+          mode: "socket",
+          has_bot_token: true,
+          has_app_token: true,
+          agent_id: null,
+          default_permission_mode: "acceptEdits",
+        },
         hasBotToken: true,
         hasAppToken: true,
         agentId: null,
@@ -1752,6 +1774,14 @@ describe("listen-client channels command handling", () => {
         running: false,
         dmPolicy: "pairing" as const,
         allowedUsers: [],
+        config: {
+          has_token: true,
+          transcribe_voice: false,
+          binding: {
+            agent_id: null,
+            conversation_id: null,
+          },
+        },
         hasToken: true,
         transcribeVoice: false,
         binding: {
@@ -1770,6 +1800,14 @@ describe("listen-client channels command handling", () => {
         running: true,
         dmPolicy: "pairing" as const,
         allowedUsers: [],
+        config: {
+          has_token: true,
+          transcribe_voice: false,
+          binding: {
+            agent_id: null,
+            conversation_id: null,
+          },
+        },
         hasToken: true,
         transcribeVoice: false,
         binding: {

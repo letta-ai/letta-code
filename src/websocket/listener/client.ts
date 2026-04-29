@@ -18,6 +18,10 @@ import {
   updateConversationLLMConfig,
 } from "../../agent/modify";
 import {
+  channelPluginConfigShouldRefreshDisplayName,
+  getMergedChannelPluginConfig,
+} from "../../channels/accountConfig";
+import {
   type ChannelRegistryEvent,
   getChannelRegistry,
 } from "../../channels/registry";
@@ -1722,6 +1726,7 @@ async function handleChannelsProtocolCommand(
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
+        config: snapshot.config ?? {},
         has_token: snapshot.hasToken,
       };
     }
@@ -1733,8 +1738,10 @@ async function handleChannelsProtocolCommand(
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
+        config: snapshot.config ?? {},
         allowed_channels: snapshot.allowedChannels,
         has_token: snapshot.hasToken,
+        agent_id: snapshot.agentId,
       };
     }
     return {
@@ -1745,8 +1752,11 @@ async function handleChannelsProtocolCommand(
       mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
+      config: snapshot.config ?? {},
       has_bot_token: snapshot.hasBotToken,
       has_app_token: snapshot.hasAppToken,
+      agent_id: snapshot.agentId,
+      default_permission_mode: snapshot.defaultPermissionMode,
     };
   };
 
@@ -1763,7 +1773,9 @@ async function handleChannelsProtocolCommand(
         running: snapshot.running,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
+        config: snapshot.config ?? {},
         has_token: snapshot.hasToken,
+        transcribe_voice: snapshot.transcribeVoice,
         binding: {
           agent_id: snapshot.binding.agentId,
           conversation_id: snapshot.binding.conversationId,
@@ -1783,6 +1795,7 @@ async function handleChannelsProtocolCommand(
         running: snapshot.running,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
+        config: snapshot.config ?? {},
         allowed_channels: snapshot.allowedChannels,
         has_token: snapshot.hasToken,
         agent_id: snapshot.agentId,
@@ -1801,6 +1814,7 @@ async function handleChannelsProtocolCommand(
       mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
+      config: snapshot.config ?? {},
       has_bot_token: snapshot.hasBotToken,
       has_app_token: snapshot.hasAppToken,
       agent_id: snapshot.agentId,
@@ -1944,6 +1958,11 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_create") {
     try {
+      const pluginConfig =
+        getMergedChannelPluginConfig(
+          parsed.channel_id,
+          parsed.account as Record<string, unknown>,
+        ) ?? {};
       const created = createChannelAccountLive(
         parsed.channel_id,
         {
@@ -1953,28 +1972,9 @@ async function handleChannelsProtocolCommand(
               : undefined,
           enabled:
             "enabled" in parsed.account ? parsed.account.enabled : undefined,
-          token: "token" in parsed.account ? parsed.account.token : undefined,
-          botToken:
-            "bot_token" in parsed.account
-              ? parsed.account.bot_token
-              : undefined,
-          appToken:
-            "app_token" in parsed.account
-              ? parsed.account.app_token
-              : undefined,
-          mode: "mode" in parsed.account ? parsed.account.mode : undefined,
-          agentId:
-            "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
-          defaultPermissionMode:
-            "default_permission_mode" in parsed.account
-              ? parsed.account.default_permission_mode
-              : undefined,
           dmPolicy: parsed.account.dm_policy,
           allowedUsers: parsed.account.allowed_users,
-          allowedChannels:
-            "allowed_channels" in parsed.account
-              ? parsed.account.allowed_channels
-              : undefined,
+          config: pluginConfig,
         },
         {
           accountId:
@@ -2032,6 +2032,11 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_update") {
     try {
+      const pluginConfig =
+        getMergedChannelPluginConfig(
+          parsed.channel_id,
+          parsed.patch as Record<string, unknown>,
+        ) ?? {};
       const updated = updateChannelAccountLive(
         parsed.channel_id,
         parsed.account_id,
@@ -2041,31 +2046,16 @@ async function handleChannelsProtocolCommand(
               ? parsed.patch.display_name
               : undefined,
           enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
-          token: "token" in parsed.patch ? parsed.patch.token : undefined,
-          botToken:
-            "bot_token" in parsed.patch ? parsed.patch.bot_token : undefined,
-          appToken:
-            "app_token" in parsed.patch ? parsed.patch.app_token : undefined,
-          mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
-          agentId:
-            "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
-          defaultPermissionMode:
-            "default_permission_mode" in parsed.patch
-              ? parsed.patch.default_permission_mode
-              : undefined,
           dmPolicy: parsed.patch.dm_policy,
           allowedUsers: parsed.patch.allowed_users,
-          allowedChannels:
-            "allowed_channels" in parsed.patch
-              ? parsed.patch.allowed_channels
-              : undefined,
+          config: pluginConfig,
         },
       );
       const shouldRefreshDisplayName =
         !("display_name" in parsed.patch) &&
-        (parsed.channel_id === "telegram"
-          ? "token" in parsed.patch
-          : "bot_token" in parsed.patch || "app_token" in parsed.patch);
+        channelPluginConfigShouldRefreshDisplayName(parsed.channel_id, {
+          config: pluginConfig,
+        });
       const account = shouldRefreshDisplayName
         ? await refreshChannelAccountDisplayNameLive(
             parsed.channel_id,
@@ -2389,21 +2379,17 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_set_config") {
     try {
+      const pluginConfig =
+        getMergedChannelPluginConfig(
+          parsed.channel_id,
+          parsed.config as Record<string, unknown>,
+        ) ?? {};
       const snapshot = await setChannelConfigLive(
         parsed.channel_id,
         {
-          token: "token" in parsed.config ? parsed.config.token : undefined,
-          botToken:
-            "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
-          appToken:
-            "app_token" in parsed.config ? parsed.config.app_token : undefined,
-          mode: "mode" in parsed.config ? parsed.config.mode : undefined,
           dmPolicy: parsed.config.dm_policy,
           allowedUsers: parsed.config.allowed_users,
-          allowedChannels:
-            "allowed_channels" in parsed.config
-              ? parsed.config.allowed_channels
-              : undefined,
+          config: pluginConfig,
         },
         parsed.account_id,
       );

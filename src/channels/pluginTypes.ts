@@ -3,7 +3,10 @@ import type {
   ChannelAdapter,
   ChannelChatType,
   ChannelRoute,
+  DmPolicy,
   OutboundChannelMessage,
+  SlackChannelMode,
+  SlackDefaultPermissionMode,
   SupportedChannelId,
 } from "./types";
 
@@ -12,6 +15,56 @@ export interface ChannelPluginMetadata {
   displayName: string;
   runtimePackages: string[];
   runtimeModules: string[];
+}
+
+export type ChannelProtocolConfig = Record<string, unknown>;
+
+export interface ChannelCommonAccountPatch {
+  displayName?: string;
+  enabled?: boolean;
+  dmPolicy?: DmPolicy;
+  allowedUsers?: string[];
+}
+
+export interface ChannelPluginAccountPatch {
+  token?: string;
+  botToken?: string;
+  appToken?: string;
+  mode?: SlackChannelMode;
+  agentId?: string | null;
+  defaultPermissionMode?: SlackDefaultPermissionMode;
+  allowedChannels?: string[];
+  transcribeVoice?: boolean;
+}
+
+export type ChannelAccountPatch = ChannelCommonAccountPatch &
+  ChannelPluginAccountPatch & {
+    /** Plugin-owned snake_case config accepted from the websocket protocol. */
+    config?: ChannelProtocolConfig;
+  };
+
+export type ChannelConfigPatch = Pick<
+  ChannelCommonAccountPatch,
+  "dmPolicy" | "allowedUsers"
+> &
+  ChannelPluginAccountPatch & {
+    /** Plugin-owned snake_case config accepted from the websocket protocol. */
+    config?: ChannelProtocolConfig;
+  };
+
+export interface ChannelAccountConfigAdapter<TAccount extends ChannelAccount> {
+  /** Extract deprecated top-level websocket fields for backwards compatibility. */
+  extractLegacyConfig(input: Record<string, unknown>): ChannelProtocolConfig;
+  /** Validate plugin-owned config payloads after legacy + nested config merging. */
+  isValidConfig(config: ChannelProtocolConfig): boolean;
+  /** Convert protocol snake_case config into the internal account patch shape. */
+  toAccountPatch(config: ChannelProtocolConfig): ChannelPluginAccountPatch;
+  /** Redacted/safe plugin config included in account list/get responses. */
+  toAccountConfig(account: TAccount): ChannelProtocolConfig;
+  /** Redacted/safe plugin config included in channel_get_config responses. */
+  toConfigSnapshotConfig(account: TAccount): ChannelProtocolConfig;
+  /** Whether this plugin config patch changes credentials/display identity. */
+  shouldRefreshDisplayName(patch: ChannelPluginAccountPatch): boolean;
 }
 
 export type ChannelMessageActionName = "send" | "react" | "upload-file";

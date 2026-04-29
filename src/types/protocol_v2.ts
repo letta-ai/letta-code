@@ -144,6 +144,8 @@ export interface ReflectionSettingsSnapshot {
 
 export type ChannelId = "telegram" | "slack" | "discord";
 
+export type ChannelPluginConfig = Record<string, unknown>;
+
 export interface ChannelSummary {
   channel_id: ChannelId;
   display_name: string;
@@ -156,88 +158,66 @@ export interface ChannelSummary {
   routes_count: number;
 }
 
-export type ChannelConfigSnapshot =
-  | {
-      channel_id: "telegram";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_token: boolean;
-    }
-  | {
-      channel_id: "slack";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      mode: SlackChannelMode;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_bot_token: boolean;
-      has_app_token: boolean;
-    }
-  | {
-      channel_id: "discord";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      allowed_channels: string[];
-      has_token: boolean;
-    };
+export interface ChannelConfigSnapshot {
+  channel_id: ChannelId;
+  account_id: string;
+  display_name?: string;
+  enabled: boolean;
+  dm_policy: DmPolicy;
+  allowed_users: string[];
+  /** Plugin-owned redacted config/settings payload. */
+  config: ChannelPluginConfig;
+  /** @deprecated Use config.has_token. */
+  has_token?: boolean;
+  /** @deprecated Use config.mode. */
+  mode?: SlackChannelMode;
+  /** @deprecated Use config.has_bot_token. */
+  has_bot_token?: boolean;
+  /** @deprecated Use config.has_app_token. */
+  has_app_token?: boolean;
+  /** @deprecated Use config.agent_id. */
+  agent_id?: string | null;
+  /** @deprecated Use config.default_permission_mode. */
+  default_permission_mode?: SlackDefaultPermissionMode;
+  /** @deprecated Use config.allowed_channels. */
+  allowed_channels?: string[];
+}
 
-export type ChannelAccountSnapshot =
-  | {
-      channel_id: "telegram";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_token: boolean;
-      binding: {
-        agent_id: string | null;
-        conversation_id: string | null;
-      };
-      created_at: string;
-      updated_at: string;
-    }
-  | {
-      channel_id: "slack";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      mode: SlackChannelMode;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_bot_token: boolean;
-      has_app_token: boolean;
-      agent_id: string | null;
-      default_permission_mode: SlackDefaultPermissionMode;
-      created_at: string;
-      updated_at: string;
-    }
-  | {
-      channel_id: "discord";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      allowed_channels: string[];
-      has_token: boolean;
-      agent_id: string | null;
-      created_at: string;
-      updated_at: string;
-    };
+export interface ChannelAccountSnapshot {
+  channel_id: ChannelId;
+  account_id: string;
+  display_name?: string;
+  enabled: boolean;
+  configured: boolean;
+  running: boolean;
+  dm_policy: DmPolicy;
+  allowed_users: string[];
+  /** Plugin-owned redacted config/settings payload. */
+  config: ChannelPluginConfig;
+  /** @deprecated Use config.has_token. */
+  has_token?: boolean;
+  /** @deprecated Use config.transcribe_voice. */
+  transcribe_voice?: boolean;
+  /** @deprecated Use config.binding. */
+  binding?: {
+    agent_id: string | null;
+    conversation_id: string | null;
+  };
+  /** @deprecated Use config.mode. */
+  mode?: SlackChannelMode;
+  /** @deprecated Use config.has_bot_token. */
+  has_bot_token?: boolean;
+  /** @deprecated Use config.has_app_token. */
+  has_app_token?: boolean;
+  /** @deprecated Use config.agent_id. */
+  agent_id?: string | null;
+  /** @deprecated Use config.default_permission_mode. */
+  default_permission_mode?: SlackDefaultPermissionMode;
+  /** @deprecated Use config.allowed_channels. */
+  allowed_channels?: string[];
+  created_at: string;
+  updated_at: string;
+}
 
 export interface ChannelPendingPairing {
   account_id: string;
@@ -1017,37 +997,31 @@ export interface ChannelAccountsListCommand {
   channel_id: ChannelId;
 }
 
-export type ChannelAccountCreatePayload =
-  | {
-      account_id?: string;
-      display_name?: string;
-      enabled?: boolean;
-      token?: string;
-      dm_policy?: DmPolicy;
-      allowed_users?: string[];
-    }
-  | {
-      account_id?: string;
-      display_name?: string;
-      enabled?: boolean;
-      bot_token?: string;
-      app_token?: string;
-      mode?: SlackChannelMode;
-      agent_id?: string | null;
-      default_permission_mode?: SlackDefaultPermissionMode;
-      dm_policy?: DmPolicy;
-      allowed_users?: string[];
-    }
-  | {
-      account_id?: string;
-      display_name?: string;
-      enabled?: boolean;
-      token?: string;
-      agent_id?: string | null;
-      dm_policy?: DmPolicy;
-      allowed_users?: string[];
-      allowed_channels?: string[];
-    };
+export interface ChannelAccountCreatePayload {
+  account_id?: string;
+  display_name?: string;
+  enabled?: boolean;
+  dm_policy?: DmPolicy;
+  allowed_users?: string[];
+  /** Plugin-owned account config. New fields should be added here, not centrally. */
+  config?: ChannelPluginConfig;
+  /** @deprecated Use config.token. */
+  token?: string;
+  /** @deprecated Use config.transcribe_voice. */
+  transcribe_voice?: boolean;
+  /** @deprecated Use config.bot_token. */
+  bot_token?: string;
+  /** @deprecated Use config.app_token. */
+  app_token?: string;
+  /** @deprecated Use config.mode. */
+  mode?: SlackChannelMode;
+  /** @deprecated Use config.agent_id. */
+  agent_id?: string | null;
+  /** @deprecated Use config.default_permission_mode. */
+  default_permission_mode?: SlackDefaultPermissionMode;
+  /** @deprecated Use config.allowed_channels. */
+  allowed_channels?: string[];
+}
 
 export interface ChannelAccountCreateCommand {
   type: "channel_account_create";
@@ -1061,34 +1035,7 @@ export interface ChannelAccountUpdateCommand {
   request_id: string;
   channel_id: ChannelId;
   account_id: string;
-  patch:
-    | {
-        display_name?: string;
-        enabled?: boolean;
-        token?: string;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      }
-    | {
-        display_name?: string;
-        enabled?: boolean;
-        bot_token?: string;
-        app_token?: string;
-        mode?: SlackChannelMode;
-        agent_id?: string | null;
-        default_permission_mode?: SlackDefaultPermissionMode;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      }
-    | {
-        display_name?: string;
-        enabled?: boolean;
-        token?: string;
-        agent_id?: string | null;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-        allowed_channels?: string[];
-      };
+  patch: Omit<ChannelAccountCreatePayload, "account_id">;
 }
 
 export interface ChannelAccountBindCommand {
@@ -1139,20 +1086,28 @@ export interface ChannelSetConfigCommand {
   request_id: string;
   channel_id: ChannelId;
   account_id?: string;
-  config:
-    | {
-        token?: string;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-        allowed_channels?: string[];
-      }
-    | {
-        bot_token?: string;
-        app_token?: string;
-        mode?: SlackChannelMode;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      };
+  config: {
+    dm_policy?: DmPolicy;
+    allowed_users?: string[];
+    /** Optional nested plugin config. Direct plugin fields are still accepted. */
+    config?: ChannelPluginConfig;
+    /** @deprecated Use config.token. */
+    token?: string;
+    /** @deprecated Use config.transcribe_voice. */
+    transcribe_voice?: boolean;
+    /** @deprecated Use config.bot_token. */
+    bot_token?: string;
+    /** @deprecated Use config.app_token. */
+    app_token?: string;
+    /** @deprecated Use config.mode. */
+    mode?: SlackChannelMode;
+    /** @deprecated Use config.agent_id. */
+    agent_id?: string | null;
+    /** @deprecated Use config.default_permission_mode. */
+    default_permission_mode?: SlackDefaultPermissionMode;
+    /** @deprecated Use config.allowed_channels. */
+    allowed_channels?: string[];
+  };
 }
 
 export interface ChannelStartCommand {
