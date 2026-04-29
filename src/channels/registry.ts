@@ -72,32 +72,25 @@ function channelDisplayName(channelId: string): string {
   }
 }
 
-function isCommunityChannel(channelId: string): boolean {
-  // First-party channels (telegram, slack, discord) have UI in the desktop
-  // app. Community plugins installed under ~/.letta/channels/<id>/ do not,
-  // so the user-facing copy needs to point to CLI commands instead.
-  try {
-    return !isFirstPartyChannelPlugin(channelId);
-  } catch {
-    return false;
-  }
-}
-
 export function buildPairingInstructions(
   channelId: string,
   code: string,
 ): string {
+  // First-party channels (telegram, slack, discord) have UI in the desktop
+  // app. Community plugins installed under ~/.letta/channels/<id>/ do not,
+  // so the user-facing copy needs to point at CLI commands instead.
   const displayName = channelDisplayName(channelId);
-  if (isCommunityChannel(channelId)) {
+  if (!isFirstPartyChannelPlugin(channelId)) {
     return (
       `This chat isn't connected to a Letta agent yet.\n\n` +
       `Pairing code: ${code} (expires in 15 minutes)\n\n` +
-      `Approve this pairing by running this on the machine running your listener:\n\n` +
-      `letta channels pair approve --channel ${channelId} --code ${code}`
+      `On the machine where your listener runs:\n\n` +
+      `letta channels pair --channel ${channelId} --code ${code} --agent <agent-id>\n\n` +
+      `Find your agent id with letta agents list.`
     );
   }
   return (
-    `To connect this chat to a Letta Code agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
+    `To connect this chat to a Letta agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
     `Pairing code: ${code}\n\n` +
     `This code expires in 15 minutes.`
   );
@@ -108,16 +101,16 @@ export function buildUnboundRouteInstructions(
   chatId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  if (isCommunityChannel(channelId)) {
+  if (!isFirstPartyChannelPlugin(channelId)) {
     return (
       `This chat isn't connected to a Letta agent yet.\n\n` +
-      `Connect it by running this on the machine running your listener:\n\n` +
+      `On the machine where your listener runs:\n\n` +
       `letta channels route add --channel ${channelId} --chat-id ${chatId} --agent <agent-id>\n\n` +
-      `Find your agent id with \`letta agents list\`.`
+      `Find your agent id with letta agents list.`
     );
   }
   return (
-    `This chat isn't bound to a Letta Code agent yet.\n\n` +
+    `This chat isn't connected to a Letta agent yet.\n\n` +
     `Open Channels > ${displayName} in Letta Code and connect this chat there.\n\n` +
     `Chat ID: ${chatId}`
   );
