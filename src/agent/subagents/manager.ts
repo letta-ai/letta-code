@@ -182,6 +182,13 @@ export async function resolveSubagentModel(options: {
   if (userModel) return userModel;
 
   if (options.subagentType === "reflection") {
+    if (recommendedModel && recommendedModel !== "inherit") {
+      const recommendedHandle = resolveModel(recommendedModel);
+      if (recommendedHandle) {
+        return recommendedHandle;
+      }
+    }
+
     return "letta/auto-memory";
   }
 
