@@ -57,6 +57,82 @@ return config
     expect(output).toContain("key = 'Delete'");
     expect(output).toContain("return config");
   });
+
+  test("injects before the final return config when helpers return config earlier", () => {
+    const input = `local wezterm = require 'wezterm'
+local config = wezterm.config_builder()
+
+local function get_config()
+  return config
+end
+
+config.color_scheme = 'Tokyo Night'
+
+return config
+`;
+
+    const output = injectWezTermDeleteFix(input);
+    const markerIdx = output.indexOf("-- Letta Code: Fix Delete key");
+    const colorIdx = output.indexOf("config.color_scheme = 'Tokyo Night'");
+    const finalReturnIdx = output.lastIndexOf("return config");
+
+    expect(markerIdx).toBeGreaterThan(colorIdx);
+    expect(markerIdx).toBeLessThan(finalReturnIdx);
+    expect(output).toContain(
+      "local function get_config()\n  return config\nend",
+    );
+  });
+
+  test("ignores return config inside Lua block comments", () => {
+    const input = `local wezterm = require 'wezterm'
+local config = wezterm.config_builder()
+
+--[[
+return config
+]]
+
+config.color_scheme = 'Tokyo Night'
+
+return config
+`;
+
+    const output = injectWezTermDeleteFix(input);
+    const markerIdx = output.indexOf("-- Letta Code: Fix Delete key");
+    const colorIdx = output.indexOf("config.color_scheme = 'Tokyo Night'");
+    const finalReturnIdx = output.lastIndexOf("return config");
+
+    expect(markerIdx).toBeGreaterThan(colorIdx);
+    expect(markerIdx).toBeLessThan(finalReturnIdx);
+  });
+
+  test("adds a live return config when converting return-table configs with commented return config text", () => {
+    const output = injectWezTermDeleteFix(`-- return config
+return {
+  color_scheme = 'Tokyo Night',
+}
+`);
+
+    expect(output).toContain("-- return config");
+    expect(output).toContain("local config = {");
+    expect(output).toContain("color_scheme = 'Tokyo Night'");
+    expect(output.match(/^\s*return config\s*$/gm)?.length).toBe(1);
+
+    const markerIdx = output.indexOf("-- Letta Code: Fix Delete key");
+    const liveReturnIdx = output.lastIndexOf("return config");
+    expect(markerIdx).toBeLessThan(liveReturnIdx);
+  });
+
+  test("ignores commented local config text when converting return-table configs", () => {
+    const output = injectWezTermDeleteFix(`-- local config = {}
+return {
+  color_scheme = 'Tokyo Night',
+}
+`);
+
+    expect(output).toContain("-- local config = {}");
+    expect(output).toContain("local config = {");
+    expect(output).toContain("return config");
+  });
 });
 
 describe("wezTermDeleteFixExists", () => {

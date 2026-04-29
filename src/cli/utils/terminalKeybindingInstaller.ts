@@ -382,19 +382,134 @@ table.insert(keys, {
 config.keys = keys
 `;
 
-const RETURN_CONFIG_LINE = /^\s*return config\s*$/m;
+const RETURN_CONFIG_LINE = /^\s*return\s+config\s*$/;
+const RETURN_TABLE_LINE = /^\s*return\s*\{/;
+const LOCAL_CONFIG_LINE = /^\s*local\s+config\b/;
+
+interface LuaCodeLine {
+  start: number;
+  end: number;
+  line: string;
+  lineEnding: string;
+  code: string;
+}
+
+function stripLuaCommentsFromLine(
+  line: string,
+  blockCommentEnd: string | null,
+): { code: string; blockCommentEnd: string | null } {
+  let code = "";
+  let index = 0;
+  let currentBlockCommentEnd = blockCommentEnd;
+
+  while (index < line.length) {
+    if (currentBlockCommentEnd) {
+      const closeIndex = line.indexOf(currentBlockCommentEnd, index);
+      if (closeIndex === -1) {
+        return { code, blockCommentEnd: currentBlockCommentEnd };
+      }
+
+      index = closeIndex + currentBlockCommentEnd.length;
+      currentBlockCommentEnd = null;
+      continue;
+    }
+
+    if (line.startsWith("--", index)) {
+      const longCommentMatch = line.slice(index).match(/^--\[(=*)\[/);
+      if (longCommentMatch) {
+        const equals = longCommentMatch[1] ?? "";
+        currentBlockCommentEnd = `]${equals}]`;
+        index += longCommentMatch[0].length;
+        continue;
+      }
+
+      break;
+    }
+
+    code += line.charAt(index);
+    index += 1;
+  }
+
+  return { code, blockCommentEnd: currentBlockCommentEnd };
+}
+
+function getLuaCodeLines(content: string): LuaCodeLine[] {
+  const lines: LuaCodeLine[] = [];
+  let start = 0;
+  let blockCommentEnd: string | null = null;
+
+  while (start < content.length) {
+    const newlineIndex = content.indexOf("\n", start);
+    const end = newlineIndex === -1 ? content.length : newlineIndex + 1;
+    const rawLine = content.slice(start, end);
+    const lineEnding = rawLine.endsWith("\r\n")
+      ? "\r\n"
+      : rawLine.endsWith("\n")
+        ? "\n"
+        : "";
+    const line = lineEnding
+      ? rawLine.slice(0, rawLine.length - lineEnding.length)
+      : rawLine;
+    const stripped = stripLuaCommentsFromLine(line, blockCommentEnd);
+    blockCommentEnd = stripped.blockCommentEnd;
+
+    lines.push({
+      start,
+      end,
+      line,
+      lineEnding,
+      code: stripped.code,
+    });
+
+    start = end;
+  }
+
+  return lines;
+}
+
+function findLastMatchingLuaLine(
+  content: string,
+  pattern: RegExp,
+): LuaCodeLine | null {
+  let result: LuaCodeLine | null = null;
+
+  for (const line of getLuaCodeLines(content)) {
+    if (pattern.test(line.code)) {
+      result = line;
+    }
+  }
+
+  return result;
+}
+
+function hasMatchingLuaLine(content: string, pattern: RegExp): boolean {
+  return findLastMatchingLuaLine(content, pattern) !== null;
+}
+
+function replaceLuaLine(
+  content: string,
+  line: LuaCodeLine,
+  replacement: string,
+): string {
+  return `${content.slice(0, line.start)}${replacement}${line.lineEnding}${content.slice(line.end)}`;
+}
 
 export function injectWezTermDeleteFix(content: string): string {
   let nextContent = content;
 
   // For simple configs that return a table directly, we need to modify them
   // to use a config variable. Check if it's a simple "return {" style config.
-  if (
-    nextContent.includes("return {") &&
-    !nextContent.includes("local config")
-  ) {
-    nextContent = nextContent.replace(/return\s*\{/, "local config = {");
-    if (!nextContent.includes("return config")) {
+  const returnTableLine = findLastMatchingLuaLine(
+    nextContent,
+    RETURN_TABLE_LINE,
+  );
+  if (returnTableLine && !hasMatchingLuaLine(nextContent, LOCAL_CONFIG_LINE)) {
+    nextContent = replaceLuaLine(
+      nextContent,
+      returnTableLine,
+      returnTableLine.line.replace(/return\s*\{/, "local config = {"),
+    );
+    if (!hasMatchingLuaLine(nextContent, RETURN_CONFIG_LINE)) {
       nextContent = `${nextContent.trimEnd()}\n\nreturn config\n`;
     }
   }
@@ -407,11 +522,12 @@ return config
 `;
   }
 
-  if (RETURN_CONFIG_LINE.test(nextContent)) {
-    return nextContent.replace(
-      RETURN_CONFIG_LINE,
-      `${WEZTERM_DELETE_FIX}\nreturn config`,
-    );
+  const returnConfigLine = findLastMatchingLuaLine(
+    nextContent,
+    RETURN_CONFIG_LINE,
+  );
+  if (returnConfigLine) {
+    return `${nextContent.slice(0, returnConfigLine.start)}${WEZTERM_DELETE_FIX}\n${nextContent.slice(returnConfigLine.start)}`;
   }
 
   return `${nextContent.trimEnd()}\n${WEZTERM_DELETE_FIX}\n`;
