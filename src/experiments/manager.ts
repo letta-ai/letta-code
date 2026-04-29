@@ -11,7 +11,7 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
   {
     id: "node",
     label: "node",
-    description: "Route API requests through the Letta Node / TS core path.",
+    description: "Route core API requests to node",
     envVar: "LETTA_NODE",
   },
 ] as const;
