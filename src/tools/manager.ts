@@ -186,6 +186,55 @@ export function getInternalToolName(serverName: string): string {
   return serverName;
 }
 
+function matchesClientToolAllowlistEntry(
+  allowSet: Set<string> | null,
+  serverToolName: string,
+  internalToolName?: string,
+): boolean {
+  if (!allowSet) {
+    return true;
+  }
+
+  return (
+    allowSet.has(serverToolName) ||
+    (internalToolName !== undefined && allowSet.has(internalToolName))
+  );
+}
+
+export function filterBuiltInToolNamesByClientAllowlist(
+  toolNames: ToolName[],
+  clientToolAllowlist?: string[],
+): ToolName[] {
+  if (clientToolAllowlist === undefined) {
+    return toolNames;
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return toolNames.filter((toolName) =>
+    matchesClientToolAllowlistEntry(
+      allowSet,
+      getServerToolName(toolName),
+      toolName,
+    ),
+  );
+}
+
+function filterExternalToolsByClientAllowlist(
+  externalTools: Map<string, ExternalToolDefinition>,
+  clientToolAllowlist?: string[],
+): Map<string, ExternalToolDefinition> {
+  if (clientToolAllowlist === undefined) {
+    return new Map(externalTools);
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return new Map(
+    Array.from(externalTools.entries()).filter(([internalName, tool]) =>
+      matchesClientToolAllowlistEntry(allowSet, tool.name, internalName),
+    ),
+  );
+}
+
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
@@ -831,6 +880,7 @@ function capturePreparedToolExecutionContext(
     externalExecutor?: ExternalToolExecutor;
   },
   options?: {
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
@@ -839,7 +889,10 @@ function capturePreparedToolExecutionContext(
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
-    externalTools: new Map(snapshot.externalTools),
+    externalTools: filterExternalToolsByClientAllowlist(
+      snapshot.externalTools,
+      options?.clientToolAllowlist,
+    ),
     externalExecutor: snapshot.externalExecutor,
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
@@ -906,6 +959,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
 export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -1170,10 +1224,10 @@ async function resolveBaseToolNamesForModel(
     options?.channelToolScope,
   );
 
-  if (options?.clientToolAllowlist !== undefined) {
-    const allowSet = new Set(options.clientToolAllowlist);
-    baseToolNames = baseToolNames.filter((name) => allowSet.has(name));
-  }
+  baseToolNames = filterBuiltInToolNamesByClientAllowlist(
+    baseToolNames,
+    options?.clientToolAllowlist,
+  );
 
   return baseToolNames;
 }

@@ -14,6 +14,7 @@ import { toolFilter } from "./filter";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
   clearToolsWithLock,
+  filterBuiltInToolNamesByClientAllowlist,
   GEMINI_DEFAULT_TOOLS,
   GEMINI_PASCAL_TOOLS,
   getToolNames,
@@ -183,13 +184,15 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     };
   }
 
-  const allowSet =
-    clientToolAllowlist !== undefined ? new Set(clientToolAllowlist) : null;
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
-    getToolNamesForToolset(toolsetPreference, channelToolScope)
-      .filter((toolName) => (exclude ? !exclude.includes(toolName) : true))
-      .filter((toolName) => !allowSet || allowSet.has(toolName)),
+    filterBuiltInToolNamesByClientAllowlist(
+      getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
+        (toolName) => (exclude ? !exclude.includes(toolName) : true),
+      ),
+      clientToolAllowlist,
+    ),
     {
+      clientToolAllowlist,
       workingDirectory,
       permissionModeState,
       channelToolScope,
