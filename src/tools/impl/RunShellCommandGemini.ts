@@ -12,6 +12,7 @@ interface RunShellCommandGeminiArgs {
   timeout_ms?: number;
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  secretEnv?: Record<string, string>;
 }
 
 export async function run_shell_command(
@@ -23,6 +24,7 @@ export async function run_shell_command(
     timeout_ms: args.timeout_ms,
     signal: args.signal,
     onOutput: args.onOutput,
+    secretEnv: args.secretEnv,
   });
 
   const message = result.output.trim() || "(Command completed with no output)";

@@ -217,6 +217,11 @@ export function getClientDefaultHeaders(): Record<string, string> {
   return {
     "X-Letta-Source": "letta-code",
     "User-Agent": `letta-code/${packageJson.version}`,
+    // Identify this device on user-message turns so the cloud can
+    // persist the (agent, conversation) → device association and
+    // restore it on other browsers/sessions. The cloud middleware
+    // ignores this header on non-message routes.
+    "X-Letta-Environment-Device-Id": settingsManager.getOrCreateDeviceId(),
     ...(nodeExperiment.source === "override"
       ? { "x-letta-node": nodeExperiment.enabled ? "1" : "0" }
       : nodeExperiment.enabled
@@ -332,7 +337,7 @@ export async function getClient() {
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
-  return new Letta({
+  const client = new Letta({
     apiKey,
     baseURL,
     logger: sdkLogger,
@@ -341,4 +346,36 @@ export async function getClient() {
     // Use instrumented fetch for timing logs when LETTA_DEBUG_TIMINGS is enabled
     ...(isTimingsEnabled() && { fetch: createTimingFetch(fetch) }),
   });
+
+  // ── Immutable-resource cache ──
+  // messages.retrieve returns immutable data (messages don't change after
+  // creation), so we cache results to avoid redundant round-trips.
+  // Capped at 32 entries with LRU eviction.
+  const MESSAGE_CACHE_MAX = 32;
+  const messageCache = new Map<string, Promise<unknown>>();
+  const origRetrieveMessage = client.messages.retrieve.bind(client.messages);
+  client.messages.retrieve = ((
+    ...args: Parameters<typeof client.messages.retrieve>
+  ) => {
+    const messageId = args[0] as string;
+    const cached = messageCache.get(messageId);
+    if (cached) {
+      // Move to end (most recent) for LRU ordering.
+      messageCache.delete(messageId);
+      messageCache.set(messageId, cached);
+      return cached;
+    }
+    const promise = origRetrieveMessage(...args);
+    messageCache.set(messageId, promise);
+    // Evict oldest entry when over capacity.
+    if (messageCache.size > MESSAGE_CACHE_MAX) {
+      const oldest = messageCache.keys().next().value;
+      if (oldest !== undefined) messageCache.delete(oldest);
+    }
+    // Evict on failure so transient errors don't stick.
+    promise.catch(() => messageCache.delete(messageId));
+    return promise;
+  }) as typeof client.messages.retrieve;
+
+  return client;
 }

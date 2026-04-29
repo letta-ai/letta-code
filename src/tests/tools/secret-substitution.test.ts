@@ -5,8 +5,8 @@ import {
   releaseToolExecutionContext,
 } from "../../tools/manager";
 import {
+  extractSecretEnvFromCommand,
   scrubSecretsFromString,
-  substituteSecretsInArgs,
 } from "../../tools/secret-substitution";
 import {
   clearSecretsCache,
@@ -39,49 +39,48 @@ afterEach(() => {
   clearSecretsCache(AGENT_B);
 });
 
-describe("secret substitution", () => {
-  test("uses the explicitly scoped agent id", async () => {
+describe("scoped secret helpers", () => {
+  test("extracts env vars using the explicit agent scope", async () => {
     await seedSecret(AGENT_A, SECRET_A);
     await seedSecret(AGENT_B, SECRET_B);
 
+    expect(extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_A)).toEqual(
+      {
+        [SECRET_KEY]: SECRET_A,
+      },
+    );
+    expect(extractSecretEnvFromCommand(`echo $${SECRET_KEY}`, AGENT_B)).toEqual(
+      {
+        [SECRET_KEY]: SECRET_B,
+      },
+    );
+  });
+
+  test("extracts env vars from command arrays", async () => {
+    await seedSecret(AGENT_A, SECRET_A);
+
     expect(
-      substituteSecretsInArgs({ command: `echo $${SECRET_KEY}` }, AGENT_A),
-    ).toEqual({ command: `echo ${SECRET_A}` });
-    expect(
-      substituteSecretsInArgs({ command: `echo $${SECRET_KEY}` }, AGENT_B),
-    ).toEqual({ command: `echo ${SECRET_B}` });
+      extractSecretEnvFromCommand(
+        [process.execPath, "-e", "console.log('ok')", `$${SECRET_KEY}`],
+        AGENT_A,
+      ),
+    ).toEqual({
+      [SECRET_KEY]: SECRET_A,
+    });
+  });
+
+  test("scrubs secret values using the explicit agent scope", async () => {
+    await seedSecret(AGENT_A, SECRET_A);
+    await seedSecret(AGENT_B, SECRET_B);
 
     expect(scrubSecretsFromString(SECRET_A, AGENT_A)).toBe(
       `${SECRET_KEY}=<REDACTED>`,
     );
     expect(scrubSecretsFromString(SECRET_B, AGENT_A)).toBe(SECRET_B);
   });
-
-  test("substitutes strings recursively in arrays and plain objects", async () => {
-    await seedSecret(AGENT_A, SECRET_A);
-
-    expect(
-      substituteSecretsInArgs(
-        {
-          command: [process.execPath, "-e", `console.log('$${SECRET_KEY}')`],
-          env_overrides: {
-            TOKEN: `$${SECRET_KEY}`,
-            nested: [`prefix-$${SECRET_KEY}`],
-          },
-        },
-        AGENT_A,
-      ),
-    ).toEqual({
-      command: [process.execPath, "-e", `console.log('${SECRET_A}')`],
-      env_overrides: {
-        TOKEN: SECRET_A,
-        nested: [`prefix-${SECRET_A}`],
-      },
-    });
-  });
 });
 
-describe("shell tool secret substitution", () => {
+describe("scoped shell secret execution", () => {
   const stringShellTools: Array<{
     name: string;
     toolNames: string[];
@@ -115,10 +114,10 @@ describe("shell tool secret substitution", () => {
   ];
 
   for (const tool of stringShellTools) {
-    test(`${tool.name} substitutes and scrubs scoped secrets`, async () => {
+    test(`${tool.name} injects and scrubs secrets within a scoped agent context`, async () => {
       await seedSecret(AGENT_A, SECRET_A);
       const runtimeScript = createTempRuntimeScriptCommand(
-        "process.stdout.write(process.argv[2] ?? '')",
+        `process.stdout.write(process.env.${SECRET_KEY} ?? '')`,
       );
       const prepared = await prepareToolExecutionContextForSpecificTools(
         tool.toolNames,
@@ -149,8 +148,8 @@ describe("shell tool secret substitution", () => {
     });
   }
 
-  for (const toolName of ["shell", "Shell"]) {
-    test(`${toolName} substitutes secrets inside command arrays`, async () => {
+  for (const toolName of ["shell", "Shell"] as const) {
+    test(`${toolName} injects secrets for command arrays within a scoped agent context`, async () => {
       await seedSecret(AGENT_A, SECRET_A);
       const prepared = await prepareToolExecutionContextForSpecificTools(
         [toolName],
@@ -170,7 +169,7 @@ describe("shell tool secret substitution", () => {
             command: [
               process.execPath,
               "-e",
-              "process.stdout.write(process.argv[1] ?? '')",
+              `process.stdout.write(process.env.${SECRET_KEY} ?? '')`,
               `$${SECRET_KEY}`,
             ],
             timeout_ms: 5000,
