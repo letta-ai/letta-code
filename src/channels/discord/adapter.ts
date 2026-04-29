@@ -8,6 +8,7 @@ import type {
   OutboundChannelMessage,
 } from "../types";
 import { isDiscordGuildChannelAllowed } from "./channelGating";
+import { formatDiscordDeliveryError } from "./errorReply";
 import {
   resolveDiscordInboundAttachments,
   resolveDiscordThreadHistory,
@@ -256,6 +257,30 @@ function buildDiscordReplyOptions(
       messageReference: trimmed,
     },
   };
+}
+
+/**
+ * Best-effort: post a user-facing error reply when forwarding a Discord
+ * message to the agent runtime fails. Swallows any send failure so the
+ * notification path can never crash the listener.
+ */
+async function notifyDiscordDeliveryError(
+  message: DiscordMessageLike,
+  error: unknown,
+): Promise<void> {
+  try {
+    if (typeof message.channel.send !== "function") return;
+    const reply = buildDiscordReplyOptions(message.id, message.channelId);
+    await message.channel.send({
+      content: formatDiscordDeliveryError(error),
+      ...(reply ?? {}),
+    });
+  } catch (sendError) {
+    console.error(
+      "[Discord] Failed to forward delivery error to user:",
+      sendError,
+    );
+  }
 }
 
 export async function resolveDiscordAccountDisplayName(
@@ -602,6 +627,7 @@ export function createDiscordAdapter(
             await adapter.onMessage(inbound);
           } catch (error) {
             console.error("[Discord] Error handling DM:", error);
+            await notifyDiscordDeliveryError(message, error);
           }
           return;
         }
@@ -675,6 +701,7 @@ export function createDiscordAdapter(
           await adapter.onMessage(inbound);
         } catch (error) {
           console.error("[Discord] Error handling guild message:", error);
+          await notifyDiscordDeliveryError(message, error);
         }
       });
 
