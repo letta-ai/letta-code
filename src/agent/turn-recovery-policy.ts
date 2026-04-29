@@ -384,6 +384,18 @@ export function buildFreshDenialApprovals(
 }
 
 /**
+ * Post-stop retries create a new request/run and must not reuse OTIDs.
+ */
+export function refreshInputOtidsForNewRequest<
+  T extends MessageCreate | ApprovalCreate,
+>(currentInput: T[]): T[] {
+  return currentInput.map((item) => ({
+    ...item,
+    otid: randomUUID(),
+  })) as T[];
+}
+
+/**
  * Strip stale approval payloads from the message input array and optionally
  * prepend fresh denial results for the actual pending approvals from the server.
  */
@@ -392,10 +404,9 @@ export function rebuildInputWithFreshDenials(
   serverApprovals: PendingApprovalInfo[],
   denialReason: string,
 ): Array<MessageCreate | ApprovalCreate> {
-  // Refresh OTIDs on all stripped messages — this is a new request, not a retry
-  const stripped = currentInput
-    .filter((item) => item?.type !== "approval")
-    .map((item) => ({ ...item, otid: randomUUID() }));
+  const stripped = refreshInputOtidsForNewRequest(
+    currentInput.filter((item) => item?.type !== "approval"),
+  );
 
   if (serverApprovals.length > 0) {
     const denials: ApprovalCreate = {

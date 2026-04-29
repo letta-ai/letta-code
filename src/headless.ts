@@ -18,6 +18,7 @@ import {
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
+  refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
@@ -1732,13 +1733,6 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
-  const refreshCurrentInputOtids = () => {
-    // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
-    currentInput = currentInput.map((item) => ({
-      ...item,
-      otid: randomUUID(),
-    }));
-  };
 
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
@@ -2317,7 +2311,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   "Anthropic API error; falling back to Bedrock...",
                 );
               }
-              refreshCurrentInputOtids();
+              currentInput = refreshInputOtidsForNewRequest(currentInput);
               continue;
             }
           }
@@ -2351,7 +2345,7 @@ ${SYSTEM_REMINDER_CLOSE}
           await new Promise((resolve) => setTimeout(resolve, delayMs));
 
           // Post-stream retry creates a new run/request.
-          refreshCurrentInputOtids();
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
           continue;
         }
       }
@@ -2493,7 +2487,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             // Empty-response retry creates a new run/request.
-            refreshCurrentInputOtids();
+            currentInput = refreshInputOtidsForNewRequest(currentInput);
             continue;
           }
 
@@ -2528,7 +2522,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             // Post-stream retry creates a new run/request.
-            refreshCurrentInputOtids();
+            currentInput = refreshInputOtidsForNewRequest(currentInput);
             continue;
           }
         } catch (_e) {
@@ -2569,7 +2563,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             // Post-stream retry creates a new run/request.
-            refreshCurrentInputOtids();
+            currentInput = refreshInputOtidsForNewRequest(currentInput);
             continue;
           }
 

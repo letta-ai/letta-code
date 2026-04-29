@@ -23,6 +23,7 @@ import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
 } from "../../agent/turn-recovery-policy";
 import { createBuffers, toLines } from "../../cli/helpers/accumulator";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
@@ -902,6 +903,7 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
 
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,
@@ -976,6 +978,7 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
 
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,

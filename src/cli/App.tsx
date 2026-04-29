@@ -41,6 +41,7 @@ import {
   isQuotaLimitErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
@@ -4173,13 +4174,6 @@ export default function App({
 
       // Copy so we can safely mutate for retry recovery flows
       let currentInput = [...initialInput];
-      const refreshCurrentInputOtids = () => {
-        // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
-        currentInput = currentInput.map((item) => ({
-          ...item,
-          otid: randomUUID(),
-        }));
-      };
       const allowReentry = options?.allowReentry ?? false;
       const hasApprovalInput = initialInput.some(
         (item) => item.type === "approval",
@@ -5995,7 +5989,7 @@ export default function App({
             refreshDerived();
 
             // Empty-response retry starts a new request/run, so refresh OTIDs.
-            refreshCurrentInputOtids();
+            currentInput = refreshInputOtidsForNewRequest(currentInput);
             buffersRef.current.interrupted = false;
             continue;
           }
@@ -6040,7 +6034,7 @@ export default function App({
                 buffersRef.current.order.push(statusId);
                 refreshDerived();
 
-                refreshCurrentInputOtids();
+                currentInput = refreshInputOtidsForNewRequest(currentInput);
                 highestSeqIdSeen = null;
                 buffersRef.current.interrupted = false;
                 continue;
@@ -6113,7 +6107,7 @@ export default function App({
 
             if (!cancelled) {
               // Post-stream retry is a new request/run, so refresh OTIDs.
-              refreshCurrentInputOtids();
+              currentInput = refreshInputOtidsForNewRequest(currentInput);
               // Reset seq_id threshold — new run starts from seq_id 1, not a resume.
               highestSeqIdSeen = null;
               // Reset interrupted flag so retry stream chunks are processed
