@@ -17,11 +17,11 @@ interface ErrorWithStatus {
  */
 export function extractErrorDetail(error: unknown): string {
   const e = error as ErrorWithStatus | null | undefined;
-  return (
-    e?.error?.detail?.trim() ||
-    e?.message?.trim() ||
-    String(error)
-  );
+  return e?.error?.detail?.trim() || e?.message?.trim() || String(error);
+}
+
+function escapeDiscordInlineCode(value: string): string {
+  return value.replace(/`/g, "\\`").replace(/\r?\n/g, " ");
 }
 
 /**
@@ -57,5 +57,6 @@ export function formatDiscordDeliveryError(error: unknown): string {
   const MAX_DETAIL = 200;
   const truncated =
     detail.length > MAX_DETAIL ? `${detail.slice(0, MAX_DETAIL)}…` : detail;
-  return `Sorry, something went wrong while forwarding your message: \`${truncated}\``;
+  const safeDetail = escapeDiscordInlineCode(truncated);
+  return `Sorry, something went wrong while forwarding your message: \`${safeDetail}\``;
 }

@@ -272,6 +272,7 @@ async function notifyDiscordDeliveryError(
     if (typeof message.channel.send !== "function") return;
     const reply = buildDiscordReplyOptions(message.id, message.channelId);
     await message.channel.send({
+      allowedMentions: { parse: [] },
       content: formatDiscordDeliveryError(error),
       ...(reply ?? {}),
     });
