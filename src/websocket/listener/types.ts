@@ -57,6 +57,7 @@ export interface IncomingMessage {
   agentId?: string;
   conversationId?: string;
   channelTurnSources?: ChannelTurnSource[];
+  clientToolAllowlist?: string[];
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;

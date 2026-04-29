@@ -930,6 +930,7 @@ export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -1138,6 +1139,7 @@ async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolName[]> {
@@ -1168,6 +1170,11 @@ async function resolveBaseToolNamesForModel(
     options?.channelToolScope,
   );
 
+  if (options?.clientToolAllowlist !== undefined) {
+    const allowSet = new Set(options.clientToolAllowlist);
+    baseToolNames = baseToolNames.filter((name) => allowSet.has(name));
+  }
+
   return baseToolNames;
 }
 
@@ -1175,6 +1182,7 @@ async function buildRegistryForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolRegistry> {

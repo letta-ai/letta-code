@@ -168,6 +168,39 @@ describe("tool execution context snapshot", () => {
     expect(prepared.loadedToolNames).not.toContain("RunShellCommand");
   });
 
+  test("filters model-derived client tools by request-scoped allowlist", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["Read", "Grep", "Glob"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual(["Glob", "Grep", "Read"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "Glob",
+      "Grep",
+      "Read",
+    ]);
+    expect(prepared.loadedToolNames).not.toContain("Bash");
+
+    const denied = await executeTool(
+      "Bash",
+      { command: "echo no", description: "Print no" },
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: Bash");
+  });
+
+  test("empty request-scoped allowlist disables client tools", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: [] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools).toEqual([]);
+  });
+
   test("prepares current tool snapshots with fresh MessageChannel discovery", async () => {
     await loadSpecificTools(["Read"]);
 

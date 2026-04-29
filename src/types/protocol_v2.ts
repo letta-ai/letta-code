@@ -543,6 +543,12 @@ export type ApprovalResponseBody =
 export interface InputCreateMessagePayload {
   kind: "create_message";
   messages: Array<MessageCreate & { client_message_id?: string }>;
+  /**
+   * Optional request-scoped allowlist for locally executed client tools.
+   * Undefined preserves the listener's normal toolset; an empty array means no
+   * client tools for this turn.
+   */
+  client_tool_allowlist?: string[];
 }
 
 export type InputApprovalResponsePayload = {

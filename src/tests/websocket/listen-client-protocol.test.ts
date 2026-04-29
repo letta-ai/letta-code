@@ -334,7 +334,11 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "input",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
-          payload: { kind: "create_message", messages: [] },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            client_tool_allowlist: ["Read", "Grep"],
+          },
         }),
       ),
     );
@@ -348,7 +352,32 @@ describe("listen-client parseServerMessage", () => {
       ),
     );
     expect(msg?.type).toBe("input");
+    if (msg?.type === "input" && msg.payload.kind === "create_message") {
+      expect(msg.payload.client_tool_allowlist).toEqual(["Read", "Grep"]);
+    }
     expect(changeDeviceState?.type).toBe("change_device_state");
+  });
+
+  test("rejects input create_message with invalid client tool allowlist", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            client_tool_allowlist: ["Read", 42],
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain("client_tool_allowlist must be string[]");
+    }
   });
 
   test("parses abort_message as the canonical abort command", () => {
