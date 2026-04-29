@@ -138,7 +138,7 @@ export interface ReflectionSettingsSnapshot {
   step_count: number;
 }
 
-export type ChannelId = "telegram" | "slack" | "discord";
+export type ChannelId = string;
 
 export type ChannelPluginConfig = Record<string, unknown>;
 

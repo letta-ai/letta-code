@@ -35,7 +35,7 @@ import {
   removePendingControlRequest as removePersistedPendingControlRequest,
   upsertPendingControlRequest as upsertPersistedPendingControlRequest,
 } from "./pendingControlRequests";
-import { loadChannelPlugin } from "./pluginRegistry";
+import { getChannelDisplayName, loadChannelPlugin } from "./pluginRegistry";
 import {
   addRoute,
   getRoute as getRouteFromStore,
@@ -57,12 +57,15 @@ import type {
   SlackChannelAccount,
   SlackDefaultPermissionMode,
 } from "./types";
+import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
-  if (channelId === "slack") return "Slack";
-  if (channelId === "discord") return "Discord";
-  return "Telegram";
+  try {
+    return getChannelDisplayName(channelId);
+  } catch {
+    return channelId;
+  }
 }
 
 function buildPairingInstructions(channelId: string, code: string): string {
@@ -762,7 +765,7 @@ export class ChannelRegistry {
     const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
-    if (msg.channel === "slack" && config.channel === "slack") {
+    if (msg.channel === "slack" && isSlackChannelAccount(config)) {
       const slackResult = await this.ensureSlackRoute(adapter, msg, config);
       if (!slackResult) {
         return;
@@ -787,7 +790,7 @@ export class ChannelRegistry {
     // standard pairing flow below.
     if (
       msg.channel === "discord" &&
-      config.channel === "discord" &&
+      isDiscordChannelAccount(config) &&
       (msg.chatType === "channel" || config.dmPolicy !== "pairing")
     ) {
       const discordResult = await this.ensureDiscordRoute(adapter, msg, config);

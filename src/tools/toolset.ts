@@ -2,12 +2,10 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
 import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
+import { getSupportedChannelIds } from "../channels/pluginRegistry";
 import { getChannelRegistry } from "../channels/registry";
 import { getRoutesForChannel, loadRoutes } from "../channels/routing";
-import {
-  SUPPORTED_CHANNEL_IDS,
-  type SupportedChannelId,
-} from "../channels/types";
+import type { SupportedChannelId } from "../channels/types";
 import type { RuntimeContextSnapshot } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 import { toolFilter } from "./filter";
@@ -216,7 +214,7 @@ export function resolveConversationChannelToolScope(
   }> = [];
   const seen = new Set<string>();
 
-  for (const channelId of SUPPORTED_CHANNEL_IDS) {
+  for (const channelId of getSupportedChannelIds()) {
     loadRoutes(channelId);
     for (const route of getRoutesForChannel(channelId)) {
       if (

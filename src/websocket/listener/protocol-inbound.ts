@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import { isValidChannelPluginConfigPayload } from "../../channels/accountConfig";
+import { isSupportedChannelId } from "../../channels/pluginRegistry";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
@@ -828,10 +829,8 @@ export function isSetExperimentCommand(
   );
 }
 
-function isChannelId(
-  value: unknown,
-): value is "telegram" | "slack" | "discord" {
-  return value === "telegram" || value === "slack" || value === "discord";
+function isChannelId(value: unknown): value is string {
+  return typeof value === "string" && isSupportedChannelId(value);
 }
 
 function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {

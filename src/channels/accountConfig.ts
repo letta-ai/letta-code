@@ -8,10 +8,11 @@ import type {
 } from "./pluginTypes";
 import { slackAccountConfigAdapter } from "./slack/accountConfig";
 import { telegramAccountConfigAdapter } from "./telegram/accountConfig";
-import type { ChannelAccount, SupportedChannelId } from "./types";
+import type { ChannelAccount } from "./types";
+import { isCustomChannelAccount, isFirstPartyChannelId } from "./types";
 
 const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
-  SupportedChannelId,
+  string,
   ChannelAccountConfigAdapter<ChannelAccount>
 > = {
   telegram:
@@ -22,14 +23,46 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
     discordAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
 };
 
+const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAccount> =
+  {
+    isValidConfig() {
+      return true;
+    },
+    toAccountPatch() {
+      return {};
+    },
+    toAccountConfig(account) {
+      if (!isCustomChannelAccount(account)) {
+        return {};
+      }
+      return {
+        configured: Object.keys(account.config).length > 0,
+      };
+    },
+    toConfigSnapshotConfig(account) {
+      if (!isCustomChannelAccount(account)) {
+        return {};
+      }
+      return {
+        configured: Object.keys(account.config).length > 0,
+      };
+    },
+    shouldRefreshDisplayName() {
+      return false;
+    },
+  };
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 export function getChannelAccountConfigAdapter(
-  channelId: SupportedChannelId,
+  channelId: string,
 ): ChannelAccountConfigAdapter<ChannelAccount> {
-  return CHANNEL_ACCOUNT_CONFIG_ADAPTERS[channelId];
+  return isFirstPartyChannelId(channelId)
+    ? (CHANNEL_ACCOUNT_CONFIG_ADAPTERS[channelId] ??
+        customChannelAccountConfigAdapter)
+    : customChannelAccountConfigAdapter;
 }
 
 export function getChannelPluginConfig(
@@ -44,7 +77,7 @@ export function getChannelPluginConfig(
 }
 
 export function isValidChannelPluginConfigPayload(
-  channelId: SupportedChannelId,
+  channelId: string,
   input: Record<string, unknown>,
   key: "config" | "plugin_config" = "config",
 ): boolean {
@@ -56,7 +89,7 @@ export function isValidChannelPluginConfigPayload(
 }
 
 export function normalizeChannelAccountPatch(
-  channelId: SupportedChannelId,
+  channelId: string,
   patch: ChannelAccountPatch,
 ): ChannelAccountPatch {
   const pluginPatch = patch.config
@@ -69,7 +102,7 @@ export function normalizeChannelAccountPatch(
 }
 
 export function normalizeChannelConfigPatch(
-  channelId: SupportedChannelId,
+  channelId: string,
   patch: ChannelConfigPatch,
 ): ChannelConfigPatch {
   const pluginPatch = patch.config
@@ -82,7 +115,7 @@ export function normalizeChannelConfigPatch(
 }
 
 export function channelPluginConfigShouldRefreshDisplayName(
-  channelId: SupportedChannelId,
+  channelId: string,
   patch: Pick<ChannelAccountPatch, keyof ChannelPluginAccountPatch | "config">,
 ): boolean {
   const adapter = getChannelAccountConfigAdapter(channelId);
