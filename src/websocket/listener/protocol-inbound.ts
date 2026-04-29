@@ -23,12 +23,15 @@ import type {
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
   CheckoutBranchCommand,
+  CopyPathCommand,
   CreateAgentCommand,
+  CreateDirCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  DeletePathCommand,
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
@@ -42,6 +45,7 @@ import type {
   MemoryFileAtRefCommand,
   MemoryHistoryCommand,
   ReadFileCommand,
+  RenamePathCommand,
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
@@ -394,6 +398,62 @@ export function isEditFileCommand(value: unknown): value is EditFileCommand {
       (typeof c.expected_replacements === "number" &&
         Number.isInteger(c.expected_replacements) &&
         c.expected_replacements > 0))
+  );
+}
+
+export function isCreateDirCommand(value: unknown): value is CreateDirCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  return (
+    c.type === "create_dir" &&
+    typeof c.path === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isDeletePathCommand(
+  value: unknown,
+): value is DeletePathCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  return (
+    c.type === "delete_path" &&
+    typeof c.path === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isRenamePathCommand(
+  value: unknown,
+): value is RenamePathCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    from?: unknown;
+    to?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "rename_path" &&
+    typeof c.from === "string" &&
+    typeof c.to === "string" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isCopyPathCommand(value: unknown): value is CopyPathCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    from?: unknown;
+    to?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "copy_path" &&
+    typeof c.from === "string" &&
+    typeof c.to === "string" &&
+    typeof c.request_id === "string"
   );
 }
 
@@ -1284,6 +1344,10 @@ export function parseServerMessage(
       isWatchFileCommand(parsed) ||
       isUnwatchFileCommand(parsed) ||
       isEditFileCommand(parsed) ||
+      isCreateDirCommand(parsed) ||
+      isDeletePathCommand(parsed) ||
+      isRenamePathCommand(parsed) ||
+      isCopyPathCommand(parsed) ||
       isFileOpsCommand(parsed) ||
       isListMemoryCommand(parsed) ||
       isMemoryHistoryCommand(parsed) ||

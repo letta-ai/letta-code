@@ -178,11 +178,14 @@ import {
   isChannelTargetsListCommand,
   isCheckoutBranchCommand,
   isCreateAgentCommand,
+  isCopyPathCommand,
+  isCreateDirCommand,
   isCronAddCommand,
   isCronDeleteAllCommand,
   isCronDeleteCommand,
   isCronGetCommand,
   isCronListCommand,
+  isDeletePathCommand,
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
@@ -195,6 +198,7 @@ import {
   isMemoryFileAtRefCommand,
   isMemoryHistoryCommand,
   isReadFileCommand,
+  isRenamePathCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
   isSetReflectionSettingsCommand,
@@ -4858,6 +4862,222 @@ async function connectWithRetry(
               },
               "listener_write_file_send_failed",
               "listener_write_file",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Directory creation ────────────────────────────────────────────
+      // Used by the sidebar when the user creates a new folder. The
+      // existing `write_file` command already creates intermediate
+      // directories for files; this gives an explicit "make a folder"
+      // primitive that doesn't require a placeholder file.
+      if (isCreateDirCommand(parsed)) {
+        console.log(
+          `[Listen] Received create_dir command: path=${parsed.path}, request_id=${parsed.request_id}`,
+        );
+        runDetachedListenerTask("create_dir", async () => {
+          try {
+            const { mkdir } = await import("node:fs/promises");
+            await mkdir(parsed.path, { recursive: true });
+            void refreshFileIndex();
+            safeSocketSend(
+              socket,
+              {
+                type: "create_dir_response",
+                request_id: parsed.request_id,
+                path: parsed.path,
+                success: true,
+              },
+              "listener_create_dir_send_failed",
+              "listener_create_dir",
+            );
+          } catch (err) {
+            console.error(
+              `[Listen] create_dir error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "create_dir_response",
+                request_id: parsed.request_id,
+                path: parsed.path,
+                success: false,
+                error:
+                  err instanceof Error
+                    ? err.message
+                    : "Failed to create directory",
+              },
+              "listener_create_dir_send_failed",
+              "listener_create_dir",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Path deletion ────────────────────────────────────────────────
+      // Removes a single file or recursively deletes a directory. Used
+      // by the sidebar context menu's "Delete" action. Refuses to
+      // touch the empty string / root path as a defense-in-depth check
+      // — any further sandboxing happens server-side based on
+      // workspace boundaries.
+      if (isDeletePathCommand(parsed)) {
+        console.log(
+          `[Listen] Received delete_path command: path=${parsed.path}, request_id=${parsed.request_id}`,
+        );
+        runDetachedListenerTask("delete_path", async () => {
+          try {
+            if (!parsed.path || parsed.path === "/" || parsed.path === "\\") {
+              throw new Error("Refusing to delete root path");
+            }
+            const { stat, rm, unlink } = await import("node:fs/promises");
+            const stats = await stat(parsed.path);
+            if (stats.isDirectory()) {
+              await rm(parsed.path, { recursive: true, force: false });
+            } else {
+              await unlink(parsed.path);
+            }
+            void refreshFileIndex();
+            safeSocketSend(
+              socket,
+              {
+                type: "delete_path_response",
+                request_id: parsed.request_id,
+                path: parsed.path,
+                success: true,
+              },
+              "listener_delete_path_send_failed",
+              "listener_delete_path",
+            );
+          } catch (err) {
+            console.error(
+              `[Listen] delete_path error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "delete_path_response",
+                request_id: parsed.request_id,
+                path: parsed.path,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to delete path",
+              },
+              "listener_delete_path_send_failed",
+              "listener_delete_path",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Atomic rename / move ─────────────────────────────────────────
+      // Powers both rename-in-place and the cut/paste (move) flow.
+      // Future drag-and-drop will call the same primitive. We rely on
+      // `fs.rename` which is atomic within a single filesystem; cross-
+      // device renames will surface as an EXDEV error to the caller.
+      if (isRenamePathCommand(parsed)) {
+        console.log(
+          `[Listen] Received rename_path command: from=${parsed.from}, to=${parsed.to}, request_id=${parsed.request_id}`,
+        );
+        runDetachedListenerTask("rename_path", async () => {
+          try {
+            const { rename, access } = await import("node:fs/promises");
+            // Refuse to overwrite — caller is responsible for resolving
+            // collisions before sending the command. fs.rename overwrites
+            // by default on POSIX, so we have to check explicitly.
+            try {
+              await access(parsed.to);
+              throw new Error(`Destination already exists: ${parsed.to}`);
+            } catch (accessErr) {
+              const e = accessErr as NodeJS.ErrnoException;
+              if (e.code !== "ENOENT") throw accessErr;
+              // ENOENT — destination is clear, proceed.
+            }
+            await rename(parsed.from, parsed.to);
+            void refreshFileIndex();
+            safeSocketSend(
+              socket,
+              {
+                type: "rename_path_response",
+                request_id: parsed.request_id,
+                from: parsed.from,
+                to: parsed.to,
+                success: true,
+              },
+              "listener_rename_path_send_failed",
+              "listener_rename_path",
+            );
+          } catch (err) {
+            console.error(
+              `[Listen] rename_path error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "rename_path_response",
+                request_id: parsed.request_id,
+                from: parsed.from,
+                to: parsed.to,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to rename path",
+              },
+              "listener_rename_path_send_failed",
+              "listener_rename_path",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Recursive copy ───────────────────────────────────────────────
+      // Powers copy/paste. Uses fs.cp's recursive mode which handles
+      // nested directories, preserving the original via `from`.
+      if (isCopyPathCommand(parsed)) {
+        console.log(
+          `[Listen] Received copy_path command: from=${parsed.from}, to=${parsed.to}, request_id=${parsed.request_id}`,
+        );
+        runDetachedListenerTask("copy_path", async () => {
+          try {
+            const { cp } = await import("node:fs/promises");
+            await cp(parsed.from, parsed.to, {
+              recursive: true,
+              errorOnExist: true,
+              force: false,
+            });
+            void refreshFileIndex();
+            safeSocketSend(
+              socket,
+              {
+                type: "copy_path_response",
+                request_id: parsed.request_id,
+                from: parsed.from,
+                to: parsed.to,
+                success: true,
+              },
+              "listener_copy_path_send_failed",
+              "listener_copy_path",
+            );
+          } catch (err) {
+            console.error(
+              `[Listen] copy_path error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "copy_path_response",
+                request_id: parsed.request_id,
+                from: parsed.from,
+                to: parsed.to,
+                success: false,
+                error:
+                  err instanceof Error ? err.message : "Failed to copy path",
+              },
+              "listener_copy_path_send_failed",
+              "listener_copy_path",
             );
           }
         });

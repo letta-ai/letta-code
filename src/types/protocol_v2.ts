@@ -692,6 +692,58 @@ export interface EditFileCommand {
   request_id: string;
 }
 
+/**
+ * Create an empty directory at `path`. Idempotent — succeeds if the
+ * directory already exists. Parent directories are created as needed.
+ */
+export interface CreateDirCommand {
+  type: "create_dir";
+  /** Absolute path of the directory to create. */
+  path: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+/**
+ * Delete a file or directory. Directories are removed recursively.
+ * Refuses to delete the workspace root itself.
+ */
+export interface DeletePathCommand {
+  type: "delete_path";
+  /** Absolute path of the entry to remove. */
+  path: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+/**
+ * Atomically rename or move a file/directory. The destination must
+ * not already exist; callers should resolve collisions before sending.
+ */
+export interface RenamePathCommand {
+  type: "rename_path";
+  /** Absolute source path. */
+  from: string;
+  /** Absolute destination path (full path, not just the new basename). */
+  to: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+/**
+ * Recursively copy a file or directory. The destination must not
+ * already exist; callers should resolve collisions before sending.
+ */
+export interface CopyPathCommand {
+  type: "copy_path";
+  /** Absolute source path. */
+  from: string;
+  /** Absolute destination path. */
+  to: string;
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
 export interface ListMemoryCommand {
   type: "list_memory";
   /** Echoed back in every response chunk for request correlation. */
@@ -1462,6 +1514,10 @@ export type WsProtocolCommand =
   | WatchFileCommand
   | UnwatchFileCommand
   | EditFileCommand
+  | CreateDirCommand
+  | DeletePathCommand
+  | RenamePathCommand
+  | CopyPathCommand
   | FileOpsCommand
   | ListMemoryCommand
   | MemoryHistoryCommand
