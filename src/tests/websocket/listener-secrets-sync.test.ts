@@ -1,49 +1,34 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  clearSecretsCache,
+  initSecretsFromServer,
+  loadSecrets,
+} from "../../utils/secretsStore";
+import { __listenClientTestUtils } from "../../websocket/listen-client";
+import {
+  __testOverrideRefreshSecretsForAgent,
+  ensureSecretsHydratedForAgent,
+} from "../../websocket/listener/secrets-sync";
 
 const retrieveMock = mock((_agentId: string, _opts?: Record<string, unknown>) =>
   Promise.resolve({ secrets: [] as Array<{ key: string; value: string }> }),
 );
 
-const getClientMock = mock(() =>
-  Promise.resolve({
-    agents: {
-      retrieve: retrieveMock,
-    },
-  }),
-);
-
-mock.module("../../agent/client", () => ({
-  __testOverrideGetClient: () => {},
-  clearLastSDKDiagnostic: () => {},
-  consumeLastSDKDiagnostic: () => null,
-  getClient: getClientMock,
-  getClientDefaultHeaders: () => ({}),
-  getMemfsGitProxyRewriteConfig: () => null,
-  getMemfsServerUrl: () => "https://example.test",
-  getServerUrl: () => "https://example.test",
-  LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV: "LETTA_MEMFS_GIT_PROXY_BASE_URL",
-}));
-
-const { __listenClientTestUtils } = await import(
-  "../../websocket/listen-client"
-);
-const { ensureSecretsHydratedForAgent } = await import(
-  "../../websocket/listener/secrets-sync"
-);
-const { clearSecretsCache, loadSecrets } = await import(
-  "../../utils/secretsStore"
-);
-
 describe("listener secrets sync", () => {
   beforeEach(() => {
     retrieveMock.mockReset();
-    getClientMock.mockClear();
+    __testOverrideRefreshSecretsForAgent(async (agentId) => {
+      const agent = await retrieveMock(agentId, {
+        include: ["agent.secrets"],
+      });
+      await initSecretsFromServer(agentId, agent);
+    });
     clearSecretsCache("agent-listener-secret");
   });
 
-  afterAll(() => {
+  afterEach(() => {
+    __testOverrideRefreshSecretsForAgent(null);
     clearSecretsCache("agent-listener-secret");
-    mock.restore();
   });
 
   test("hydrates the agent-scoped secrets cache from the server", async () => {

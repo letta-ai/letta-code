@@ -9,7 +9,23 @@
 import { debugLog, debugWarn } from "../../utils/debug";
 import type { ListenerRuntime } from "./types";
 
+let _testRefreshSecretsForAgentOverride:
+  | ((agentId: string) => Promise<void>)
+  | null = null;
+
+export function __testOverrideRefreshSecretsForAgent(
+  factory: ((agentId: string) => Promise<void>) | null,
+): void {
+  _testRefreshSecretsForAgentOverride = factory;
+}
+
 async function refreshSecretsForAgent(agentId: string): Promise<void> {
+  if (_testRefreshSecretsForAgentOverride) {
+    await _testRefreshSecretsForAgentOverride(agentId);
+    debugLog("secrets-sync", `Refreshed secrets for agent ${agentId}`);
+    return;
+  }
+
   const { initSecretsFromServer } = await import("../../utils/secretsStore");
   await initSecretsFromServer(agentId);
   debugLog("secrets-sync", `Refreshed secrets for agent ${agentId}`);
