@@ -6,8 +6,23 @@
 
 interface ErrorWithStatus {
   status?: number;
-  message?: string;
-  error?: { detail?: string };
+  message?: unknown;
+  error?: {
+    detail?: unknown;
+    message?: unknown;
+    error?: {
+      detail?: unknown;
+      message?: unknown;
+    };
+  };
+}
+
+function readTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /**
@@ -18,8 +33,11 @@ interface ErrorWithStatus {
 export function extractErrorDetail(error: unknown): string {
   const e = error as ErrorWithStatus | null | undefined;
   return (
-    e?.error?.detail?.trim() ||
-    e?.message?.trim() ||
+    readTrimmedString(e?.error?.error?.detail) ||
+    readTrimmedString(e?.error?.error?.message) ||
+    readTrimmedString(e?.error?.detail) ||
+    readTrimmedString(e?.error?.message) ||
+    readTrimmedString(e?.message) ||
     String(error)
   );
 }

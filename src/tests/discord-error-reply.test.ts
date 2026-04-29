@@ -6,6 +6,19 @@ import {
 } from "../channels/discord/errorReply";
 
 describe("extractErrorDetail", () => {
+  test("prefers nested Letta SDK error.error.detail", () => {
+    const err = {
+      status: 404,
+      message: "404 Not Found",
+      error: {
+        error: { detail: "Agent with ID agent-nested not found" },
+      },
+    };
+    expect(extractErrorDetail(err)).toBe(
+      "Agent with ID agent-nested not found",
+    );
+  });
+
   test("prefers Letta SDK error.detail", () => {
     const err = {
       status: 404,
@@ -27,9 +40,26 @@ describe("extractErrorDetail", () => {
     const err = { error: { detail: "  spaced  " } };
     expect(extractErrorDetail(err)).toBe("spaced");
   });
+
+  test("falls back to direct error.message when detail is missing", () => {
+    const err = { error: { message: "operator-visible message" } };
+    expect(extractErrorDetail(err)).toBe("operator-visible message");
+  });
 });
 
 describe("formatDiscordDeliveryError", () => {
+  test("special-cases nested 404 agent-not-found", () => {
+    const err = {
+      status: 404,
+      error: {
+        error: { detail: "Agent with ID agent-nested not found" },
+      },
+    };
+    const msg = formatDiscordDeliveryError(err);
+    expect(msg).toContain("agent I'm bound to");
+    expect(msg).toContain("letta channels bind --channel discord");
+  });
+
   test("special-cases 404 agent-not-found", () => {
     const err = {
       status: 404,
