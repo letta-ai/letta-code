@@ -10,7 +10,6 @@ import {
   executeApprovalBatch,
 } from "../../agent/approval-execution";
 import { getResumeData } from "../../agent/check-approval";
-import { getClient } from "../../agent/client";
 import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
@@ -19,6 +18,7 @@ import {
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
+import { getClient } from "../../backend/api/client";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
 import { formatPermissionDenial } from "../../permissions/formatDenial";

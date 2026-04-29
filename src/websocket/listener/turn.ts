@@ -7,7 +7,6 @@ import type {
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
-import { getClient } from "../../agent/client";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -24,6 +23,7 @@ import {
   isEmptyResponseRetryable,
   rebuildInputWithFreshDenials,
 } from "../../agent/turn-recovery-policy";
+import { getClient } from "../../backend/api/client";
 import { createBuffers, toLines } from "../../cli/helpers/accumulator";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import {

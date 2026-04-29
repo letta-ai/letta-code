@@ -7,7 +7,6 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
-import { getClient } from "../../agent/client";
 import { sendMessageStream } from "../../agent/message";
 import {
   buildFreshDenialApprovals,
@@ -17,6 +16,7 @@ import {
   parseRetryAfterHeaderMs,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "../../agent/turn-recovery-policy";
+import { getClient } from "../../backend/api/client";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import { createStreamAbortRelay } from "../../utils/streamAbortRelay";

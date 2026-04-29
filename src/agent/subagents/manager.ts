@@ -8,6 +8,8 @@
  */
 
 import { spawn } from "node:child_process";
+import { getClient } from "../../backend/api/client";
+import { getBillingTier } from "../../backend/api/metadata";
 import { buildChatUrl } from "../../cli/helpers/appUrls";
 import {
   addToolCall,
@@ -34,7 +36,6 @@ import {
 } from "../../tools/impl/shellEnv";
 import { getErrorMessage } from "../../utils/error";
 import { getAvailableModelHandles } from "../available-models";
-import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
 import { getDefaultModelForTier, resolveModel } from "../model";
 import recallSubagentPrompt from "../prompts/recall_subagent.md";
@@ -111,15 +112,7 @@ async function getPrimaryAgentModelHandle(): Promise<{
 }
 
 async function getCurrentBillingTier(): Promise<string | null> {
-  try {
-    const client = await getClient();
-    const balance = await client.get<{ billing_tier?: string }>(
-      "/v1/metadata/balance",
-    );
-    return balance.billing_tier ?? null;
-  } catch {
-    return null;
-  }
+  return getBillingTier();
 }
 
 /**

@@ -1,8 +1,8 @@
 import type WebSocket from "ws";
-import { getClient } from "../../agent/client";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { REMEMBER_PROMPT } from "../../agent/promptAssets";
+import { getClient } from "../../backend/api/client";
 import {
   buildDoctorMessage,
   buildInitMessage,

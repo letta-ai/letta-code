@@ -5,7 +5,6 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { getClient } from "../../agent/client";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import {
   clearSubagentConfigCache,
@@ -13,6 +12,7 @@ import {
   getAllSubagentConfigs,
 } from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagents/manager";
+import { forkConversation } from "../../backend/api/conversations";
 import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge.js";
 import {
   completeSubagent,
@@ -655,22 +655,17 @@ export async function task(args: TaskArgs): Promise<string> {
       return "Error: Subagent type with fork: true cannot be combined with agent_id or conversation_id";
     }
     try {
-      const client = await getClient();
       const parentAgentId = getCurrentAgentId();
       const parentConvId = getConversationId() ?? "default";
       // Mark the forked conversation as hidden so it doesn't clutter the
       // parent agent's conversation list in the ADE. The subagent still
       // reads/writes this conversation normally — only archive status is
       // affected.
-      const forkedConv = (await client.post(
-        `/v1/conversations/${encodeURIComponent(parentConvId)}/fork`,
-        {
-          query: {
-            ...(parentConvId === "default" ? { agent_id: parentAgentId } : {}),
-            hidden: true,
-          },
-        },
-      )) as { id: string };
+      const forkedConv = await forkConversation(parentConvId, {
+        ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
+        hidden: true,
+        useQuery: true,
+      });
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
     } catch (error) {

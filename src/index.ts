@@ -3,13 +3,11 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
-import { getClient } from "./agent/client";
 import {
   setAgentContext,
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   getModelPresetUpdateForAgent,
@@ -20,6 +18,8 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import { getClient } from "./backend/api/client";
+import { getBillingTier } from "./backend/api/metadata";
 import {
   type ParsedCliArgs,
   parseCliArgs,
@@ -1669,26 +1669,7 @@ async function main(): Promise<void> {
           if (!effectiveModel && !selfHostedBaseUrl) {
             // On Letta API without explicit model - check billing tier for appropriate default
             const { getDefaultModelForTier } = await import("./agent/model");
-            let billingTier: string | null = null;
-            try {
-              const baseURL =
-                process.env.LETTA_BASE_URL ||
-                settings.env?.LETTA_BASE_URL ||
-                LETTA_CLOUD_API_URL;
-              const apiKey =
-                process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-              const response = await fetch(`${baseURL}/v1/metadata/balance`, {
-                headers: getLettaCodeHeaders(apiKey),
-              });
-              if (response.ok) {
-                const data = (await response.json()) as {
-                  billing_tier?: string;
-                };
-                billingTier = data.billing_tier ?? null;
-              }
-            } catch {
-              // Ignore - will use standard default
-            }
+            const billingTier = await getBillingTier();
             effectiveModel = getDefaultModelForTier(billingTier);
           }
 

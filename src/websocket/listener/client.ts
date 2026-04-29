@@ -11,12 +11,12 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getAvailableModelHandles } from "../../agent/available-models";
-import { getClient } from "../../agent/client";
 import { getModelInfo, models, resolveModel } from "../../agent/model";
 import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
+import { getClient } from "../../backend/api/client";
 import {
   type ChannelRegistryEvent,
   getChannelRegistry,

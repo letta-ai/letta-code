@@ -1,6 +1,6 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
+import { getClient } from "../backend/api/client";
 import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
 import { getChannelRegistry } from "../channels/registry";
 import { getRoutesForChannel, loadRoutes } from "../channels/routing";

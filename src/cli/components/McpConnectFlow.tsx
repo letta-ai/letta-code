@@ -5,7 +5,7 @@
 
 import { Box, useInput } from "ink";
 import { memo, useCallback, useState } from "react";
-import { getClient } from "../../agent/client";
+import { getClient } from "../../backend/api/client";
 import {
   connectMcpServer,
   type McpConnectConfig,

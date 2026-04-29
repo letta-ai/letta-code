@@ -9,6 +9,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { getClient } from "../backend/api/client";
 import {
   type ClientTool,
   type PermissionModeState,
@@ -27,7 +28,6 @@ import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import { getClient } from "./client";
 import { buildClientSkillsPayload } from "./clientSkills";
 import { getSkillSources } from "./context";
 

@@ -6,7 +6,7 @@ import type {
 import type { Tool } from "@letta-ai/letta-client/resources/tools";
 import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useState } from "react";
-import { getClient } from "../../agent/client";
+import { getClient } from "../../backend/api/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";

@@ -2,7 +2,7 @@ import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useState } from "react";
-import { getClient } from "../../agent/client";
+import { getClient } from "../../backend/api/client";
 import { debugLog } from "../../utils/debug";
 import { buildChatUrl } from "../helpers/appUrls";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";

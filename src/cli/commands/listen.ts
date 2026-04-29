@@ -4,7 +4,7 @@
  */
 
 import { hostname } from "node:os";
-import { getServerUrl } from "../../agent/client";
+import { getServerUrl } from "../../backend/api/client";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import {

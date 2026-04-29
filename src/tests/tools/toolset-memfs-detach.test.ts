@@ -33,9 +33,11 @@ const mockGetClient = mock(() =>
   }),
 );
 
-mock.module("../../agent/client", () => ({
+mock.module("../../backend/api/client", () => ({
   getClient: mockGetClient,
   getServerUrl: () => "http://localhost:8283",
+  getMemfsServerUrl: () => "http://localhost:8283",
+  getMemfsGitProxyRewriteConfig: () => null,
 }));
 
 const { detachMemoryTools } = await import("../../tools/toolset");

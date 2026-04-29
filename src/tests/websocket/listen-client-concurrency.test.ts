@@ -201,7 +201,7 @@ mock.module("../../cli/helpers/stream", () => ({
   drainStreamWithResume: drainStreamWithResumeMock,
 }));
 
-mock.module("../../agent/client", () => ({
+mock.module("../../backend/api/client", () => ({
   getClient: getClientMock,
   getServerUrl: () => "https://example.test",
   clearLastSDKDiagnostic: () => {},

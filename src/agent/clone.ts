@@ -4,7 +4,7 @@
 
 import { toFile } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getClient } from "./client";
+import { getClient } from "../backend/api/client";
 
 export interface CloneAgentOptions {
   /** The ID of the agent to clone */

@@ -1,9 +1,8 @@
-import { getServerUrl } from "./agent/client";
-import { settingsManager } from "./settings-manager";
+import { getServerUrl } from "./backend/api/client";
+import { getServerHealth } from "./backend/api/health";
+import { isVersionBelow } from "./utils/version";
 
 const MINIMUM_DOCKER_VERSION = "0.16.6";
-
-import { isVersionBelow } from "./utils/version";
 
 /**
  * Check if the Docker image version meets minimum requirements
@@ -18,19 +17,10 @@ export async function startDockerVersionCheck(): Promise<void> {
   }
 
   try {
-    const settings = await settingsManager.getSettingsWithSecureTokens();
-    const apiKey =
-      process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "";
-
-    // Fetch server version with timeout
-    const res = await fetch(`${baseURL}/v1/health`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+    const data = await getServerHealth({
+      baseUrl: baseURL,
       signal: AbortSignal.timeout(3000),
     });
-
-    if (!res.ok) return;
-
-    const data = (await res.json()) as { version?: string };
     const serverVersion = data.version;
 
     if (!serverVersion) return;

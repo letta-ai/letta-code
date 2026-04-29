@@ -3,8 +3,6 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { __testOverrideGetClient, getMemfsServerUrl } from "../../agent/client";
 import {
   assertMemoryRepoReadyForWrite,
   buildGitAuthArgs,
@@ -17,6 +15,10 @@ import {
   normalizeCredentialBaseUrl,
   shouldConfigurePersistentMemfsCredentialHelper,
 } from "../../agent/memoryGit";
+import {
+  __testOverrideGetClient,
+  getMemfsServerUrl,
+} from "../../backend/api/client";
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;
