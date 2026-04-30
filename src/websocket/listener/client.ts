@@ -16,7 +16,7 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
-import { getClient } from "../../backend/api/client";
+import { getBackend } from "../../backend";
 import {
   channelPluginConfigShouldRefreshDisplayName,
   getChannelPluginConfig,
@@ -3797,12 +3797,11 @@ async function handleAbortMessageInput(
     emitInterruptedStatusDelta,
     scheduleQueuePump,
     cancelConversation: async (agentId: string, conversationId: string) => {
-      const client = await getClient();
       const cancelId =
         conversationId === "default" || !conversationId
           ? agentId
           : conversationId;
-      await client.conversations.cancel(cancelId);
+      await getBackend().cancelConversation(cancelId);
     },
     ...deps,
   };

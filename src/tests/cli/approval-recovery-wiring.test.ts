@@ -58,8 +58,7 @@ describe("approval recovery wiring", () => {
 
     const segment = source.slice(start, end);
 
-    expect(segment).toContain("getClient()");
-    expect(segment).toContain("client.conversations.cancel");
+    expect(segment).toContain("getBackend().cancelConversation");
   });
 
   test("startup and resume approval restores route through shared recovery helper", () => {

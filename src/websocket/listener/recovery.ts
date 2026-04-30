@@ -18,6 +18,7 @@ import {
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
+import { getBackend } from "../../backend";
 import { getClient } from "../../backend/api/client";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
@@ -128,8 +129,7 @@ export async function isRetriablePostStopError(
   }
 
   try {
-    const client = await getClient();
-    const run = await client.runs.retrieve(lastRunId);
+    const run = await getBackend().retrieveRun(lastRunId);
     const metaError = run.metadata?.error as
       | {
           error_type?: string;

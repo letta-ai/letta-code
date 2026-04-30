@@ -9,7 +9,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
-import { getClient } from "../backend/api/client";
+import { getBackend } from "../backend";
 import {
   type ClientTool,
   type PermissionModeState,
@@ -136,7 +136,7 @@ export async function sendMessageStream(
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
-  const client = await getClient();
+  const backend = getBackend();
   const normalizedMessages = await normalizeMessageImageParts(messages);
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
@@ -235,7 +235,7 @@ export async function sendMessageStream(
   let stream: Stream<LettaStreamingResponse>;
   const abortRelay = createStreamAbortRelay(requestOptions.signal);
   try {
-    stream = await client.conversations.messages.create(
+    stream = await backend.createConversationMessageStream(
       resolvedConversationId,
       requestBody,
       {

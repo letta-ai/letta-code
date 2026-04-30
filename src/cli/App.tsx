@@ -77,6 +77,7 @@ import {
 import { reconcileExistingAgentState } from "../agent/reconcileExistingAgentState";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
+import { type ConversationMessageStreamBody, getBackend } from "../backend";
 import { getAgentContextOverview } from "../backend/api/agents";
 import { getClient, getServerUrl } from "../backend/api/client";
 import { forkConversation } from "../backend/api/conversations";
@@ -885,8 +886,7 @@ async function isRetriableError(
   // underlying cause is a transient LLM/network issue that should be retried
   if (lastRunId) {
     try {
-      const client = await getClient();
-      const run = await client.runs.retrieve(lastRunId);
+      const run = await getBackend().retrieveRun(lastRunId);
       const metaError = run.metadata?.error as
         | {
             error_type?: string;
@@ -4465,7 +4465,7 @@ export default function App({
               // Attempt to resume the in-flight run via the conversation stream endpoint.
               // Server resolves: (1) otid lookup, (2) active run fallback.
               try {
-                const client = await getClient();
+                const backend = getBackend();
                 const messageOtid = currentInput
                   .map((item) => (item as Record<string, unknown>).otid)
                   .find((v): v is string => typeof v === "string");
@@ -4485,7 +4485,7 @@ export default function App({
                 }
 
                 const conversationId = conversationIdRef.current ?? "default";
-                const resumeStream = await client.conversations.messages.stream(
+                const resumeStream = await backend.streamConversationMessages(
                   conversationId,
                   // Cast needed until SDK MessageStreamParams includes otid field
                   {
@@ -4496,9 +4496,7 @@ export default function App({
                     otid: messageOtid ?? undefined,
                     starting_after: 0,
                     batch_size: 1000,
-                  } as unknown as Parameters<
-                    typeof client.conversations.messages.stream
-                  >[1],
+                  } as unknown as ConversationMessageStreamBody,
                 );
 
                 // Only reset buffer state after confirming stream is available
@@ -6166,8 +6164,7 @@ export default function App({
           // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
-              const client = await getClient();
-              const run = await client.runs.retrieve(lastRunId);
+              const run = await getBackend().retrieveRun(lastRunId);
 
               // Check if run has error information in metadata
               if (run.metadata?.error) {
@@ -6695,8 +6692,8 @@ export default function App({
       // Send cancel request to backend (fire-and-forget).
       // Without this, the backend stays in requires_approval state after tool interrupt,
       // causing CONFLICT on the next user message.
-      getClient()
-        .then((client) => {
+      Promise.resolve()
+        .then(() => {
           const cancelConversationId =
             conversationIdRef.current === "default"
               ? agentIdRef.current
@@ -6704,7 +6701,7 @@ export default function App({
           if (!cancelConversationId || cancelConversationId === "loading") {
             return;
           }
-          return client.conversations.cancel(cancelConversationId);
+          return getBackend().cancelConversation(cancelConversationId);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -6817,8 +6814,8 @@ export default function App({
 
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
-      getClient()
-        .then((client) => {
+      Promise.resolve()
+        .then(() => {
           const cancelConversationId =
             conversationIdRef.current === "default"
               ? agentIdRef.current
@@ -6826,7 +6823,7 @@ export default function App({
           if (!cancelConversationId || cancelConversationId === "loading") {
             return;
           }
-          return client.conversations.cancel(cancelConversationId);
+          return getBackend().cancelConversation(cancelConversationId);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -6845,7 +6842,6 @@ export default function App({
     } else {
       setInterruptRequested(true);
       try {
-        const client = await getClient();
         const cancelConversationId =
           conversationIdRef.current === "default"
             ? agentIdRef.current
@@ -6853,7 +6849,7 @@ export default function App({
         if (!cancelConversationId || cancelConversationId === "loading") {
           return;
         }
-        await client.conversations.cancel(cancelConversationId);
+        await getBackend().cancelConversation(cancelConversationId);
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
@@ -6935,7 +6931,6 @@ export default function App({
       setBtwState({ status: "forking", question });
 
       try {
-        const client = await getClient();
         const isDefault = conversationIdRef.current === "default";
 
         // Fork the conversation
@@ -6951,10 +6946,13 @@ export default function App({
         }));
 
         // Send the question to the forked conversation
-        const stream = await client.conversations.messages.create(forked.id, {
-          messages: [{ role: "user", content: question }],
-          stream_tokens: true,
-        });
+        const stream = await getBackend().createConversationMessageStream(
+          forked.id,
+          {
+            messages: [{ role: "user", content: question }],
+            stream_tokens: true,
+          },
+        );
 
         let responseText = "";
         for await (const chunk of stream) {

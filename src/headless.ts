@@ -40,6 +40,7 @@ import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import { type ConversationMessageStreamBody, getBackend } from "./backend";
 import { getClient } from "./backend/api/client";
 import type { ParsedCliArgs } from "./cli/args";
 import {
@@ -1870,8 +1871,7 @@ ${SYSTEM_REMINDER_CLOSE}
             .find((v): v is string => typeof v === "string");
 
           try {
-            const client = await getClient();
-            stream = (await client.conversations.messages.stream(
+            stream = (await getBackend().streamConversationMessages(
               conversationId,
               // Cast needed until SDK MessageStreamParams includes otid field
               {
@@ -1882,9 +1882,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 otid: messageOtid ?? undefined,
                 starting_after: 0,
                 batch_size: 1000,
-              } as unknown as Parameters<
-                typeof client.conversations.messages.stream
-              >[1],
+              } as unknown as ConversationMessageStreamBody,
             )) as Awaited<ReturnType<typeof sendMessageStream>>;
             conversationBusyRetries = 0;
             // Fall through to drain
@@ -2422,7 +2420,7 @@ ${SYSTEM_REMINDER_CLOSE}
           let detail = detailFromRun ?? latestErrorText ?? "";
 
           if (lastRunId) {
-            const run = await client.runs.retrieve(lastRunId);
+            const run = await getBackend().retrieveRun(lastRunId);
             const metaError = run.metadata?.error as
               | {
                   error_type?: string;
@@ -2590,7 +2588,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Fetch detailed error from run metadata if available (same as TUI mode)
       if (lastRunId && errorMessages.length === 0) {
         try {
-          const run = await client.runs.retrieve(lastRunId);
+          const run = await getBackend().retrieveRun(lastRunId);
           if (run.metadata?.error) {
             const errorData = run.metadata.error as {
               type?: string;

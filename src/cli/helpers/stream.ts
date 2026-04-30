@@ -11,6 +11,11 @@ import {
   type StreamRequestContext,
 } from "../../agent/message";
 import {
+  type ConversationMessageStreamBody,
+  getBackend,
+  type RunMessageStreamBody,
+} from "../../backend";
+import {
   clearLastSDKDiagnostic,
   consumeLastSDKDiagnostic,
   getClient,
@@ -775,7 +780,7 @@ export async function drainStreamWithResume(
     );
 
     try {
-      const client = await lazyClient();
+      const backend = getBackend();
 
       // Reset interrupted flag so resumed chunks can be processed by onChunk.
       // Without this, tool_return_message for server-side tools (web_search, fetch_webpage)
@@ -793,7 +798,7 @@ export async function drainStreamWithResume(
       try {
         resumeStream =
           runIdSource === "otid" && streamOtid && streamRequestContext
-            ? await client.conversations.messages.stream(
+            ? await backend.streamConversationMessages(
                 streamRequestContext.resolvedConversationId,
                 {
                   agent_id:
@@ -803,21 +808,19 @@ export async function drainStreamWithResume(
                   otid: streamOtid,
                   starting_after: result.lastSeqId ?? 0,
                   batch_size: 1000,
-                } as unknown as Parameters<
-                  typeof client.conversations.messages.stream
-                >[1],
+                } as unknown as ConversationMessageStreamBody,
                 resumeAbortRelay
                   ? { signal: resumeAbortRelay.signal }
                   : undefined,
               )
-            : await client.runs.messages.stream(
+            : await backend.streamRunMessages(
                 runIdToResume as string,
                 {
                   // If lastSeqId is null the stream failed before any seq_id-bearing
                   // chunk arrived; use 0 to replay the run from the beginning.
                   starting_after: result.lastSeqId ?? 0,
                   batch_size: 1000,
-                },
+                } as unknown as RunMessageStreamBody,
                 resumeAbortRelay
                   ? { signal: resumeAbortRelay.signal }
                   : undefined,
