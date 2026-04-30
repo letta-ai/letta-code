@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { Letta } from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -1442,11 +1441,9 @@ export async function handleHeadlessCommand(
 
   // If input-format is stream-json, use bidirectional mode
   if (isBidirectionalMode) {
-    const client = await getClient();
     await runBidirectionalMode(
       agent,
       conversationId,
-      client,
       outputFormat,
       includePartialMessages,
       availableTools,
@@ -2792,7 +2789,6 @@ ${SYSTEM_REMINDER_CLOSE}
 async function runBidirectionalMode(
   agent: AgentState,
   conversationId: string,
-  client: Letta,
   _outputFormat: string,
   includePartialMessages: boolean,
   availableTools: string[],
@@ -3488,7 +3484,7 @@ async function runBidirectionalMode(
             sessionId,
           },
           requestId: requestId ?? "",
-          client,
+          backend,
           hasPendingApproval,
         });
         writeWireMessage(bootstrapResp);
@@ -3500,7 +3496,7 @@ async function runBidirectionalMode(
           sessionAgentId: agent.id,
           sessionId,
           requestId: requestId ?? "",
-          client,
+          backend,
         });
         writeWireMessage(listResp);
       } else if (subtype === "recover_pending_approvals") {
