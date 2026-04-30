@@ -6,24 +6,31 @@ import type {
   Backend,
   ConversationCreateBody,
   ConversationMessageCreateBody,
+  ConversationMessageStreamBody,
   RunMessageStreamBody,
 } from "../backend";
+import { FakeHeadlessStore } from "./FakeHeadlessStore";
 
-function createEmptyPage<T>() {
+function createPage<T>(items: T[]) {
   return {
-    getPaginatedItems: () => [] as T[],
+    getPaginatedItems: () => items,
   };
 }
 
-function createFakeStream(text: string): Stream<LettaStreamingResponse> {
+function createFakeStream(message: {
+  id: string;
+  date: string;
+  content?: unknown;
+}): Stream<LettaStreamingResponse> {
   const controller = new AbortController();
   return {
     controller,
     async *[Symbol.asyncIterator]() {
       yield {
         message_type: "assistant_message",
-        id: "msg-fake-assistant",
-        content: [{ type: "text", text }],
+        id: message.id,
+        date: message.date,
+        content: message.content ?? [{ type: "text", text: "pong" }],
       } as LettaStreamingResponse;
       yield {
         message_type: "stop_reason",
@@ -34,78 +41,77 @@ function createFakeStream(text: string): Stream<LettaStreamingResponse> {
 }
 
 export class FakeHeadlessBackend implements Backend {
-  private readonly agent: AgentState;
-  private conversationId = "conv-fake-headless";
+  private readonly store: FakeHeadlessStore;
 
   constructor(agentId = "agent-fake-headless") {
-    this.agent = {
-      id: agentId,
-      name: "Fake Headless Agent",
-      tools: [],
-      tags: [],
-      message_ids: [],
-      in_context_message_ids: [],
-      llm_config: {
-        model: "dev/fake-headless",
-        model_endpoint_type: "openai",
-        model_endpoint: "https://example.invalid/v1",
-        context_window: 128000,
-      },
-    } as unknown as AgentState;
+    this.store = new FakeHeadlessStore(agentId);
   }
 
   async retrieveAgent(agentId: string): Promise<AgentState> {
-    return { ...this.agent, id: agentId } as AgentState;
+    return this.store.ensureAgent(agentId);
   }
 
-  async updateAgent(agentId: string): Promise<AgentState> {
-    return { ...this.agent, id: agentId } as AgentState;
+  updateAgent(...args: Parameters<Backend["updateAgent"]>) {
+    const [agentId, body] = args;
+    return Promise.resolve(this.store.updateAgent(agentId, body));
   }
 
   async retrieveConversation(conversationId: string): Promise<Conversation> {
-    return {
-      id: conversationId,
-      agent_id: this.agent.id,
-      in_context_message_ids: [],
-    } as unknown as Conversation;
+    return this.store.retrieveConversation(conversationId);
   }
 
   async createConversation(
     body: ConversationCreateBody,
   ): Promise<Conversation> {
-    this.conversationId = "conv-fake-headless";
-    return {
-      id: this.conversationId,
-      agent_id: body.agent_id ?? this.agent.id,
-      in_context_message_ids: [],
-    } as unknown as Conversation;
+    return this.store.createConversation(body);
   }
 
-  async updateConversation(conversationId: string): Promise<Conversation> {
-    return this.retrieveConversation(conversationId);
+  updateConversation(...args: Parameters<Backend["updateConversation"]>) {
+    const [conversationId, body] = args;
+    return Promise.resolve(this.store.updateConversation(conversationId, body));
   }
 
-  listConversationMessages(): ReturnType<Backend["listConversationMessages"]> {
-    return Promise.resolve(createEmptyPage() as never);
+  listConversationMessages(
+    ...args: Parameters<Backend["listConversationMessages"]>
+  ): ReturnType<Backend["listConversationMessages"]> {
+    const [conversationId, body] = args;
+    return Promise.resolve(
+      createPage(
+        this.store.listConversationMessages(conversationId, body),
+      ) as never,
+    );
   }
 
-  listAgentMessages(): ReturnType<Backend["listAgentMessages"]> {
-    return Promise.resolve(createEmptyPage() as never);
+  listAgentMessages(
+    ...args: Parameters<Backend["listAgentMessages"]>
+  ): ReturnType<Backend["listAgentMessages"]> {
+    const [agentId, body] = args;
+    return Promise.resolve(
+      createPage(this.store.listAgentMessages(agentId, body)) as never,
+    );
   }
 
-  retrieveMessage(): ReturnType<Backend["retrieveMessage"]> {
-    return Promise.resolve([] as never);
+  retrieveMessage(
+    ...args: Parameters<Backend["retrieveMessage"]>
+  ): ReturnType<Backend["retrieveMessage"]> {
+    const [messageId] = args;
+    return Promise.resolve(this.store.retrieveMessage(messageId) as never);
   }
 
   async createConversationMessageStream(
-    _conversationId: string,
-    _body: ConversationMessageCreateBody,
+    conversationId: string,
+    body: ConversationMessageCreateBody,
   ) {
-    return createFakeStream("pong");
+    const assistantMessage = this.store.appendTurn(conversationId, body);
+    return createFakeStream(assistantMessage);
   }
 
-  async streamConversationMessages() {
-    return createFakeStream("pong");
+  async streamConversationMessages(
+    conversationId: string,
+    body: ConversationMessageStreamBody,
+  ) {
+    const assistantMessage = this.store.appendTurn(conversationId, body);
+    return createFakeStream(assistantMessage);
   }
 
   async cancelConversation() {
@@ -117,7 +123,11 @@ export class FakeHeadlessBackend implements Backend {
   }
 
   async streamRunMessages(_runId: string, _body: RunMessageStreamBody) {
-    return createFakeStream("pong");
+    return createFakeStream({
+      id: "msg-fake-headless-run",
+      date: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+      content: [{ type: "text", text: "pong" }],
+    });
   }
 
   async forkConversation(conversationId: string) {

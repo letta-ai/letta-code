@@ -100,42 +100,77 @@ async function runStreamJsonCli(): Promise<{
     let stdout = "";
     let stderr = "";
     let buffer = "";
-    let sentInputs = false;
+    let sentInitialInputs = false;
+    let sentListAfterFirstTurn = false;
+    let sentSecondTurn = false;
+    let sentFinalControls = false;
     let closing = false;
+    let resultCount = 0;
+    const controlResponseIds = new Set<string>();
 
     const maybeClose = () => {
-      const controlResponses = objects.filter(
-        (obj) => obj.type === "control_response",
-      ).length;
-      const hasResult = objects.some((obj) => obj.type === "result");
-      if (!closing && controlResponses >= 2 && hasResult) {
+      const hasAllControlResponses = [
+        "bootstrap-initial",
+        "list-after-1",
+        "bootstrap-after-2",
+        "list-after-2",
+      ].every((id) => controlResponseIds.has(id));
+      if (!closing && resultCount >= 2 && hasAllControlResponses) {
         closing = true;
         proc.stdin?.end();
       }
     };
 
-    const sendInputs = () => {
-      if (sentInputs) return;
-      sentInputs = true;
-      const inputs = [
-        {
-          type: "control_request",
-          request_id: "bootstrap-1",
-          request: { subtype: "bootstrap_session_state" },
-        },
-        {
-          type: "control_request",
-          request_id: "list-1",
-          request: { subtype: "list_messages" },
-        },
-        {
-          type: "user",
-          message: { role: "user", content: "ping" },
-        },
-      ];
-      for (const input of inputs) {
-        proc.stdin?.write(`${JSON.stringify(input)}\n`);
-      }
+    const sendInput = (input: Record<string, unknown>) => {
+      proc.stdin?.write(`${JSON.stringify(input)}\n`);
+    };
+
+    const sendInitialInputs = () => {
+      if (sentInitialInputs) return;
+      sentInitialInputs = true;
+      sendInput({
+        type: "control_request",
+        request_id: "bootstrap-initial",
+        request: { subtype: "bootstrap_session_state" },
+      });
+      sendInput({
+        type: "user",
+        message: { role: "user", content: "ping one" },
+      });
+    };
+
+    const sendListAfterFirstTurn = () => {
+      if (sentListAfterFirstTurn) return;
+      sentListAfterFirstTurn = true;
+      sendInput({
+        type: "control_request",
+        request_id: "list-after-1",
+        request: { subtype: "list_messages" },
+      });
+    };
+
+    const sendSecondTurn = () => {
+      if (sentSecondTurn) return;
+      sentSecondTurn = true;
+      sendInput({
+        type: "user",
+        message: { role: "user", content: "ping two" },
+      });
+    };
+
+    const sendFinalControls = () => {
+      if (sentFinalControls) return;
+      sentFinalControls = true;
+      sendInput({
+        type: "control_request",
+        request_id: "bootstrap-after-2",
+        request: { subtype: "bootstrap_session_state" },
+      });
+      sendInput({
+        type: "control_request",
+        request_id: "list-after-2",
+        request: { subtype: "list_messages" },
+      });
     };
 
     const processLine = (line: string) => {
@@ -148,7 +183,26 @@ async function runStreamJsonCli(): Promise<{
       }
       objects.push(parsed);
       if (parsed.type === "system" && parsed.subtype === "init") {
-        sendInputs();
+        sendInitialInputs();
+      }
+      if (parsed.type === "result") {
+        resultCount += 1;
+        if (resultCount === 1) {
+          sendListAfterFirstTurn();
+        } else if (resultCount === 2) {
+          sendFinalControls();
+        }
+      }
+      if (parsed.type === "control_response") {
+        const response = parsed.response as
+          | { request_id?: unknown; subtype?: unknown }
+          | undefined;
+        if (typeof response?.request_id === "string") {
+          controlResponseIds.add(response.request_id);
+          if (response.request_id === "list-after-1") {
+            sendSecondTurn();
+          }
+        }
       }
       maybeClose();
     };
@@ -191,6 +245,29 @@ async function runStreamJsonCli(): Promise<{
   });
 }
 
+function findControlPayload(
+  objects: Array<Record<string, unknown>>,
+  requestId: string,
+): Record<string, unknown> {
+  const control = objects.find((obj) => {
+    if (obj.type !== "control_response") return false;
+    const response = obj.response as { request_id?: unknown } | undefined;
+    return response?.request_id === requestId;
+  });
+  expect(control).toBeDefined();
+
+  const response = control?.response as
+    | { subtype?: unknown; response?: unknown }
+    | undefined;
+  expect(response?.subtype).toBe("success");
+  return response?.response as Record<string, unknown>;
+}
+
+function payloadMessages(payload: Record<string, unknown>) {
+  expect(Array.isArray(payload.messages)).toBe(true);
+  return payload.messages as Array<{ message_type?: string }>;
+}
+
 describe("headless dev backend smoke", () => {
   test("runs one-shot headless without API credentials", async () => {
     const result = await runCli([
@@ -211,7 +288,7 @@ describe("headless dev backend smoke", () => {
     expect(result.stderr).not.toContain("Failed to connect to Letta server");
   });
 
-  test("runs stream-json controls and user turn without API credentials", async () => {
+  test("runs stream-json controls and repeated user turns without API credentials", async () => {
     const result = await runStreamJsonCli();
 
     expect(result.exitCode).toBe(0);
@@ -221,7 +298,7 @@ describe("headless dev backend smoke", () => {
     const controlResponses = result.objects.filter(
       (obj) => obj.type === "control_response",
     );
-    expect(controlResponses).toHaveLength(2);
+    expect(controlResponses).toHaveLength(4);
     expect(
       controlResponses.every(
         (obj) =>
@@ -243,5 +320,31 @@ describe("headless dev backend smoke", () => {
         (obj) => obj.type === "result" && JSON.stringify(obj).includes("pong"),
       ),
     ).toBe(true);
+
+    const listAfterFirst = payloadMessages(
+      findControlPayload(result.objects, "list-after-1"),
+    );
+    expect(listAfterFirst.map((message) => message.message_type)).toEqual([
+      "assistant_message",
+      "user_message",
+    ]);
+    expect(JSON.stringify(listAfterFirst)).toContain("ping one");
+
+    const listAfterSecond = payloadMessages(
+      findControlPayload(result.objects, "list-after-2"),
+    );
+    expect(listAfterSecond.map((message) => message.message_type)).toEqual([
+      "assistant_message",
+      "user_message",
+      "assistant_message",
+      "user_message",
+    ]);
+    expect(JSON.stringify(listAfterSecond)).toContain("ping one");
+    expect(JSON.stringify(listAfterSecond)).toContain("ping two");
+
+    const bootstrapAfterSecond = payloadMessages(
+      findControlPayload(result.objects, "bootstrap-after-2"),
+    );
+    expect(bootstrapAfterSecond).toHaveLength(4);
   });
 });
