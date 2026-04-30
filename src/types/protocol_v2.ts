@@ -752,6 +752,19 @@ export interface MemoryFileAtRefCommand {
   ref: string;
 }
 
+/** Read a file from the agent's MemFS working tree. Use base64 for binary. */
+export interface ReadMemoryFileCommand {
+  type: "read_memory_file";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to read. */
+  agent_id: string;
+  /** Relative to the memory root. */
+  path: string;
+  /** Defaults to "utf8". */
+  encoding?: "utf8" | "base64";
+}
+
 /**
  * Write a file into the agent's MemFS and commit + push.
  *
@@ -1536,6 +1549,7 @@ export type WsProtocolCommand =
   | MemoryHistoryCommand
   | MemoryFileAtRefCommand
   | MemoryCommitDiffCommand
+  | ReadMemoryFileCommand
   | WriteMemoryFileCommand
   | EnableMemfsCommand
   | ListModelsCommand

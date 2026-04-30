@@ -218,6 +218,7 @@ import {
   isMemoryFileAtRefCommand,
   isMemoryHistoryCommand,
   isReadFileCommand,
+  isReadMemoryFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
   isSetExperimentCommand,
@@ -5843,6 +5844,110 @@ async function connectWithRetry(
               },
               "listener_memory_commit_diff_send_failed",
               "listener_memory_commit_diff",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Read a file from the MemFS working tree ───────────────────────
+      if (isReadMemoryFileCommand(parsed)) {
+        runDetachedListenerTask("read_memory_file", async () => {
+          const encoding = parsed.encoding ?? "utf8";
+          const sendFailure = (error: string): void => {
+            safeSocketSend(
+              socket,
+              {
+                type: "read_memory_file_response",
+                request_id: parsed.request_id,
+                agent_id: parsed.agent_id,
+                path: parsed.path,
+                content: null,
+                encoding,
+                success: false,
+                error,
+              },
+              "listener_read_memory_file_send_failed",
+              "listener_read_memory_file",
+            );
+          };
+
+          try {
+            const {
+              getMemoryFilesystemRoot,
+              ensureLocalMemfsCheckout,
+              isMemfsEnabledOnServer,
+            } = await import("../../agent/memoryFilesystem");
+            const { readFile } = await import("node:fs/promises");
+            const { existsSync } = await import("node:fs");
+            const { isAbsolute, join, normalize, relative, sep } = await import(
+              "node:path"
+            );
+
+            // Reject absolute paths or escapes outside memory root.
+            if (isAbsolute(parsed.path) || parsed.path.length === 0) {
+              sendFailure("path must be a non-empty relative path");
+              return;
+            }
+            const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+            const absolutePath = normalize(join(memoryRoot, parsed.path));
+            const rel = relative(memoryRoot, absolutePath);
+            if (
+              rel.startsWith("..") ||
+              rel === "" ||
+              isAbsolute(rel) ||
+              rel.split(sep).includes("..")
+            ) {
+              sendFailure("path must resolve inside the memory root");
+              return;
+            }
+
+            // Clone memfs on first read if it isn't local yet.
+            if (!existsSync(join(memoryRoot, ".git"))) {
+              const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
+              if (!enabled) {
+                sendFailure("memfs is not enabled for this agent");
+                return;
+              }
+              await ensureLocalMemfsCheckout(parsed.agent_id);
+              if (!existsSync(join(memoryRoot, ".git"))) {
+                sendFailure("failed to initialize local memory checkout");
+                return;
+              }
+            }
+
+            const buffer = await readFile(absolutePath);
+            const content =
+              encoding === "base64"
+                ? buffer.toString("base64")
+                : buffer.toString("utf-8");
+            const pathspec = rel.split(sep).join("/");
+
+            safeSocketSend(
+              socket,
+              {
+                type: "read_memory_file_response",
+                request_id: parsed.request_id,
+                agent_id: parsed.agent_id,
+                path: pathspec,
+                content,
+                encoding,
+                success: true,
+              },
+              "listener_read_memory_file_send_failed",
+              "listener_read_memory_file",
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_read_memory_file_failed",
+              err,
+              "listener_memory_read",
+            );
+            console.error(
+              `[Listen] read_memory_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            sendFailure(
+              err instanceof Error ? err.message : "Failed to read memory file",
             );
           }
         });

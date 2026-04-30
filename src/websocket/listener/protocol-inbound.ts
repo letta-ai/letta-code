@@ -46,6 +46,7 @@ import type {
   MemoryFileAtRefCommand,
   MemoryHistoryCommand,
   ReadFileCommand,
+  ReadMemoryFileCommand,
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
@@ -534,6 +535,28 @@ export function isMemoryFileAtRefCommand(
     typeof c.agent_id === "string" &&
     typeof c.file_path === "string" &&
     typeof c.ref === "string"
+  );
+}
+
+export function isReadMemoryFileCommand(
+  value: unknown,
+): value is ReadMemoryFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    path?: unknown;
+    encoding?: unknown;
+  };
+  return (
+    c.type === "read_memory_file" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.path === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64")
   );
 }
 
@@ -1439,6 +1462,7 @@ export function parseServerMessage(
       isMemoryHistoryCommand(parsed) ||
       isMemoryFileAtRefCommand(parsed) ||
       isMemoryCommitDiffCommand(parsed) ||
+      isReadMemoryFileCommand(parsed) ||
       isWriteMemoryFileCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
