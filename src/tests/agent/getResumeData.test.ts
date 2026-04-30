@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import type Letta from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -6,10 +6,17 @@ import type {
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData } from "../../agent/check-approval";
+import { __testSetBackend, type Backend } from "../../backend";
 
 type ResumeAgentState = AgentState & {
   in_context_message_ids?: string[] | null;
 };
+
+const dummyClient = {} as Letta;
+
+function installBackend(overrides: Record<string, unknown>): void {
+  __testSetBackend(overrides as unknown as Backend);
+}
 
 const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
   "user_message",
@@ -57,6 +64,10 @@ function makeUserMessage(id = "msg-last"): Message {
 }
 
 describe("getResumeData", () => {
+  afterEach(() => {
+    __testSetBackend(null);
+  });
+
   test("includeMessageHistory=false still computes pending approvals without backfill (conversation path)", async () => {
     const conversationsRetrieve = mock(async () => ({
       in_context_message_ids: ["msg-last"],
@@ -67,16 +78,14 @@ describe("getResumeData", () => {
     const agentsList = mock(async () => ({ items: [] }));
     const messagesRetrieve = mock(async () => [makeApprovalMessage()]);
 
-    const client = {
-      conversations: {
-        retrieve: conversationsRetrieve,
-        messages: { list: conversationsList },
-      },
-      agents: { messages: { list: agentsList } },
-      messages: { retrieve: messagesRetrieve },
-    } as unknown as Letta;
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listConversationMessages: conversationsList,
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
 
-    const resume = await getResumeData(client, makeAgent(), "conv-abc", {
+    const resume = await getResumeData(dummyClient, makeAgent(), "conv-abc", {
       includeMessageHistory: false,
     });
 
@@ -100,17 +109,15 @@ describe("getResumeData", () => {
     }));
     const messagesRetrieve = mock(async () => [makeApprovalMessage()]);
 
-    const client = {
-      conversations: {
-        retrieve: conversationsRetrieve,
-        messages: { list: conversationsList },
-      },
-      agents: { messages: { list: agentsList } },
-      messages: { retrieve: messagesRetrieve },
-    } as unknown as Letta;
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listConversationMessages: conversationsList,
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
 
     const resume = await getResumeData(
-      client,
+      dummyClient,
       makeAgent({
         message_ids: ["msg-last"],
         in_context_message_ids: ["msg-last"],
@@ -133,13 +140,13 @@ describe("getResumeData", () => {
       makeApprovalMessage("msg-live"),
     ]);
 
-    const client = {
-      agents: { messages: { list: agentsList } },
-      messages: { retrieve: messagesRetrieve },
-    } as unknown as Letta;
+    installBackend({
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
 
     const resume = await getResumeData(
-      client,
+      dummyClient,
       makeAgent({
         message_ids: ["msg-stale"],
         in_context_message_ids: ["msg-live"],
@@ -161,13 +168,13 @@ describe("getResumeData", () => {
     }));
     const messagesRetrieve = mock(async () => [makeUserMessage("msg-stale")]);
 
-    const client = {
-      agents: { messages: { list: agentsList } },
-      messages: { retrieve: messagesRetrieve },
-    } as unknown as Letta;
+    installBackend({
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
 
     const resume = await getResumeData(
-      client,
+      dummyClient,
       makeAgent({ in_context_message_ids: [] }),
       "default",
       { includeMessageHistory: false },
@@ -191,16 +198,14 @@ describe("getResumeData", () => {
     }));
     const messagesRetrieve = mock(async () => [makeUserMessage()]);
 
-    const client = {
-      conversations: {
-        retrieve: conversationsRetrieve,
-      },
-      agents: { messages: { list: agentsList } },
-      messages: { retrieve: messagesRetrieve },
-    } as unknown as Letta;
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
 
     const resume = await getResumeData(
-      client,
+      dummyClient,
       makeAgent({ in_context_message_ids: ["msg-last"] }),
       "default",
     );

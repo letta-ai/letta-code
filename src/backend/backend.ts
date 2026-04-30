@@ -28,7 +28,94 @@ export type RunMessageStreamParams = Parameters<
 export type RunMessageStreamBody = RunMessageStreamParams[1];
 export type RunMessageStreamOptions = RunMessageStreamParams[2];
 
+export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
+export type AgentRetrieveOptions = AgentRetrieveParams[1];
+
+export type AgentUpdateParams = Parameters<APIClient["agents"]["update"]>;
+export type AgentUpdateBody = AgentUpdateParams[1];
+export type AgentUpdateOptions = AgentUpdateParams[2];
+
+export type ConversationRetrieveParams = Parameters<
+  APIClient["conversations"]["retrieve"]
+>;
+export type ConversationRetrieveOptions = ConversationRetrieveParams[1];
+
+export type ConversationCreateParams = Parameters<
+  APIClient["conversations"]["create"]
+>;
+export type ConversationCreateBody = ConversationCreateParams[0];
+export type ConversationCreateOptions = ConversationCreateParams[1];
+
+export type ConversationUpdateParams = Parameters<
+  APIClient["conversations"]["update"]
+>;
+export type ConversationUpdateBody = ConversationUpdateParams[1];
+export type ConversationUpdateOptions = ConversationUpdateParams[2];
+
+export type ConversationMessageListParams = Parameters<
+  APIClient["conversations"]["messages"]["list"]
+>;
+export type ConversationMessageListBody = ConversationMessageListParams[1];
+export type ConversationMessageListOptions = ConversationMessageListParams[2];
+
+export type AgentMessageListParams = Parameters<
+  APIClient["agents"]["messages"]["list"]
+>;
+export type AgentMessageListBody = AgentMessageListParams[1];
+export type AgentMessageListOptions = AgentMessageListParams[2];
+
+export type MessageRetrieveParams = Parameters<
+  APIClient["messages"]["retrieve"]
+>;
+export type MessageRetrieveOptions = MessageRetrieveParams[1];
+
 export interface Backend {
+  retrieveAgent(
+    agentId: string,
+    options?: AgentRetrieveOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>;
+
+  updateAgent(
+    agentId: string,
+    body: AgentUpdateBody,
+    options?: AgentUpdateOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
+
+  retrieveConversation(
+    conversationId: string,
+    options?: ConversationRetrieveOptions,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["retrieve"]>>>;
+
+  createConversation(
+    body: ConversationCreateBody,
+    options?: ConversationCreateOptions,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
+
+  updateConversation(
+    conversationId: string,
+    body: ConversationUpdateBody,
+    options?: ConversationUpdateOptions,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["update"]>>>;
+
+  listConversationMessages(
+    conversationId: string,
+    body?: ConversationMessageListBody,
+    options?: ConversationMessageListOptions,
+  ): Promise<
+    Awaited<ReturnType<APIClient["conversations"]["messages"]["list"]>>
+  >;
+
+  listAgentMessages(
+    agentId: string,
+    body?: AgentMessageListBody,
+    options?: AgentMessageListOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["list"]>>>;
+
+  retrieveMessage(
+    messageId: string,
+    options?: MessageRetrieveOptions,
+  ): Promise<Awaited<ReturnType<APIClient["messages"]["retrieve"]>>>;
+
   createConversationMessageStream(
     conversationId: string,
     body: ConversationMessageCreateBody,
@@ -85,6 +172,68 @@ export class APIBackend implements Backend {
     }
     const { getClient: resolveClient } = await import("./api/client");
     return resolveClient();
+  }
+
+  async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
+    const client = await this.getClient();
+    return client.agents.retrieve(agentId, options);
+  }
+
+  async updateAgent(
+    agentId: string,
+    body: AgentUpdateBody,
+    options?: AgentUpdateOptions,
+  ) {
+    const client = await this.getClient();
+    return client.agents.update(agentId, body, options);
+  }
+
+  async retrieveConversation(
+    conversationId: string,
+    options?: ConversationRetrieveOptions,
+  ) {
+    const client = await this.getClient();
+    return client.conversations.retrieve(conversationId, options);
+  }
+
+  async createConversation(
+    body: ConversationCreateBody,
+    options?: ConversationCreateOptions,
+  ) {
+    const client = await this.getClient();
+    return client.conversations.create(body, options);
+  }
+
+  async updateConversation(
+    conversationId: string,
+    body: ConversationUpdateBody,
+    options?: ConversationUpdateOptions,
+  ) {
+    const client = await this.getClient();
+    return client.conversations.update(conversationId, body, options);
+  }
+
+  async listConversationMessages(
+    conversationId: string,
+    body?: ConversationMessageListBody,
+    options?: ConversationMessageListOptions,
+  ) {
+    const client = await this.getClient();
+    return client.conversations.messages.list(conversationId, body, options);
+  }
+
+  async listAgentMessages(
+    agentId: string,
+    body?: AgentMessageListBody,
+    options?: AgentMessageListOptions,
+  ) {
+    const client = await this.getClient();
+    return client.agents.messages.list(agentId, body, options);
+  }
+
+  async retrieveMessage(messageId: string, options?: MessageRetrieveOptions) {
+    const client = await this.getClient();
+    return client.messages.retrieve(messageId, options);
   }
 
   async createConversationMessageStream(
