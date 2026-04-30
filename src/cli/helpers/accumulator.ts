@@ -491,6 +491,19 @@ function resolveLineIdForKind(
   return `${kind}:${canonicalId}`;
 }
 
+function hasExistingOtidAlias(
+  aliasMap: Map<string, string>,
+  canonical: string,
+  nextOtid?: string,
+): boolean {
+  for (const [mappedOtid, mappedCanonical] of aliasMap.entries()) {
+    if (mappedCanonical === canonical && mappedOtid !== nextOtid) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function resolveAssistantLineId(
   b: Buffers,
   chunk: LettaStreamingResponse & { id?: string; otid?: string },
@@ -521,11 +534,16 @@ function resolveAssistantLineId(
       "assistant",
     );
     const existingLine = b.byId.get(existingLineId);
+    const hasPriorOtidAlias = hasExistingOtidAlias(
+      b.assistantCanonicalByOtid,
+      canonicalFromMessageId,
+      otid,
+    );
     if (
       existingLine &&
       existingLine.kind === "assistant" &&
       "phase" in existingLine &&
-      existingLine.phase === "finished"
+      (existingLine.phase === "finished" || hasPriorOtidAlias)
     ) {
       canonical = otid;
     }
@@ -597,11 +615,16 @@ function resolveReasoningLineId(
       "reasoning",
     );
     const existingLine = b.byId.get(existingLineId);
+    const hasPriorOtidAlias = hasExistingOtidAlias(
+      b.reasoningCanonicalByOtid,
+      canonicalFromMessageId,
+      otid,
+    );
     if (
       existingLine &&
       existingLine.kind === "reasoning" &&
       "phase" in existingLine &&
-      existingLine.phase === "finished"
+      (existingLine.phase === "finished" || hasPriorOtidAlias)
     ) {
       canonical = otid;
     }
