@@ -33,7 +33,9 @@
     "access": "public"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.55",
     "@letta-ai/letta-client": "^1.10.2",
+    "ai": "^6.0.171",
     "glob": "^13.0.0",
     "highlight.js": "^11.11.1",
     "ink-link": "^5.0.0",

@@ -320,6 +320,20 @@ export async function configureDevBackend(name: string): Promise<void> {
       );
       return;
     }
+    case "fake-headless-openai-responses": {
+      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { OpenAIResponsesStreamAdapter } = await import(
+        "./dev/OpenAIResponsesStreamAdapter"
+      );
+      const { ProviderTurnExecutor } = await import(
+        "./dev/ProviderTurnExecutor"
+      );
+      backend = new FakeHeadlessBackend(
+        "agent-fake-headless",
+        new ProviderTurnExecutor(new OpenAIResponsesStreamAdapter()),
+      );
+      return;
+    }
     default:
       throw new Error(`Unknown --dev-backend value "${name}"`);
   }
