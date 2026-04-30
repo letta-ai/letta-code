@@ -20,9 +20,16 @@ export interface SecretCommandResult {
  *   /secret set KEY value  - Set a secret
  *   /secret list           - List available secret names
  *   /secret unset KEY      - Unset a secret
+ *
+ * @param args  Tokenized subcommand + arguments.
+ * @param agentId  Optional explicit agent ID. When omitted the secrets store
+ *   falls back to `getCurrentAgentId()` / env vars (CLI usage). Callers in
+ *   contexts without a global agent context (e.g. the WebSocket listener,
+ *   which serves multiple agents in one process) must pass this explicitly.
  */
 export async function handleSecretCommand(
   args: string[],
+  agentId?: string,
 ): Promise<SecretCommandResult> {
   const [subcommand, key, value] = args;
 
@@ -48,7 +55,7 @@ export async function handleSecretCommand(
       }
 
       try {
-        await setSecretOnServer(normalizedKey, value);
+        await setSecretOnServer(normalizedKey, value, agentId);
         return { output: `Secret '$${normalizedKey}' set.` };
       } catch (error) {
         return {
@@ -58,7 +65,7 @@ export async function handleSecretCommand(
     }
 
     case "list": {
-      const names = listSecretNames();
+      const names = listSecretNames(agentId);
 
       if (names.length === 0) {
         return {
@@ -84,7 +91,7 @@ export async function handleSecretCommand(
       const normalizedKey = key.toUpperCase();
 
       try {
-        const deleted = await deleteSecretOnServer(normalizedKey);
+        const deleted = await deleteSecretOnServer(normalizedKey, agentId);
 
         if (deleted) {
           return { output: `Secret '$${normalizedKey}' unset.` };

@@ -3,6 +3,7 @@ import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { REMEMBER_PROMPT } from "../../agent/promptAssets";
 import { getClient } from "../../backend/api/client";
+import { handleSecretCommand } from "../../cli/commands/secret";
 import {
   buildDoctorMessage,
   buildInitMessage,
@@ -39,6 +40,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "remember",
   "channels",
   "toolset",
+  "secret",
 ];
 
 /**
@@ -63,9 +65,7 @@ export async function handleExecuteCommand(
   };
 
   const trimmedArgs = command.args?.trim();
-  const input = trimmedArgs
-    ? `/${command.command_id} ${trimmedArgs}`
-    : `/${command.command_id}`;
+  const input = sanitizeCommandInput(command.command_id, trimmedArgs);
 
   // Emit slash_command_start
   const startDelta: SlashCommandStartMessage = {
@@ -111,6 +111,13 @@ export async function handleExecuteCommand(
           conversationRuntime,
           trimmedArgs,
           opts,
+        );
+        break;
+
+      case "secret":
+        output = await handleSecretRemoteCommand(
+          trimmedArgs,
+          conversationRuntime.agentId,
         );
         break;
 
@@ -165,6 +172,51 @@ function emitSlashCommandEnd(
     ...fields,
   };
   emitCanonicalMessageDelta(socket, runtime, endDelta as StreamDelta, scope);
+}
+
+/**
+ * Build the displayed `input` for slash_command_start/end deltas.
+ *
+ * Most commands echo the raw input verbatim. `/secret set KEY value` is
+ * special — the third token is a secret value that must NOT appear in the
+ * chat history. Replace it with `***` for the echoed input.
+ */
+function sanitizeCommandInput(
+  commandId: string,
+  trimmedArgs: string | undefined,
+): string {
+  const base = `/${commandId}`;
+  if (!trimmedArgs) return base;
+
+  if (commandId === "secret") {
+    const parts = trimmedArgs.split(/\s+/);
+    if (parts[0] === "set" && parts.length >= 3) {
+      const key = (parts[1] ?? "").toUpperCase();
+      return `${base} set ${key} ***`;
+    }
+  }
+
+  return `${base} ${trimmedArgs}`;
+}
+
+/**
+ * /secret — Manage agent secrets (delegates to the shared CLI handler).
+ *
+ * Splits args on whitespace into [subcommand, key, value] and forwards to
+ * `handleSecretCommand`, which talks to the server and updates the local
+ * secrets cache. The listener serves multiple agents per process so the
+ * agent ID is threaded explicitly — `getCurrentAgentId()` would throw here.
+ */
+async function handleSecretRemoteCommand(
+  args: string | undefined,
+  agentId: string | null,
+): Promise<string> {
+  if (!agentId) {
+    return "Failed to set secret: No agent context set. Agent ID is required.";
+  }
+  const parts = args ? args.split(/\s+/).filter(Boolean) : [];
+  const result = await handleSecretCommand(parts, agentId);
+  return result.output;
 }
 
 /**
