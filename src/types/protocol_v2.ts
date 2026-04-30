@@ -753,16 +753,10 @@ export interface MemoryFileAtRefCommand {
 }
 
 /**
- * Write a file into the agent's MemFS (memory git repo) and commit + push.
+ * Write a file into the agent's MemFS and commit + push.
  *
- * Use for durable agent memory writes (e.g. profile images, blocks). Path is
+ * Use for agent memory writes (e.g. profile images). Path is
  * relative to the memory root and is rejected if it escapes the root.
- *
- * Differs from generic `write_file`:
- *  - resolves path against `getMemoryFilesystemRoot(agent_id)` (no absolute paths)
- *  - bypasses Edit/Write tools so binary bytes aren't CRLF-mangled
- *  - performs `git add` + commit + push via `commitAndSyncMemoryWrite`
- *  - emits `memory_updated` so the UI auto-refreshes
  */
 export interface WriteMemoryFileCommand {
   type: "write_memory_file";
