@@ -6,6 +6,17 @@ import type {
   ConversationMessageListBody,
 } from "../../backend";
 import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
+import { DeterministicToolCallExecutor } from "../../backend/dev/HeadlessTurnExecutor";
+
+async function collectStream(
+  stream: AsyncIterable<LettaStreamingResponse>,
+): Promise<LettaStreamingResponse[]> {
+  const chunks: LettaStreamingResponse[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return chunks;
+}
 
 async function drainAssistantText(
   stream: AsyncIterable<LettaStreamingResponse>,
@@ -145,5 +156,79 @@ describe("FakeHeadlessBackend", () => {
       "user_message",
     ]);
     expect(JSON.stringify(secondPageItems)).toContain("first");
+  });
+
+  test("persists deterministic tool request and approval-result output", async () => {
+    const backend = new FakeHeadlessBackend(
+      "agent-tool",
+      new DeterministicToolCallExecutor(),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-tool",
+    });
+
+    const firstChunks = await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("use a tool", "agent-tool"),
+      ),
+    );
+    const approvalChunk = firstChunks.find(
+      (chunk) => chunk.message_type === "approval_request_message",
+    ) as
+      | (LettaStreamingResponse & {
+          tool_call?: { tool_call_id?: string; name?: string };
+        })
+      | undefined;
+    expect(approvalChunk?.tool_call?.name).toBe("ShellCommand");
+    expect(
+      firstChunks.some(
+        (chunk) =>
+          chunk.message_type === "stop_reason" &&
+          chunk.stop_reason === "requires_approval",
+      ),
+    ).toBe(true);
+
+    const afterRequest = await backend.listConversationMessages(
+      conversation.id,
+      { order: "asc" } as ConversationMessageListBody,
+    );
+    expect(
+      afterRequest.getPaginatedItems().map((message) => message.message_type),
+    ).toEqual(["user_message", "approval_request_message"]);
+
+    const finalText = await drainAssistantText(
+      await backend.createConversationMessageStream(conversation.id, {
+        ...createBody("", "agent-tool"),
+        messages: [
+          {
+            type: "approval",
+            approvals: [
+              {
+                type: "tool",
+                tool_call_id: approvalChunk?.tool_call?.tool_call_id,
+                tool_return: "deterministic-tool-ok",
+                status: "success",
+              },
+            ],
+          },
+        ],
+      } as unknown as ConversationMessageCreateBody),
+    );
+    expect(finalText).toContain("tool result received (success)");
+    expect(finalText).toContain("deterministic-tool-ok");
+
+    const afterApproval = await backend.listConversationMessages(
+      conversation.id,
+      { order: "asc" } as ConversationMessageListBody,
+    );
+    expect(
+      afterApproval.getPaginatedItems().map((message) => message.message_type),
+    ).toEqual([
+      "user_message",
+      "approval_request_message",
+      "approval_response_message",
+      "assistant_message",
+    ]);
   });
 });

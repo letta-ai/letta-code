@@ -298,6 +298,17 @@ export async function configureDevBackend(name: string): Promise<void> {
       backend = new FakeHeadlessBackend();
       return;
     }
+    case "fake-headless-tool-call": {
+      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { DeterministicToolCallExecutor } = await import(
+        "./dev/HeadlessTurnExecutor"
+      );
+      backend = new FakeHeadlessBackend(
+        "agent-fake-headless",
+        new DeterministicToolCallExecutor(),
+      );
+      return;
+    }
     default:
       throw new Error(`Unknown --dev-backend value "${name}"`);
   }
