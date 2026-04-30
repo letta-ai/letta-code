@@ -1,7 +1,15 @@
 import type { ChannelAccountConfigAdapter } from "../pluginTypes";
-import type { DiscordChannelAccount } from "../types";
+import type {
+  ChannelDefaultPermissionMode,
+  DiscordChannelAccount,
+} from "../types";
 
-const DISCORD_CONFIG_KEYS = new Set(["token", "agent_id", "allowed_channels"]);
+const DISCORD_CONFIG_KEYS = new Set([
+  "token",
+  "agent_id",
+  "allowed_channels",
+  "default_permission_mode",
+]);
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -17,6 +25,16 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
+function isDefaultPermissionMode(
+  value: unknown,
+): value is ChannelDefaultPermissionMode {
+  return (
+    value === "default" ||
+    value === "acceptEdits" ||
+    value === "bypassPermissions"
+  );
+}
+
 export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordChannelAccount> =
   {
     isValidConfig(config) {
@@ -29,7 +47,9 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         (config.token === undefined || isString(config.token)) &&
         (config.agent_id === undefined || isNullableString(config.agent_id)) &&
         (config.allowed_channels === undefined ||
-          isStringArray(config.allowed_channels))
+          isStringArray(config.allowed_channels)) &&
+        (config.default_permission_mode === undefined ||
+          isDefaultPermissionMode(config.default_permission_mode))
       );
     },
 
@@ -42,6 +62,11 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         allowedChannels: isStringArray(config.allowed_channels)
           ? [...config.allowed_channels]
           : undefined,
+        defaultPermissionMode: isDefaultPermissionMode(
+          config.default_permission_mode,
+        )
+          ? config.default_permission_mode
+          : undefined,
       };
     },
 
@@ -50,6 +75,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         has_token: account.token.trim().length > 0,
         agent_id: account.agentId,
         allowed_channels: [...(account.allowedChannels ?? [])],
+        default_permission_mode: account.defaultPermissionMode ?? "default",
       };
     },
 
@@ -58,6 +84,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         has_token: account.token.trim().length > 0,
         agent_id: account.agentId,
         allowed_channels: [...(account.allowedChannels ?? [])],
+        default_permission_mode: account.defaultPermissionMode ?? "default",
       };
     },
 

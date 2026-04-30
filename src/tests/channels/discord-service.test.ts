@@ -187,6 +187,43 @@ describe("discord channel service", () => {
     expect(config.allowedChannels).toEqual(["channel-3"]);
   });
 
+  test("discord account snapshots round-trip defaultPermissionMode", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        defaultPermissionMode: "bypassPermissions",
+      },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.defaultPermissionMode).toBe("bypassPermissions");
+
+    const updated = updateChannelAccountLive("discord", "discord-bot", {
+      defaultPermissionMode: "acceptEdits",
+    });
+
+    if (updated.channelId !== "discord") throw new Error("wrong channel");
+    expect(updated.defaultPermissionMode).toBe("acceptEdits");
+
+    const config = getChannelConfigSnapshot("discord", "discord-bot");
+    if (!config || config.channelId !== "discord")
+      throw new Error("wrong channel");
+    expect(config.defaultPermissionMode).toBe("acceptEdits");
+  });
+
+  test("default permission mode defaults to 'default' when not specified", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      { token: "test-token" },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.defaultPermissionMode).toBe("default");
+  });
+
   test("default dmPolicy is 'pairing' when not specified", () => {
     const created = createChannelAccountLive(
       "discord",
@@ -209,6 +246,7 @@ describe("discord channel service", () => {
         enabled: false,
         token: "test-token",
         agentId: null,
+        defaultPermissionMode: "default",
         dmPolicy: "pairing",
         allowedUsers: [],
         createdAt: "2026-04-11T00:00:00.000Z",

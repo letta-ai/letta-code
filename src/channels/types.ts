@@ -10,10 +10,13 @@
 export const SUPPORTED_CHANNEL_IDS = ["telegram", "slack", "discord"] as const;
 export type SupportedChannelId = (typeof SUPPORTED_CHANNEL_IDS)[number];
 export type ChannelChatType = "direct" | "channel";
-export type SlackDefaultPermissionMode =
+export type ChannelDefaultPermissionMode =
   | "default"
   | "acceptEdits"
   | "bypassPermissions";
+/** @deprecated Use {@link ChannelDefaultPermissionMode}. Kept for backward
+ * compatibility with code that imported the Slack-named alias. */
+export type SlackDefaultPermissionMode = ChannelDefaultPermissionMode;
 
 export interface ChannelMessageAttachment {
   id?: string;
@@ -320,7 +323,7 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   botToken: string;
   appToken: string;
   agentId: string | null;
-  defaultPermissionMode: SlackDefaultPermissionMode;
+  defaultPermissionMode: ChannelDefaultPermissionMode;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same
@@ -336,6 +339,17 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   token: string;
   /** Agent ID used for account-bound DM and guild auto-routing. */
   agentId: string | null;
+  /**
+   * Permission mode applied to newly-created conversations for this Discord
+   * account. When set to anything other than "default", the listener seeds the
+   * per-conversation permission state via a `discord_conversation_created`
+   * lifecycle event so that subsequent tool approvals on that conversation
+   * inherit the configured mode (e.g. `bypassPermissions` for trusted DMs or
+   * trusted private channels).
+   *
+   * Defaults to `"default"` (interactive approval).
+   */
+  defaultPermissionMode: ChannelDefaultPermissionMode;
   /**
    * Optional allowlist of guild channel IDs. When non-empty, only messages
    * whose channel ID (or parent channel ID for thread messages) appears in

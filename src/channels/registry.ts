@@ -49,13 +49,13 @@ import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelDefaultPermissionMode,
   ChannelRoute,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   DiscordChannelAccount,
   InboundChannelMessage,
   SlackChannelAccount,
-  SlackDefaultPermissionMode,
 } from "./types";
 import { formatChannelNotification } from "./xml";
 
@@ -236,7 +236,15 @@ export type ChannelRegistryEvent =
       accountId: string;
       agentId: string;
       conversationId: string;
-      defaultPermissionMode: SlackDefaultPermissionMode;
+      defaultPermissionMode: ChannelDefaultPermissionMode;
+    }
+  | {
+      type: "discord_conversation_created";
+      channelId: "discord";
+      accountId: string;
+      agentId: string;
+      conversationId: string;
+      defaultPermissionMode: ChannelDefaultPermissionMode;
     };
 
 // ── Registry ──────────────────────────────────────────────────────
@@ -1054,6 +1062,16 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
+    if (config.defaultPermissionMode !== "default") {
+      this.eventHandler?.({
+        type: "discord_conversation_created",
+        channelId: "discord",
+        accountId: config.accountId,
+        agentId: config.agentId,
+        conversationId,
+        defaultPermissionMode: config.defaultPermissionMode,
+      });
+    }
     return route;
   }
 

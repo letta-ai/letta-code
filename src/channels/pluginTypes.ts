@@ -2,11 +2,11 @@ import type {
   ChannelAccount,
   ChannelAdapter,
   ChannelChatType,
+  ChannelDefaultPermissionMode,
   ChannelRoute,
   DmPolicy,
   OutboundChannelMessage,
   SlackChannelMode,
-  SlackDefaultPermissionMode,
   SupportedChannelId,
 } from "./types";
 
@@ -32,7 +32,7 @@ export interface ChannelPluginAccountPatch {
   appToken?: string;
   mode?: SlackChannelMode;
   agentId?: string | null;
-  defaultPermissionMode?: SlackDefaultPermissionMode;
+  defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[];
   transcribeVoice?: boolean;
 }

@@ -2297,6 +2297,38 @@ describe("listen-client permission mode scope keys", () => {
       modeBeforePlan: null,
     });
   });
+
+  test("discord conversation created event seeds the new conversation permission mode", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    __listenClientTestUtils.handleChannelRegistryEvent(
+      {
+        type: "discord_conversation_created",
+        channelId: "discord",
+        accountId: "acct-1",
+        agentId: "agent-456",
+        conversationId: "conv-discord-1",
+        defaultPermissionMode: "bypassPermissions",
+      },
+      socket as unknown as WebSocket,
+      listener,
+    );
+
+    const status = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-456",
+      conversation_id: "conv-discord-1",
+    });
+
+    expect(status.current_permission_mode).toBe("bypassPermissions");
+    expect(
+      listener.permissionModeByConversation.get("conversation:conv-discord-1"),
+    ).toEqual({
+      mode: "bypassPermissions",
+      planFilePath: null,
+      modeBeforePlan: null,
+    });
+  });
 });
 
 describe("listen-client approval resolver wiring", () => {
