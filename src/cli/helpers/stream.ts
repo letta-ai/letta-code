@@ -687,12 +687,16 @@ export async function drainStreamWithResume(
                 typeof client.conversations.messages.stream
               >[1],
             )
-          : await client.runs.messages.stream(runIdToResume!, {
-              // If lastSeqId is null the stream failed before any seq_id-bearing
-              // chunk arrived; use 0 to replay the run from the beginning.
-              starting_after: result.lastSeqId ?? 0,
-              batch_size: 1000,
-            });
+          : runIdToResume
+            ? await client.runs.messages.stream(runIdToResume, {
+                // If lastSeqId is null the stream failed before any seq_id-bearing
+                // chunk arrived; use 0 to replay the run from the beginning.
+                starting_after: result.lastSeqId ?? 0,
+                batch_size: 1000,
+              })
+            : (() => {
+                throw new Error("Cannot resume stream without a run id");
+              })();
 
       // Continue draining from where we left off
       // Note: Don't pass onFirstMessage again - already called in initial drain

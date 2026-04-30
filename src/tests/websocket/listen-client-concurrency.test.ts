@@ -112,6 +112,28 @@ const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("../../cli/helpers/stream");
 
+type MockResolvedValueOnce = {
+  mockResolvedValueOnce: (value: unknown) => void;
+};
+
+type MockImplementationOnce<TArgs extends unknown[], TResult> = {
+  mockImplementationOnce: (fn: (...args: TArgs) => TResult) => void;
+};
+
+type ClassificationOptions = {
+  permissionModeState?: { mode?: string };
+};
+
+const classifyApprovalsMockWithResolvedValueOnce =
+  classifyApprovalsMock as unknown as MockResolvedValueOnce;
+const classifyApprovalsMockWithImplementationOnce =
+  classifyApprovalsMock as unknown as MockImplementationOnce<
+    [unknown, ClassificationOptions],
+    Promise<unknown>
+  >;
+const executeApprovalBatchMockWithResolvedValueOnce =
+  executeApprovalBatchMock as unknown as MockResolvedValueOnce;
+
 mock.module("../../agent/message", () => ({
   sendMessageStream: sendMessageStreamMock,
   getStreamToolContextId: getStreamToolContextIdMock,
@@ -743,7 +765,7 @@ describe("listen-client multi-worker concurrency", () => {
       pendingApprovals: [approval],
       messageHistory: [],
     });
-    (classifyApprovalsMock as any).mockResolvedValueOnce({
+    classifyApprovalsMockWithResolvedValueOnce.mockResolvedValueOnce({
       autoAllowed: [
         {
           approval,
@@ -1191,9 +1213,9 @@ describe("listen-client multi-worker concurrency", () => {
     });
 
     let capturedModeAtClassification: string | null = null;
-    (classifyApprovalsMock as any).mockImplementationOnce(
-      async (_approvals: any, opts: any) => {
-        capturedModeAtClassification = opts?.permissionModeState?.mode ?? null;
+    classifyApprovalsMockWithImplementationOnce.mockImplementationOnce(
+      async (_approvals, opts) => {
+        capturedModeAtClassification = opts.permissionModeState?.mode ?? null;
         return {
           autoAllowed: [
             {
@@ -1212,7 +1234,7 @@ describe("listen-client multi-worker concurrency", () => {
         };
       },
     );
-    (executeApprovalBatchMock as any).mockResolvedValueOnce([
+    executeApprovalBatchMockWithResolvedValueOnce.mockResolvedValueOnce([
       {
         type: "tool",
         tool_call_id: "tc-1",
@@ -1387,7 +1409,7 @@ describe("listen-client multi-worker concurrency", () => {
     );
     const socket = new MockSocket();
 
-    (classifyApprovalsMock as any).mockResolvedValueOnce({
+    classifyApprovalsMockWithResolvedValueOnce.mockResolvedValueOnce({
       autoAllowed: [
         {
           approval: {

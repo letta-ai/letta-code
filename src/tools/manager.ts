@@ -1406,14 +1406,10 @@ export async function executeTool(
         );
       }
       if (stdout) {
-        for (let i = 0; i < stdout.length; i++) {
-          stdout[i] = scrubSecretsFromString(stdout[i]!);
-        }
+        stdout.splice(0, stdout.length, ...stdout.map(scrubSecretsFromString));
       }
       if (stderr) {
-        for (let i = 0; i < stderr.length; i++) {
-          stderr[i] = scrubSecretsFromString(stderr[i]!);
-        }
+        stderr.splice(0, stderr.length, ...stderr.map(scrubSecretsFromString));
       }
     }
 
