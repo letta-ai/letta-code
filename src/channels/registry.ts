@@ -1173,6 +1173,45 @@ export class ChannelRegistry {
 
 // ── Initialization ────────────────────────────────────────────────
 
+export interface ChannelStartupFailure {
+  channelId: string;
+  accountId?: string;
+  error: string;
+}
+
+export class ChannelInitializationError extends Error {
+  constructor(public readonly failures: ChannelStartupFailure[]) {
+    super(formatChannelStartupFailures(failures));
+    this.name = "ChannelInitializationError";
+  }
+}
+
+export function formatChannelStartupFailures(
+  failures: ChannelStartupFailure[],
+): string {
+  const failedChannels = Array.from(
+    new Set(failures.map((failure) => failure.channelId)),
+  );
+  const lines = failures.map((failure) => {
+    const label = failure.accountId
+      ? `${failure.channelId}/${failure.accountId}`
+      : failure.channelId;
+    return `- ${label}: ${failure.error}`;
+  });
+
+  return [
+    "Failed to start requested channel listeners.",
+    ...lines,
+    "",
+    "The listener is not running for these channels.",
+    `Install missing runtimes with: letta server --channels ${failedChannels.join(",")} --install-channel-runtimes`,
+    "Or install them once with:",
+    ...failedChannels.map(
+      (channelId) => `  letta channels install ${channelId}`,
+    ),
+  ].join("\n");
+}
+
 /**
  * Initialize the channel system.
  *
@@ -1186,16 +1225,18 @@ export class ChannelRegistry {
  */
 export async function initializeChannels(
   channelNames: string[],
+  options?: { failOnStartupError?: boolean },
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
+  const failures: ChannelStartupFailure[] = [];
 
   for (const channelId of channelNames) {
     loadChannelAccounts(channelId);
     const accounts = listChannelAccounts(channelId);
     if (accounts.length === 0) {
-      console.error(
-        `Channel "${channelId}" not configured. Run: letta channels configure ${channelId}`,
-      );
+      const error = `Channel "${channelId}" not configured. Run: letta channels configure ${channelId}`;
+      failures.push({ channelId, error });
+      console.error(error);
       continue;
     }
 
@@ -1207,12 +1248,22 @@ export async function initializeChannels(
       try {
         await registry.startChannelAccount(channelId, account.accountId);
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push({
+          channelId,
+          accountId: account.accountId,
+          error: message,
+        });
         console.error(
           `[Channels] Failed to start ${channelId}/${account.accountId}:`,
-          error instanceof Error ? error.message : error,
+          message,
         );
       }
     }
+  }
+
+  if (failures.length > 0 && options?.failOnStartupError) {
+    throw new ChannelInitializationError(failures);
   }
 
   return registry;

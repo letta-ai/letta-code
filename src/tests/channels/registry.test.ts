@@ -16,6 +16,7 @@ import {
   buildSlackConversationSummary,
   ChannelRegistry,
   completePairing,
+  formatChannelStartupFailures,
   getChannelRegistry,
 } from "../../channels/registry";
 import {
@@ -89,6 +90,34 @@ describe("ChannelRegistry", () => {
 
     await registry.stopAll();
     expect(getChannelRegistry()).toBeNull();
+  });
+});
+
+describe("formatChannelStartupFailures", () => {
+  test("shows actionable install commands for missing channel runtimes", () => {
+    const message = formatChannelStartupFailures([
+      {
+        channelId: "discord",
+        accountId: "acct-discord",
+        error:
+          "Discord support is not installed. Run: letta channels install discord or start the listener with --install-channel-runtimes.",
+      },
+      {
+        channelId: "slack",
+        accountId: "acct-slack",
+        error:
+          "Slack support is not installed. Run: letta channels install slack or start the listener with --install-channel-runtimes.",
+      },
+    ]);
+
+    expect(message).toContain("Failed to start requested channel listeners.");
+    expect(message).toContain("discord/acct-discord");
+    expect(message).toContain("slack/acct-slack");
+    expect(message).toContain(
+      "letta server --channels discord,slack --install-channel-runtimes",
+    );
+    expect(message).toContain("letta channels install discord");
+    expect(message).toContain("letta channels install slack");
   });
 });
 

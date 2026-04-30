@@ -417,7 +417,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     const { initializeChannels } = await import("../../channels/registry");
-    await initializeChannels(channelNames);
+    await initializeChannels(channelNames, {
+      failOnStartupError: Boolean(values.channels),
+    });
   }
 
   // Determine connection name
