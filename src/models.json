@@ -1417,6 +1417,7 @@
       "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
+        "max_output_tokens": 64000,
         "parallel_tool_calls": true
       }
     },
