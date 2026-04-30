@@ -11,7 +11,7 @@ import type {
   ConversationUpdateBody,
 } from "../backend";
 
-type StoredMessage = Message & {
+export type StoredMessage = Message & {
   id: string;
   message_type: string;
   date: string;

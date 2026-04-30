@@ -1,6 +1,4 @@
-import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type {
   Backend,
@@ -10,6 +8,11 @@ import type {
   RunMessageStreamBody,
 } from "../backend";
 import { FakeHeadlessStore } from "./FakeHeadlessStore";
+import {
+  createAssistantMessageStream,
+  DeterministicPongExecutor,
+  type HeadlessTurnExecutor,
+} from "./HeadlessTurnExecutor";
 
 function createPage<T>(items: T[]) {
   return {
@@ -17,34 +20,16 @@ function createPage<T>(items: T[]) {
   };
 }
 
-function createFakeStream(message: {
-  id: string;
-  date: string;
-  content?: unknown;
-}): Stream<LettaStreamingResponse> {
-  const controller = new AbortController();
-  return {
-    controller,
-    async *[Symbol.asyncIterator]() {
-      yield {
-        message_type: "assistant_message",
-        id: message.id,
-        date: message.date,
-        content: message.content ?? [{ type: "text", text: "pong" }],
-      } as LettaStreamingResponse;
-      yield {
-        message_type: "stop_reason",
-        stop_reason: "end_turn",
-      } as LettaStreamingResponse;
-    },
-  } as unknown as Stream<LettaStreamingResponse>;
-}
-
 export class FakeHeadlessBackend implements Backend {
   private readonly store: FakeHeadlessStore;
+  private readonly executor: HeadlessTurnExecutor;
 
-  constructor(agentId = "agent-fake-headless") {
+  constructor(
+    agentId = "agent-fake-headless",
+    executor: HeadlessTurnExecutor = new DeterministicPongExecutor(),
+  ) {
     this.store = new FakeHeadlessStore(agentId);
+    this.executor = executor;
   }
 
   async retrieveAgent(agentId: string): Promise<AgentState> {
@@ -102,16 +87,14 @@ export class FakeHeadlessBackend implements Backend {
     conversationId: string,
     body: ConversationMessageCreateBody,
   ) {
-    const assistantMessage = this.store.appendTurn(conversationId, body);
-    return createFakeStream(assistantMessage);
+    return this.executor.execute({ conversationId, body, store: this.store });
   }
 
   async streamConversationMessages(
     conversationId: string,
     body: ConversationMessageStreamBody,
   ) {
-    const assistantMessage = this.store.appendTurn(conversationId, body);
-    return createFakeStream(assistantMessage);
+    return this.executor.execute({ conversationId, body, store: this.store });
   }
 
   async cancelConversation() {
@@ -123,7 +106,7 @@ export class FakeHeadlessBackend implements Backend {
   }
 
   async streamRunMessages(_runId: string, _body: RunMessageStreamBody) {
-    return createFakeStream({
+    return createAssistantMessageStream({
       id: "msg-fake-headless-run",
       date: new Date(Date.UTC(2026, 0, 1)).toISOString(),
       content: [{ type: "text", text: "pong" }],
