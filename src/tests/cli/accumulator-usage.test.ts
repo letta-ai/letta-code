@@ -393,6 +393,54 @@ describe("accumulator usage statistics", () => {
     );
   });
 
+  test("inserts a blank line before a streamed reasoning section heading in the same otid", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-heading",
+      otid: "reasoning-otid-heading",
+      reasoning: "**Calculating math problems**\n\nFirst section.",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-heading",
+      otid: "reasoning-otid-heading",
+      reasoning: "**Computing with Python**\n\nSecond section.",
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("reasoning-msg-heading");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe(
+      "**Calculating math problems**\n\nFirst section.\n\n**Computing with Python**\n\nSecond section.",
+    );
+  });
+
+  test("retrofits a blank line when a streamed reasoning heading spans multiple chunks", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-split-heading",
+      otid: "reasoning-otid-split-heading",
+      reasoning: "**Calculating math problems**\n\nFirst section.**Computing",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-split-heading",
+      otid: "reasoning-otid-split-heading",
+      reasoning: " with Python**\n\nSecond section.",
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("reasoning-msg-split-heading");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe(
+      "**Calculating math problems**\n\nFirst section.\n\n**Computing with Python**\n\nSecond section.",
+    );
+  });
+
   test("reconciles optimistic user lines to the backend message id via otid", () => {
     const buffers = createBuffers();
     buffers.byId.set("user-local-1", {
