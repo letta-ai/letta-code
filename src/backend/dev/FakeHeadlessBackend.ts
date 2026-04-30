@@ -10,7 +10,10 @@ import type {
   ConversationMessageStreamBody,
   RunMessageStreamBody,
 } from "../backend";
-import { FakeHeadlessStore } from "./FakeHeadlessStore";
+import {
+  FakeHeadlessStore,
+  type FakeHeadlessStoreOptions,
+} from "./FakeHeadlessStore";
 import {
   createAssistantMessageStream,
   DeterministicPongExecutor,
@@ -31,8 +34,9 @@ export class FakeHeadlessBackend implements Backend {
   constructor(
     agentId = "agent-fake-headless",
     executor: HeadlessTurnExecutor = new DeterministicPongExecutor(),
+    storeOptions: FakeHeadlessStoreOptions = {},
   ) {
-    this.store = new FakeHeadlessStore(agentId);
+    this.store = new FakeHeadlessStore(agentId, storeOptions);
     this.executor = executor;
   }
 

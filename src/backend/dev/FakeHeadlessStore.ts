@@ -1,3 +1,11 @@
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   LettaStreamingResponse,
@@ -142,6 +150,10 @@ export interface StoredTurnInput {
   conversationId: string;
 }
 
+export interface FakeHeadlessStoreOptions {
+  storageDir?: string;
+}
+
 type ProviderUIMessagePart = ProviderTrajectoryUIMessage["parts"][number];
 type ProviderUIToolPart = ProviderUIMessagePart & {
   type: `tool-${string}`;
@@ -171,7 +183,35 @@ function isProviderUIToolPart(
   );
 }
 
+function encodePathSegment(value: string): string {
+  return Buffer.from(value).toString("base64url");
+}
+
+function jsonl<T>(items: T[]): string {
+  return `${items.map((item) => JSON.stringify(item)).join("\n")}\n`;
+}
+
+function readJsonFile<T>(path: string): T | undefined {
+  if (!existsSync(path)) return undefined;
+  return JSON.parse(readFileSync(path, "utf8")) as T;
+}
+
+function readJsonlFile<T>(path: string): T[] {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as T);
+}
+
+function numericSuffix(value: string, prefix: string): number {
+  return value.startsWith(prefix)
+    ? Number.parseInt(value.slice(prefix.length), 10) || 0
+    : 0;
+}
+
 export class FakeHeadlessStore {
+  private readonly storageDir?: string;
   private readonly agents = new Map<string, AgentState>();
   private readonly conversations = new Map<string, StoredConversation>();
   private readonly messagesByConversationKey = new Map<
@@ -187,7 +227,12 @@ export class FakeHeadlessStore {
   private messageSeq = 0;
   private providerTrajectorySeq = 0;
 
-  constructor(private readonly defaultAgentId: string) {
+  constructor(
+    private readonly defaultAgentId: string,
+    options: FakeHeadlessStoreOptions = {},
+  ) {
+    this.storageDir = options.storageDir;
+    this.loadFromStorage();
     this.ensureAgent(this.defaultAgentId);
   }
 
@@ -196,6 +241,7 @@ export class FakeHeadlessStore {
     if (existing) return existing;
     const agent = createAgent(agentId);
     this.agents.set(agentId, agent);
+    this.persistAgent(agentId);
     this.ensureConversation("default", agentId);
     return agent;
   }
@@ -204,6 +250,7 @@ export class FakeHeadlessStore {
     const current = this.ensureAgent(agentId);
     const updated = { ...current, ...(body as Record<string, unknown>) };
     this.agents.set(agentId, updated as AgentState);
+    this.persistAgent(agentId);
     return updated as AgentState;
   }
 
@@ -231,6 +278,7 @@ export class FakeHeadlessStore {
       this.conversationKey(conversationId, current.agent_id),
       updated as StoredConversation,
     );
+    this.persistConversationState(conversationId, current.agent_id);
     return updated as Conversation;
   }
 
@@ -492,6 +540,7 @@ export class FakeHeadlessStore {
     const trajectory = this.providerTrajectoryByConversationKey.get(key) ?? [];
     trajectory.push(entry);
     this.providerTrajectoryByConversationKey.set(key, trajectory);
+    this.persistConversationState(conversationId, agentId);
     return entry;
   }
 
@@ -511,6 +560,7 @@ export class FakeHeadlessStore {
     };
     this.applyProviderRawCapture(entry, capturedPart);
     this.applyProviderStreamPartToUI(conversationId, agentId, entry, part);
+    this.persistConversationState(conversationId, agentId);
   }
 
   private applyProviderRawCapture(
@@ -981,6 +1031,7 @@ export class FakeHeadlessStore {
         options.approvalResponseId,
       ];
     }
+    this.persistConversationState(entry.conversationId, entry.agentId);
   }
 
   private providerTrajectoryForConversation(
@@ -1153,6 +1204,8 @@ export class FakeHeadlessStore {
       message_ids: messageIds,
       in_context_message_ids: inContextMessageIds,
     } as AgentState);
+    this.persistAgent(agentId);
+    this.persistConversationState(conversation.id, agentId);
 
     return message;
   }
@@ -1188,6 +1241,107 @@ export class FakeHeadlessStore {
     return limit === undefined ? items : items.slice(0, limit);
   }
 
+  private loadFromStorage(): void {
+    if (!this.storageDir || !existsSync(this.storageDir)) return;
+
+    const agentsDir = join(this.storageDir, "agents");
+    if (existsSync(agentsDir)) {
+      for (const file of readdirSync(agentsDir)) {
+        if (!file.endsWith(".json")) continue;
+        const agent = readJsonFile<AgentState>(join(agentsDir, file));
+        if (agent?.id) {
+          this.agents.set(agent.id, agent);
+        }
+      }
+    }
+
+    const conversationsDir = join(this.storageDir, "conversations");
+    if (existsSync(conversationsDir)) {
+      for (const conversationDirName of readdirSync(conversationsDir)) {
+        const conversationDir = join(conversationsDir, conversationDirName);
+        const conversation = readJsonFile<StoredConversation>(
+          join(conversationDir, "conversation.json"),
+        );
+        if (!conversation?.id || !conversation.agent_id) continue;
+
+        const key = this.conversationKey(
+          conversation.id,
+          conversation.agent_id,
+        );
+        const messages = readJsonlFile<StoredMessage>(
+          join(conversationDir, "messages.jsonl"),
+        );
+        const providerTrajectory = readJsonlFile<ProviderTrajectoryMessage>(
+          join(conversationDir, "provider-trajectory.jsonl"),
+        );
+
+        this.conversations.set(key, conversation);
+        this.messagesByConversationKey.set(key, messages);
+        this.providerTrajectoryByConversationKey.set(key, providerTrajectory);
+        this.conversationSeq = Math.max(
+          this.conversationSeq,
+          numericSuffix(conversation.id, "conv-fake-headless-"),
+        );
+
+        for (const message of messages) {
+          this.messagesById.set(message.id, [message]);
+          this.messageSeq = Math.max(
+            this.messageSeq,
+            numericSuffix(message.id, "msg-fake-headless-"),
+          );
+        }
+
+        for (const entry of providerTrajectory) {
+          this.providerTrajectorySeq = Math.max(
+            this.providerTrajectorySeq,
+            numericSuffix(entry.id, "provider-msg-fake-headless-"),
+          );
+        }
+      }
+    }
+  }
+
+  private persistAgent(agentId: string): void {
+    if (!this.storageDir) return;
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    const agentsDir = join(this.storageDir, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(
+      join(agentsDir, `${encodePathSegment(agentId)}.json`),
+      `${JSON.stringify(agent, null, 2)}\n`,
+    );
+  }
+
+  private persistConversationState(
+    conversationId: string,
+    agentId: string,
+  ): void {
+    if (!this.storageDir) return;
+    const key = this.conversationKey(conversationId, agentId);
+    const conversation = this.conversations.get(key);
+    if (!conversation) return;
+
+    const conversationDir = join(
+      this.storageDir,
+      "conversations",
+      encodePathSegment(key),
+    );
+    mkdirSync(conversationDir, { recursive: true });
+    writeFileSync(
+      join(conversationDir, "conversation.json"),
+      `${JSON.stringify(conversation, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(conversationDir, "messages.jsonl"),
+      jsonl(this.messagesByConversationKey.get(key) ?? []),
+    );
+    writeFileSync(
+      join(conversationDir, "provider-trajectory.jsonl"),
+      jsonl(this.providerTrajectoryByConversationKey.get(key) ?? []),
+    );
+  }
+
   private ensureConversation(
     conversationId: string,
     agentId?: string,
@@ -1205,6 +1359,7 @@ export class FakeHeadlessStore {
     this.conversations.set(key, conversation);
     this.messagesByConversationKey.set(key, []);
     this.providerTrajectoryByConversationKey.set(key, []);
+    this.persistConversationState(conversation.id, resolvedAgentId);
     return conversation;
   }
 

@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   ConversationMessageCreateBody,
@@ -576,6 +579,120 @@ describe("ProviderTurnExecutor", () => {
         providerMetadata: { openai: { itemId: "item-text" } },
       },
     ]);
+  });
+
+  test("reloads provider UI trajectory from flatfile storage", async () => {
+    const storageDir = mkdtempSync(join(tmpdir(), "letta-provider-store-"));
+    try {
+      const firstAdapter: ProviderStreamAdapter = {
+        async *stream() {
+          yield streamPart({
+            type: "tool-call",
+            toolCallId: "provider-tool-persisted",
+            toolName: "ShellCommand",
+            input: { command: "echo persisted", login: false },
+          });
+          yield streamPart({ type: "finish", finishReason: "tool-calls" });
+        },
+      };
+      const firstBackend = new FakeHeadlessBackend(
+        "agent-provider",
+        new ProviderTurnExecutor(firstAdapter),
+        { storageDir },
+      );
+      const conversation = await firstBackend.createConversation({
+        agent_id: "agent-provider",
+      });
+
+      const firstChunks = await collectStream(
+        await firstBackend.createConversationMessageStream(
+          conversation.id,
+          createBody("call persisted tool"),
+        ),
+      );
+      const approvalChunk = firstChunks.find(
+        (chunk) => chunk.message_type === "approval_request_message",
+      ) as LettaStreamingResponse & {
+        tool_call?: { tool_call_id?: string };
+      };
+
+      let capturedMessages: ProviderTurnInput["uiMessages"] | undefined;
+      const secondAdapter: ProviderStreamAdapter = {
+        async *stream(input) {
+          capturedMessages = input.uiMessages;
+          yield streamPart({
+            type: "text-delta",
+            id: "text-1",
+            text: "persisted trajectory ok",
+          });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        },
+      };
+      const secondBackend = new FakeHeadlessBackend(
+        "agent-provider",
+        new ProviderTurnExecutor(secondAdapter),
+        { storageDir },
+      );
+
+      const finalText = await drainAssistantText(
+        await secondBackend.createConversationMessageStream(conversation.id, {
+          ...createBody(""),
+          messages: [
+            {
+              type: "approval",
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: approvalChunk.tool_call?.tool_call_id,
+                  tool_return: "persisted-result",
+                  status: "success",
+                },
+              ],
+            },
+          ],
+        } as unknown as ConversationMessageCreateBody),
+      );
+
+      expect(finalText).toBe("persisted trajectory ok");
+      expect(
+        capturedMessages?.map((message) => ({
+          role: message.role,
+          parts: message.parts,
+        })),
+      ).toEqual([
+        {
+          role: "user",
+          parts: [{ type: "text", text: "call persisted tool" }],
+        },
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-ShellCommand",
+              toolCallId: "provider-tool-persisted",
+              state: "output-available",
+              input: { command: "echo persisted", login: false },
+              output: "persisted-result",
+            },
+          ],
+        },
+      ]);
+
+      const page = await secondBackend.listConversationMessages(
+        conversation.id,
+        { order: "asc" } as ConversationMessageListBody,
+      );
+      expect(
+        page.getPaginatedItems().map((message) => message.message_type),
+      ).toEqual([
+        "user_message",
+        "approval_request_message",
+        "approval_response_message",
+        "assistant_message",
+      ]);
+    } finally {
+      rmSync(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("default provider adapter stays disabled", async () => {

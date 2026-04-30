@@ -291,11 +291,19 @@ export function getBackend(): Backend {
   return backend;
 }
 
+function devBackendStoreOptions() {
+  return { storageDir: process.env.LETTA_CODE_DEV_BACKEND_DIR };
+}
+
 export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
       const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-      backend = new FakeHeadlessBackend();
+      backend = new FakeHeadlessBackend(
+        undefined,
+        undefined,
+        devBackendStoreOptions(),
+      );
       return;
     }
     case "fake-headless-tool-call": {
@@ -306,6 +314,7 @@ export async function configureDevBackend(name: string): Promise<void> {
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
         new DeterministicToolCallExecutor(),
+        devBackendStoreOptions(),
       );
       return;
     }
@@ -317,6 +326,7 @@ export async function configureDevBackend(name: string): Promise<void> {
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
         new ProviderTurnExecutor(),
+        devBackendStoreOptions(),
       );
       return;
     }
@@ -331,6 +341,7 @@ export async function configureDevBackend(name: string): Promise<void> {
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
         new ProviderTurnExecutor(new OpenAIResponsesStreamAdapter()),
+        devBackendStoreOptions(),
       );
       return;
     }
