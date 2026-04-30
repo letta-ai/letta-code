@@ -752,6 +752,34 @@ export interface MemoryFileAtRefCommand {
   ref: string;
 }
 
+/**
+ * Write a file into the agent's MemFS (memory git repo) and commit + push.
+ *
+ * Use for durable agent memory writes (e.g. profile images, blocks). Path is
+ * relative to the memory root and is rejected if it escapes the root.
+ *
+ * Differs from generic `write_file`:
+ *  - resolves path against `getMemoryFilesystemRoot(agent_id)` (no absolute paths)
+ *  - bypasses Edit/Write tools so binary bytes aren't CRLF-mangled
+ *  - performs `git add` + commit + push via `commitAndSyncMemoryWrite`
+ *  - emits `memory_updated` so the UI auto-refreshes
+ */
+export interface WriteMemoryFileCommand {
+  type: "write_memory_file";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to write to. */
+  agent_id: string;
+  /** Relative path within the memory directory (e.g. "profile.png"). */
+  path: string;
+  /** Content to write — utf8 string or base64-encoded bytes. */
+  content: string;
+  /** Encoding of `content`. Defaults to "utf8". */
+  encoding?: "utf8" | "base64";
+  /** Optional commit message; defaults to a sensible fallback. */
+  commit_message?: string;
+}
+
 export interface MemoryCommitDiffCommand {
   type: "memory_commit_diff";
   /** Echoed back in the response for request correlation. */
@@ -1514,6 +1542,7 @@ export type WsProtocolCommand =
   | MemoryHistoryCommand
   | MemoryFileAtRefCommand
   | MemoryCommitDiffCommand
+  | WriteMemoryFileCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand

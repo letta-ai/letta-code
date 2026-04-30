@@ -229,6 +229,7 @@ import {
   isUpdateToolsetCommand,
   isWatchFileCommand,
   isWriteFileCommand,
+  isWriteMemoryFileCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -5842,6 +5843,171 @@ async function connectWithRetry(
               },
               "listener_memory_commit_diff_send_failed",
               "listener_memory_commit_diff",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Write a file into MemFS (durable agent memory write + commit + push) ─
+      if (isWriteMemoryFileCommand(parsed)) {
+        runDetachedListenerTask("write_memory_file", async () => {
+          const encoding = parsed.encoding ?? "utf8";
+          const sendFailure = (error: string): void => {
+            safeSocketSend(
+              socket,
+              {
+                type: "write_memory_file_response",
+                request_id: parsed.request_id,
+                agent_id: parsed.agent_id,
+                path: parsed.path,
+                success: false,
+                error,
+              },
+              "listener_write_memory_file_send_failed",
+              "listener_write_memory_file",
+            );
+          };
+
+          try {
+            const {
+              getMemoryFilesystemRoot,
+              ensureLocalMemfsCheckout,
+              isMemfsEnabledOnServer,
+            } = await import("../../agent/memoryFilesystem");
+            const { commitAndSyncMemoryWrite } = await import(
+              "../../agent/memoryGit"
+            );
+            const { writeFile, mkdir } = await import("node:fs/promises");
+            const { existsSync } = await import("node:fs");
+            const { dirname, isAbsolute, join, normalize, relative, sep } =
+              await import("node:path");
+
+            // ── Validate relative path ─────────────────────────────────────
+            if (isAbsolute(parsed.path) || parsed.path.length === 0) {
+              sendFailure(
+                "write_memory_file: path must be a non-empty relative path",
+              );
+              return;
+            }
+            const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+            const absolutePath = normalize(join(memoryRoot, parsed.path));
+            const rel = relative(memoryRoot, absolutePath);
+            if (
+              rel.startsWith("..") ||
+              rel === "" ||
+              isAbsolute(rel) ||
+              rel.split(sep).includes("..")
+            ) {
+              sendFailure(
+                "write_memory_file: path must resolve inside the memory root",
+              );
+              return;
+            }
+
+            // ── Ensure MemFS is enabled and checked out ───────────────────
+            if (!existsSync(join(memoryRoot, ".git"))) {
+              const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
+              if (!enabled) {
+                sendFailure(
+                  "write_memory_file: memfs is not enabled for this agent",
+                );
+                return;
+              }
+              await ensureLocalMemfsCheckout(parsed.agent_id);
+              if (!existsSync(join(memoryRoot, ".git"))) {
+                sendFailure(
+                  "write_memory_file: failed to initialize local memory checkout",
+                );
+                return;
+              }
+            }
+
+            // ── Decode + write bytes (binary-safe for base64) ──────────────
+            const buffer =
+              encoding === "base64"
+                ? Buffer.from(parsed.content, "base64")
+                : Buffer.from(parsed.content, "utf-8");
+            await mkdir(dirname(absolutePath), { recursive: true });
+            await writeFile(absolutePath, buffer);
+
+            // ── Resolve agent identity for the commit author ───────────────
+            let agentName = parsed.agent_id;
+            try {
+              const { getClient } = await import("../../backend/api/client");
+              const client = await getClient();
+              const agent = await client.agents.retrieve(parsed.agent_id);
+              if (agent.name && agent.name.trim().length > 0) {
+                agentName = agent.name.trim();
+              }
+            } catch {
+              // Best-effort — fall back to agent id as the author name.
+            }
+
+            // ── Commit + push (with replay-on-conflict from helper) ────────
+            // Use posix separators in the pathspec — git expects forward slashes
+            // even on Windows.
+            const pathspec = rel.split(sep).join("/");
+            const reason =
+              parsed.commit_message?.trim() || `Update memory file ${pathspec}`;
+            const commitResult = await commitAndSyncMemoryWrite({
+              memoryDir: memoryRoot,
+              pathspecs: [pathspec],
+              reason,
+              author: {
+                agentId: parsed.agent_id,
+                authorName: agentName,
+                authorEmail: `${parsed.agent_id}@letta.com`,
+              },
+              replay: async () => {
+                // Re-write the same bytes on top of the latest remote state.
+                await mkdir(dirname(absolutePath), { recursive: true });
+                await writeFile(absolutePath, buffer);
+                return [pathspec];
+              },
+            });
+
+            // ── Notify UI so the memory view auto-refreshes ────────────────
+            if (commitResult.committed) {
+              safeSocketSend(
+                socket,
+                {
+                  type: "memory_updated",
+                  affected_paths: [pathspec],
+                  timestamp: Date.now(),
+                },
+                "listener_write_memory_file_send_failed",
+                "listener_write_memory_file",
+              );
+            }
+
+            safeSocketSend(
+              socket,
+              {
+                type: "write_memory_file_response",
+                request_id: parsed.request_id,
+                agent_id: parsed.agent_id,
+                path: pathspec,
+                success: true,
+                committed: commitResult.committed,
+                ...(commitResult.sha ? { commit_sha: commitResult.sha } : {}),
+              },
+              "listener_write_memory_file_send_failed",
+              "listener_write_memory_file",
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_write_memory_file_failed",
+              err,
+              "listener_memory_write",
+            );
+            console.error(
+              `[Listen] write_memory_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            sendFailure(
+              err instanceof Error
+                ? err.message
+                : "Failed to write memory file",
             );
           }
         });
