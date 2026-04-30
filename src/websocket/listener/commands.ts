@@ -39,6 +39,10 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "remember",
   "channels",
   "toolset",
+  // /secret opens the EditSecretsDialog and routes reads/writes through the
+  // dedicated secret_list / secret_apply WS commands — not via
+  // execute_command — so it has no case in handleExecuteCommand.
+  "secret",
 ];
 
 /**

@@ -1526,6 +1526,67 @@ export interface CheckoutBranchResponse {
   error?: string;
 }
 
+// ─────────────────────────────────────────────────
+//  Secrets management (modal + CLI source of truth)
+//
+//  letta-code owns the secrets cache. All reads and writes go through these
+//  three commands so the in-memory cache stays consistent. Per-turn
+//  hydration is one-shot — these commands are the only paths that re-touch
+//  core after the initial fetch.
+// ─────────────────────────────────────────────────
+
+/**
+ * Refresh the local secrets cache from core and return the available
+ * secrets. The modal needs the plaintext values to populate the form, so
+ * this command intentionally exposes them. The CLI's `/secret list` uses a
+ * separate code path that returns names only.
+ */
+export interface SecretListCommand {
+  type: "secret_list";
+  request_id: string;
+  /** Agent whose secrets to list. */
+  agent_id: string;
+}
+
+export interface SecretListResponse {
+  type: "secret_list_response";
+  request_id: string;
+  success: boolean;
+  /** Sorted secret entries (key + plaintext value). Empty on failure. */
+  secrets: Array<{ key: string; value: string }>;
+  error?: string;
+}
+
+/**
+ * Apply a batch of secret mutations atomically. The device computes the
+ * resulting map (current ∪ set) ∖ unset and PATCHes core in a single call,
+ * eliminating the read-modify-write race that would plague parallel
+ * per-key calls. This is the only WS-surfaced write — single-key set/unset
+ * are CLI-only via `setSecretOnServer` / `deleteSecretOnServer`.
+ *
+ * Keys provided in `set` override any existing values; `unset` keys are
+ * removed from the final map. Keys appearing in both lists resolve to
+ * `unset` (defensive — clients shouldn't send both).
+ */
+export interface SecretApplyCommand {
+  type: "secret_apply";
+  request_id: string;
+  agent_id: string;
+  /** Keys to add or replace, with their plaintext values. */
+  set: Record<string, string>;
+  /** Keys to remove. Normalized to uppercase server-side. */
+  unset: string[];
+}
+
+export interface SecretApplyResponse {
+  type: "secret_apply_response";
+  request_id: string;
+  success: boolean;
+  /** Sorted secret names after the apply. Empty on failure. */
+  names: string[];
+  error?: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -1589,7 +1650,9 @@ export type WsProtocolCommand =
   | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
   | SearchBranchesCommand
-  | CheckoutBranchCommand;
+  | CheckoutBranchCommand
+  | SecretListCommand
+  | SecretApplyCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
@@ -1626,6 +1689,8 @@ export type WsProtocolMessage =
   | ChannelAccountsUpdatedMessage
   | ChannelPairingsUpdatedMessage
   | ChannelRoutesUpdatedMessage
-  | ChannelTargetsUpdatedMessage;
+  | ChannelTargetsUpdatedMessage
+  | SecretListResponse
+  | SecretApplyResponse;
 
 export type { StopReasonType };

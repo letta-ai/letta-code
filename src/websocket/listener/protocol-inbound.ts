@@ -51,6 +51,8 @@ import type {
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
+  SecretApplyCommand,
+  SecretListCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -1411,6 +1413,55 @@ export function isCheckoutBranchCommand(
   );
 }
 
+export function isSecretListCommand(
+  value: unknown,
+): value is SecretListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "secret_list" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    c.agent_id.length > 0
+  );
+}
+
+export function isSecretApplyCommand(
+  value: unknown,
+): value is SecretApplyCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    set?: unknown;
+    unset?: unknown;
+  };
+  if (
+    c.type !== "secret_apply" ||
+    typeof c.request_id !== "string" ||
+    typeof c.agent_id !== "string" ||
+    c.agent_id.length === 0
+  ) {
+    return false;
+  }
+  if (!c.set || typeof c.set !== "object" || Array.isArray(c.set)) {
+    return false;
+  }
+  for (const v of Object.values(c.set as Record<string, unknown>)) {
+    if (typeof v !== "string") return false;
+  }
+  if (!Array.isArray(c.unset)) return false;
+  for (const k of c.unset) {
+    if (typeof k !== "string" || k.length === 0) return false;
+  }
+  return true;
+}
+
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -1501,7 +1552,9 @@ export function parseServerMessage(
       isChannelRouteRemoveCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
-      isCheckoutBranchCommand(parsed)
+      isCheckoutBranchCommand(parsed) ||
+      isSecretListCommand(parsed) ||
+      isSecretApplyCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }
