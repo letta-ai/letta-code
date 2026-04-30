@@ -6,6 +6,7 @@ import type {
   Backend,
   ConversationCreateBody,
   ConversationMessageCreateBody,
+  ConversationMessageListBody,
   ConversationMessageStreamBody,
   RunMessageStreamBody,
 } from "../backend";
@@ -90,10 +91,18 @@ export class FakeHeadlessBackend implements Backend {
     body: ConversationMessageCreateBody,
   ) {
     const turnInput = this.store.appendTurnInput(conversationId, body);
+    const history = this.store.listConversationMessages(
+      turnInput.conversationId,
+      {
+        agent_id: turnInput.agentId,
+        order: "asc",
+      } as ConversationMessageListBody,
+    );
     const stream = await this.executor.execute({
       conversationId,
       agentId: turnInput.agentId,
       body,
+      history,
     });
     return this.persistExecutorStream(
       turnInput.conversationId,
@@ -107,10 +116,18 @@ export class FakeHeadlessBackend implements Backend {
     body: ConversationMessageStreamBody,
   ) {
     const turnInput = this.store.appendTurnInput(conversationId, body);
+    const history = this.store.listConversationMessages(
+      turnInput.conversationId,
+      {
+        agent_id: turnInput.agentId,
+        order: "asc",
+      } as ConversationMessageListBody,
+    );
     const stream = await this.executor.execute({
       conversationId,
       agentId: turnInput.agentId,
       body,
+      history,
     });
     return this.persistExecutorStream(
       turnInput.conversationId,

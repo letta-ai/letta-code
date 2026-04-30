@@ -14,6 +14,7 @@ export interface HeadlessTurnExecutorInput {
   conversationId: string;
   agentId: string;
   body: HeadlessTurnBody;
+  history: StoredMessage[];
 }
 
 export interface HeadlessTurnExecutor {
