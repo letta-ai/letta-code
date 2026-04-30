@@ -291,6 +291,18 @@ export function getBackend(): Backend {
   return backend;
 }
 
+export async function configureDevBackend(name: string): Promise<void> {
+  switch (name) {
+    case "fake-headless": {
+      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      backend = new FakeHeadlessBackend();
+      return;
+    }
+    default:
+      throw new Error(`Unknown --dev-backend value "${name}"`);
+  }
+}
+
 export function __testSetBackend(nextBackend: Backend | null): void {
   backend = nextBackend ?? new APIBackend();
 }

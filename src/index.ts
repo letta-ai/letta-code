@@ -800,95 +800,104 @@ async function main(): Promise<void> {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
-  // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
-  // Stored OAuth credentials (interactive session tokens) are not accepted for
-  // automated/headless use — get an API key at https://app.letta.com/api-keys
-  if (
+  const isUsingDevBackend =
     isHeadless &&
-    baseURL === LETTA_CLOUD_API_URL &&
-    !process.env.LETTA_API_KEY
-  ) {
-    console.error("Missing LETTA_API_KEY");
-    console.error(
-      "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
-    );
-    console.error("Get an API key at https://app.letta.com/api-keys");
-    process.exit(1);
-  }
+    typeof values["dev-backend"] === "string" &&
+    values["dev-backend"].length > 0;
 
-  // Check if refresh token is missing for Letta Cloud (only when not using env var)
-  // Skip this check if we already have an API key from env
-  if (
-    !isHeadless &&
-    baseURL === LETTA_CLOUD_API_URL &&
-    !settings.refreshToken &&
-    !apiKey
-  ) {
-    // For interactive mode, show setup flow
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main().catch((err: unknown) => {
-      // Handle top-level errors gracefully without raw stack traces
-      trackCliBoundaryError("setup_restart_failed", err, "tui_setup_restart");
-      const message =
-        err instanceof Error ? err.message : "An unexpected error occurred";
-      console.error(`\nError: ${message}`);
-      if (isDebugEnabled()) {
-        console.error(err);
-      }
-      process.exit(1);
-    });
-  }
-
-  if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-    // For interactive mode, show setup flow
-    console.log("No credentials found. Let's get you set up!\n");
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main();
-  }
-
-  // Validate credentials by checking health endpoint
-  const { validateCredentials } = await import("./auth/oauth");
-  const isValid = await validateCredentials(baseURL, apiKey ?? "");
-  markMilestone("CREDENTIALS_VALIDATED");
-
-  // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
-  // Must run after credentials are validated so OAuth tokens are available.
-  if (isValid) {
-    const { bootstrapBaseToolsIfNeeded } = await import(
-      "./agent/bootstrap-tools"
-    );
-    await bootstrapBaseToolsIfNeeded();
-  }
-
-  if (!isValid) {
-    // For headless mode, error out with helpful message
-    if (isHeadless) {
-      console.error("Failed to connect to Letta server");
-      console.error(`Base URL: ${baseURL}`);
+  if (!isUsingDevBackend) {
+    // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
+    // Stored OAuth credentials (interactive session tokens) are not accepted for
+    // automated/headless use — get an API key at https://app.letta.com/api-keys
+    if (
+      isHeadless &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      !process.env.LETTA_API_KEY
+    ) {
+      console.error("Missing LETTA_API_KEY");
       console.error(
-        "Your credentials may be invalid or the server may be unreachable.",
+        "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
       );
-      console.error(
-        "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
-      );
+      console.error("Get an API key at https://app.letta.com/api-keys");
       process.exit(1);
     }
 
-    // For interactive mode, show setup flow
-    console.log("Failed to connect to Letta server.");
-    console.log(`Base URL: ${baseURL}\n`);
-    console.log(
-      "Your credentials may be invalid or the server may be unreachable.",
-    );
-    console.log("Let's reconfigure your setup.\n");
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main();
+    // Check if refresh token is missing for Letta Cloud (only when not using env var)
+    // Skip this check if we already have an API key from env
+    if (
+      !isHeadless &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      !settings.refreshToken &&
+      !apiKey
+    ) {
+      // For interactive mode, show setup flow
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main().catch((err: unknown) => {
+        // Handle top-level errors gracefully without raw stack traces
+        trackCliBoundaryError("setup_restart_failed", err, "tui_setup_restart");
+        const message =
+          err instanceof Error ? err.message : "An unexpected error occurred";
+        console.error(`\nError: ${message}`);
+        if (isDebugEnabled()) {
+          console.error(err);
+        }
+        process.exit(1);
+      });
+    }
+
+    if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
+      // For interactive mode, show setup flow
+      console.log("No credentials found. Let's get you set up!\n");
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main();
+    }
+
+    // Validate credentials by checking health endpoint
+    const { validateCredentials } = await import("./auth/oauth");
+    const isValid = await validateCredentials(baseURL, apiKey ?? "");
+    markMilestone("CREDENTIALS_VALIDATED");
+
+    // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
+    // Must run after credentials are validated so OAuth tokens are available.
+    if (isValid) {
+      const { bootstrapBaseToolsIfNeeded } = await import(
+        "./agent/bootstrap-tools"
+      );
+      await bootstrapBaseToolsIfNeeded();
+    }
+
+    if (!isValid) {
+      // For headless mode, error out with helpful message
+      if (isHeadless) {
+        console.error("Failed to connect to Letta server");
+        console.error(`Base URL: ${baseURL}`);
+        console.error(
+          "Your credentials may be invalid or the server may be unreachable.",
+        );
+        console.error(
+          "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
+        );
+        process.exit(1);
+      }
+
+      // For interactive mode, show setup flow
+      console.log("Failed to connect to Letta server.");
+      console.log(`Base URL: ${baseURL}\n`);
+      console.log(
+        "Your credentials may be invalid or the server may be unreachable.",
+      );
+      console.log("Let's reconfigure your setup.\n");
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main();
+    }
+  } else {
+    markMilestone("CREDENTIALS_VALIDATED");
   }
 
   // Resolve --name to agent ID if provided

@@ -1,5 +1,6 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { resolveModel } from "../agent/model";
+import { getBackend } from "../backend";
 import { getClient } from "../backend/api/client";
 import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
 import { getSupportedChannelIds } from "../channels/pluginRegistry";
@@ -273,16 +274,16 @@ export async function prepareToolExecutionContextForScope(params: {
     cachedAgent,
   } = params;
 
-  const client = await getClient();
+  const backend = getBackend();
   const agent = (cachedAgent ??
-    (await client.agents.retrieve(agentId))) as ScopeModelCarrier;
+    (await backend.retrieveAgent(agentId))) as ScopeModelCarrier;
   let effectiveModel =
     overrideModel && overrideModel.length > 0
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
 
   if (!effectiveModel && conversationId && conversationId !== "default") {
-    const conversation = await client.conversations.retrieve(conversationId);
+    const conversation = await backend.retrieveConversation(conversationId);
     const conversationModel = (conversation as { model?: string | null }).model;
     if (typeof conversationModel === "string" && conversationModel.length > 0) {
       effectiveModel = conversationModel;
@@ -507,11 +508,11 @@ export async function clearPersistedClientToolRules(
   agentId: string,
   cachedAgent?: AgentState | null,
 ): Promise<{ removedToolNames: string[] } | null> {
-  const client = await getClient();
+  const backend = getBackend();
 
   try {
     const agentWithTools = (cachedAgent ??
-      (await client.agents.retrieve(agentId, {
+      (await backend.retrieveAgent(agentId, {
         include: ["agent.tools"],
       }))) as AgentWithToolsAndRules;
     if (!shouldClearPersistedToolRules(agentWithTools)) {
@@ -519,7 +520,7 @@ export async function clearPersistedClientToolRules(
     }
     const existingRules = agentWithTools.tool_rules || [];
 
-    await client.agents.update(agentId, {
+    await backend.updateAgent(agentId, {
       tool_rules: [],
     });
 

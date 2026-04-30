@@ -551,6 +551,11 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
+  const devBackend = values["dev-backend"];
+  if (typeof devBackend === "string" && devBackend.length > 0) {
+    const { configureDevBackend } = await import("./backend");
+    await configureDevBackend(devBackend);
+  }
   const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
 

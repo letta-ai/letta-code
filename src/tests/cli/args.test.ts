@@ -55,6 +55,7 @@ describe("shared CLI arg schema", () => {
     expect(help).toContain("--memfs-startup <m>");
     expect(help).toContain("Default: text");
     expect(help).not.toContain("--run");
+    expect(help).not.toContain("--dev-backend");
 
     for (const [flagName, definition] of Object.entries(
       CLI_FLAG_CATALOG,
@@ -95,6 +96,8 @@ describe("shared CLI arg schema", () => {
         "3",
         "--block-value",
         "persona=hello",
+        "--dev-backend",
+        "fake-headless",
       ]),
       true,
     );
@@ -102,6 +105,7 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["pre-load-skills"]).toBe("skill-a,skill-b");
     expect(parsed.values["max-turns"]).toBe("3");
     expect(parsed.values["block-value"]).toEqual(["persona=hello"]);
+    expect(parsed.values["dev-backend"]).toBe("fake-headless");
   });
 
   test("rejects removed system-append flag in strict mode", () => {
