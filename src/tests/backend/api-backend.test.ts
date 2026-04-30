@@ -1,5 +1,6 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
+  APIClient,
   ConversationMessageCreateBody,
   ConversationMessageStreamBody,
   RunMessageStreamBody,
@@ -46,15 +47,7 @@ const getClientMock = mock(async () => ({
   },
 }));
 
-mock.module("../../backend/api/client", () => ({
-  getClient: getClientMock,
-}));
-
-mock.module("../../backend/api/conversations", () => ({
-  forkConversation: forkConversationMock,
-}));
-
-const { APIBackend } = await import("../../backend");
+import { APIBackend } from "../../backend";
 
 describe("APIBackend", () => {
   beforeEach(() => {
@@ -67,12 +60,11 @@ describe("APIBackend", () => {
     forkConversationMock.mockClear();
   });
 
-  afterAll(() => {
-    mock.restore();
-  });
-
   test("delegates core conversation and run operations to the Letta API", async () => {
-    const backend = new APIBackend();
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
     const createBody = {
       messages: [{ role: "user", content: "hello" }],
       streaming: true,

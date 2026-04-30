@@ -1,11 +1,12 @@
 import type { getClient } from "./api/client";
-import { getClient as getApiClient } from "./api/client";
-import {
-  type ForkConversationOptions,
+import type {
+  ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
+type GetAPIClient = typeof getClient;
+type ForkConversation = typeof forkConversationRequest;
 
 export type ConversationMessageCreateParams = Parameters<
   APIClient["conversations"]["messages"]["create"]
@@ -64,9 +65,26 @@ export interface Backend {
   ): ReturnType<typeof forkConversationRequest>;
 }
 
+interface APIBackendDeps {
+  getClient?: GetAPIClient;
+  forkConversation?: ForkConversation;
+}
+
 export class APIBackend implements Backend {
+  private readonly getApiClientOverride?: GetAPIClient;
+  private readonly forkConversationOverride?: ForkConversation;
+
+  constructor(deps: APIBackendDeps = {}) {
+    this.getApiClientOverride = deps.getClient;
+    this.forkConversationOverride = deps.forkConversation;
+  }
+
   private async getClient(): Promise<APIClient> {
-    return getApiClient();
+    if (this.getApiClientOverride) {
+      return this.getApiClientOverride();
+    }
+    const { getClient: resolveClient } = await import("./api/client");
+    return resolveClient();
   }
 
   async createConversationMessageStream(
@@ -106,8 +124,15 @@ export class APIBackend implements Backend {
     return client.runs.messages.stream(runId, body, options);
   }
 
-  forkConversation(conversationId: string, options?: ForkConversationOptions) {
-    return forkConversationRequest(conversationId, options);
+  async forkConversation(
+    conversationId: string,
+    options?: ForkConversationOptions,
+  ) {
+    if (this.forkConversationOverride) {
+      return this.forkConversationOverride(conversationId, options);
+    }
+    const { forkConversation } = await import("./api/conversations");
+    return forkConversation(conversationId, options);
   }
 }
 
