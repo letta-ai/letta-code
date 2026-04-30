@@ -7,18 +7,26 @@ import type {
   HeadlessTurnExecutor,
   HeadlessTurnExecutorInput,
 } from "./HeadlessTurnExecutor";
+import {
+  type ProviderTrajectoryMessage,
+  type ProviderTrajectoryUIMessage,
+  providerUIMessages,
+} from "./ProviderTrajectory";
 
 export interface ProviderTurnInput {
   conversationId: string;
   agentId: string;
   body: HeadlessTurnBody;
   history: StoredMessage[];
+  providerTrajectory: ProviderTrajectoryMessage[];
+  uiMessages: ProviderTrajectoryUIMessage[];
   clientTools: unknown[];
   clientSkills: unknown[];
 }
 
 export type ProviderStreamEvent =
   | { type: "text-delta"; text: string }
+  | { type: "reasoning-delta"; text: string }
   | {
       type: "tool-call";
       toolCallId: string;
@@ -60,6 +68,8 @@ export function buildProviderTurnInput(
     agentId: input.agentId,
     body: input.body,
     history: input.history,
+    providerTrajectory: input.providerTrajectory,
+    uiMessages: providerUIMessages(input.providerTrajectory),
     clientTools: bodyListField(input.body, "client_tools"),
     clientSkills: bodyListField(input.body, "client_skills"),
   };
@@ -91,6 +101,15 @@ function createProviderLettaStream(
               otid: assistantOtid,
               content: [{ type: "text", text: event.text }],
             } as LettaStreamingResponse;
+            continue;
+          }
+
+          if (event.type === "reasoning-delta") {
+            yield {
+              message_type: "assistant_message",
+              otid: assistantOtid,
+              content: [{ type: "reasoning", text: event.text }],
+            } as unknown as LettaStreamingResponse;
             continue;
           }
 

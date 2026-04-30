@@ -96,6 +96,17 @@ describe("ProviderTurnExecutor", () => {
       "user_message",
     ]);
     expect(JSON.stringify(captured?.history)).toContain("hello provider");
+    expect(
+      captured?.uiMessages.map((message) => ({
+        role: message.role,
+        parts: message.parts,
+      })),
+    ).toEqual([
+      { role: "user", parts: [{ type: "text", text: "hello provider" }] },
+    ]);
+    expect(captured?.providerTrajectory[0]?.type).toBe(
+      "letta_provider_ui_message",
+    );
     expect(captured?.clientTools).toHaveLength(1);
 
     const page = await backend.listConversationMessages(conversation.id, {
@@ -155,6 +166,191 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual(["user_message", "approval_request_message"]);
   });
 
+  test("passes AI SDK provider trajectory through tool-call continuations", async () => {
+    const capturedMessages: ProviderTurnInput["uiMessages"][] = [];
+    const adapter: ProviderStreamAdapter = {
+      async *stream(input) {
+        capturedMessages.push(input.uiMessages);
+        const hasToolResult = input.uiMessages.some(
+          (message) =>
+            message.role === "assistant" &&
+            message.parts.some(
+              (part) =>
+                part.type === "tool-ShellCommand" &&
+                "state" in part &&
+                part.state === "output-available",
+            ),
+        );
+        if (!hasToolResult) {
+          yield {
+            type: "tool-call",
+            toolCallId: "provider-tool-trajectory",
+            toolName: "ShellCommand",
+            input: { command: "echo provider-trajectory", login: false },
+          };
+          yield { type: "finish", finishReason: "tool-calls" };
+          return;
+        }
+        yield { type: "text-delta", text: "trajectory ok" };
+        yield { type: "finish", finishReason: "stop" };
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    const firstChunks = await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("call a trajectory tool"),
+      ),
+    );
+    const approvalChunk = firstChunks.find(
+      (chunk) => chunk.message_type === "approval_request_message",
+    ) as LettaStreamingResponse & {
+      tool_call?: { tool_call_id?: string };
+    };
+    expect(approvalChunk.tool_call?.tool_call_id).toBe(
+      "provider-tool-trajectory",
+    );
+
+    const finalText = await drainAssistantText(
+      await backend.createConversationMessageStream(conversation.id, {
+        ...createBody(""),
+        messages: [
+          {
+            type: "approval",
+            approvals: [
+              {
+                type: "tool",
+                tool_call_id: approvalChunk.tool_call?.tool_call_id,
+                tool_return: "provider-trajectory",
+                status: "success",
+              },
+            ],
+          },
+        ],
+      } as unknown as ConversationMessageCreateBody),
+    );
+
+    expect(finalText).toBe("trajectory ok");
+    expect(
+      capturedMessages[0]?.map((message) => ({
+        role: message.role,
+        parts: message.parts,
+      })),
+    ).toEqual([
+      {
+        role: "user",
+        parts: [{ type: "text", text: "call a trajectory tool" }],
+      },
+    ]);
+    expect(
+      capturedMessages[1]?.map((message) => ({
+        role: message.role,
+        parts: message.parts,
+      })),
+    ).toEqual([
+      {
+        role: "user",
+        parts: [{ type: "text", text: "call a trajectory tool" }],
+      },
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-ShellCommand",
+            toolCallId: "provider-tool-trajectory",
+            state: "output-available",
+            input: { command: "echo provider-trajectory", login: false },
+            output: "provider-trajectory",
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("represents denied approvals as output-error UI tool parts", async () => {
+    const capturedMessages: ProviderTurnInput["uiMessages"][] = [];
+    const adapter: ProviderStreamAdapter = {
+      async *stream(input) {
+        capturedMessages.push(input.uiMessages);
+        if (
+          input.uiMessages.some(
+            (message) =>
+              message.role === "assistant" &&
+              message.parts.some(
+                (part) =>
+                  part.type === "tool-ShellCommand" &&
+                  "state" in part &&
+                  part.state === "output-error",
+              ),
+          )
+        ) {
+          yield { type: "text-delta", text: "denied ok" };
+          yield { type: "finish", finishReason: "stop" };
+          return;
+        }
+        yield {
+          type: "tool-call",
+          toolCallId: "provider-tool-denied",
+          toolName: "ShellCommand",
+          input: { command: "node -e unsafe" },
+        };
+        yield { type: "finish", finishReason: "tool-calls" };
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+    const chunks = await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("call denied tool"),
+      ),
+    );
+    const approvalChunk = chunks.find(
+      (chunk) => chunk.message_type === "approval_request_message",
+    ) as LettaStreamingResponse & {
+      tool_call?: { tool_call_id?: string };
+    };
+
+    await drainAssistantText(
+      await backend.createConversationMessageStream(conversation.id, {
+        ...createBody(""),
+        messages: [
+          {
+            type: "approval",
+            approvals: [
+              {
+                type: "approval",
+                tool_call_id: approvalChunk.tool_call?.tool_call_id,
+                approve: false,
+                reason: "Tool requires approval (headless mode)",
+              },
+            ],
+          },
+        ],
+      } as unknown as ConversationMessageCreateBody),
+    );
+
+    expect(capturedMessages[1]?.at(-1)?.parts.at(-1)).toEqual({
+      type: "tool-ShellCommand",
+      toolCallId: "provider-tool-denied",
+      state: "output-error",
+      input: { command: "node -e unsafe" },
+      errorText: "Tool requires approval (headless mode)",
+    });
+  });
+
   test("uses one assistant otid for text deltas in the same provider turn", async () => {
     const adapter: ProviderStreamAdapter = {
       async *stream() {
@@ -184,6 +380,65 @@ describe("ProviderTurnExecutor", () => {
     expect(assistantChunks).toHaveLength(2);
     expect(assistantChunks[0]?.otid).toBeTruthy();
     expect(assistantChunks[0]?.otid).toBe(assistantChunks[1]?.otid);
+  });
+
+  test("persists reasoning deltas in the provider UI trajectory", async () => {
+    const capturedMessages: ProviderTurnInput["uiMessages"][] = [];
+    let turn = 0;
+    const adapter: ProviderStreamAdapter = {
+      async *stream(input) {
+        capturedMessages.push(input.uiMessages);
+        turn += 1;
+        if (turn === 1) {
+          yield { type: "reasoning-delta", text: "think" };
+          yield { type: "text-delta", text: "done" };
+        }
+        yield { type: "finish", finishReason: "stop" };
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("reason first"),
+      ),
+    );
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("reason second"),
+      ),
+    );
+
+    expect(
+      capturedMessages[1]?.map((message) => ({
+        role: message.role,
+        parts: message.parts,
+      })),
+    ).toEqual([
+      {
+        role: "user",
+        parts: [{ type: "text", text: "reason first" }],
+      },
+      {
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "think" },
+          { type: "text", text: "done" },
+        ],
+      },
+      {
+        role: "user",
+        parts: [{ type: "text", text: "reason second" }],
+      },
+    ]);
   });
 
   test("default provider adapter stays disabled", async () => {

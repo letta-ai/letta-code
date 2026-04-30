@@ -98,11 +98,16 @@ export class FakeHeadlessBackend implements Backend {
         order: "asc",
       } as ConversationMessageListBody,
     );
+    const providerTrajectory = this.store.listProviderTrajectory(
+      turnInput.conversationId,
+      turnInput.agentId,
+    );
     const stream = await this.executor.execute({
       conversationId,
       agentId: turnInput.agentId,
       body,
       history,
+      providerTrajectory,
     });
     return this.persistExecutorStream(
       turnInput.conversationId,
@@ -123,11 +128,16 @@ export class FakeHeadlessBackend implements Backend {
         order: "asc",
       } as ConversationMessageListBody,
     );
+    const providerTrajectory = this.store.listProviderTrajectory(
+      turnInput.conversationId,
+      turnInput.agentId,
+    );
     const stream = await this.executor.execute({
       conversationId,
       agentId: turnInput.agentId,
       body,
       history,
+      providerTrajectory,
     });
     return this.persistExecutorStream(
       turnInput.conversationId,

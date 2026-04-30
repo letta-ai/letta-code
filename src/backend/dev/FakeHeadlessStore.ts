@@ -13,6 +13,10 @@ import type {
   ConversationMessageStreamBody,
   ConversationUpdateBody,
 } from "../backend";
+import type {
+  ProviderTrajectoryMessage,
+  ProviderTrajectoryUIMessage,
+} from "./ProviderTrajectory";
 
 export type StoredMessage = Message & {
   id: string;
@@ -55,6 +59,37 @@ function normalizeContent(content: unknown): unknown {
     return textContent(content);
   }
   return content;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function textFromContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!isRecord(part)) return "";
+        if (part.type === "text" && typeof part.text === "string") {
+          return part.text;
+        }
+        return "";
+      })
+      .filter((text) => text.length > 0)
+      .join("\n");
+  }
+  if (content === undefined || content === null) return "";
+  return JSON.stringify(content);
+}
+
+function parseToolInput(input: unknown): unknown {
+  if (typeof input !== "string") return input ?? {};
+  try {
+    return JSON.parse(input) as unknown;
+  } catch {
+    return input;
+  }
 }
 
 function getMessageType(message: Record<string, unknown>): string {
@@ -101,6 +136,23 @@ export interface StoredTurnInput {
   conversationId: string;
 }
 
+type ProviderUIMessagePart = ProviderTrajectoryUIMessage["parts"][number];
+type ProviderUIToolPart = ProviderUIMessagePart & {
+  type: `tool-${string}`;
+  toolCallId: string;
+};
+
+function isProviderUIToolPart(
+  part: ProviderUIMessagePart,
+): part is ProviderUIToolPart {
+  return (
+    typeof part.type === "string" &&
+    part.type.startsWith("tool-") &&
+    "toolCallId" in part &&
+    typeof part.toolCallId === "string"
+  );
+}
+
 export class FakeHeadlessStore {
   private readonly agents = new Map<string, AgentState>();
   private readonly conversations = new Map<string, StoredConversation>();
@@ -108,9 +160,14 @@ export class FakeHeadlessStore {
     string,
     StoredMessage[]
   >();
+  private readonly providerTrajectoryByConversationKey = new Map<
+    string,
+    ProviderTrajectoryMessage[]
+  >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
   private conversationSeq = 0;
   private messageSeq = 0;
+  private providerTrajectorySeq = 0;
 
   constructor(private readonly defaultAgentId: string) {
     this.ensureAgent(this.defaultAgentId);
@@ -173,7 +230,17 @@ export class FakeHeadlessStore {
     this.ensureConversation(conversationId, agentId);
 
     for (const message of bodyWithAgent.messages ?? []) {
-      this.appendInputMessage(conversationId, agentId, message);
+      const storedMessage = this.appendInputMessage(
+        conversationId,
+        agentId,
+        message,
+      );
+      this.appendProviderInputMessage(
+        conversationId,
+        agentId,
+        message,
+        storedMessage,
+      );
     }
 
     return { agentId, conversationId };
@@ -194,7 +261,27 @@ export class FakeHeadlessStore {
       agentId,
       toStoredOutputFields(chunk as unknown as Record<string, unknown>),
     );
+    this.appendProviderOutputChunk(
+      conversationId,
+      agentId,
+      chunk,
+      storedMessage,
+    );
     return storedMessage as unknown as LettaStreamingResponse;
+  }
+
+  listProviderTrajectory(
+    conversationId: string,
+    agentId?: string,
+  ): ProviderTrajectoryMessage[] {
+    const resolvedAgentId =
+      agentId ?? this.agentIdForConversation(conversationId);
+    this.ensureConversation(conversationId, resolvedAgentId);
+    return [
+      ...(this.providerTrajectoryByConversationKey.get(
+        this.conversationKey(conversationId, resolvedAgentId),
+      ) ?? []),
+    ];
   }
 
   listConversationMessages(
@@ -228,6 +315,378 @@ export class FakeHeadlessStore {
 
   retrieveMessage(messageId: string): StoredMessage[] {
     return [...(this.messagesById.get(messageId) ?? [])];
+  }
+
+  private appendProviderInputMessage(
+    conversationId: string,
+    agentId: string,
+    message: Record<string, unknown>,
+    storedMessage: StoredMessage,
+  ): void {
+    if (message.type === "approval") {
+      this.applyApprovalResultsToProviderTrajectory(
+        conversationId,
+        agentId,
+        Array.isArray(message.approvals) ? message.approvals : [],
+        storedMessage,
+      );
+      return;
+    }
+
+    if (message.role === "user") {
+      const text = textFromContent(normalizeContent(message.content));
+      if (text.length > 0) {
+        this.appendProviderTrajectoryMessage(conversationId, agentId, {
+          storedMessage,
+          role: "user",
+          parts: [{ type: "text", text }],
+        });
+      }
+    }
+  }
+
+  private appendProviderOutputChunk(
+    conversationId: string,
+    agentId: string,
+    chunk: LettaStreamingResponse,
+    storedMessage: StoredMessage,
+  ): void {
+    if (chunk.message_type === "assistant_message") {
+      const content = (chunk as { content?: unknown }).content;
+      const parts = Array.isArray(content)
+        ? content
+        : textContent(textFromContent(content));
+      for (const part of parts) {
+        if (!isRecord(part)) continue;
+        if (part.type === "text" && typeof part.text === "string") {
+          this.appendAssistantTextProviderMessage(
+            conversationId,
+            agentId,
+            part.text,
+            storedMessage,
+            typeof (chunk as { otid?: unknown }).otid === "string"
+              ? (chunk as { otid: string }).otid
+              : undefined,
+          );
+          continue;
+        }
+        if (part.type === "reasoning" && typeof part.text === "string") {
+          this.appendAssistantReasoningProviderMessage(
+            conversationId,
+            agentId,
+            part.text,
+            storedMessage,
+            typeof (chunk as { otid?: unknown }).otid === "string"
+              ? (chunk as { otid: string }).otid
+              : undefined,
+          );
+        }
+      }
+      return;
+    }
+
+    if (chunk.message_type === "approval_request_message") {
+      const toolCall = this.toolCallFromChunk(chunk);
+      if (toolCall) {
+        this.appendAssistantToolCallProviderMessage(
+          conversationId,
+          agentId,
+          toolCall,
+          storedMessage,
+        );
+      }
+    }
+  }
+
+  private appendProviderTrajectoryMessage(
+    conversationId: string,
+    agentId: string,
+    options: {
+      storedMessage: StoredMessage;
+      role: ProviderTrajectoryUIMessage["role"];
+      parts: ProviderUIMessagePart[];
+      otid?: string;
+      toolCallIds?: string[];
+      approvalRequestId?: string;
+      approvalResponseId?: string;
+    },
+  ): ProviderTrajectoryMessage {
+    this.providerTrajectorySeq += 1;
+    const id = `provider-msg-fake-headless-${this.providerTrajectorySeq}`;
+    const entry: ProviderTrajectoryMessage = {
+      type: "letta_provider_ui_message",
+      schemaVersion: 1,
+      id,
+      date: options.storedMessage.date,
+      agentId,
+      conversationId,
+      uiMessage: {
+        id,
+        role: options.role,
+        metadata: {
+          lettaProjection: {
+            messageTypes: [options.storedMessage.message_type],
+            otids: options.otid ? [options.otid] : undefined,
+            messageIds: [options.storedMessage.id],
+            approvalRequestIds: options.approvalRequestId
+              ? [options.approvalRequestId]
+              : undefined,
+            approvalResponseIds: options.approvalResponseId
+              ? [options.approvalResponseId]
+              : undefined,
+            toolCallIds: options.toolCallIds,
+          },
+        },
+        parts: options.parts,
+      },
+    };
+    const key = this.conversationKey(conversationId, agentId);
+    const trajectory = this.providerTrajectoryByConversationKey.get(key) ?? [];
+    trajectory.push(entry);
+    this.providerTrajectoryByConversationKey.set(key, trajectory);
+    return entry;
+  }
+
+  private appendAssistantTextProviderMessage(
+    conversationId: string,
+    agentId: string,
+    text: string,
+    storedMessage: StoredMessage,
+    otid?: string,
+  ): void {
+    const entry = this.assistantEntryForAppend(
+      conversationId,
+      agentId,
+      storedMessage,
+      otid,
+    );
+    const lastPart = entry.uiMessage.parts.at(-1);
+    if (lastPart?.type === "text") {
+      lastPart.text += text;
+    } else {
+      entry.uiMessage.parts.push({ type: "text", text });
+    }
+    this.appendStoredMessageProjection(entry, storedMessage, { otid });
+  }
+
+  private appendAssistantReasoningProviderMessage(
+    conversationId: string,
+    agentId: string,
+    text: string,
+    storedMessage: StoredMessage,
+    otid?: string,
+  ): void {
+    const entry = this.assistantEntryForAppend(
+      conversationId,
+      agentId,
+      storedMessage,
+      otid,
+    );
+    const lastPart = entry.uiMessage.parts.at(-1);
+    if (lastPart?.type === "reasoning") {
+      lastPart.text += text;
+    } else {
+      entry.uiMessage.parts.push({ type: "reasoning", text });
+    }
+    this.appendStoredMessageProjection(entry, storedMessage, { otid });
+  }
+
+  private appendAssistantToolCallProviderMessage(
+    conversationId: string,
+    agentId: string,
+    toolCall: { toolCallId: string; toolName: string; input: unknown },
+    storedMessage: StoredMessage,
+  ): void {
+    const entry = this.assistantEntryForAppend(
+      conversationId,
+      agentId,
+      storedMessage,
+    );
+    entry.uiMessage.parts.push({
+      type: `tool-${toolCall.toolName}`,
+      toolCallId: toolCall.toolCallId,
+      state: "approval-requested",
+      input: toolCall.input,
+      approval: { id: storedMessage.id },
+    } as ProviderUIMessagePart);
+    this.appendStoredMessageProjection(entry, storedMessage, {
+      approvalRequestId: storedMessage.id,
+      toolCallIds: [toolCall.toolCallId],
+    });
+  }
+
+  private assistantEntryForAppend(
+    conversationId: string,
+    agentId: string,
+    storedMessage: StoredMessage,
+    otid?: string,
+  ): ProviderTrajectoryMessage {
+    const trajectory = this.providerTrajectoryForConversation(
+      conversationId,
+      agentId,
+    );
+    const last = trajectory.at(-1);
+    if (last?.uiMessage.role === "assistant") {
+      return last;
+    }
+
+    return this.appendProviderTrajectoryMessage(conversationId, agentId, {
+      storedMessage,
+      role: "assistant",
+      parts: [],
+      otid,
+    });
+  }
+
+  private appendStoredMessageProjection(
+    entry: ProviderTrajectoryMessage,
+    storedMessage: StoredMessage,
+    options: {
+      otid?: string;
+      toolCallIds?: string[];
+      approvalRequestId?: string;
+      approvalResponseId?: string;
+    } = {},
+  ): void {
+    const projection = entry.uiMessage.metadata?.lettaProjection;
+    if (!projection) return;
+    if (!projection.messageIds.includes(storedMessage.id)) {
+      projection.messageIds.push(storedMessage.id);
+    }
+    if (!projection.messageTypes.includes(storedMessage.message_type)) {
+      projection.messageTypes.push(storedMessage.message_type);
+    }
+    if (options.otid) {
+      projection.otids = [...(projection.otids ?? []), options.otid];
+    }
+    if (options.toolCallIds && options.toolCallIds.length > 0) {
+      projection.toolCallIds = [
+        ...(projection.toolCallIds ?? []),
+        ...options.toolCallIds,
+      ];
+    }
+    if (options.approvalRequestId) {
+      projection.approvalRequestIds = [
+        ...(projection.approvalRequestIds ?? []),
+        options.approvalRequestId,
+      ];
+    }
+    if (options.approvalResponseId) {
+      projection.approvalResponseIds = [
+        ...(projection.approvalResponseIds ?? []),
+        options.approvalResponseId,
+      ];
+    }
+  }
+
+  private providerTrajectoryForConversation(
+    conversationId: string,
+    agentId: string,
+  ): ProviderTrajectoryMessage[] {
+    const key = this.conversationKey(conversationId, agentId);
+    const trajectory = this.providerTrajectoryByConversationKey.get(key) ?? [];
+    this.providerTrajectoryByConversationKey.set(key, trajectory);
+    return trajectory;
+  }
+
+  private toolCallFromChunk(
+    chunk: LettaStreamingResponse,
+  ): { toolCallId: string; toolName: string; input: unknown } | undefined {
+    const chunkWithTools = chunk as unknown as {
+      tool_call?: unknown;
+      tool_calls?: unknown;
+    };
+    const toolCall =
+      (isRecord(chunkWithTools.tool_call) && chunkWithTools.tool_call) ||
+      (Array.isArray(chunkWithTools.tool_calls) &&
+      isRecord(chunkWithTools.tool_calls[0])
+        ? chunkWithTools.tool_calls[0]
+        : undefined);
+    if (!toolCall) return undefined;
+    const toolCallId = toolCall.tool_call_id;
+    const toolName = toolCall.name;
+    if (typeof toolCallId !== "string" || typeof toolName !== "string") {
+      return undefined;
+    }
+    return {
+      toolCallId,
+      toolName,
+      input: parseToolInput(toolCall.arguments),
+    };
+  }
+
+  private applyApprovalResultsToProviderTrajectory(
+    conversationId: string,
+    agentId: string,
+    approvals: unknown[],
+    storedMessage: StoredMessage,
+  ): void {
+    for (const approval of approvals) {
+      if (!isRecord(approval)) continue;
+      const toolCallId = approval.tool_call_id;
+      if (typeof toolCallId !== "string") continue;
+      const match = this.findToolUIPart(conversationId, agentId, toolCallId);
+      if (!match) continue;
+
+      if (approval.type === "approval" && approval.approve === false) {
+        delete (match.part as { approval?: unknown }).approval;
+        Object.assign(match.part, {
+          state: "output-error",
+          errorText:
+            typeof approval.reason === "string"
+              ? approval.reason
+              : "Tool execution denied.",
+        });
+        this.appendStoredMessageProjection(match.entry, storedMessage, {
+          approvalResponseId: storedMessage.id,
+        });
+        continue;
+      }
+
+      if (approval.type !== "tool") continue;
+      delete (match.part as { approval?: unknown }).approval;
+      Object.assign(match.part, {
+        state: "output-available",
+        output: textFromContent(approval.tool_return),
+      });
+      this.appendStoredMessageProjection(match.entry, storedMessage, {
+        approvalResponseId: storedMessage.id,
+      });
+    }
+  }
+
+  private findToolUIPart(
+    conversationId: string,
+    agentId: string,
+    toolCallId: string,
+  ):
+    | { entry: ProviderTrajectoryMessage; part: ProviderUIToolPart }
+    | undefined {
+    const trajectory = this.providerTrajectoryForConversation(
+      conversationId,
+      agentId,
+    );
+    for (
+      let entryIndex = trajectory.length - 1;
+      entryIndex >= 0;
+      entryIndex--
+    ) {
+      const entry = trajectory[entryIndex];
+      if (!entry) continue;
+      if (entry.uiMessage.role !== "assistant") continue;
+      for (
+        let partIndex = entry.uiMessage.parts.length - 1;
+        partIndex >= 0;
+        partIndex--
+      ) {
+        const part = entry.uiMessage.parts[partIndex];
+        if (!part) continue;
+        if (isProviderUIToolPart(part) && part.toolCallId === toolCallId) {
+          return { entry, part };
+        }
+      }
+    }
+    return undefined;
   }
 
   private appendInputMessage(
@@ -341,6 +800,7 @@ export class FakeHeadlessStore {
     } as StoredConversation;
     this.conversations.set(key, conversation);
     this.messagesByConversationKey.set(key, []);
+    this.providerTrajectoryByConversationKey.set(key, []);
     return conversation;
   }
 

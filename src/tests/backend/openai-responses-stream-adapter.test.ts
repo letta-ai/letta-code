@@ -1,28 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { LanguageModel, TextStreamPart, ToolSet } from "ai";
-import type { StoredMessage } from "../../backend/dev/FakeHeadlessStore";
 import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
 import {
   OpenAIResponsesStreamAdapter,
   type OpenAIResponsesStreamAdapterOptions,
-  storedMessagesToModelMessages,
 } from "../../backend/dev/OpenAIResponsesStreamAdapter";
+import type { ProviderTrajectoryUIMessage } from "../../backend/dev/ProviderTrajectory";
 import type { ProviderTurnInput } from "../../backend/dev/ProviderTurnExecutor";
-
-function stored(
-  fields: Partial<StoredMessage> & { message_type: string } & Record<
-      string,
-      unknown
-    >,
-) {
-  return {
-    id: "msg-test",
-    date: "2026-01-01T00:00:00.000Z",
-    agent_id: "agent-test",
-    conversation_id: "conv-test",
-    ...fields,
-  } as StoredMessage;
-}
 
 function streamPart(part: Record<string, unknown>): TextStreamPart<ToolSet> {
   return part as unknown as TextStreamPart<ToolSet>;
@@ -36,12 +20,16 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   return values;
 }
 
-function providerInput(history: StoredMessage[]): ProviderTurnInput {
+function providerInput(
+  uiMessages: ProviderTrajectoryUIMessage[],
+): ProviderTurnInput {
   return {
     conversationId: "conv-test",
     agentId: "agent-test",
     body: {} as HeadlessTurnBody,
-    history,
+    history: [],
+    providerTrajectory: [],
+    uiMessages,
     clientTools: [
       {
         name: "ShellCommand",
@@ -58,73 +46,6 @@ function providerInput(history: StoredMessage[]): ProviderTurnInput {
 }
 
 describe("OpenAIResponsesStreamAdapter", () => {
-  test("converts stored fake-backend messages into AI SDK model messages", () => {
-    const messages = storedMessagesToModelMessages([
-      stored({
-        message_type: "user_message",
-        content: [{ type: "text", text: "hello" }],
-      }),
-      stored({
-        message_type: "assistant_message",
-        content: [{ type: "text", text: "checking" }],
-      }),
-      stored({
-        message_type: "approval_request_message",
-        tool_call: {
-          tool_call_id: "call-1",
-          name: "ShellCommand",
-          arguments: JSON.stringify({ command: "echo hi" }),
-        },
-      }),
-      stored({
-        message_type: "approval_response_message",
-        approvals: [
-          {
-            type: "tool",
-            tool_call_id: "call-1",
-            tool_return: "hi",
-            status: "success",
-          },
-        ],
-      }),
-      stored({
-        message_type: "assistant_message",
-        content: [{ type: "text", text: "done" }],
-      }),
-    ]);
-
-    expect(messages).toEqual([
-      { role: "user", content: "hello" },
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: "checking",
-          },
-          {
-            type: "tool-call",
-            toolCallId: "call-1",
-            toolName: "ShellCommand",
-            input: { command: "echo hi" },
-          },
-        ],
-      },
-      {
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: "call-1",
-            toolName: "ShellCommand",
-            output: { type: "text", value: "hi" },
-          },
-        ],
-      },
-      { role: "assistant", content: "done" },
-    ]);
-  });
-
   test("streams OpenAI Responses output through provider events", async () => {
     let capturedModel: string | undefined;
     let capturedMessages: unknown[] | undefined;
@@ -136,6 +57,11 @@ describe("OpenAIResponsesStreamAdapter", () => {
       capturedTools = options.tools;
       return {
         fullStream: (async function* () {
+          yield streamPart({
+            type: "reasoning-delta",
+            id: "reasoning-1",
+            text: "thinking",
+          });
           yield streamPart({ type: "text-delta", id: "text-1", text: "hi" });
           yield streamPart({
             type: "tool-call",
@@ -159,18 +85,25 @@ describe("OpenAIResponsesStreamAdapter", () => {
     const events = await collect(
       adapter.stream(
         providerInput([
-          stored({
-            message_type: "user_message",
-            content: [{ type: "text", text: "hello" }],
-          }),
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "canonical hello" }],
+          },
         ]),
       ),
     );
 
     expect(capturedModel).toBe("gpt-test");
-    expect(capturedMessages).toEqual([{ role: "user", content: "hello" }]);
+    expect(capturedMessages).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "canonical hello" }],
+      },
+    ]);
     expect(Object.keys(capturedTools ?? {})).toEqual(["ShellCommand"]);
     expect(events).toEqual([
+      { type: "reasoning-delta", text: "thinking" },
       { type: "text-delta", text: "hi" },
       {
         type: "tool-call",
@@ -182,38 +115,61 @@ describe("OpenAIResponsesStreamAdapter", () => {
     ]);
   });
 
-  test("converts denied Letta approvals into AI SDK execution-denied tool results", () => {
-    const messages = storedMessagesToModelMessages([
-      stored({
-        message_type: "approval_request_message",
-        tool_call: {
-          tool_call_id: "call-denied",
-          name: "ShellCommand",
-          arguments: JSON.stringify({ command: "node -e 'unsafe'" }),
-        },
-      }),
-      stored({
-        message_type: "approval_response_message",
-        approvals: [
-          {
-            type: "approval",
-            tool_call_id: "call-denied",
-            approve: false,
-            reason: "Tool requires approval (headless mode)",
-          },
-        ],
-      }),
-    ]);
+  test("projects UI tool outputs without AI SDK approval protocol parts", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: NonNullable<
+      OpenAIResponsesStreamAdapterOptions["streamText"]
+    > = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new OpenAIResponsesStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
 
-    expect(messages).toEqual([
+    await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "call tool" }],
+          },
+          {
+            id: "ui-assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-ShellCommand",
+                toolCallId: "call-1",
+                state: "output-available",
+                input: { command: "pwd" },
+                output: "ok",
+              },
+            ],
+          },
+        ]),
+      ),
+    );
+
+    expect(capturedMessages).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "call tool" }],
+      },
       {
         role: "assistant",
         content: [
           {
             type: "tool-call",
-            toolCallId: "call-denied",
+            toolCallId: "call-1",
             toolName: "ShellCommand",
-            input: { command: "node -e 'unsafe'" },
+            input: { command: "pwd" },
           },
         ],
       },
@@ -222,12 +178,9 @@ describe("OpenAIResponsesStreamAdapter", () => {
         content: [
           {
             type: "tool-result",
-            toolCallId: "call-denied",
+            toolCallId: "call-1",
             toolName: "ShellCommand",
-            output: {
-              type: "execution-denied",
-              reason: "Tool requires approval (headless mode)",
-            },
+            output: { type: "text", value: "ok" },
           },
         ],
       },
