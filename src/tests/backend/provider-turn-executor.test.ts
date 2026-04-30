@@ -5,11 +5,17 @@ import type {
   ConversationMessageListBody,
 } from "../../backend";
 import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
+import type { ProviderStreamPart } from "../../backend/dev/ProviderTrajectory";
 import {
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
   type ProviderTurnInput,
+  providerStreamPart,
 } from "../../backend/dev/ProviderTurnExecutor";
+
+function streamPart(part: Record<string, unknown>) {
+  return providerStreamPart(part as ProviderStreamPart);
+}
 
 function createBody(text: string): ConversationMessageCreateBody {
   return {
@@ -70,8 +76,12 @@ describe("ProviderTurnExecutor", () => {
     const adapter: ProviderStreamAdapter = {
       async *stream(input) {
         captured = input;
-        yield { type: "text-delta", text: "provider ok" };
-        yield { type: "finish", finishReason: "stop" };
+        yield streamPart({
+          type: "text-delta",
+          id: "text-1",
+          text: "provider ok",
+        });
+        yield streamPart({ type: "finish", finishReason: "stop" });
       },
     };
     const backend = new FakeHeadlessBackend(
@@ -120,13 +130,13 @@ describe("ProviderTurnExecutor", () => {
   test("maps provider tool calls into approval requests", async () => {
     const adapter: ProviderStreamAdapter = {
       async *stream() {
-        yield {
+        yield streamPart({
           type: "tool-call",
           toolCallId: "provider-tool-1",
           toolName: "ShellCommand",
           input: { command: "echo provider-tool", login: false },
-        };
-        yield { type: "finish", finishReason: "tool-calls" };
+        });
+        yield streamPart({ type: "finish", finishReason: "tool-calls" });
       },
     };
     const backend = new FakeHeadlessBackend(
@@ -182,17 +192,21 @@ describe("ProviderTurnExecutor", () => {
             ),
         );
         if (!hasToolResult) {
-          yield {
+          yield streamPart({
             type: "tool-call",
             toolCallId: "provider-tool-trajectory",
             toolName: "ShellCommand",
             input: { command: "echo provider-trajectory", login: false },
-          };
-          yield { type: "finish", finishReason: "tool-calls" };
+          });
+          yield streamPart({ type: "finish", finishReason: "tool-calls" });
           return;
         }
-        yield { type: "text-delta", text: "trajectory ok" };
-        yield { type: "finish", finishReason: "stop" };
+        yield streamPart({
+          type: "text-delta",
+          id: "text-1",
+          text: "trajectory ok",
+        });
+        yield streamPart({ type: "finish", finishReason: "stop" });
       },
     };
     const backend = new FakeHeadlessBackend(
@@ -291,17 +305,21 @@ describe("ProviderTurnExecutor", () => {
               ),
           )
         ) {
-          yield { type: "text-delta", text: "denied ok" };
-          yield { type: "finish", finishReason: "stop" };
+          yield streamPart({
+            type: "text-delta",
+            id: "text-1",
+            text: "denied ok",
+          });
+          yield streamPart({ type: "finish", finishReason: "stop" });
           return;
         }
-        yield {
+        yield streamPart({
           type: "tool-call",
           toolCallId: "provider-tool-denied",
           toolName: "ShellCommand",
           input: { command: "node -e unsafe" },
-        };
-        yield { type: "finish", finishReason: "tool-calls" };
+        });
+        yield streamPart({ type: "finish", finishReason: "tool-calls" });
       },
     };
     const backend = new FakeHeadlessBackend(
@@ -354,9 +372,9 @@ describe("ProviderTurnExecutor", () => {
   test("uses one assistant otid for text deltas in the same provider turn", async () => {
     const adapter: ProviderStreamAdapter = {
       async *stream() {
-        yield { type: "text-delta", text: "LET" };
-        yield { type: "text-delta", text: "TA" };
-        yield { type: "finish", finishReason: "stop" };
+        yield streamPart({ type: "text-delta", id: "text-1", text: "LET" });
+        yield streamPart({ type: "text-delta", id: "text-1", text: "TA" });
+        yield streamPart({ type: "finish", finishReason: "stop" });
       },
     };
     const backend = new FakeHeadlessBackend(
@@ -390,10 +408,14 @@ describe("ProviderTurnExecutor", () => {
         capturedMessages.push(input.uiMessages);
         turn += 1;
         if (turn === 1) {
-          yield { type: "reasoning-delta", text: "think" };
-          yield { type: "text-delta", text: "done" };
+          yield streamPart({
+            type: "reasoning-delta",
+            id: "reasoning-1",
+            text: "think",
+          });
+          yield streamPart({ type: "text-delta", id: "text-1", text: "done" });
         }
-        yield { type: "finish", finishReason: "stop" };
+        yield streamPart({ type: "finish", finishReason: "stop" });
       },
     };
     const backend = new FakeHeadlessBackend(
@@ -437,6 +459,121 @@ describe("ProviderTurnExecutor", () => {
       {
         role: "user",
         parts: [{ type: "text", text: "reason second" }],
+      },
+    ]);
+  });
+
+  test("preserves full provider stream parts in the raw trajectory sidecar", async () => {
+    const capturedTrajectories: ProviderTurnInput["providerTrajectory"][] = [];
+    let turn = 0;
+    const adapter: ProviderStreamAdapter = {
+      async *stream(input) {
+        capturedTrajectories.push(input.providerTrajectory);
+        turn += 1;
+        if (turn === 1) {
+          yield streamPart({
+            type: "start-step",
+            request: { body: { input: "raw first" } },
+            warnings: [{ type: "other", message: "raw warning" }],
+          });
+          yield streamPart({
+            type: "text-start",
+            id: "text-raw",
+            providerMetadata: { openai: { itemId: "item-text" } },
+          });
+          yield streamPart({
+            type: "text-delta",
+            id: "text-raw",
+            text: "raw hello",
+            providerMetadata: { openai: { itemId: "item-text" } },
+          });
+          yield streamPart({
+            type: "text-end",
+            id: "text-raw",
+            providerMetadata: { openai: { itemId: "item-text" } },
+          });
+          yield streamPart({
+            type: "raw",
+            rawValue: { type: "response.output_text.delta" },
+          });
+          yield streamPart({
+            type: "finish-step",
+            response: {
+              id: "resp-raw-1",
+              timestamp: new Date(Date.UTC(2026, 0, 1)),
+              modelId: "gpt-test",
+            },
+            usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+            finishReason: "stop",
+            rawFinishReason: "stop",
+            providerMetadata: { openai: { responseId: "resp-raw-1" } },
+          });
+        }
+        yield streamPart({
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+        });
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("raw first"),
+      ),
+    );
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("raw second"),
+      ),
+    );
+
+    const assistantEntry = capturedTrajectories[1]?.find(
+      (entry) => entry.uiMessage.role === "assistant",
+    );
+    expect(
+      assistantEntry?.raw?.streamParts?.map(
+        (part) => (part as { type?: unknown }).type,
+      ),
+    ).toEqual([
+      "start-step",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "raw",
+      "finish-step",
+      "finish",
+    ]);
+    expect(assistantEntry?.raw?.request).toEqual({
+      body: { input: "raw first" },
+    });
+    expect(assistantEntry?.raw?.response).toMatchObject({
+      id: "resp-raw-1",
+      modelId: "gpt-test",
+    });
+    expect(assistantEntry?.raw?.providerMetadata).toEqual({
+      openai: { responseId: "resp-raw-1" },
+    });
+    expect(assistantEntry?.uiMessage.metadata?.provider).toEqual({
+      modelId: "gpt-test",
+      responseId: "resp-raw-1",
+      providerMetadata: { openai: { responseId: "resp-raw-1" } },
+    });
+    expect(assistantEntry?.uiMessage.parts).toEqual([
+      {
+        type: "text",
+        text: "raw hello",
+        state: "done",
+        providerMetadata: { openai: { itemId: "item-text" } },
       },
     ]);
   });

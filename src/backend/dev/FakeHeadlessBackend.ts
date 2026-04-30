@@ -16,6 +16,7 @@ import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "./HeadlessTurnExecutor";
+import { isProviderStreamPartOnly } from "./ProviderTrajectory";
 
 function createPage<T>(items: T[]) {
   return {
@@ -176,7 +177,14 @@ export class FakeHeadlessBackend implements Backend {
       controller: stream.controller,
       async *[Symbol.asyncIterator]() {
         for await (const chunk of stream) {
-          yield store.appendStreamChunk(conversationId, agentId, chunk);
+          const persisted = store.appendStreamChunk(
+            conversationId,
+            agentId,
+            chunk,
+          );
+          if (!isProviderStreamPartOnly(persisted)) {
+            yield persisted;
+          }
         }
       },
     } as unknown as Stream<LettaStreamingResponse>;

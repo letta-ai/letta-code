@@ -14,8 +14,14 @@ import type {
   ConversationUpdateBody,
 } from "../backend";
 import type {
+  ProviderStreamPart,
   ProviderTrajectoryMessage,
   ProviderTrajectoryUIMessage,
+} from "./ProviderTrajectory";
+import {
+  cloneProviderStreamPart,
+  getAttachedProviderStreamPart,
+  isProviderStreamPartOnly,
 } from "./ProviderTrajectory";
 
 export type StoredMessage = Message & {
@@ -141,6 +147,18 @@ type ProviderUIToolPart = ProviderUIMessagePart & {
   type: `tool-${string}`;
   toolCallId: string;
 };
+type ProviderUITextPart = ProviderUIMessagePart & {
+  type: "text";
+  text: string;
+  state?: "streaming" | "done";
+  providerMetadata?: unknown;
+};
+type ProviderUIReasoningPart = ProviderUIMessagePart & {
+  type: "reasoning";
+  text: string;
+  state?: "streaming" | "done";
+  providerMetadata?: unknown;
+};
 
 function isProviderUIToolPart(
   part: ProviderUIMessagePart,
@@ -252,7 +270,26 @@ export class FakeHeadlessStore {
     chunk: LettaStreamingResponse,
   ): LettaStreamingResponse {
     const messageType = (chunk as { message_type?: unknown })?.message_type;
+    const providerStreamPart = getAttachedProviderStreamPart(chunk);
+    if (isProviderStreamPartOnly(chunk)) {
+      if (providerStreamPart) {
+        this.appendProviderStreamPart(
+          conversationId,
+          agentId,
+          providerStreamPart,
+        );
+      }
+      return chunk;
+    }
+
     if (typeof messageType !== "string" || messageType === "stop_reason") {
+      if (providerStreamPart) {
+        this.appendProviderStreamPart(
+          conversationId,
+          agentId,
+          providerStreamPart,
+        );
+      }
       return chunk;
     }
 
@@ -267,6 +304,13 @@ export class FakeHeadlessStore {
       chunk,
       storedMessage,
     );
+    if (providerStreamPart) {
+      this.appendProviderStreamPart(
+        conversationId,
+        agentId,
+        providerStreamPart,
+      );
+    }
     return storedMessage as unknown as LettaStreamingResponse;
   }
 
@@ -402,7 +446,7 @@ export class FakeHeadlessStore {
     conversationId: string,
     agentId: string,
     options: {
-      storedMessage: StoredMessage;
+      storedMessage?: StoredMessage;
       role: ProviderTrajectoryUIMessage["role"];
       parts: ProviderUIMessagePart[];
       otid?: string;
@@ -417,7 +461,9 @@ export class FakeHeadlessStore {
       type: "letta_provider_ui_message",
       schemaVersion: 1,
       id,
-      date: options.storedMessage.date,
+      date:
+        options.storedMessage?.date ??
+        new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq + 1)).toISOString(),
       agentId,
       conversationId,
       uiMessage: {
@@ -425,9 +471,11 @@ export class FakeHeadlessStore {
         role: options.role,
         metadata: {
           lettaProjection: {
-            messageTypes: [options.storedMessage.message_type],
+            messageTypes: options.storedMessage
+              ? [options.storedMessage.message_type]
+              : [],
             otids: options.otid ? [options.otid] : undefined,
-            messageIds: [options.storedMessage.id],
+            messageIds: options.storedMessage ? [options.storedMessage.id] : [],
             approvalRequestIds: options.approvalRequestId
               ? [options.approvalRequestId]
               : undefined,
@@ -445,6 +493,352 @@ export class FakeHeadlessStore {
     trajectory.push(entry);
     this.providerTrajectoryByConversationKey.set(key, trajectory);
     return entry;
+  }
+
+  private appendProviderStreamPart(
+    conversationId: string,
+    agentId: string,
+    part: ProviderStreamPart,
+  ): void {
+    const entry = this.assistantEntryForProviderStreamPart(
+      conversationId,
+      agentId,
+    );
+    const capturedPart = cloneProviderStreamPart(part);
+    entry.raw = {
+      ...entry.raw,
+      streamParts: [...(entry.raw?.streamParts ?? []), capturedPart],
+    };
+    this.applyProviderRawCapture(entry, capturedPart);
+    this.applyProviderStreamPartToUI(conversationId, agentId, entry, part);
+  }
+
+  private applyProviderRawCapture(
+    entry: ProviderTrajectoryMessage,
+    part: ProviderStreamPart,
+  ): void {
+    if (!entry.raw) entry.raw = {};
+
+    if (part.type === "start-step") {
+      entry.raw.request = part.request;
+      entry.raw.warnings = [
+        ...(entry.raw.warnings ?? []),
+        ...(part.warnings ?? []),
+      ];
+      entry.raw.steps = [...(entry.raw.steps ?? []), part];
+      return;
+    }
+
+    if (part.type === "finish-step") {
+      entry.raw.response = part.response;
+      entry.raw.usage = part.usage;
+      entry.raw.providerMetadata = part.providerMetadata;
+      entry.raw.steps = [...(entry.raw.steps ?? []), part];
+      entry.uiMessage.metadata = {
+        ...entry.uiMessage.metadata,
+        provider: {
+          ...entry.uiMessage.metadata?.provider,
+          modelId: part.response.modelId,
+          responseId: part.response.id,
+          providerMetadata: part.providerMetadata,
+        },
+      };
+      return;
+    }
+
+    if (part.type === "finish") {
+      entry.raw.usage = part.totalUsage;
+      return;
+    }
+
+    if ("providerMetadata" in part && part.providerMetadata) {
+      entry.raw.providerMetadata = part.providerMetadata;
+    }
+  }
+
+  private applyProviderStreamPartToUI(
+    conversationId: string,
+    agentId: string,
+    entry: ProviderTrajectoryMessage,
+    part: ProviderStreamPart,
+  ): void {
+    if (part.type === "text-start") {
+      const textPart = this.ensureTextLikePart(entry, "text");
+      textPart.state = "streaming";
+      this.applyPartProviderMetadata(textPart, part);
+      return;
+    }
+
+    if (part.type === "text-delta") {
+      const textPart = this.lastTextLikePart(entry, "text");
+      if (textPart) this.applyPartProviderMetadata(textPart, part);
+      return;
+    }
+
+    if (part.type === "text-end") {
+      const textPart = this.lastTextLikePart(entry, "text");
+      if (textPart) {
+        textPart.state = "done";
+        this.applyPartProviderMetadata(textPart, part);
+      }
+      return;
+    }
+
+    if (part.type === "reasoning-start") {
+      const reasoningPart = this.ensureTextLikePart(entry, "reasoning");
+      reasoningPart.state = "streaming";
+      this.applyPartProviderMetadata(reasoningPart, part);
+      return;
+    }
+
+    if (part.type === "reasoning-delta") {
+      const reasoningPart = this.lastTextLikePart(entry, "reasoning");
+      if (reasoningPart) this.applyPartProviderMetadata(reasoningPart, part);
+      return;
+    }
+
+    if (part.type === "reasoning-end") {
+      const reasoningPart = this.lastTextLikePart(entry, "reasoning");
+      if (reasoningPart) {
+        reasoningPart.state = "done";
+        this.applyPartProviderMetadata(reasoningPart, part);
+      }
+      return;
+    }
+
+    if (part.type === "tool-input-start") {
+      const toolPart = this.ensureStreamingToolPart(entry, part);
+      this.applyToolCallMetadata(toolPart, part);
+      return;
+    }
+
+    if (part.type === "tool-input-delta" || part.type === "tool-input-end") {
+      const match = this.findToolUIPart(conversationId, agentId, part.id);
+      if (match) this.applyToolCallMetadata(match.part, part);
+      return;
+    }
+
+    if (part.type === "tool-call") {
+      const match = this.findToolUIPart(
+        conversationId,
+        agentId,
+        part.toolCallId,
+      );
+      if (match) this.applyToolCallMetadata(match.part, part);
+      return;
+    }
+
+    if (part.type === "tool-result") {
+      this.applyProviderToolResult(conversationId, agentId, entry, part);
+      return;
+    }
+
+    if (part.type === "tool-error") {
+      this.applyProviderToolError(conversationId, agentId, entry, part);
+      return;
+    }
+
+    if (part.type === "source") {
+      this.appendSourcePart(entry, part);
+      return;
+    }
+
+    if (part.type === "file") {
+      entry.uiMessage.parts.push({
+        type: "file",
+        mediaType: part.file.mediaType,
+        url: `data:${part.file.mediaType};base64,${part.file.base64}`,
+        providerMetadata: part.providerMetadata,
+      } as ProviderUIMessagePart);
+    }
+  }
+
+  private assistantEntryForProviderStreamPart(
+    conversationId: string,
+    agentId: string,
+  ): ProviderTrajectoryMessage {
+    const trajectory = this.providerTrajectoryForConversation(
+      conversationId,
+      agentId,
+    );
+    const last = trajectory.at(-1);
+    if (last?.uiMessage.role === "assistant") return last;
+
+    return this.appendProviderTrajectoryMessage(conversationId, agentId, {
+      role: "assistant",
+      parts: [],
+    });
+  }
+
+  private ensureTextLikePart(
+    entry: ProviderTrajectoryMessage,
+    type: "text",
+  ): ProviderUITextPart;
+  private ensureTextLikePart(
+    entry: ProviderTrajectoryMessage,
+    type: "reasoning",
+  ): ProviderUIReasoningPart;
+  private ensureTextLikePart(
+    entry: ProviderTrajectoryMessage,
+    type: "text" | "reasoning",
+  ): ProviderUITextPart | ProviderUIReasoningPart {
+    const last =
+      type === "text"
+        ? this.lastTextLikePart(entry, "text")
+        : this.lastTextLikePart(entry, "reasoning");
+    if (last) return last;
+    const part = { type, text: "" } as
+      | ProviderUITextPart
+      | ProviderUIReasoningPart;
+    entry.uiMessage.parts.push(part as ProviderUIMessagePart);
+    return part;
+  }
+
+  private lastTextLikePart(
+    entry: ProviderTrajectoryMessage,
+    type: "text",
+  ): ProviderUITextPart | undefined;
+  private lastTextLikePart(
+    entry: ProviderTrajectoryMessage,
+    type: "reasoning",
+  ): ProviderUIReasoningPart | undefined;
+  private lastTextLikePart(
+    entry: ProviderTrajectoryMessage,
+    type: "text" | "reasoning",
+  ): ProviderUITextPart | ProviderUIReasoningPart | undefined {
+    for (let index = entry.uiMessage.parts.length - 1; index >= 0; index--) {
+      const part = entry.uiMessage.parts[index];
+      if (part?.type === type) {
+        return part as ProviderUITextPart | ProviderUIReasoningPart;
+      }
+    }
+    return undefined;
+  }
+
+  private applyPartProviderMetadata(
+    uiPart: ProviderUITextPart | ProviderUIReasoningPart,
+    streamPart: ProviderStreamPart,
+  ): void {
+    if ("providerMetadata" in streamPart && streamPart.providerMetadata) {
+      uiPart.providerMetadata = streamPart.providerMetadata;
+    }
+  }
+
+  private ensureStreamingToolPart(
+    entry: ProviderTrajectoryMessage,
+    part: Extract<ProviderStreamPart, { type: "tool-input-start" }>,
+  ): ProviderUIToolPart {
+    const existing = entry.uiMessage.parts.find(
+      (uiPart): uiPart is ProviderUIToolPart =>
+        isProviderUIToolPart(uiPart) && uiPart.toolCallId === part.id,
+    );
+    if (existing) return existing;
+    const toolPart = {
+      type: `tool-${part.toolName}`,
+      toolCallId: part.id,
+      state: "input-streaming",
+      input: undefined,
+      title: part.title,
+      providerExecuted: part.providerExecuted,
+    } as ProviderUIToolPart;
+    entry.uiMessage.parts.push(toolPart);
+    return toolPart;
+  }
+
+  private applyToolCallMetadata(
+    uiPart: ProviderUIToolPart,
+    streamPart: ProviderStreamPart,
+  ): void {
+    if ("providerMetadata" in streamPart && streamPart.providerMetadata) {
+      (uiPart as { callProviderMetadata?: unknown }).callProviderMetadata =
+        streamPart.providerMetadata;
+    }
+    if ("providerExecuted" in streamPart) {
+      (uiPart as { providerExecuted?: unknown }).providerExecuted =
+        streamPart.providerExecuted;
+    }
+    if ("title" in streamPart) {
+      (uiPart as { title?: unknown }).title = streamPart.title;
+    }
+  }
+
+  private applyProviderToolResult(
+    conversationId: string,
+    agentId: string,
+    entry: ProviderTrajectoryMessage,
+    part: Extract<ProviderStreamPart, { type: "tool-result" }>,
+  ): void {
+    const match = this.findToolUIPart(conversationId, agentId, part.toolCallId);
+    const toolPart = match?.part ?? this.pushToolPart(entry, part);
+    Object.assign(toolPart, {
+      state: "output-available",
+      input: part.input,
+      output: part.output,
+      preliminary: part.preliminary,
+    });
+    if (part.providerMetadata) {
+      (
+        toolPart as { resultProviderMetadata?: unknown }
+      ).resultProviderMetadata = part.providerMetadata;
+    }
+  }
+
+  private applyProviderToolError(
+    conversationId: string,
+    agentId: string,
+    entry: ProviderTrajectoryMessage,
+    part: Extract<ProviderStreamPart, { type: "tool-error" }>,
+  ): void {
+    const match = this.findToolUIPart(conversationId, agentId, part.toolCallId);
+    const toolPart = match?.part ?? this.pushToolPart(entry, part);
+    Object.assign(toolPart, {
+      state: "output-error",
+      input: part.input,
+      errorText: textFromContent(part.error),
+    });
+    if (part.providerMetadata) {
+      (
+        toolPart as { resultProviderMetadata?: unknown }
+      ).resultProviderMetadata = part.providerMetadata;
+    }
+  }
+
+  private pushToolPart(
+    entry: ProviderTrajectoryMessage,
+    part: Extract<ProviderStreamPart, { toolCallId: string; toolName: string }>,
+  ): ProviderUIToolPart {
+    const toolPart = {
+      type: `tool-${part.toolName}`,
+      toolCallId: part.toolCallId,
+      input: "input" in part ? part.input : undefined,
+    } as ProviderUIToolPart;
+    entry.uiMessage.parts.push(toolPart);
+    return toolPart;
+  }
+
+  private appendSourcePart(
+    entry: ProviderTrajectoryMessage,
+    part: Extract<ProviderStreamPart, { type: "source" }>,
+  ): void {
+    if (part.sourceType === "url") {
+      entry.uiMessage.parts.push({
+        type: "source-url",
+        sourceId: part.id,
+        url: part.url,
+        title: part.title,
+        providerMetadata: part.providerMetadata,
+      } as ProviderUIMessagePart);
+      return;
+    }
+
+    entry.uiMessage.parts.push({
+      type: "source-document",
+      sourceId: part.id,
+      mediaType: part.mediaType,
+      title: part.title,
+      filename: part.filename,
+      providerMetadata: part.providerMetadata,
+    } as ProviderUIMessagePart);
   }
 
   private appendAssistantTextProviderMessage(
@@ -502,13 +896,23 @@ export class FakeHeadlessStore {
       agentId,
       storedMessage,
     );
-    entry.uiMessage.parts.push({
+    const toolPart = {
       type: `tool-${toolCall.toolName}`,
       toolCallId: toolCall.toolCallId,
       state: "approval-requested",
       input: toolCall.input,
       approval: { id: storedMessage.id },
-    } as ProviderUIMessagePart);
+    } as ProviderUIMessagePart;
+    const existing = this.findToolUIPart(
+      conversationId,
+      agentId,
+      toolCall.toolCallId,
+    );
+    if (existing) {
+      Object.assign(existing.part, toolPart);
+    } else {
+      entry.uiMessage.parts.push(toolPart);
+    }
     this.appendStoredMessageProjection(entry, storedMessage, {
       approvalRequestId: storedMessage.id,
       toolCallIds: [toolCall.toolCallId],

@@ -102,17 +102,15 @@ describe("OpenAIResponsesStreamAdapter", () => {
       },
     ]);
     expect(Object.keys(capturedTools ?? {})).toEqual(["ShellCommand"]);
-    expect(events).toEqual([
-      { type: "reasoning-delta", text: "thinking" },
-      { type: "text-delta", text: "hi" },
-      {
-        type: "tool-call",
-        toolCallId: "call-2",
-        toolName: "ShellCommand",
-        input: { command: "pwd" },
-      },
-      { type: "finish", finishReason: "tool-calls" },
+    expect(events.map((event) => event.type)).toEqual([
+      "ai-sdk-part",
+      "ai-sdk-part",
+      "ai-sdk-part",
+      "ai-sdk-part",
     ]);
+    expect(
+      events.map((event) => event.type === "ai-sdk-part" && event.part.type),
+    ).toEqual(["reasoning-delta", "text-delta", "tool-call", "finish"]);
   });
 
   test("projects UI tool outputs without AI SDK approval protocol parts", async () => {

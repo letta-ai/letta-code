@@ -1,4 +1,11 @@
-import type { UIMessage } from "ai";
+import type { TextStreamPart, ToolSet, UIMessage } from "ai";
+
+export type ProviderStreamPart = TextStreamPart<ToolSet>;
+
+const PROVIDER_STREAM_PART = Symbol.for("@letta/provider-stream-part");
+const PROVIDER_STREAM_PART_ONLY = Symbol.for(
+  "@letta/provider-stream-part-only",
+);
 
 export interface ProviderTrajectoryProviderMetadata {
   providerId?: string;
@@ -44,6 +51,64 @@ export interface ProviderTrajectoryMessage {
   conversationId: string;
   uiMessage: ProviderTrajectoryUIMessage;
   raw?: ProviderTrajectoryRawCapture;
+}
+
+export function cloneProviderStreamPart(
+  part: ProviderStreamPart,
+): ProviderStreamPart {
+  return cloneUnknown(part) as ProviderStreamPart;
+}
+
+export function attachProviderStreamPart<T extends object>(
+  target: T,
+  part: ProviderStreamPart,
+): T {
+  Object.defineProperty(target, PROVIDER_STREAM_PART, {
+    value: part,
+    enumerable: false,
+    configurable: false,
+  });
+  return target;
+}
+
+export function getAttachedProviderStreamPart(
+  value: unknown,
+): ProviderStreamPart | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  return (value as Record<symbol, ProviderStreamPart | undefined>)[
+    PROVIDER_STREAM_PART
+  ];
+}
+
+export function markProviderStreamPartOnly<T extends object>(target: T): T {
+  Object.defineProperty(target, PROVIDER_STREAM_PART_ONLY, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+  });
+  return target;
+}
+
+export function isProviderStreamPartOnly(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<symbol, boolean | undefined>)[
+      PROVIDER_STREAM_PART_ONLY
+    ] === true
+  );
+}
+
+function cloneUnknown(value: unknown): unknown {
+  try {
+    return structuredClone(value);
+  } catch {
+    try {
+      return JSON.parse(JSON.stringify(value)) as unknown;
+    } catch {
+      return String(value);
+    }
+  }
 }
 
 function clonePart(

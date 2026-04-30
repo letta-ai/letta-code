@@ -15,6 +15,7 @@ import type {
   ProviderStreamEvent,
   ProviderTurnInput,
 } from "./ProviderTurnExecutor";
+import { providerStreamPart } from "./ProviderTurnExecutor";
 
 const DEFAULT_OPENAI_RESPONSES_MODEL = "gpt-5.5";
 
@@ -108,34 +109,7 @@ export class OpenAIResponsesStreamAdapter implements ProviderStreamAdapter {
     });
 
     for await (const part of result.fullStream) {
-      if (part.type === "text-delta") {
-        yield { type: "text-delta", text: part.text };
-        continue;
-      }
-
-      if (part.type === "reasoning-delta") {
-        yield { type: "reasoning-delta", text: part.text };
-        continue;
-      }
-
-      if (part.type === "tool-call") {
-        yield {
-          type: "tool-call",
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          input: part.input,
-        };
-        continue;
-      }
-
-      if (part.type === "finish") {
-        yield { type: "finish", finishReason: part.finishReason };
-        continue;
-      }
-
-      if (part.type === "error") {
-        yield { type: "error", error: part.error };
-      }
+      yield providerStreamPart(part);
     }
   }
 }
