@@ -1,5 +1,8 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  LettaStreamingResponse,
+  Message,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type {
   AgentMessageListBody,
@@ -86,6 +89,18 @@ function getCursor(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function toStoredOutputFields(chunk: Record<string, unknown>) {
+  const { id: _id, date: _date, agent_id, conversation_id, ...fields } = chunk;
+  void agent_id;
+  void conversation_id;
+  return fields;
+}
+
+export interface StoredTurnInput {
+  agentId: string;
+  conversationId: string;
+}
+
 export class FakeHeadlessStore {
   private readonly agents = new Map<string, AgentState>();
   private readonly conversations = new Map<string, StoredConversation>();
@@ -144,10 +159,10 @@ export class FakeHeadlessStore {
     return updated as Conversation;
   }
 
-  appendTurn(
+  appendTurnInput(
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
-  ): StoredMessage {
+  ): StoredTurnInput {
     const bodyWithAgent = body as {
       agent_id?: string;
       messages?: Array<Record<string, unknown>>;
@@ -161,7 +176,25 @@ export class FakeHeadlessStore {
       this.appendInputMessage(conversationId, agentId, message);
     }
 
-    return this.appendAssistantMessage(conversationId, agentId, "pong");
+    return { agentId, conversationId };
+  }
+
+  appendStreamChunk(
+    conversationId: string,
+    agentId: string,
+    chunk: LettaStreamingResponse,
+  ): LettaStreamingResponse {
+    const messageType = (chunk as { message_type?: unknown })?.message_type;
+    if (typeof messageType !== "string" || messageType === "stop_reason") {
+      return chunk;
+    }
+
+    const storedMessage = this.appendMessage(
+      conversationId,
+      agentId,
+      toStoredOutputFields(chunk as unknown as Record<string, unknown>),
+    );
+    return storedMessage as unknown as LettaStreamingResponse;
   }
 
   listConversationMessages(
@@ -212,18 +245,6 @@ export class FakeHeadlessStore {
       content,
       otid: message.otid,
       approvals: message.approvals,
-    });
-  }
-
-  private appendAssistantMessage(
-    conversationId: string,
-    agentId: string,
-    text: string,
-  ): StoredMessage {
-    return this.appendMessage(conversationId, agentId, {
-      message_type: "assistant_message",
-      role: "assistant",
-      content: textContent(text),
     });
   }
 

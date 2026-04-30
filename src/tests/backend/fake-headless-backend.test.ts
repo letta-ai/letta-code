@@ -81,9 +81,11 @@ describe("FakeHeadlessBackend", () => {
   test("supports default conversation listing through agent messages", async () => {
     const backend = new FakeHeadlessBackend("agent-default");
 
-    await backend.createConversationMessageStream(
-      "default",
-      createBody("default hello", "agent-default"),
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        "default",
+        createBody("default hello", "agent-default"),
+      ),
     );
 
     const page = await backend.listAgentMessages("agent-default", {
@@ -106,13 +108,17 @@ describe("FakeHeadlessBackend", () => {
       agent_id: "agent-pages",
     });
 
-    await backend.createConversationMessageStream(
-      conversation.id,
-      createBody("first", "agent-pages"),
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("first", "agent-pages"),
+      ),
     );
-    await backend.createConversationMessageStream(
-      conversation.id,
-      createBody("second", "agent-pages"),
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("second", "agent-pages"),
+      ),
     );
 
     const firstPage = await backend.listConversationMessages(conversation.id, {

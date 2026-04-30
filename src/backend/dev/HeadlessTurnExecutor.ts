@@ -4,7 +4,7 @@ import type {
   ConversationMessageCreateBody,
   ConversationMessageStreamBody,
 } from "../backend";
-import type { FakeHeadlessStore, StoredMessage } from "./FakeHeadlessStore";
+import type { StoredMessage } from "./FakeHeadlessStore";
 
 export type HeadlessTurnBody =
   | ConversationMessageCreateBody
@@ -12,8 +12,8 @@ export type HeadlessTurnBody =
 
 export interface HeadlessTurnExecutorInput {
   conversationId: string;
+  agentId: string;
   body: HeadlessTurnBody;
-  store: FakeHeadlessStore;
 }
 
 export interface HeadlessTurnExecutor {
@@ -23,7 +23,7 @@ export interface HeadlessTurnExecutor {
 }
 
 export function createAssistantMessageStream(
-  message: Pick<StoredMessage, "id" | "date" | "content">,
+  message: Partial<Pick<StoredMessage, "id" | "date" | "content">> = {},
 ): Stream<LettaStreamingResponse> {
   const controller = new AbortController();
   return {
@@ -31,8 +31,8 @@ export function createAssistantMessageStream(
     async *[Symbol.asyncIterator]() {
       yield {
         message_type: "assistant_message",
-        id: message.id,
-        date: message.date,
+        ...(message.id ? { id: message.id } : {}),
+        ...(message.date ? { date: message.date } : {}),
         content: message.content ?? [{ type: "text", text: "pong" }],
       } as LettaStreamingResponse;
       yield {
@@ -44,8 +44,7 @@ export function createAssistantMessageStream(
 }
 
 export class DeterministicPongExecutor implements HeadlessTurnExecutor {
-  async execute({ conversationId, body, store }: HeadlessTurnExecutorInput) {
-    const assistantMessage = store.appendTurn(conversationId, body);
-    return createAssistantMessageStream(assistantMessage);
+  async execute(_input: HeadlessTurnExecutorInput) {
+    return createAssistantMessageStream();
   }
 }

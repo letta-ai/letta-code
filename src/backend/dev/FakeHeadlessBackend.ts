@@ -1,4 +1,6 @@
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type {
   Backend,
@@ -87,14 +89,34 @@ export class FakeHeadlessBackend implements Backend {
     conversationId: string,
     body: ConversationMessageCreateBody,
   ) {
-    return this.executor.execute({ conversationId, body, store: this.store });
+    const turnInput = this.store.appendTurnInput(conversationId, body);
+    const stream = await this.executor.execute({
+      conversationId,
+      agentId: turnInput.agentId,
+      body,
+    });
+    return this.persistExecutorStream(
+      turnInput.conversationId,
+      turnInput.agentId,
+      stream,
+    );
   }
 
   async streamConversationMessages(
     conversationId: string,
     body: ConversationMessageStreamBody,
   ) {
-    return this.executor.execute({ conversationId, body, store: this.store });
+    const turnInput = this.store.appendTurnInput(conversationId, body);
+    const stream = await this.executor.execute({
+      conversationId,
+      agentId: turnInput.agentId,
+      body,
+    });
+    return this.persistExecutorStream(
+      turnInput.conversationId,
+      turnInput.agentId,
+      stream,
+    );
   }
 
   async cancelConversation() {
@@ -115,5 +137,21 @@ export class FakeHeadlessBackend implements Backend {
 
   async forkConversation(conversationId: string) {
     return { id: conversationId } as never;
+  }
+
+  private persistExecutorStream(
+    conversationId: string,
+    agentId: string,
+    stream: Stream<LettaStreamingResponse>,
+  ): Stream<LettaStreamingResponse> {
+    const store = this.store;
+    return {
+      controller: stream.controller,
+      async *[Symbol.asyncIterator]() {
+        for await (const chunk of stream) {
+          yield store.appendStreamChunk(conversationId, agentId, chunk);
+        }
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
   }
 }
