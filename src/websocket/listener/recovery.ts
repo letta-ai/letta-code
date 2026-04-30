@@ -10,7 +10,6 @@ import {
   executeApprovalBatch,
 } from "../../agent/approval-execution";
 import { getResumeData } from "../../agent/check-approval";
-import { getClient } from "../../agent/client";
 import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
@@ -19,6 +18,7 @@ import {
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
+import { getClient } from "../../backend/api/client";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
 import { formatPermissionDenial } from "../../permissions/formatDenial";
@@ -61,6 +61,7 @@ import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
 } from "./runtime";
+import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
@@ -626,6 +627,7 @@ export async function resolveRecoveredApprovalResponse(
   );
   const recoveryAbortController = new AbortController();
   runtime.activeAbortController = recoveryAbortController;
+  await ensureSecretsHydratedForAgent(runtime.listener, recovered.agentId);
   const preparedToolContext = await prepareToolExecutionContextForScope({
     agentId: recovered.agentId,
     conversationId: recovered.conversationId,

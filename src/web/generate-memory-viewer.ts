@@ -11,7 +11,6 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { getClient, getServerUrl } from "../agent/client";
 import { getMemoryFilesystemRoot } from "../agent/memoryFilesystem";
 import { getMemoryRepoDir, isGitRepo } from "../agent/memoryGit";
 import {
@@ -19,6 +18,9 @@ import {
   readFileContent,
   scanMemoryFilesystem,
 } from "../agent/memoryScanner";
+import { getAgentContextOverview } from "../backend/api/agents";
+import { getClient, getServerUrl } from "../backend/api/client";
+import { apiRequest } from "../backend/api/request";
 import memoryViewerTemplate from "./memory-viewer-template.txt";
 import type {
   ContextData,
@@ -44,6 +46,56 @@ type ConversationListItem = {
   last_run_completion?: string | null;
   label?: string | null;
 };
+
+type ContextOverviewResponse = {
+  messages?: Array<{
+    id: string;
+    role: string;
+    content: string | unknown[];
+    conversation_id?: string | null;
+    created_at: string;
+  }>;
+  context_window_size_max: number;
+  context_window_size_current: number;
+  num_tokens_system: number;
+  num_tokens_core_memory: number;
+  num_tokens_external_memory_summary: number;
+  num_tokens_summary_memory: number;
+  num_tokens_functions_definitions: number;
+  num_tokens_messages: number;
+};
+
+function messagesFromOverview(
+  overview: ContextOverviewResponse,
+): MessageInfo[] | undefined {
+  return overview.messages?.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    conversation_id: message.conversation_id,
+    created_at: message.created_at,
+  }));
+}
+
+function contextFromOverview(
+  overview: ContextOverviewResponse,
+  model: string,
+  contextWindow?: number,
+): ContextData {
+  return {
+    contextWindow: contextWindow || overview.context_window_size_max,
+    usedTokens: overview.context_window_size_current,
+    model,
+    breakdown: {
+      system: overview.num_tokens_system,
+      coreMemory: overview.num_tokens_core_memory,
+      externalMemory: overview.num_tokens_external_memory_summary,
+      summaryMemory: overview.num_tokens_summary_memory,
+      tools: overview.num_tokens_functions_definitions,
+      messages: overview.num_tokens_messages,
+    },
+  };
+}
 
 export interface GenerateResult {
   filePath: string;
@@ -302,59 +354,15 @@ async function collectMemoryData(
     if (agent.name) agentName = agent.name;
     model = agent.llm_config?.model ?? "unknown";
 
-    // Fetch context breakdown via raw API (not in SDK)
-    const apiKey =
-      (client as unknown as { apiKey?: string }).apiKey ||
-      process.env.LETTA_API_KEY ||
-      "";
+    // Fetch context breakdown via API seam (not in SDK)
     const contextWindow = agent.llm_config?.context_window ?? 0;
     try {
-      const contextRes = await fetch(
-        `${serverUrl}/v1/agents/${agentId}/context`,
-        {
-          headers: { Authorization: `Bearer ${apiKey}` },
-          signal: AbortSignal.timeout(5000),
-        },
+      const overview = await getAgentContextOverview<ContextOverviewResponse>(
+        agentId,
+        { signal: AbortSignal.timeout(5000) },
       );
-      if (contextRes.ok) {
-        const overview = (await contextRes.json()) as {
-          messages?: Array<{
-            id: string;
-            role: string;
-            content: string | unknown[];
-            conversation_id?: string | null;
-            created_at: string;
-          }>;
-          context_window_size_max: number;
-          context_window_size_current: number;
-          num_tokens_system: number;
-          num_tokens_core_memory: number;
-          num_tokens_external_memory_summary: number;
-          num_tokens_summary_memory: number;
-          num_tokens_functions_definitions: number;
-          num_tokens_messages: number;
-        };
-        messages = overview.messages?.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          conversation_id: m.conversation_id,
-          created_at: m.created_at,
-        }));
-        context = {
-          contextWindow: contextWindow || overview.context_window_size_max,
-          usedTokens: overview.context_window_size_current,
-          model,
-          breakdown: {
-            system: overview.num_tokens_system,
-            coreMemory: overview.num_tokens_core_memory,
-            externalMemory: overview.num_tokens_external_memory_summary,
-            summaryMemory: overview.num_tokens_summary_memory,
-            tools: overview.num_tokens_functions_definitions,
-            messages: overview.num_tokens_messages,
-          },
-        };
-      }
+      messages = messagesFromOverview(overview);
+      context = contextFromOverview(overview, model, contextWindow);
     } catch {
       // Context fetch failed - continue without it
     }
@@ -364,64 +372,37 @@ async function collectMemoryData(
       const apiKey = process.env.LETTA_API_KEY || "";
       if (apiKey && serverUrl) {
         // Fetch agent info + context in parallel
-        const [agentRes, contextRes] = await Promise.all([
-          fetch(`${serverUrl}/v1/agents/${agentId}`, {
-            headers: { Authorization: `Bearer ${apiKey}` },
-            signal: AbortSignal.timeout(5000),
-          }).catch(() => null),
-          fetch(`${serverUrl}/v1/agents/${agentId}/context`, {
-            headers: { Authorization: `Bearer ${apiKey}` },
-            signal: AbortSignal.timeout(5000),
-          }).catch(() => null),
-        ]);
-
-        if (agentRes?.ok) {
-          const agentData = (await agentRes.json()) as {
+        const [agentData, overview] = await Promise.all([
+          apiRequest<{
             name?: string;
             llm_config?: { model?: string; context_window?: number };
-          };
-          if (agentData.name) agentName = agentData.name;
-          if (agentData.llm_config?.model) model = agentData.llm_config.model;
-        }
-
-        if (contextRes?.ok) {
-          const overview = (await contextRes.json()) as {
-            messages?: Array<{
-              id: string;
-              role: string;
-              content: string | unknown[];
-              conversation_id?: string | null;
-              created_at: string;
-            }>;
-            context_window_size_max: number;
-            context_window_size_current: number;
-            num_tokens_system: number;
-            num_tokens_core_memory: number;
-            num_tokens_external_memory_summary: number;
-            num_tokens_summary_memory: number;
-            num_tokens_functions_definitions: number;
-            num_tokens_messages: number;
-          };
-          messages = overview.messages?.map((m) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            conversation_id: m.conversation_id,
-            created_at: m.created_at,
-          }));
-          context = {
-            contextWindow: overview.context_window_size_max,
-            usedTokens: overview.context_window_size_current,
-            model,
-            breakdown: {
-              system: overview.num_tokens_system,
-              coreMemory: overview.num_tokens_core_memory,
-              externalMemory: overview.num_tokens_external_memory_summary,
-              summaryMemory: overview.num_tokens_summary_memory,
-              tools: overview.num_tokens_functions_definitions,
-              messages: overview.num_tokens_messages,
+          }>("GET", `/v1/agents/${agentId}`, undefined, {
+            baseUrl: serverUrl,
+            apiKey,
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => null),
+          apiRequest<ContextOverviewResponse>(
+            "GET",
+            `/v1/agents/${agentId}/context`,
+            undefined,
+            {
+              baseUrl: serverUrl,
+              apiKey,
+              signal: AbortSignal.timeout(5000),
             },
-          };
+          ).catch(() => null),
+        ]);
+
+        if (agentData?.name) agentName = agentData.name;
+        if (agentData?.llm_config?.model) model = agentData.llm_config.model;
+
+        if (overview) {
+          messages = messagesFromOverview(overview);
+          context = contextFromOverview(
+            overview,
+            model,
+            agentData?.llm_config?.context_window,
+          );
         }
       }
     } catch {

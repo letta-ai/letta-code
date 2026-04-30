@@ -466,7 +466,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const deviceId = settingsManager.getOrCreateDeviceId();
     const startupMode = await resolveListenerStartupMode(channelNames);
 
-    if (startupMode.kind === "unsupported-self-hosted") {
+    if (
+      startupMode.kind === "unsupported-self-hosted" &&
+      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR !== "1"
+    ) {
       console.error(
         `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
       );

@@ -6,7 +6,7 @@ import type {
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getClient } from "../../agent/client";
+import { getClient } from "../../backend/api/client";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";

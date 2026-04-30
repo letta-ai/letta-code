@@ -10,6 +10,8 @@ export const telegramChannelPlugin: ChannelPlugin = {
     displayName: "Telegram",
     runtimePackages: ["grammy@1.42.0"],
     runtimeModules: ["grammy"],
+    source: "first-party",
+    firstParty: true,
   },
   createAdapter(account: ChannelAccount) {
     return createTelegramAdapter(account as TelegramChannelAccount);

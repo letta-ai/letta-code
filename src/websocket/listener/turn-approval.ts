@@ -51,6 +51,7 @@ import {
 import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { debugLogApprovalResumeState } from "./recovery";
+import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import {
   markAwaitingAcceptedApprovalContinuationRunId,
   sendApprovalContinuationWithRetry,
@@ -499,6 +500,9 @@ export async function handleApprovalStop(params: {
 
   let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
   try {
+    if (agentId) {
+      await ensureSecretsHydratedForAgent(runtime.listener, agentId);
+    }
     executionResults = await executeApprovalBatch(decisions, undefined, {
       toolContextId: turnToolContextId ?? undefined,
       abortSignal: abortController.signal,

@@ -7,8 +7,8 @@
 
 import type { Letta } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import { getServerUrl } from "../backend/api/client";
 import { settingsManager } from "../settings-manager";
-import { getServerUrl } from "./client";
 import { type CreateAgentOptions, createAgent } from "./create";
 import { parseMdxFrontmatter } from "./memory";
 import { getDefaultModel, resolveModel } from "./model";

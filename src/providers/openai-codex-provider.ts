@@ -1,12 +1,19 @@
 /**
- * Direct API calls to Letta for managing ChatGPT OAuth provider
+ * ChatGPT OAuth provider management backed by the centralized Letta API seam.
  * Uses the chatgpt_oauth provider type - backend handles request transformation
  * (transforms OpenAI API format → ChatGPT backend API format)
  */
 
-import { getLettaCodeHeaders } from "../agent/http-headers";
-import { LETTA_CLOUD_API_URL } from "../auth/oauth";
-import { settingsManager } from "../settings-manager";
+import { getBalanceMetadata } from "../backend/api/metadata";
+import {
+  createProvider,
+  deleteProvider,
+  getProviderByName,
+  type ProviderResponse,
+} from "../backend/api/providers";
+import { apiRequest } from "../backend/api/request";
+
+export { listProviders } from "../backend/api/providers";
 
 // Provider name constant for letta-code's ChatGPT OAuth provider
 export const OPENAI_CODEX_PROVIDER_NAME = "chatgpt-plus-pro";
@@ -26,114 +33,27 @@ export interface ChatGPTOAuthConfig {
   expires_at: number; // Unix timestamp in milliseconds
 }
 
-interface ProviderResponse {
-  id: string;
-  name: string;
-  provider_type: string;
-  api_key?: string;
-  base_url?: string;
-}
-
-interface BalanceResponse {
-  total_balance: number;
-  monthly_credit_balance: number;
-  purchased_credit_balance: number;
-  billing_tier: string;
-}
-
 interface EligibilityCheckResult {
   eligible: boolean;
   billing_tier: string;
   reason?: string;
 }
 
-/**
- * Get the Letta API base URL and auth token
- */
-async function getLettaConfig(): Promise<{ baseUrl: string; apiKey: string }> {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const baseUrl =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "";
-  return { baseUrl, apiKey };
-}
-
-/**
- * Make a request to the Letta providers API
- */
-async function providersRequest<T>(
-  method: "GET" | "POST" | "PATCH" | "DELETE",
-  path: string,
-  body?: Record<string, unknown>,
-): Promise<T> {
-  const { baseUrl, apiKey } = await getLettaConfig();
-  const url = `${baseUrl}${path}`;
-
-  const response = await fetch(url, {
-    method,
-    headers: getLettaCodeHeaders(apiKey),
-    ...(body && { body: JSON.stringify(body) }),
+function encodeOAuthConfig(config: ChatGPTOAuthConfig): string {
+  return JSON.stringify({
+    access_token: config.access_token,
+    id_token: config.id_token,
+    refresh_token: config.refresh_token,
+    account_id: config.account_id,
+    expires_at: config.expires_at,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-
-    // Check if this is a pro/enterprise plan limitation error
-    if (response.status === 403) {
-      try {
-        const errorData = JSON.parse(errorText);
-        if (
-          errorData.error &&
-          typeof errorData.error === "string" &&
-          errorData.error.includes("only available for pro or enterprise")
-        ) {
-          throw new Error("PLAN_UPGRADE_REQUIRED");
-        }
-      } catch (parseError) {
-        // If it's not valid JSON or doesn't match our pattern, fall through to generic error
-        if (
-          parseError instanceof Error &&
-          parseError.message === "PLAN_UPGRADE_REQUIRED"
-        ) {
-          throw parseError;
-        }
-      }
-    }
-
-    throw new Error(`Provider API error (${response.status}): ${errorText}`);
-  }
-
-  // Handle empty responses (e.g., DELETE)
-  const text = await response.text();
-  if (!text) {
-    return {} as T;
-  }
-  return JSON.parse(text) as T;
-}
-
-/**
- * List all providers to find if our provider exists
- */
-export async function listProviders(): Promise<ProviderResponse[]> {
-  try {
-    const response = await providersRequest<ProviderResponse[]>(
-      "GET",
-      "/v1/providers",
-    );
-    return response;
-  } catch {
-    return [];
-  }
 }
 
 /**
  * Get the chatgpt-plus-pro provider if it exists
  */
 export async function getOpenAICodexProvider(): Promise<ProviderResponse | null> {
-  const providers = await listProviders();
-  return providers.find((p) => p.name === OPENAI_CODEX_PROVIDER_NAME) || null;
+  return getProviderByName(OPENAI_CODEX_PROVIDER_NAME);
 }
 
 /**
@@ -144,20 +64,11 @@ export async function getOpenAICodexProvider(): Promise<ProviderResponse | null>
 export async function createOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
 ): Promise<ProviderResponse> {
-  // Encode OAuth config as JSON in api_key field
-  const apiKeyJson = JSON.stringify({
-    access_token: config.access_token,
-    id_token: config.id_token,
-    refresh_token: config.refresh_token,
-    account_id: config.account_id,
-    expires_at: config.expires_at,
-  });
-
-  return providersRequest<ProviderResponse>("POST", "/v1/providers", {
-    name: OPENAI_CODEX_PROVIDER_NAME,
-    provider_type: CHATGPT_OAUTH_PROVIDER_TYPE,
-    api_key: apiKeyJson,
-  });
+  return createProvider(
+    CHATGPT_OAUTH_PROVIDER_TYPE,
+    OPENAI_CODEX_PROVIDER_NAME,
+    encodeOAuthConfig(config),
+  );
 }
 
 /**
@@ -168,22 +79,9 @@ export async function updateOpenAICodexProvider(
   providerId: string,
   config: ChatGPTOAuthConfig,
 ): Promise<ProviderResponse> {
-  // Encode OAuth config as JSON in api_key field
-  const apiKeyJson = JSON.stringify({
-    access_token: config.access_token,
-    id_token: config.id_token,
-    refresh_token: config.refresh_token,
-    account_id: config.account_id,
-    expires_at: config.expires_at,
+  return apiRequest<ProviderResponse>("PATCH", `/v1/providers/${providerId}`, {
+    api_key: encodeOAuthConfig(config),
   });
-
-  return providersRequest<ProviderResponse>(
-    "PATCH",
-    `/v1/providers/${providerId}`,
-    {
-      api_key: apiKeyJson,
-    },
-  );
 }
 
 /**
@@ -192,7 +90,7 @@ export async function updateOpenAICodexProvider(
 export async function deleteOpenAICodexProvider(
   providerId: string,
 ): Promise<void> {
-  await providersRequest<void>("DELETE", `/v1/providers/${providerId}`);
+  await deleteProvider(providerId);
 }
 
 /**
@@ -212,12 +110,10 @@ export async function createOrUpdateOpenAICodexProvider(
   const existing = await getOpenAICodexProvider();
 
   if (existing) {
-    // Update existing provider with new OAuth config
     return updateOpenAICodexProvider(existing.id, config);
-  } else {
-    // Create new provider
-    return createOpenAICodexProvider(config);
   }
+
+  return createOpenAICodexProvider(config);
 }
 
 /**
@@ -236,11 +132,7 @@ export async function removeOpenAICodexProvider(): Promise<void> {
  */
 export async function checkOpenAICodexEligibility(): Promise<EligibilityCheckResult> {
   try {
-    const balance = await providersRequest<BalanceResponse>(
-      "GET",
-      "/v1/metadata/balance",
-    );
-
+    const balance = await getBalanceMetadata();
     const billingTier = balance.billing_tier.toLowerCase();
 
     // OAuth is available for pro and enterprise tiers

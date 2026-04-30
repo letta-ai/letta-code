@@ -6,7 +6,7 @@
  * helper (`fetchRunErrorDetail`) that requires network access.
  */
 
-import { getClient } from "./client";
+import { getClient } from "../backend/api/client";
 
 export interface RunErrorInfo {
   error_type?: string;
@@ -40,6 +40,7 @@ export {
   isRetryableProviderErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryPreStreamTransientError,

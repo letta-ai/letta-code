@@ -1,5 +1,6 @@
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
+import stripAnsi from "strip-ansi";
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import {
   getConversationId,
@@ -36,8 +37,8 @@ import {
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import {
+  extractSecretEnvFromCommand,
   scrubSecretsFromString,
-  substituteSecretsInArgs,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
@@ -184,6 +185,55 @@ export function getInternalToolName(serverName: string): string {
   }
   // If not in mapping, the server name is the internal name
   return serverName;
+}
+
+function matchesClientToolAllowlistEntry(
+  allowSet: Set<string> | null,
+  serverToolName: string,
+  internalToolName?: string,
+): boolean {
+  if (!allowSet) {
+    return true;
+  }
+
+  return (
+    allowSet.has(serverToolName) ||
+    (internalToolName !== undefined && allowSet.has(internalToolName))
+  );
+}
+
+export function filterBuiltInToolNamesByClientAllowlist(
+  toolNames: ToolName[],
+  clientToolAllowlist?: string[],
+): ToolName[] {
+  if (clientToolAllowlist === undefined) {
+    return toolNames;
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return toolNames.filter((toolName) =>
+    matchesClientToolAllowlistEntry(
+      allowSet,
+      getServerToolName(toolName),
+      toolName,
+    ),
+  );
+}
+
+function filterExternalToolsByClientAllowlist(
+  externalTools: Map<string, ExternalToolDefinition>,
+  clientToolAllowlist?: string[],
+): Map<string, ExternalToolDefinition> {
+  if (clientToolAllowlist === undefined) {
+    return new Map(externalTools);
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return new Map(
+    Array.from(externalTools.entries()).filter(([internalName, tool]) =>
+      matchesClientToolAllowlistEntry(allowSet, tool.name, internalName),
+    ),
+  );
 }
 
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
@@ -831,6 +881,7 @@ function capturePreparedToolExecutionContext(
     externalExecutor?: ExternalToolExecutor;
   },
   options?: {
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
@@ -839,7 +890,10 @@ function capturePreparedToolExecutionContext(
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
-    externalTools: new Map(snapshot.externalTools),
+    externalTools: filterExternalToolsByClientAllowlist(
+      snapshot.externalTools,
+      options?.clientToolAllowlist,
+    ),
     externalExecutor: snapshot.externalExecutor,
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
@@ -906,6 +960,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
 export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -930,6 +985,7 @@ export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -1138,6 +1194,7 @@ async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolName[]> {
@@ -1168,6 +1225,11 @@ async function resolveBaseToolNamesForModel(
     options?.channelToolScope,
   );
 
+  baseToolNames = filterBuiltInToolNamesByClientAllowlist(
+    baseToolNames,
+    options?.clientToolAllowlist,
+  );
+
   return baseToolNames;
 }
 
@@ -1175,6 +1237,7 @@ async function buildRegistryForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolRegistry> {
@@ -1625,13 +1688,27 @@ export async function executeTool(
           enhancedArgs = {
             ...enhancedArgs,
             onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(scrubSecretsFromString(chunk), stream);
+              options.onOutput?.(
+                stripAnsi(scrubSecretsFromString(chunk, scopedAgentId)),
+                stream,
+              );
             },
           };
         }
 
-        // Substitute $SECRET_NAME patterns with actual secret values
-        enhancedArgs = substituteSecretsInArgs(enhancedArgs);
+        // Inject secrets as environment variables instead of substituting into
+        // the command string. This prevents shell metacharacters in secrets
+        // (e.g. $$, backticks, quotes) from being interpreted by the shell.
+        const command = enhancedArgs.command;
+        const secretEnv =
+          typeof command === "string" ||
+          (Array.isArray(command) &&
+            command.every((part) => typeof part === "string"))
+            ? extractSecretEnvFromCommand(command, scopedAgentId)
+            : {};
+        if (Object.keys(secretEnv).length > 0) {
+          enhancedArgs = { ...enhancedArgs, secretEnv };
+        }
       }
 
       // Inject toolCallId, abort signal, and parent scope for Task tool
@@ -1718,14 +1795,17 @@ export async function executeTool(
       // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
-      // Scrub secret values from tool output so they don't leak into agent context
+      // Scrub secret values + ANSI escape sequences from tool output so they
+      // don't leak into agent context or render as garbage in downstream UIs.
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
+        const sanitize = (text: string) =>
+          stripAnsi(scrubSecretsFromString(text, scopedAgentId));
         if (typeof flattenedResponse === "string") {
-          flattenedResponse = scrubSecretsFromString(flattenedResponse);
+          flattenedResponse = sanitize(flattenedResponse);
         } else if (Array.isArray(flattenedResponse)) {
           flattenedResponse = flattenedResponse.map((block) =>
             block.type === "text"
-              ? { ...block, text: scrubSecretsFromString(block.text) }
+              ? { ...block, text: sanitize(block.text) }
               : block,
           );
         }
@@ -1733,7 +1813,7 @@ export async function executeTool(
           for (let i = 0; i < stdout.length; i++) {
             const line = stdout[i];
             if (line !== undefined) {
-              stdout[i] = scrubSecretsFromString(line);
+              stdout[i] = sanitize(line);
             }
           }
         }
@@ -1741,7 +1821,7 @@ export async function executeTool(
           for (let i = 0; i < stderr.length; i++) {
             const line = stderr[i];
             if (line !== undefined) {
-              stderr[i] = scrubSecretsFromString(line);
+              stderr[i] = sanitize(line);
             }
           }
         }

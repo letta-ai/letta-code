@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -20,6 +21,10 @@ const {
   isChannelRuntimeInstalled,
   loadChannelRuntimeModule,
 } = await import("../../channels/runtimeDeps");
+const { __testOverrideChannelsRoot } = await import("../../channels/config");
+const { __testClearUserChannelPluginCache } = await import(
+  "../../channels/pluginRegistry"
+);
 
 function writeFakeGrammyModule(runtimeDir: string): void {
   const moduleDir = join(runtimeDir, "node_modules", "grammy");
@@ -44,19 +49,26 @@ function writeFakeGrammyModule(runtimeDir: string): void {
 
 let runtimeRoot: string;
 let bundledRuntimeRoot: string;
+let channelsRoot: string;
 
 beforeEach(() => {
   runtimeRoot = mkdtempSync(join(tmpdir(), "letta-channel-runtime-"));
   bundledRuntimeRoot = mkdtempSync(
     join(tmpdir(), "letta-channel-runtime-bundled-"),
   );
+  channelsRoot = mkdtempSync(join(tmpdir(), "letta-channel-root-"));
+  __testOverrideChannelsRoot(channelsRoot);
+  __testClearUserChannelPluginCache();
   __testOverrideChannelRuntimeDeps({ runtimeRoot });
 });
 
 afterEach(() => {
   __testOverrideChannelRuntimeDeps(null);
+  __testOverrideChannelsRoot(null);
+  __testClearUserChannelPluginCache();
   rmSync(runtimeRoot, { recursive: true, force: true });
   rmSync(bundledRuntimeRoot, { recursive: true, force: true });
+  rmSync(channelsRoot, { recursive: true, force: true });
 });
 
 test("loadChannelRuntimeModule throws a friendly install hint when runtime is missing", async () => {
@@ -146,6 +158,46 @@ test("installChannelRuntime writes a manifest and invokes npm in the runtime dir
       cwd: getChannelRuntimeDir("telegram"),
     },
   ]);
+});
+
+test("installChannelRuntime links user plugin node_modules for entry imports", async () => {
+  const channelDir = join(channelsRoot, "demo");
+  mkdirSync(channelDir, { recursive: true });
+  writeFileSync(
+    join(channelDir, "channel.json"),
+    JSON.stringify({
+      id: "demo",
+      displayName: "Demo Chat",
+      entry: "./plugin.mjs",
+      runtimePackages: ["demo-runtime@1.0.0"],
+      runtimeModules: ["demo-runtime"],
+    }),
+  );
+
+  const spawnImpl = mock(
+    (_cmd: string, _args: string[], opts?: { cwd?: string }) => {
+      if (!opts?.cwd) {
+        throw new Error("expected cwd");
+      }
+      mkdirSync(join(opts.cwd, "node_modules"), { recursive: true });
+      const proc = new EventEmitter();
+      queueMicrotask(() => {
+        proc.emit("exit", 0);
+      });
+      return proc as unknown as ReturnType<typeof mock>;
+    },
+  );
+
+  __testOverrideChannelRuntimeDeps({
+    runtimeRoot,
+    spawnImpl: spawnImpl as never,
+    packageManager: "npm",
+    platform: "linux",
+  });
+
+  await installChannelRuntime("demo");
+
+  expect(existsSync(join(channelDir, "node_modules"))).toBe(true);
 });
 
 test("installChannelRuntime uses bun add --no-save for bun installs", async () => {

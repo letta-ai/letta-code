@@ -14,6 +14,7 @@ import {
   isRetryableProviderErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
   shouldAttemptApprovalRecovery,
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
@@ -476,6 +477,31 @@ describe("rebuildInputWithFreshDenials", () => {
     role: "user" as const,
     content: "hello",
   };
+
+  test("refreshInputOtidsForNewRequest replaces OTIDs for every item", () => {
+    const input = [
+      {
+        type: "approval" as const,
+        approvals: [] as never[],
+        otid: "approval-old",
+      },
+      {
+        ...userMsg,
+        otid: "message-old",
+      },
+    ];
+
+    const result = refreshInputOtidsForNewRequest(input);
+
+    expect(result).toHaveLength(2);
+    expect(result).not.toBe(input);
+    expect(result[0]).not.toBe(input[0]);
+    expect(result[1]).not.toBe(input[1]);
+    expect(result[0]?.type).toBe("approval");
+    expect(result[1]?.type).toBe("message");
+    expect(result[0]?.otid).not.toBe("approval-old");
+    expect(result[1]?.otid).not.toBe("message-old");
+  });
 
   test("strips stale + prepends fresh denials", () => {
     const input = [

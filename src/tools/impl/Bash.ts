@@ -42,12 +42,17 @@ function validateWorktreePath(command: string, cwd: string): string | null {
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
 
-function rebuildCachedLauncher(command: string): string[] | null {
+function rebuildCachedLauncher(
+  command: string,
+  secretEnv?: Record<string, string>,
+): string[] | null {
   if (!cachedWorkingLauncher) return null;
   const cachedExecutable = cachedWorkingLauncher[0]?.toLowerCase();
   if (!cachedExecutable) return null;
 
-  const launchers = buildShellLaunchers(command);
+  const launchers = buildShellLaunchers(command, {
+    powershellEnvAliases: secretEnv ? Object.keys(secretEnv) : undefined,
+  });
   return (
     launchers.find(
       (launcher) => launcher[0]?.toLowerCase() === cachedExecutable,
@@ -61,11 +66,16 @@ function rebuildCachedLauncher(command: string): string[] | null {
  * For background processes, we can't easily do async fallback, so we rely on cached launcher
  * from previous foreground commands or the default launcher order.
  */
-function getBackgroundLauncher(command: string): string[] {
-  const cachedLauncher = rebuildCachedLauncher(command);
+function getBackgroundLauncher(
+  command: string,
+  secretEnv?: Record<string, string>,
+): string[] {
+  const cachedLauncher = rebuildCachedLauncher(command, secretEnv);
   if (cachedLauncher) return cachedLauncher;
 
-  const launchers = buildShellLaunchers(command);
+  const launchers = buildShellLaunchers(command, {
+    powershellEnvAliases: secretEnv ? Object.keys(secretEnv) : undefined,
+  });
   return launchers[0] || [];
 }
 
@@ -83,8 +93,13 @@ export async function spawnCommand(
     timeout: number;
     signal?: AbortSignal;
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+    secretEnv?: Record<string, string>;
   },
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  const env = options.secretEnv
+    ? { ...options.env, ...options.secretEnv }
+    : options.env;
+
   // On Unix (Linux/macOS), use simple bash -c approach (original behavior)
   // This avoids the complexity of fallback logic which caused issues on ARM64 CI
   if (process.platform !== "win32") {
@@ -92,7 +107,7 @@ export async function spawnCommand(
     const executable = process.platform === "darwin" ? "/bin/zsh" : "bash";
     return spawnWithLauncher([executable, "-c", command], {
       cwd: options.cwd,
-      env: options.env,
+      env,
       timeoutMs: options.timeout,
       signal: options.signal,
       onOutput: options.onOutput,
@@ -101,12 +116,12 @@ export async function spawnCommand(
 
   // On Windows, use fallback logic to handle PowerShell ENOENT errors (PR #482)
   if (cachedWorkingLauncher) {
-    const newLauncher = rebuildCachedLauncher(command);
+    const newLauncher = rebuildCachedLauncher(command, options.secretEnv);
     if (newLauncher) {
       try {
         const result = await spawnWithLauncher(newLauncher, {
           cwd: options.cwd,
-          env: options.env,
+          env,
           timeoutMs: options.timeout,
           signal: options.signal,
           onOutput: options.onOutput,
@@ -122,7 +137,11 @@ export async function spawnCommand(
     }
   }
 
-  const launchers = buildShellLaunchers(command);
+  const launchers = buildShellLaunchers(command, {
+    powershellEnvAliases: options.secretEnv
+      ? Object.keys(options.secretEnv)
+      : undefined,
+  });
   if (launchers.length === 0) {
     throw new Error("No shell launchers available");
   }
@@ -134,7 +153,7 @@ export async function spawnCommand(
     try {
       const result = await spawnWithLauncher(launcher, {
         cwd: options.cwd,
-        env: options.env,
+        env,
         timeoutMs: options.timeout,
         signal: options.signal,
         onOutput: options.onOutput,
@@ -164,6 +183,7 @@ interface BashArgs {
   run_in_background?: boolean;
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  secretEnv?: Record<string, string>;
 }
 
 interface BashResult {
@@ -183,6 +203,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     run_in_background = false,
     signal,
     onOutput,
+    secretEnv,
   } = args;
   const userCwd = getCurrentWorkingDirectory();
 
@@ -233,7 +254,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
     const bashId = getNextBashId();
     const outputFile = createBackgroundOutputFile(bashId);
-    const launcher = getBackgroundLauncher(command);
+    const launcher = getBackgroundLauncher(command, secretEnv);
     const [executable, ...launcherArgs] = launcher;
     if (!executable) {
       return {
@@ -244,7 +265,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     const childProcess = spawn(executable, launcherArgs, {
       shell: false,
       cwd: userCwd,
-      env: getShellEnv(),
+      env: secretEnv ? { ...getShellEnv(), ...secretEnv } : getShellEnv(),
     });
     backgroundProcesses.set(bashId, {
       process: childProcess,
@@ -322,6 +343,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       timeout: effectiveTimeout,
       signal,
       onOutput,
+      secretEnv,
     });
 
     let output = stdout;

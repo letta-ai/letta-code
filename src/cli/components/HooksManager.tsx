@@ -176,7 +176,7 @@ export const HooksManager = memo(function HooksManager({
 
     const fetchAgentTools = async () => {
       try {
-        const { getClient } = await import("../../agent/client");
+        const { getClient } = await import("../../backend/api/client");
         const client = await getClient();
         // Use dedicated tools endpoint instead of fetching whole agent
         // Pass limit to avoid pagination issues

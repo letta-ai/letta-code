@@ -16,6 +16,7 @@ interface ShellCommandArgs {
   prefix_rule?: string[];
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  secretEnv?: Record<string, string>;
 }
 
 interface ShellCommandResult {
@@ -61,10 +62,17 @@ export async function shell_command(
     justification,
     signal,
     onOutput,
+    secretEnv,
   } = args;
-  const envOverrides = getMemoryGitIdentityEnvOverrides(command, workdir);
+  const envOverrides = {
+    ...getMemoryGitIdentityEnvOverrides(command, workdir),
+    ...(secretEnv ?? {}),
+  };
   const resolvedWorkdir = resolveShellWorkdir(workdir);
-  const launchers = buildShellLaunchers(command, { login });
+  const launchers = buildShellLaunchers(command, {
+    login,
+    powershellEnvAliases: secretEnv ? Object.keys(secretEnv) : undefined,
+  });
   if (launchers.length === 0) {
     throw new Error("Command must be a non-empty string");
   }

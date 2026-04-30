@@ -19,13 +19,14 @@ import type {
 // ── Paths ─────────────────────────────────────────────────────────
 
 const CHANNELS_ROOT = join(homedir(), ".letta", "channels");
+let channelsRootOverride: string | null = null;
 
 export function getChannelsRoot(): string {
-  return CHANNELS_ROOT;
+  return channelsRootOverride ?? CHANNELS_ROOT;
 }
 
 export function getChannelDir(channelId: string): string {
-  return join(CHANNELS_ROOT, channelId);
+  return join(getChannelsRoot(), channelId);
 }
 
 export function getChannelConfigPath(channelId: string): string {
@@ -50,6 +51,10 @@ export function getChannelTargetsPath(channelId: string): string {
 
 export function getPendingChannelControlRequestsPath(): string {
   return join(getChannelsRoot(), "pending-control-requests.json");
+}
+
+export function __testOverrideChannelsRoot(root: string | null): void {
+  channelsRootOverride = root;
 }
 
 // ── YAML helpers ──────────────────────────────────────────────────

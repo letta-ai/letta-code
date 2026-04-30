@@ -33,6 +33,7 @@ import {
   prepareToolExecutionContextForModel,
   prepareToolExecutionContextForSpecificTools,
   refreshDynamicChannelToolsInLoadedRegistry,
+  registerExternalTools,
 } from "../../tools/manager";
 import { resolveConversationChannelToolScope } from "../../tools/toolset";
 
@@ -75,6 +76,7 @@ describe("tool execution context snapshot", () => {
     }
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
+    clearExternalTools();
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
@@ -166,6 +168,93 @@ describe("tool execution context snapshot", () => {
     expect(prepared.loadedToolNames).not.toContain("ReadFileGemini");
     expect(prepared.loadedToolNames).not.toContain("WriteFileGemini");
     expect(prepared.loadedToolNames).not.toContain("RunShellCommand");
+  });
+
+  test("filters model-derived client tools by request-scoped allowlist", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["Read", "Grep", "Glob"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual(["Glob", "Grep", "Read"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "Glob",
+      "Grep",
+      "Read",
+    ]);
+    expect(prepared.loadedToolNames).not.toContain("Bash");
+
+    const denied = await executeTool(
+      "Bash",
+      { command: "echo no", description: "Print no" },
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: Bash");
+  });
+
+  test("empty request-scoped allowlist disables client tools", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: [] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools).toEqual([]);
+  });
+
+  test("request-scoped allowlist accepts server-facing Agent alias", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["Agent"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual(["Task"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Agent"]);
+  });
+
+  test("request-scoped allowlist filters external tools by name", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "Allowed external tool",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+      {
+        name: "RemoteBar",
+        description: "Filtered external tool",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["Read", "RemoteFoo"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual(["Read"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "Read",
+      "RemoteFoo",
+    ]);
+  });
+
+  test("empty request-scoped allowlist disables external tools too", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "External tool",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: [] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools).toEqual([]);
   });
 
   test("prepares current tool snapshots with fresh MessageChannel discovery", async () => {

@@ -9,11 +9,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type {
-  DmPolicy,
-  SlackChannelMode,
-  SlackDefaultPermissionMode,
-} from "../channels/types";
+import type { DmPolicy } from "../channels/types";
 import type { CronTask } from "../cron";
 import type { ExperimentId, ExperimentSnapshot } from "../experiments/types";
 
@@ -142,7 +138,9 @@ export interface ReflectionSettingsSnapshot {
   step_count: number;
 }
 
-export type ChannelId = "telegram" | "slack" | "discord";
+export type ChannelId = string;
+
+export type ChannelPluginConfig = Record<string, unknown>;
 
 export interface ChannelSummary {
   channel_id: ChannelId;
@@ -156,88 +154,31 @@ export interface ChannelSummary {
   routes_count: number;
 }
 
-export type ChannelConfigSnapshot =
-  | {
-      channel_id: "telegram";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_token: boolean;
-    }
-  | {
-      channel_id: "slack";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      mode: SlackChannelMode;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_bot_token: boolean;
-      has_app_token: boolean;
-    }
-  | {
-      channel_id: "discord";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      allowed_channels: string[];
-      has_token: boolean;
-    };
+export interface ChannelConfigSnapshot {
+  channel_id: ChannelId;
+  account_id: string;
+  display_name?: string;
+  enabled: boolean;
+  dm_policy: DmPolicy;
+  allowed_users: string[];
+  /** Plugin-owned redacted config/settings payload. */
+  config: ChannelPluginConfig;
+}
 
-export type ChannelAccountSnapshot =
-  | {
-      channel_id: "telegram";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_token: boolean;
-      binding: {
-        agent_id: string | null;
-        conversation_id: string | null;
-      };
-      created_at: string;
-      updated_at: string;
-    }
-  | {
-      channel_id: "slack";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      mode: SlackChannelMode;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_bot_token: boolean;
-      has_app_token: boolean;
-      agent_id: string | null;
-      default_permission_mode: SlackDefaultPermissionMode;
-      created_at: string;
-      updated_at: string;
-    }
-  | {
-      channel_id: "discord";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      allowed_channels: string[];
-      has_token: boolean;
-      agent_id: string | null;
-      created_at: string;
-      updated_at: string;
-    };
+export interface ChannelAccountSnapshot {
+  channel_id: ChannelId;
+  account_id: string;
+  display_name?: string;
+  enabled: boolean;
+  configured: boolean;
+  running: boolean;
+  dm_policy: DmPolicy;
+  allowed_users: string[];
+  /** Plugin-owned redacted config/settings payload. */
+  config: ChannelPluginConfig;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface ChannelPendingPairing {
   account_id: string;
@@ -543,6 +484,12 @@ export type ApprovalResponseBody =
 export interface InputCreateMessagePayload {
   kind: "create_message";
   messages: Array<MessageCreate & { client_message_id?: string }>;
+  /**
+   * Optional request-scoped allowlist for locally executed client tools.
+   * Undefined preserves the listener's normal toolset; an empty array means no
+   * client tools for this turn.
+   */
+  client_tool_allowlist?: string[];
 }
 
 export type InputApprovalResponsePayload = {
@@ -1017,37 +964,15 @@ export interface ChannelAccountsListCommand {
   channel_id: ChannelId;
 }
 
-export type ChannelAccountCreatePayload =
-  | {
-      account_id?: string;
-      display_name?: string;
-      enabled?: boolean;
-      token?: string;
-      dm_policy?: DmPolicy;
-      allowed_users?: string[];
-    }
-  | {
-      account_id?: string;
-      display_name?: string;
-      enabled?: boolean;
-      bot_token?: string;
-      app_token?: string;
-      mode?: SlackChannelMode;
-      agent_id?: string | null;
-      default_permission_mode?: SlackDefaultPermissionMode;
-      dm_policy?: DmPolicy;
-      allowed_users?: string[];
-    }
-  | {
-      account_id?: string;
-      display_name?: string;
-      enabled?: boolean;
-      token?: string;
-      agent_id?: string | null;
-      dm_policy?: DmPolicy;
-      allowed_users?: string[];
-      allowed_channels?: string[];
-    };
+export interface ChannelAccountCreatePayload {
+  account_id?: string;
+  display_name?: string;
+  enabled?: boolean;
+  dm_policy?: DmPolicy;
+  allowed_users?: string[];
+  /** Plugin-owned account config. New fields should be added here, not centrally. */
+  config?: ChannelPluginConfig;
+}
 
 export interface ChannelAccountCreateCommand {
   type: "channel_account_create";
@@ -1061,34 +986,7 @@ export interface ChannelAccountUpdateCommand {
   request_id: string;
   channel_id: ChannelId;
   account_id: string;
-  patch:
-    | {
-        display_name?: string;
-        enabled?: boolean;
-        token?: string;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      }
-    | {
-        display_name?: string;
-        enabled?: boolean;
-        bot_token?: string;
-        app_token?: string;
-        mode?: SlackChannelMode;
-        agent_id?: string | null;
-        default_permission_mode?: SlackDefaultPermissionMode;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      }
-    | {
-        display_name?: string;
-        enabled?: boolean;
-        token?: string;
-        agent_id?: string | null;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-        allowed_channels?: string[];
-      };
+  patch: Omit<ChannelAccountCreatePayload, "account_id">;
 }
 
 export interface ChannelAccountBindCommand {
@@ -1139,20 +1037,11 @@ export interface ChannelSetConfigCommand {
   request_id: string;
   channel_id: ChannelId;
   account_id?: string;
-  config:
-    | {
-        token?: string;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-        allowed_channels?: string[];
-      }
-    | {
-        bot_token?: string;
-        app_token?: string;
-        mode?: SlackChannelMode;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      };
+  config: {
+    dm_policy?: DmPolicy;
+    allowed_users?: string[];
+    plugin_config?: ChannelPluginConfig;
+  };
 }
 
 export interface ChannelStartCommand {

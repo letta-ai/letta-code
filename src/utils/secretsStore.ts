@@ -4,8 +4,8 @@
  * and cached in memory for fast $SECRET_NAME substitution in shell commands.
  */
 
-import { getClient } from "../agent/client";
 import { getCurrentAgentId } from "../agent/context";
+import { getClient } from "../backend/api/client";
 
 /** In-memory cache of secrets (populated on startup from server).
  *  Stored on globalThis via Symbol.for() to survive Bun bundle duplication. */

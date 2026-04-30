@@ -3,9 +3,19 @@
  * Unified module for managing custom LLM provider connections
  */
 
-import { getLettaCodeHeaders } from "../agent/http-headers";
-import { LETTA_CLOUD_API_URL } from "../auth/oauth";
-import { settingsManager } from "../settings-manager";
+import {
+  checkProviderApiKey as checkProviderApiKeyRequest,
+  createOrUpdateProvider as createOrUpdateProviderRequest,
+  createProvider as createProviderRequest,
+  deleteProvider as deleteProviderRequest,
+  getProviderByName as getProviderByNameRequest,
+  listProviders as listApiProviders,
+  type ProviderResponse,
+  removeProviderByName as removeProviderByNameRequest,
+  updateProvider as updateProviderRequest,
+} from "../backend/api/providers";
+
+export type { ProviderResponse } from "../backend/api/providers";
 
 // Field definition for multi-field providers (like Bedrock)
 export interface ProviderField {
@@ -215,73 +225,11 @@ export function isByokHandleForSelector(
   return provider in byokProviderAliases;
 }
 
-// Response type from the providers API
-export interface ProviderResponse {
-  id: string;
-  name: string;
-  provider_type: string;
-  api_key?: string;
-  base_url?: string;
-  access_key?: string;
-  region?: string;
-}
-
-/**
- * Get the Letta API base URL and auth token
- */
-async function getLettaConfig(): Promise<{ baseUrl: string; apiKey: string }> {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const baseUrl =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "";
-  return { baseUrl, apiKey };
-}
-
-/**
- * Make a request to the Letta providers API
- */
-async function providersRequest<T>(
-  method: "GET" | "POST" | "PATCH" | "DELETE",
-  path: string,
-  body?: Record<string, unknown>,
-): Promise<T> {
-  const { baseUrl, apiKey } = await getLettaConfig();
-  const url = `${baseUrl}${path}`;
-
-  const response = await fetch(url, {
-    method,
-    headers: getLettaCodeHeaders(apiKey),
-    ...(body && { body: JSON.stringify(body) }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Provider API error (${response.status}): ${errorText}`);
-  }
-
-  // Handle empty responses (e.g., DELETE)
-  const text = await response.text();
-  if (!text) {
-    return {} as T;
-  }
-  return JSON.parse(text) as T;
-}
-
 /**
  * List all BYOK providers for the current user
  */
 export async function listProviders(): Promise<ProviderResponse[]> {
-  try {
-    const response = await providersRequest<ProviderResponse[]>(
-      "GET",
-      "/v1/providers",
-    );
-    return response;
-  } catch {
-    return [];
-  }
+  return listApiProviders();
 }
 
 /**
@@ -314,8 +262,7 @@ export async function isProviderConnected(
 export async function getProviderByName(
   providerName: string,
 ): Promise<ProviderResponse | null> {
-  const providers = await listProviders();
-  return providers.find((p) => p.name === providerName) || null;
+  return getProviderByNameRequest(providerName);
 }
 
 /**
@@ -329,13 +276,13 @@ export async function checkProviderApiKey(
   region?: string,
   profile?: string,
 ): Promise<void> {
-  await providersRequest<{ message: string }>("POST", "/v1/providers/check", {
-    provider_type: providerType,
-    api_key: apiKey,
-    ...(accessKey && { access_key: accessKey }),
-    ...(region && { region }),
-    ...(profile && { profile }),
-  });
+  await checkProviderApiKeyRequest(
+    providerType,
+    apiKey,
+    accessKey,
+    region,
+    profile,
+  );
 }
 
 /**
@@ -349,14 +296,14 @@ export async function createProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
-  return providersRequest<ProviderResponse>("POST", "/v1/providers", {
-    name: providerName,
-    provider_type: providerType,
-    api_key: apiKey,
-    ...(accessKey && { access_key: accessKey }),
-    ...(region && { region }),
-    ...(profile && { profile }),
-  });
+  return createProviderRequest(
+    providerType,
+    providerName,
+    apiKey,
+    accessKey,
+    region,
+    profile,
+  );
 }
 
 /**
@@ -369,23 +316,14 @@ export async function updateProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
-  return providersRequest<ProviderResponse>(
-    "PATCH",
-    `/v1/providers/${providerId}`,
-    {
-      api_key: apiKey,
-      ...(accessKey && { access_key: accessKey }),
-      ...(region && { region }),
-      ...(profile && { profile }),
-    },
-  );
+  return updateProviderRequest(providerId, apiKey, accessKey, region, profile);
 }
 
 /**
  * Delete a provider by ID
  */
 export async function deleteProvider(providerId: string): Promise<void> {
-  await providersRequest<void>("DELETE", `/v1/providers/${providerId}`);
+  await deleteProviderRequest(providerId);
 }
 
 /**
@@ -400,13 +338,7 @@ export async function createOrUpdateProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
-  const existing = await getProviderByName(providerName);
-
-  if (existing) {
-    return updateProvider(existing.id, apiKey, accessKey, region, profile);
-  }
-
-  return createProvider(
+  return createOrUpdateProviderRequest(
     providerType,
     providerName,
     apiKey,
@@ -422,10 +354,7 @@ export async function createOrUpdateProvider(
 export async function removeProviderByName(
   providerName: string,
 ): Promise<void> {
-  const existing = await getProviderByName(providerName);
-  if (existing) {
-    await deleteProvider(existing.id);
-  }
+  await removeProviderByNameRequest(providerName);
 }
 
 /**

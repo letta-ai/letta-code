@@ -2,8 +2,8 @@ import { execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { getClient } from "../backend/api/client";
 import { settingsManager } from "../settings-manager";
-import { getClient } from "./client";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
 import {
@@ -408,7 +408,7 @@ export async function enableMemfsForCreatedAgent(params: {
   const { agentId, agentTags } = params;
 
   try {
-    const { getClient } = await import("./client");
+    const { getClient } = await import("../backend/api/client");
     const client = await getClient();
     const tags = agentTags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {

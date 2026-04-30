@@ -48,6 +48,9 @@ class FakeSlackApp {
 }
 
 mock.module("../../channels/slack/runtime", () => ({
+  ensureSlackRuntimeInstalled: async () => false,
+  installSlackRuntime: async () => {},
+  isSlackRuntimeInstalled: () => true,
   loadSlackBoltModule: async () => ({
     default: {
       default: {

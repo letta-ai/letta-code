@@ -7,7 +7,6 @@ import type {
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
-import { getClient } from "../../agent/client";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -23,7 +22,9 @@ import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
 } from "../../agent/turn-recovery-policy";
+import { getClient } from "../../backend/api/client";
 import { createBuffers, toLines } from "../../cli/helpers/accumulator";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import {
@@ -423,9 +424,15 @@ export async function handleIncomingMessage(
       return;
     }
 
-    // Ensure memfs repo is cloned/pulled for this agent (lazy, once per session).
-    const { ensureMemfsSyncedForAgent } = await import("./memfs-sync");
-    await ensureMemfsSyncedForAgent(runtime.listener, agentId);
+    // Ensure local per-agent state is ready before reminders and tool execution.
+    const [{ ensureMemfsSyncedForAgent }, { ensureSecretsHydratedForAgent }] =
+      await Promise.all([import("./memfs-sync"), import("./secrets-sync")]);
+    await Promise.all([
+      // Memfs is lazy and memoized once per session.
+      ensureMemfsSyncedForAgent(runtime.listener, agentId),
+      // Secrets refresh every turn so desktop GUI updates are picked up.
+      ensureSecretsHydratedForAgent(runtime.listener, agentId),
+    ]);
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
@@ -576,6 +583,7 @@ export async function handleIncomingMessage(
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
+      clientToolAllowlist: msg.clientToolAllowlist,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
     });
@@ -896,6 +904,7 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
 
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,
@@ -970,6 +979,7 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
 
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,

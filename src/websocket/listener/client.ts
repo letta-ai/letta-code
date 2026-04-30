@@ -11,12 +11,16 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getAvailableModelHandles } from "../../agent/available-models";
-import { getClient } from "../../agent/client";
 import { getModelInfo, models, resolveModel } from "../../agent/model";
 import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
+import { getClient } from "../../backend/api/client";
+import {
+  channelPluginConfigShouldRefreshDisplayName,
+  getChannelPluginConfig,
+} from "../../channels/accountConfig";
 import {
   type ChannelRegistryEvent,
   getChannelRegistry,
@@ -1722,7 +1726,7 @@ async function handleChannelsProtocolCommand(
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
-        has_token: snapshot.hasToken,
+        config: snapshot.config ?? {},
       };
     }
     if (snapshot.channelId === "discord") {
@@ -1733,8 +1737,7 @@ async function handleChannelsProtocolCommand(
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
-        allowed_channels: snapshot.allowedChannels,
-        has_token: snapshot.hasToken,
+        config: snapshot.config ?? {},
       };
     }
     return {
@@ -1742,11 +1745,9 @@ async function handleChannelsProtocolCommand(
       account_id: snapshot.accountId,
       display_name: snapshot.displayName,
       enabled: snapshot.enabled,
-      mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
-      has_bot_token: snapshot.hasBotToken,
-      has_app_token: snapshot.hasAppToken,
+      config: snapshot.config ?? {},
     };
   };
 
@@ -1763,11 +1764,7 @@ async function handleChannelsProtocolCommand(
         running: snapshot.running,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
-        has_token: snapshot.hasToken,
-        binding: {
-          agent_id: snapshot.binding.agentId,
-          conversation_id: snapshot.binding.conversationId,
-        },
+        config: snapshot.config ?? {},
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
@@ -1783,9 +1780,7 @@ async function handleChannelsProtocolCommand(
         running: snapshot.running,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
-        allowed_channels: snapshot.allowedChannels,
-        has_token: snapshot.hasToken,
-        agent_id: snapshot.agentId,
+        config: snapshot.config ?? {},
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
@@ -1798,13 +1793,9 @@ async function handleChannelsProtocolCommand(
       enabled: snapshot.enabled,
       configured: snapshot.configured,
       running: snapshot.running,
-      mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
-      has_bot_token: snapshot.hasBotToken,
-      has_app_token: snapshot.hasAppToken,
-      agent_id: snapshot.agentId,
-      default_permission_mode: snapshot.defaultPermissionMode,
+      config: snapshot.config ?? {},
       created_at: snapshot.createdAt,
       updated_at: snapshot.updatedAt,
     };
@@ -1944,6 +1935,8 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_create") {
     try {
+      const pluginConfig =
+        getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
       const created = createChannelAccountLive(
         parsed.channel_id,
         {
@@ -1953,28 +1946,9 @@ async function handleChannelsProtocolCommand(
               : undefined,
           enabled:
             "enabled" in parsed.account ? parsed.account.enabled : undefined,
-          token: "token" in parsed.account ? parsed.account.token : undefined,
-          botToken:
-            "bot_token" in parsed.account
-              ? parsed.account.bot_token
-              : undefined,
-          appToken:
-            "app_token" in parsed.account
-              ? parsed.account.app_token
-              : undefined,
-          mode: "mode" in parsed.account ? parsed.account.mode : undefined,
-          agentId:
-            "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
-          defaultPermissionMode:
-            "default_permission_mode" in parsed.account
-              ? parsed.account.default_permission_mode
-              : undefined,
           dmPolicy: parsed.account.dm_policy,
           allowedUsers: parsed.account.allowed_users,
-          allowedChannels:
-            "allowed_channels" in parsed.account
-              ? parsed.account.allowed_channels
-              : undefined,
+          config: pluginConfig,
         },
         {
           accountId:
@@ -2032,6 +2006,8 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_update") {
     try {
+      const pluginConfig =
+        getChannelPluginConfig(parsed.patch as Record<string, unknown>) ?? {};
       const updated = updateChannelAccountLive(
         parsed.channel_id,
         parsed.account_id,
@@ -2041,31 +2017,16 @@ async function handleChannelsProtocolCommand(
               ? parsed.patch.display_name
               : undefined,
           enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
-          token: "token" in parsed.patch ? parsed.patch.token : undefined,
-          botToken:
-            "bot_token" in parsed.patch ? parsed.patch.bot_token : undefined,
-          appToken:
-            "app_token" in parsed.patch ? parsed.patch.app_token : undefined,
-          mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
-          agentId:
-            "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
-          defaultPermissionMode:
-            "default_permission_mode" in parsed.patch
-              ? parsed.patch.default_permission_mode
-              : undefined,
           dmPolicy: parsed.patch.dm_policy,
           allowedUsers: parsed.patch.allowed_users,
-          allowedChannels:
-            "allowed_channels" in parsed.patch
-              ? parsed.patch.allowed_channels
-              : undefined,
+          config: pluginConfig,
         },
       );
       const shouldRefreshDisplayName =
         !("display_name" in parsed.patch) &&
-        (parsed.channel_id === "telegram"
-          ? "token" in parsed.patch
-          : "bot_token" in parsed.patch || "app_token" in parsed.patch);
+        channelPluginConfigShouldRefreshDisplayName(parsed.channel_id, {
+          config: pluginConfig,
+        });
       const account = shouldRefreshDisplayName
         ? await refreshChannelAccountDisplayNameLive(
             parsed.channel_id,
@@ -2389,21 +2350,17 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_set_config") {
     try {
+      const pluginConfig =
+        getChannelPluginConfig(
+          parsed.config as Record<string, unknown>,
+          "plugin_config",
+        ) ?? {};
       const snapshot = await setChannelConfigLive(
         parsed.channel_id,
         {
-          token: "token" in parsed.config ? parsed.config.token : undefined,
-          botToken:
-            "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
-          appToken:
-            "app_token" in parsed.config ? parsed.config.app_token : undefined,
-          mode: "mode" in parsed.config ? parsed.config.mode : undefined,
           dmPolicy: parsed.config.dm_policy,
           allowedUsers: parsed.config.allowed_users,
-          allowedChannels:
-            "allowed_channels" in parsed.config
-              ? parsed.config.allowed_channels
-              : undefined,
+          config: pluginConfig,
         },
         parsed.account_id,
       );
@@ -4121,6 +4078,7 @@ function createRuntime(): ListenerRuntime {
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
     memfsSyncedAgents: new Map(),
+    secretsHydrationByAgent: new Map(),
     lastEmittedStatus: null,
   };
 }
@@ -4726,6 +4684,7 @@ async function connectWithRetry(
           type: "message",
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
+          clientToolAllowlist: inputPayload.client_tool_allowlist,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(
@@ -6333,6 +6292,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+  secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
@@ -6368,6 +6328,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+    secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
@@ -6523,6 +6484,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.memfsSyncedAgents,
       set: (value: ListenerRuntime["memfsSyncedAgents"]) => {
         listener.memfsSyncedAgents = value;
+      },
+    },
+    secretsHydrationByAgent: {
+      get: () => listener.secretsHydrationByAgent,
+      set: (value: ListenerRuntime["secretsHydrationByAgent"]) => {
+        listener.secretsHydrationByAgent = value;
       },
     },
     worktreeWatcherByConversation: {

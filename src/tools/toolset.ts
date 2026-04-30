@@ -1,19 +1,18 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
+import { getClient } from "../backend/api/client";
 import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
+import { getSupportedChannelIds } from "../channels/pluginRegistry";
 import { getChannelRegistry } from "../channels/registry";
 import { getRoutesForChannel, loadRoutes } from "../channels/routing";
-import {
-  SUPPORTED_CHANNEL_IDS,
-  type SupportedChannelId,
-} from "../channels/types";
+import type { SupportedChannelId } from "../channels/types";
 import type { RuntimeContextSnapshot } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 import { toolFilter } from "./filter";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
   clearToolsWithLock,
+  filterBuiltInToolNamesByClientAllowlist,
   GEMINI_DEFAULT_TOOLS,
   GEMINI_PASCAL_TOOLS,
   getToolNames,
@@ -138,6 +137,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   modelIdentifier?: string | null;
   toolsetPreference: ToolsetPreference;
   exclude?: ToolName[];
+  clientToolAllowlist?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -147,6 +147,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     modelIdentifier,
     toolsetPreference,
     exclude,
+    clientToolAllowlist,
     workingDirectory,
     permissionModeState,
     channelToolScope,
@@ -162,6 +163,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       effectiveModel ?? undefined,
       {
         exclude,
+        clientToolAllowlist,
         workingDirectory,
         permissionModeState,
         channelToolScope,
@@ -181,10 +183,14 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   }
 
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
-    getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
-      (toolName) => (exclude ? !exclude.includes(toolName) : true),
+    filterBuiltInToolNamesByClientAllowlist(
+      getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
+        (toolName) => (exclude ? !exclude.includes(toolName) : true),
+      ),
+      clientToolAllowlist,
     ),
     {
+      clientToolAllowlist,
       workingDirectory,
       permissionModeState,
       channelToolScope,
@@ -216,7 +222,7 @@ export function resolveConversationChannelToolScope(
   }> = [];
   const seen = new Set<string>();
 
-  for (const channelId of SUPPORTED_CHANNEL_IDS) {
+  for (const channelId of getSupportedChannelIds()) {
     loadRoutes(channelId);
     for (const route of getRoutesForChannel(channelId)) {
       if (
@@ -251,6 +257,7 @@ export async function prepareToolExecutionContextForScope(params: {
   conversationId?: string | null;
   overrideModel?: string | null;
   exclude?: ToolName[];
+  clientToolAllowlist?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   cachedAgent?: AgentState | null;
@@ -260,6 +267,7 @@ export async function prepareToolExecutionContextForScope(params: {
     conversationId,
     overrideModel,
     exclude,
+    clientToolAllowlist,
     workingDirectory,
     permissionModeState,
     cachedAgent,
@@ -297,6 +305,7 @@ export async function prepareToolExecutionContextForScope(params: {
     modelIdentifier: effectiveModel,
     toolsetPreference,
     exclude,
+    clientToolAllowlist,
     workingDirectory,
     permissionModeState,
     runtimeContext: {

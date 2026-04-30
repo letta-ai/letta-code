@@ -6,15 +6,15 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import {
-  clearLastSDKDiagnostic,
-  consumeLastSDKDiagnostic,
-  getClient,
-} from "../../agent/client";
-import {
   getStreamRequestContext,
   getStreamRequestStartTime,
   type StreamRequestContext,
 } from "../../agent/message";
+import {
+  clearLastSDKDiagnostic,
+  consumeLastSDKDiagnostic,
+  getClient,
+} from "../../backend/api/client";
 import { telemetry } from "../../telemetry";
 import { debugLog, debugWarn } from "../../utils/debug";
 import {

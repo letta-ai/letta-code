@@ -126,7 +126,7 @@ export function ensureMemoryFilesystemDirs(
 export async function isMemfsEnabledOnServer(
   agentId: string,
 ): Promise<boolean> {
-  const { getClient } = await import("./client");
+  const { getClient } = await import("../backend/api/client");
   const client = await getClient();
   const agent = await client.agents.retrieve(agentId);
   const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");
@@ -385,7 +385,7 @@ export async function applyMemfsFlags(
       }
       // Force recompile of the system message so the updated template
       // (with/without memfs addon) is reflected in the compiled prompt.
-      const { getClient } = await import("./client");
+      const { getClient } = await import("../backend/api/client");
       const client = await getClient();
       await client.agents.recompile(agentId, { update_timestamp: false });
     }
@@ -404,7 +404,7 @@ export async function applyMemfsFlags(
 
     // Migration (LET-7353): Remove legacy skills/loaded_skills blocks.
     // These blocks are no longer used — skills are now injected via system reminders.
-    const { getClient } = await import("./client");
+    const { getClient } = await import("../backend/api/client");
     const client = await getClient();
     for (const label of ["skills", "loaded_skills"]) {
       try {
@@ -471,7 +471,7 @@ export async function applyMemfsFlags(
  * Whether the current server is the Letta API (or local memfs testing is enabled).
  */
 export async function isLettaCloud(): Promise<boolean> {
-  const { getServerUrl } = await import("./client");
+  const { getServerUrl } = await import("../backend/api/client");
   const serverUrl = getServerUrl();
 
   return (
@@ -494,7 +494,7 @@ function getServerHostLabel(serverUrl: string): string {
  * Whether the MemFS sync endpoint is backed by the Letta API.
  */
 export async function isLettaMemfsServer(): Promise<boolean> {
-  const { getMemfsServerUrl } = await import("./client");
+  const { getMemfsServerUrl } = await import("../backend/api/memfs-git-proxy");
   const memfsServerUrl = getMemfsServerUrl();
 
   return (
@@ -505,7 +505,7 @@ export async function isLettaMemfsServer(): Promise<boolean> {
 }
 
 async function getMemfsSyncUnavailableMessage(): Promise<string> {
-  const { getMemfsServerUrl } = await import("./client");
+  const { getMemfsServerUrl } = await import("../backend/api/memfs-git-proxy");
   const memfsServerUrl = getMemfsServerUrl();
   return `MemFS sync failed (expected api.letta.com, got ${getServerHostLabel(memfsServerUrl)})`;
 }

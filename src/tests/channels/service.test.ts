@@ -461,6 +461,12 @@ describe("channel service", () => {
           agentId: "agent-telegram",
           conversationId: "conv-telegram",
         },
+        config: expect.objectContaining({
+          binding: {
+            agent_id: "agent-telegram",
+            conversation_id: "conv-telegram",
+          },
+        }),
       }),
     );
   });

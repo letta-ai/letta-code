@@ -10,6 +10,8 @@ export const discordChannelPlugin: ChannelPlugin = {
     displayName: "Discord",
     runtimePackages: ["discord.js@14.18.0"],
     runtimeModules: ["discord.js"],
+    source: "first-party",
+    firstParty: true,
   },
   createAdapter(account: ChannelAccount) {
     return createDiscordAdapter(account as DiscordChannelAccount);

@@ -25,12 +25,12 @@ import {
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { debugLog, debugWarn } from "../utils/debug";
+import { getClient } from "../backend/api/client";
 import {
-  getClient,
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
-} from "./client";
+} from "../backend/api/memfs-git-proxy";
+import { debugLog, debugWarn } from "../utils/debug";
 
 const execFile = promisify(execFileCb);
 
@@ -1368,8 +1368,25 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
       // Move .git into the existing memory directory
       renameSync(join(tmpDir, ".git"), join(dir, ".git"));
 
-      // Reset to match remote state
-      await runGit(dir, ["checkout", "--", "."], token);
+      // Reset to match remote state. Skip when the remote has no HEAD
+      // yet (empty repo, e.g. a freshly-allocated training agent) —
+      // `git checkout -- .` fails with "pathspec '.' did not match any
+      // file(s) known to git" in that case, which is fatal here. When
+      // there's nothing on the remote there's nothing to restore, so
+      // leaving the existing local files in place is the right move.
+      try {
+        await runGit(dir, ["rev-parse", "--verify", "HEAD"], token);
+        await runGit(dir, ["checkout", "--", "."], token);
+      } catch (checkoutErr) {
+        const msg =
+          checkoutErr instanceof Error
+            ? checkoutErr.message
+            : String(checkoutErr);
+        debugLog(
+          "memfs-git",
+          `Skipping checkout (likely empty remote, no HEAD yet): ${msg}`,
+        );
+      }
 
       debugLog("memfs-git", "Migrated existing memory directory to git repo");
     } finally {

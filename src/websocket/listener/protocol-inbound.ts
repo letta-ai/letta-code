@@ -1,4 +1,6 @@
 import type WebSocket from "ws";
+import { isValidChannelPluginConfigPayload } from "../../channels/accountConfig";
+import { isSupportedChannelId } from "../../channels/pluginRegistry";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
@@ -67,6 +69,12 @@ import type {
 import { isValidApprovalResponseBody } from "./approval";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
+}
+
 function isRuntimeScope(value: unknown): value is RuntimeScope {
   if (!value || typeof value !== "object") {
     return false;
@@ -99,12 +107,17 @@ function isInputCommand(value: unknown): value is InputCommand {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    client_tool_allowlist?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
   };
   if (payload.kind === "create_message") {
-    return Array.isArray(payload.messages);
+    return (
+      Array.isArray(payload.messages) &&
+      (payload.client_tool_allowlist === undefined ||
+        isStringArray(payload.client_tool_allowlist))
+    );
   }
   if (payload.kind === "approval_response") {
     return isValidApprovalResponseBody(payload);
@@ -136,6 +149,7 @@ function getInvalidInputReason(value: unknown): {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    client_tool_allowlist?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -146,6 +160,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.kind=create_message requires payload.messages[]",
+      };
+    }
+    if (
+      payload.client_tool_allowlist !== undefined &&
+      !isStringArray(payload.client_tool_allowlist)
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.client_tool_allowlist must be string[]",
       };
     }
     return null;
@@ -827,10 +851,8 @@ export function isSetExperimentCommand(
   );
 }
 
-function isChannelId(
-  value: unknown,
-): value is "telegram" | "slack" | "discord" {
-  return value === "telegram" || value === "slack" || value === "discord";
+function isChannelId(value: unknown): value is string {
+  return typeof value === "string" && isSupportedChannelId(value);
 }
 
 function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
@@ -843,10 +865,6 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
     config.allowed_users === undefined ||
     (Array.isArray(config.allowed_users) &&
       config.allowed_users.every((entry) => typeof entry === "string"));
-  const hasValidAllowedChannels =
-    config.allowed_channels === undefined ||
-    (Array.isArray(config.allowed_channels) &&
-      config.allowed_channels.every((entry) => typeof entry === "string"));
   const hasValidDisplayName =
     config.display_name === undefined ||
     typeof config.display_name === "string";
@@ -856,11 +874,40 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
   return (
     hasValidDmPolicy &&
     hasValidAllowedUsers &&
-    hasValidAllowedChannels &&
     hasValidDisplayName &&
     hasValidEnabled
   );
 }
+
+function hasOnlyFields(
+  value: Record<string, unknown>,
+  allowedFields: ReadonlySet<string>,
+): boolean {
+  return Object.keys(value).every((field) => allowedFields.has(field));
+}
+
+const CHANNEL_ACCOUNT_CREATE_FIELDS = new Set([
+  "account_id",
+  "display_name",
+  "enabled",
+  "dm_policy",
+  "allowed_users",
+  "config",
+]);
+
+const CHANNEL_ACCOUNT_UPDATE_FIELDS = new Set([
+  "display_name",
+  "enabled",
+  "dm_policy",
+  "allowed_users",
+  "config",
+]);
+
+const CHANNEL_SET_CONFIG_FIELDS = new Set([
+  "dm_policy",
+  "allowed_users",
+  "plugin_config",
+]);
 
 export function isChannelsListCommand(
   value: unknown,
@@ -910,34 +957,13 @@ export function isChannelAccountCreateCommand(
   if (
     (account.account_id !== undefined &&
       typeof account.account_id !== "string") ||
-    !hasValidChannelPolicyFields(account)
+    !hasValidChannelPolicyFields(account) ||
+    !hasOnlyFields(account, CHANNEL_ACCOUNT_CREATE_FIELDS)
   ) {
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return account.token === undefined || typeof account.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return (
-      (account.token === undefined || typeof account.token === "string") &&
-      (account.agent_id === undefined ||
-        account.agent_id === null ||
-        typeof account.agent_id === "string")
-    );
-  }
-
-  return (
-    (account.bot_token === undefined ||
-      typeof account.bot_token === "string") &&
-    (account.app_token === undefined ||
-      typeof account.app_token === "string") &&
-    (account.mode === undefined || account.mode === "socket") &&
-    (account.agent_id === undefined ||
-      account.agent_id === null ||
-      typeof account.agent_id === "string")
-  );
+  return isValidChannelPluginConfigPayload(c.channel_id, account);
 }
 
 export function isChannelAccountUpdateCommand(
@@ -963,31 +989,14 @@ export function isChannelAccountUpdateCommand(
   }
 
   const patch = c.patch as Record<string, unknown>;
-  if (!hasValidChannelPolicyFields(patch)) {
+  if (
+    !hasValidChannelPolicyFields(patch) ||
+    !hasOnlyFields(patch, CHANNEL_ACCOUNT_UPDATE_FIELDS)
+  ) {
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return patch.token === undefined || typeof patch.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return (
-      (patch.token === undefined || typeof patch.token === "string") &&
-      (patch.agent_id === undefined ||
-        patch.agent_id === null ||
-        typeof patch.agent_id === "string")
-    );
-  }
-
-  return (
-    (patch.bot_token === undefined || typeof patch.bot_token === "string") &&
-    (patch.app_token === undefined || typeof patch.app_token === "string") &&
-    (patch.mode === undefined || patch.mode === "socket") &&
-    (patch.agent_id === undefined ||
-      patch.agent_id === null ||
-      typeof patch.agent_id === "string")
-  );
+  return isValidChannelPluginConfigPayload(c.channel_id, patch);
 }
 
 export function isChannelAccountBindCommand(
@@ -1122,22 +1131,17 @@ export function isChannelSetConfigCommand(
     return false;
   }
   const config = c.config as Record<string, unknown>;
-  if (!hasValidChannelPolicyFields(config)) {
+  if (
+    !hasValidChannelPolicyFields(config) ||
+    !hasOnlyFields(config, CHANNEL_SET_CONFIG_FIELDS)
+  ) {
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return config.token === undefined || typeof config.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return config.token === undefined || typeof config.token === "string";
-  }
-
-  return (
-    (config.bot_token === undefined || typeof config.bot_token === "string") &&
-    (config.app_token === undefined || typeof config.app_token === "string") &&
-    (config.mode === undefined || config.mode === "socket")
+  return isValidChannelPluginConfigPayload(
+    c.channel_id,
+    config,
+    "plugin_config",
   );
 }
 

@@ -9,12 +9,9 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  getMemfsGitProxyRewriteConfig,
-  getServerUrl,
-} from "../../agent/client";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getServerUrl } from "../../backend/api/client";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 
@@ -185,6 +182,54 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
   return shimDir;
 }
 
+const LETTA_CLOUD_MEMFS_GIT_BASE_URL = "https://api.letta.com";
+const LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV = "LETTA_MEMFS_GIT_PROXY_BASE_URL";
+
+function isLocalhostUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function trimBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+function getShellMemfsBaseUrl(env: NodeJS.ProcessEnv): string {
+  // Use the shell environment as the source of truth for command execution.
+  // This keeps Desktop's transient LETTA_BASE_URL proxy from affecting the
+  // canonical MemFS git remote, while still allowing an explicit MemFS base
+  // override to opt out of the Cloud rewrite.
+  return env.LETTA_MEMFS_BASE_URL || LETTA_CLOUD_MEMFS_GIT_BASE_URL;
+}
+
+function getShellMemfsGitProxyRewriteConfig(
+  env: NodeJS.ProcessEnv,
+): { configKey: string; configValue: string } | null {
+  const rawProxyBaseUrl = env[LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV]?.trim();
+  if (!rawProxyBaseUrl || !isLocalhostUrl(rawProxyBaseUrl)) {
+    return null;
+  }
+
+  const memfsBaseUrl = trimBaseUrl(getShellMemfsBaseUrl(env));
+  if (!memfsBaseUrl.includes("api.letta.com")) {
+    return null;
+  }
+
+  const proxyBaseUrl = trimBaseUrl(rawProxyBaseUrl);
+  const proxyPrefix = `${proxyBaseUrl}/v1/git/`;
+  const memfsPrefix = `${memfsBaseUrl}/v1/git/`;
+
+  return {
+    configKey: `url.${proxyPrefix}.insteadOf`,
+    configValue: memfsPrefix,
+  };
+}
+
 function appendGitConfigEnv(
   env: NodeJS.ProcessEnv,
   key: string,
@@ -198,7 +243,7 @@ function appendGitConfigEnv(
 }
 
 function applyMemfsGitProxyEnv(env: NodeJS.ProcessEnv): void {
-  const rewrite = getMemfsGitProxyRewriteConfig(env);
+  const rewrite = getShellMemfsGitProxyRewriteConfig(env);
   if (!rewrite) {
     return;
   }
