@@ -108,4 +108,44 @@ describe("listener permission mode helpers", () => {
     );
     expect(state.mode).toBe("memory");
   });
+
+  test("seeds new conversations from LETTA_LISTENER_DEFAULT_PERMISSION_MODE", () => {
+    const prev = process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE;
+    process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE = "bypassPermissions";
+    try {
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const ref = getOrCreateConversationPermissionModeStateRef(
+        listener,
+        "agent-env",
+        "conv-env",
+      );
+      expect(ref.mode).toBe("bypassPermissions");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE;
+      } else {
+        process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE = prev;
+      }
+    }
+  });
+
+  test("ignores invalid LETTA_LISTENER_DEFAULT_PERMISSION_MODE values", () => {
+    const prev = process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE;
+    process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE = "yolo";
+    try {
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const ref = getOrCreateConversationPermissionModeStateRef(
+        listener,
+        "agent-bad",
+        "conv-bad",
+      );
+      expect(ref.mode).toBe("default");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE;
+      } else {
+        process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE = prev;
+      }
+    }
+  });
 });

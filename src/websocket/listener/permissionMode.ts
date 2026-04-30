@@ -31,9 +31,28 @@ export function getPermissionModeScopeKey(
   return `conversation:${normalizedConversationId}`;
 }
 
+function getEnvDefaultPermissionMode(): PermissionMode | null {
+  const raw = process.env.LETTA_LISTENER_DEFAULT_PERMISSION_MODE;
+  if (
+    raw === "default" ||
+    raw === "acceptEdits" ||
+    raw === "bypassPermissions"
+  ) {
+    return raw;
+  }
+  return null;
+}
+
 function createDefaultPermissionModeState(): ConversationPermissionModeState {
+  // When the listener is running under a default-mode global (e.g. headless
+  // server mode without a TUI to flip /mode), allow the operator to seed a
+  // per-listener default via env. Existing per-conversation entries loaded
+  // from remote-settings.json take precedence; this only affects scopes that
+  // would otherwise materialize at the global default.
+  const globalMode = globalPermissionMode.getMode();
+  const envDefault = getEnvDefaultPermissionMode();
   return {
-    mode: globalPermissionMode.getMode(),
+    mode: globalMode === "default" && envDefault ? envDefault : globalMode,
     planFilePath: null,
     modeBeforePlan: null,
   };

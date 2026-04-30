@@ -1062,16 +1062,17 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "default") {
-      this.eventHandler?.({
-        type: "discord_conversation_created",
-        channelId: "discord",
-        accountId: config.accountId,
-        agentId: config.agentId,
-        conversationId,
-        defaultPermissionMode: config.defaultPermissionMode,
-      });
-    }
+    // Always emit; the listener's handler is idempotent for the "default"
+    // case and seeds the per-conversation map, which protects against
+    // global-default fallthrough on a fresh conversation runtime.
+    this.eventHandler?.({
+      type: "discord_conversation_created",
+      channelId: "discord",
+      accountId: config.accountId,
+      agentId: config.agentId,
+      conversationId,
+      defaultPermissionMode: config.defaultPermissionMode,
+    });
     return route;
   }
 

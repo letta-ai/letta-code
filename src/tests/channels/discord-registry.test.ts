@@ -362,7 +362,7 @@ describe("discord channel registry", () => {
     });
   });
 
-  test("does not emit discord_conversation_created when default permission mode is 'default'", async () => {
+  test("emits discord_conversation_created with mode 'default' for default-mode accounts", async () => {
     const { ChannelRegistry } = await import("../../channels/registry");
     const registry = new ChannelRegistry();
     const adapter = createAdapter();
@@ -383,11 +383,11 @@ describe("discord channel registry", () => {
     );
 
     expect(createConversation).toHaveBeenCalledTimes(1);
-    expect(
-      events.some(
-        (event) =>
-          (event as { type?: string }).type === "discord_conversation_created",
-      ),
-    ).toBe(false);
+    const event = events.find(
+      (entry) =>
+        (entry as { type?: string }).type === "discord_conversation_created",
+    ) as { defaultPermissionMode?: string } | undefined;
+    expect(event).toBeDefined();
+    expect(event?.defaultPermissionMode).toBe("default");
   });
 });
