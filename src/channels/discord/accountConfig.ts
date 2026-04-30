@@ -1,7 +1,13 @@
 import type { ChannelAccountConfigAdapter } from "../pluginTypes";
-import type { DiscordChannelAccount } from "../types";
+import type { DiscordChannelAccount, DiscordChannelPolicy } from "../types";
 
-const DISCORD_CONFIG_KEYS = new Set(["token", "agent_id", "allowed_channels"]);
+const DISCORD_CONFIG_KEYS = new Set([
+  "token",
+  "agent_id",
+  "allowed_channels",
+  "channel_policy",
+  "auto_thread_on_mention",
+]);
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -17,6 +23,16 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
+}
+
+function isDiscordChannelPolicy(
+  value: unknown,
+): value is DiscordChannelPolicy {
+  return value === "mention" || value === "open";
+}
+
 export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordChannelAccount> =
   {
     isValidConfig(config) {
@@ -29,7 +45,11 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         (config.token === undefined || isString(config.token)) &&
         (config.agent_id === undefined || isNullableString(config.agent_id)) &&
         (config.allowed_channels === undefined ||
-          isStringArray(config.allowed_channels))
+          isStringArray(config.allowed_channels)) &&
+        (config.channel_policy === undefined ||
+          isDiscordChannelPolicy(config.channel_policy)) &&
+        (config.auto_thread_on_mention === undefined ||
+          isBoolean(config.auto_thread_on_mention))
       );
     },
 
@@ -42,6 +62,12 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         allowedChannels: isStringArray(config.allowed_channels)
           ? [...config.allowed_channels]
           : undefined,
+        channelPolicy: isDiscordChannelPolicy(config.channel_policy)
+          ? config.channel_policy
+          : undefined,
+        autoThreadOnMention: isBoolean(config.auto_thread_on_mention)
+          ? config.auto_thread_on_mention
+          : undefined,
       };
     },
 
@@ -50,6 +76,8 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         has_token: account.token.trim().length > 0,
         agent_id: account.agentId,
         allowed_channels: [...(account.allowedChannels ?? [])],
+        channel_policy: account.channelPolicy ?? "mention",
+        auto_thread_on_mention: account.autoThreadOnMention ?? true,
       };
     },
 
@@ -58,6 +86,8 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         has_token: account.token.trim().length > 0,
         agent_id: account.agentId,
         allowed_channels: [...(account.allowedChannels ?? [])],
+        channel_policy: account.channelPolicy ?? "mention",
+        auto_thread_on_mention: account.autoThreadOnMention ?? true,
       };
     },
 

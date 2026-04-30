@@ -187,6 +187,37 @@ describe("discord channel service", () => {
     expect(config.allowedChannels).toEqual(["channel-3"]);
   });
 
+  test("discord account snapshots round-trip channelPolicy and autoThreadOnMention", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        channelPolicy: "open",
+        autoThreadOnMention: false,
+      },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.channelPolicy).toBe("open");
+    expect(created.autoThreadOnMention).toBe(false);
+
+    const updated = updateChannelAccountLive("discord", "discord-bot", {
+      channelPolicy: "mention",
+    });
+
+    if (updated.channelId !== "discord") throw new Error("wrong channel");
+    expect(updated.channelPolicy).toBe("mention");
+    // Partial patch preserves the unspecified field.
+    expect(updated.autoThreadOnMention).toBe(false);
+
+    const config = getChannelConfigSnapshot("discord", "discord-bot");
+    if (!config || config.channelId !== "discord")
+      throw new Error("wrong channel");
+    expect(config.channelPolicy).toBe("mention");
+    expect(config.autoThreadOnMention).toBe(false);
+  });
+
   test("default dmPolicy is 'pairing' when not specified", () => {
     const created = createChannelAccountLive(
       "discord",
