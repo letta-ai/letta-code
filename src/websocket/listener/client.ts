@@ -4149,7 +4149,14 @@ async function startConnectedListenerRuntime(
   }
 
   const shouldStartHeartbeat = options.startHeartbeat !== false;
-  const shouldStartCronScheduler = options.startCronScheduler !== false;
+  // LETTA_DISABLE_CRON_SCHEDULER=1 lets users opt out entirely. Useful when
+  // running multiple letta-code instances against the same agent dir, since
+  // only one process can hold the lease and the others would otherwise log
+  // "scheduler lease held by PID …" on every connect.
+  const cronSchedulerDisabledByEnv =
+    process.env.LETTA_DISABLE_CRON_SCHEDULER === "1";
+  const shouldStartCronScheduler =
+    options.startCronScheduler !== false && !cronSchedulerDisabledByEnv;
 
   runtime.transport = transport;
   safeEmitWsEvent("recv", "lifecycle", {
