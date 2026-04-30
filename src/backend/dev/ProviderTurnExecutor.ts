@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StoredMessage } from "./FakeHeadlessStore";
@@ -81,11 +82,13 @@ function createProviderLettaStream(
     controller,
     async *[Symbol.asyncIterator]() {
       let sawToolCall = false;
+      const assistantOtid = `provider-assistant-${randomUUID()}`;
       try {
         for await (const event of events) {
           if (event.type === "text-delta") {
             yield {
               message_type: "assistant_message",
+              otid: assistantOtid,
               content: [{ type: "text", text: event.text }],
             } as LettaStreamingResponse;
             continue;

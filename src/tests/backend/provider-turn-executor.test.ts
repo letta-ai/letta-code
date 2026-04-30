@@ -155,6 +155,37 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual(["user_message", "approval_request_message"]);
   });
 
+  test("uses one assistant otid for text deltas in the same provider turn", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield { type: "text-delta", text: "LET" };
+        yield { type: "text-delta", text: "TA" };
+        yield { type: "finish", finishReason: "stop" };
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    const chunks = await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("stream text"),
+      ),
+    );
+    const assistantChunks = chunks.filter(
+      (chunk) => chunk.message_type === "assistant_message",
+    ) as Array<LettaStreamingResponse & { otid?: string }>;
+
+    expect(assistantChunks).toHaveLength(2);
+    expect(assistantChunks[0]?.otid).toBeTruthy();
+    expect(assistantChunks[0]?.otid).toBe(assistantChunks[1]?.otid);
+  });
+
   test("default provider adapter stays disabled", async () => {
     const backend = new FakeHeadlessBackend(
       "agent-provider",
