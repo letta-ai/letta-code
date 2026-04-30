@@ -109,6 +109,9 @@ class FakeBot {
 }
 
 mock.module("../../channels/telegram/runtime", () => ({
+  ensureTelegramRuntimeInstalled: async () => false,
+  installTelegramRuntime: async () => {},
+  isTelegramRuntimeInstalled: () => true,
   loadGrammyModule: async () => ({
     Bot: FakeBot,
     InputFile: FakeInputFile,
