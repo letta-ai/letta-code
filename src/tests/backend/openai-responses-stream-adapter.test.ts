@@ -181,4 +181,56 @@ describe("OpenAIResponsesStreamAdapter", () => {
       { type: "finish", finishReason: "tool-calls" },
     ]);
   });
+
+  test("converts denied Letta approvals into AI SDK execution-denied tool results", () => {
+    const messages = storedMessagesToModelMessages([
+      stored({
+        message_type: "approval_request_message",
+        tool_call: {
+          tool_call_id: "call-denied",
+          name: "ShellCommand",
+          arguments: JSON.stringify({ command: "node -e 'unsafe'" }),
+        },
+      }),
+      stored({
+        message_type: "approval_response_message",
+        approvals: [
+          {
+            type: "approval",
+            tool_call_id: "call-denied",
+            approve: false,
+            reason: "Tool requires approval (headless mode)",
+          },
+        ],
+      }),
+    ]);
+
+    expect(messages).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-denied",
+            toolName: "ShellCommand",
+            input: { command: "node -e 'unsafe'" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-denied",
+            toolName: "ShellCommand",
+            output: {
+              type: "execution-denied",
+              reason: "Tool requires approval (headless mode)",
+            },
+          },
+        ],
+      },
+    ]);
+  });
 });

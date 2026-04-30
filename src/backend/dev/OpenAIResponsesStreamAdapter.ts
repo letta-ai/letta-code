@@ -87,12 +87,18 @@ function toolCallFromMessage(message: StoredMessage):
   };
 }
 
-function approvalResultsFromMessage(message: StoredMessage): Array<{
+type ApprovalToolResult = {
   type: "tool-result";
   toolCallId: string;
   toolName: string;
-  output: { type: "text"; value: string };
-}> {
+  output:
+    | { type: "text"; value: string }
+    | { type: "execution-denied"; reason?: string };
+};
+
+function approvalResultsFromMessage(
+  message: StoredMessage,
+): ApprovalToolResult[] {
   const approvals = Array.isArray(
     (message as unknown as { approvals?: unknown }).approvals,
   )
@@ -100,20 +106,36 @@ function approvalResultsFromMessage(message: StoredMessage): Array<{
     : Array.isArray(message.content)
       ? message.content
       : [];
-  return approvals.flatMap((approval) => {
-    if (!isRecord(approval) || approval.type !== "tool") return [];
+  const results: ApprovalToolResult[] = [];
+  for (const approval of approvals) {
+    if (!isRecord(approval)) continue;
     const toolCallId = approval.tool_call_id;
-    if (typeof toolCallId !== "string") return [];
-    const toolReturn = textFromContent(approval.tool_return);
-    return [
-      {
-        type: "tool-result" as const,
+    if (typeof toolCallId !== "string") continue;
+
+    if (approval.type === "approval" && approval.approve === false) {
+      results.push({
+        type: "tool-result",
         toolCallId,
         toolName: "unknown",
-        output: { type: "text" as const, value: toolReturn },
-      },
-    ];
-  });
+        output: {
+          type: "execution-denied",
+          reason:
+            typeof approval.reason === "string" ? approval.reason : undefined,
+        },
+      });
+      continue;
+    }
+
+    if (approval.type !== "tool") continue;
+    const toolReturn = textFromContent(approval.tool_return);
+    results.push({
+      type: "tool-result",
+      toolCallId,
+      toolName: "unknown",
+      output: { type: "text", value: toolReturn },
+    });
+  }
+  return results;
 }
 
 function appendAssistantText(messages: ModelMessage[], text: string): void {
