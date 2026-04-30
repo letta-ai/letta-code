@@ -273,6 +273,43 @@ describe("buildSubagentArgs", () => {
 
     expect(promptArg).toBe(longPrompt);
   });
+
+  test("injects --no-system-info-reminder and --no-skills for reflection subagents", () => {
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection" },
+      null,
+      "hello",
+    );
+
+    expect(args).toContain("--no-system-info-reminder");
+    expect(args).toContain("--no-skills");
+  });
+
+  test("does not inject reflection-only flags for other subagent types", () => {
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      "hello",
+    );
+
+    expect(args).not.toContain("--no-system-info-reminder");
+    expect(args).not.toContain("--no-skills");
+  });
+
+  test("does not inject reflection-only flags when deploying an existing reflection agent", () => {
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection" },
+      null,
+      "hello",
+      "agent-existing-reflection",
+    );
+
+    expect(args).not.toContain("--no-system-info-reminder");
+    expect(args).not.toContain("--no-skills");
+  });
 });
 
 describe("resolveSubagentModel", () => {

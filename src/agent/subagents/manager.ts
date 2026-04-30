@@ -776,6 +776,14 @@ export function buildSubagentArgs(
     if (model) {
       args.push("--model", model);
     }
+
+    // Reflection-specific startup flags: match the memory_reflection training
+    // env so the trained policy sees identical prompt suffixes and skill
+    // availability at inference time as it did during training.
+    if (type === "reflection") {
+      args.push("--no-system-info-reminder");
+      args.push("--no-skills");
+    }
   }
 
   const boundedUserPrompt = capReflectionStartupPrompt(
