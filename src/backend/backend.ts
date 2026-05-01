@@ -350,6 +350,26 @@ export async function configureDevBackend(name: string): Promise<void> {
       );
       return;
     }
+    case "fake-headless-anthropic": {
+      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
+      const { createAnthropicModelFactory } = await import(
+        "./dev/AnthropicModel"
+      );
+      const { ProviderTurnExecutor } = await import(
+        "./dev/ProviderTurnExecutor"
+      );
+      backend = new FakeHeadlessBackend(
+        "agent-fake-headless",
+        new ProviderTurnExecutor(
+          new AISDKStreamAdapter({
+            createModel: createAnthropicModelFactory(),
+          }),
+        ),
+        devBackendStoreOptions(),
+      );
+      return;
+    }
     default:
       throw new Error(`Unknown --dev-backend value "${name}"`);
   }

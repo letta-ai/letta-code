@@ -4,6 +4,7 @@
     "": {
       "name": "@letta-ai/letta-code",
       "dependencies": {
+        "@ai-sdk/anthropic": "^3.0.73",
         "@ai-sdk/openai": "^3.0.55",
         "@letta-ai/letta-client": "^1.10.2",
         "ai": "^6.0.171",
@@ -42,6 +43,8 @@
     },
   },
   "packages": {
+    "@ai-sdk/anthropic": ["@ai-sdk/anthropic@3.0.73", "", { "dependencies": { "@ai-sdk/provider": "3.0.10", "@ai-sdk/provider-utils": "4.0.25" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-SRTIqKK5ljxqUNNOFTysc/nFcn5uh4aCQBPOPZHygfQhWk3CMtV6zZhXx9kBk5X3O4Cz/JpBgauuL7SOEAiBbw=="],
+
     "@ai-sdk/gateway": ["@ai-sdk/gateway@3.0.106", "", { "dependencies": { "@ai-sdk/provider": "3.0.10", "@ai-sdk/provider-utils": "4.0.25", "@vercel/oidc": "3.2.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-HVYm505O/bJa9ol2uJGi6p5f/i6gFuWuP/T2ql6P1N0wS38TSEZnJseBv/hJCWpmM6N9A3Y7wIHn99tetZskBA=="],
 
     "@ai-sdk/openai": ["@ai-sdk/openai@3.0.55", "", { "dependencies": { "@ai-sdk/provider": "3.0.10", "@ai-sdk/provider-utils": "4.0.25" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-1pZPT/VEKbn/7ItAr5Hkhy41GxbjiJUhsgTFFIPTwYT7Ph/swuByl4YCXLSfuav27zSzQdscOoxCtDasseeQHA=="],
