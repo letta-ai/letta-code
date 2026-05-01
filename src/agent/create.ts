@@ -6,6 +6,7 @@ import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
+import { getBackend } from "../backend";
 import { getClient } from "../backend/api/client";
 import { apiRequest, getApiRequestConfig } from "../backend/api/request";
 import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "../constants";
@@ -204,7 +205,7 @@ export async function createAgent(
     modelHandle = getDefaultModel();
   }
 
-  const client = await getClient();
+  const backend = getBackend();
 
   // Only attach server-side tools to the agent.
   // Client-side tools (Read, Write, Bash, etc.) are passed via client_tools at runtime,
@@ -361,7 +362,7 @@ export async function createAgent(
   };
 
   const createWithTools = (tools: string[]) =>
-    client.agents.create({
+    backend.createAgent({
       ...createAgentRequestBase,
       tools,
     });
@@ -386,12 +387,13 @@ export async function createAgent(
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
-  const fullAgent = await client.agents.retrieve(agent.id, {
+  const fullAgent = await backend.retrieveAgent(agent.id, {
     include: ["agent.managed_group"],
   });
 
   // Update persona block for sleeptime agent
   if (enableSleeptimeVal && fullAgent.managed_group) {
+    const client = await getClient();
     // Find the sleeptime agent in the managed group by checking agent_type
     for (const groupAgentId of fullAgent.managed_group.agent_ids) {
       try {

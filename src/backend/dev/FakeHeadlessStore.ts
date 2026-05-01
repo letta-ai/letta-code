@@ -13,6 +13,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type {
+  AgentCreateBody,
   AgentMessageListBody,
   AgentUpdateBody,
   ConversationCreateBody,
@@ -49,7 +50,7 @@ type StoredConversation = Conversation & {
   in_context_message_ids: string[];
 };
 
-function createAgent(agentId: string): AgentState {
+function createDefaultAgent(agentId: string): AgentState {
   return {
     id: agentId,
     name: "Fake Headless Agent",
@@ -225,6 +226,7 @@ export class FakeHeadlessStore {
     ProviderTrajectoryMessage[]
   >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
+  private agentSeq = 0;
   private conversationSeq = 0;
   private messageSeq = 0;
   private providerTrajectorySeq = 0;
@@ -241,7 +243,7 @@ export class FakeHeadlessStore {
   ensureAgent(agentId: string): AgentState {
     const existing = this.agents.get(agentId);
     if (existing) return existing;
-    const agent = createAgent(agentId);
+    const agent = createDefaultAgent(agentId);
     this.agents.set(agentId, agent);
     this.persistAgent(agentId);
     this.ensureConversation("default", agentId);
@@ -254,6 +256,43 @@ export class FakeHeadlessStore {
     this.agents.set(agentId, updated as AgentState);
     this.persistAgent(agentId);
     return updated as AgentState;
+  }
+
+  createAgent(body: AgentCreateBody): AgentState {
+    this.agentSeq += 1;
+    const bodyRecord = body as Record<string, unknown>;
+    const agentId =
+      typeof bodyRecord.id === "string" && bodyRecord.id.length > 0
+        ? bodyRecord.id
+        : `agent-fake-headless-${this.agentSeq}`;
+    const base = createDefaultAgent(agentId);
+    const tools = Array.isArray(bodyRecord.tools)
+      ? bodyRecord.tools.map((name) => ({ name }))
+      : base.tools;
+    const agent = {
+      ...base,
+      ...bodyRecord,
+      id: agentId,
+      tools,
+      tags: Array.isArray(bodyRecord.tags) ? bodyRecord.tags : base.tags,
+      message_ids: [],
+      in_context_message_ids: [],
+      llm_config: {
+        ...base.llm_config,
+        model:
+          typeof bodyRecord.model === "string"
+            ? bodyRecord.model
+            : base.llm_config?.model,
+        context_window:
+          typeof bodyRecord.context_window_limit === "number"
+            ? bodyRecord.context_window_limit
+            : base.llm_config?.context_window,
+      },
+    } as unknown as AgentState;
+    this.agents.set(agentId, agent);
+    this.persistAgent(agentId);
+    this.ensureConversation("default", agentId);
+    return agent;
   }
 
   retrieveConversation(conversationId: string, agentId?: string): Conversation {
@@ -1287,6 +1326,10 @@ export class FakeHeadlessStore {
         const agent = readJsonFile<AgentState>(join(agentsDir, file));
         if (agent?.id) {
           this.agents.set(agent.id, agent);
+          this.agentSeq = Math.max(
+            this.agentSeq,
+            numericSuffix(agent.id, "agent-fake-headless-"),
+          );
         }
       }
     }

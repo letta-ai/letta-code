@@ -44,7 +44,6 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
-import { getClient } from "./backend/api/client";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -1070,8 +1069,7 @@ export async function handleHeadlessCommand(
   // Priority 6: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
-    const client = await getClient();
-    const defaultAgent = await ensureDefaultAgents(client, {
+    const defaultAgent = await ensureDefaultAgents(backend, {
       preferredModel: model,
     });
     if (defaultAgent) {

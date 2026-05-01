@@ -69,10 +69,10 @@ describe("model preset refresh wiring", () => {
       "buildModelSettings(modelHandle, updateArgs)",
     );
     expect(updateSegment).toContain(
-      "Parameters<typeof client.conversations.update>[1]",
+      "Parameters<typeof backend.updateConversation>[1]",
     );
     expect(updateSegment).toContain(
-      "client.conversations.update(conversationId, payload)",
+      "backend.updateConversation(conversationId, payload)",
     );
     expect(updateSegment).toContain("model: modelHandle");
     expect(updateSegment).toContain("options?: UpdateAgentLLMConfigOptions");

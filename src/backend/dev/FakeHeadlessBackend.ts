@@ -49,6 +49,11 @@ export class FakeHeadlessBackend implements Backend {
     return Promise.resolve(this.store.updateAgent(agentId, body));
   }
 
+  createAgent(...args: Parameters<Backend["createAgent"]>) {
+    const [body] = args;
+    return Promise.resolve(this.store.createAgent(body));
+  }
+
   async retrieveConversation(conversationId: string): Promise<Conversation> {
     return this.store.retrieveConversation(conversationId);
   }
@@ -89,6 +94,16 @@ export class FakeHeadlessBackend implements Backend {
   ): ReturnType<Backend["retrieveMessage"]> {
     const [messageId] = args;
     return Promise.resolve(this.store.retrieveMessage(messageId) as never);
+  }
+
+  async listModels(): ReturnType<Backend["listModels"]> {
+    return [
+      {
+        handle: "dev/fake-headless",
+        model: "dev/fake-headless",
+        model_endpoint_type: "openai",
+      },
+    ] as never;
   }
 
   async createConversationMessageStream(

@@ -18,6 +18,7 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import { getBackend } from "./backend";
 import { getClient } from "./backend/api/client";
 import { getBillingTier } from "./backend/api/metadata";
 import {
@@ -1456,7 +1457,7 @@ async function main(): Promise<void> {
           case "create": {
             const { ensureDefaultAgents } = await import("./agent/defaults");
             try {
-              const defaultAgent = await ensureDefaultAgents(client, {
+              const defaultAgent = await ensureDefaultAgents(getBackend(), {
                 preferredModel: model,
               });
               if (defaultAgent) {

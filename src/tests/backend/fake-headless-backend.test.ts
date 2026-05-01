@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
+  AgentCreateBody,
   AgentMessageListBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
@@ -59,6 +60,27 @@ function createBody(
 }
 
 describe("FakeHeadlessBackend", () => {
+  test("creates agents and lists local models through the backend facade", async () => {
+    const backend = new FakeHeadlessBackend("agent-default");
+
+    const agent = await backend.createAgent({
+      name: "Created Agent",
+      system: "system prompt",
+      model: "dev/fake-headless",
+      tools: ["web_search"],
+      tags: ["origin:test"],
+    } as AgentCreateBody);
+    const retrieved = await backend.retrieveAgent(agent.id);
+    const models = await backend.listModels();
+
+    expect(agent.id).toBe("agent-fake-headless-1");
+    expect(retrieved.name).toBe("Created Agent");
+    expect(retrieved.system).toBe("system prompt");
+    expect(retrieved.tools?.map((tool) => tool.name)).toEqual(["web_search"]);
+    expect(retrieved.tags).toEqual(["origin:test"]);
+    expect(models.map((model) => model.handle)).toEqual(["dev/fake-headless"]);
+  });
+
   test("stores user and assistant messages for explicit conversations", async () => {
     const backend = new FakeHeadlessBackend("agent-test");
     const conversation = await backend.createConversation({

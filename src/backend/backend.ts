@@ -35,6 +35,10 @@ export type AgentUpdateParams = Parameters<APIClient["agents"]["update"]>;
 export type AgentUpdateBody = AgentUpdateParams[1];
 export type AgentUpdateOptions = AgentUpdateParams[2];
 
+export type AgentCreateParams = Parameters<APIClient["agents"]["create"]>;
+export type AgentCreateBody = AgentCreateParams[0];
+export type AgentCreateOptions = AgentCreateParams[1];
+
 export type ConversationRetrieveParams = Parameters<
   APIClient["conversations"]["retrieve"]
 >;
@@ -69,6 +73,9 @@ export type MessageRetrieveParams = Parameters<
 >;
 export type MessageRetrieveOptions = MessageRetrieveParams[1];
 
+export type ModelsListParams = Parameters<APIClient["models"]["list"]>;
+export type ModelsListOptions = ModelsListParams[0];
+
 export interface Backend {
   retrieveAgent(
     agentId: string,
@@ -80,6 +87,11 @@ export interface Backend {
     body: AgentUpdateBody,
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
+
+  createAgent(
+    body: AgentCreateBody,
+    options?: AgentCreateOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["create"]>>>;
 
   retrieveConversation(
     conversationId: string,
@@ -115,6 +127,10 @@ export interface Backend {
     messageId: string,
     options?: MessageRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["messages"]["retrieve"]>>>;
+
+  listModels(
+    options?: ModelsListOptions,
+  ): Promise<Awaited<ReturnType<APIClient["models"]["list"]>>>;
 
   createConversationMessageStream(
     conversationId: string,
@@ -188,6 +204,11 @@ export class APIBackend implements Backend {
     return client.agents.update(agentId, body, options);
   }
 
+  async createAgent(body: AgentCreateBody, options?: AgentCreateOptions) {
+    const client = await this.getClient();
+    return client.agents.create(body, options);
+  }
+
   async retrieveConversation(
     conversationId: string,
     options?: ConversationRetrieveOptions,
@@ -234,6 +255,11 @@ export class APIBackend implements Backend {
   async retrieveMessage(messageId: string, options?: MessageRetrieveOptions) {
     const client = await this.getClient();
     return client.messages.retrieve(messageId, options);
+  }
+
+  async listModels(options?: ModelsListOptions) {
+    const client = await this.getClient();
+    return client.models.list(options);
   }
 
   async createConversationMessageStream(
