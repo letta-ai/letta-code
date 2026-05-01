@@ -46,11 +46,6 @@ type StreamingChunk =
   | CompactionSummaryMessageChunk
   | CompactionEventMessageChunk;
 
-function isAccumulatorChunkDebugEnabled(): boolean {
-  const value = process.env.LETTA_DEBUG_ACCUMULATOR_CHUNKS;
-  return value === "1" || value === "true";
-}
-
 // Constants for streaming output
 const MAX_TAIL_LINES = 5;
 const MAX_BUFFER_SIZE = 100_000; // 100KB
@@ -753,15 +748,6 @@ export function onChunk(
   // that arrive before drainStream exits.
   if (b.interrupted) {
     return;
-  }
-
-  if (isAccumulatorChunkDebugEnabled()) {
-    debugLog(
-      "accumulator",
-      "received chunk (%s): %O",
-      chunk.message_type ?? "unknown",
-      chunk,
-    );
   }
 
   // TODO remove once SDK v1 has proper typing for in-stream errors
