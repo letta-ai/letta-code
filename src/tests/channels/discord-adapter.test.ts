@@ -46,7 +46,7 @@ describe("splitMessageText", () => {
     const chunks = splitMessageText(text, 1900);
     expect(chunks.length).toBeGreaterThan(1);
     // First chunk should split at the newline (position 900), not mid-content
-    expect(chunks[0]!.length).toBeLessThanOrEqual(1900);
+    expect(chunks[0]?.length).toBeLessThanOrEqual(1900);
     // The split should happen at a \n boundary, so first chunk should be
     // exactly 900+1 chars (the first line plus the newline)
     expect(chunks[0]).toBe(`${line}\n${line}`);
@@ -65,9 +65,9 @@ describe("splitMessageText", () => {
     const solid = "x".repeat(5000);
     const chunks = splitMessageText(solid, 1900);
     expect(chunks.length).toBe(3); // 1900 + 1900 + 1200
-    expect(chunks[0]!.length).toBe(1900);
-    expect(chunks[1]!.length).toBe(1900);
-    expect(chunks[2]!.length).toBe(1200);
+    expect(chunks[0]?.length).toBe(1900);
+    expect(chunks[1]?.length).toBe(1900);
+    expect(chunks[2]?.length).toBe(1200);
   });
 
   test("reconstructed text matches original content", () => {

@@ -75,7 +75,7 @@ The system reminds you when memory has uncommitted changes. Sync when convenient
 
 # Subagents
 
-Delegate to specialized subagents via the Task tool. Each gets its own context window, so delegation also protects your primary context budget. Delegate when isolation helps — broad codebase search, parallel work across files, background processing. Do work directly when it's contained.
+Delegate to specialized subagents via the Agent tool. Each gets its own context window, so delegation also protects your primary context budget. Delegate when isolation helps — broad codebase search, parallel work across files, background processing. Do work directly when it's contained.
 
 You also have **context-management subagents** that refine your token-space representations without burning your primary context:
 

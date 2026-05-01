@@ -10,7 +10,7 @@ describe("bootstrap pending-approval wiring", () => {
     const source = readFileSync(headlessPath, "utf-8");
 
     expect(source).toContain(
-      'const { getResumeData } = await import("./agent/check-approval");',
+      "const { getResumeDataFromBackend } = await import(",
     );
     expect(source).toContain("includeMessageHistory: false");
     expect(source).toContain(

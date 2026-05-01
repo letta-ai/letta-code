@@ -8,6 +8,8 @@
  */
 
 import { spawn } from "node:child_process";
+import { getClient } from "../../backend/api/client";
+import { getBillingTier } from "../../backend/api/metadata";
 import { buildChatUrl } from "../../cli/helpers/appUrls";
 import {
   addToolCall,
@@ -34,12 +36,15 @@ import {
 } from "../../tools/impl/shellEnv";
 import { getErrorMessage } from "../../utils/error";
 import { getAvailableModelHandles } from "../available-models";
-import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
 import { getDefaultModelForTier, resolveModel } from "../model";
 import recallSubagentPrompt from "../prompts/recall_subagent.md";
-
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
+import {
+  estimateStartupContextTokens,
+  REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "./contextBudget";
 
 // ============================================================================
 // Types
@@ -89,27 +94,25 @@ function getModelHandleFromAgent(agent: {
   return model || null;
 }
 
-async function getPrimaryAgentModelHandle(): Promise<string | null> {
+async function getPrimaryAgentModelHandle(): Promise<{
+  handle: string | null;
+  agent: {
+    name?: string | null;
+    llm_config?: { model_endpoint_type?: string | null; model?: string | null };
+  } | null;
+}> {
   try {
     const agentId = getCurrentAgentId();
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
-    return getModelHandleFromAgent(agent);
+    return { handle: getModelHandleFromAgent(agent), agent };
   } catch {
-    return null;
+    return { handle: null, agent: null };
   }
 }
 
 async function getCurrentBillingTier(): Promise<string | null> {
-  try {
-    const client = await getClient();
-    const balance = await client.get<{ billing_tier?: string }>(
-      "/v1/metadata/balance",
-    );
-    return balance.billing_tier ?? null;
-  } catch {
-    return null;
-  }
+  return getBillingTier();
 }
 
 /**
@@ -172,6 +175,13 @@ export async function resolveSubagentModel(options: {
   if (userModel) return userModel;
 
   if (options.subagentType === "reflection") {
+    if (recommendedModel && recommendedModel !== "inherit") {
+      const recommendedHandle = resolveModel(recommendedModel);
+      if (recommendedHandle) {
+        return recommendedHandle;
+      }
+    }
+
     return "letta/auto-memory";
   }
 
@@ -642,6 +652,91 @@ export function composeSubagentChildEnv(
 // Core Functions
 // ============================================================================
 
+function getReflectionStartupNotice(): string {
+  return `[Reflection startup context truncated: system prompt + initial message are capped at ~${REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT.toLocaleString()} estimated tokens. Some parent memory preview content was omitted; read files directly from MEMORY_DIR if needed.]`;
+}
+
+function buildMinimalParentMemorySection(maxChars: number): string {
+  const notice = getReflectionStartupNotice();
+  const section = `<parent_memory>\n${notice}\n</parent_memory>`;
+  if (section.length <= maxChars) {
+    return section;
+  }
+  return section.slice(0, Math.max(0, maxChars));
+}
+
+function shrinkParentMemorySection(section: string, maxChars: number): string {
+  const notice = getReflectionStartupNotice();
+  const treeMatch = section.match(
+    /<memory_filesystem>[\s\S]*?<\/memory_filesystem>/,
+  );
+  const prefix = "<parent_memory>\n";
+  const suffix = "\n</parent_memory>";
+
+  const tree = treeMatch?.[0];
+  if (tree) {
+    const candidate = `${prefix}${tree}\n${notice}${suffix}`;
+    if (candidate.length <= maxChars) {
+      return candidate;
+    }
+  }
+
+  return buildMinimalParentMemorySection(maxChars);
+}
+
+function hardTruncateReflectionPrompt(
+  prompt: string,
+  maxChars: number,
+): string {
+  const notice = `\n${getReflectionStartupNotice()}`;
+  if (maxChars <= notice.length) {
+    return notice.slice(0, Math.max(0, maxChars));
+  }
+  return `${prompt.slice(0, maxChars - notice.length).trimEnd()}${notice}`;
+}
+
+function capReflectionStartupPrompt(
+  type: string,
+  systemPrompt: string,
+  userPrompt: string,
+): string {
+  if (type !== "reflection") {
+    return userPrompt;
+  }
+
+  const estimatedTokens = estimateStartupContextTokens(
+    `${systemPrompt}\n${userPrompt}`,
+  );
+  if (estimatedTokens <= REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT) {
+    return userPrompt;
+  }
+
+  const allowedPromptChars = Math.max(
+    0,
+    REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT - systemPrompt.length - 1,
+  );
+  const parentMemoryMatch = userPrompt.match(
+    /<parent_memory>[\s\S]*?<\/parent_memory>/,
+  );
+
+  if (parentMemoryMatch?.index !== undefined) {
+    const start = parentMemoryMatch.index;
+    const end = start + parentMemoryMatch[0].length;
+    const outsideChars = userPrompt.length - parentMemoryMatch[0].length;
+    const parentMemoryBudget = Math.max(0, allowedPromptChars - outsideChars);
+    const replacement = shrinkParentMemorySection(
+      parentMemoryMatch[0],
+      parentMemoryBudget,
+    );
+    const candidate = `${userPrompt.slice(0, start)}${replacement}${userPrompt.slice(end)}`;
+    if (candidate.length <= allowedPromptChars) {
+      return candidate;
+    }
+  }
+
+  return hardTruncateReflectionPrompt(userPrompt, allowedPromptChars);
+}
+
 /**
  * Build CLI arguments for spawning a subagent
  */
@@ -681,9 +776,22 @@ export function buildSubagentArgs(
     if (model) {
       args.push("--model", model);
     }
+
+    // Reflection-specific startup flags: match the memory_reflection training
+    // env so the trained policy sees identical prompt suffixes and skill
+    // availability at inference time as it did during training.
+    if (type === "reflection") {
+      args.push("--no-system-info-reminder");
+      args.push("--no-skills");
+    }
   }
 
-  args.push("-p", userPrompt);
+  const boundedUserPrompt = capReflectionStartupPrompt(
+    type,
+    config.systemPrompt,
+    userPrompt,
+  );
+  args.push("-p", boundedUserPrompt);
   args.push("--output-format", "stream-json");
 
   // Use subagent's configured permission mode, or inherit from parent
@@ -915,7 +1023,7 @@ async function executeSubagent(
     if (exitCode !== 0) {
       // Check if this is a provider-not-supported error and we haven't retried yet
       if (!isRetry && isProviderNotSupportedError(stderr)) {
-        const primaryModel = await getPrimaryAgentModelHandle();
+        const { handle: primaryModel } = await getPrimaryAgentModelHandle();
         if (primaryModel) {
           // Retry with the primary agent's model
           return executeSubagent(
@@ -1094,7 +1202,8 @@ export async function spawnSubagent(
     existingAgentId || existingConversationId,
   );
 
-  const parentModelHandle = await getPrimaryAgentModelHandle();
+  const { handle: parentModelHandle, agent: parentAgent } =
+    await getPrimaryAgentModelHandle();
   const billingTier = await getCurrentBillingTier();
 
   // For existing agents, don't override model; for new agents, use provided or config default
@@ -1125,14 +1234,15 @@ export async function spawnSubagent(
   let finalPrompt = prompt;
   if (isDeployingExisting && resolvedParentAgentId) {
     try {
-      const client = await getClient();
-      const parentAgent = await client.agents.retrieve(resolvedParentAgentId);
+      const cachedParent =
+        parentAgent ??
+        (await (await getClient()).agents.retrieve(resolvedParentAgentId));
       if (forkedContext) {
         const systemReminder = buildForkSystemReminder(type);
         finalPrompt = systemReminder + prompt;
       } else {
         const systemReminder = buildDeploySystemReminder(
-          parentAgent.name,
+          cachedParent.name ?? "",
           resolvedParentAgentId,
         );
         finalPrompt = systemReminder + prompt;

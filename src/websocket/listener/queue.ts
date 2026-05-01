@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type WebSocket from "ws";
 import { getChannelRegistry } from "../../channels/registry";
 import type {
   ChannelTurnOutcome,
@@ -14,6 +13,10 @@ import type {
 import { isCoalescable } from "../../queue/queueRuntime";
 import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
+import {
+  type ImageNormalizationFailureMode,
+  normalizeMessageContentImages as normalizeSharedMessageContentImages,
+} from "../../utils/messageImageNormalization";
 import { getListenerBlockedReason } from "../helpers/listenerQueueAdapter";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
@@ -24,6 +27,7 @@ import {
   getPendingControlRequestCount,
 } from "./runtime";
 import { resolveRuntimeScope } from "./scope";
+import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   InboundMessagePayload,
@@ -198,78 +202,24 @@ function mapTurnLifecycleOutcome(
   return "completed";
 }
 
-function isBase64ImageContentPart(part: unknown): part is {
-  type: "image";
-  source: { type: "base64"; media_type: string; data: string };
-} {
-  if (!part || typeof part !== "object") {
-    return false;
-  }
-
-  const candidate = part as {
-    type?: unknown;
-    source?: {
-      type?: unknown;
-      media_type?: unknown;
-      data?: unknown;
-    };
-  };
-
-  return (
-    candidate.type === "image" &&
-    !!candidate.source &&
-    candidate.source.type === "base64" &&
-    typeof candidate.source.media_type === "string" &&
-    candidate.source.media_type.length > 0 &&
-    typeof candidate.source.data === "string" &&
-    candidate.source.data.length > 0
-  );
-}
-
 export async function normalizeMessageContentImages(
   content: MessageCreate["content"],
   resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
+  failureMode: ImageNormalizationFailureMode = "strict",
 ): Promise<MessageCreate["content"]> {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  let didChange = false;
-  const normalizedParts = await Promise.all(
-    content.map(async (part) => {
-      if (!isBase64ImageContentPart(part)) {
-        return part;
-      }
-
-      const resized = await resize(
-        Buffer.from(part.source.data, "base64"),
-        part.source.media_type,
-      );
-      if (
-        resized.data !== part.source.data ||
-        resized.mediaType !== part.source.media_type
-      ) {
-        didChange = true;
-      }
-
-      return {
-        ...part,
-        source: {
-          ...part.source,
-          type: "base64" as const,
-          data: resized.data,
-          media_type: resized.mediaType,
-        },
-      };
-    }),
+  return await normalizeSharedMessageContentImages(
+    content,
+    resize,
+    failureMode,
   );
-
-  return didChange ? normalizedParts : content;
 }
 
 export async function normalizeInboundMessages(
   messages: InboundMessagePayload[],
   resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
+  options: {
+    imageFailureMode?: ImageNormalizationFailureMode;
+  } = {},
 ): Promise<InboundMessagePayload[]> {
   let didChange = false;
 
@@ -282,6 +232,7 @@ export async function normalizeInboundMessages(
       const normalizedContent = await normalizeMessageContentImages(
         message.content,
         resize,
+        options.imageFailureMode ?? "strict",
       );
       if (normalizedContent !== message.content) {
         didChange = true;
@@ -459,7 +410,7 @@ function computeListenerQueueBlockedReason(
 
 async function drainQueuedMessages(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: (
     queuedTurn: IncomingMessage,
@@ -551,7 +502,7 @@ async function drainQueuedMessages(
 
 export function scheduleQueuePump(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: (
     queuedTurn: IncomingMessage,

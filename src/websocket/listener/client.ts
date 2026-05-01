@@ -4,19 +4,23 @@
  */
 
 import { execFile } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
 import { getAvailableModelHandles } from "../../agent/available-models";
-import { getClient } from "../../agent/client";
 import { getModelInfo, models, resolveModel } from "../../agent/model";
 import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "../../agent/modify";
+import { getBackend } from "../../backend";
+import {
+  channelPluginConfigShouldRefreshDisplayName,
+  getChannelPluginConfig,
+} from "../../channels/accountConfig";
 import {
   type ChannelRegistryEvent,
   getChannelRegistry,
@@ -42,6 +46,10 @@ import {
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "../../cli/helpers/subagentState";
+import {
+  estimateSystemPromptTokensFromMemoryDir,
+  setSystemPromptDoctorState,
+} from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
   addTask as addCronTask,
@@ -54,6 +62,7 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
+import { experimentManager } from "../../experiments/manager";
 import {
   buildByokProviderAliases,
   listProviders,
@@ -106,11 +115,17 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  GetExperimentsCommand,
+  GetExperimentsResponseMessage,
   GetReflectionSettingsCommand,
   ListMemoryCommand,
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
+  ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
+  ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
   ReflectionSettingsScope,
+  SetExperimentCommand,
+  SetExperimentResponseMessage,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
@@ -192,6 +207,7 @@ import {
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isFileOpsCommand,
+  isGetExperimentsCommand,
   isGetReflectionSettingsCommand,
   isGetTreeCommand,
   isGrepInFilesCommand,
@@ -202,8 +218,12 @@ import {
   isMemoryFileAtRefCommand,
   isMemoryHistoryCommand,
   isReadFileCommand,
+  isReadMemoryFileCommand,
   isSearchBranchesCommand,
   isSearchFilesCommand,
+  isSecretApplyCommand,
+  isSecretListCommand,
+  isSetExperimentCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
@@ -212,6 +232,7 @@ import {
   isUpdateToolsetCommand,
   isWatchFileCommand,
   isWriteFileCommand,
+  isWriteMemoryFileCommand,
   parseServerMessage,
 } from "./protocol-inbound";
 import {
@@ -271,6 +292,12 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import {
+  getListenerTransportKind,
+  isListenerTransportOpen,
+  type ListenerTransport,
+  LocalListenerTransport,
+} from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
   ChangeCwdMessage,
@@ -290,6 +317,21 @@ type ChannelsServiceModule = typeof import("../../channels/service");
 let channelsServiceLoaderOverride:
   | null
   | (() => Promise<ChannelsServiceModule>) = null;
+
+/**
+ * Detect whether a directory is a git worktree root.
+ * Worktrees have a `.git` **file** (not directory) that points to the main
+ * repo's `.git/worktrees/<name>`.  This distinguishes them from normal repos
+ * where `.git` is a directory.
+ */
+async function isGitWorktreeRoot(dir: string): Promise<boolean> {
+  try {
+    const stats = await lstat(path.join(dir, ".git"));
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
 
 async function loadChannelsService(): Promise<ChannelsServiceModule> {
   if (channelsServiceLoaderOverride) {
@@ -336,6 +378,30 @@ function safeSocketSend(
   }
 }
 
+function safeTransportSend(
+  transport: ListenerTransport,
+  payload: unknown,
+  errorType: string,
+  context: string,
+): boolean {
+  if (!isListenerTransportOpen(transport)) {
+    return false;
+  }
+
+  try {
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    transport.send(serialized);
+    return true;
+  } catch (error) {
+    trackListenerError(errorType, error, context);
+    if (isDebugEnabled()) {
+      console.error(`[Listen] ${context} send failed:`, error);
+    }
+    return false;
+  }
+}
+
 function runDetachedListenerTask(
   commandName: string,
   task: () => Promise<void>,
@@ -357,6 +423,7 @@ async function replaySyncStateForRuntime(
   socket: WebSocket,
   scope: { agent_id: string; conversation_id: string },
   opts?: {
+    recoverApprovals?: boolean;
     recoverApprovalStateForSync?: (
       runtime: ConversationRuntime,
       scope: { agent_id: string; conversation_id: string },
@@ -371,16 +438,18 @@ async function replaySyncStateForRuntime(
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
 
-  try {
-    await recoverFn(syncScopedRuntime, scope);
-  } catch (error) {
-    trackListenerError(
-      "listener_sync_recovery_failed",
-      error,
-      "listener_sync_recovery",
-    );
-    if (isDebugEnabled()) {
-      console.warn("[Listen] Sync approval recovery failed:", error);
+  if (opts?.recoverApprovals ?? true) {
+    try {
+      await recoverFn(syncScopedRuntime, scope);
+    } catch (error) {
+      trackListenerError(
+        "listener_sync_recovery_failed",
+        error,
+        "listener_sync_recovery",
+      );
+      if (isDebugEnabled()) {
+        console.warn("[Listen] Sync approval recovery failed:", error);
+      }
     }
   }
 
@@ -987,6 +1056,8 @@ async function buildListModelsResponse(
 type ReflectionSettingsCommand =
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand;
+
+type ExperimentCommand = GetExperimentsCommand | SetExperimentCommand;
 
 type ChannelsCommand =
   | ChannelsListCommand
@@ -1647,7 +1718,7 @@ async function handleChannelsProtocolCommand(
 
   const mapChannelConfig = (
     snapshot: ReturnType<typeof getChannelConfigSnapshot>,
-  ) => {
+  ): ProtocolChannelConfigSnapshot | null => {
     if (!snapshot) {
       return null;
     }
@@ -1659,7 +1730,7 @@ async function handleChannelsProtocolCommand(
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
-        has_token: snapshot.hasToken,
+        config: snapshot.config ?? {},
       };
     }
     if (snapshot.channelId === "discord") {
@@ -1670,7 +1741,7 @@ async function handleChannelsProtocolCommand(
         enabled: snapshot.enabled,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
-        has_token: snapshot.hasToken,
+        config: snapshot.config ?? {},
       };
     }
     return {
@@ -1678,17 +1749,15 @@ async function handleChannelsProtocolCommand(
       account_id: snapshot.accountId,
       display_name: snapshot.displayName,
       enabled: snapshot.enabled,
-      mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
-      has_bot_token: snapshot.hasBotToken,
-      has_app_token: snapshot.hasAppToken,
+      config: snapshot.config ?? {},
     };
   };
 
   const mapChannelAccount = (
     snapshot: ReturnType<typeof listChannelAccountSnapshots>[number],
-  ) => {
+  ): ProtocolChannelAccountSnapshot => {
     if (snapshot.channelId === "telegram") {
       return {
         channel_id: snapshot.channelId,
@@ -1699,11 +1768,7 @@ async function handleChannelsProtocolCommand(
         running: snapshot.running,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
-        has_token: snapshot.hasToken,
-        binding: {
-          agent_id: snapshot.binding.agentId,
-          conversation_id: snapshot.binding.conversationId,
-        },
+        config: snapshot.config ?? {},
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
@@ -1719,8 +1784,7 @@ async function handleChannelsProtocolCommand(
         running: snapshot.running,
         dm_policy: snapshot.dmPolicy,
         allowed_users: snapshot.allowedUsers,
-        has_token: snapshot.hasToken,
-        agent_id: snapshot.agentId,
+        config: snapshot.config ?? {},
         created_at: snapshot.createdAt,
         updated_at: snapshot.updatedAt,
       };
@@ -1733,13 +1797,9 @@ async function handleChannelsProtocolCommand(
       enabled: snapshot.enabled,
       configured: snapshot.configured,
       running: snapshot.running,
-      mode: snapshot.mode,
       dm_policy: snapshot.dmPolicy,
       allowed_users: snapshot.allowedUsers,
-      has_bot_token: snapshot.hasBotToken,
-      has_app_token: snapshot.hasAppToken,
-      agent_id: snapshot.agentId,
-      default_permission_mode: snapshot.defaultPermissionMode,
+      config: snapshot.config ?? {},
       created_at: snapshot.createdAt,
       updated_at: snapshot.updatedAt,
     };
@@ -1879,6 +1939,8 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_create") {
     try {
+      const pluginConfig =
+        getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
       const created = createChannelAccountLive(
         parsed.channel_id,
         {
@@ -1888,24 +1950,9 @@ async function handleChannelsProtocolCommand(
               : undefined,
           enabled:
             "enabled" in parsed.account ? parsed.account.enabled : undefined,
-          token: "token" in parsed.account ? parsed.account.token : undefined,
-          botToken:
-            "bot_token" in parsed.account
-              ? parsed.account.bot_token
-              : undefined,
-          appToken:
-            "app_token" in parsed.account
-              ? parsed.account.app_token
-              : undefined,
-          mode: "mode" in parsed.account ? parsed.account.mode : undefined,
-          agentId:
-            "agent_id" in parsed.account ? parsed.account.agent_id : undefined,
-          defaultPermissionMode:
-            "default_permission_mode" in parsed.account
-              ? parsed.account.default_permission_mode
-              : undefined,
           dmPolicy: parsed.account.dm_policy,
           allowedUsers: parsed.account.allowed_users,
+          config: pluginConfig,
         },
         {
           accountId:
@@ -1963,6 +2010,8 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_update") {
     try {
+      const pluginConfig =
+        getChannelPluginConfig(parsed.patch as Record<string, unknown>) ?? {};
       const updated = updateChannelAccountLive(
         parsed.channel_id,
         parsed.account_id,
@@ -1972,27 +2021,16 @@ async function handleChannelsProtocolCommand(
               ? parsed.patch.display_name
               : undefined,
           enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
-          token: "token" in parsed.patch ? parsed.patch.token : undefined,
-          botToken:
-            "bot_token" in parsed.patch ? parsed.patch.bot_token : undefined,
-          appToken:
-            "app_token" in parsed.patch ? parsed.patch.app_token : undefined,
-          mode: "mode" in parsed.patch ? parsed.patch.mode : undefined,
-          agentId:
-            "agent_id" in parsed.patch ? parsed.patch.agent_id : undefined,
-          defaultPermissionMode:
-            "default_permission_mode" in parsed.patch
-              ? parsed.patch.default_permission_mode
-              : undefined,
           dmPolicy: parsed.patch.dm_policy,
           allowedUsers: parsed.patch.allowed_users,
+          config: pluginConfig,
         },
       );
       const shouldRefreshDisplayName =
         !("display_name" in parsed.patch) &&
-        (parsed.channel_id === "telegram"
-          ? "token" in parsed.patch
-          : "bot_token" in parsed.patch || "app_token" in parsed.patch);
+        channelPluginConfigShouldRefreshDisplayName(parsed.channel_id, {
+          config: pluginConfig,
+        });
       const account = shouldRefreshDisplayName
         ? await refreshChannelAccountDisplayNameLive(
             parsed.channel_id,
@@ -2316,17 +2354,17 @@ async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_set_config") {
     try {
+      const pluginConfig =
+        getChannelPluginConfig(
+          parsed.config as Record<string, unknown>,
+          "plugin_config",
+        ) ?? {};
       const snapshot = await setChannelConfigLive(
         parsed.channel_id,
         {
-          token: "token" in parsed.config ? parsed.config.token : undefined,
-          botToken:
-            "bot_token" in parsed.config ? parsed.config.bot_token : undefined,
-          appToken:
-            "app_token" in parsed.config ? parsed.config.app_token : undefined,
-          mode: "mode" in parsed.config ? parsed.config.mode : undefined,
           dmPolicy: parsed.config.dm_policy,
           allowedUsers: parsed.config.allowed_users,
+          config: pluginConfig,
         },
         parsed.account_id,
       );
@@ -3084,6 +3122,62 @@ function resolveReflectionSettingsScope(
   };
 }
 
+async function handleExperimentCommand(
+  parsed: ExperimentCommand,
+  socket: WebSocket,
+  listener: ListenerRuntime,
+): Promise<boolean> {
+  if (parsed.type === "get_experiments") {
+    const response: GetExperimentsResponseMessage = {
+      type: "get_experiments_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+    return true;
+  }
+
+  try {
+    experimentManager.set(parsed.experiment_id, parsed.enabled);
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: true,
+      experiments: experimentManager.list(),
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+
+    emitDeviceStatusUpdate(socket, listener);
+  } catch (err) {
+    const response: SetExperimentResponseMessage = {
+      type: "set_experiment_response",
+      request_id: parsed.request_id,
+      success: false,
+      experiments: experimentManager.list(),
+      error: err instanceof Error ? err.message : "Failed to update experiment",
+    };
+    safeSocketSend(
+      socket,
+      response,
+      "listener_experiments_send_failed",
+      "listener_experiments",
+    );
+  }
+
+  return true;
+}
+
 async function handleReflectionSettingsCommand(
   parsed: ReflectionSettingsCommand,
   socket: WebSocket,
@@ -3197,7 +3291,7 @@ async function handleReflectionSettingsCommand(
  */
 async function wireChannelIngress(
   listener: ListenerRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): Promise<void> {
@@ -3259,18 +3353,22 @@ async function wireChannelIngress(
 
 function handleChannelRegistryEvent(
   event: ChannelRegistryEvent,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ListenerRuntime,
 ): void {
   if (event.type === "pairings_updated") {
-    emitChannelPairingsUpdated(socket, event.channelId as ChannelId);
-    emitChannelsUpdated(socket, event.channelId as ChannelId);
+    if (socket instanceof WebSocket) {
+      emitChannelPairingsUpdated(socket, event.channelId as ChannelId);
+      emitChannelsUpdated(socket, event.channelId as ChannelId);
+    }
     return;
   }
 
   if (event.type === "targets_updated") {
-    emitChannelTargetsUpdated(socket, event.channelId as ChannelId);
-    emitChannelsUpdated(socket, event.channelId as ChannelId);
+    if (socket instanceof WebSocket) {
+      emitChannelTargetsUpdated(socket, event.channelId as ChannelId);
+      emitChannelsUpdated(socket, event.channelId as ChannelId);
+    }
     return;
   }
 
@@ -3454,7 +3552,7 @@ async function handleApprovalResponseInput(
       conversation_id?: string | null;
     };
     response: ApprovalResponseBody;
-    socket: WebSocket;
+    socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
       connectionId?: string;
@@ -3477,7 +3575,7 @@ async function handleApprovalResponseInput(
     ) => ConversationRuntime;
     resolveRecoveredApprovalResponse: (
       runtime: ConversationRuntime,
-      socket: WebSocket,
+      socket: ListenerTransport,
       response: ApprovalResponseBody,
       processTurn: typeof handleIncomingMessage,
       opts?: {
@@ -3487,7 +3585,7 @@ async function handleApprovalResponseInput(
     ) => Promise<boolean>;
     scheduleQueuePump: (
       runtime: ConversationRuntime,
-      socket: WebSocket,
+      socket: ListenerTransport,
       opts: StartListenerOptions,
       processQueuedTurn: ProcessQueuedTurn,
     ) => void;
@@ -3703,12 +3801,11 @@ async function handleAbortMessageInput(
     emitInterruptedStatusDelta,
     scheduleQueuePump,
     cancelConversation: async (agentId: string, conversationId: string) => {
-      const client = await getClient();
       const cancelId =
         conversationId === "default" || !conversationId
           ? agentId
           : conversationId;
-      await client.conversations.cancel(cancelId);
+      await getBackend().cancelConversation(cancelId);
     },
     ...deps,
   };
@@ -3908,12 +4005,16 @@ async function handleCwdChange(
     runtime.reminderState.hasSentSessionContext = false;
     runtime.reminderState.pendingSessionContextReason = "cwd_changed";
 
-    // If the new cwd is outside the current file-index root, re-root the
-    // index so file search covers the new workspace.  setIndexRoot()
-    // triggers a non-blocking rebuild and does NOT mutate process.cwd(),
-    // keeping concurrent conversations safe.
+    // If the new cwd is outside the current file-index root, or is a git
+    // worktree nested under it, re-root the index so file search covers
+    // the new workspace.  setIndexRoot() triggers a non-blocking rebuild
+    // and does NOT mutate process.cwd(), keeping concurrent conversations safe.
     const currentRoot = getIndexRoot();
-    if (!normalizedPath.startsWith(currentRoot)) {
+    const needsReroot =
+      !normalizedPath.startsWith(currentRoot) ||
+      (normalizedPath !== currentRoot &&
+        (await isGitWorktreeRoot(normalizedPath)));
+    if (needsReroot) {
       setIndexRoot(normalizedPath);
     }
 
@@ -3954,6 +4055,7 @@ function createRuntime(): ListenerRuntime {
   const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
     socket: null,
+    transport: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
     intentionallyClosed: false,
@@ -3979,6 +4081,7 @@ function createRuntime(): ListenerRuntime {
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
     memfsSyncedAgents: new Map(),
+    secretsHydrationByAgent: new Map(),
     lastEmittedStatus: null,
   };
 }
@@ -4010,11 +4113,13 @@ function stopRuntime(
   stopAllWorktreeWatchers(runtime);
 
   if (!runtime.socket) {
+    runtime.transport = null;
     return;
   }
 
   const socket = runtime.socket;
   runtime.socket = null;
+  runtime.transport = null;
 
   // Stale runtimes being replaced should not emit callbacks/retries.
   if (suppressCallbacks) {
@@ -4027,6 +4132,187 @@ function stopRuntime(
   ) {
     socket.close();
   }
+}
+
+async function startConnectedListenerRuntime(
+  runtime: ListenerRuntime,
+  transport: ListenerTransport,
+  opts: Pick<
+    StartListenerOptions,
+    "connectionId" | "onConnected" | "onStatusChange" | "onWsEvent"
+  >,
+  processQueuedTurn: ProcessQueuedTurn,
+  options: {
+    startHeartbeat?: boolean;
+    startCronScheduler?: boolean;
+  } = {},
+): Promise<void> {
+  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+    return;
+  }
+
+  const shouldStartHeartbeat = options.startHeartbeat !== false;
+  // LETTA_DISABLE_CRON_SCHEDULER=1 lets users opt out entirely. Useful when
+  // running multiple letta-code instances against the same agent dir, since
+  // only one process can hold the lease and the others would otherwise log
+  // "scheduler lease held by PID …" on every connect.
+  const cronSchedulerDisabledByEnv =
+    process.env.LETTA_DISABLE_CRON_SCHEDULER === "1";
+  const shouldStartCronScheduler =
+    options.startCronScheduler !== false && !cronSchedulerDisabledByEnv;
+
+  runtime.transport = transport;
+  safeEmitWsEvent("recv", "lifecycle", {
+    type:
+      getListenerTransportKind(transport) === "websocket"
+        ? "_ws_open"
+        : "_local_open",
+  });
+  runtime.hasSuccessfulConnection = true;
+  runtime.everConnected = true;
+  opts.onConnected(opts.connectionId);
+
+  if (runtime.conversationRuntimes.size === 0) {
+    // Don't emit device_status before the lookup store exists.
+    // Without a conversation runtime, the scope resolves to
+    // agent:__unknown__ which misses persisted CWD and permission
+    // mode entries. The web's sync command will create a scoped
+    // runtime and emit a properly-scoped device_status at that point.
+    emitLoopStatusUpdate(transport, runtime);
+  } else {
+    for (const reminderState of runtime.reminderStateByConversation.values()) {
+      // Reset bootstrap reminder state on (re)connect so session-context
+      // and agent-info fire on the first turn of the new connection.
+      // This is intentionally in the open handler, NOT the sync handler,
+      // because the Desktop UMI controller sends sync every ~5 s and
+      // resetting there would re-arm reminders on every periodic sync.
+      resetSharedReminderState(reminderState);
+    }
+    for (const contextTracker of runtime.contextTrackerByConversation.values()) {
+      resetContextHistory(contextTracker);
+    }
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      const scope = {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      };
+      emitDeviceStatusUpdate(transport, conversationRuntime, scope);
+      emitLoopStatusUpdate(transport, conversationRuntime, scope);
+    }
+  }
+
+  // Subscribe to subagent state changes and emit snapshots over the listener
+  // transport. Local channel mode intentionally discards these frames.
+  runtime._unsubscribeSubagentState?.();
+  runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
+    if (runtime.conversationRuntimes.size === 0) {
+      emitSubagentStateIfOpen(runtime);
+      return;
+    }
+
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      emitSubagentStateIfOpen(runtime, {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      });
+    }
+  });
+
+  // Subscribe to subagent stream events and forward as tagged stream_delta.
+  runtime._unsubscribeSubagentStreamEvents?.();
+  runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
+    (subagentId, event) => {
+      if (!isListenerTransportOpen(transport)) return;
+
+      const subagent = getSubagents().find((entry) => entry.id === subagentId);
+      if (subagent?.silent === true) {
+        // Reflection/background "silent" subagents should not stream their
+        // internal transcript into the parent conversation.
+        return;
+      }
+
+      // The event has { type: "message", message_type, ...LettaStreamingResponse }
+      // plus extra headless fields (session_id, uuid) that pass through harmlessly.
+      emitStreamDelta(
+        transport,
+        runtime,
+        event as unknown as import("../../types/protocol_v2").StreamDelta,
+        subagent?.parentAgentId
+          ? {
+              agent_id: subagent.parentAgentId,
+              conversation_id: subagent.parentConversationId ?? "default",
+            }
+          : undefined,
+        subagentId,
+      );
+    },
+  );
+
+  // Register the message queue bridge to route task notifications into the
+  // correct per-conversation QueueRuntime. This enables background Task
+  // completions to reach the agent in listen mode.
+  setMessageQueueAdder((queuedMessage) => {
+    const targetRuntime =
+      queuedMessage.agentId && queuedMessage.conversationId
+        ? getOrCreateScopedRuntime(
+            runtime,
+            queuedMessage.agentId,
+            queuedMessage.conversationId,
+          )
+        : findFallbackRuntime(runtime);
+
+    if (!targetRuntime?.queueRuntime) {
+      return; // No target — notification dropped
+    }
+
+    targetRuntime.queueRuntime.enqueue({
+      kind: "task_notification",
+      source: "task_notification",
+      text: queuedMessage.text,
+      agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
+      conversationId:
+        queuedMessage.conversationId ?? targetRuntime.conversationId,
+    } as Omit<
+      import("../../queue/queueRuntime").TaskNotificationQueueItem,
+      "id" | "enqueuedAt"
+    >);
+
+    // Kick the queue pump so the notification can trigger a standalone turn
+    // (see consumeQueuedTurn notification-aware path in queue.ts).
+    scheduleQueuePump(
+      targetRuntime,
+      transport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+  });
+
+  if (shouldStartHeartbeat) {
+    runtime.heartbeatInterval = setInterval(() => {
+      safeTransportSend(
+        transport,
+        { type: "ping" },
+        "listener_ping_send_failed",
+        "listener_heartbeat",
+      );
+    }, 30000);
+  }
+
+  if (shouldStartCronScheduler) {
+    startCronScheduler(
+      transport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+  }
+
+  // Wire channel ingress (if channels are active).
+  await wireChannelIngress(
+    runtime,
+    transport,
+    opts as StartListenerOptions,
+    processQueuedTurn,
+  );
 }
 
 /**
@@ -4050,6 +4336,74 @@ export async function startListenerClient(
   telemetry.init();
 
   await connectWithRetry(runtime, opts);
+}
+
+export interface StartLocalChannelListenerOptions {
+  connectionId: string;
+  deviceId: string;
+  connectionName: string;
+  onConnected: (connectionId: string) => void;
+  onError: (error: Error) => void;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  onWsEvent?: StartListenerOptions["onWsEvent"];
+}
+
+/**
+ * Start a listener runtime for local channel adapters without environment
+ * registration or a remote WebSocket server.
+ */
+export async function startLocalChannelListener(
+  opts: StartLocalChannelListenerOptions,
+): Promise<void> {
+  const existingRuntime = getActiveRuntime();
+  if (existingRuntime) {
+    stopRuntime(existingRuntime, true);
+  }
+
+  const runtime = createRuntime();
+  runtime.onWsEvent = opts.onWsEvent;
+  runtime.connectionId = opts.connectionId;
+  runtime.connectionName = opts.connectionName;
+  setActiveRuntime(runtime);
+  telemetry.setSurface("websocket");
+  telemetry.init();
+
+  try {
+    await loadTools();
+    const transport = new LocalListenerTransport();
+    const processQueuedTurn: ProcessQueuedTurn = async (
+      queuedTurn: IncomingMessage,
+      dequeuedBatch: DequeuedBatch,
+    ): Promise<void> => {
+      const scopedRuntime = getOrCreateScopedRuntime(
+        runtime,
+        queuedTurn.agentId,
+        queuedTurn.conversationId,
+      );
+      await handleIncomingMessage(
+        queuedTurn,
+        transport,
+        scopedRuntime,
+        opts.onStatusChange,
+        opts.connectionId,
+        dequeuedBatch.batchId,
+      );
+    };
+
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      opts,
+      processQueuedTurn,
+      { startHeartbeat: false, startCronScheduler: true },
+    );
+  } catch (error) {
+    stopRuntime(runtime, true);
+    if (getActiveRuntime() === runtime) {
+      setActiveRuntime(null);
+    }
+    opts.onError(error instanceof Error ? error : new Error(String(error)));
+  }
 }
 
 /** File/directory names filtered from directory listings (OS/VCS noise). */
@@ -4216,6 +4570,7 @@ async function connectWithRetry(
   const cancelledWatches = new Set<string>();
 
   runtime.socket = socket;
+  const transport = socket;
   const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,
     dequeuedBatch: DequeuedBatch,
@@ -4227,7 +4582,7 @@ async function connectWithRetry(
     );
     await handleIncomingMessage(
       queuedTurn,
-      socket,
+      transport,
       scopedRuntime,
       opts.onStatusChange,
       opts.connectionId,
@@ -4236,145 +4591,13 @@ async function connectWithRetry(
   };
 
   socket.on("open", async () => {
-    if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-      return;
-    }
-
-    safeEmitWsEvent("recv", "lifecycle", { type: "_ws_open" });
-    runtime.hasSuccessfulConnection = true;
-    runtime.everConnected = true;
-    opts.onConnected(opts.connectionId);
-
-    if (runtime.conversationRuntimes.size === 0) {
-      // Don't emit device_status before the lookup store exists.
-      // Without a conversation runtime, the scope resolves to
-      // agent:__unknown__ which misses persisted CWD and permission
-      // mode entries. The web's sync command will create a scoped
-      // runtime and emit a properly-scoped device_status at that point.
-      emitLoopStatusUpdate(socket, runtime);
-    } else {
-      for (const reminderState of runtime.reminderStateByConversation.values()) {
-        // Reset bootstrap reminder state on (re)connect so session-context
-        // and agent-info fire on the first turn of the new connection.
-        // This is intentionally in the open handler, NOT the sync handler,
-        // because the Desktop UMI controller sends sync every ~5 s and
-        // resetting there would re-arm reminders on every periodic sync.
-        resetSharedReminderState(reminderState);
-      }
-      for (const contextTracker of runtime.contextTrackerByConversation.values()) {
-        resetContextHistory(contextTracker);
-      }
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-        const scope = {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        };
-        emitDeviceStatusUpdate(socket, conversationRuntime, scope);
-        emitLoopStatusUpdate(socket, conversationRuntime, scope);
-      }
-    }
-
-    // Subscribe to subagent state changes and emit snapshots over WS.
-    // Store the unsubscribe function on the runtime for cleanup on close.
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-      if (runtime.conversationRuntimes.size === 0) {
-        emitSubagentStateIfOpen(runtime);
-        return;
-      }
-
-      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-        emitSubagentStateIfOpen(runtime, {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        });
-      }
-    });
-
-    // Subscribe to subagent stream events and forward as tagged stream_delta.
-    // Events are raw JSON lines from the subagent's stdout (headless format):
-    //   { type: "message", message_type: "tool_call_message", ...LettaStreamingResponse fields }
-    // These are already MessageDelta-shaped (type:"message" + LettaStreamingResponse).
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
-      (subagentId, event) => {
-        if (socket.readyState !== WebSocket.OPEN) return;
-
-        const subagent = getSubagents().find(
-          (entry) => entry.id === subagentId,
-        );
-        if (subagent?.silent === true) {
-          // Reflection/background "silent" subagents should not stream their
-          // internal transcript into the parent conversation.
-          return;
-        }
-
-        // The event has { type: "message", message_type, ...LettaStreamingResponse }
-        // plus extra headless fields (session_id, uuid) that pass through harmlessly.
-        emitStreamDelta(
-          socket,
-          runtime,
-          event as unknown as import("../../types/protocol_v2").StreamDelta,
-          subagent?.parentAgentId
-            ? {
-                agent_id: subagent.parentAgentId,
-                conversation_id: subagent.parentConversationId ?? "default",
-              }
-            : undefined,
-          subagentId,
-        );
-      },
+    await startConnectedListenerRuntime(
+      runtime,
+      transport,
+      opts,
+      processQueuedTurn,
+      { startHeartbeat: true, startCronScheduler: true },
     );
-
-    // Register the message queue bridge to route task notifications into the
-    // correct per-conversation QueueRuntime. This enables background Task
-    // completions to reach the agent in listen mode.
-    setMessageQueueAdder((queuedMessage) => {
-      const targetRuntime =
-        queuedMessage.agentId && queuedMessage.conversationId
-          ? getOrCreateScopedRuntime(
-              runtime,
-              queuedMessage.agentId,
-              queuedMessage.conversationId,
-            )
-          : findFallbackRuntime(runtime);
-
-      if (!targetRuntime?.queueRuntime) {
-        return; // No target — notification dropped
-      }
-
-      targetRuntime.queueRuntime.enqueue({
-        kind: "task_notification",
-        source: "task_notification",
-        text: queuedMessage.text,
-        agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
-        conversationId:
-          queuedMessage.conversationId ?? targetRuntime.conversationId,
-      } as Omit<
-        import("../../queue/queueRuntime").TaskNotificationQueueItem,
-        "id" | "enqueuedAt"
-      >);
-
-      // Kick the queue pump so the notification can trigger a standalone turn
-      // (see consumeQueuedTurn notification-aware path in queue.ts).
-      scheduleQueuePump(targetRuntime, socket, opts, processQueuedTurn);
-    });
-    runtime.heartbeatInterval = setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        safeSocketSend(
-          socket,
-          { type: "ping" },
-          "listener_ping_send_failed",
-          "listener_heartbeat",
-        );
-      }
-    }, 30000);
-
-    // Start cron scheduler if tasks exist
-    startCronScheduler(socket, opts, processQueuedTurn);
-
-    // Wire channel ingress (if channels are active)
-    await wireChannelIngress(runtime, socket, opts, processQueuedTurn);
   });
 
   socket.on("message", async (data: WebSocket.RawData) => {
@@ -4422,7 +4645,9 @@ async function connectWithRetry(
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
           return;
         }
-        await replaySyncStateForRuntime(runtime, socket, parsed.runtime);
+        await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
+          recoverApprovals: parsed.recover_approvals !== false,
+        });
         return;
       }
 
@@ -4469,6 +4694,7 @@ async function connectWithRetry(
           type: "message",
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
+          clientToolAllowlist: inputPayload.client_tool_allowlist,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(
@@ -4590,10 +4816,12 @@ async function connectWithRetry(
             // the search covers the correct workspace.
             if (parsed.cwd) {
               const currentRoot = getIndexRoot();
-              if (
-                !parsed.cwd.startsWith(currentRoot + path.sep) &&
-                parsed.cwd !== currentRoot
-              ) {
+              const needsReroot =
+                (!parsed.cwd.startsWith(currentRoot + path.sep) &&
+                  parsed.cwd !== currentRoot) ||
+                (parsed.cwd !== currentRoot &&
+                  (await isGitWorktreeRoot(parsed.cwd)));
+              if (needsReroot) {
                 setIndexRoot(parsed.cwd);
               }
             }
@@ -5630,6 +5858,275 @@ async function connectWithRetry(
         return;
       }
 
+      // ── Read a file from the MemFS working tree ───────────────────────
+      if (isReadMemoryFileCommand(parsed)) {
+        runDetachedListenerTask("read_memory_file", async () => {
+          const encoding = parsed.encoding ?? "utf8";
+          const sendFailure = (error: string): void => {
+            safeSocketSend(
+              socket,
+              {
+                type: "read_memory_file_response",
+                request_id: parsed.request_id,
+                agent_id: parsed.agent_id,
+                path: parsed.path,
+                content: null,
+                encoding,
+                success: false,
+                error,
+              },
+              "listener_read_memory_file_send_failed",
+              "listener_read_memory_file",
+            );
+          };
+
+          try {
+            const {
+              getMemoryFilesystemRoot,
+              ensureLocalMemfsCheckout,
+              isMemfsEnabledOnServer,
+            } = await import("../../agent/memoryFilesystem");
+            const { readFile } = await import("node:fs/promises");
+            const { existsSync } = await import("node:fs");
+            const { isAbsolute, join, normalize, relative, sep } = await import(
+              "node:path"
+            );
+
+            // Reject absolute paths or escapes outside memory root.
+            if (isAbsolute(parsed.path) || parsed.path.length === 0) {
+              sendFailure("path must be a non-empty relative path");
+              return;
+            }
+            const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+            const absolutePath = normalize(join(memoryRoot, parsed.path));
+            const rel = relative(memoryRoot, absolutePath);
+            if (
+              rel.startsWith("..") ||
+              rel === "" ||
+              isAbsolute(rel) ||
+              rel.split(sep).includes("..")
+            ) {
+              sendFailure("path must resolve inside the memory root");
+              return;
+            }
+
+            // Clone memfs on first read if it isn't local yet.
+            if (!existsSync(join(memoryRoot, ".git"))) {
+              const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
+              if (!enabled) {
+                sendFailure("memfs is not enabled for this agent");
+                return;
+              }
+              await ensureLocalMemfsCheckout(parsed.agent_id);
+              if (!existsSync(join(memoryRoot, ".git"))) {
+                sendFailure("failed to initialize local memory checkout");
+                return;
+              }
+            }
+
+            const buffer = await readFile(absolutePath);
+            const content =
+              encoding === "base64"
+                ? buffer.toString("base64")
+                : buffer.toString("utf-8");
+            const pathspec = rel.split(sep).join("/");
+
+            safeSocketSend(
+              socket,
+              {
+                type: "read_memory_file_response",
+                request_id: parsed.request_id,
+                agent_id: parsed.agent_id,
+                path: pathspec,
+                content,
+                encoding,
+                success: true,
+              },
+              "listener_read_memory_file_send_failed",
+              "listener_read_memory_file",
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_read_memory_file_failed",
+              err,
+              "listener_memory_read",
+            );
+            console.error(
+              `[Listen] read_memory_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            sendFailure(
+              err instanceof Error ? err.message : "Failed to read memory file",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Write a file into MemFS (durable agent memory write + commit + push) ─
+      if (isWriteMemoryFileCommand(parsed)) {
+        runDetachedListenerTask("write_memory_file", async () => {
+          const encoding = parsed.encoding ?? "utf8";
+          const sendFailure = (error: string): void => {
+            safeSocketSend(
+              socket,
+              {
+                type: "write_memory_file_response",
+                request_id: parsed.request_id,
+                agent_id: parsed.agent_id,
+                path: parsed.path,
+                success: false,
+                error,
+              },
+              "listener_write_memory_file_send_failed",
+              "listener_write_memory_file",
+            );
+          };
+
+          try {
+            const {
+              getMemoryFilesystemRoot,
+              ensureLocalMemfsCheckout,
+              isMemfsEnabledOnServer,
+            } = await import("../../agent/memoryFilesystem");
+            const { commitAndSyncMemoryWrite } = await import(
+              "../../agent/memoryGit"
+            );
+            const { writeFile, mkdir } = await import("node:fs/promises");
+            const { existsSync } = await import("node:fs");
+            const { dirname, isAbsolute, join, normalize, relative, sep } =
+              await import("node:path");
+
+            // ── Validate relative path ─────────────────────────────────────
+            if (isAbsolute(parsed.path) || parsed.path.length === 0) {
+              sendFailure(
+                "write_memory_file: path must be a non-empty relative path",
+              );
+              return;
+            }
+            const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+            const absolutePath = normalize(join(memoryRoot, parsed.path));
+            const rel = relative(memoryRoot, absolutePath);
+            if (
+              rel.startsWith("..") ||
+              rel === "" ||
+              isAbsolute(rel) ||
+              rel.split(sep).includes("..")
+            ) {
+              sendFailure(
+                "write_memory_file: path must resolve inside the memory root",
+              );
+              return;
+            }
+
+            // ── Ensure MemFS is enabled and checked out ───────────────────
+            if (!existsSync(join(memoryRoot, ".git"))) {
+              const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
+              if (!enabled) {
+                sendFailure(
+                  "write_memory_file: memfs is not enabled for this agent",
+                );
+                return;
+              }
+              await ensureLocalMemfsCheckout(parsed.agent_id);
+              if (!existsSync(join(memoryRoot, ".git"))) {
+                sendFailure(
+                  "write_memory_file: failed to initialize local memory checkout",
+                );
+                return;
+              }
+            }
+
+            // ── Decode + write bytes (binary-safe for base64) ──────────────
+            const buffer =
+              encoding === "base64"
+                ? Buffer.from(parsed.content, "base64")
+                : Buffer.from(parsed.content, "utf-8");
+            await mkdir(dirname(absolutePath), { recursive: true });
+            await writeFile(absolutePath, buffer);
+
+            // ── Resolve agent identity for the commit author ───────────────
+            let agentName = parsed.agent_id;
+            try {
+              const { getClient } = await import("../../backend/api/client");
+              const client = await getClient();
+              const agent = await client.agents.retrieve(parsed.agent_id);
+              if (agent.name && agent.name.trim().length > 0) {
+                agentName = agent.name.trim();
+              }
+            } catch {
+              // Best-effort — fall back to agent id as the author name.
+            }
+
+            // ── Commit + push (with replay-on-conflict from helper) ────────
+            // Use posix separators in the pathspec — git expects forward slashes
+            // even on Windows.
+            const pathspec = rel.split(sep).join("/");
+            const reason =
+              parsed.commit_message?.trim() || `Update memory file ${pathspec}`;
+            const commitResult = await commitAndSyncMemoryWrite({
+              memoryDir: memoryRoot,
+              pathspecs: [pathspec],
+              reason,
+              author: {
+                agentId: parsed.agent_id,
+                authorName: agentName,
+                authorEmail: `${parsed.agent_id}@letta.com`,
+              },
+              replay: async () => {
+                // Re-write the same bytes on top of the latest remote state.
+                await mkdir(dirname(absolutePath), { recursive: true });
+                await writeFile(absolutePath, buffer);
+                return [pathspec];
+              },
+            });
+
+            // ── Notify UI so the memory view auto-refreshes ────────────────
+            if (commitResult.committed) {
+              safeSocketSend(
+                socket,
+                {
+                  type: "memory_updated",
+                  affected_paths: [pathspec],
+                  timestamp: Date.now(),
+                },
+                "listener_write_memory_file_send_failed",
+                "listener_write_memory_file",
+              );
+            }
+
+            safeSocketSend(
+              socket,
+              {
+                type: "write_memory_file_response",
+                request_id: parsed.request_id,
+                agent_id: parsed.agent_id,
+                path: pathspec,
+                success: true,
+                committed: commitResult.committed,
+                ...(commitResult.sha ? { commit_sha: commitResult.sha } : {}),
+              },
+              "listener_write_memory_file_send_failed",
+              "listener_write_memory_file",
+            );
+          } catch (err) {
+            trackListenerError(
+              "listener_write_memory_file_failed",
+              err,
+              "listener_memory_write",
+            );
+            console.error(
+              `[Listen] write_memory_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+            );
+            sendFailure(
+              err instanceof Error
+                ? err.message
+                : "Failed to write memory file",
+            );
+          }
+        });
+        return;
+      }
+
       // ── Cron CRUD commands (no runtime scope required) ────────────────
       if (
         isCronListCommand(parsed) ||
@@ -5674,6 +6171,13 @@ async function connectWithRetry(
         return;
       }
 
+      if (isGetExperimentsCommand(parsed) || isSetExperimentCommand(parsed)) {
+        runDetachedListenerTask("experiment_command", async () => {
+          await handleExperimentCommand(parsed, socket, runtime);
+        });
+        return;
+      }
+
       if (
         isGetReflectionSettingsCommand(parsed) ||
         isSetReflectionSettingsCommand(parsed)
@@ -5686,6 +6190,25 @@ async function connectWithRetry(
 
       // ── Slash commands (execute_command) ────────────────────────────────
       if (isExecuteCommandCommand(parsed)) {
+        // Internal-only: refresh doctor state after recompile (no chat output)
+        if (parsed.command_id === "refresh_doctor_state") {
+          const agentId = parsed.runtime.agent_id;
+          if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+            try {
+              const { getMemoryFilesystemRoot } = await import(
+                "../../agent/memoryFilesystem"
+              );
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
+              setSystemPromptDoctorState(agentId, tokens);
+            } catch {
+              // best-effort
+            }
+          }
+          emitDeviceStatusUpdate(socket, runtime, parsed.runtime);
+          return;
+        }
+
         // Slash commands need a scoped runtime for the conversation context
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
@@ -5820,6 +6343,110 @@ async function connectWithRetry(
               },
               "listener_checkout_branch_send_failed",
               "listener_checkout_branch",
+            );
+          }
+        });
+        return;
+      }
+
+      // ── Secrets management (modal + CLI source of truth) ───────────────
+      // letta-code owns the secrets cache. The modal and CLI both reach
+      // the server through these three commands so the cache stays in sync
+      // and per-turn hydration can stay one-shot.
+      if (isSecretListCommand(parsed)) {
+        runDetachedListenerTask("secret_list", async () => {
+          try {
+            const { refreshAndListSecrets } = await import(
+              "../../utils/secretsStore"
+            );
+            const secrets = await refreshAndListSecrets(parsed.agent_id);
+            safeSocketSend(
+              socket,
+              {
+                type: "secret_list_response",
+                request_id: parsed.request_id,
+                success: true,
+                secrets,
+              },
+              "listener_secret_list_send_failed",
+              "listener_secret_list",
+            );
+          } catch (error) {
+            safeSocketSend(
+              socket,
+              {
+                type: "secret_list_response",
+                request_id: parsed.request_id,
+                success: false,
+                secrets: [],
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to list secrets",
+              },
+              "listener_secret_list_send_failed",
+              "listener_secret_list",
+            );
+          }
+        });
+        return;
+      }
+
+      if (isSecretApplyCommand(parsed)) {
+        runDetachedListenerTask("secret_apply", async () => {
+          // Validate keys up front. Reject with a clear error so the modal
+          // surfaces the bad key without partially applying anything.
+          for (const key of Object.keys(parsed.set)) {
+            if (!/^[A-Z_][A-Z0-9_]*$/.test(key.toUpperCase())) {
+              safeSocketSend(
+                socket,
+                {
+                  type: "secret_apply_response",
+                  request_id: parsed.request_id,
+                  success: false,
+                  names: [],
+                  error: `Invalid secret name '${key}'. Use uppercase letters, numbers, and underscores only.`,
+                },
+                "listener_secret_apply_send_failed",
+                "listener_secret_apply",
+              );
+              return;
+            }
+          }
+          try {
+            const { applySecretBatch } = await import(
+              "../../utils/secretsStore"
+            );
+            const names = await applySecretBatch(
+              { set: parsed.set, unset: parsed.unset },
+              parsed.agent_id,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "secret_apply_response",
+                request_id: parsed.request_id,
+                success: true,
+                names,
+              },
+              "listener_secret_apply_send_failed",
+              "listener_secret_apply",
+            );
+          } catch (error) {
+            safeSocketSend(
+              socket,
+              {
+                type: "secret_apply_response",
+                request_id: parsed.request_id,
+                success: false,
+                names: [],
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to apply secrets",
+              },
+              "listener_secret_apply_send_failed",
+              "listener_secret_apply",
             );
           }
         });
@@ -5996,7 +6623,7 @@ async function connectWithRetry(
  */
 export function isListenerActive(): boolean {
   const runtime = getActiveRuntime();
-  return runtime !== null && runtime.socket !== null;
+  return runtime !== null && runtime.transport !== null;
 }
 
 /**
@@ -6048,6 +6675,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+  secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
@@ -6083,6 +6711,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
+    secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
@@ -6240,6 +6869,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.memfsSyncedAgents = value;
       },
     },
+    secretsHydrationByAgent: {
+      get: () => listener.secretsHydrationByAgent,
+      set: (value: ListenerRuntime["secretsHydrationByAgent"]) => {
+        listener.secretsHydrationByAgent = value;
+      },
+    },
     worktreeWatcherByConversation: {
       get: () => listener.worktreeWatcherByConversation,
       set: (value: ListenerRuntime["worktreeWatcherByConversation"]) => {
@@ -6346,6 +6981,7 @@ export const __listenClientTestUtils = {
   handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
+  handleExperimentCommand,
   handleReflectionSettingsCommand,
   enqueueChannelTurn,
   scheduleQueuePump,

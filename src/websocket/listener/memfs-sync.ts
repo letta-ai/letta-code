@@ -14,7 +14,7 @@ import type { ListenerRuntime } from "./types";
  * Core sync logic — fetches agent, checks tag, clones/pulls repo.
  */
 async function syncMemfsForAgent(agentId: string): Promise<void> {
-  const { getClient } = await import("../../agent/client");
+  const { getClient } = await import("../../backend/api/client");
   const client = await getClient();
   const agent = await client.agents.retrieve(agentId);
 

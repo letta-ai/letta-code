@@ -7,8 +7,8 @@
 
 import type { Letta } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import { getServerUrl } from "../backend/api/client";
 import { settingsManager } from "../settings-manager";
-import { getServerUrl } from "./client";
 import { type CreateAgentOptions, createAgent } from "./create";
 import { parseMdxFrontmatter } from "./memory";
 import { getDefaultModel, resolveModel } from "./model";
@@ -184,8 +184,9 @@ export async function ensureDefaultAgents(
     await addTagToAgent(client, agent.id, MEMO_TAG);
     settingsManager.pinGlobal(agent.id);
 
-    // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-    await enableMemfsIfCloud(agent.id);
+    // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
+    // without blocking startup on the initial clone.
+    void enableMemfsIfCloud(agent.id);
 
     return agent;
   } catch (err) {

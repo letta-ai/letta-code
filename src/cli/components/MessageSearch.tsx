@@ -1,8 +1,7 @@
-import type { Letta } from "@letta-ai/letta-client";
 import type { MessageSearchResponse } from "@letta-ai/letta-client/resources/messages";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getClient } from "../../agent/client";
+import { searchMessages, warmSearchCache } from "../../backend/api/search";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -50,18 +49,13 @@ type SearchCacheWarmResponse = {
   warmed: boolean;
 };
 
-export async function warmMessageSearchCache(client: Letta) {
+export async function warmMessageSearchCache() {
   const body: SearchCacheWarmRequest = {
     collection: "messages",
     scope: {},
   };
 
-  return client.post<SearchCacheWarmResponse>(
-    "/v1/_internal_search/cache-warm",
-    {
-      body,
-    },
-  );
+  return warmSearchCache<SearchCacheWarmResponse>(body);
 }
 
 function isSearchRangeAvailable(
@@ -229,7 +223,6 @@ export function MessageSearch({
   const [expandedMessage, setExpandedMessage] = useState<
     MessageSearchResponse[number] | null
   >(null);
-  const clientRef = useRef<Letta | null>(null);
   const searchRequestIdRef = useRef(0);
   // Cache results per query+mode+range combination to avoid re-fetching
   const resultsCache = useRef<Map<string, MessageSearchResponse>>(new Map());
@@ -239,16 +232,9 @@ export function MessageSearch({
 
   // Warm tpuf cache on mount (fire-and-forget)
   useEffect(() => {
-    const warmCache = async () => {
-      try {
-        const client = await getClient();
-        clientRef.current = client;
-        await warmMessageSearchCache(client);
-      } catch {
-        // Silently ignore - cache warm is best-effort
-      }
-    };
-    void warmCache();
+    void warmMessageSearchCache().catch(() => {
+      // Silently ignore - cache warm is best-effort
+    });
   }, []);
 
   // Get cache key for a specific query+mode+range combination
@@ -267,12 +253,7 @@ export function MessageSearch({
 
   // Execute search for a single mode (returns results, doesn't set state)
   const fetchSearchResults = useCallback(
-    async (
-      client: Letta,
-      query: string,
-      mode: SearchMode,
-      range: SearchRange,
-    ) => {
+    async (query: string, mode: SearchMode, range: SearchRange) => {
       const body: Record<string, unknown> = {
         query: query.trim(),
         search_mode: mode,
@@ -286,22 +267,13 @@ export function MessageSearch({
         body.conversation_id = conversationId;
       }
 
-      const searchResults = await client.post<MessageSearchResponse>(
-        "/v1/messages/search",
-        { body },
-      );
-      return searchResults;
+      return searchMessages<MessageSearchResponse>(body);
     },
     [agentId, conversationId],
   );
 
   const fetchAndCacheSearchResults = useCallback(
-    async (
-      client: Letta,
-      query: string,
-      mode: SearchMode,
-      range: SearchRange,
-    ) => {
+    async (query: string, mode: SearchMode, range: SearchRange) => {
       const cacheKey = getCacheKey(query, mode, range);
       const cached = resultsCache.current.get(cacheKey);
       if (cached) {
@@ -319,7 +291,7 @@ export function MessageSearch({
         return emptyResults;
       }
 
-      const request = fetchSearchResults(client, query, mode, range)
+      const request = fetchSearchResults(query, mode, range)
         .then((searchResults) => {
           resultsCache.current.set(cacheKey, searchResults);
           return searchResults;
@@ -347,13 +319,9 @@ export function MessageSearch({
 
       void (async () => {
         try {
-          const client = clientRef.current || (await getClient());
-          clientRef.current = client;
-
           await Promise.all(
             prefetch.map(({ mode: prefetchMode, range: prefetchRange }) =>
               fetchAndCacheSearchResults(
-                client,
                 query,
                 prefetchMode,
                 prefetchRange,
@@ -390,11 +358,7 @@ export function MessageSearch({
       setLoading(true);
 
       try {
-        const client = clientRef.current || (await getClient());
-        clientRef.current = client;
-
         const primaryResults = await fetchAndCacheSearchResults(
-          client,
           query,
           mode,
           range,

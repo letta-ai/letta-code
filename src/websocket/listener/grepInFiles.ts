@@ -137,7 +137,7 @@ export async function runGrepInFiles(
   if (contextLines > 0) {
     rgArgs.push("-C", contextLines.toString());
   }
-  if (glob && glob.trim()) {
+  if (glob?.trim()) {
     rgArgs.push("--glob", glob.trim());
   }
   // Respect .gitignore + skip hidden files/dirs by default. These are

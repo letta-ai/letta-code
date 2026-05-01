@@ -777,7 +777,6 @@ export function Input({
   statusLinePadding = 0,
   statusLinePrompt,
   onCycleReasoningEffort,
-  onDraftChange,
   footerNotification,
 }: {
   visible?: boolean;
@@ -823,7 +822,6 @@ export function Input({
   statusLinePadding?: number;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
-  onDraftChange?: (draft: string) => void;
   footerNotification?: string | null;
 }) {
   const [value, setValue] = useState("");
@@ -966,19 +964,10 @@ export function Input({
 
   // Restore input from error (only if current value is empty)
   useEffect(() => {
-    if (restoredInput === null || restoredInput === undefined) return;
-
-    // Empty string is a deliberate external clear request (e.g. draft consumed).
-    if (restoredInput === "") {
-      setValue("");
-      onRestoredInputConsumed?.();
-      return;
-    }
-
-    if (value === "") {
+    if (restoredInput && value === "") {
       setValue(restoredInput);
       onRestoredInputConsumed?.();
-    } else {
+    } else if (restoredInput && value !== "") {
       // Input has content, don't clobber - just consume the restored value
       onRestoredInputConsumed?.();
     }
@@ -1364,8 +1353,7 @@ export function Input({
       setAtEndBoundary(false);
     }
     previousValueRef.current = value;
-    onDraftChange?.(value);
-  }, [value, onDraftChange]);
+  }, [value]);
 
   // Exit history mode when user starts typing
   useEffect(() => {

@@ -1,6 +1,5 @@
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
 import type { RunErrorInfo } from "../../agent/approval-recovery";
 import { extractConflictDetail } from "../../agent/turn-recovery-policy";
 import {
@@ -15,6 +14,7 @@ import {
   emitRetryDelta,
   emitStatusDelta,
 } from "./protocol-outbound";
+import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
 export type RecoverableStatusNoticeKind = "stale_approval_conflict_recovery";
@@ -244,7 +244,7 @@ export function getLoopErrorNoticeDecision(params: {
 }
 
 export function emitLoopErrorNotice(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ListenerRuntime | ConversationRuntime,
   params: {
     message: string;
@@ -284,7 +284,7 @@ export function emitLoopErrorNotice(
 }
 
 export function emitRecoverableStatusNotice(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ListenerRuntime | ConversationRuntime,
   params: {
     kind: RecoverableStatusNoticeKind;
@@ -316,7 +316,7 @@ export function emitRecoverableStatusNotice(
 }
 
 export function emitRecoverableRetryNotice(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ListenerRuntime | ConversationRuntime,
   params: Parameters<typeof emitRetryDelta>[2] & {
     kind: RecoverableRetryNoticeKind;

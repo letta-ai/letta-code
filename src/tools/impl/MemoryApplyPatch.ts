@@ -9,13 +9,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { getClient } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
 import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
 import {
   assertMemoryRepoReadyForWrite,
   commitAndSyncMemoryWrite,
 } from "../../agent/memoryGit";
+import { getClient } from "../../backend/api/client";
 import { validateRequiredParams } from "./validation";
 
 type ParsedPatchOp =
@@ -118,14 +118,14 @@ export async function memory_apply_patch(
   const memoryDir = resolveMemoryDir();
   ensureMemoryRepo(memoryDir);
 
-  await assertMemoryRepoReadyForWrite(memoryDir);
+  const { agentId, agentName } = await getAgentIdentity();
+  await assertMemoryRepoReadyForWrite(memoryDir, agentId);
 
   const pathspecs = await applyMemoryPatch(memoryDir, input);
   if (pathspecs.length === 0) {
     return { message: "memory_apply_patch completed with no changed paths." };
   }
 
-  const { agentId, agentName } = await getAgentIdentity();
   const commitResult = await commitAndSyncMemoryWrite({
     memoryDir,
     pathspecs,

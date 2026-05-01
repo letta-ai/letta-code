@@ -41,17 +41,16 @@ import {
   isQuotaLimitErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
-import { getClient, getServerUrl } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { selectDefaultAgentModel } from "../agent/defaults";
-import { getLettaCodeHeaders } from "../agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   ensureMemoryFilesystemDirs,
@@ -78,15 +77,25 @@ import {
 import { reconcileExistingAgentState } from "../agent/reconcileExistingAgentState";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
+import { type ConversationMessageStreamBody, getBackend } from "../backend";
+import { getAgentContextOverview } from "../backend/api/agents";
+import { getClient, getServerUrl } from "../backend/api/client";
+import { forkConversation } from "../backend/api/conversations";
+import {
+  getBalanceMetadata,
+  getBillingTier,
+  submitFeedbackMetadata,
+} from "../backend/api/metadata";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   INTERRUPTED_BY_USER,
-  MEMFS_CONFLICT_CHECK_INTERVAL,
   SYSTEM_ALERT_CLOSE,
   SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "../constants";
+import { experimentManager } from "../experiments/manager";
+import type { ExperimentId } from "../experiments/types";
 import {
   runNotificationHooks,
   runPreCompactHooks,
@@ -144,6 +153,7 @@ import {
   debugWarn,
   isDebugEnabled,
 } from "../utils/debug";
+import { recordTuiPerf } from "../utils/tuiPerf";
 import { getVersion } from "../version";
 import {
   handleMcpAdd,
@@ -180,6 +190,7 @@ import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { EventMessage } from "./components/EventMessage";
+import { ExperimentSelector } from "./components/ExperimentSelector";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
@@ -296,7 +307,6 @@ import {
 } from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
-import { buildStartupSystemPromptWarning } from "./helpers/startupSystemPromptWarning";
 import {
   resolvePromptChar,
   resolveStatusLineConfig,
@@ -330,6 +340,11 @@ import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,
 } from "./helpers/subagentTurnStart";
+import {
+  buildStartupSystemPromptWarning,
+  estimateSystemTokens,
+  setSystemPromptDoctorState,
+} from "./helpers/systemPromptWarning.ts";
 import {
   appendTaskNotificationEventsToBuffer,
   extractTaskNotificationsForDisplay,
@@ -610,6 +625,7 @@ function extractErrorMeta(e: unknown) {
 // Any changes made in the overlay will be queued until end_turn
 const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/model",
+  "/experiments",
   "/toolset",
   "/system",
   "/personality",
@@ -870,8 +886,7 @@ async function isRetriableError(
   // underlying cause is a transient LLM/network issue that should be retried
   if (lastRunId) {
     try {
-      const client = await getClient();
-      const run = await client.runs.retrieve(lastRunId);
+      const run = await getBackend().retrieveRun(lastRunId);
       const metaError = run.metadata?.error as
         | {
             error_type?: string;
@@ -1577,6 +1592,7 @@ export default function App({
   // Overlay/selector state - only one can be open at a time
   type ActiveOverlay =
     | "model"
+    | "experiment"
     | "sleeptime"
     | "compaction"
     | "toolset"
@@ -1611,7 +1627,6 @@ export default function App({
   const memfsWatcherRef = useRef<ReturnType<
     typeof import("node:fs").watch
   > | null>(null);
-  const memfsGitCheckInFlightRef = useRef(false);
   const pendingGitReminderRef = useRef<{
     dirty: boolean;
     aheadOfRemote: boolean;
@@ -1646,6 +1661,12 @@ export default function App({
   type QueuedOverlayAction =
     | { type: "switch_agent"; agentId: string; commandId?: string }
     | { type: "switch_model"; modelId: string; commandId?: string }
+    | {
+        type: "set_experiment";
+        experimentId: ExperimentId;
+        enabled: boolean;
+        commandId?: string;
+      }
     | {
         type: "set_sleeptime";
         settings: ReflectionSettings;
@@ -1841,22 +1862,9 @@ export default function App({
   useEffect(() => {
     (async () => {
       try {
-        const settings = settingsManager.getSettings();
-        const baseURL =
-          process.env.LETTA_BASE_URL ||
-          settings.env?.LETTA_BASE_URL ||
-          "https://api.letta.com";
-        const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-
-        const response = await fetch(`${baseURL}/v1/metadata/balance`, {
-          headers: getLettaCodeHeaders(apiKey),
-        });
-
-        if (response.ok) {
-          const data = (await response.json()) as { billing_tier?: string };
-          if (data.billing_tier) {
-            setBillingTier(data.billing_tier);
-          }
+        const tier = await getBillingTier();
+        if (tier) {
+          setBillingTier(tier);
         }
       } catch {
         // Silently ignore - billing tier is optional context
@@ -2222,9 +2230,6 @@ export default function App({
 
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
-
-  // Track current input draft for approval dialogs
-  const currentDraftRef = useRef<string>("");
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
@@ -3176,6 +3181,7 @@ export default function App({
     streamingRefreshTimeoutRef.current = setTimeout(() => {
       streamingRefreshTimeoutRef.current = null;
       if (!buffersRef.current.interrupted) {
+        recordTuiPerf("ui_refresh:tool_output");
         refreshDerived();
       }
     }, 100);
@@ -3193,6 +3199,10 @@ export default function App({
   // Helper to update streaming output for bash/shell tools
   const updateStreamingOutput = useCallback(
     (toolCallId: string, chunk: string, isStderr = false) => {
+      recordTuiPerf(`tool_output:${isStderr ? "stderr" : "stdout"}`, {
+        bytes: Buffer.byteLength(chunk),
+      });
+
       const lineId = buffersRef.current.toolCallIdToLineId.get(toolCallId);
       if (!lineId) return;
 
@@ -3234,6 +3244,7 @@ export default function App({
           !buffersRef.current.interrupted &&
           (buffersRef.current.commitGeneration || 0) === capturedGeneration
         ) {
+          recordTuiPerf("ui_refresh:stream");
           refreshDerived();
         }
       }, 16); // ~60fps
@@ -3443,7 +3454,7 @@ export default function App({
       const fetchConfig = async () => {
         try {
           // Use pre-loaded agent state if available, otherwise fetch
-          const { getClient } = await import("../agent/client");
+          const { getClient } = await import("../backend/api/client");
           const client = await getClient();
           let agent: AgentState;
           if (initialAgentState && initialAgentState.id === agentId) {
@@ -3906,35 +3917,6 @@ export default function App({
     [refreshDerived],
   );
 
-  const maybeCheckMemoryGitStatus = useCallback(async () => {
-    // Only check if memfs is enabled for this agent
-    if (!agentId || agentId === "loading") return;
-    if (!settingsManager.isMemfsEnabled(agentId)) return;
-
-    // Git-backed memory: check status periodically (fire-and-forget).
-    // Runs every N turns to detect uncommitted changes or unpushed commits.
-    const isIntervalTurn =
-      sharedReminderStateRef.current.turnCount > 0 &&
-      sharedReminderStateRef.current.turnCount %
-        MEMFS_CONFLICT_CHECK_INTERVAL ===
-        0;
-
-    if (isIntervalTurn && !memfsGitCheckInFlightRef.current) {
-      memfsGitCheckInFlightRef.current = true;
-
-      import("../agent/memoryGit")
-        .then(({ getMemoryGitStatus }) => getMemoryGitStatus(agentId))
-        .then((status) => {
-          pendingGitReminderRef.current =
-            status.dirty || status.aheadOfRemote ? status : null;
-        })
-        .catch(() => {})
-        .finally(() => {
-          memfsGitCheckInFlightRef.current = false;
-        });
-    }
-  }, [agentId]);
-
   useEffect(() => {
     if (loadingState !== "ready") {
       return;
@@ -4184,13 +4166,6 @@ export default function App({
 
       // Copy so we can safely mutate for retry recovery flows
       let currentInput = [...initialInput];
-      const refreshCurrentInputOtids = () => {
-        // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
-        currentInput = currentInput.map((item) => ({
-          ...item,
-          otid: randomUUID(),
-        }));
-      };
       const allowReentry = options?.allowReentry ?? false;
       const hasApprovalInput = initialInput.some(
         (item) => item.type === "approval",
@@ -4381,10 +4356,12 @@ export default function App({
             null;
           let turnToolContextId: string | null = null;
           let preStreamResumeResult: DrainResult | null = null;
+          let prefetchedAgent: AgentState | null = null;
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
             );
+            prefetchedAgent = preparedToolContext.agent;
             const nextStream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
@@ -4487,7 +4464,7 @@ export default function App({
               // Attempt to resume the in-flight run via the conversation stream endpoint.
               // Server resolves: (1) otid lookup, (2) active run fallback.
               try {
-                const client = await getClient();
+                const backend = getBackend();
                 const messageOtid = currentInput
                   .map((item) => (item as Record<string, unknown>).otid)
                   .find((v): v is string => typeof v === "string");
@@ -4507,7 +4484,7 @@ export default function App({
                 }
 
                 const conversationId = conversationIdRef.current ?? "default";
-                const resumeStream = await client.conversations.messages.stream(
+                const resumeStream = await backend.streamConversationMessages(
                   conversationId,
                   // Cast needed until SDK MessageStreamParams includes otid field
                   {
@@ -4518,9 +4495,7 @@ export default function App({
                     otid: messageOtid ?? undefined,
                     starting_after: 0,
                     batch_size: 1000,
-                  } as unknown as Parameters<
-                    typeof client.conversations.messages.stream
-                  >[1],
+                  } as unknown as ConversationMessageStreamBody,
                 );
 
                 // Only reset buffer state after confirming stream is available
@@ -4832,8 +4807,11 @@ export default function App({
           // This ensures the UI shows the correct model as early as possible
           const syncAgentState = async () => {
             try {
-              const client = await getClient();
-              const agent = await client.agents.retrieve(agentIdRef.current);
+              // Reuse the agent fetched by prepareToolExecutionContextForScope
+              // (avoids a redundant agents.retrieve per turn).
+              const agent =
+                prefetchedAgent ??
+                (await (await getClient()).agents.retrieve(agentIdRef.current));
 
               // Keep model UI in sync with the agent configuration.
               // Note: many tiers share the same handle (e.g. gpt-5.2-none/high), so we
@@ -4899,9 +4877,20 @@ export default function App({
             }
           };
 
+          const isAutoApprovalMode =
+            pinnedPermissionMode === "bypassPermissions";
+          const isUserInitiated = currentInput.some(
+            (item) => item.type === "message" && item.role === "user",
+          );
           const handleFirstMessage = () => {
             setNetworkPhase("download");
-            void syncAgentState();
+            // Only sync agent state on user messages or when manual approval
+            // mode is active (user may have changed model while reviewing).
+            // In bypass mode, tool-result continuations happen instantly —
+            // no time for the agent to have changed.
+            if (isUserInitiated || !isAutoApprovalMode) {
+              void syncAgentState();
+            }
           };
 
           const runTokenStart = buffersRef.current.tokenCount;
@@ -5190,8 +5179,6 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             }
-
-            await maybeCheckMemoryGitStatus();
 
             // === RALPH WIGGUM CONTINUATION CHECK ===
             // Check if ralph mode is active and should auto-continue
@@ -5992,7 +5979,7 @@ export default function App({
             refreshDerived();
 
             // Empty-response retry starts a new request/run, so refresh OTIDs.
-            refreshCurrentInputOtids();
+            currentInput = refreshInputOtidsForNewRequest(currentInput);
             buffersRef.current.interrupted = false;
             continue;
           }
@@ -6037,7 +6024,7 @@ export default function App({
                 buffersRef.current.order.push(statusId);
                 refreshDerived();
 
-                refreshCurrentInputOtids();
+                currentInput = refreshInputOtidsForNewRequest(currentInput);
                 highestSeqIdSeen = null;
                 buffersRef.current.interrupted = false;
                 continue;
@@ -6110,7 +6097,7 @@ export default function App({
 
             if (!cancelled) {
               // Post-stream retry is a new request/run, so refresh OTIDs.
-              refreshCurrentInputOtids();
+              currentInput = refreshInputOtidsForNewRequest(currentInput);
               // Reset seq_id threshold — new run starts from seq_id 1, not a resume.
               highestSeqIdSeen = null;
               // Reset interrupted flag so retry stream chunks are processed
@@ -6176,8 +6163,7 @@ export default function App({
           // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
-              const client = await getClient();
-              const run = await client.runs.retrieve(lastRunId);
+              const run = await getBackend().retrieveRun(lastRunId);
 
               // Check if run has error information in metadata
               if (run.metadata?.error) {
@@ -6390,7 +6376,6 @@ export default function App({
       queueApprovalResults,
       consumeQueuedMessages,
       appendTaskNotificationEvents,
-      maybeCheckMemoryGitStatus,
       clearApprovalToolContext,
       openTrajectorySegment,
       syncTrajectoryTokenBase,
@@ -6706,8 +6691,8 @@ export default function App({
       // Send cancel request to backend (fire-and-forget).
       // Without this, the backend stays in requires_approval state after tool interrupt,
       // causing CONFLICT on the next user message.
-      getClient()
-        .then((client) => {
+      Promise.resolve()
+        .then(() => {
           const cancelConversationId =
             conversationIdRef.current === "default"
               ? agentIdRef.current
@@ -6715,7 +6700,7 @@ export default function App({
           if (!cancelConversationId || cancelConversationId === "loading") {
             return;
           }
-          return client.conversations.cancel(cancelConversationId);
+          return getBackend().cancelConversation(cancelConversationId);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -6828,8 +6813,8 @@ export default function App({
 
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
-      getClient()
-        .then((client) => {
+      Promise.resolve()
+        .then(() => {
           const cancelConversationId =
             conversationIdRef.current === "default"
               ? agentIdRef.current
@@ -6837,7 +6822,7 @@ export default function App({
           if (!cancelConversationId || cancelConversationId === "loading") {
             return;
           }
-          return client.conversations.cancel(cancelConversationId);
+          return getBackend().cancelConversation(cancelConversationId);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -6856,7 +6841,6 @@ export default function App({
     } else {
       setInterruptRequested(true);
       try {
-        const client = await getClient();
         const cancelConversationId =
           conversationIdRef.current === "default"
             ? agentIdRef.current
@@ -6864,7 +6848,7 @@ export default function App({
         if (!cancelConversationId || cancelConversationId === "loading") {
           return;
         }
-        await client.conversations.cancel(cancelConversationId);
+        await getBackend().cancelConversation(cancelConversationId);
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
@@ -6946,14 +6930,12 @@ export default function App({
       setBtwState({ status: "forking", question });
 
       try {
-        const client = await getClient();
         const isDefault = conversationIdRef.current === "default";
 
         // Fork the conversation
-        const forked = (await client.post(
-          `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/fork`,
-          { body: isDefault ? { agent_id: agentId } : {} },
-        )) as { id: string };
+        const forked = await forkConversation(conversationIdRef.current, {
+          ...(isDefault ? { agentId } : {}),
+        });
 
         debugLog("btw", "forked conversationId=%s", forked.id);
         setBtwState((prev) => ({
@@ -6963,10 +6945,13 @@ export default function App({
         }));
 
         // Send the question to the forked conversation
-        const stream = await client.conversations.messages.create(forked.id, {
-          messages: [{ role: "user", content: question }],
-          stream_tokens: true,
-        });
+        const stream = await getBackend().createConversationMessageStream(
+          forked.id,
+          {
+            messages: [{ role: "user", content: question }],
+            stream_tokens: true,
+          },
+        );
 
         let responseText = "";
         for await (const chunk of stream) {
@@ -7348,8 +7333,9 @@ export default function App({
           memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
         });
 
-        // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-        await enableMemfsIfCloud(agent.id);
+        // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
+        // without blocking the new-agent UX on the initial clone.
+        void enableMemfsIfCloud(agent.id);
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
@@ -7966,6 +7952,17 @@ export default function App({
           return { submitted: true };
         }
 
+        if (trimmed === "/experiments") {
+          startOverlayCommand(
+            "experiment",
+            "/experiments",
+            "Opening experiments selector...",
+            "Experiments dialog dismissed",
+          );
+          setActiveOverlay("experiment");
+          return { submitted: true };
+        }
+
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
           const adeUrl = buildChatUrl(agentId, {
@@ -8550,29 +8547,7 @@ export default function App({
                 | undefined;
 
               try {
-                const settings = settingsManager.getSettings();
-                const baseURL =
-                  process.env.LETTA_BASE_URL ||
-                  settings.env?.LETTA_BASE_URL ||
-                  "https://api.letta.com";
-                const apiKey =
-                  process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-
-                const balanceResponse = await fetch(
-                  `${baseURL}/v1/metadata/balance`,
-                  {
-                    headers: getLettaCodeHeaders(apiKey),
-                  },
-                );
-
-                if (balanceResponse.ok) {
-                  balance = (await balanceResponse.json()) as {
-                    total_balance: number;
-                    monthly_credit_balance: number;
-                    purchased_credit_balance: number;
-                    billing_tier: string;
-                  };
-                }
+                balance = await getBalanceMetadata();
               } catch {
                 // Silently skip balance info if endpoint not available
               }
@@ -8610,26 +8585,16 @@ export default function App({
           // Fetch breakdown (5s timeout)
           let breakdown: ContextWindowOverview | undefined;
           try {
-            const settings =
-              await settingsManager.getSettingsWithSecureTokens();
-            const apiKey =
-              process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-            const baseUrl = getServerUrl();
-
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-            const res = await fetch(
-              `${baseUrl}/v1/agents/${agentIdRef.current}/context`,
-              {
-                headers: { Authorization: `Bearer ${apiKey}` },
-                signal: controller.signal,
-              },
-            );
-            clearTimeout(timeoutId);
-
-            if (res.ok) {
-              breakdown = (await res.json()) as ContextWindowOverview;
+            try {
+              breakdown = await getAgentContextOverview<ContextWindowOverview>(
+                agentIdRef.current,
+                { signal: controller.signal },
+              );
+            } finally {
+              clearTimeout(timeoutId);
             }
           } catch {
             // Timeout or network error — proceed without breakdown
@@ -8673,9 +8638,13 @@ export default function App({
               currentConversationId === "default"
                 ? { agent_id: agentId }
                 : undefined;
-            await client.conversations.recompile(
+            const compiledSystemPrompt = await client.conversations.recompile(
               currentConversationId,
               conversationParams,
+            );
+            setSystemPromptDoctorState(
+              agentId,
+              estimateSystemTokens(compiledSystemPrompt),
             );
 
             cmd.finish(
@@ -9023,12 +8992,10 @@ export default function App({
 
             // For default conversation, pass agent_id
             const isDefault = conversationIdRef.current === "default";
-            const forked = (await client.post(
-              `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/fork`,
-              {
-                query: isDefault ? { agent_id: agentId } : {},
-              },
-            )) as { id: string };
+            const forked = await forkConversation(conversationIdRef.current, {
+              ...(isDefault ? { agentId } : {}),
+              useQuery: true,
+            });
 
             // If we forked with an explicit summary, update it
             if (conversationSummary) {
@@ -12783,6 +12750,72 @@ ${SYSTEM_REMINDER_CLOSE}
     ],
   );
 
+  const handleExperimentSelect = useCallback(
+    async (
+      selection: { experimentId: ExperimentId; enabled: boolean },
+      commandId?: string | null,
+    ) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/experiments")
+        : consumeOverlayCommand("experiment");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/experiments",
+            "Experiment toggle queued – will update after current task completes",
+          );
+        cmd.update({
+          output:
+            "Experiment toggle queued – will update after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "set_experiment",
+          experimentId: selection.experimentId,
+          enabled: selection.enabled,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/experiments", "Updating experiment...");
+        cmd.update({
+          output: "Updating experiment...",
+          phase: "running",
+        });
+
+        try {
+          const snapshot = experimentManager.set(
+            selection.experimentId,
+            selection.enabled,
+          );
+          cmd.finish(
+            `Experiment "${snapshot.label}" ${snapshot.enabled ? "enabled" : "disabled"}`,
+            true,
+          );
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to update experiment: ${errorDetails}`);
+        } finally {
+          setActiveOverlay(null);
+        }
+      });
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
   // Process queued overlay actions when streaming ends
   // These are actions from interactive commands (like /agents, /model) that were
   // used while the agent was busy. The change is applied after end_turn.
@@ -12874,6 +12907,14 @@ ${SYSTEM_REMINDER_CLOSE}
         })();
       } else if (action.type === "switch_toolset") {
         handleToolsetSelect(action.toolsetId, action.commandId);
+      } else if (action.type === "set_experiment") {
+        handleExperimentSelect(
+          {
+            experimentId: action.experimentId,
+            enabled: action.enabled,
+          },
+          action.commandId,
+        );
       } else if (action.type === "switch_system") {
         handleSystemPromptSelect(action.promptId, action.commandId);
       } else if (action.type === "switch_personality") {
@@ -12891,6 +12932,7 @@ ${SYSTEM_REMINDER_CLOSE}
     handleSleeptimeModeSelect,
     handleCompactionModeSelect,
     handleToolsetSelect,
+    handleExperimentSelect,
     handleSystemPromptSelect,
     handlePersonalitySelect,
     agentId,
@@ -12937,64 +12979,51 @@ ${SYSTEM_REMINDER_CLOSE}
             ...safeSettings
           } = settings;
 
-          const response = await fetch(
-            "https://api.letta.com/v1/metadata/feedback",
+          await submitFeedbackMetadata(
+            apiKey,
+            settingsManager.getOrCreateDeviceId(),
             {
-              method: "POST",
-              headers: {
-                ...getLettaCodeHeaders(apiKey),
-                "X-Letta-Code-Device-ID": settingsManager.getOrCreateDeviceId(),
-              },
-              body: JSON.stringify({
-                message: resolvedMessage,
-                feature: "letta-code",
-                agent_id: agentId,
-                session_id: telemetry.getSessionId(),
-                version: getVersion(),
-                platform: process.platform,
-                settings: JSON.stringify(safeSettings),
-                // System info
-                local_time: getLocalTime(),
-                device_type: getDeviceType(),
-                cwd: process.cwd(),
-                // Session stats
-                ...(() => {
-                  const stats = sessionStatsRef.current?.getSnapshot();
-                  if (!stats) return {};
-                  return {
-                    total_api_ms: stats.totalApiMs,
-                    total_wall_ms: stats.totalWallMs,
-                    step_count: stats.usage.stepCount,
-                    prompt_tokens: stats.usage.promptTokens,
-                    completion_tokens: stats.usage.completionTokens,
-                    total_tokens: stats.usage.totalTokens,
-                    cached_input_tokens: stats.usage.cachedInputTokens,
-                    cache_write_tokens: stats.usage.cacheWriteTokens,
-                    reasoning_tokens: stats.usage.reasoningTokens,
-                    context_tokens: stats.usage.contextTokens,
-                  };
-                })(),
-                // Agent info
-                agent_name: agentName ?? undefined,
-                agent_description: agentDescription ?? undefined,
-                model: currentModelId ?? undefined,
-                // Account info
-                billing_tier: billingTier ?? undefined,
-                server_version: telemetry.getServerVersion() ?? undefined,
-                // Recent chunk log for diagnostics
-                recent_chunks: chunkLog.getEntries(),
-                // Debug log tail for diagnostics
-                debug_log_tail: debugLogFile.getTail(),
-              }),
+              message: resolvedMessage,
+              feature: "letta-code",
+              agent_id: agentId,
+              session_id: telemetry.getSessionId(),
+              version: getVersion(),
+              platform: process.platform,
+              settings: JSON.stringify(safeSettings),
+              // System info
+              local_time: getLocalTime(),
+              device_type: getDeviceType(),
+              cwd: process.cwd(),
+              // Session stats
+              ...(() => {
+                const stats = sessionStatsRef.current?.getSnapshot();
+                if (!stats) return {};
+                return {
+                  total_api_ms: stats.totalApiMs,
+                  total_wall_ms: stats.totalWallMs,
+                  step_count: stats.usage.stepCount,
+                  prompt_tokens: stats.usage.promptTokens,
+                  completion_tokens: stats.usage.completionTokens,
+                  total_tokens: stats.usage.totalTokens,
+                  cached_input_tokens: stats.usage.cachedInputTokens,
+                  cache_write_tokens: stats.usage.cacheWriteTokens,
+                  reasoning_tokens: stats.usage.reasoningTokens,
+                  context_tokens: stats.usage.contextTokens,
+                };
+              })(),
+              // Agent info
+              agent_name: agentName ?? undefined,
+              agent_description: agentDescription ?? undefined,
+              model: currentModelId ?? undefined,
+              // Account info
+              billing_tier: billingTier ?? undefined,
+              server_version: telemetry.getServerVersion() ?? undefined,
+              // Recent chunk log for diagnostics
+              recent_chunks: chunkLog.getEntries(),
+              // Debug log tail for diagnostics
+              debug_log_tail: debugLogFile.getTail(),
             },
           );
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-              `Failed to send feedback (${response.status}): ${errorText}`,
-            );
-          }
 
           cmd.finish(
             "Feedback submitted! To chat with the Letta dev team live, join our Discord (https://discord.gg/letta).",
@@ -13599,11 +13628,6 @@ ${SYSTEM_REMINDER_CLOSE}
     refreshDerived,
     queueApprovalResults,
   ]);
-
-  const handleConsumeDraft = useCallback(() => {
-    currentDraftRef.current = "";
-    setRestoredInput("");
-  }, []);
 
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
@@ -14222,8 +14246,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                                 : undefined
                             }
                             agentName={agentName ?? undefined}
-                            initialDraft={currentDraftRef.current || undefined}
-                            onConsumeDraft={handleConsumeDraft}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -14321,8 +14343,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         : undefined
                     }
                     agentName={agentName ?? undefined}
-                    initialDraft={currentDraftRef.current || undefined}
-                    onConsumeDraft={handleConsumeDraft}
                   />
                 </Box>
               )}
@@ -14445,9 +14465,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
-                onDraftChange={(draft) => {
-                  currentDraftRef.current = draft;
-                }}
                 networkPhase={networkPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
@@ -14630,6 +14647,15 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     setActiveConnectCommandId(null);
                   }
                 }}
+              />
+            )}
+
+            {/* Experiment Selector - conditionally mounted as overlay */}
+            {activeOverlay === "experiment" && (
+              <ExperimentSelector
+                experiments={experimentManager.list()}
+                onSelect={handleExperimentSelect}
+                onCancel={closeOverlay}
               />
             )}
 

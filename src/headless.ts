@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { Letta } from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -18,11 +17,11 @@ import {
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
+  refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
 import { handleBootstrapSessionState } from "./agent/bootstrapHandler";
-import { getClient } from "./agent/client";
 import { buildClientSkillsPayload } from "./agent/clientSkills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
@@ -40,6 +39,12 @@ import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import {
+  type ConversationCreateBody,
+  type ConversationMessageStreamBody,
+  getBackend,
+} from "./backend";
+import { getClient } from "./backend/api/client";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -94,7 +99,7 @@ import {
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
-import { writeWireMessage } from "./streamJsonWriter";
+import { writeWireMessage, writeWireMessageAsync } from "./streamJsonWriter";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import { extractTelemetryInputText } from "./telemetry/input";
@@ -365,6 +370,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   agentId: string;
   conversationId: string;
   overrideModel?: string | null;
+  cachedAgent?: AgentState | null;
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -377,6 +383,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
+    cachedAgent: params.cachedAgent,
   });
 
   return {
@@ -424,6 +431,18 @@ async function flushAndExit(code: number): Promise<never> {
   ]);
 
   process.exit(code);
+}
+
+// For one-shot headless outputs (json/text), await the final stdout write before
+// exiting so CI pipes don't occasionally observe an empty stdout buffer.
+async function writeFinalHeadlessStdout(text: string): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (process.stdout.destroyed || process.stdout.writableEnded) {
+      resolve();
+      return;
+    }
+    process.stdout.write(text, () => resolve());
+  });
 }
 
 export async function handleHeadlessCommand(
@@ -531,7 +550,12 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  const client = await getClient();
+  const devBackend = values["dev-backend"];
+  if (typeof devBackend === "string" && devBackend.length > 0) {
+    const { configureDevBackend } = await import("./backend");
+    await configureDevBackend(devBackend);
+  }
+  const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
 
   // Check for --resume flag (interactive only)
@@ -915,10 +939,10 @@ export async function handleHeadlessCommand(
         "conversations",
         `retrieve(${specifiedConversationId}) [headless conv→agent lookup]`,
       );
-      const conversation = await client.conversations.retrieve(
+      const conversation = await backend.retrieveConversation(
         specifiedConversationId,
       );
-      agent = await client.agents.retrieve(conversation.agent_id);
+      agent = await backend.retrieveAgent(conversation.agent_id);
     } catch (error) {
       trackHeadlessBoundaryError(
         "headless_conversation_lookup_failed",
@@ -975,7 +999,9 @@ export async function handleHeadlessCommand(
   // Priority 2: Try to use --agent specified ID
   if (!agent && specifiedAgentId) {
     try {
-      agent = await client.agents.retrieve(specifiedAgentId);
+      agent = await backend.retrieveAgent(specifiedAgentId, {
+        include: ["agent.secrets", "agent.tools"],
+      });
     } catch (_error) {
       console.error(`Agent ${specifiedAgentId} not found`);
       process.exit(1);
@@ -1020,7 +1046,7 @@ export async function handleHeadlessCommand(
     );
     if (localAgentId) {
       try {
-        agent = await client.agents.retrieve(localAgentId);
+        agent = await backend.retrieveAgent(localAgentId);
       } catch (_error) {
         // Local LRU agent doesn't exist - log and continue
         console.error(`Unable to locate agent ${localAgentId} in .letta/`);
@@ -1034,7 +1060,7 @@ export async function handleHeadlessCommand(
     const globalAgentId = settingsManager.getGlobalLastAgentId();
     if (globalAgentId) {
       try {
-        agent = await client.agents.retrieve(globalAgentId);
+        agent = await backend.retrieveAgent(globalAgentId);
       } catch (_error) {
         // Global LRU agent doesn't exist
       }
@@ -1044,6 +1070,7 @@ export async function handleHeadlessCommand(
   // Priority 6: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
+    const client = await getClient();
     const defaultAgent = await ensureDefaultAgents(client, {
       preferredModel: model,
     });
@@ -1110,7 +1137,7 @@ export async function handleHeadlessCommand(
   const secretsAgentId = agent?.id;
   const secretsInitPromise = secretsAgentId
     ? import("./utils/secretsStore").then(({ initSecretsFromServer }) =>
-        initSecretsFromServer(secretsAgentId),
+        initSecretsFromServer(secretsAgentId, agent ?? undefined),
       )
     : Promise.resolve();
 
@@ -1252,9 +1279,8 @@ export async function handleHeadlessCommand(
           : "standard";
         const expected = rebuildPrompt(storedPreset, memoryMode);
         if (agent.system !== expected) {
-          const client = await getClient();
-          await client.agents.update(agent.id, { system: expected });
-          agent = await client.agents.retrieve(agent.id);
+          await backend.updateAgent(agent.id, { system: expected });
+          agent = await backend.retrieveAgent(agent.id);
         }
       } else {
         settingsManager.clearSystemPromptPreset(agent.id);
@@ -1263,7 +1289,7 @@ export async function handleHeadlessCommand(
   }
 
   const startupAgentId = agent.id;
-  void clearPersistedClientToolRules(startupAgentId)
+  void clearPersistedClientToolRules(startupAgentId, agent)
     .then((cleanup) => {
       if (cleanup) {
         const count = cleanup.removedToolNames.length;
@@ -1319,7 +1345,7 @@ export async function handleHeadlessCommand(
           "conversations",
           `retrieve(${specifiedConversationId}) [headless --conv validate]`,
         );
-        await client.conversations.retrieve(specifiedConversationId);
+        await backend.retrieveConversation(specifiedConversationId);
         conversationId = specifiedConversationId;
       } catch {
         console.error(
@@ -1336,14 +1362,14 @@ export async function handleHeadlessCommand(
     // missing from @letta-ai/letta-client@1.10.1 types, but the core
     // endpoint accepts it and the SDK's create impl forwards unknown
     // body fields unchanged — remove the cast once the SDK is bumped.
-    const createParams: Parameters<typeof client.conversations.create>[0] = {
+    const createParams: ConversationCreateBody = {
       agent_id: agent.id,
       isolated_block_labels: isolatedBlockLabels,
     };
     if (fromAgentId) {
       (createParams as { hidden?: boolean }).hidden = true;
     }
-    const conversation = await client.conversations.create(createParams);
+    const conversation = await backend.createConversation(createParams);
     conversationId = conversation.id;
   } else if (isSubagent) {
     // Freshly created subagents have no concurrency risk — use the default
@@ -1354,7 +1380,7 @@ export async function handleHeadlessCommand(
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
     // Use --conv default to explicitly target the agent's
     // primary conversation.
-    const conversation = await client.conversations.create({
+    const conversation = await backend.createConversation({
       agent_id: agent.id,
       isolated_block_labels: isolatedBlockLabels,
     });
@@ -1393,12 +1419,24 @@ export async function handleHeadlessCommand(
 
   let availableTools =
     agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
+  // Cache the agent from the initial fetch to avoid redundant agents.retrieve
+  // calls on every while-loop iteration.
+  let cachedAgent: AgentState | null = null;
+  // Capture the resolved model (conversation override → agent fallback) so
+  // subsequent while-loop iterations can prepare the correct toolset without
+  // re-fetching the conversation model. This is only for local tool context;
+  // request-scoped override_model should remain reserved for provider fallback.
+  let preparedEffectiveModel: string | null | undefined;
   {
     const initialToolContext = await prepareHeadlessToolExecutionContext({
       agentId: agent.id,
       conversationId,
+      cachedAgent: agent as AgentState,
     });
     availableTools = initialToolContext.availableTools;
+    cachedAgent = initialToolContext.preparedToolContext.agent;
+    preparedEffectiveModel =
+      initialToolContext.preparedToolContext.effectiveModel;
   }
 
   // If input-format is stream-json, use bidirectional mode
@@ -1406,7 +1444,6 @@ export async function handleHeadlessCommand(
     await runBidirectionalMode(
       agent,
       conversationId,
-      client,
       outputFormat,
       includePartialMessages,
       availableTools,
@@ -1471,14 +1508,14 @@ export async function handleHeadlessCommand(
   const resolveAllPendingApprovals = async (
     mode: "queue_for_next_turn" | "send_immediately" = "send_immediately",
   ) => {
-    const { getResumeData } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("./agent/check-approval");
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
-      const freshAgent = await client.agents.retrieve(agent.id);
+      const freshAgent = await backend.retrieveAgent(agent.id);
 
-      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      let resume: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
       try {
-        resume = await getResumeData(client, freshAgent, conversationId);
+        resume = await getResumeDataFromBackend(freshAgent, conversationId);
       } catch (error) {
         // Treat 404/422 as "no approvals" - stale message/conversation state
         if (
@@ -1600,7 +1637,7 @@ export async function handleHeadlessCommand(
 
   if (fromAgentId) {
     const senderAgentId = fromAgentId;
-    const senderAgent = await client.agents.retrieve(senderAgentId);
+    const senderAgent = await backend.retrieveAgent(senderAgentId);
     const systemReminder = `${SYSTEM_REMINDER_OPEN}
 This message is from "${senderAgent.name}" (agent ID: ${senderAgentId}), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
 The sender will only see the final message you generate (not tool calls or reasoning).
@@ -1704,13 +1741,6 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
-  const refreshCurrentInputOtids = () => {
-    // Terminal stop-reason retries are NEW requests and must not reuse OTIDs.
-    currentInput = currentInput.map((item) => ({
-      ...item,
-      otid: randomUUID(),
-    }));
-  };
 
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
@@ -1733,7 +1763,7 @@ ${SYSTEM_REMINDER_CLOSE}
           session_id: sessionId,
           uuid: `error-max-turns-${randomUUID()}`,
         };
-        writeWireMessage(errorMsg);
+        await writeWireMessageAsync(errorMsg);
       } else {
         console.error(
           `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
@@ -1785,7 +1815,8 @@ ${SYSTEM_REMINDER_CLOSE}
         const turnToolContext = await prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           conversationId,
-          overrideModel: overrideModelHandle,
+          overrideModel: overrideModelHandle ?? preparedEffectiveModel,
+          cachedAgent,
         });
         availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
@@ -1847,8 +1878,7 @@ ${SYSTEM_REMINDER_CLOSE}
             .find((v): v is string => typeof v === "string");
 
           try {
-            const client = await getClient();
-            stream = (await client.conversations.messages.stream(
+            stream = (await getBackend().streamConversationMessages(
               conversationId,
               // Cast needed until SDK MessageStreamParams includes otid field
               {
@@ -1859,9 +1889,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 otid: messageOtid ?? undefined,
                 starting_after: 0,
                 batch_size: 1000,
-              } as unknown as Parameters<
-                typeof client.conversations.messages.stream
-              >[1],
+              } as unknown as ConversationMessageStreamBody,
             )) as Awaited<ReturnType<typeof sendMessageStream>>;
             conversationBusyRetries = 0;
             // Fall through to drain
@@ -2288,7 +2316,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   "Anthropic API error; falling back to Bedrock...",
                 );
               }
-              refreshCurrentInputOtids();
+              currentInput = refreshInputOtidsForNewRequest(currentInput);
               continue;
             }
           }
@@ -2322,7 +2350,7 @@ ${SYSTEM_REMINDER_CLOSE}
           await new Promise((resolve) => setTimeout(resolve, delayMs));
 
           // Post-stream retry creates a new run/request.
-          refreshCurrentInputOtids();
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
           continue;
         }
       }
@@ -2367,7 +2395,7 @@ ${SYSTEM_REMINDER_CLOSE}
               session_id: sessionId,
               uuid: `error-${lastRunId || randomUUID()}`,
             };
-            writeWireMessage(errorMsg);
+            await writeWireMessageAsync(errorMsg);
           } else {
             console.error("Failed to fetch pending approvals for resync");
           }
@@ -2399,7 +2427,7 @@ ${SYSTEM_REMINDER_CLOSE}
           let detail = detailFromRun ?? latestErrorText ?? "";
 
           if (lastRunId) {
-            const run = await client.runs.retrieve(lastRunId);
+            const run = await getBackend().retrieveRun(lastRunId);
             const metaError = run.metadata?.error as
               | {
                   error_type?: string;
@@ -2464,7 +2492,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             // Empty-response retry creates a new run/request.
-            refreshCurrentInputOtids();
+            currentInput = refreshInputOtidsForNewRequest(currentInput);
             continue;
           }
 
@@ -2499,7 +2527,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             // Post-stream retry creates a new run/request.
-            refreshCurrentInputOtids();
+            currentInput = refreshInputOtidsForNewRequest(currentInput);
             continue;
           }
         } catch (_e) {
@@ -2540,7 +2568,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             // Post-stream retry creates a new run/request.
-            refreshCurrentInputOtids();
+            currentInput = refreshInputOtidsForNewRequest(currentInput);
             continue;
           }
 
@@ -2567,7 +2595,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Fetch detailed error from run metadata if available (same as TUI mode)
       if (lastRunId && errorMessages.length === 0) {
         try {
-          const run = await client.runs.retrieve(lastRunId);
+          const run = await getBackend().retrieveRun(lastRunId);
           if (run.metadata?.error) {
             const errorData = run.metadata.error as {
               type?: string;
@@ -2604,7 +2632,7 @@ ${SYSTEM_REMINDER_CLOSE}
           session_id: sessionId,
           uuid: `error-${lastRunId || randomUUID()}`,
         };
-        writeWireMessage(errorMsg);
+        await writeWireMessageAsync(errorMsg);
       } else {
         console.error(`Error: ${errorMessage}`);
       }
@@ -2631,7 +2659,7 @@ ${SYSTEM_REMINDER_CLOSE}
         session_id: sessionId,
         uuid: `error-${lastKnownRunId || randomUUID()}`,
       };
-      writeWireMessage(errorMsg);
+      await writeWireMessageAsync(errorMsg);
     } else {
       console.error(`Error: ${errorDetails}`);
     }
@@ -2705,7 +2733,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversation_id: conversationId,
       usage,
     };
-    console.log(JSON.stringify(output, null, 2));
+    await writeFinalHeadlessStdout(`${JSON.stringify(output, null, 2)}\n`);
   } else if (outputFormat === "stream-json") {
     // Output final result event
     // Collect all run_ids from buffers
@@ -2737,14 +2765,14 @@ ${SYSTEM_REMINDER_CLOSE}
       usage,
       uuid: resultUuid,
     };
-    writeWireMessage(resultEvent);
+    await writeWireMessageAsync(resultEvent);
   } else {
     // text format (default)
     if (!resultText || resultText === "No assistant response found") {
       console.error("No assistant response found");
       await exitHeadless(1, "headless_missing_result_text");
     }
-    console.log(resultText);
+    await writeFinalHeadlessStdout(`${resultText}\n`);
   }
 
   // Report all milestones at the end for latency audit
@@ -2761,7 +2789,6 @@ ${SYSTEM_REMINDER_CLOSE}
 async function runBidirectionalMode(
   agent: AgentState,
   conversationId: string,
-  client: Letta,
   _outputFormat: string,
   includePartialMessages: boolean,
   availableTools: string[],
@@ -2770,6 +2797,7 @@ async function runBidirectionalMode(
   reflectionSettings: ReflectionSettings,
 ): Promise<void> {
   const sessionId = agent.id;
+  const backend = getBackend();
   const telemetryModelId = agent.llm_config?.model ?? "unknown";
   const readline = await import("node:readline");
   const exitBidirectional = async (
@@ -2811,14 +2839,14 @@ async function runBidirectionalMode(
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
-    const { getResumeData } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("./agent/check-approval");
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
-      const freshAgent = await client.agents.retrieve(agent.id);
+      const freshAgent = await backend.retrieveAgent(agent.id);
 
-      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      let resume: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
       try {
-        resume = await getResumeData(client, freshAgent, conversationId);
+        resume = await getResumeDataFromBackend(freshAgent, conversationId);
       } catch (error) {
         // Treat 404/422 as "no approvals" - stale message/conversation state
         if (
@@ -3190,19 +3218,23 @@ async function runBidirectionalMode(
       );
     }
 
-    const { getResumeData } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("./agent/check-approval");
 
     let approvalsProcessed = 0;
     const MAX_RECOVERY_PASSES = 8;
 
     for (let pass = 0; pass < MAX_RECOVERY_PASSES; pass += 1) {
-      const freshAgent = await client.agents.retrieve(agent.id);
+      const freshAgent = await backend.retrieveAgent(agent.id);
 
-      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      let resume: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
       try {
-        resume = await getResumeData(client, freshAgent, targetConversationId, {
-          includeMessageHistory: false,
-        });
+        resume = await getResumeDataFromBackend(
+          freshAgent,
+          targetConversationId,
+          {
+            includeMessageHistory: false,
+          },
+        );
       } catch (error) {
         if (
           error instanceof APIError &&
@@ -3413,14 +3445,15 @@ async function runBidirectionalMode(
         writeWireMessage(registerResponse);
       } else if (subtype === "bootstrap_session_state") {
         const bootstrapReq = message.request as BootstrapSessionStateRequest;
-        const { getResumeData } = await import("./agent/check-approval");
+        const { getResumeDataFromBackend } = await import(
+          "./agent/check-approval"
+        );
         let hasPendingApproval = false;
 
         try {
           // Re-fetch for parity with approval checks elsewhere in headless mode.
-          const freshAgent = await client.agents.retrieve(agent.id);
-          const resume = await getResumeData(
-            client,
+          const freshAgent = await backend.retrieveAgent(agent.id);
+          const resume = await getResumeDataFromBackend(
             freshAgent,
             conversationId,
             {
@@ -3451,7 +3484,7 @@ async function runBidirectionalMode(
             sessionId,
           },
           requestId: requestId ?? "",
-          client,
+          backend,
           hasPendingApproval,
         });
         writeWireMessage(bootstrapResp);
@@ -3463,7 +3496,7 @@ async function runBidirectionalMode(
           sessionAgentId: agent.id,
           sessionId,
           requestId: requestId ?? "",
-          client,
+          backend,
         });
         writeWireMessage(listResp);
       } else if (subtype === "recover_pending_approvals") {

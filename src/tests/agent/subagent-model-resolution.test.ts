@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
 import type { SubagentConfig } from "../../agent/subagents";
 import {
+  estimateStartupContextTokens,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "../../agent/subagents/contextBudget";
+import {
   buildSubagentArgs,
   resolveSubagentLauncher,
   resolveSubagentModel,
@@ -233,27 +237,82 @@ describe("buildSubagentArgs", () => {
     expect(args).toContain("--permission-mode");
     expect(args).toContain("memory");
   });
+
+  test("caps reflection system prompt plus initial message to startup budget", () => {
+    const systemPrompt = "system ".repeat(1_000);
+    const memoryPreview = `<parent_memory>\n<memory_filesystem>\n/memory/\n└── system/\n</memory_filesystem>\n${"memory ".repeat(40_000)}\n</parent_memory>`;
+    const userPrompt = `Review transcript at /tmp/payload.json\n\n${memoryPreview}`;
+
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection", systemPrompt },
+      null,
+      userPrompt,
+    );
+    const promptArg = args[args.indexOf("-p") + 1] ?? "";
+
+    expect(
+      estimateStartupContextTokens(`${systemPrompt}\n${promptArg}`),
+    ).toBeLessThanOrEqual(REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT);
+    expect(promptArg).toContain("Review transcript at /tmp/payload.json");
+    expect(promptArg).toContain("<parent_memory>");
+    expect(promptArg).toContain("<memory_filesystem>");
+    expect(promptArg).toContain("Reflection startup context truncated");
+    expect(promptArg.length).toBeLessThan(userPrompt.length);
+  });
+
+  test("does not cap non-reflection initial messages", () => {
+    const longPrompt = "prompt ".repeat(40_000);
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      longPrompt,
+    );
+    const promptArg = args[args.indexOf("-p") + 1] ?? "";
+
+    expect(promptArg).toBe(longPrompt);
+  });
+
+  test("injects --no-system-info-reminder and --no-skills for reflection subagents", () => {
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection" },
+      null,
+      "hello",
+    );
+
+    expect(args).toContain("--no-system-info-reminder");
+    expect(args).toContain("--no-skills");
+  });
+
+  test("does not inject reflection-only flags for other subagent types", () => {
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      "hello",
+    );
+
+    expect(args).not.toContain("--no-system-info-reminder");
+    expect(args).not.toContain("--no-skills");
+  });
+
+  test("does not inject reflection-only flags when deploying an existing reflection agent", () => {
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection" },
+      null,
+      "hello",
+      "agent-existing-reflection",
+    );
+
+    expect(args).not.toContain("--no-system-info-reminder");
+    expect(args).not.toContain("--no-skills");
+  });
 });
 
 describe("resolveSubagentModel", () => {
-  async function withAutoMemory<T>(
-    value: string,
-    fn: () => Promise<T>,
-  ): Promise<T> {
-    const original = process.env.AUTO_MEMORY;
-    process.env.AUTO_MEMORY = value;
-
-    try {
-      return await fn();
-    } finally {
-      if (original === undefined) {
-        delete process.env.AUTO_MEMORY;
-      } else {
-        process.env.AUTO_MEMORY = original;
-      }
-    }
-  }
-
   test("prefers BYOK-swapped handle when available", async () => {
     const cases = [
       { parentProvider: "lc-anthropic", baseProvider: "anthropic" },
@@ -398,52 +457,65 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("openai/gpt-5");
   });
 
-  test("uses letta/auto-memory for reflection subagents when AUTO_MEMORY=1", async () => {
-    const result = await withAutoMemory("1", () =>
-      resolveSubagentModel({
-        subagentType: "reflection",
-        recommendedModel: "anthropic/test-model",
-        parentModelHandle: "lc-anthropic/parent-model",
-        availableHandles: new Set(),
-      }),
-    );
+  test("uses letta/auto-memory for reflection subagents by default", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "inherit",
+      parentModelHandle: "lc-anthropic/parent-model",
+      availableHandles: new Set(),
+    });
 
     expect(result).toBe("letta/auto-memory");
   });
 
-  test("accepts AUTO_MEMORY=true for reflection subagents", async () => {
-    const result = await withAutoMemory("true", () =>
-      resolveSubagentModel({
-        subagentType: "reflection",
-        recommendedModel: "anthropic/test-model",
-        availableHandles: new Set(["anthropic/test-model"]),
-      }),
-    );
+  test("uses letta/auto-memory for reflection subagents with no recommended model", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      parentModelHandle: "lc-anthropic/parent-model",
+      availableHandles: new Set(),
+    });
 
     expect(result).toBe("letta/auto-memory");
   });
 
-  test("does not override an explicit user model when AUTO_MEMORY is enabled", async () => {
-    const result = await withAutoMemory("1", () =>
-      resolveSubagentModel({
-        subagentType: "reflection",
-        userModel: "openai/gpt-5",
-        recommendedModel: "anthropic/test-model",
-        availableHandles: new Set(["openai/gpt-5", "letta/auto-memory"]),
-      }),
-    );
+  test("honors reflection subagent model overrides", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "anthropic/test-model",
+      parentModelHandle: "lc-anthropic/parent-model",
+      availableHandles: new Set(),
+    });
+
+    expect(result).toBe("anthropic/test-model");
+  });
+
+  test("resolves reflection subagent model aliases before honoring overrides", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "auto",
+      availableHandles: new Set(["letta/auto"]),
+    });
+
+    expect(result).toBe("letta/auto");
+  });
+
+  test("does not override an explicit user model for reflection subagents", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      userModel: "openai/gpt-5",
+      recommendedModel: "anthropic/test-model",
+      availableHandles: new Set(["openai/gpt-5", "letta/auto-memory"]),
+    });
 
     expect(result).toBe("openai/gpt-5");
   });
 
   test("does not affect non-reflection subagents", async () => {
-    const result = await withAutoMemory("1", () =>
-      resolveSubagentModel({
-        subagentType: "general-purpose",
-        recommendedModel: "anthropic/test-model",
-        availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
-      }),
-    );
+    const result = await resolveSubagentModel({
+      subagentType: "general-purpose",
+      recommendedModel: "anthropic/test-model",
+      availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
+    });
 
     expect(result).toBe("anthropic/test-model");
   });

@@ -252,6 +252,15 @@ export const commands: Record<string, Command> = {
       return "Opening toolset selector...";
     },
   },
+  "/experiments": {
+    desc: "Toggle experiments",
+    order: 27.1,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open experiments selector
+      return "Opening experiments selector...";
+    },
+  },
   "/ade": {
     desc: "Open agent in ADE (browser)",
     order: 28,

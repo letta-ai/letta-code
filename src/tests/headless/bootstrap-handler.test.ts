@@ -1,20 +1,20 @@
 /**
- * Handler-level tests for bootstrap_session_state using mock Letta clients.
+ * Handler-level tests for bootstrap_session_state using mock backends.
  *
  * Verifies:
- * 1. Correct routing (all paths use conversations.messages.list)
+ * 1. Correct routing (all paths use backend.listConversationMessages)
  * 2. Response payload shape (agent_id, conversation_id, model, tools, messages, etc.)
  * 3. Pagination fields (next_before, has_more)
  * 4. Timing fields presence
- * 5. Error path — client throws → error envelope returned
+ * 5. Error path — backend throws → error envelope returned
  * 6. Default conversation passes conversation_id="default" with agent_id query
- * 7. Explicit conversation uses conversations.messages.list
+ * 7. Explicit conversation uses backend.listConversationMessages
  *
  * No network. No CLI subprocess. No process.stdout.
  */
 import { describe, expect, mock, test } from "bun:test";
 import type {
-  BootstrapHandlerClient,
+  BootstrapHandlerBackend,
   BootstrapHandlerSessionContext,
 } from "../../agent/bootstrapHandler";
 import { handleBootstrapSessionState } from "../../agent/bootstrapHandler";
@@ -23,23 +23,20 @@ import { handleBootstrapSessionState } from "../../agent/bootstrapHandler";
 // Mock factory
 // ─────────────────────────────────────────────────────────────────────────────
 
-function makeClient(convMessages: unknown[] = []): {
-  client: BootstrapHandlerClient;
+function makeBackend(convMessages: unknown[] = []): {
+  backend: BootstrapHandlerBackend;
   convListSpy: ReturnType<typeof mock>;
 } {
   const convListSpy = mock(async () => ({
     getPaginatedItems: () => convMessages,
   }));
 
-  const client: BootstrapHandlerClient = {
-    conversations: {
-      messages: {
-        list: convListSpy as unknown as BootstrapHandlerClient["conversations"]["messages"]["list"],
-      },
-    },
+  const backend: BootstrapHandlerBackend = {
+    listConversationMessages:
+      convListSpy as unknown as BootstrapHandlerBackend["listConversationMessages"],
   };
 
-  return { client, convListSpy };
+  return { backend, convListSpy };
 }
 
 const BASE_CTX: BootstrapHandlerSessionContext = {
@@ -56,8 +53,8 @@ const BASE_CTX: BootstrapHandlerSessionContext = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("bootstrap_session_state routing", () => {
-  test("default conversation passes default + agent_id to conversations.messages.list", async () => {
-    const { client, convListSpy } = makeClient([
+  test("default conversation passes default + agent_id to backend.listConversationMessages", async () => {
+    const { backend, convListSpy } = makeBackend([
       { id: "msg-1", type: "user_message" },
     ]);
 
@@ -65,7 +62,7 @@ describe("bootstrap_session_state routing", () => {
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: { ...BASE_CTX, conversationId: "default" },
       requestId: "req-1",
-      client,
+      backend,
     });
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
@@ -77,8 +74,8 @@ describe("bootstrap_session_state routing", () => {
     );
   });
 
-  test("named conversation uses conversations.messages.list", async () => {
-    const { client, convListSpy } = makeClient([
+  test("named conversation uses backend.listConversationMessages", async () => {
+    const { backend, convListSpy } = makeBackend([
       { id: "msg-1", type: "user_message" },
     ]);
 
@@ -86,7 +83,7 @@ describe("bootstrap_session_state routing", () => {
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: { ...BASE_CTX, conversationId: "conv-abc-123" },
       requestId: "req-2",
-      client,
+      backend,
     });
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
@@ -107,13 +104,13 @@ describe("bootstrap_session_state response shape", () => {
       { id: "msg-2", type: "user_message" },
       { id: "msg-1", type: "user_message" },
     ];
-    const { client } = makeClient(messages);
+    const { backend } = makeBackend(messages);
 
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: BASE_CTX,
       requestId: "req-3",
-      client,
+      backend,
     });
 
     expect(resp.type).toBe("control_response");
@@ -136,12 +133,12 @@ describe("bootstrap_session_state response shape", () => {
   });
 
   test("has_pending_approval defaults to false", async () => {
-    const { client } = makeClient();
+    const { backend } = makeBackend();
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: BASE_CTX,
       requestId: "req-4",
-      client,
+      backend,
     });
     const payload = (resp.response as { response: Record<string, unknown> })
       .response;
@@ -149,12 +146,12 @@ describe("bootstrap_session_state response shape", () => {
   });
 
   test("has_pending_approval reflects caller-provided value", async () => {
-    const { client } = makeClient();
+    const { backend } = makeBackend();
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: BASE_CTX,
       requestId: "req-5",
-      client,
+      backend,
       hasPendingApproval: true,
     });
     const payload = (resp.response as { response: Record<string, unknown> })
@@ -163,12 +160,12 @@ describe("bootstrap_session_state response shape", () => {
   });
 
   test("timings are present and numeric", async () => {
-    const { client } = makeClient();
+    const { backend } = makeBackend();
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: BASE_CTX,
       requestId: "req-6",
-      client,
+      backend,
     });
     const payload = (resp.response as { response: Record<string, unknown> })
       .response;
@@ -194,13 +191,13 @@ describe("bootstrap_session_state pagination", () => {
       id: `msg-${i}`,
       type: "user_message",
     }));
-    const { client } = makeClient(messages);
+    const { backend } = makeBackend(messages);
 
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state", limit: 50 },
       sessionContext: BASE_CTX,
       requestId: "req-7",
-      client,
+      backend,
     });
     const payload = (resp.response as { response: Record<string, unknown> })
       .response;
@@ -212,13 +209,13 @@ describe("bootstrap_session_state pagination", () => {
     const messages = Array.from({ length: limit }, (_, i) => ({
       id: `msg-${i}`,
     }));
-    const { client } = makeClient(messages);
+    const { backend } = makeBackend(messages);
 
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state", limit },
       sessionContext: BASE_CTX,
       requestId: "req-8",
-      client,
+      backend,
     });
     const payload = (resp.response as { response: Record<string, unknown> })
       .response;
@@ -231,13 +228,13 @@ describe("bootstrap_session_state pagination", () => {
       { id: "msg-middle" },
       { id: "msg-oldest" },
     ];
-    const { client } = makeClient(messages);
+    const { backend } = makeBackend(messages);
 
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: BASE_CTX,
       requestId: "req-9",
-      client,
+      backend,
     });
     const payload = (resp.response as { response: Record<string, unknown> })
       .response;
@@ -246,12 +243,12 @@ describe("bootstrap_session_state pagination", () => {
   });
 
   test("next_before is null when no messages", async () => {
-    const { client } = makeClient([]);
+    const { backend } = makeBackend([]);
     const resp = await handleBootstrapSessionState({
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: BASE_CTX,
       requestId: "req-10",
-      client,
+      backend,
     });
     const payload = (resp.response as { response: Record<string, unknown> })
       .response;
@@ -264,14 +261,10 @@ describe("bootstrap_session_state pagination", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("bootstrap_session_state error handling", () => {
-  test("client error returns error envelope", async () => {
-    const throwingClient: BootstrapHandlerClient = {
-      conversations: {
-        messages: {
-          list: async () => {
-            throw new Error("Network timeout");
-          },
-        },
+  test("backend error returns error envelope", async () => {
+    const throwingBackend: BootstrapHandlerBackend = {
+      listConversationMessages: async () => {
+        throw new Error("Network timeout");
       },
     };
 
@@ -279,7 +272,7 @@ describe("bootstrap_session_state error handling", () => {
       bootstrapReq: { subtype: "bootstrap_session_state" },
       sessionContext: BASE_CTX,
       requestId: "req-err",
-      client: throwingClient,
+      backend: throwingBackend,
     });
 
     expect(resp.type).toBe("control_response");

@@ -40,6 +40,7 @@ describe("built-in subagents", () => {
     const configs = await getAllSubagentConfigs();
     expect(configs.reflection).toBeDefined();
     expect(configs.reflection?.name).toBe("reflection");
+    expect(configs.reflection?.recommendedModel).toBe("inherit");
   });
 
   test("memory-related built-ins use memory permission mode", async () => {

@@ -8,6 +8,11 @@ import type {
   Message,
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import {
+  type AgentMessageListBody,
+  type ConversationMessageListBody,
+  getBackend,
+} from "../backend";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
 
@@ -271,7 +276,6 @@ function sortChronological(messages: Message[]): Message[] {
 }
 
 async function fetchConversationBackfillMessages(
-  client: Letta,
   conversationId: string,
 ): Promise<Message[]> {
   const collected: Message[] = [];
@@ -285,12 +289,12 @@ async function fetchConversationBackfillMessages(
   let anchorCount = 0;
 
   for (let pageIndex = 0; pageIndex < BACKFILL_MAX_PAGES; pageIndex += 1) {
-    const page = await client.conversations.messages.list(conversationId, {
+    const page = await getBackend().listConversationMessages(conversationId, {
       limit: BACKFILL_PAGE_LIMIT,
       order: "desc",
       include_return_message_types: RESUME_BACKFILL_MESSAGE_TYPES,
       ...(cursorBefore ? { before: cursorBefore } : {}),
-    } as unknown as Parameters<typeof client.conversations.messages.list>[1]);
+    } as unknown as ConversationMessageListBody);
     const items = page.getPaginatedItems();
     if (items.length === 0) break;
 
@@ -344,13 +348,11 @@ async function fetchConversationBackfillMessages(
  * The source of truth for pending approvals is `conversation.in_context_message_ids`.
  * We anchor our message fetch to that, not arbitrary recent cursor messages.
  *
- * @param client - The Letta client
  * @param agent - The agent state
  * @param conversationId - Optional conversation ID (uses conversations API)
  * @returns Pending approval (if any) and recent message history
  */
-export async function getResumeData(
-  client: Letta,
+export async function getResumeDataFromBackend(
   agent: AgentState,
   conversationId?: string,
   options: GetResumeDataOptions = {},
@@ -369,7 +371,8 @@ export async function getResumeData(
 
     if (useConversationsApi) {
       // Get conversation to access in_context_message_ids (source of truth)
-      const conversation = await client.conversations.retrieve(conversationId);
+      const conversation =
+        await getBackend().retrieveConversation(conversationId);
       inContextMessageIds = conversation.in_context_message_ids;
 
       if (!inContextMessageIds || inContextMessageIds.length === 0) {
@@ -379,10 +382,8 @@ export async function getResumeData(
         );
         if (includeMessageHistory && isBackfillEnabled()) {
           try {
-            const backfill = await fetchConversationBackfillMessages(
-              client,
-              conversationId,
-            );
+            const backfill =
+              await fetchConversationBackfillMessages(conversationId);
             return {
               pendingApproval: null,
               pendingApprovals: [],
@@ -410,16 +411,14 @@ export async function getResumeData(
       if (!lastInContextId) {
         throw new Error("Expected at least one in-context message");
       }
-      const retrievedMessages = await client.messages.retrieve(lastInContextId);
+      const retrievedMessages =
+        await getBackend().retrieveMessage(lastInContextId);
 
       // Fetch message history separately for backfill (desc then reverse for last N chronological)
       // Wrapped in try/catch so backfill failures don't crash the CLI
       if (includeMessageHistory && isBackfillEnabled()) {
         try {
-          messages = await fetchConversationBackfillMessages(
-            client,
-            conversationId,
-          );
+          messages = await fetchConversationBackfillMessages(conversationId);
         } catch (backfillError) {
           debugWarn(
             "check-approval",
@@ -480,12 +479,12 @@ export async function getResumeData(
             ? BACKFILL_PAGE_LIMIT
             : 1;
         try {
-          const messagesPage = await client.agents.messages.list(agent.id, {
+          const messagesPage = await getBackend().listAgentMessages(agent.id, {
             conversation_id: "default",
             limit: listLimit,
             order: "desc",
             include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
-          } as unknown as Parameters<typeof client.agents.messages.list>[1]);
+          } as unknown as AgentMessageListBody);
           defaultConversationMessages = sortChronological(
             messagesPage.getPaginatedItems(),
           );
@@ -510,7 +509,7 @@ export async function getResumeData(
 
       if (lastInContextId) {
         const retrievedMessages =
-          await client.messages.retrieve(lastInContextId);
+          await getBackend().retrieveMessage(lastInContextId);
         const messageToCheck =
           retrievedMessages.find(
             (msg) => msg.message_type === "approval_request_message",
@@ -627,4 +626,16 @@ export async function getResumeData(
     console.error("Error getting resume data:", error);
     return { pendingApproval: null, pendingApprovals: [], messageHistory: [] };
   }
+}
+
+/**
+ * @deprecated Pass through for older call sites. Resume data is loaded through getBackend().
+ */
+export async function getResumeData(
+  _client: Letta,
+  agent: AgentState,
+  conversationId?: string,
+  options: GetResumeDataOptions = {},
+): Promise<ResumeData> {
+  return getResumeDataFromBackend(agent, conversationId, options);
 }

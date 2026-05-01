@@ -1,7 +1,7 @@
 // src/cli/commands/profile.ts
 // Profile command handlers for managing local agent profiles
 
-import { getClient } from "../../agent/client";
+import { getClient } from "../../backend/api/client";
 import { settingsManager } from "../../settings-manager";
 import type { Buffers, Line } from "../helpers/accumulator";
 import { formatErrorDetails } from "../helpers/errorFormatter";
@@ -343,7 +343,7 @@ export async function handlePin(
   // If user provided a name, rename the agent first
   if (name && name !== ctx.agentName) {
     try {
-      const { getClient } = await import("../../agent/client");
+      const { getClient } = await import("../../backend/api/client");
       const client = await getClient();
       await client.agents.update(ctx.agentId, { name });
       ctx.updateAgentName(name);

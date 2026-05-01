@@ -12,7 +12,6 @@
  * On stop: clears interval, releases lease.
  */
 
-import type WebSocket from "ws";
 import type { CronPromptQueueItem, DequeuedBatch } from "../queue/queueRuntime";
 import { ensureConversationQueueRuntime } from "../websocket/listener/client";
 import { scheduleQueuePump } from "../websocket/listener/queue";
@@ -20,6 +19,7 @@ import {
   getActiveRuntime,
   getOrCreateConversationRuntime,
 } from "../websocket/listener/runtime";
+import type { ListenerTransport } from "../websocket/listener/transport";
 import type {
   IncomingMessage,
   StartListenerOptions,
@@ -114,7 +114,7 @@ function shouldFireTask(task: CronTask, now: Date): boolean {
 function fireCronTask(
   task: CronTask,
   now: Date,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
@@ -185,7 +185,7 @@ function handleMissedOneShot(task: CronTask, now: Date): boolean {
 
 function tick(
   state: SchedulerState,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
@@ -258,7 +258,7 @@ function tick(
  * No-ops if already running.
  */
 export function startScheduler(
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
@@ -268,8 +268,13 @@ export function startScheduler(
   try {
     token = claimSchedulerLease();
   } catch (err) {
-    // Another process holds the lease — that's OK, don't start scheduler here
-    console.error("[Cron] Could not claim scheduler lease:", err);
+    // Another process holds the lease — that's the expected outcome when
+    // multiple letta-code instances run against the same dir. Log at debug
+    // level so we don't spam the user's terminal on every reconnect; set
+    // LETTA_DISABLE_CRON_SCHEDULER=1 in the env to skip the claim entirely.
+    if (process.env.LETTA_DEBUG === "1") {
+      console.debug("[Cron] Could not claim scheduler lease:", err);
+    }
     return;
   }
 

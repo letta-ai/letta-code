@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { getClient } from "../../agent/client";
+import { getClient } from "../../backend/api/client";
 import { settingsManager } from "../../settings-manager";
 
 type SearchMode = "vector" | "fts" | "hybrid";

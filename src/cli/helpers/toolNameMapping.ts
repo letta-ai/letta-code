@@ -81,7 +81,9 @@ export function getDisplayToolName(rawName: string): string {
  * Checks if a tool name represents a Task/subagent tool
  */
 export function isTaskTool(name: string): boolean {
-  return name === "Task" || name === "task";
+  return (
+    name === "Task" || name === "task" || name === "Agent" || name === "agent"
+  );
 }
 
 /**

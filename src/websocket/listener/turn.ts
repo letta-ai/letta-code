@@ -4,11 +4,9 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
 import { getResumeData } from "../../agent/check-approval";
-import { getClient } from "../../agent/client";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -24,7 +22,9 @@ import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
 } from "../../agent/turn-recovery-policy";
+import { getClient } from "../../backend/api/client";
 import { createBuffers, toLines } from "../../cli/helpers/accumulator";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import {
@@ -104,6 +104,7 @@ import {
   sendMessageStreamWithRetry,
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import type {
   ConversationRuntime,
@@ -165,7 +166,7 @@ function escapeTaskNotificationSummary(summary: string): string {
 
 function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
-  socket: WebSocket;
+  socket: ListenerTransport;
   agentId: string;
   conversationId: string;
   workingDirectory: string;
@@ -311,7 +312,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
 }
 
 function finalizeInterruptedTurn(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     runId?: string | null;
@@ -347,7 +348,7 @@ function finalizeInterruptedTurn(
 
 export async function handleIncomingMessage(
   msg: IncomingMessage,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
@@ -423,9 +424,15 @@ export async function handleIncomingMessage(
       return;
     }
 
-    // Ensure memfs repo is cloned/pulled for this agent (lazy, once per session).
-    const { ensureMemfsSyncedForAgent } = await import("./memfs-sync");
-    await ensureMemfsSyncedForAgent(runtime.listener, agentId);
+    // Ensure local per-agent state is ready before reminders and tool execution.
+    const [{ ensureMemfsSyncedForAgent }, { ensureSecretsHydratedForAgent }] =
+      await Promise.all([import("./memfs-sync"), import("./secrets-sync")]);
+    await Promise.all([
+      // Memfs is lazy and memoized once per session.
+      ensureMemfsSyncedForAgent(runtime.listener, agentId),
+      // Secrets refresh every turn so desktop GUI updates are picked up.
+      ensureSecretsHydratedForAgent(runtime.listener, agentId),
+    ]);
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
@@ -442,7 +449,14 @@ export async function handleIncomingMessage(
     }
 
     const { normalizeInboundMessages } = await import("./queue");
-    const normalizedMessages = await normalizeInboundMessages(msg.messages);
+    const normalizedMessages = await normalizeInboundMessages(
+      msg.messages,
+      undefined,
+      {
+        imageFailureMode:
+          (msg.channelTurnSources?.length ?? 0) > 0 ? "drop" : "strict",
+      },
+    );
     trackListenerUserInput(normalizedMessages, "unknown");
     const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
     let turnToolContextId: string | null = null;
@@ -569,6 +583,7 @@ export async function handleIncomingMessage(
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
+      clientToolAllowlist: msg.clientToolAllowlist,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
     });
@@ -889,6 +904,7 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
 
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,
@@ -963,6 +979,7 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
 
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,

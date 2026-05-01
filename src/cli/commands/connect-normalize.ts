@@ -11,6 +11,8 @@ export type ConnectProviderCanonical =
   | "zai"
   | "zai-coding"
   | "minimax"
+  | "moonshot"
+  | "kimi-code"
   | "gemini"
   | "openrouter"
   | "bedrock";
@@ -23,6 +25,8 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   zai: "zai",
   "zai-coding": "zai-coding",
   minimax: "minimax",
+  moonshot: "moonshot",
+  "kimi-code": "kimi-code",
   gemini: "gemini",
   openrouter: "openrouter",
   bedrock: "bedrock",
@@ -35,6 +39,8 @@ const CANONICAL_ORDER: ConnectProviderCanonical[] = [
   "zai",
   "zai-coding",
   "minimax",
+  "moonshot",
+  "kimi-code",
   "gemini",
   "openrouter",
   "bedrock",

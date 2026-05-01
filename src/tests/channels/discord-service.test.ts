@@ -150,6 +150,7 @@ describe("discord channel service", () => {
     const snapshot = await setChannelConfigLive("discord", {
       token: "new-token",
       dmPolicy: "allowlist",
+      allowedChannels: ["channel-1"],
     });
 
     expect(snapshot).not.toBeNull();
@@ -157,6 +158,33 @@ describe("discord channel service", () => {
     if (snapshot.channelId !== "discord") throw new Error("wrong channel");
     expect(snapshot.hasToken).toBe(true);
     expect(snapshot.dmPolicy).toBe("allowlist");
+    expect(snapshot.allowedChannels).toEqual(["channel-1"]);
+  });
+
+  test("discord account snapshots round-trip allowed channel allowlist", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        allowedChannels: ["channel-1", "channel-2"],
+      },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.allowedChannels).toEqual(["channel-1", "channel-2"]);
+
+    const updated = updateChannelAccountLive("discord", "discord-bot", {
+      allowedChannels: ["channel-3"],
+    });
+
+    if (updated.channelId !== "discord") throw new Error("wrong channel");
+    expect(updated.allowedChannels).toEqual(["channel-3"]);
+
+    const config = getChannelConfigSnapshot("discord", "discord-bot");
+    if (!config || config.channelId !== "discord")
+      throw new Error("wrong channel");
+    expect(config.allowedChannels).toEqual(["channel-3"]);
   });
 
   test("default dmPolicy is 'pairing' when not specified", () => {

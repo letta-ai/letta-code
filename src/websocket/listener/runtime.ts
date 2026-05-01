@@ -166,6 +166,8 @@ export function createConversationRuntime(
     lastStopReason: null,
     isProcessing: false,
     activeWorkingDirectory: null,
+    expectedWorktreePath: null,
+    expectedWorktreeExpiresAt: null,
     activeRunId: null,
     activeRunStartedAt: null,
     activeAbortController: null,

@@ -19,13 +19,14 @@ import type {
 // ── Paths ─────────────────────────────────────────────────────────
 
 const CHANNELS_ROOT = join(homedir(), ".letta", "channels");
+let channelsRootOverride: string | null = null;
 
 export function getChannelsRoot(): string {
-  return CHANNELS_ROOT;
+  return channelsRootOverride ?? CHANNELS_ROOT;
 }
 
 export function getChannelDir(channelId: string): string {
-  return join(CHANNELS_ROOT, channelId);
+  return join(getChannelsRoot(), channelId);
 }
 
 export function getChannelConfigPath(channelId: string): string {
@@ -50,6 +51,10 @@ export function getChannelTargetsPath(channelId: string): string {
 
 export function getPendingChannelControlRequestsPath(): string {
   return join(getChannelsRoot(), "pending-control-requests.json");
+}
+
+export function __testOverrideChannelsRoot(root: string | null): void {
+  channelsRootOverride = root;
 }
 
 // ── YAML helpers ──────────────────────────────────────────────────
@@ -158,12 +163,16 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
 
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
   parse(parsed) {
+    const rawAllowedChannels = parsed.allowed_channels;
     return {
       channel: "discord",
       enabled: parsed.enabled !== false,
       token: String(parsed.token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      allowedChannels: Array.isArray(rawAllowedChannels)
+        ? (rawAllowedChannels as string[])
+        : undefined,
     };
   },
 };

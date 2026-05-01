@@ -165,6 +165,9 @@ const resolveSlackChannelHistoryMock = mock(
 );
 
 mock.module("../../channels/slack/runtime", () => ({
+  ensureSlackRuntimeInstalled: async () => false,
+  installSlackRuntime: async () => {},
+  isSlackRuntimeInstalled: () => true,
   loadSlackBoltModule: async () => ({
     App: FakeSlackApp,
     default: {

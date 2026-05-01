@@ -14,6 +14,8 @@ const IMAGE_EXTENSIONS = new Set([
   ".gif",
   ".webp",
   ".bmp",
+  ".heic",
+  ".heif",
 ]);
 
 function isImageFile(filePath: string): boolean {

@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { getClient } from "../../agent/client";
+import { getClient } from "../../backend/api/client";
 import { settingsManager } from "../../settings-manager";
 
 function printUsage(): void {

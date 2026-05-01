@@ -9,13 +9,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { getClient } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
 import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
 import {
   assertMemoryRepoReadyForWrite,
   commitAndSyncMemoryWrite,
 } from "../../agent/memoryGit";
+import { getClient } from "../../backend/api/client";
 import { validateRequiredParams } from "./validation";
 
 type MemoryCommand =
@@ -105,7 +105,8 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   const memoryDir = resolveMemoryDir();
   ensureMemoryRepo(memoryDir);
 
-  await assertMemoryRepoReadyForWrite(memoryDir);
+  const { agentId, agentName } = await getAgentIdentity();
+  await assertMemoryRepoReadyForWrite(memoryDir, agentId);
 
   const affectedPaths = await applyMemoryCommand(memoryDir, args);
   if (affectedPaths.length === 0) {
@@ -114,7 +115,6 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     };
   }
 
-  const { agentId, agentName } = await getAgentIdentity();
   const commitResult = await commitAndSyncMemoryWrite({
     memoryDir,
     pathspecs: affectedPaths,

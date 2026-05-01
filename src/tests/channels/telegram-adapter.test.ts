@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { __testOverrideChannelsRoot } from "../../channels/config";
 import type { InboundChannelMessage } from "../../channels/types";
 
 type FakeBotStartOptions = {
@@ -107,11 +108,10 @@ class FakeBot {
   }
 }
 
-mock.module("../../channels/config", () => ({
-  getChannelDir: (channelId: string) => join(channelRoot, channelId),
-}));
-
 mock.module("../../channels/telegram/runtime", () => ({
+  ensureTelegramRuntimeInstalled: async () => false,
+  installTelegramRuntime: async () => {},
+  isTelegramRuntimeInstalled: () => true,
   loadGrammyModule: async () => ({
     Bot: FakeBot,
     InputFile: FakeInputFile,
@@ -140,6 +140,7 @@ const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
   channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
+  __testOverrideChannelsRoot(channelRoot);
   FakeBot.instances.length = 0;
   FakeBot.nextStartImpl = async (options, botInfo) => {
     await options?.onStart?.(
@@ -159,6 +160,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __testOverrideChannelsRoot(null);
   console.error = originalConsoleError;
   globalThis.fetch = originalFetch;
   if (originalOpenAiApiKey === undefined) {

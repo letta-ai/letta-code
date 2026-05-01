@@ -1,4 +1,6 @@
 import type WebSocket from "ws";
+import { isValidChannelPluginConfigPayload } from "../../channels/accountConfig";
+import { isSupportedChannelId } from "../../channels/pluginRegistry";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
@@ -33,6 +35,7 @@ import type {
   EnableMemfsCommand,
   ExecuteCommandCommand,
   FileOpsCommand,
+  GetExperimentsCommand,
   GetReflectionSettingsCommand,
   GetTreeCommand,
   GrepInFilesCommand,
@@ -44,9 +47,13 @@ import type {
   MemoryFileAtRefCommand,
   MemoryHistoryCommand,
   ReadFileCommand,
+  ReadMemoryFileCommand,
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
+  SecretApplyCommand,
+  SecretListCommand,
+  SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
@@ -60,10 +67,17 @@ import type {
   UpdateToolsetCommand,
   WatchFileCommand,
   WriteFileCommand,
+  WriteMemoryFileCommand,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
+
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
+}
 
 function isRuntimeScope(value: unknown): value is RuntimeScope {
   if (!value || typeof value !== "object") {
@@ -97,12 +111,17 @@ function isInputCommand(value: unknown): value is InputCommand {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    client_tool_allowlist?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
   };
   if (payload.kind === "create_message") {
-    return Array.isArray(payload.messages);
+    return (
+      Array.isArray(payload.messages) &&
+      (payload.client_tool_allowlist === undefined ||
+        isStringArray(payload.client_tool_allowlist))
+    );
   }
   if (payload.kind === "approval_response") {
     return isValidApprovalResponseBody(payload);
@@ -134,6 +153,7 @@ function getInvalidInputReason(value: unknown): {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    client_tool_allowlist?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -144,6 +164,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.kind=create_message requires payload.messages[]",
+      };
+    }
+    if (
+      payload.client_tool_allowlist !== undefined &&
+      !isStringArray(payload.client_tool_allowlist)
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.client_tool_allowlist must be string[]",
       };
     }
     return null;
@@ -237,8 +267,14 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   const candidate = value as {
     type?: unknown;
     runtime?: unknown;
+    recover_approvals?: unknown;
   };
-  return candidate.type === "sync" && isRuntimeScope(candidate.runtime);
+  return (
+    candidate.type === "sync" &&
+    isRuntimeScope(candidate.runtime) &&
+    (candidate.recover_approvals === undefined ||
+      typeof candidate.recover_approvals === "boolean")
+  );
 }
 
 function isTerminalSpawnCommand(value: unknown): value is TerminalSpawnCommand {
@@ -502,6 +538,54 @@ export function isMemoryFileAtRefCommand(
     typeof c.agent_id === "string" &&
     typeof c.file_path === "string" &&
     typeof c.ref === "string"
+  );
+}
+
+export function isReadMemoryFileCommand(
+  value: unknown,
+): value is ReadMemoryFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    path?: unknown;
+    encoding?: unknown;
+  };
+  return (
+    c.type === "read_memory_file" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.path === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64")
+  );
+}
+
+export function isWriteMemoryFileCommand(
+  value: unknown,
+): value is WriteMemoryFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    path?: unknown;
+    content?: unknown;
+    encoding?: unknown;
+    commit_message?: unknown;
+  };
+  return (
+    c.type === "write_memory_file" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.path === "string" &&
+    typeof c.content === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64") &&
+    (c.commit_message === undefined || typeof c.commit_message === "string")
   );
 }
 
@@ -790,10 +874,37 @@ export function isSetReflectionSettingsCommand(
   );
 }
 
-function isChannelId(
+export function isGetExperimentsCommand(
   value: unknown,
-): value is "telegram" | "slack" | "discord" {
-  return value === "telegram" || value === "slack" || value === "discord";
+): value is GetExperimentsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+  };
+  return c.type === "get_experiments" && typeof c.request_id === "string";
+}
+
+export function isSetExperimentCommand(
+  value: unknown,
+): value is SetExperimentCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    experiment_id?: unknown;
+    enabled?: unknown;
+  };
+  return (
+    c.type === "set_experiment" &&
+    typeof c.request_id === "string" &&
+    c.experiment_id === "node" &&
+    typeof c.enabled === "boolean"
+  );
+}
+
+function isChannelId(value: unknown): value is string {
+  return typeof value === "string" && isSupportedChannelId(value);
 }
 
 function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
@@ -819,6 +930,36 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
     hasValidEnabled
   );
 }
+
+function hasOnlyFields(
+  value: Record<string, unknown>,
+  allowedFields: ReadonlySet<string>,
+): boolean {
+  return Object.keys(value).every((field) => allowedFields.has(field));
+}
+
+const CHANNEL_ACCOUNT_CREATE_FIELDS = new Set([
+  "account_id",
+  "display_name",
+  "enabled",
+  "dm_policy",
+  "allowed_users",
+  "config",
+]);
+
+const CHANNEL_ACCOUNT_UPDATE_FIELDS = new Set([
+  "display_name",
+  "enabled",
+  "dm_policy",
+  "allowed_users",
+  "config",
+]);
+
+const CHANNEL_SET_CONFIG_FIELDS = new Set([
+  "dm_policy",
+  "allowed_users",
+  "plugin_config",
+]);
 
 export function isChannelsListCommand(
   value: unknown,
@@ -868,34 +1009,13 @@ export function isChannelAccountCreateCommand(
   if (
     (account.account_id !== undefined &&
       typeof account.account_id !== "string") ||
-    !hasValidChannelPolicyFields(account)
+    !hasValidChannelPolicyFields(account) ||
+    !hasOnlyFields(account, CHANNEL_ACCOUNT_CREATE_FIELDS)
   ) {
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return account.token === undefined || typeof account.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return (
-      (account.token === undefined || typeof account.token === "string") &&
-      (account.agent_id === undefined ||
-        account.agent_id === null ||
-        typeof account.agent_id === "string")
-    );
-  }
-
-  return (
-    (account.bot_token === undefined ||
-      typeof account.bot_token === "string") &&
-    (account.app_token === undefined ||
-      typeof account.app_token === "string") &&
-    (account.mode === undefined || account.mode === "socket") &&
-    (account.agent_id === undefined ||
-      account.agent_id === null ||
-      typeof account.agent_id === "string")
-  );
+  return isValidChannelPluginConfigPayload(c.channel_id, account);
 }
 
 export function isChannelAccountUpdateCommand(
@@ -921,31 +1041,14 @@ export function isChannelAccountUpdateCommand(
   }
 
   const patch = c.patch as Record<string, unknown>;
-  if (!hasValidChannelPolicyFields(patch)) {
+  if (
+    !hasValidChannelPolicyFields(patch) ||
+    !hasOnlyFields(patch, CHANNEL_ACCOUNT_UPDATE_FIELDS)
+  ) {
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return patch.token === undefined || typeof patch.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return (
-      (patch.token === undefined || typeof patch.token === "string") &&
-      (patch.agent_id === undefined ||
-        patch.agent_id === null ||
-        typeof patch.agent_id === "string")
-    );
-  }
-
-  return (
-    (patch.bot_token === undefined || typeof patch.bot_token === "string") &&
-    (patch.app_token === undefined || typeof patch.app_token === "string") &&
-    (patch.mode === undefined || patch.mode === "socket") &&
-    (patch.agent_id === undefined ||
-      patch.agent_id === null ||
-      typeof patch.agent_id === "string")
-  );
+  return isValidChannelPluginConfigPayload(c.channel_id, patch);
 }
 
 export function isChannelAccountBindCommand(
@@ -1080,22 +1183,17 @@ export function isChannelSetConfigCommand(
     return false;
   }
   const config = c.config as Record<string, unknown>;
-  if (!hasValidChannelPolicyFields(config)) {
+  if (
+    !hasValidChannelPolicyFields(config) ||
+    !hasOnlyFields(config, CHANNEL_SET_CONFIG_FIELDS)
+  ) {
     return false;
   }
 
-  if (c.channel_id === "telegram") {
-    return config.token === undefined || typeof config.token === "string";
-  }
-
-  if (c.channel_id === "discord") {
-    return config.token === undefined || typeof config.token === "string";
-  }
-
-  return (
-    (config.bot_token === undefined || typeof config.bot_token === "string") &&
-    (config.app_token === undefined || typeof config.app_token === "string") &&
-    (config.mode === undefined || config.mode === "socket")
+  return isValidChannelPluginConfigPayload(
+    c.channel_id,
+    config,
+    "plugin_config",
   );
 }
 
@@ -1315,6 +1413,55 @@ export function isCheckoutBranchCommand(
   );
 }
 
+export function isSecretListCommand(
+  value: unknown,
+): value is SecretListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "secret_list" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    c.agent_id.length > 0
+  );
+}
+
+export function isSecretApplyCommand(
+  value: unknown,
+): value is SecretApplyCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    set?: unknown;
+    unset?: unknown;
+  };
+  if (
+    c.type !== "secret_apply" ||
+    typeof c.request_id !== "string" ||
+    typeof c.agent_id !== "string" ||
+    c.agent_id.length === 0
+  ) {
+    return false;
+  }
+  if (!c.set || typeof c.set !== "object" || Array.isArray(c.set)) {
+    return false;
+  }
+  for (const v of Object.values(c.set as Record<string, unknown>)) {
+    if (typeof v !== "string") return false;
+  }
+  if (!Array.isArray(c.unset)) return false;
+  for (const k of c.unset) {
+    if (typeof k !== "string" || k.length === 0) return false;
+  }
+  return true;
+}
+
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -1365,6 +1512,8 @@ export function parseServerMessage(
       isMemoryHistoryCommand(parsed) ||
       isMemoryFileAtRefCommand(parsed) ||
       isMemoryCommitDiffCommand(parsed) ||
+      isReadMemoryFileCommand(parsed) ||
+      isWriteMemoryFileCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
@@ -1377,6 +1526,8 @@ export function parseServerMessage(
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isGetExperimentsCommand(parsed) ||
+      isSetExperimentCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||
@@ -1401,7 +1552,9 @@ export function parseServerMessage(
       isChannelRouteRemoveCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
-      isCheckoutBranchCommand(parsed)
+      isCheckoutBranchCommand(parsed) ||
+      isSecretListCommand(parsed) ||
+      isSecretApplyCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

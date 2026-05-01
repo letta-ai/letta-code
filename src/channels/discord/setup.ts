@@ -64,8 +64,8 @@ export async function runDiscordSetup(): Promise<boolean> {
         .filter(Boolean);
     }
 
-    // Agent binding — required for guild @mention routing to work.
-    // Without this, the bot won't know which agent to create threads for.
+    // Agent binding — required for account-bound DMs and guild @mentions.
+    // Without this, the bot won't know which agent to create conversations for.
     const envAgentId = process.env.LETTA_AGENT_ID || "";
     let agentId: string | null = null;
 
@@ -80,14 +80,14 @@ export async function runDiscordSetup(): Promise<boolean> {
 
     if (!agentId) {
       const agentInput = await rl.question(
-        "\nAgent ID to bind this bot to (required for @mention routing): ",
+        "\nAgent ID to bind this bot to (required for DM and @mention routing): ",
       );
       agentId = agentInput.trim() || null;
     }
 
     if (!agentId) {
       console.log(
-        "\nWarning: No agent bound. DM pairing will still work, but guild @mentions won't route until you bind an agent.",
+        "\nWarning: No agent bound. DM pairing will still work, but open/allowlist DMs and guild @mentions won't route until you bind an agent.",
       );
       console.log(
         "  You can bind later: letta channels bind --channel discord --agent <id>",

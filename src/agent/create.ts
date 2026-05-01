@@ -6,11 +6,11 @@ import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
+import { getClient } from "../backend/api/client";
+import { apiRequest, getApiRequestConfig } from "../backend/api/request";
 import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "../constants";
 import { settingsManager } from "../settings-manager";
 import { getModelContextWindow } from "./available-models";
-import { getClient, getServerUrl } from "./client";
-import { getLettaCodeHeaders } from "./http-headers";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
   formatAvailableModels,
@@ -65,8 +65,7 @@ function isToolsNotFoundError(err: unknown): boolean {
 }
 
 export async function addBaseToolsToServer(): Promise<boolean> {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const { apiKey } = await getApiRequestConfig();
 
   if (!apiKey) {
     console.warn(
@@ -76,19 +75,7 @@ export async function addBaseToolsToServer(): Promise<boolean> {
   }
 
   try {
-    const response = await fetch(`${getServerUrl()}/v1/tools/add-base-tools`, {
-      method: "POST",
-      headers: getLettaCodeHeaders(apiKey),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.warn(
-        `Failed to add base tools via /v1/tools/add-base-tools (${response.status}): ${body || response.statusText}`,
-      );
-      return false;
-    }
-
+    await apiRequest<void>("POST", "/v1/tools/add-base-tools");
     return true;
   } catch (err) {
     console.warn(

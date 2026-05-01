@@ -1,8 +1,8 @@
 import type WebSocket from "ws";
-import { getClient } from "../../agent/client";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { REMEMBER_PROMPT } from "../../agent/promptAssets";
+import { getClient } from "../../backend/api/client";
 import {
   buildDoctorMessage,
   buildInitMessage,
@@ -39,6 +39,10 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "remember",
   "channels",
   "toolset",
+  // /secret opens the EditSecretsDialog and routes reads/writes through the
+  // dedicated secret_list / secret_apply WS commands — not via
+  // execute_command — so it has no case in handleExecuteCommand.
+  "secret",
 ];
 
 /**

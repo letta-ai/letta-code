@@ -292,7 +292,7 @@ If the worker output is generic, the worker failed. "User is direct" or "project
 **IMPORTANT**: Use this prompt template to ensure workers extract all required categories:
 
 ```
-Task({
+Agent({
   subagent_type: "history-analyzer",
   description: "Process chunk [N] of [SOURCE] history",
   prompt: `## Assignment
@@ -560,7 +560,7 @@ Launch exploration subagents in a **single message** so they run concurrently.
 
 ```
 # After initial scan reveals key areas, launch parallel explorers in the background:
-Task({
+Agent({
   subagent_type: "general-purpose",
   description: "Explore API layer",
   run_in_background: true,
@@ -573,7 +573,7 @@ Return:
 4. gotchas or deprecated paths
 5. file paths worth storing in memory`
 })
-Task({
+Agent({
   subagent_type: "general-purpose",
   description: "Explore frontend layer",
   run_in_background: true,
@@ -586,7 +586,7 @@ Return:
 4. gotchas or fragile areas
 5. file paths worth storing in memory`
 })
-Task({
+Agent({
   subagent_type: "general-purpose",
   description: "Explore shared systems",
   run_in_background: true,

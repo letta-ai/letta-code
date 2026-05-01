@@ -3,13 +3,11 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
-import { getClient } from "./agent/client";
 import {
   setAgentContext,
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   getModelPresetUpdateForAgent,
@@ -20,6 +18,8 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import { getClient } from "./backend/api/client";
+import { getBillingTier } from "./backend/api/metadata";
 import {
   type ParsedCliArgs,
   parseCliArgs,
@@ -91,7 +91,7 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
-  letta memfs ...       Memory filesystem subcommands (JSON-only)
+  letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta blocks ...      Blocks subcommands (JSON-only)
@@ -100,14 +100,16 @@ USAGE
 OPTIONS
 ${renderCliOptionsHelp()}
 
-SUBCOMMANDS (JSON-only)
-  letta memfs status --agent <id>
-  letta memfs diff --agent <id>
-  letta memfs resolve --agent <id> --resolutions '<JSON>'
-  letta memfs backup --agent <id>
-  letta memfs backups --agent <id>
-  letta memfs restore --agent <id> --from <backup> --force
-  letta memfs export --agent <id> --out <dir>
+SUBCOMMANDS
+  letta memory status --agent <id>
+  letta memory diff --agent <id>
+  letta memory resolve --agent <id> --resolutions '<JSON>'
+  letta memory backup --agent <id>
+  letta memory backups --agent <id>
+  letta memory restore --agent <id> --from <backup> --force
+  letta memory export --agent <id> --out <dir>
+  letta memory pull --agent <id>
+  letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
@@ -355,7 +357,7 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
-  // Early exit for CLI subcommands (e.g., `letta server`, `letta memfs`).
+  // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
   const subcommandResult = await runSubcommand(process.argv.slice(2));
@@ -798,88 +800,104 @@ async function main(): Promise<void> {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
-  // Check if refresh token is missing for Letta Cloud (only when not using env var)
-  // Skip this check if we already have an API key from env
-  if (
-    !isHeadless &&
-    baseURL === LETTA_CLOUD_API_URL &&
-    !settings.refreshToken &&
-    !apiKey
-  ) {
-    // For interactive mode, show setup flow
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main().catch((err: unknown) => {
-      // Handle top-level errors gracefully without raw stack traces
-      trackCliBoundaryError("setup_restart_failed", err, "tui_setup_restart");
-      const message =
-        err instanceof Error ? err.message : "An unexpected error occurred";
-      console.error(`\nError: ${message}`);
-      if (isDebugEnabled()) {
-        console.error(err);
-      }
-      process.exit(1);
-    });
-  }
+  const isUsingDevBackend =
+    isHeadless &&
+    typeof values["dev-backend"] === "string" &&
+    values["dev-backend"].length > 0;
 
-  if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-    // For headless mode, error out (assume automation context)
-    if (isHeadless) {
+  if (!isUsingDevBackend) {
+    // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
+    // Stored OAuth credentials (interactive session tokens) are not accepted for
+    // automated/headless use — get an API key at https://app.letta.com/api-keys
+    if (
+      isHeadless &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      !process.env.LETTA_API_KEY
+    ) {
       console.error("Missing LETTA_API_KEY");
       console.error(
-        "Run 'letta' in interactive mode to authenticate or export the missing environment variable",
+        "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
       );
+      console.error("Get an API key at https://app.letta.com/api-keys");
       process.exit(1);
     }
 
-    // For interactive mode, show setup flow
-    console.log("No credentials found. Let's get you set up!\n");
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main();
-  }
+    // Check if refresh token is missing for Letta Cloud (only when not using env var)
+    // Skip this check if we already have an API key from env
+    if (
+      !isHeadless &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      !settings.refreshToken &&
+      !apiKey
+    ) {
+      // For interactive mode, show setup flow
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main().catch((err: unknown) => {
+        // Handle top-level errors gracefully without raw stack traces
+        trackCliBoundaryError("setup_restart_failed", err, "tui_setup_restart");
+        const message =
+          err instanceof Error ? err.message : "An unexpected error occurred";
+        console.error(`\nError: ${message}`);
+        if (isDebugEnabled()) {
+          console.error(err);
+        }
+        process.exit(1);
+      });
+    }
 
-  // Validate credentials by checking health endpoint
-  const { validateCredentials } = await import("./auth/oauth");
-  const isValid = await validateCredentials(baseURL, apiKey ?? "");
-  markMilestone("CREDENTIALS_VALIDATED");
+    if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
+      // For interactive mode, show setup flow
+      console.log("No credentials found. Let's get you set up!\n");
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main();
+    }
 
-  // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
-  // Must run after credentials are validated so OAuth tokens are available.
-  if (isValid) {
-    const { bootstrapBaseToolsIfNeeded } = await import(
-      "./agent/bootstrap-tools"
-    );
-    await bootstrapBaseToolsIfNeeded();
-  }
+    // Validate credentials by checking health endpoint
+    const { validateCredentials } = await import("./auth/oauth");
+    const isValid = await validateCredentials(baseURL, apiKey ?? "");
+    markMilestone("CREDENTIALS_VALIDATED");
 
-  if (!isValid) {
-    // For headless mode, error out with helpful message
-    if (isHeadless) {
-      console.error("Failed to connect to Letta server");
-      console.error(`Base URL: ${baseURL}`);
-      console.error(
+    // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
+    // Must run after credentials are validated so OAuth tokens are available.
+    if (isValid) {
+      const { bootstrapBaseToolsIfNeeded } = await import(
+        "./agent/bootstrap-tools"
+      );
+      await bootstrapBaseToolsIfNeeded();
+    }
+
+    if (!isValid) {
+      // For headless mode, error out with helpful message
+      if (isHeadless) {
+        console.error("Failed to connect to Letta server");
+        console.error(`Base URL: ${baseURL}`);
+        console.error(
+          "Your credentials may be invalid or the server may be unreachable.",
+        );
+        console.error(
+          "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
+        );
+        process.exit(1);
+      }
+
+      // For interactive mode, show setup flow
+      console.log("Failed to connect to Letta server.");
+      console.log(`Base URL: ${baseURL}\n`);
+      console.log(
         "Your credentials may be invalid or the server may be unreachable.",
       );
-      console.error(
-        "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
-      );
-      process.exit(1);
+      console.log("Let's reconfigure your setup.\n");
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main();
     }
-
-    // For interactive mode, show setup flow
-    console.log("Failed to connect to Letta server.");
-    console.log(`Base URL: ${baseURL}\n`);
-    console.log(
-      "Your credentials may be invalid or the server may be unreachable.",
-    );
-    console.log("Let's reconfigure your setup.\n");
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main();
+  } else {
+    markMilestone("CREDENTIALS_VALIDATED");
   }
 
   // Resolve --name to agent ID if provided
@@ -1469,14 +1487,33 @@ async function main(): Promise<void> {
     ]);
 
     // Main initialization effect - runs after profile selection
+    const initStartedRef = React.useRef(false);
     useEffect(() => {
-      if (loadingState !== "assembling") return;
+      if (loadingState !== "assembling") {
+        // If init bounced back to a picker, allow the next user selection to
+        // start a fresh assembling phase.
+        if (
+          loadingState === "selecting" ||
+          loadingState === "selecting_global" ||
+          loadingState === "selecting_conversation"
+        ) {
+          initStartedRef.current = false;
+        }
+        return;
+      }
+      // Guard against double-fire from dependency churn in the same
+      // "assembling" phase.  Only the first invocation should run.
+      if (initStartedRef.current) return;
+      initStartedRef.current = true;
 
       async function init() {
         const client = await getClient();
 
         // Determine which agent we'll be using (before loading tools)
         let resumingAgentId: string | null = null;
+        // Track agent fetched during ID resolution so we can reuse it later
+        // (validatedAgent React state may not be committed yet).
+        let resolvedAgent: AgentState | null = null;
 
         // Priority 1: --agent flag
         if (agentIdArg) {
@@ -1485,8 +1522,11 @@ async function main(): Promise<void> {
             resumingAgentId = agentIdArg;
           } else {
             try {
-              const agent = await client.agents.retrieve(agentIdArg);
+              const agent = await client.agents.retrieve(agentIdArg, {
+                include: ["agent.secrets", "agent.tools"],
+              });
               setValidatedAgent(agent);
+              resolvedAgent = agent;
               resumingAgentId = agentIdArg;
             } catch {
               // Agent doesn't exist, will create new later
@@ -1508,8 +1548,14 @@ async function main(): Promise<void> {
             resumingAgentId = selectedGlobalAgentId;
           } else {
             try {
-              const agent = await client.agents.retrieve(selectedGlobalAgentId);
+              const agent = await client.agents.retrieve(
+                selectedGlobalAgentId,
+                {
+                  include: ["agent.secrets", "agent.tools"],
+                },
+              );
               setValidatedAgent(agent);
+              resolvedAgent = agent;
               resumingAgentId = selectedGlobalAgentId;
             } catch {
               // Selected agent doesn't exist - show selector again
@@ -1632,26 +1678,7 @@ async function main(): Promise<void> {
           if (!effectiveModel && !selfHostedBaseUrl) {
             // On Letta API without explicit model - check billing tier for appropriate default
             const { getDefaultModelForTier } = await import("./agent/model");
-            let billingTier: string | null = null;
-            try {
-              const baseURL =
-                process.env.LETTA_BASE_URL ||
-                settings.env?.LETTA_BASE_URL ||
-                LETTA_CLOUD_API_URL;
-              const apiKey =
-                process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-              const response = await fetch(`${baseURL}/v1/metadata/balance`, {
-                headers: getLettaCodeHeaders(apiKey),
-              });
-              if (response.ok) {
-                const data = (await response.json()) as {
-                  billing_tier?: string;
-                };
-                billingTier = data.billing_tier ?? null;
-              }
-            } catch {
-              // Ignore - will use standard default
-            }
+            const billingTier = await getBillingTier();
             effectiveModel = getDefaultModelForTier(billingTier);
           }
 
@@ -1685,9 +1712,11 @@ async function main(): Promise<void> {
         if (!agent && resumingAgentId) {
           try {
             agent =
-              validatedAgent && validatedAgent.id === resumingAgentId
-                ? validatedAgent
-                : await client.agents.retrieve(resumingAgentId);
+              resolvedAgent && resolvedAgent.id === resumingAgentId
+                ? resolvedAgent
+                : validatedAgent && validatedAgent.id === resumingAgentId
+                  ? validatedAgent
+                  : await client.agents.retrieve(resumingAgentId);
           } catch (error) {
             // Agent disappeared between validation and now - show selector
             console.error(
@@ -1722,23 +1751,41 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
-        // Start memfs sync early — awaited in parallel with getResumeData below
+        // Start memfs sync early. Interactive startup is optimistic: keep the
+        // session moving and let memfs clone/pull finish in the background
+        // unless the user explicitly requested a memfs mode toggle.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
         const startupMemfsFlag = autoEnableMemfsForFreshAgent
           ? true
           : memfsFlag;
+        const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
         const memfsSyncPromise = import("./agent/memoryFilesystem").then(
           ({ applyMemfsFlags }) =>
             applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
+              pullOnExistingRepo: true,
               agentTags,
               skipPromptUpdate: shouldCreateNew,
             }),
         );
+        const memfsSyncBackgroundPromise = memfsSyncPromise.catch((error) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          debugWarn(
+            "startup",
+            `Background memfs sync failed for ${agentId}: ${message}`,
+          );
+          console.warn(`[memfs background sync] ${message}`);
+          return null;
+        });
+        if (!shouldBlockOnMemfsStartup) {
+          void memfsSyncBackgroundPromise;
+        }
 
         // Init secrets cache — runs in parallel with memfs sync below.
         const secretsInitPromise = import("./utils/secretsStore").then(
-          ({ initSecretsFromServer }) => initSecretsFromServer(agentId),
+          ({ initSecretsFromServer }) =>
+            initSecretsFromServer(agentId, agent ?? undefined),
         );
 
         // Check if we're resuming an existing agent
@@ -1793,8 +1840,8 @@ async function main(): Promise<void> {
           }
 
           if (systemPromptPreset) {
-            // Await memfs sync first so isMemfsEnabled() reflects the final state
-            // before updateAgentSystemPrompt reads it to pick the memory addon.
+            // Rebuilding the prompt needs the reconciled memory mode so we
+            // still wait here for this explicit override path.
             try {
               await memfsSyncPromise;
             } catch (error) {
@@ -1817,7 +1864,7 @@ async function main(): Promise<void> {
         }
 
         const startupAgentId = agent.id;
-        void clearPersistedClientToolRules(startupAgentId)
+        void clearPersistedClientToolRules(startupAgentId, agent)
           .then((cleanup) => {
             if (cleanup) {
               const count = cleanup.removedToolNames.length;
@@ -1923,27 +1970,22 @@ async function main(): Promise<void> {
           // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";
 
-          // Load message history and memfs sync in parallel — they're independent
+          // Load message history without waiting on memfs sync.
           setLoadingState("checking");
-          const [data] = await Promise.all([
-            getResumeData(client, agent, "default"),
-            memfsSyncPromise.catch((error) => {
-              console.error(
-                error instanceof Error ? error.message : String(error),
-              );
-              process.exit(1);
-            }),
-          ]);
+          const data = await getResumeData(client, agent, "default");
           setResumeData(data);
           setResumedExistingConversation(data.messageHistory.length > 0);
         }
 
-        // Ensure memfs sync completed (already resolved for default path via Promise.all above)
-        try {
-          await memfsSyncPromise;
-        } catch (error) {
-          console.error(error instanceof Error ? error.message : String(error));
-          process.exit(1);
+        if (shouldBlockOnMemfsStartup) {
+          try {
+            await memfsSyncPromise;
+          } catch (error) {
+            console.error(
+              error instanceof Error ? error.message : String(error),
+            );
+            process.exit(1);
+          }
         }
 
         // Ensure secrets cache is populated (non-fatal).
@@ -1959,7 +2001,8 @@ async function main(): Promise<void> {
         }
 
         // Auto-heal system prompt drift (rebuild from stored recipe).
-        // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+        // Runs after memfs flag reconciliation so isMemfsEnabled() reflects
+        // the target memory mode even if clone/pull is still in flight.
         if (resuming && !systemPromptPreset) {
           let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
 

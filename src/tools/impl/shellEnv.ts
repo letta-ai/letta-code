@@ -9,9 +9,9 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getServerUrl } from "../../agent/client";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getServerUrl } from "../../backend/api/client";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 
@@ -182,6 +182,79 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
   return shimDir;
 }
 
+const LETTA_CLOUD_MEMFS_GIT_BASE_URL = "https://api.letta.com";
+const LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV = "LETTA_MEMFS_GIT_PROXY_BASE_URL";
+
+function isLocalhostUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function trimBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+function getShellMemfsBaseUrl(env: NodeJS.ProcessEnv): string {
+  // Use the shell environment as the source of truth for command execution.
+  // This keeps Desktop's transient LETTA_BASE_URL proxy from affecting the
+  // canonical MemFS git remote, while still allowing an explicit MemFS base
+  // override to opt out of the Cloud rewrite.
+  return env.LETTA_MEMFS_BASE_URL || LETTA_CLOUD_MEMFS_GIT_BASE_URL;
+}
+
+function getShellMemfsGitProxyRewriteConfig(
+  env: NodeJS.ProcessEnv,
+): { configKey: string; configValue: string } | null {
+  const rawProxyBaseUrl = env[LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV]?.trim();
+  if (!rawProxyBaseUrl || !isLocalhostUrl(rawProxyBaseUrl)) {
+    return null;
+  }
+
+  const memfsBaseUrl = trimBaseUrl(getShellMemfsBaseUrl(env));
+  if (!memfsBaseUrl.includes("api.letta.com")) {
+    return null;
+  }
+
+  const proxyBaseUrl = trimBaseUrl(rawProxyBaseUrl);
+  const proxyPrefix = `${proxyBaseUrl}/v1/git/`;
+  const memfsPrefix = `${memfsBaseUrl}/v1/git/`;
+
+  return {
+    configKey: `url.${proxyPrefix}.insteadOf`,
+    configValue: memfsPrefix,
+  };
+}
+
+function appendGitConfigEnv(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: string,
+): void {
+  const rawCount = env.GIT_CONFIG_COUNT;
+  const count = rawCount && /^\d+$/.test(rawCount) ? Number(rawCount) : 0;
+  env[`GIT_CONFIG_KEY_${count}`] = key;
+  env[`GIT_CONFIG_VALUE_${count}`] = value;
+  env.GIT_CONFIG_COUNT = String(count + 1);
+}
+
+function applyMemfsGitProxyEnv(env: NodeJS.ProcessEnv): void {
+  const rewrite = getShellMemfsGitProxyRewriteConfig(env);
+  if (!rewrite) {
+    return;
+  }
+
+  appendGitConfigEnv(env, rewrite.configKey, rewrite.configValue);
+  env.GIT_TERMINAL_PROMPT = "0";
+  env.GCM_INTERACTIVE = "never";
+  env.GIT_ASKPASS = "";
+  env.SSH_ASKPASS = "";
+}
+
 /**
  * Get enhanced environment variables for shell execution.
  * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
@@ -307,6 +380,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (!env.TERM) {
     env.TERM = "xterm-256color";
   }
+
+  // Desktop's local listener only has a localhost session token; the proxy owns
+  // the real Cloud token. Apply a process-local git URL rewrite so agent-run
+  // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
+  // ephemeral localhost URL into the memory repo's git config.
+  applyMemfsGitProxyEnv(env);
 
   return env;
 }
