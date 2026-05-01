@@ -1138,9 +1138,12 @@ export class ChannelRegistry {
       return { route, isFirstRouteTurn: false };
     }
 
-    // In guild channels, only create routes from explicit mentions.
-    // Existing routed threads continue above via the route lookup path.
-    if (msg.chatType === "channel" && !msg.isMention) {
+    // In guild channels, only create routes from explicit mentions — unless
+    // the account has channelPolicy "open", in which case every guild message
+    // that reached this point should be routed. Existing routed threads
+    // continue above via the route lookup path.
+    const isOpenPolicy = config.channelPolicy === "open";
+    if (msg.chatType === "channel" && !msg.isMention && !isOpenPolicy) {
       return null;
     }
 
