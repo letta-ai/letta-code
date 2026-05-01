@@ -189,11 +189,11 @@ export function buildSystemPrompt(
       `Unknown preset "${presetId}" — cannot rebuild system prompt`,
     );
   }
-  const addon =
-    memoryMode === "memfs"
-      ? SYSTEM_PROMPT_MEMFS_ADDON
-      : SYSTEM_PROMPT_BLOCKS_ADDON;
-  return `${preset.content.trimEnd()}\n\n${addon.trimStart()}`.trim();
+  if (memoryMode === "memfs") {
+    return preset.content.trim();
+  }
+
+  return `${preset.content.trimEnd()}\n\n${SYSTEM_PROMPT_BLOCKS_ADDON.trimStart()}`.trim();
 }
 
 /**
@@ -226,11 +226,13 @@ export function swapMemoryAddon(
   result = stripHeadingSections(result, (h) =>
     h.title.startsWith("Memory Filesystem"),
   );
-  // Compact blank lines and append target addon
+  // Compact blank lines and append target addon only for standard memory mode.
   result = result.replace(/\n{3,}/g, "\n\n").trimEnd();
-  const target =
-    mode === "memfs" ? SYSTEM_PROMPT_MEMFS_ADDON : SYSTEM_PROMPT_BLOCKS_ADDON;
-  return `${result}\n\n${target.trimStart()}`.trim();
+  if (mode === "memfs") {
+    return result.trim();
+  }
+
+  return `${result}\n\n${SYSTEM_PROMPT_BLOCKS_ADDON.trimStart()}`.trim();
 }
 
 /**
@@ -277,9 +279,9 @@ export function shouldRecommendDefaultPrompt(
 }
 
 /**
- * Resolve a prompt ID and build the full system prompt with memory addon.
+ * Resolve a prompt ID and build the full system prompt for the memory mode.
  * Known presets are rebuilt deterministically; unknown IDs (subagent names)
- * are resolved async and have the addon swapped in.
+ * are resolved async and have managed memory sections reconciled.
  */
 export async function resolveAndBuildSystemPrompt(
   promptId: string | undefined,

@@ -3462,8 +3462,7 @@ export default function App({
             const agentSystem = (agent as { system?: unknown }).system;
             if (typeof agentSystem === "string") {
               const normalize = (s: string) => {
-                // Match prompt presets even if memfs addon is enabled/disabled.
-                // The memfs addon is appended to the stored agent.system prompt.
+                // Match prompt presets even if a managed memory section is present.
                 const withoutMemfs = s.replace(/\n# Memory[\s\S]*$/, "");
                 return withoutMemfs.replace(/\r\n/g, "\n").trim();
               };

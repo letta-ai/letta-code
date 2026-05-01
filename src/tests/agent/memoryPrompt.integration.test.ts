@@ -15,6 +15,10 @@ function expectedPrompt(base: string, addon: string): string {
   return `${base.trimEnd()}\n\n${addon.trimStart()}`.trim();
 }
 
+function expectedMemfsPrompt(base: string): string {
+  return base.trim();
+}
+
 describeIntegration("memory prompt integration", () => {
   const createdAgentIds: string[] = [];
 
@@ -51,12 +55,13 @@ describeIntegration("memory prompt integration", () => {
 
       const client = await getClient();
 
-      const expectedMemfs = expectedPrompt(base, SYSTEM_PROMPT_MEMFS_ADDON);
+      const expectedMemfs = expectedMemfsPrompt(base);
       let fetched = await client.agents.retrieve(created.agent.id);
       expect(fetched.system).toBe(expectedMemfs);
-      expect((fetched.system.match(/## Memory layout/g) || []).length).toBe(1);
+      expect(fetched.system).not.toContain(SYSTEM_PROMPT_MEMFS_ADDON.trim());
+      expect((fetched.system.match(/## Memory layout/g) || []).length).toBe(0);
       expect((fetched.system.match(/# See what changed/g) || []).length).toBe(
-        1,
+        0,
       );
 
       const enableAgain = await updateAgentSystemPromptMemfs(
@@ -88,7 +93,7 @@ describeIntegration("memory prompt integration", () => {
       fetched = await client.agents.retrieve(created.agent.id);
       expect(fetched.system).toBe(expectedMemfs);
       expect((fetched.system.match(/# See what changed/g) || []).length).toBe(
-        1,
+        0,
       );
     },
     { timeout: 120000 },
