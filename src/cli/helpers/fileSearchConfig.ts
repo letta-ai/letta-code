@@ -10,6 +10,35 @@ interface CwdConfig {
 }
 
 /**
+ * Paths (relative to the index root) that are ALWAYS excluded from the
+ * file index, regardless of the user's `.lettaignore` config. Used for
+ * letta-code-internal directories that would otherwise dwarf real
+ * search results.
+ *
+ * Currently:
+ * - `.letta/worktrees` — parallel git worktrees are full duplicate
+ *   checkouts of the project. They massively pollute @-mention and
+ *   quick-open (cmd+shift+o) results when the user has not (yet)
+ *   added `.letta` to their `.lettaignore`.
+ *
+ * Note: this is matched against the entry's path RELATIVE to the
+ * index root, so `cmd+shift+o` invoked with `cwd` set to a worktree
+ * itself naturally still indexes that worktree's files (the relative
+ * path is never `.letta/worktrees/...` from inside one).
+ */
+const ALWAYS_EXCLUDED_RELATIVE_PATHS: readonly string[] = [".letta/worktrees"];
+
+function isAlwaysExcludedPath(relativePath: string | undefined): boolean {
+  if (!relativePath) return false;
+  for (const p of ALWAYS_EXCLUDED_RELATIVE_PATHS) {
+    if (relativePath === p || relativePath.startsWith(`${p}/`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Cache of compiled matchers keyed by absolute cwd path.
  * Compiled once per unique cwd for performance, re-built when cwd changes.
  */
@@ -86,6 +115,10 @@ export function shouldExcludeEntry(
   relativePath?: string,
   root?: string,
 ): boolean {
+  // Hard-coded floor: skip letta-code-internal dirs like
+  // .letta/worktrees regardless of user .lettaignore config.
+  if (isAlwaysExcludedPath(relativePath)) return true;
+
   const { nameMatchers, pathMatchers } = getConfig(root);
 
   // Name-based .lettaignore patterns (e.g. *.log, vendor)
