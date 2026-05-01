@@ -9,6 +9,7 @@ import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
 import { formatChannelControlRequestPrompt } from "../interactive";
 import type {
   ChannelAdapter,
+  ChannelAdapterStartOptions,
   ChannelControlRequestEvent,
   InboundChannelMessage,
   OutboundChannelMessage,
@@ -34,6 +35,74 @@ type BufferedMediaGroup = {
   messages: TelegramLikeMessage[];
   timer: ReturnType<typeof setTimeout>;
 };
+
+const DEFAULT_TELEGRAM_INIT_TIMEOUT_MS = 15_000;
+const DEFAULT_TELEGRAM_START_TIMEOUT_MS = 20_000;
+const TELEGRAM_FAILED_START_STOP_TIMEOUT_MS = 5_000;
+
+function getStartupTimeoutMs(envName: string, fallbackMs: number): number {
+  const raw = process.env[envName];
+  if (!raw) {
+    return fallbackMs;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs;
+}
+
+function withStartupTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timer.unref?.();
+
+    promise.then(
+      (value) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        resolve(value);
+      },
+      (error) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        reject(error);
+      },
+    );
+  });
+}
+
+function logTelegramStartup(
+  options: ChannelAdapterStartOptions | undefined,
+  message: string,
+): void {
+  options?.logger?.(`[Telegram] ${message}`);
+}
+
+async function stopTelegramBotQuietly(
+  telegramBot: TelegramBot,
+  options: ChannelAdapterStartOptions | undefined,
+): Promise<void> {
+  try {
+    await withStartupTimeout(
+      telegramBot.stop(),
+      "Telegram bot stop after failed startup",
+      TELEGRAM_FAILED_START_STOP_TIMEOUT_MS,
+    );
+  } catch (error) {
+    logTelegramStartup(
+      options,
+      `stop after failed startup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 type TelegramReactionType =
   | {
       type?: "emoji";
@@ -275,13 +344,21 @@ export function createTelegramAdapter(
     }, TELEGRAM_MEDIA_GROUP_FLUSH_MS);
   }
 
-  async function ensureBot(): Promise<TelegramBot> {
+  async function ensureBot(
+    options?: ChannelAdapterStartOptions,
+  ): Promise<TelegramBot> {
     if (bot) {
       return bot;
     }
 
+    logTelegramStartup(options, "loading grammY runtime");
     const grammy = await ensureModule();
+    logTelegramStartup(options, "grammY runtime loaded");
     const Bot = resolveTelegramBotConstructor(grammy);
+    logTelegramStartup(
+      options,
+      `constructing bot for account ${config.accountId}`,
+    );
     const instance = new Bot(config.token);
 
     instance.catch((error) => {
@@ -400,6 +477,10 @@ export function createTelegramAdapter(
       );
     });
 
+    logTelegramStartup(
+      options,
+      `handlers registered for account ${config.accountId}`,
+    );
     bot = instance;
     return instance;
   }
@@ -410,42 +491,90 @@ export function createTelegramAdapter(
     accountId: config.accountId,
     name: "Telegram",
 
-    async start(): Promise<void> {
+    async start(options?: ChannelAdapterStartOptions): Promise<void> {
       if (running) return;
-      const telegramBot = await ensureBot();
+      logTelegramStartup(
+        options,
+        `start requested for account ${config.accountId}`,
+      );
+      const telegramBot = await ensureBot(options);
 
-      await telegramBot.init();
+      logTelegramStartup(options, `init start for account ${config.accountId}`);
+      try {
+        await withStartupTimeout(
+          telegramBot.init(),
+          "Telegram bot init",
+          getStartupTimeoutMs(
+            "LETTA_TELEGRAM_INIT_TIMEOUT_MS",
+            DEFAULT_TELEGRAM_INIT_TIMEOUT_MS,
+          ),
+        );
+      } catch (error) {
+        bot = null;
+        throw error;
+      }
       const info = telegramBot.botInfo;
-      console.log(
-        `[Telegram] Bot started as @${info.username} (dm_policy: ${config.dmPolicy})`,
+      logTelegramStartup(
+        options,
+        `init complete for @${info.username ?? "unknown"} (${config.accountId})`,
       );
 
-      await new Promise<void>((resolve, reject) => {
-        let started = false;
+      logTelegramStartup(
+        options,
+        `polling start for account ${config.accountId}`,
+      );
+      let startupAborted = false;
+      try {
+        await withStartupTimeout(
+          new Promise<void>((resolve, reject) => {
+            let started = false;
 
-        void telegramBot
-          .start({
-            allowed_updates: ["message", "message_reaction"],
-            onStart: () => {
-              running = true;
-              started = true;
-              resolve();
-            },
-          })
-          .catch((error) => {
-            running = false;
+            void telegramBot
+              .start({
+                allowed_updates: ["message", "message_reaction"],
+                onStart: () => {
+                  if (startupAborted) {
+                    return;
+                  }
+                  running = true;
+                  started = true;
+                  console.log(
+                    `[Telegram] Bot started as @${info.username} (dm_policy: ${config.dmPolicy})`,
+                  );
+                  logTelegramStartup(
+                    options,
+                    `polling started for @${info.username ?? "unknown"} (${config.accountId})`,
+                  );
+                  resolve();
+                },
+              })
+              .catch((error) => {
+                running = false;
 
-            if (!started) {
-              reject(error);
-              return;
-            }
+                if (!started) {
+                  reject(error);
+                  return;
+                }
 
-            console.error(
-              "[Telegram] Long-polling stopped unexpectedly:",
-              error,
-            );
-          });
-      });
+                console.error(
+                  "[Telegram] Long-polling stopped unexpectedly:",
+                  error,
+                );
+              });
+          }),
+          "Telegram bot polling startup",
+          getStartupTimeoutMs(
+            "LETTA_TELEGRAM_START_TIMEOUT_MS",
+            DEFAULT_TELEGRAM_START_TIMEOUT_MS,
+          ),
+        );
+      } catch (error) {
+        startupAborted = true;
+        running = false;
+        bot = null;
+        await stopTelegramBotQuietly(telegramBot, options);
+        throw error;
+      }
     },
 
     async stop(): Promise<void> {

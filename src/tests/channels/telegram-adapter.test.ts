@@ -45,6 +45,7 @@ class FakeBot {
     async (fileId) => ({
       file_path: `photos/${fileId}.jpg`,
     });
+  static nextInitImpl: () => Promise<void> = async () => {};
 
   readonly token: string;
   botInfo = { username: "test_bot", id: 12345 };
@@ -83,7 +84,9 @@ class FakeBot {
     return this;
   }
 
-  async init(): Promise<void> {}
+  async init(): Promise<void> {
+    return FakeBot.nextInitImpl();
+  }
 
   start(options?: FakeBotStartOptions): Promise<void> {
     return FakeBot.nextStartImpl(options, this.botInfo);
@@ -137,6 +140,9 @@ const consoleErrorSpy = mock(() => {});
 const originalConsoleError = console.error;
 const originalFetch = globalThis.fetch;
 const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+const originalTelegramInitTimeout = process.env.LETTA_TELEGRAM_INIT_TIMEOUT_MS;
+const originalTelegramStartTimeout =
+  process.env.LETTA_TELEGRAM_START_TIMEOUT_MS;
 
 beforeEach(() => {
   channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
@@ -153,10 +159,13 @@ beforeEach(() => {
   FakeBot.nextGetFileImpl = async (fileId) => ({
     file_path: `photos/${fileId}.jpg`,
   });
+  FakeBot.nextInitImpl = async () => {};
   consoleErrorSpy.mockClear();
   console.error = consoleErrorSpy as typeof console.error;
   globalThis.fetch = originalFetch;
   delete process.env.OPENAI_API_KEY;
+  delete process.env.LETTA_TELEGRAM_INIT_TIMEOUT_MS;
+  delete process.env.LETTA_TELEGRAM_START_TIMEOUT_MS;
 });
 
 afterEach(() => {
@@ -167,6 +176,16 @@ afterEach(() => {
     delete process.env.OPENAI_API_KEY;
   } else {
     process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+  }
+  if (originalTelegramInitTimeout === undefined) {
+    delete process.env.LETTA_TELEGRAM_INIT_TIMEOUT_MS;
+  } else {
+    process.env.LETTA_TELEGRAM_INIT_TIMEOUT_MS = originalTelegramInitTimeout;
+  }
+  if (originalTelegramStartTimeout === undefined) {
+    delete process.env.LETTA_TELEGRAM_START_TIMEOUT_MS;
+  } else {
+    process.env.LETTA_TELEGRAM_START_TIMEOUT_MS = originalTelegramStartTimeout;
   }
   rmSync(channelRoot, { recursive: true, force: true });
 });
@@ -229,7 +248,10 @@ test("telegram adapter start waits until polling is live before resolving", asyn
     allowedUsers: [],
   });
 
-  const startPromise = adapter.start();
+  const logs: string[] = [];
+  const startPromise = adapter.start({
+    logger: (message) => logs.push(message),
+  });
   expect(adapter.isRunning()).toBe(false);
 
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -242,6 +264,55 @@ test("telegram adapter start waits until polling is live before resolving", asyn
   await startPromise;
 
   expect(adapter.isRunning()).toBe(true);
+  expect(logs).toEqual(
+    expect.arrayContaining([
+      "[Telegram] start requested for account telegram-test-account",
+      "[Telegram] loading grammY runtime",
+      "[Telegram] grammY runtime loaded",
+      "[Telegram] handlers registered for account telegram-test-account",
+      "[Telegram] polling start for account telegram-test-account",
+      "[Telegram] polling started for @test_bot (telegram-test-account)",
+    ]),
+  );
+  expect(logs.join("\n")).not.toContain("test-token");
+});
+
+test("telegram adapter fails startup when bot init hangs", async () => {
+  process.env.LETTA_TELEGRAM_INIT_TIMEOUT_MS = "1";
+  FakeBot.nextInitImpl = async () => new Promise<void>(() => {});
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await expect(adapter.start()).rejects.toThrow(
+    "Telegram bot init timed out after 1ms",
+  );
+  expect(adapter.isRunning()).toBe(false);
+});
+
+test("telegram adapter fails startup when polling never reports ready", async () => {
+  process.env.LETTA_TELEGRAM_START_TIMEOUT_MS = "1";
+  FakeBot.nextStartImpl = async () => new Promise<void>(() => {});
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await expect(adapter.start()).rejects.toThrow(
+    "Telegram bot polling startup timed out after 1ms",
+  );
+  expect(adapter.isRunning()).toBe(false);
 });
 
 test("telegram adapter logs and clears running state when polling exits unexpectedly", async () => {

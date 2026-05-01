@@ -19,6 +19,7 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "./accounts";
+import { getChannelAccountsPath, getChannelsRoot } from "./config";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
@@ -54,6 +55,7 @@ import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelRoute,
+  ChannelStartupLogger,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   DiscordChannelAccount,
@@ -612,27 +614,57 @@ export class ChannelRegistry {
   async startChannelAccount(
     channelId: string,
     accountId: string,
+    options?: ChannelStartupOptions,
   ): Promise<boolean> {
+    logChannelStartup(options?.logger, `starting ${channelId}/${accountId}`);
     loadChannelAccounts(channelId);
     const account = getChannelAccount(channelId, accountId);
     if (!account) {
+      logChannelStartup(
+        options?.logger,
+        `account not found: ${channelId}/${accountId}`,
+      );
       return false;
     }
 
+    logChannelStartup(
+      options?.logger,
+      `loading route, pairing, and target stores for ${channelId}/${accountId}`,
+    );
     loadRoutes(channelId);
     loadPairingStore(channelId);
     loadTargetStore(channelId);
 
     const existing = this.getAdapter(channelId, accountId);
     if (existing?.isRunning()) {
+      logChannelStartup(
+        options?.logger,
+        `stopping existing adapter for ${channelId}/${accountId}`,
+      );
       await existing.stop();
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
 
+    logChannelStartup(
+      options?.logger,
+      `loading plugin for ${account.channel}/${accountId}`,
+    );
     const plugin = await loadChannelPlugin(account.channel);
+    logChannelStartup(
+      options?.logger,
+      `creating adapter for ${account.channel}/${accountId}`,
+    );
     const adapter = await plugin.createAdapter(account);
     this.registerAdapter(adapter);
-    await adapter.start();
+    logChannelStartup(
+      options?.logger,
+      `starting adapter for ${account.channel}/${accountId}`,
+    );
+    await adapter.start({ logger: options?.logger });
+    logChannelStartup(
+      options?.logger,
+      `started adapter for ${account.channel}/${accountId}`,
+    );
     return true;
   }
 
@@ -1179,6 +1211,24 @@ export interface ChannelStartupFailure {
   error: string;
 }
 
+type ChannelStartupOptions = {
+  logger?: ChannelStartupLogger;
+};
+
+function logChannelStartup(
+  logger: ChannelStartupLogger | undefined,
+  message: string,
+): void {
+  logger?.(`[Channels] ${message}`);
+}
+
+function formatChannelStartupError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+  return String(error);
+}
+
 export class ChannelInitializationError extends Error {
   constructor(public readonly failures: ChannelStartupFailure[]) {
     super(formatChannelStartupFailures(failures));
@@ -1225,18 +1275,43 @@ export function formatChannelStartupFailures(
  */
 export async function initializeChannels(
   channelNames: string[],
-  options?: { failOnStartupError?: boolean },
+  options?: { failOnStartupError?: boolean; logger?: ChannelStartupLogger },
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
   const failures: ChannelStartupFailure[] = [];
 
+  logChannelStartup(
+    options?.logger,
+    `requested: ${channelNames.length > 0 ? channelNames.join(",") : "none"}`,
+  );
+  logChannelStartup(options?.logger, `root: ${getChannelsRoot()}`);
+
   for (const channelId of channelNames) {
+    logChannelStartup(
+      options?.logger,
+      `loading ${channelId} accounts from ${getChannelAccountsPath(channelId)}`,
+    );
     loadChannelAccounts(channelId);
     const accounts = listChannelAccounts(channelId);
+    const enabledAccountIds = accounts
+      .filter((account) => account.enabled)
+      .map((account) => account.accountId);
+    logChannelStartup(
+      options?.logger,
+      `${channelId}: accounts=${accounts.length}, enabled=${enabledAccountIds.length > 0 ? enabledAccountIds.join(",") : "none"}`,
+    );
     if (accounts.length === 0) {
       const error = `Channel "${channelId}" not configured. Run: letta channels configure ${channelId}`;
       failures.push({ channelId, error });
       console.error(error);
+      continue;
+    }
+
+    if (enabledAccountIds.length === 0) {
+      const error = `Channel "${channelId}" has no enabled accounts.`;
+      failures.push({ channelId, error });
+      console.error(error);
+      logChannelStartup(options?.logger, error);
       continue;
     }
 
@@ -1246,7 +1321,9 @@ export async function initializeChannels(
       }
 
       try {
-        await registry.startChannelAccount(channelId, account.accountId);
+        await registry.startChannelAccount(channelId, account.accountId, {
+          logger: options?.logger,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         failures.push({
@@ -1257,6 +1334,10 @@ export async function initializeChannels(
         console.error(
           `[Channels] Failed to start ${channelId}/${account.accountId}:`,
           message,
+        );
+        logChannelStartup(
+          options?.logger,
+          `failed ${channelId}/${account.accountId}: ${formatChannelStartupError(error)}`,
         );
       }
     }

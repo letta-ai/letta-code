@@ -1,4 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  __testOverrideLoadChannelAccounts,
+  __testOverrideSaveChannelAccounts,
+  clearChannelAccountStores,
+} from "../../channels/accounts";
+import { __testOverrideChannelsRoot } from "../../channels/config";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
@@ -18,6 +27,7 @@ import {
   completePairing,
   formatChannelStartupFailures,
   getChannelRegistry,
+  initializeChannels,
 } from "../../channels/registry";
 import {
   __testOverrideLoadRoutes,
@@ -118,6 +128,79 @@ describe("formatChannelStartupFailures", () => {
     );
     expect(message).toContain("letta channels install discord");
     expect(message).toContain("letta channels install slack");
+  });
+});
+
+describe("initializeChannels startup logging", () => {
+  let channelRoot: string;
+
+  beforeEach(() => {
+    channelRoot = mkdtempSync(join(tmpdir(), "letta-channel-startup-"));
+    __testOverrideChannelsRoot(channelRoot);
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+    clearChannelAccountStores();
+  });
+
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
+    __testOverrideChannelsRoot(null);
+    rmSync(channelRoot, { recursive: true, force: true });
+  });
+
+  test("logs account discovery before fatal startup failures", async () => {
+    const logs: string[] = [];
+
+    await expect(
+      initializeChannels(["telegram"], {
+        failOnStartupError: true,
+        logger: (message) => logs.push(message),
+      }),
+    ).rejects.toThrow('Channel "telegram" not configured');
+
+    expect(logs).toEqual(
+      expect.arrayContaining([
+        "[Channels] requested: telegram",
+        `[Channels] root: ${channelRoot}`,
+        `[Channels] loading telegram accounts from ${join(channelRoot, "telegram", "accounts.json")}`,
+        "[Channels] telegram: accounts=0, enabled=none",
+      ]),
+    );
+  });
+
+  test("treats explicitly requested channels with no enabled accounts as startup failures", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "telegram",
+        accountId: "acct-disabled",
+        enabled: false,
+        token: "test-token",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        transcribeVoice: false,
+        binding: { agentId: null, conversationId: null },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    clearChannelAccountStores();
+
+    const logs: string[] = [];
+
+    await expect(
+      initializeChannels(["telegram"], {
+        failOnStartupError: true,
+        logger: (message) => logs.push(message),
+      }),
+    ).rejects.toThrow('Channel "telegram" has no enabled accounts');
+
+    expect(logs).toContain("[Channels] telegram: accounts=1, enabled=none");
   });
 });
 
