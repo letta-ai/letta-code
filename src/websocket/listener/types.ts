@@ -29,6 +29,7 @@ import type { ListenerTransport } from "./transport";
 export interface StartListenerOptions {
   connectionId: string;
   wsUrl: string;
+  supportsSplitStatusChannels?: boolean;
   deviceId: string;
   connectionName: string;
   onConnected: (connectionId: string) => void;

@@ -568,7 +568,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       `Registering with ${registerOptions.serverUrl}/v1/environments/register`,
     );
 
-    const { connectionId, wsUrl } = await registerWithCloud(registerOptions);
+    const { connectionId, wsUrl, supportsSplitStatusChannels } =
+      await registerWithCloud(registerOptions);
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -592,6 +593,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const reregister = async (): Promise<{
       connectionId: string;
       wsUrl: string;
+      supportsSplitStatusChannels: boolean;
     }> => {
       sessionLog.log("Re-registering with retry...");
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
@@ -640,10 +642,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const startDebugClient = async (
         connId: string,
         url: string,
+        nextSupportsSplitStatusChannels: boolean,
       ): Promise<void> => {
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
+          supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
           deviceId,
           connectionName,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
@@ -672,7 +676,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             );
             try {
               const result = await reregister();
-              await startDebugClient(result.connectionId, result.wsUrl);
+              await startDebugClient(
+                result.connectionId,
+                result.wsUrl,
+                result.supportsSplitStatusChannels,
+              );
             } catch (error) {
               const msg =
                 error instanceof Error ? error.message : String(error);
@@ -695,7 +703,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
         });
       };
-      await startDebugClient(connectionId, wsUrl);
+      await startDebugClient(connectionId, wsUrl, supportsSplitStatusChannels);
     } else {
       // Normal mode: interactive Ink UI
       console.clear();
@@ -723,10 +731,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const startNormalClient = async (
         connId: string,
         url: string,
+        nextSupportsSplitStatusChannels: boolean,
       ): Promise<void> => {
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
+          supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
           deviceId,
           connectionName,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
@@ -750,7 +760,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log("Environment expired, re-registering...");
             try {
               const result = await reregister();
-              await startNormalClient(result.connectionId, result.wsUrl);
+              await startNormalClient(
+                result.connectionId,
+                result.wsUrl,
+                result.supportsSplitStatusChannels,
+              );
             } catch (error) {
               const msg =
                 error instanceof Error ? error.message : String(error);
@@ -775,7 +789,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
         });
       };
-      await startNormalClient(connectionId, wsUrl);
+      await startNormalClient(connectionId, wsUrl, supportsSplitStatusChannels);
     }
 
     // Keep process alive

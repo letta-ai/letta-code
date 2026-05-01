@@ -4624,13 +4624,19 @@ async function connectWithRetry(
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);
   url.searchParams.set("connectionName", opts.connectionName);
-  url.searchParams.set("channel", "control");
 
-  // Build the stream URL with channel=stream
-  const streamUrl = new URL(opts.wsUrl);
-  streamUrl.searchParams.set("deviceId", opts.deviceId);
-  streamUrl.searchParams.set("connectionName", opts.connectionName);
-  streamUrl.searchParams.set("channel", "stream");
+  const supportsSplitStatusChannels = opts.supportsSplitStatusChannels === true;
+  if (supportsSplitStatusChannels) {
+    url.searchParams.set("channel", "control");
+  }
+
+  let streamUrl: URL | null = null;
+  if (supportsSplitStatusChannels) {
+    streamUrl = new URL(opts.wsUrl);
+    streamUrl.searchParams.set("deviceId", opts.deviceId);
+    streamUrl.searchParams.set("connectionName", opts.connectionName);
+    streamUrl.searchParams.set("channel", "stream");
+  }
 
   const socket = new WebSocket(url.toString(), {
     headers: {
@@ -4642,11 +4648,13 @@ async function connectWithRetry(
   // The stream socket carries runtime emissions (stream_delta, device/loop
   // status, queue updates, subagent state) while the control socket handles
   // command request/response traffic.
-  const streamSocket = new WebSocket(streamUrl.toString(), {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
+  const streamSocket = streamUrl
+    ? new WebSocket(streamUrl.toString(), {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
+    : null;
   runtime.streamSocket = streamSocket;
 
   // ── File watchers (keyed by absolute path) ─────────────────────────────
@@ -4687,13 +4695,13 @@ async function connectWithRetry(
   };
 
   socket.on("open", async () => {
-    // Wait for the stream socket to also open before starting the runtime.
-    // If the stream socket is not yet open, wait for it; if it fails, we
-    // proceed without it (emissions fall back to the control socket).
-    const streamTransport = await waitForStreamSocketOpen(
-      streamSocket,
-      runtime,
-    );
+    let streamTransport: ListenerTransport | null = null;
+    if (streamSocket) {
+      // Wait for the stream socket to also open before starting the runtime.
+      // If the stream socket is not yet open, wait for it; if it fails, we
+      // proceed without it (emissions fall back to the control socket).
+      streamTransport = await waitForStreamSocketOpen(streamSocket, runtime);
+    }
     await startConnectedListenerRuntime(
       runtime,
       transport,
@@ -6740,30 +6748,32 @@ async function connectWithRetry(
   // not trigger reconnection. If the stream socket drops, emissions fall back
   // to the control socket via the isListenerTransportOpen check in
   // emitProtocolV2Message.
-  streamSocket.on("error", (error: Error) => {
-    trackListenerError(
-      "listener_stream_socket_error",
-      error,
-      "listener_stream_socket",
-    );
-    if (isDebugEnabled()) {
-      console.error("[Listen] Stream WebSocket error:", error);
-    }
-  });
-
-  streamSocket.on("close", (code: number, reason: Buffer) => {
-    if (isDebugEnabled()) {
-      console.log(
-        `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
+  if (streamSocket) {
+    streamSocket.on("error", (error: Error) => {
+      trackListenerError(
+        "listener_stream_socket_error",
+        error,
+        "listener_stream_socket",
       );
-    }
-    // Clear the stream transport so emissions fall back to the control socket.
-    // Do NOT trigger reconnection — the control socket owns that lifecycle.
-    if (runtime.streamSocket === streamSocket) {
-      runtime.streamSocket = null;
-      runtime.streamTransport = null;
-    }
-  });
+      if (isDebugEnabled()) {
+        console.error("[Listen] Stream WebSocket error:", error);
+      }
+    });
+
+    streamSocket.on("close", (code: number, reason: Buffer) => {
+      if (isDebugEnabled()) {
+        console.log(
+          `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
+        );
+      }
+      // Clear the stream transport so emissions fall back to the control socket.
+      // Do NOT trigger reconnection — the control socket owns that lifecycle.
+      if (runtime.streamSocket === streamSocket) {
+        runtime.streamSocket = null;
+        runtime.streamTransport = null;
+      }
+    });
+  }
 }
 
 /**
