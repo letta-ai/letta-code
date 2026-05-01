@@ -1,8 +1,11 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { getClient } from "./api/client";
 import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import { FakeHeadlessBackend } from "./dev/FakeHeadlessBackend";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
 type GetAPIClient = typeof getClient;
@@ -319,7 +322,34 @@ export class APIBackend implements Backend {
   }
 }
 
-let backend: Backend = new APIBackend();
+function isTruthyEnv(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+export function isExperimentalLocalBackendEnabled(): boolean {
+  return isTruthyEnv(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL);
+}
+
+export function getLocalBackendStorageDir(homeDir = homedir()): string {
+  return (
+    process.env.LETTA_LOCAL_BACKEND_DIR ??
+    join(homeDir, ".letta", "lc-local-backend")
+  );
+}
+
+function createExperimentalLocalBackend(): Backend {
+  return new FakeHeadlessBackend(undefined, undefined, {
+    storageDir: getLocalBackendStorageDir(),
+  });
+}
+
+function createInitialBackend(): Backend {
+  return isExperimentalLocalBackendEnabled()
+    ? createExperimentalLocalBackend()
+    : new APIBackend();
+}
+
+let backend: Backend = createInitialBackend();
 
 export function getBackend(): Backend {
   return backend;
@@ -398,5 +428,5 @@ export async function configureDevBackend(name: string): Promise<void> {
 }
 
 export function __testSetBackend(nextBackend: Backend | null): void {
-  backend = nextBackend ?? new APIBackend();
+  backend = nextBackend ?? createInitialBackend();
 }

@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createIsolatedCliTestEnv } from "../testProcessEnv";
 
 const projectRoot = process.cwd();
 
 async function runCli(
   args: string[],
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   const env = createIsolatedCliTestEnv({
     LETTA_DEBUG: "0",
     DISABLE_AUTOUPDATER: "1",
+    ...extraEnv,
   });
   delete env.LETTA_API_KEY;
   delete env.LETTA_BASE_URL;
@@ -443,6 +448,46 @@ describe("headless dev backend smoke", () => {
     expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Failed to connect to Letta server");
     expect(result.stderr).not.toContain("Memory flags failed");
+  });
+
+  test("runs with env-selected local backend and writes flatfiles", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-local-backend-"));
+    try {
+      const result = await runCli(
+        [
+          "-p",
+          "ping",
+          "--new-agent",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+          "--no-memfs",
+          "--memfs-startup",
+          "skip",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("pong");
+      expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+      expect(result.stderr).not.toContain("Failed to connect to Letta server");
+
+      const agentFiles = await readdir(join(storageDir, "agents"));
+      expect(agentFiles.length).toBeGreaterThan(0);
+      const persistedAgent = JSON.parse(
+        await readFile(join(storageDir, "agents", agentFiles[0] ?? ""), "utf8"),
+      ) as { id?: unknown };
+      expect(typeof persistedAgent.id).toBe("string");
+
+      const conversationDirs = await readdir(join(storageDir, "conversations"));
+      expect(conversationDirs.length).toBeGreaterThan(0);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("rejects remote MemFS enable on dev backends without API credentials", async () => {
