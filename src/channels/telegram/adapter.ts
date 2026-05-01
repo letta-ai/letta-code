@@ -34,6 +34,43 @@ type BufferedMediaGroup = {
   messages: TelegramLikeMessage[];
   timer: ReturnType<typeof setTimeout>;
 };
+
+const DEFAULT_TELEGRAM_INIT_TIMEOUT_MS = 15_000;
+const DEFAULT_TELEGRAM_START_TIMEOUT_MS = 20_000;
+const TELEGRAM_FAILED_START_STOP_TIMEOUT_MS = 5_000;
+
+function getStartupTimeoutMs(envName: string, fallbackMs: number): number {
+  const raw = process.env[envName];
+  if (!raw) return fallbackMs;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs;
+}
+
+function withStartupTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timer.unref?.();
+
+    promise.then(
+      (value) => {
+        if (timer) clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (timer) clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 type TelegramReactionType =
   | {
       type?: "emoji";
@@ -414,38 +451,71 @@ export function createTelegramAdapter(
       if (running) return;
       const telegramBot = await ensureBot();
 
-      await telegramBot.init();
+      try {
+        await withStartupTimeout(
+          telegramBot.init(),
+          "Telegram bot init",
+          getStartupTimeoutMs(
+            "LETTA_TELEGRAM_INIT_TIMEOUT_MS",
+            DEFAULT_TELEGRAM_INIT_TIMEOUT_MS,
+          ),
+        );
+      } catch (error) {
+        bot = null;
+        throw error;
+      }
       const info = telegramBot.botInfo;
-      console.log(
-        `[Telegram] Bot started as @${info.username} (dm_policy: ${config.dmPolicy})`,
-      );
+      let startupTimedOut = false;
 
-      await new Promise<void>((resolve, reject) => {
-        let started = false;
+      try {
+        await withStartupTimeout(
+          new Promise<void>((resolve, reject) => {
+            let started = false;
 
-        void telegramBot
-          .start({
-            allowed_updates: ["message", "message_reaction"],
-            onStart: () => {
-              running = true;
-              started = true;
-              resolve();
-            },
-          })
-          .catch((error) => {
-            running = false;
+            void telegramBot
+              .start({
+                allowed_updates: ["message", "message_reaction"],
+                onStart: () => {
+                  if (startupTimedOut) return;
+                  running = true;
+                  started = true;
+                  console.log(
+                    `[Telegram] Bot started as @${info.username} (dm_policy: ${config.dmPolicy})`,
+                  );
+                  resolve();
+                },
+              })
+              .catch((error) => {
+                running = false;
 
-            if (!started) {
-              reject(error);
-              return;
-            }
+                if (!started) {
+                  reject(error);
+                  return;
+                }
 
-            console.error(
-              "[Telegram] Long-polling stopped unexpectedly:",
-              error,
-            );
-          });
-      });
+                console.error(
+                  "[Telegram] Long-polling stopped unexpectedly:",
+                  error,
+                );
+              });
+          }),
+          "Telegram bot polling startup",
+          getStartupTimeoutMs(
+            "LETTA_TELEGRAM_START_TIMEOUT_MS",
+            DEFAULT_TELEGRAM_START_TIMEOUT_MS,
+          ),
+        );
+      } catch (error) {
+        startupTimedOut = true;
+        running = false;
+        bot = null;
+        await withStartupTimeout(
+          telegramBot.stop(),
+          "Telegram bot stop after failed startup",
+          TELEGRAM_FAILED_START_STOP_TIMEOUT_MS,
+        ).catch(() => undefined);
+        throw error;
+      }
     },
 
     async stop(): Promise<void> {

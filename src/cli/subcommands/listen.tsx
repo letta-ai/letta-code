@@ -385,6 +385,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Load local project settings to access saved environment name
   await settingsManager.loadLocalProjectSettings();
 
+  // Session log (always written to ~/.letta/logs/remote/). Initialize it
+  // before channel startup so early adapter failures leave a trail.
+  const sessionLog = new RemoteSessionLog();
+  sessionLog.init();
+  console.log(`Log file: ${sessionLog.path}`);
+
   // Initialize channels if explicitly requested, or restore persisted enabled
   // channels when a desktop wrapper opts into boot-time channel restore.
   const channelNames = values.channels
@@ -417,9 +423,17 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     const { initializeChannels } = await import("../../channels/registry");
-    await initializeChannels(channelNames, {
-      failOnStartupError: Boolean(values.channels),
-    });
+    try {
+      await initializeChannels(channelNames, {
+        failOnStartupError: Boolean(values.channels),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      sessionLog.log(`FATAL: ${msg}`);
+      console.error(`Failed to start listener: ${msg}`);
+      await flushListenerTelemetryEnd("listener_channel_start_failed");
+      return 1;
+    }
   }
 
   // Determine connection name
@@ -457,11 +471,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       settingsManager.setListenerEnvName(connectionName);
     }
   }
-
-  // Session log (always written to ~/.letta/logs/remote/)
-  const sessionLog = new RemoteSessionLog();
-  sessionLog.init();
-  console.log(`Log file: ${sessionLog.path}`);
 
   try {
     // Get device ID
