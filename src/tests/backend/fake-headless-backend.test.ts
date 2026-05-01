@@ -62,6 +62,7 @@ function createBody(
 describe("FakeHeadlessBackend", () => {
   test("creates agents and lists local models through the backend facade", async () => {
     const backend = new FakeHeadlessBackend("agent-default");
+    expect(backend.capabilities.remoteMemfs).toBe(false);
 
     const agent = await backend.createAgent({
       name: "Created Agent",

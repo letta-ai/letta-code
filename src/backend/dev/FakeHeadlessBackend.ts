@@ -28,6 +28,8 @@ function createPage<T>(items: T[]) {
 }
 
 export class FakeHeadlessBackend implements Backend {
+  readonly capabilities = { remoteMemfs: false };
+
   private readonly store: FakeHeadlessStore;
   private readonly executor: HeadlessTurnExecutor;
 

@@ -423,6 +423,49 @@ describe("headless dev backend smoke", () => {
     expect(result.stderr).not.toContain("Failed to connect to Letta server");
   });
 
+  test("creates a new headless agent through the dev backend without API credentials", async () => {
+    const result = await runCli([
+      "-p",
+      "ping",
+      "--new-agent",
+      "--dev-backend",
+      "fake-headless",
+      "--permission-mode",
+      "plan",
+      "--no-skills",
+      "--no-memfs",
+      "--memfs-startup",
+      "skip",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pong");
+    expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Failed to connect to Letta server");
+    expect(result.stderr).not.toContain("Memory flags failed");
+  });
+
+  test("rejects remote MemFS enable on dev backends without API credentials", async () => {
+    const result = await runCli([
+      "-p",
+      "ping",
+      "--agent",
+      "agent-fake",
+      "--dev-backend",
+      "fake-headless",
+      "--permission-mode",
+      "plan",
+      "--no-skills",
+      "--memfs",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "Error: --memfs is not supported by this backend yet",
+    );
+    expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+  });
+
   test("runs stream-json controls and repeated user turns without API credentials", async () => {
     const result = await runStreamJsonCli();
 

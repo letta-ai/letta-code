@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { Backend } from "../backend";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
@@ -517,7 +518,12 @@ async function getMemfsSyncUnavailableMessage(): Promise<string> {
  * Skips the system prompt update since callers are expected to create
  * the agent with the correct memory mode upfront.
  */
-export async function enableMemfsIfCloud(agentId: string): Promise<void> {
+export async function enableMemfsIfCloud(
+  agentId: string,
+  backend?: Backend,
+): Promise<void> {
+  const resolvedBackend = backend ?? (await import("../backend")).getBackend();
+  if (!resolvedBackend.capabilities.remoteMemfs) return;
   if (!(await isLettaCloud())) return;
 
   try {

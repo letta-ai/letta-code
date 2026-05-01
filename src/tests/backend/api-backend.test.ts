@@ -139,6 +139,7 @@ describe("APIBackend", () => {
       getClient: getClientMock as unknown as () => Promise<APIClient>,
       forkConversation: forkConversationMock,
     });
+    expect(backend.capabilities.remoteMemfs).toBe(true);
     const agentUpdateBody = { system: "system" } as AgentUpdateBody;
     const agentCreateBody = { name: "new agent" } as AgentCreateBody;
     const conversationCreateBody = {

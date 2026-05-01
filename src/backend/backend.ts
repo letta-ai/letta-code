@@ -76,7 +76,13 @@ export type MessageRetrieveOptions = MessageRetrieveParams[1];
 export type ModelsListParams = Parameters<APIClient["models"]["list"]>;
 export type ModelsListOptions = ModelsListParams[0];
 
+export interface BackendCapabilities {
+  remoteMemfs: boolean;
+}
+
 export interface Backend {
+  readonly capabilities: BackendCapabilities;
+
   retrieveAgent(
     agentId: string,
     options?: AgentRetrieveOptions,
@@ -174,6 +180,8 @@ interface APIBackendDeps {
 }
 
 export class APIBackend implements Backend {
+  readonly capabilities: BackendCapabilities = { remoteMemfs: true };
+
   private readonly getApiClientOverride?: GetAPIClient;
   private readonly forkConversationOverride?: ForkConversation;
 

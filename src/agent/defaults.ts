@@ -174,7 +174,8 @@ export async function ensureDefaultAgents(
     const { isLettaCloud, enableMemfsIfCloud } = await import(
       "./memoryFilesystem"
     );
-    const willAutoEnableMemfs = await isLettaCloud();
+    const willAutoEnableMemfs =
+      backend.capabilities.remoteMemfs && (await isLettaCloud());
 
     const { agent } = await createAgent({
       ...DEFAULT_AGENT_CONFIGS.memo,
@@ -186,7 +187,9 @@ export async function ensureDefaultAgents(
 
     // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
     // without blocking startup on the initial clone.
-    void enableMemfsIfCloud(agent.id);
+    if (backend.capabilities.remoteMemfs) {
+      void enableMemfsIfCloud(agent.id, backend);
+    }
 
     return agent;
   } catch (err) {
