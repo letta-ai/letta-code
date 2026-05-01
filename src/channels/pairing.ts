@@ -2,12 +2,12 @@
  * Channel pairing store.
  *
  * Handles the pairing flow for channels with dm_policy: "pairing".
- * When an unknown user messages the bot, they get a pairing code.
+ * When an unknown user messages the channel, they get a pairing code.
  * The user runs `/channels <channel> pair <code>` to approve the connection.
  *
  * Persisted in ~/.letta/channels/<channel>/pairing.yaml.
  *
- * Reference: lettabot src/pairing/store.ts
+ * Reference: earlier pairing-store implementation
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
