@@ -156,6 +156,10 @@ export type ConversationRuntime = {
 export type ListenerRuntime = {
   socket: WebSocket | null;
   transport?: ListenerTransport | null;
+  /** Stream transport for runtime emissions (stream_delta, device/loop status, etc.). */
+  streamTransport?: ListenerTransport | null;
+  /** Underlying stream WebSocket (for close/cleanup). */
+  streamSocket: WebSocket | null;
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
   intentionallyClosed: boolean;

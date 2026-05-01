@@ -4056,6 +4056,8 @@ function createRuntime(): ListenerRuntime {
   return {
     socket: null,
     transport: null,
+    streamTransport: null,
+    streamSocket: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
     intentionallyClosed: false,
@@ -4112,6 +4114,22 @@ function stopRuntime(
   runtime.queuedSystemPromptRecompileByConversation.clear();
   stopAllWorktreeWatchers(runtime);
 
+  // Close the stream socket if present.
+  const streamSocket = runtime.streamSocket;
+  runtime.streamSocket = null;
+  runtime.streamTransport = null;
+  if (streamSocket) {
+    if (suppressCallbacks) {
+      streamSocket.removeAllListeners();
+    }
+    if (
+      streamSocket.readyState === WebSocket.OPEN ||
+      streamSocket.readyState === WebSocket.CONNECTING
+    ) {
+      streamSocket.close();
+    }
+  }
+
   if (!runtime.socket) {
     runtime.transport = null;
     return;
@@ -4146,6 +4164,7 @@ async function startConnectedListenerRuntime(
     startHeartbeat?: boolean;
     startCronScheduler?: boolean;
   } = {},
+  streamTransport?: ListenerTransport | null,
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
     return;
@@ -4162,6 +4181,9 @@ async function startConnectedListenerRuntime(
     options.startCronScheduler !== false && !cronSchedulerDisabledByEnv;
 
   runtime.transport = transport;
+  if (streamTransport) {
+    runtime.streamTransport = streamTransport;
+  }
   safeEmitWsEvent("recv", "lifecycle", {
     type:
       getListenerTransportKind(transport) === "websocket"
@@ -4483,6 +4505,62 @@ async function listDirectoryHybrid(
 }
 
 /**
+ * Wait for the stream socket to open, returning it as a ListenerTransport.
+ * Returns null if the stream socket closes or errors before opening, or if
+ * the runtime is shutting down. The caller falls back to the control socket
+ * in that case.
+ */
+function waitForStreamSocketOpen(
+  streamSocket: WebSocket,
+  _runtime: ListenerRuntime,
+): Promise<ListenerTransport | null> {
+  return new Promise((resolve) => {
+    if (streamSocket.readyState === WebSocket.OPEN) {
+      resolve(streamSocket);
+      return;
+    }
+    if (
+      streamSocket.readyState === WebSocket.CLOSING ||
+      streamSocket.readyState === WebSocket.CLOSED
+    ) {
+      resolve(null);
+      return;
+    }
+
+    const onOpen = () => {
+      cleanup();
+      resolve(streamSocket);
+    };
+    const onClose = () => {
+      cleanup();
+      resolve(null);
+    };
+    const onError = () => {
+      cleanup();
+      // Error is followed by close, so resolve null here
+      resolve(null);
+    };
+
+    const cleanup = () => {
+      streamSocket.removeListener("open", onOpen);
+      streamSocket.removeListener("close", onClose);
+      streamSocket.removeListener("error", onError);
+    };
+
+    streamSocket.on("open", onOpen);
+    streamSocket.on("close", onClose);
+    streamSocket.on("error", onError);
+
+    // Safety timeout: if the stream socket doesn't open within 5s, proceed
+    // without it. This prevents the control channel from being blocked.
+    setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, 5000);
+  });
+}
+
+/**
  * Connect to WebSocket with exponential backoff retry.
  */
 async function connectWithRetry(
@@ -4546,12 +4624,30 @@ async function connectWithRetry(
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);
   url.searchParams.set("connectionName", opts.connectionName);
+  url.searchParams.set("channel", "control");
+
+  // Build the stream URL with channel=stream
+  const streamUrl = new URL(opts.wsUrl);
+  streamUrl.searchParams.set("deviceId", opts.deviceId);
+  streamUrl.searchParams.set("connectionName", opts.connectionName);
+  streamUrl.searchParams.set("channel", "stream");
 
   const socket = new WebSocket(url.toString(), {
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
   });
+
+  // Open the stream socket alongside the control socket.
+  // The stream socket carries runtime emissions (stream_delta, device/loop
+  // status, queue updates, subagent state) while the control socket handles
+  // command request/response traffic.
+  const streamSocket = new WebSocket(streamUrl.toString(), {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  });
+  runtime.streamSocket = streamSocket;
 
   // ── File watchers (keyed by absolute path) ─────────────────────────────
   // Managed by watch_file / unwatch_file commands from the web client.
@@ -4591,12 +4687,20 @@ async function connectWithRetry(
   };
 
   socket.on("open", async () => {
+    // Wait for the stream socket to also open before starting the runtime.
+    // If the stream socket is not yet open, wait for it; if it fails, we
+    // proceed without it (emissions fall back to the control socket).
+    const streamTransport = await waitForStreamSocketOpen(
+      streamSocket,
+      runtime,
+    );
     await startConnectedListenerRuntime(
       runtime,
       transport,
       opts,
       processQueuedTurn,
       { startHeartbeat: true, startCronScheduler: true },
+      streamTransport,
     );
   });
 
@@ -6562,6 +6666,20 @@ async function connectWithRetry(
     runtime._unsubscribeSubagentState = undefined;
     runtime._unsubscribeSubagentStreamEvents?.();
     runtime._unsubscribeSubagentStreamEvents = undefined;
+    // Close the stream socket when the control socket closes.
+    // The stream socket does not drive reconnection logic — only the control
+    // socket does. Closing the stream socket here prevents orphaned connections.
+    if (streamSocket) {
+      streamSocket.removeAllListeners();
+      if (
+        streamSocket.readyState === WebSocket.OPEN ||
+        streamSocket.readyState === WebSocket.CONNECTING
+      ) {
+        streamSocket.close();
+      }
+    }
+    runtime.streamSocket = null;
+    runtime.streamTransport = null;
     runtime.socket = null;
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
       rejectPendingApprovalResolvers(
@@ -6616,6 +6734,36 @@ async function connectWithRetry(
     }
     // Error triggers close(), which handles retry logic.
   });
+
+  // Stream socket error/close handlers.
+  // The stream socket is fire-and-forget for emissions — errors here should
+  // not trigger reconnection. If the stream socket drops, emissions fall back
+  // to the control socket via the isListenerTransportOpen check in
+  // emitProtocolV2Message.
+  streamSocket.on("error", (error: Error) => {
+    trackListenerError(
+      "listener_stream_socket_error",
+      error,
+      "listener_stream_socket",
+    );
+    if (isDebugEnabled()) {
+      console.error("[Listen] Stream WebSocket error:", error);
+    }
+  });
+
+  streamSocket.on("close", (code: number, reason: Buffer) => {
+    if (isDebugEnabled()) {
+      console.log(
+        `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
+      );
+    }
+    // Clear the stream transport so emissions fall back to the control socket.
+    // Do NOT trigger reconnection — the control socket owns that lifecycle.
+    if (runtime.streamSocket === streamSocket) {
+      runtime.streamSocket = null;
+      runtime.streamTransport = null;
+    }
+  });
 }
 
 /**
@@ -6649,6 +6797,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   activeAgentId: string | null;
   activeConversationId: string;
   socket: WebSocket | null;
+  streamSocket: WebSocket | null;
   workingDirectoryByConversation: Map<string, string>;
   permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
   reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
@@ -6685,6 +6834,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     activeAgentId: string | null;
     activeConversationId: string;
     socket: WebSocket | null;
+    streamSocket: WebSocket | null;
     workingDirectoryByConversation: Map<string, string>;
     permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
     reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
@@ -6720,6 +6870,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.socket,
       set: (value: WebSocket | null) => {
         listener.socket = value;
+      },
+    },
+    streamSocket: {
+      get: () => listener.streamSocket,
+      set: (value: WebSocket | null) => {
+        listener.streamSocket = value;
       },
     },
     workingDirectoryByConversation: {
