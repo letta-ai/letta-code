@@ -5,11 +5,11 @@ import type {
   ToolSet,
   UIMessageChunk,
 } from "ai";
-import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
 import {
-  OpenAIResponsesStreamAdapter,
-  type OpenAIResponsesStreamAdapterOptions,
-} from "../../backend/dev/OpenAIResponsesStreamAdapter";
+  AISDKStreamAdapter,
+  type AISDKStreamTextFunction,
+} from "../../backend/dev/AISDKStreamAdapter";
+import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
 import type { ProviderTrajectoryUIMessage } from "../../backend/dev/ProviderTrajectory";
 import type { ProviderTurnInput } from "../../backend/dev/ProviderTurnExecutor";
 
@@ -61,14 +61,14 @@ function providerInput(
   };
 }
 
-describe("OpenAIResponsesStreamAdapter", () => {
-  test("streams OpenAI Responses output through provider events", async () => {
-    let capturedModel: string | undefined;
+describe("AISDKStreamAdapter", () => {
+  test("streams AI SDK output through provider events", async () => {
+    const model = {} as LanguageModel;
+    let capturedModel: LanguageModel | undefined;
     let capturedMessages: unknown[] | undefined;
     let capturedTools: ToolSet | undefined;
-    const streamText: NonNullable<
-      OpenAIResponsesStreamAdapterOptions["streamText"]
-    > = (options) => {
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedModel = options.model;
       capturedMessages = options.messages;
       capturedTools = options.tools;
       return {
@@ -110,12 +110,8 @@ describe("OpenAIResponsesStreamAdapter", () => {
           ]),
       };
     };
-    const adapter = new OpenAIResponsesStreamAdapter({
-      model: "gpt-test",
-      createModel: (model) => {
-        capturedModel = model;
-        return {} as LanguageModel;
-      },
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => model,
       streamText,
     });
 
@@ -131,7 +127,7 @@ describe("OpenAIResponsesStreamAdapter", () => {
       ),
     );
 
-    expect(capturedModel).toBe("gpt-test");
+    expect(capturedModel).toBe(model);
     expect(capturedMessages).toEqual([
       {
         role: "user",
@@ -169,9 +165,7 @@ describe("OpenAIResponsesStreamAdapter", () => {
 
   test("projects UI tool outputs without AI SDK approval protocol parts", async () => {
     let capturedMessages: unknown[] | undefined;
-    const streamText: NonNullable<
-      OpenAIResponsesStreamAdapterOptions["streamText"]
-    > = (options) => {
+    const streamText: AISDKStreamTextFunction = (options) => {
       capturedMessages = options.messages;
       return {
         fullStream: (async function* () {
@@ -184,7 +178,7 @@ describe("OpenAIResponsesStreamAdapter", () => {
           ]),
       };
     };
-    const adapter = new OpenAIResponsesStreamAdapter({
+    const adapter = new AISDKStreamAdapter({
       createModel: () => ({}) as LanguageModel,
       streamText,
     });

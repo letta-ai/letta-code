@@ -1,4 +1,3 @@
-import { createOpenAI } from "@ai-sdk/openai";
 import {
   tool as aiTool,
   convertToModelMessages,
@@ -21,9 +20,7 @@ import type {
 } from "./ProviderTurnExecutor";
 import { providerStreamPart, providerUIMessage } from "./ProviderTurnExecutor";
 
-const DEFAULT_OPENAI_RESPONSES_MODEL = "gpt-5.5";
-
-type StreamTextFunction = (options: {
+export type AISDKStreamTextFunction = (options: {
   model: LanguageModel;
   messages: ModelMessage[];
   tools?: ToolSet;
@@ -37,13 +34,10 @@ type StreamTextFunction = (options: {
   }) => ReadableStream<UIMessageChunk>;
 };
 
-export interface OpenAIResponsesStreamAdapterOptions {
-  model?: string;
-  apiKey?: string;
-  fetch?: typeof fetch;
+export interface AISDKStreamAdapterOptions {
+  createModel: () => LanguageModel;
   abortSignal?: AbortSignal;
-  createModel?: (model: string) => LanguageModel;
-  streamText?: StreamTextFunction;
+  streamText?: AISDKStreamTextFunction;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -69,24 +63,12 @@ function toToolSet(clientTools: unknown[]): ToolSet | undefined {
   return Object.keys(tools).length > 0 ? tools : undefined;
 }
 
-function createDefaultOpenAIResponsesModel(options: {
-  model: string;
-  apiKey?: string;
-  fetch?: typeof fetch;
-}): LanguageModel {
-  const provider = createOpenAI({
-    apiKey: options.apiKey,
-    fetch: options.fetch,
-  });
-  return provider.responses(options.model);
-}
-
-function defaultStreamText(options: Parameters<StreamTextFunction>[0]) {
+function defaultStreamText(options: Parameters<AISDKStreamTextFunction>[0]) {
   return streamText(options);
 }
 
 async function captureFinalUIMessage(
-  result: ReturnType<StreamTextFunction>,
+  result: ReturnType<AISDKStreamTextFunction>,
   originalMessages: ProviderTrajectoryUIMessage[],
 ): Promise<ProviderTrajectoryUIMessage | undefined> {
   if (!result.toUIMessageStream) return undefined;
@@ -103,25 +85,13 @@ async function captureFinalUIMessage(
   return finalMessage;
 }
 
-export class OpenAIResponsesStreamAdapter implements ProviderStreamAdapter {
-  private readonly model: string;
-  private readonly createModel: (model: string) => LanguageModel;
-  private readonly runStreamText: StreamTextFunction;
+export class AISDKStreamAdapter implements ProviderStreamAdapter {
+  private readonly createModel: () => LanguageModel;
+  private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
 
-  constructor(options: OpenAIResponsesStreamAdapterOptions = {}) {
-    this.model =
-      options.model ??
-      process.env.LETTA_CODE_DEV_OPENAI_MODEL ??
-      DEFAULT_OPENAI_RESPONSES_MODEL;
-    this.createModel =
-      options.createModel ??
-      ((model) =>
-        createDefaultOpenAIResponsesModel({
-          model,
-          apiKey: options.apiKey,
-          fetch: options.fetch,
-        }));
+  constructor(options: AISDKStreamAdapterOptions) {
+    this.createModel = options.createModel;
     this.runStreamText = options.streamText ?? defaultStreamText;
     this.abortSignal = options.abortSignal;
   }
@@ -133,7 +103,7 @@ export class OpenAIResponsesStreamAdapter implements ProviderStreamAdapter {
       tools: tools as never,
     });
     const result = this.runStreamText({
-      model: this.createModel(this.model),
+      model: this.createModel(),
       messages: await convertToModelMessages(uiMessages, { tools }),
       tools,
       maxRetries: 0,

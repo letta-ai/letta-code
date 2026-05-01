@@ -332,15 +332,20 @@ export async function configureDevBackend(name: string): Promise<void> {
     }
     case "fake-headless-openai-responses": {
       const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-      const { OpenAIResponsesStreamAdapter } = await import(
-        "./dev/OpenAIResponsesStreamAdapter"
+      const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
+      const { createOpenAIResponsesModelFactory } = await import(
+        "./dev/OpenAIResponsesModel"
       );
       const { ProviderTurnExecutor } = await import(
         "./dev/ProviderTurnExecutor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
-        new ProviderTurnExecutor(new OpenAIResponsesStreamAdapter()),
+        new ProviderTurnExecutor(
+          new AISDKStreamAdapter({
+            createModel: createOpenAIResponsesModelFactory(),
+          }),
+        ),
         devBackendStoreOptions(),
       );
       return;
