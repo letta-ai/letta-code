@@ -295,6 +295,22 @@ function devBackendStoreOptions() {
   return { storageDir: process.env.LETTA_CODE_DEV_BACKEND_DIR };
 }
 
+async function createAISDKDevBackend(provider?: string): Promise<Backend> {
+  const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+  const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
+  const { createAISDKModelFactory } = await import("./dev/AISDKModelFactory");
+  const { ProviderTurnExecutor } = await import("./dev/ProviderTurnExecutor");
+  return new FakeHeadlessBackend(
+    "agent-fake-headless",
+    new ProviderTurnExecutor(
+      new AISDKStreamAdapter({
+        createModel: createAISDKModelFactory({ provider }),
+      }),
+    ),
+    devBackendStoreOptions(),
+  );
+}
+
 export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
@@ -331,43 +347,15 @@ export async function configureDevBackend(name: string): Promise<void> {
       return;
     }
     case "fake-headless-openai-responses": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-      const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
-      const { createOpenAIResponsesModelFactory } = await import(
-        "./dev/OpenAIResponsesModel"
-      );
-      const { ProviderTurnExecutor } = await import(
-        "./dev/ProviderTurnExecutor"
-      );
-      backend = new FakeHeadlessBackend(
-        "agent-fake-headless",
-        new ProviderTurnExecutor(
-          new AISDKStreamAdapter({
-            createModel: createOpenAIResponsesModelFactory(),
-          }),
-        ),
-        devBackendStoreOptions(),
-      );
+      backend = await createAISDKDevBackend("openai-responses");
       return;
     }
     case "fake-headless-anthropic": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-      const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
-      const { createAnthropicModelFactory } = await import(
-        "./dev/AnthropicModel"
-      );
-      const { ProviderTurnExecutor } = await import(
-        "./dev/ProviderTurnExecutor"
-      );
-      backend = new FakeHeadlessBackend(
-        "agent-fake-headless",
-        new ProviderTurnExecutor(
-          new AISDKStreamAdapter({
-            createModel: createAnthropicModelFactory(),
-          }),
-        ),
-        devBackendStoreOptions(),
-      );
+      backend = await createAISDKDevBackend("anthropic");
+      return;
+    }
+    case "fake-headless-ai-sdk": {
+      backend = await createAISDKDevBackend();
       return;
     }
     default:
