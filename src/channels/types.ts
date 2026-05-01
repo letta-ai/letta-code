@@ -104,12 +104,6 @@ export type ChannelTurnLifecycleEvent =
       error?: string;
     };
 
-export type ChannelStartupLogger = (message: string) => void;
-
-export interface ChannelAdapterStartOptions {
-  logger?: ChannelStartupLogger;
-}
-
 // ── Adapter interface ─────────────────────────────────────────────
 
 export interface ChannelAdapter {
@@ -123,7 +117,7 @@ export interface ChannelAdapter {
   readonly name: string;
 
   /** Start receiving messages (e.g. begin long-polling). */
-  start(options?: ChannelAdapterStartOptions): Promise<void>;
+  start(): Promise<void>;
   /** Stop receiving messages gracefully. */
   stop(): Promise<void>;
   /** Whether the adapter is currently running. */
