@@ -3,6 +3,7 @@ import type { TextStreamPart, ToolSet, UIMessage } from "ai";
 export type ProviderStreamPart = TextStreamPart<ToolSet>;
 
 const PROVIDER_STREAM_PART = Symbol.for("@letta/provider-stream-part");
+const PROVIDER_UI_MESSAGE = Symbol.for("@letta/provider-ui-message");
 const PROVIDER_STREAM_PART_ONLY = Symbol.for(
   "@letta/provider-stream-part-only",
 );
@@ -59,6 +60,12 @@ export function cloneProviderStreamPart(
   return cloneUnknown(part) as ProviderStreamPart;
 }
 
+export function cloneProviderUIMessageSnapshot(
+  message: ProviderTrajectoryUIMessage,
+): ProviderTrajectoryUIMessage {
+  return cloneUnknown(message) as ProviderTrajectoryUIMessage;
+}
+
 export function attachProviderStreamPart<T extends object>(
   target: T,
   part: ProviderStreamPart,
@@ -77,6 +84,27 @@ export function getAttachedProviderStreamPart(
   if (typeof value !== "object" || value === null) return undefined;
   return (value as Record<symbol, ProviderStreamPart | undefined>)[
     PROVIDER_STREAM_PART
+  ];
+}
+
+export function attachProviderUIMessage<T extends object>(
+  target: T,
+  message: ProviderTrajectoryUIMessage,
+): T {
+  Object.defineProperty(target, PROVIDER_UI_MESSAGE, {
+    value: message,
+    enumerable: false,
+    configurable: false,
+  });
+  return target;
+}
+
+export function getAttachedProviderUIMessage(
+  value: unknown,
+): ProviderTrajectoryUIMessage | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  return (value as Record<symbol, ProviderTrajectoryUIMessage | undefined>)[
+    PROVIDER_UI_MESSAGE
   ];
 }
 

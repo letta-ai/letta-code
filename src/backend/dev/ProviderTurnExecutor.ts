@@ -9,6 +9,7 @@ import type {
 } from "./HeadlessTurnExecutor";
 import {
   attachProviderStreamPart,
+  attachProviderUIMessage,
   markProviderStreamPartOnly,
   type ProviderStreamPart,
   type ProviderTrajectoryMessage,
@@ -29,12 +30,19 @@ export interface ProviderTurnInput {
 
 export type ProviderStreamEvent =
   | { type: "ai-sdk-part"; part: ProviderStreamPart }
+  | { type: "ai-sdk-ui-message"; message: ProviderTrajectoryUIMessage }
   | { type: "error"; error: unknown };
 
 export function providerStreamPart(
   part: ProviderStreamPart,
 ): ProviderStreamEvent {
   return { type: "ai-sdk-part", part };
+}
+
+export function providerUIMessage(
+  message: ProviderTrajectoryUIMessage,
+): ProviderStreamEvent {
+  return { type: "ai-sdk-ui-message", message };
 }
 
 export interface ProviderStreamAdapter {
@@ -93,6 +101,14 @@ function createProviderStreamPartChunk(
   ) as unknown as LettaStreamingResponse;
 }
 
+function createProviderUIMessageChunk(
+  message: ProviderTrajectoryUIMessage,
+): LettaStreamingResponse {
+  return markProviderStreamPartOnly(
+    attachProviderUIMessage({ message_type: "provider_ui_message" }, message),
+  ) as unknown as LettaStreamingResponse;
+}
+
 function withProviderStreamPart(
   chunk: LettaStreamingResponse,
   part: ProviderStreamPart,
@@ -121,6 +137,11 @@ function createProviderLettaStream(
               stop_reason: "error",
             } as LettaStreamingResponse;
             return;
+          }
+
+          if (event.type === "ai-sdk-ui-message") {
+            yield createProviderUIMessageChunk(event.message);
+            continue;
           }
 
           const { part } = event;

@@ -14,6 +14,7 @@ import {
   ProviderTurnExecutor,
   type ProviderTurnInput,
   providerStreamPart,
+  providerUIMessage,
 } from "../../backend/dev/ProviderTurnExecutor";
 
 function streamPart(part: Record<string, unknown>) {
@@ -462,6 +463,76 @@ describe("ProviderTurnExecutor", () => {
       {
         role: "user",
         parts: [{ type: "text", text: "reason second" }],
+      },
+    ]);
+  });
+
+  test("uses AI SDK UIMessage snapshots as the provider trajectory source", async () => {
+    const capturedMessages: ProviderTurnInput["uiMessages"][] = [];
+    let turn = 0;
+    const adapter: ProviderStreamAdapter = {
+      async *stream(input) {
+        capturedMessages.push(input.uiMessages);
+        turn += 1;
+        if (turn === 1) {
+          yield streamPart({
+            type: "text-delta",
+            id: "text-1",
+            text: "sdk ok",
+          });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+          yield providerUIMessage({
+            id: "sdk-response-message",
+            role: "assistant",
+            parts: [{ type: "text", text: "sdk ok", state: "done" }],
+          });
+          return;
+        }
+        yield streamPart({ type: "finish", finishReason: "stop" });
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("sdk first"),
+      ),
+    );
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("sdk second"),
+      ),
+    );
+
+    expect(
+      capturedMessages[1]?.map((message) => ({
+        id: message.id,
+        role: message.role,
+        parts: message.parts,
+      })),
+    ).toEqual([
+      {
+        id: "provider-msg-fake-headless-1",
+        role: "user",
+        parts: [{ type: "text", text: "sdk first" }],
+      },
+      {
+        id: "provider-msg-fake-headless-2",
+        role: "assistant",
+        parts: [{ type: "text", text: "sdk ok", state: "done" }],
+      },
+      {
+        id: "provider-msg-fake-headless-3",
+        role: "user",
+        parts: [{ type: "text", text: "sdk second" }],
       },
     ]);
   });

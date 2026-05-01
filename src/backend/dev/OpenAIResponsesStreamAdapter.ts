@@ -5,17 +5,21 @@ import {
   jsonSchema,
   type LanguageModel,
   type ModelMessage,
+  readUIMessageStream,
   streamText,
   type TextStreamPart,
   type ToolSet,
+  type UIMessageChunk,
+  validateUIMessages,
 } from "ai";
 import type { ClientTool } from "../../tools/manager";
+import type { ProviderTrajectoryUIMessage } from "./ProviderTrajectory";
 import type {
   ProviderStreamAdapter,
   ProviderStreamEvent,
   ProviderTurnInput,
 } from "./ProviderTurnExecutor";
-import { providerStreamPart } from "./ProviderTurnExecutor";
+import { providerStreamPart, providerUIMessage } from "./ProviderTurnExecutor";
 
 const DEFAULT_OPENAI_RESPONSES_MODEL = "gpt-5.5";
 
@@ -25,7 +29,13 @@ type StreamTextFunction = (options: {
   tools?: ToolSet;
   maxRetries: number;
   abortSignal?: AbortSignal;
-}) => { fullStream: AsyncIterable<TextStreamPart<ToolSet>> };
+}) => {
+  fullStream: AsyncIterable<TextStreamPart<ToolSet>>;
+  toUIMessageStream?: (options?: {
+    originalMessages?: ProviderTrajectoryUIMessage[];
+    sendSources?: boolean;
+  }) => ReadableStream<UIMessageChunk>;
+};
 
 export interface OpenAIResponsesStreamAdapterOptions {
   model?: string;
@@ -75,6 +85,24 @@ function defaultStreamText(options: Parameters<StreamTextFunction>[0]) {
   return streamText(options);
 }
 
+async function captureFinalUIMessage(
+  result: ReturnType<StreamTextFunction>,
+  originalMessages: ProviderTrajectoryUIMessage[],
+): Promise<ProviderTrajectoryUIMessage | undefined> {
+  if (!result.toUIMessageStream) return undefined;
+
+  let finalMessage: ProviderTrajectoryUIMessage | undefined;
+  for await (const message of readUIMessageStream<ProviderTrajectoryUIMessage>({
+    stream: result.toUIMessageStream({
+      originalMessages,
+      sendSources: true,
+    }),
+  })) {
+    finalMessage = message;
+  }
+  return finalMessage;
+}
+
 export class OpenAIResponsesStreamAdapter implements ProviderStreamAdapter {
   private readonly model: string;
   private readonly createModel: (model: string) => LanguageModel;
@@ -100,16 +128,33 @@ export class OpenAIResponsesStreamAdapter implements ProviderStreamAdapter {
 
   async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
     const tools = toToolSet(input.clientTools);
+    const uiMessages = await validateUIMessages<ProviderTrajectoryUIMessage>({
+      messages: input.uiMessages,
+      tools: tools as never,
+    });
     const result = this.runStreamText({
       model: this.createModel(this.model),
-      messages: await convertToModelMessages(input.uiMessages, { tools }),
+      messages: await convertToModelMessages(uiMessages, { tools }),
       tools,
       maxRetries: 0,
       abortSignal: this.abortSignal,
     });
+    let uiMessageError: unknown;
+    const finalUIMessage = captureFinalUIMessage(result, uiMessages).catch(
+      (error) => {
+        uiMessageError = error;
+        return undefined;
+      },
+    );
 
     for await (const part of result.fullStream) {
       yield providerStreamPart(part);
+    }
+
+    const message = await finalUIMessage;
+    if (uiMessageError) throw uiMessageError;
+    if (message) {
+      yield providerUIMessage(message);
     }
   }
 }

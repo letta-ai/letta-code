@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { LanguageModel, TextStreamPart, ToolSet } from "ai";
+import type {
+  LanguageModel,
+  TextStreamPart,
+  ToolSet,
+  UIMessageChunk,
+} from "ai";
 import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
 import {
   OpenAIResponsesStreamAdapter,
@@ -10,6 +15,17 @@ import type { ProviderTurnInput } from "../../backend/dev/ProviderTurnExecutor";
 
 function streamPart(part: Record<string, unknown>): TextStreamPart<ToolSet> {
   return part as unknown as TextStreamPart<ToolSet>;
+}
+
+function uiMessageStream(chunks: Array<Record<string, unknown>>) {
+  return new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(chunk as UIMessageChunk);
+      }
+      controller.close();
+    },
+  });
 }
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
@@ -71,6 +87,27 @@ describe("OpenAIResponsesStreamAdapter", () => {
           });
           yield streamPart({ type: "finish", finishReason: "tool-calls" });
         })(),
+        toUIMessageStream: () =>
+          uiMessageStream([
+            { type: "start" },
+            { type: "reasoning-start", id: "reasoning-1" },
+            {
+              type: "reasoning-delta",
+              id: "reasoning-1",
+              delta: "thinking",
+            },
+            { type: "reasoning-end", id: "reasoning-1" },
+            { type: "text-start", id: "text-1" },
+            { type: "text-delta", id: "text-1", delta: "hi" },
+            { type: "text-end", id: "text-1" },
+            {
+              type: "tool-input-available",
+              toolCallId: "call-2",
+              toolName: "ShellCommand",
+              input: { command: "pwd" },
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
       };
     };
     const adapter = new OpenAIResponsesStreamAdapter({
@@ -107,10 +144,27 @@ describe("OpenAIResponsesStreamAdapter", () => {
       "ai-sdk-part",
       "ai-sdk-part",
       "ai-sdk-part",
+      "ai-sdk-ui-message",
     ]);
     expect(
       events.map((event) => event.type === "ai-sdk-part" && event.part.type),
-    ).toEqual(["reasoning-delta", "text-delta", "tool-call", "finish"]);
+    ).toEqual(["reasoning-delta", "text-delta", "tool-call", "finish", false]);
+    expect(events.at(-1)).toMatchObject({
+      type: "ai-sdk-ui-message",
+      message: {
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "thinking", state: "done" },
+          { type: "text", text: "hi", state: "done" },
+          {
+            type: "tool-ShellCommand",
+            toolCallId: "call-2",
+            state: "input-available",
+            input: { command: "pwd" },
+          },
+        ],
+      },
+    });
   });
 
   test("projects UI tool outputs without AI SDK approval protocol parts", async () => {
@@ -123,6 +177,11 @@ describe("OpenAIResponsesStreamAdapter", () => {
         fullStream: (async function* () {
           yield streamPart({ type: "finish", finishReason: "stop" });
         })(),
+        toUIMessageStream: () =>
+          uiMessageStream([
+            { type: "start" },
+            { type: "finish", finishReason: "stop" },
+          ]),
       };
     };
     const adapter = new OpenAIResponsesStreamAdapter({

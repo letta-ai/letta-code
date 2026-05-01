@@ -28,7 +28,9 @@ import type {
 } from "./ProviderTrajectory";
 import {
   cloneProviderStreamPart,
+  cloneProviderUIMessageSnapshot,
   getAttachedProviderStreamPart,
+  getAttachedProviderUIMessage,
   isProviderStreamPartOnly,
 } from "./ProviderTrajectory";
 
@@ -319,12 +321,20 @@ export class FakeHeadlessStore {
   ): LettaStreamingResponse {
     const messageType = (chunk as { message_type?: unknown })?.message_type;
     const providerStreamPart = getAttachedProviderStreamPart(chunk);
+    const providerUIMessage = getAttachedProviderUIMessage(chunk);
     if (isProviderStreamPartOnly(chunk)) {
       if (providerStreamPart) {
         this.appendProviderStreamPart(
           conversationId,
           agentId,
           providerStreamPart,
+        );
+      }
+      if (providerUIMessage) {
+        this.applyProviderUIMessageSnapshot(
+          conversationId,
+          agentId,
+          providerUIMessage,
         );
       }
       return chunk;
@@ -560,6 +570,32 @@ export class FakeHeadlessStore {
     };
     this.applyProviderRawCapture(entry, capturedPart);
     this.applyProviderStreamPartToUI(conversationId, agentId, entry, part);
+    this.persistConversationState(conversationId, agentId);
+  }
+
+  private applyProviderUIMessageSnapshot(
+    conversationId: string,
+    agentId: string,
+    message: ProviderTrajectoryUIMessage,
+  ): void {
+    const entry = this.assistantEntryForProviderStreamPart(
+      conversationId,
+      agentId,
+    );
+    const currentMetadata = entry.uiMessage.metadata;
+    const snapshot = cloneProviderUIMessageSnapshot(message);
+    entry.uiMessage = {
+      ...snapshot,
+      id: entry.uiMessage.id,
+      role: "assistant",
+      metadata: {
+        ...snapshot.metadata,
+        provider: snapshot.metadata?.provider ?? currentMetadata?.provider,
+        lettaProjection:
+          currentMetadata?.lettaProjection ??
+          snapshot.metadata?.lettaProjection,
+      },
+    };
     this.persistConversationState(conversationId, agentId);
   }
 
