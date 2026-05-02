@@ -70,6 +70,28 @@ describe("headless backend lifecycle wiring", () => {
     expect(source).not.toContain("client.agents.");
   });
 
+  test("interactive ready-state agent config refresh uses Backend", () => {
+    const source = readSource("../../cli/App.tsx");
+
+    const start = source.indexOf("// Fetch llmConfig when agent is ready");
+    const end = source.indexOf("// Update project settings", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const section = source.slice(start, end);
+    expect(section).toContain("backend.retrieveAgent(agentId)");
+    const capabilityGuardIndex = section.indexOf(
+      "backend.capabilities.serverSideToolManagement",
+    );
+    const getClientIndex = section.indexOf("getClient()");
+    expect(capabilityGuardIndex).toBeGreaterThan(-1);
+    expect(getClientIndex).toBeGreaterThan(capabilityGuardIndex);
+    expect(section.slice(0, capabilityGuardIndex)).not.toContain("getClient");
+    expect(section.slice(0, capabilityGuardIndex)).not.toContain(
+      "client.agents.",
+    );
+  });
+
   test("memfs flag application skips remote operations for local backends", () => {
     const source = readSource("../../agent/memoryFilesystem.ts");
 
