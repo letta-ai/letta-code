@@ -203,6 +203,19 @@ export type ListenerRuntime = {
   secretsHydrationFreshnessByAgent: Map<string, number>;
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
+  /**
+   * Agent metadata warmups for listen-mode reminders. The cached promise is
+   * reused while the listener stays connected so first-turn reminders can join
+   * an in-flight sync warmup instead of fetching agent info again.
+   */
+  agentMetadataByAgent: Map<
+    string,
+    Promise<{
+      name: string | null;
+      description: string | null;
+      lastRunAt: string | null;
+    } | null>
+  >;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
   /** Unsubscribe from subagent state store (set on socket open, cleared on close). */
   _unsubscribeSubagentState?: (() => void) | undefined;
