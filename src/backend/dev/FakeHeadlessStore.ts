@@ -126,6 +126,88 @@ function createLocalAgentRecord(body: AgentCreateBody): LocalAgentRecord {
   };
 }
 
+function timestampForSequence(sequence: number): string {
+  return new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString();
+}
+
+function optionalRecordOrNull(
+  value: unknown,
+): Record<string, unknown> | null | undefined {
+  if (value === null) return null;
+  return isRecord(value) ? { ...value } : undefined;
+}
+
+function conversationModelSettings(
+  value: unknown,
+): Record<string, unknown> | null | undefined {
+  return optionalRecordOrNull(value);
+}
+
+function createLocalConversationRecord(
+  conversationId: string,
+  agentId: string,
+  sequence: number,
+  body: Partial<ConversationCreateBody> = {},
+): StoredConversation {
+  const bodyRecord = body as Record<string, unknown>;
+  const now = timestampForSequence(sequence);
+  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
+  return {
+    id: conversationId,
+    agent_id: agentId,
+    archived: false,
+    archived_at: null,
+    created_at: now,
+    updated_at: now,
+    last_message_at: null,
+    summary: optionalStringOrNull(bodyRecord.summary) ?? null,
+    in_context_message_ids: [],
+    ...(typeof bodyRecord.model === "string" || bodyRecord.model === null
+      ? { model: bodyRecord.model }
+      : {}),
+    ...(modelSettings !== undefined ? { model_settings: modelSettings } : {}),
+  } as StoredConversation;
+}
+
+function updateLocalConversationRecord(
+  current: StoredConversation,
+  body: ConversationUpdateBody,
+  updatedAt: string,
+): StoredConversation {
+  const bodyRecord = body as Record<string, unknown>;
+  const next: StoredConversation = {
+    ...current,
+    updated_at: updatedAt,
+  };
+  if (typeof bodyRecord.archived === "boolean") {
+    next.archived = bodyRecord.archived;
+    next.archived_at = bodyRecord.archived
+      ? (current.archived_at ?? updatedAt)
+      : null;
+  }
+  if (bodyRecord.archived === null) {
+    next.archived = false;
+    next.archived_at = null;
+  }
+  if (
+    typeof bodyRecord.last_message_at === "string" ||
+    bodyRecord.last_message_at === null
+  ) {
+    next.last_message_at = bodyRecord.last_message_at;
+  }
+  if (typeof bodyRecord.model === "string" || bodyRecord.model === null) {
+    next.model = bodyRecord.model;
+  }
+  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
+  if (modelSettings !== undefined) {
+    next.model_settings = modelSettings as StoredConversation["model_settings"];
+  }
+  if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
+    next.summary = bodyRecord.summary;
+  }
+  return next;
+}
+
 function normalizeAgentRecord(value: unknown): LocalAgentRecord | undefined {
   if (!isRecord(value) || typeof value.id !== "string") return undefined;
   const modelSettings = isRecord(value.model_settings)
@@ -290,6 +372,7 @@ export interface FakeHeadlessStoreOptions {
   storageDir?: string;
   seedDefaultAgent?: boolean;
   strictAgentAccess?: boolean;
+  strictConversationAccess?: boolean;
 }
 
 export class LocalBackendNotFoundError extends Error {
@@ -595,6 +678,7 @@ function localMessageToProviderTrajectoryMessage(
 export class FakeHeadlessStore {
   private readonly storageDir?: string;
   private readonly strictAgentAccess: boolean;
+  private readonly strictConversationAccess: boolean;
   private readonly agents = new Map<string, LocalAgentRecord>();
   private readonly conversations = new Map<string, StoredConversation>();
   private readonly messagesByConversationKey = new Map<
@@ -616,6 +700,8 @@ export class FakeHeadlessStore {
   ) {
     this.storageDir = options.storageDir;
     this.strictAgentAccess = options.strictAgentAccess === true;
+    this.strictConversationAccess =
+      options.strictConversationAccess ?? this.strictAgentAccess;
     this.loadFromStorage();
     if (options.seedDefaultAgent !== false) {
       this.ensureAgent(this.defaultAgentId);
@@ -700,31 +786,116 @@ export class FakeHeadlessStore {
   }
 
   retrieveConversation(conversationId: string, agentId?: string): Conversation {
+    const existing = this.findConversation(conversationId, agentId);
+    if (existing) return existing;
+    if (this.strictConversationAccess) {
+      throw new LocalBackendNotFoundError("Conversation", conversationId);
+    }
     return this.ensureConversation(conversationId, agentId);
   }
 
   createConversation(body: ConversationCreateBody): Conversation {
     const agentId = body.agent_id ?? this.defaultAgentId;
+    if (this.strictAgentAccess && !this.agents.has(agentId)) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
     this.ensureAgent(agentId);
     this.conversationSeq += 1;
-    return this.ensureConversation(
+    const conversation = createLocalConversationRecord(
       `conv-fake-headless-${this.conversationSeq}`,
       agentId,
+      this.conversationSeq,
+      body,
     );
+    const key = this.conversationKey(conversation.id, agentId);
+    this.conversations.set(key, conversation);
+    this.messagesByConversationKey.set(key, []);
+    this.providerTrajectoryByConversationKey.set(key, []);
+    this.persistConversationState(conversation.id, agentId);
+    return conversation;
   }
 
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
   ): Conversation {
-    const current = this.ensureConversation(conversationId);
-    const updated = { ...current, ...(body as Record<string, unknown>) };
+    const current = this.findConversation(conversationId);
+    if (!current) {
+      if (this.strictConversationAccess) {
+        throw new LocalBackendNotFoundError("Conversation", conversationId);
+      }
+      const created = this.ensureConversation(conversationId);
+      const updated = updateLocalConversationRecord(
+        created,
+        body,
+        timestampForSequence(this.messageSeq + this.conversationSeq + 1),
+      );
+      this.conversations.set(
+        this.conversationKey(conversationId, created.agent_id),
+        updated,
+      );
+      this.persistConversationState(conversationId, created.agent_id);
+      return updated;
+    }
+    const updated = updateLocalConversationRecord(
+      current,
+      body,
+      timestampForSequence(this.messageSeq + this.conversationSeq + 1),
+    );
     this.conversations.set(
       this.conversationKey(conversationId, current.agent_id),
-      updated as StoredConversation,
+      updated,
     );
     this.persistConversationState(conversationId, current.agent_id);
-    return updated as Conversation;
+    return updated;
+  }
+
+  forkConversation(
+    conversationId: string,
+    options: { agentId?: string } = {},
+  ): { id: string } {
+    const source = this.findConversation(conversationId);
+    if (!source) {
+      throw new LocalBackendNotFoundError("Conversation", conversationId);
+    }
+    const targetAgentId = options.agentId ?? source.agent_id;
+    if (this.strictAgentAccess && !this.agents.has(targetAgentId)) {
+      throw new LocalBackendNotFoundError("Agent", targetAgentId);
+    }
+    this.ensureAgent(targetAgentId);
+    this.conversationSeq += 1;
+    const forked = createLocalConversationRecord(
+      `conv-fake-headless-${this.conversationSeq}`,
+      targetAgentId,
+      this.conversationSeq,
+      {
+        summary: source.summary ?? null,
+        ...(source.model !== undefined ? { model: source.model } : {}),
+        ...(source.model_settings !== undefined
+          ? { model_settings: source.model_settings }
+          : {}),
+      } as Partial<ConversationCreateBody>,
+    );
+    const sourceKey = this.conversationKey(source.id, source.agent_id);
+    const targetKey = this.conversationKey(forked.id, targetAgentId);
+    const forkedTrajectory = this.cloneProviderTrajectoryForFork(
+      this.providerTrajectoryByConversationKey.get(sourceKey) ?? [],
+      forked.id,
+      targetAgentId,
+    );
+    forked.in_context_message_ids = forkedTrajectory.map((entry) => entry.id);
+    this.conversations.set(targetKey, forked);
+    this.messagesByConversationKey.set(
+      targetKey,
+      projectLocalMessagesToStoredMessages(
+        forkedTrajectory.map((entry) => entry.uiMessage),
+        targetAgentId,
+        forked.id,
+      ),
+    );
+    this.providerTrajectoryByConversationKey.set(targetKey, forkedTrajectory);
+    this.persistConversationState(forked.id, targetAgentId);
+    return { id: forked.id };
   }
 
   appendTurnInput(
@@ -737,7 +908,16 @@ export class FakeHeadlessStore {
     };
     const agentId =
       bodyWithAgent.agent_id ?? this.agentIdForConversation(conversationId);
+    if (this.strictAgentAccess && !this.agents.has(agentId)) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
     this.ensureAgent(agentId);
+    if (
+      this.strictConversationAccess &&
+      !this.findConversation(conversationId, agentId)
+    ) {
+      throw new LocalBackendNotFoundError("Conversation", conversationId);
+    }
     this.ensureConversation(conversationId, agentId);
 
     for (const message of bodyWithAgent.messages ?? []) {
@@ -980,6 +1160,10 @@ export class FakeHeadlessStore {
         ...conversation.in_context_message_ids,
         id,
       ];
+    }
+    if (conversation) {
+      conversation.last_message_at = date;
+      conversation.updated_at = date;
       this.conversations.set(key, conversation);
     }
     this.persistConversationState(conversationId, agentId);
@@ -1694,6 +1878,35 @@ export class FakeHeadlessStore {
     }
   }
 
+  private cloneProviderTrajectoryForFork(
+    trajectory: ProviderTrajectoryMessage[],
+    conversationId: string,
+    agentId: string,
+  ): ProviderTrajectoryMessage[] {
+    return trajectory.map((entry) => {
+      this.providerTrajectorySeq += 1;
+      const id = `provider-msg-fake-headless-${this.providerTrajectorySeq}`;
+      const uiMessage = cloneLocalMessage(entry.uiMessage);
+      return {
+        type: "letta_provider_ui_message",
+        schemaVersion: 1,
+        id,
+        date: entry.date,
+        agentId,
+        conversationId,
+        uiMessage: {
+          ...uiMessage,
+          id,
+          metadata: {
+            ...uiMessage.metadata,
+            agent_id: agentId,
+            conversation_id: conversationId,
+          },
+        },
+      };
+    });
+  }
+
   private loadFromStorage(): void {
     if (!this.storageDir || !existsSync(this.storageDir)) return;
 
@@ -1827,11 +2040,15 @@ export class FakeHeadlessStore {
     const existing = this.conversations.get(key);
     if (existing) return existing;
 
-    const conversation = {
-      id: conversationId,
-      agent_id: resolvedAgentId,
-      in_context_message_ids: [],
-    } as StoredConversation;
+    const shouldAdvanceSequence = conversationId !== "default";
+    if (shouldAdvanceSequence) {
+      this.conversationSeq += 1;
+    }
+    const conversation = createLocalConversationRecord(
+      conversationId,
+      resolvedAgentId,
+      shouldAdvanceSequence ? this.conversationSeq : this.conversationSeq + 1,
+    );
     this.conversations.set(key, conversation);
     this.messagesByConversationKey.set(key, []);
     this.providerTrajectoryByConversationKey.set(key, []);
@@ -1839,14 +2056,31 @@ export class FakeHeadlessStore {
     return conversation;
   }
 
+  private findConversation(
+    conversationId: string,
+    agentId?: string,
+  ): StoredConversation | undefined {
+    if (agentId) {
+      return this.conversations.get(
+        this.conversationKey(conversationId, agentId),
+      );
+    }
+    if (conversationId === "default") {
+      return this.conversations.get(
+        this.conversationKey(conversationId, this.defaultAgentId),
+      );
+    }
+    for (const conversation of this.conversations.values()) {
+      if (conversation.id === conversationId) return conversation;
+    }
+    return undefined;
+  }
+
   private agentIdForConversation(conversationId: string): string {
     if (conversationId === "default") return this.defaultAgentId;
-    for (const conversation of this.conversations.values()) {
-      if (conversation.id === conversationId) {
-        return conversation.agent_id;
-      }
-    }
-    return this.defaultAgentId;
+    return (
+      this.findConversation(conversationId)?.agent_id ?? this.defaultAgentId
+    );
   }
 
   private conversationKey(conversationId: string, agentId: string): string {

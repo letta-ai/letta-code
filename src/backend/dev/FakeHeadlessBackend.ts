@@ -188,8 +188,9 @@ export class FakeHeadlessBackend implements Backend {
     });
   }
 
-  async forkConversation(conversationId: string) {
-    return { id: conversationId } as never;
+  async forkConversation(...args: Parameters<Backend["forkConversation"]>) {
+    const [conversationId, options] = args;
+    return this.store.forkConversation(conversationId, options);
   }
 
   private persistExecutorStream(

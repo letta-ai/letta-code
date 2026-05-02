@@ -342,6 +342,7 @@ function createExperimentalLocalBackend(): Backend {
     storageDir: getLocalBackendStorageDir(),
     seedDefaultAgent: false,
     strictAgentAccess: true,
+    strictConversationAccess: true,
   });
 }
 

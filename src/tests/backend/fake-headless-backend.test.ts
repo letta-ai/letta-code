@@ -7,6 +7,7 @@ import { validateUIMessages } from "ai";
 import type {
   AgentCreateBody,
   AgentMessageListBody,
+  ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
 } from "../../backend";
@@ -68,6 +69,14 @@ function jsonl(text: string): unknown[] {
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as unknown);
+}
+
+function conversationDir(storageDir: string, conversationId: string): string {
+  return join(
+    storageDir,
+    "conversations",
+    Buffer.from(`conversation:${conversationId}`).toString("base64url"),
+  );
 }
 
 describe("FakeHeadlessBackend", () => {
@@ -286,6 +295,98 @@ describe("FakeHeadlessBackend", () => {
       expect(persisted.block_ids).toBeUndefined();
       expect(persisted.llm_config).toBeUndefined();
       expect(persisted.compaction_settings).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("strict conversation lifecycle routes require existing records and persist supported fields", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "fake-headless-conv-"));
+    try {
+      const backend = new FakeHeadlessBackend("agent-default", undefined, {
+        storageDir,
+        seedDefaultAgent: false,
+        strictAgentAccess: true,
+        strictConversationAccess: true,
+      });
+
+      await expect(
+        backend.retrieveConversation("conv-missing"),
+      ).rejects.toThrow("Conversation conv-missing not found");
+      await expect(
+        backend.createConversation({ agent_id: "agent-missing" }),
+      ).rejects.toThrow("Agent agent-missing not found");
+
+      let conversationFiles: string[] = [];
+      try {
+        conversationFiles = await readdir(join(storageDir, "conversations"));
+      } catch {
+        conversationFiles = [];
+      }
+      expect(conversationFiles).toEqual([]);
+
+      const agent = await backend.createAgent({
+        name: "Conversation Agent",
+        model: "dev/fake-headless",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "initial summary",
+        model: "anthropic/claude-test",
+        model_settings: { provider_type: "anthropic", strict: true },
+        isolated_block_labels: ["ignore"],
+      } as ConversationCreateBody);
+
+      expect(conversation).toMatchObject({
+        agent_id: agent.id,
+        archived: false,
+        archived_at: null,
+        summary: "initial summary",
+        model: "anthropic/claude-test",
+        model_settings: { provider_type: "anthropic", strict: true },
+        in_context_message_ids: [],
+      });
+      expect(
+        (conversation as unknown as Record<string, unknown>)
+          .isolated_block_labels,
+      ).toBeUndefined();
+      expect(await backend.retrieveConversation(conversation.id)).toMatchObject(
+        {
+          id: conversation.id,
+          agent_id: agent.id,
+        },
+      );
+
+      const updated = await backend.updateConversation(conversation.id, {
+        archived: true,
+        summary: null,
+        model: "openai/gpt-test",
+        model_settings: { provider_type: "openai", max_tokens: 1000 },
+        last_message_at: "2026-01-02T00:00:00.000Z",
+        ignored: "nope",
+      } as unknown as Parameters<typeof backend.updateConversation>[1]);
+      expect(updated).toMatchObject({
+        id: conversation.id,
+        archived: true,
+        summary: null,
+        model: "openai/gpt-test",
+        model_settings: { provider_type: "openai", max_tokens: 1000 },
+        last_message_at: "2026-01-02T00:00:00.000Z",
+      });
+      expect(typeof updated.archived_at).toBe("string");
+
+      const persisted = JSON.parse(
+        await readFile(
+          join(
+            conversationDir(storageDir, conversation.id),
+            "conversation.json",
+          ),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+      expect(persisted.ignored).toBeUndefined();
+      expect(persisted.isolated_block_labels).toBeUndefined();
+      expect(persisted.forked_from).toBeUndefined();
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -527,5 +628,72 @@ describe("FakeHeadlessBackend", () => {
       "approval_response_message",
       "assistant_message",
     ]);
+  });
+
+  test("forks conversations by copying LocalMessage transcript state", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "fake-headless-fork-"));
+    try {
+      const backend = new FakeHeadlessBackend("agent-fork", undefined, {
+        storageDir,
+      });
+      const conversation = await backend.createConversation({
+        agent_id: "agent-fork",
+        summary: "fork source",
+      } as ConversationCreateBody);
+      await drainAssistantText(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("fork me", "agent-fork"),
+        ),
+      );
+
+      const forked = await backend.forkConversation(conversation.id);
+      expect(forked.id).not.toBe(conversation.id);
+
+      const sourcePage = await backend.listConversationMessages(
+        conversation.id,
+        {
+          order: "asc",
+        } as ConversationMessageListBody,
+      );
+      const forkedPage = await backend.listConversationMessages(forked.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      expect(
+        forkedPage.getPaginatedItems().map((message) => message.message_type),
+      ).toEqual(["user_message", "assistant_message"]);
+      expect(JSON.stringify(forkedPage.getPaginatedItems())).toContain(
+        "fork me",
+      );
+      expect(forkedPage.getPaginatedItems()[0]?.id).not.toBe(
+        sourcePage.getPaginatedItems()[0]?.id,
+      );
+
+      const forkedConversation = JSON.parse(
+        await readFile(
+          join(conversationDir(storageDir, forked.id), "conversation.json"),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+      expect(forkedConversation.forked_from).toBeUndefined();
+      expect(forkedConversation.summary).toBe("fork source");
+
+      const forkedMessages = jsonl(
+        await readFile(
+          join(conversationDir(storageDir, forked.id), "messages.jsonl"),
+          "utf8",
+        ),
+      );
+      expect(forkedMessages).toHaveLength(2);
+      expect(
+        forkedMessages.every(
+          (message) =>
+            (message as { metadata?: { conversation_id?: string } }).metadata
+              ?.conversation_id === forked.id,
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 });
