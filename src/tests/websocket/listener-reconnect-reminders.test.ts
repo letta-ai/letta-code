@@ -12,11 +12,12 @@ describe("listen reconnect reminders", () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     setActiveRuntime(runtime);
 
-    const conversationRuntime = __listenClientTestUtils.getOrCreateConversationRuntime(
-      runtime,
-      "agent-1",
-      "conv-1",
-    );
+    const conversationRuntime =
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        runtime,
+        "agent-1",
+        "conv-1",
+      );
 
     conversationRuntime.reminderState.hasSentAgentInfo = true;
     conversationRuntime.reminderState.hasSentSessionContext = true;
@@ -48,7 +49,9 @@ describe("listen reconnect reminders", () => {
       );
 
       expect(conversationRuntime.reminderState.hasSentAgentInfo).toBe(true);
-      expect(conversationRuntime.reminderState.hasSentSessionContext).toBe(true);
+      expect(conversationRuntime.reminderState.hasSentSessionContext).toBe(
+        true,
+      );
       expect(conversationRuntime.reminderState.turnCount).toBe(7);
       expect(conversationRuntime.reminderState.pendingReflectionTrigger).toBe(
         true,
