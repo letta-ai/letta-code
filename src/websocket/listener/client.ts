@@ -26,7 +26,6 @@ import {
   getChannelRegistry,
 } from "../../channels/registry";
 import type { ChannelTurnSource } from "../../channels/types";
-import { resetContextHistory } from "../../cli/helpers/contextTracker";
 import {
   ensureFileIndex,
   getIndexRoot,
@@ -68,10 +67,7 @@ import {
   listProviders,
 } from "../../providers/byok-providers";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
-import {
-  createSharedReminderState,
-  resetSharedReminderState,
-} from "../../reminders/state";
+import { createSharedReminderState } from "../../reminders/state";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
@@ -4180,17 +4176,8 @@ async function startConnectedListenerRuntime(
     // runtime and emit a properly-scoped device_status at that point.
     emitLoopStatusUpdate(transport, runtime);
   } else {
-    for (const reminderState of runtime.reminderStateByConversation.values()) {
-      // Reset bootstrap reminder state on (re)connect so session-context
-      // and agent-info fire on the first turn of the new connection.
-      // This is intentionally in the open handler, NOT the sync handler,
-      // because the Desktop UMI controller sends sync every ~5 s and
-      // resetting there would re-arm reminders on every periodic sync.
-      resetSharedReminderState(reminderState);
-    }
-    for (const contextTracker of runtime.contextTrackerByConversation.values()) {
-      resetContextHistory(contextTracker);
-    }
+    // Preserve existing per-conversation reminder and context state across
+    // pure transport reconnects; only refresh the live status snapshots here.
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
       const scope = {
         agent_id: conversationRuntime.agentId,
@@ -6926,6 +6913,7 @@ export const __listenClientTestUtils = {
   },
   createRuntime: createLegacyTestRuntime,
   createListenerRuntime: createRuntime,
+  startConnectedListenerRuntime: startConnectedListenerRuntime,
   handleModeChange,
   getOrCreateScopedRuntime,
   buildListModelsEntries,
