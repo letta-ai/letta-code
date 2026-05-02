@@ -480,8 +480,23 @@ describe("headless dev backend smoke", () => {
       expect(agentFiles.length).toBeGreaterThan(0);
       const persistedAgent = JSON.parse(
         await readFile(join(storageDir, "agents", agentFiles[0] ?? ""), "utf8"),
-      ) as { id?: unknown };
+      ) as Record<string, unknown>;
       expect(typeof persistedAgent.id).toBe("string");
+      expect(Object.keys(persistedAgent).sort()).toEqual([
+        "description",
+        "id",
+        "model",
+        "model_settings",
+        "name",
+        "system",
+        "tags",
+      ]);
+      expect(persistedAgent.tools).toBeUndefined();
+      expect(persistedAgent.memory_blocks).toBeUndefined();
+      expect(persistedAgent.block_ids).toBeUndefined();
+      expect(persistedAgent.llm_config).toBeUndefined();
+      expect(persistedAgent.message_ids).toBeUndefined();
+      expect(persistedAgent.in_context_message_ids).toBeUndefined();
 
       const conversationDirs = await readdir(join(storageDir, "conversations"));
       expect(conversationDirs.length).toBeGreaterThan(0);
@@ -583,14 +598,13 @@ describe("headless dev backend smoke", () => {
         (obj) =>
           obj.type === "message" &&
           obj.message_type === "approval_request_message" &&
-          JSON.stringify(obj).includes("ShellCommand"),
+          JSON.stringify(obj).includes("Bash"),
       ),
     ).toBe(true);
     expect(
       result.objects.some(
         (obj) =>
-          obj.type === "auto_approval" &&
-          JSON.stringify(obj).includes("ShellCommand"),
+          obj.type === "auto_approval" && JSON.stringify(obj).includes("Bash"),
       ),
     ).toBe(true);
     expect(

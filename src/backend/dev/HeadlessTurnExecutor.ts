@@ -108,7 +108,7 @@ export class DeterministicToolCallExecutor implements HeadlessTurnExecutor {
         message_type: "approval_request_message",
         tool_call: {
           tool_call_id: toolCallId,
-          name: "ShellCommand",
+          name: "Bash",
           arguments: JSON.stringify({
             command: "echo deterministic-tool-ok",
             login: false,

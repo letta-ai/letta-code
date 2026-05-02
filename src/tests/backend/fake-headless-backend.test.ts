@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   AgentCreateBody,
@@ -74,12 +77,82 @@ describe("FakeHeadlessBackend", () => {
     const retrieved = await backend.retrieveAgent(agent.id);
     const models = await backend.listModels();
 
-    expect(agent.id).toBe("agent-fake-headless-1");
+    expect(agent.id).toStartWith("agent-local-");
     expect(retrieved.name).toBe("Created Agent");
     expect(retrieved.system).toBe("system prompt");
-    expect(retrieved.tools?.map((tool) => tool.name)).toEqual(["web_search"]);
+    expect(retrieved.tools?.map((tool) => tool.name)).toEqual([]);
     expect(retrieved.tags).toEqual(["origin:test"]);
+    expect(retrieved.model).toBe("dev/fake-headless");
+    expect(retrieved.model_settings).toEqual({});
     expect(models.map((model) => model.handle)).toEqual(["dev/fake-headless"]);
+  });
+
+  test("persists a minimal local agent record", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "fake-headless-store-"));
+    try {
+      const backend = new FakeHeadlessBackend("agent-default", undefined, {
+        storageDir,
+      });
+      const agent = await backend.createAgent({
+        name: "Minimal Agent",
+        description: "stored small",
+        system: "system prompt",
+        model: "dev/fake-headless",
+        tools: ["web_search"],
+        tags: ["origin:test"],
+        memory_blocks: [{ label: "human", value: "ignore me" }],
+        block_ids: ["block-ignore"],
+        include_base_tools: false,
+        include_base_tool_rules: false,
+        initial_message_sequence: [],
+        compaction_settings: { mode: "server-only" },
+        parallel_tool_calls: true,
+        context_window_limit: 128000,
+      } as unknown as AgentCreateBody);
+
+      const files = await readdir(join(storageDir, "agents"));
+      const storedAgentFile = files.find((file) =>
+        file.includes(Buffer.from(agent.id).toString("base64url")),
+      );
+      expect(storedAgentFile).toBeDefined();
+      const persisted = JSON.parse(
+        await readFile(
+          join(storageDir, "agents", storedAgentFile ?? ""),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+
+      expect(Object.keys(persisted).sort()).toEqual([
+        "description",
+        "id",
+        "model",
+        "model_settings",
+        "name",
+        "system",
+        "tags",
+      ]);
+      expect(persisted).toMatchObject({
+        id: agent.id,
+        name: "Minimal Agent",
+        description: "stored small",
+        system: "system prompt",
+        tags: ["origin:test"],
+        model: "dev/fake-headless",
+        model_settings: {
+          context_window_limit: 128000,
+          parallel_tool_calls: true,
+        },
+      });
+      expect(persisted.tools).toBeUndefined();
+      expect(persisted.memory_blocks).toBeUndefined();
+      expect(persisted.block_ids).toBeUndefined();
+      expect(persisted.llm_config).toBeUndefined();
+      expect(persisted.message_ids).toBeUndefined();
+      expect(persisted.in_context_message_ids).toBeUndefined();
+      expect(persisted.compaction_settings).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("stores user and assistant messages for explicit conversations", async () => {
@@ -203,7 +276,7 @@ describe("FakeHeadlessBackend", () => {
           tool_call?: { tool_call_id?: string; name?: string };
         })
       | undefined;
-    expect(approvalChunk?.tool_call?.name).toBe("ShellCommand");
+    expect(approvalChunk?.tool_call?.name).toBe("Bash");
     expect(
       firstChunks.some(
         (chunk) =>

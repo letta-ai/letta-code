@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -50,19 +51,150 @@ type StoredConversation = Conversation & {
   in_context_message_ids: string[];
 };
 
-function createDefaultAgent(agentId: string): AgentState {
+export interface LocalAgentRecord {
+  id: string;
+  name: string;
+  description?: string | null;
+  system: string;
+  tags: string[];
+  model: string;
+  model_settings: Record<string, unknown>;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function optionalStringOrNull(value: unknown): string | null | undefined {
+  return typeof value === "string" || value === null ? value : undefined;
+}
+
+function supportedModelSettingsFromBody(
+  bodyRecord: Record<string, unknown>,
+): Record<string, unknown> {
+  const modelSettings = isRecord(bodyRecord.model_settings)
+    ? { ...bodyRecord.model_settings }
+    : {};
+
+  if (typeof bodyRecord.context_window_limit === "number") {
+    modelSettings.context_window_limit = bodyRecord.context_window_limit;
+  }
+  if (typeof bodyRecord.parallel_tool_calls === "boolean") {
+    modelSettings.parallel_tool_calls = bodyRecord.parallel_tool_calls;
+  }
+  if (
+    typeof bodyRecord.max_tokens === "number" ||
+    bodyRecord.max_tokens === null
+  ) {
+    modelSettings.max_tokens = bodyRecord.max_tokens;
+  }
+
+  return modelSettings;
+}
+
+function createDefaultAgentRecord(agentId: string): LocalAgentRecord {
   return {
     id: agentId,
     name: "Fake Headless Agent",
-    tools: [],
+    description: null,
+    system: "",
     tags: [],
-    message_ids: [],
-    in_context_message_ids: [],
+    model: "dev/fake-headless",
+    model_settings: {
+      context_window_limit: 128000,
+    },
+  };
+}
+
+function createLocalAgentRecord(body: AgentCreateBody): LocalAgentRecord {
+  const bodyRecord = body as Record<string, unknown>;
+  return {
+    id: `agent-local-${randomUUID()}`,
+    name: optionalString(bodyRecord.name) ?? "Letta Code",
+    description: optionalStringOrNull(bodyRecord.description) ?? null,
+    system: optionalString(bodyRecord.system) ?? "",
+    tags: isStringArray(bodyRecord.tags) ? bodyRecord.tags : [],
+    model: optionalString(bodyRecord.model) ?? "dev/fake-headless",
+    model_settings: supportedModelSettingsFromBody(bodyRecord),
+  };
+}
+
+function normalizeAgentRecord(value: unknown): LocalAgentRecord | undefined {
+  if (!isRecord(value) || typeof value.id !== "string") return undefined;
+  const modelSettings = isRecord(value.model_settings)
+    ? { ...value.model_settings }
+    : {};
+  const legacyLlmConfig = isRecord(value.llm_config) ? value.llm_config : {};
+  if (
+    modelSettings.context_window_limit === undefined &&
+    typeof legacyLlmConfig.context_window === "number"
+  ) {
+    modelSettings.context_window_limit = legacyLlmConfig.context_window;
+  }
+  if (
+    modelSettings.max_tokens === undefined &&
+    (typeof legacyLlmConfig.max_tokens === "number" ||
+      legacyLlmConfig.max_tokens === null)
+  ) {
+    modelSettings.max_tokens = legacyLlmConfig.max_tokens;
+  }
+
+  return {
+    id: value.id,
+    name: optionalString(value.name) ?? "Letta Code",
+    description: optionalStringOrNull(value.description) ?? null,
+    system: optionalString(value.system) ?? "",
+    tags: isStringArray(value.tags) ? value.tags : [],
+    model:
+      optionalString(value.model) ??
+      optionalString(legacyLlmConfig.model) ??
+      "dev/fake-headless",
+    model_settings: modelSettings,
+  };
+}
+
+function projectAgentState(
+  record: LocalAgentRecord,
+  messageIds: string[] = [],
+  inContextMessageIds: string[] = messageIds,
+): AgentState {
+  return {
+    id: record.id,
+    name: record.name,
+    description: record.description,
+    system: record.system,
+    tools: [],
+    tags: record.tags,
+    model: record.model,
+    model_settings: record.model_settings,
+    message_ids: messageIds,
+    in_context_message_ids: inContextMessageIds,
+    // Temporary compatibility shim for older runtime call sites. Local storage
+    // keeps only `model` + `model_settings`.
     llm_config: {
-      model: "dev/fake-headless",
+      model: record.model,
       model_endpoint_type: "openai",
       model_endpoint: "https://example.invalid/v1",
-      context_window: 128000,
+      context_window:
+        typeof record.model_settings.context_window_limit === "number"
+          ? record.model_settings.context_window_limit
+          : 128000,
+      ...(typeof record.model_settings.reasoning_effort === "string" && {
+        reasoning_effort: record.model_settings.reasoning_effort,
+      }),
+      ...(typeof record.model_settings.enable_reasoner === "boolean" && {
+        enable_reasoner: record.model_settings.enable_reasoner,
+      }),
+      ...((typeof record.model_settings.max_tokens === "number" ||
+        record.model_settings.max_tokens === null) && {
+        max_tokens: record.model_settings.max_tokens,
+      }),
     },
   } as unknown as AgentState;
 }
@@ -215,7 +347,7 @@ function numericSuffix(value: string, prefix: string): number {
 
 export class FakeHeadlessStore {
   private readonly storageDir?: string;
-  private readonly agents = new Map<string, AgentState>();
+  private readonly agents = new Map<string, LocalAgentRecord>();
   private readonly conversations = new Map<string, StoredConversation>();
   private readonly messagesByConversationKey = new Map<
     string,
@@ -226,7 +358,6 @@ export class FakeHeadlessStore {
     ProviderTrajectoryMessage[]
   >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
-  private agentSeq = 0;
   private conversationSeq = 0;
   private messageSeq = 0;
   private providerTrajectorySeq = 0;
@@ -242,57 +373,50 @@ export class FakeHeadlessStore {
 
   ensureAgent(agentId: string): AgentState {
     const existing = this.agents.get(agentId);
-    if (existing) return existing;
-    const agent = createDefaultAgent(agentId);
+    if (existing) return this.projectAgent(existing);
+    const agent = createDefaultAgentRecord(agentId);
     this.agents.set(agentId, agent);
     this.persistAgent(agentId);
     this.ensureConversation("default", agentId);
-    return agent;
+    return this.projectAgent(agent);
   }
 
   updateAgent(agentId: string, body: AgentUpdateBody): AgentState {
     const current = this.ensureAgent(agentId);
-    const updated = { ...current, ...(body as Record<string, unknown>) };
-    this.agents.set(agentId, updated as AgentState);
+    void current;
+    const currentRecord =
+      this.agents.get(agentId) ?? createDefaultAgentRecord(agentId);
+    const bodyRecord = body as Record<string, unknown>;
+    const nextModelSettings = {
+      ...currentRecord.model_settings,
+      ...supportedModelSettingsFromBody(bodyRecord),
+    };
+    const updated = {
+      ...currentRecord,
+      ...(typeof bodyRecord.name === "string" && { name: bodyRecord.name }),
+      ...((typeof bodyRecord.description === "string" ||
+        bodyRecord.description === null) && {
+        description: bodyRecord.description,
+      }),
+      ...(typeof bodyRecord.system === "string" && {
+        system: bodyRecord.system,
+      }),
+      ...(isStringArray(bodyRecord.tags) && { tags: bodyRecord.tags }),
+      ...(typeof bodyRecord.model === "string" && { model: bodyRecord.model }),
+      model_settings: nextModelSettings,
+    };
+    this.agents.set(agentId, updated);
     this.persistAgent(agentId);
-    return updated as AgentState;
+    return this.projectAgent(updated);
   }
 
   createAgent(body: AgentCreateBody): AgentState {
-    this.agentSeq += 1;
-    const bodyRecord = body as Record<string, unknown>;
-    const agentId =
-      typeof bodyRecord.id === "string" && bodyRecord.id.length > 0
-        ? bodyRecord.id
-        : `agent-fake-headless-${this.agentSeq}`;
-    const base = createDefaultAgent(agentId);
-    const tools = Array.isArray(bodyRecord.tools)
-      ? bodyRecord.tools.map((name) => ({ name }))
-      : base.tools;
-    const agent = {
-      ...base,
-      ...bodyRecord,
-      id: agentId,
-      tools,
-      tags: Array.isArray(bodyRecord.tags) ? bodyRecord.tags : base.tags,
-      message_ids: [],
-      in_context_message_ids: [],
-      llm_config: {
-        ...base.llm_config,
-        model:
-          typeof bodyRecord.model === "string"
-            ? bodyRecord.model
-            : base.llm_config?.model,
-        context_window:
-          typeof bodyRecord.context_window_limit === "number"
-            ? bodyRecord.context_window_limit
-            : base.llm_config?.context_window,
-      },
-    } as unknown as AgentState;
+    const agent = createLocalAgentRecord(body);
+    const agentId = agent.id;
     this.agents.set(agentId, agent);
     this.persistAgent(agentId);
     this.ensureConversation("default", agentId);
-    return agent;
+    return this.projectAgent(agent);
   }
 
   retrieveConversation(conversationId: string, agentId?: string): Conversation {
@@ -1265,21 +1389,7 @@ export class FakeHeadlessStore {
     ];
     this.conversations.set(key, conversation);
 
-    const agent = this.ensureAgent(agentId);
-    const agentWithContext = agent as AgentState & {
-      in_context_message_ids?: string[];
-    };
-    const messageIds = [...(agent.message_ids ?? []), id];
-    const inContextMessageIds = [
-      ...(agentWithContext.in_context_message_ids ?? []),
-      id,
-    ];
-    this.agents.set(agentId, {
-      ...agent,
-      message_ids: messageIds,
-      in_context_message_ids: inContextMessageIds,
-    } as AgentState);
-    this.persistAgent(agentId);
+    this.ensureAgent(agentId);
     this.persistConversationState(conversation.id, agentId);
 
     return message;
@@ -1323,13 +1433,11 @@ export class FakeHeadlessStore {
     if (existsSync(agentsDir)) {
       for (const file of readdirSync(agentsDir)) {
         if (!file.endsWith(".json")) continue;
-        const agent = readJsonFile<AgentState>(join(agentsDir, file));
+        const agent = normalizeAgentRecord(
+          readJsonFile<unknown>(join(agentsDir, file)),
+        );
         if (agent?.id) {
           this.agents.set(agent.id, agent);
-          this.agentSeq = Math.max(
-            this.agentSeq,
-            numericSuffix(agent.id, "agent-fake-headless-"),
-          );
         }
       }
     }
@@ -1390,6 +1498,15 @@ export class FakeHeadlessStore {
       join(agentsDir, `${encodePathSegment(agentId)}.json`),
       `${JSON.stringify(agent, null, 2)}\n`,
     );
+  }
+
+  private projectAgent(record: LocalAgentRecord): AgentState {
+    const key = this.conversationKey("default", record.id);
+    const defaultMessages = this.messagesByConversationKey.get(key) ?? [];
+    const messageIds = defaultMessages.map((message) => message.id);
+    const inContextMessageIds =
+      this.conversations.get(key)?.in_context_message_ids ?? messageIds;
+    return projectAgentState(record, messageIds, inContextMessageIds);
   }
 
   private persistConversationState(
