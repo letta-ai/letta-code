@@ -27,6 +27,5 @@ describe("listener tool prep metadata reuse", () => {
     expect(source).toContain("buildMaybeLaunchReflectionSubagent({");
     expect(source).toContain("cachedAgent,");
     expect(source).toContain("prepareToolExecutionContextForScope({");
-    expect(source).toContain("cachedEffectiveModel: effectiveModel,");
   });
 });

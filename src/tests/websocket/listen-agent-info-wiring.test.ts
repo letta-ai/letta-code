@@ -13,14 +13,15 @@ describe("listen agent-info wiring", () => {
     const turnSource = readFileSync(turnPath, "utf-8");
     const listenContextSource = readFileSync(listenContextPath, "utf-8");
 
+    expect(turnSource).toContain("let cachedAgent: AgentState | null = null;");
+    expect(turnSource).toContain("cachedAgent = (await client.agents.retrieve");
     expect(turnSource).toContain(
-      "if (!runtime.reminderState.hasSentAgentInfo && agentId)",
+      "if (!runtime.reminderState.hasSentAgentInfo && cachedAgent)",
     );
+    expect(turnSource).toContain("name: cachedAgent.name ?? null,");
     expect(turnSource).toContain(
-      "const agent = await client.agents.retrieve(agentId);",
+      "description: cachedAgent.description ?? null,",
     );
-    expect(turnSource).toContain("name: agent.name ?? null,");
-    expect(turnSource).toContain("description: agent.description ?? null,");
     expect(turnSource).toContain("lastRunAt:");
     expect(turnSource).toContain(
       "agentName: listenAgentMetadata?.name ?? null",
