@@ -1016,7 +1016,16 @@ export class FakeHeadlessStore {
     const agentId =
       (body as { agent_id?: string } | undefined)?.agent_id ??
       this.agentIdForConversation(conversationId);
-    this.ensureConversation(conversationId, agentId);
+    if (this.strictAgentAccess && !this.agents.has(agentId)) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
+    const conversation = this.findConversation(conversationId, agentId);
+    if (!conversation) {
+      if (this.strictConversationAccess) {
+        throw new LocalBackendNotFoundError("Conversation", conversationId);
+      }
+      this.ensureConversation(conversationId, agentId);
+    }
     const messages = this.projectedMessagesForConversation(
       conversationId,
       agentId,
@@ -1028,6 +1037,9 @@ export class FakeHeadlessStore {
     agentId: string,
     body?: AgentMessageListBody,
   ): StoredMessage[] {
+    if (this.strictAgentAccess && !this.agents.has(agentId)) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
     const conversationId =
       (body as { conversation_id?: string } | undefined)?.conversation_id ??
       "default";
@@ -1039,7 +1051,11 @@ export class FakeHeadlessStore {
 
   retrieveMessage(messageId: string): StoredMessage[] {
     this.rebuildMessageIndex();
-    return [...(this.messagesById.get(messageId) ?? [])];
+    const messages = this.messagesById.get(messageId) ?? [];
+    if (messages.length === 0 && this.strictConversationAccess) {
+      throw new LocalBackendNotFoundError("Message", messageId);
+    }
+    return [...messages];
   }
 
   private appendProviderInputMessage(

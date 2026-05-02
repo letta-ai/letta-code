@@ -422,6 +422,57 @@ describe("FakeHeadlessBackend", () => {
     expect(updatedConversation.in_context_message_ids).toHaveLength(2);
   });
 
+  test("strict message routes require existing records and retrieve projected messages", async () => {
+    const backend = new FakeHeadlessBackend("agent-default", undefined, {
+      seedDefaultAgent: false,
+      strictAgentAccess: true,
+      strictConversationAccess: true,
+    });
+
+    await expect(
+      backend.listAgentMessages("agent-missing", {
+        conversation_id: "default",
+      } as AgentMessageListBody),
+    ).rejects.toThrow("Agent agent-missing not found");
+
+    const agent = await backend.createAgent({
+      name: "Message Agent",
+      model: "dev/fake-headless",
+    } as AgentCreateBody);
+    await expect(
+      backend.listConversationMessages("conv-missing", {
+        agent_id: agent.id,
+      } as ConversationMessageListBody),
+    ).rejects.toThrow("Conversation conv-missing not found");
+    await expect(backend.retrieveMessage("msg-missing")).rejects.toThrow(
+      "Message msg-missing not found",
+    );
+
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as ConversationCreateBody);
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("retrieve me", agent.id),
+      ),
+    );
+
+    const page = await backend.listConversationMessages(conversation.id, {
+      order: "asc",
+    } as ConversationMessageListBody);
+    const messages = page.getPaginatedItems();
+    expect(messages.map((message) => message.message_type)).toEqual([
+      "user_message",
+      "assistant_message",
+    ]);
+
+    const retrieved = await backend.retrieveMessage(messages[0]?.id ?? "");
+    expect(retrieved).toHaveLength(1);
+    expect(retrieved[0]?.id).toBe(messages[0]?.id);
+    expect(JSON.stringify(retrieved[0])).toContain("retrieve me");
+  });
+
   test("persists AI SDK UIMessage JSONL as the canonical transcript", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "fake-headless-ui-"));
     try {

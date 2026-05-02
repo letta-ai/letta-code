@@ -71,31 +71,27 @@ export class FakeHeadlessBackend implements Backend {
     return Promise.resolve(this.store.updateConversation(conversationId, body));
   }
 
-  listConversationMessages(
+  async listConversationMessages(
     ...args: Parameters<Backend["listConversationMessages"]>
   ): ReturnType<Backend["listConversationMessages"]> {
     const [conversationId, body] = args;
-    return Promise.resolve(
-      createPage(
-        this.store.listConversationMessages(conversationId, body),
-      ) as never,
-    );
+    return createPage(
+      this.store.listConversationMessages(conversationId, body),
+    ) as never;
   }
 
-  listAgentMessages(
+  async listAgentMessages(
     ...args: Parameters<Backend["listAgentMessages"]>
   ): ReturnType<Backend["listAgentMessages"]> {
     const [agentId, body] = args;
-    return Promise.resolve(
-      createPage(this.store.listAgentMessages(agentId, body)) as never,
-    );
+    return createPage(this.store.listAgentMessages(agentId, body)) as never;
   }
 
-  retrieveMessage(
+  async retrieveMessage(
     ...args: Parameters<Backend["retrieveMessage"]>
   ): ReturnType<Backend["retrieveMessage"]> {
     const [messageId] = args;
-    return Promise.resolve(this.store.retrieveMessage(messageId) as never);
+    return this.store.retrieveMessage(messageId) as never;
   }
 
   async listModels(): ReturnType<Backend["listModels"]> {
