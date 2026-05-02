@@ -63,6 +63,20 @@ function makeUserMessage(id = "msg-last"): Message {
   } as Message;
 }
 
+function datedMessage(
+  id: string,
+  messageType: MessageType,
+  date: string,
+  extras: Record<string, unknown> = {},
+): Message {
+  return {
+    id,
+    date,
+    message_type: messageType,
+    ...extras,
+  } as unknown as Message;
+}
+
 describe("getResumeData", () => {
   afterEach(() => {
     __testSetBackend(null);
@@ -220,5 +234,68 @@ describe("getResumeData", () => {
     });
     expect(resume.pendingApprovals).toHaveLength(0);
     expect(resume.messageHistory.length).toBeGreaterThan(0);
+  });
+
+  test("default conversation backfill orders equal-timestamp local tool messages before assistant text", async () => {
+    const sameDate = "2026-01-01T00:00:02.000Z";
+    const listedMessages = [
+      datedMessage("provider-msg-2:assistant", "assistant_message", sameDate),
+      datedMessage(
+        "provider-msg-2:approval:call-1:response",
+        "approval_response_message",
+        sameDate,
+        {
+          approvals: [
+            {
+              type: "tool",
+              tool_call_id: "call-1",
+              status: "success",
+              tool_return: "ok",
+            },
+          ],
+        },
+      ),
+      datedMessage(
+        "provider-msg-2:approval:call-1:request",
+        "approval_request_message",
+        sameDate,
+        {
+          tool_call: {
+            tool_call_id: "call-1",
+            name: "ShellCommand",
+            arguments: '{"command":"pwd"}',
+          },
+        },
+      ),
+      datedMessage(
+        "provider-msg-1",
+        "user_message",
+        "2026-01-01T00:00:01.000Z",
+      ),
+    ];
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => listedMessages,
+    }));
+    const messagesRetrieve = mock(async () => []);
+
+    installBackend({
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeData(
+      dummyClient,
+      makeAgent({ in_context_message_ids: ["provider-msg-2"] }),
+      "default",
+    );
+
+    expect(
+      resume.messageHistory.map((message) => message.message_type),
+    ).toEqual([
+      "user_message",
+      "approval_request_message",
+      "approval_response_message",
+      "assistant_message",
+    ]);
   });
 });

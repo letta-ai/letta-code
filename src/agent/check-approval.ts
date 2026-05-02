@@ -264,6 +264,29 @@ export function prepareMessageHistory(
  * The API doesn't guarantee order, so we must sort explicitly.
  */
 function sortChronological(messages: Message[]): Message[] {
+  const messageTypeRank = (messageType: string | undefined): number => {
+    switch (messageType) {
+      case "user_message":
+        return 0;
+      case "reasoning_message":
+        return 1;
+      case "tool_call_message":
+      case "approval_request_message":
+        return 2;
+      case "tool_return_message":
+      case "approval_response_message":
+        return 3;
+      case "assistant_message":
+        return 4;
+      case "event_message":
+        return 5;
+      case "summary_message":
+        return 6;
+      default:
+        return 7;
+    }
+  };
+
   return [...messages].sort((a, b) => {
     // All message types *should* have 'date', but be defensive.
     const ta = a.date ? new Date(a.date).getTime() : 0;
@@ -271,7 +294,8 @@ function sortChronological(messages: Message[]): Message[] {
     if (!Number.isFinite(ta) && !Number.isFinite(tb)) return 0;
     if (!Number.isFinite(ta)) return -1;
     if (!Number.isFinite(tb)) return 1;
-    return ta - tb;
+    if (ta !== tb) return ta - tb;
+    return messageTypeRank(a.message_type) - messageTypeRank(b.message_type);
   });
 }
 

@@ -1928,11 +1928,19 @@ export class LocalStore {
     const localMessages = (
       this.providerTrajectoryByConversationKey.get(key) ?? []
     ).map((entry) => entry.uiMessage);
-    const messages = projectLocalMessagesToStoredMessages(
-      localMessages,
-      agentId,
-      conversation?.id ?? conversationId,
-    );
+    const resolvedConversationId = conversation?.id ?? conversationId;
+    const messages = localMessages.flatMap((message, index) => {
+      const projected = projectLocalMessageToStoredMessages(
+        message,
+        agentId,
+        resolvedConversationId,
+        new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+      );
+      if (projected.length > 0) {
+        this.messagesById.set(message.id, projected);
+      }
+      return projected;
+    });
     this.messagesByConversationKey.set(key, messages);
     for (const message of messages) {
       this.messagesById.set(message.id, [message]);

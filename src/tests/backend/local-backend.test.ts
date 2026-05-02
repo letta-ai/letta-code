@@ -345,6 +345,28 @@ describe("LocalBackend", () => {
       expect(JSON.stringify(capturedMessages[1])).toContain(
         "provider-local-tool-output",
       );
+
+      const resumedBackend = new LocalBackend({
+        storageDir,
+        executionMode: "fake",
+      });
+      const resumedConversation = await resumedBackend.retrieveConversation(
+        conversation.id,
+      );
+      const lastInContextId = (
+        resumedConversation.in_context_message_ids ?? []
+      ).at(-1);
+      expect(lastInContextId).toBeString();
+      const lastMessageVariants = await resumedBackend.retrieveMessage(
+        lastInContextId ?? "",
+      );
+      expect(
+        lastMessageVariants.map((message) => message.message_type),
+      ).toEqual([
+        "approval_request_message",
+        "approval_response_message",
+        "assistant_message",
+      ]);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
