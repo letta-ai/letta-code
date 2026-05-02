@@ -11,9 +11,13 @@ import type {
   ConversationMessageCreateBody,
   ConversationMessageListBody,
   ConversationMessageStreamBody,
+  RunMessageStreamBody,
 } from "../../backend";
 import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
-import { DeterministicToolCallExecutor } from "../../backend/dev/HeadlessTurnExecutor";
+import {
+  DeterministicToolCallExecutor,
+  type HeadlessTurnExecutor,
+} from "../../backend/dev/HeadlessTurnExecutor";
 
 async function collectStream(
   stream: AsyncIterable<LettaStreamingResponse>,
@@ -461,6 +465,94 @@ describe("FakeHeadlessBackend", () => {
       stop_reason: "end_turn",
       run_id: runId,
     });
+
+    const replayed = await collectStream(
+      await backend.streamRunMessages(runId, {} as RunMessageStreamBody),
+    );
+    expect(replayed.map((chunk) => chunk.message_type)).toEqual(
+      chunks.map((chunk) => chunk.message_type),
+    );
+    expect(
+      replayed.every(
+        (chunk) => (chunk as { run_id?: unknown }).run_id === runId,
+      ),
+    ).toBe(true);
+    expect((replayed[0] as unknown as { seq_id?: number }).seq_id).toBe(1);
+
+    const replayedAfterFirst = await collectStream(
+      await backend.streamRunMessages(runId, {
+        starting_after: 1,
+      } as RunMessageStreamBody),
+    );
+    expect(
+      replayedAfterFirst.map(
+        (chunk) => (chunk as unknown as { seq_id?: number }).seq_id,
+      ),
+    ).toEqual([2]);
+  });
+
+  test("run routes reject missing local runs", async () => {
+    const backend = new FakeHeadlessBackend("agent-run");
+    await expect(backend.retrieveRun("run-missing")).rejects.toThrow(
+      "Run run-missing not found",
+    );
+    await expect(
+      backend.streamRunMessages("run-missing", {} as RunMessageStreamBody),
+    ).rejects.toThrow("Run run-missing not found");
+  });
+
+  test("cancelConversation marks an active local run cancelled", async () => {
+    let controller: AbortController | undefined;
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        controller = new AbortController();
+        return {
+          controller,
+          async *[Symbol.asyncIterator]() {
+            yield {
+              message_type: "assistant_message",
+              content: [{ type: "text", text: "should not matter" }],
+            } as LettaStreamingResponse;
+          },
+        } as unknown as Awaited<ReturnType<HeadlessTurnExecutor["execute"]>>;
+      },
+    };
+    const backend = new FakeHeadlessBackend("agent-cancel", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-cancel",
+    } as ConversationCreateBody);
+
+    await backend.createConversationMessageStream(
+      conversation.id,
+      createBody("cancel me", "agent-cancel"),
+    );
+    const cancelResult = (await backend.cancelConversation(
+      conversation.id,
+    )) as unknown as { status: string };
+    expect(cancelResult).toEqual({ status: "cancelled" });
+    expect(controller?.signal.aborted).toBe(true);
+
+    await expect(
+      backend.retrieveRun("run-fake-headless-1"),
+    ).resolves.toMatchObject({
+      id: "run-fake-headless-1",
+      status: "cancelled",
+      stop_reason: "cancelled",
+    });
+    const replayed = await collectStream(
+      await backend.streamRunMessages(
+        "run-fake-headless-1",
+        {} as RunMessageStreamBody,
+      ),
+    );
+    expect(replayed).toMatchObject([
+      {
+        message_type: "stop_reason",
+        stop_reason: "cancelled",
+        run_id: "run-fake-headless-1",
+        seq_id: 1,
+      },
+    ]);
   });
 
   test("strict send-turn routes reject before appending local messages", async () => {

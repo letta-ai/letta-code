@@ -16,9 +16,9 @@ import type {
 import {
   FakeHeadlessStore,
   type FakeHeadlessStoreOptions,
+  LocalBackendNotFoundError,
 } from "./FakeHeadlessStore";
 import {
-  createAssistantMessageStream,
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "./HeadlessTurnExecutor";
@@ -54,6 +54,39 @@ function attachRunId(
   return chunk;
 }
 
+function chunkSeqId(chunk: LettaStreamingResponse): number | undefined {
+  const seqId = (chunk as { seq_id?: unknown }).seq_id;
+  return typeof seqId === "number" ? seqId : undefined;
+}
+
+function cloneStreamingChunk(
+  chunk: LettaStreamingResponse,
+): LettaStreamingResponse {
+  return JSON.parse(JSON.stringify(chunk)) as LettaStreamingResponse;
+}
+
+function createReplayStream(
+  chunks: LettaStreamingResponse[],
+): Stream<LettaStreamingResponse> {
+  const controller = new AbortController();
+  return {
+    controller,
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) {
+        yield cloneStreamingChunk(chunk);
+      }
+    },
+  } as unknown as Stream<LettaStreamingResponse>;
+}
+
+function isTerminalRun(run: Run): boolean {
+  return (
+    run.status === "completed" ||
+    run.status === "failed" ||
+    run.status === "cancelled"
+  );
+}
+
 export class FakeHeadlessBackend implements Backend {
   readonly capabilities = { remoteMemfs: false };
 
@@ -61,6 +94,11 @@ export class FakeHeadlessBackend implements Backend {
   private readonly executor: HeadlessTurnExecutor;
   private readonly runs = new Map<string, Run>();
   private readonly activeRunByConversation = new Map<string, string>();
+  private readonly runControllerByRunId = new Map<string, AbortController>();
+  private readonly runChunksByRunId = new Map<
+    string,
+    LettaStreamingResponse[]
+  >();
   private runSeq = 0;
 
   constructor(
@@ -148,24 +186,42 @@ export class FakeHeadlessBackend implements Backend {
     return this.executeConversationTurn(conversationId, body);
   }
 
-  async cancelConversation() {
+  async cancelConversation(...args: Parameters<Backend["cancelConversation"]>) {
+    const [conversationIdOrAgentId] = args;
+    const runId =
+      this.activeRunByConversation.get(conversationIdOrAgentId) ??
+      this.findActiveRunByAgentId(conversationIdOrAgentId);
+    if (runId) {
+      const controller = this.runControllerByRunId.get(runId);
+      this.recordRunChunk(runId, {
+        message_type: "stop_reason",
+        stop_reason: "cancelled",
+      } as LettaStreamingResponse);
+      this.completeRun(runId, "cancelled");
+      controller?.abort();
+    }
     return { status: "cancelled" } as never;
   }
 
   async retrieveRun(runId: string) {
-    return (this.runs.get(runId) ?? {
-      id: runId,
-      status: "completed",
-      metadata: {},
-    }) as never;
+    const run = this.runs.get(runId);
+    if (!run) throw new LocalBackendNotFoundError("Run", runId);
+    return run as never;
   }
 
-  async streamRunMessages(_runId: string, _body: RunMessageStreamBody) {
-    return createAssistantMessageStream({
-      id: "msg-fake-headless-run",
-      date: new Date(Date.UTC(2026, 0, 1)).toISOString(),
-      content: [{ type: "text", text: "pong" }],
+  async streamRunMessages(runId: string, body: RunMessageStreamBody) {
+    if (!this.runs.has(runId)) {
+      throw new LocalBackendNotFoundError("Run", runId);
+    }
+    const startingAfter =
+      typeof body?.starting_after === "number"
+        ? body.starting_after
+        : undefined;
+    const chunks = (this.runChunksByRunId.get(runId) ?? []).filter((chunk) => {
+      if (startingAfter === undefined) return true;
+      return (chunkSeqId(chunk) ?? 0) > startingAfter;
     });
+    return createReplayStream(chunks) as never;
   }
 
   async forkConversation(...args: Parameters<Backend["forkConversation"]>) {
@@ -209,6 +265,7 @@ export class FakeHeadlessBackend implements Backend {
       this.failRun(run.id, error);
       throw error;
     }
+    this.runControllerByRunId.set(run.id, stream.controller);
     return this.persistExecutorStream(
       turnInput.conversationId,
       turnInput.agentId,
@@ -246,6 +303,7 @@ export class FakeHeadlessBackend implements Backend {
   private completeRun(runId: string, stopReason: string): void {
     const run = this.runs.get(runId);
     if (!run) return;
+    if (isTerminalRun(run)) return;
     const completedAt = timestampForRun(this.runSeq + this.runs.size);
     const status =
       stopReason === "error" || stopReason === "llm_api_error"
@@ -262,11 +320,13 @@ export class FakeHeadlessBackend implements Backend {
     if (run.conversation_id) {
       this.activeRunByConversation.delete(run.conversation_id);
     }
+    this.runControllerByRunId.delete(runId);
   }
 
   private failRun(runId: string, error: unknown): void {
     const run = this.runs.get(runId);
     if (!run) return;
+    if (isTerminalRun(run)) return;
     const message = error instanceof Error ? error.message : String(error);
     this.runs.set(runId, {
       ...run,
@@ -282,6 +342,31 @@ export class FakeHeadlessBackend implements Backend {
         },
       },
     });
+    if (run.conversation_id) {
+      this.activeRunByConversation.delete(run.conversation_id);
+    }
+    this.runControllerByRunId.delete(runId);
+  }
+
+  private findActiveRunByAgentId(agentId: string): string | undefined {
+    for (const [runId, run] of this.runs.entries()) {
+      if (run.agent_id === agentId && !isTerminalRun(run)) return runId;
+    }
+    return undefined;
+  }
+
+  private recordRunChunk(
+    runId: string,
+    chunk: LettaStreamingResponse,
+  ): LettaStreamingResponse {
+    const chunks = this.runChunksByRunId.get(runId) ?? [];
+    const recorded = attachRunId(cloneStreamingChunk(chunk), runId);
+    if (chunkSeqId(recorded) === undefined) {
+      (recorded as { seq_id?: number }).seq_id = chunks.length + 1;
+    }
+    chunks.push(recorded);
+    this.runChunksByRunId.set(runId, chunks);
+    return recorded;
   }
 
   private persistExecutorStream(
@@ -315,7 +400,10 @@ export class FakeHeadlessBackend implements Backend {
               chunk,
             );
             if (!isProviderStreamPartOnly(persisted)) {
-              yield attachRunId(persisted, runId);
+              yield backend.recordRunChunk(
+                runId,
+                attachRunId(persisted, runId),
+              );
             }
           }
           if (!sawStopReason) {
