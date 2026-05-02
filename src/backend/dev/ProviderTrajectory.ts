@@ -1,4 +1,11 @@
-import type { TextStreamPart, ToolSet, UIMessage } from "ai";
+import type { TextStreamPart, ToolSet } from "ai";
+import type { LocalMessage } from "./LocalMessage";
+
+export type {
+  LocalMessage,
+  LocalMessageMetadata,
+  LocalMessageProviderMetadata,
+} from "./LocalMessage";
 
 export type ProviderStreamPart = TextStreamPart<ToolSet>;
 
@@ -8,29 +15,7 @@ const PROVIDER_STREAM_PART_ONLY = Symbol.for(
   "@letta/provider-stream-part-only",
 );
 
-export interface ProviderTrajectoryProviderMetadata {
-  providerId?: string;
-  modelId?: string;
-  responseId?: string;
-  providerMetadata?: unknown;
-}
-
-export interface ProviderTrajectoryLettaProjection {
-  messageTypes: string[];
-  otids?: string[];
-  messageIds: string[];
-  approvalRequestIds?: string[];
-  approvalResponseIds?: string[];
-  toolCallIds?: string[];
-}
-
-export interface ProviderTrajectoryUIMessageMetadata {
-  provider?: ProviderTrajectoryProviderMetadata;
-  lettaProjection?: ProviderTrajectoryLettaProjection;
-}
-
-export type ProviderTrajectoryUIMessage =
-  UIMessage<ProviderTrajectoryUIMessageMetadata>;
+export type ProviderTrajectoryUIMessage = LocalMessage;
 
 export interface ProviderTrajectoryRawCapture {
   streamParts?: unknown[];
@@ -153,26 +138,11 @@ export function cloneProviderUIMessage(
     metadata: message.metadata
       ? {
           ...message.metadata,
-          lettaProjection: message.metadata.lettaProjection
+          provider: message.metadata.provider
             ? {
-                ...message.metadata.lettaProjection,
-                messageTypes: [
-                  ...message.metadata.lettaProjection.messageTypes,
-                ],
-                otids: message.metadata.lettaProjection.otids
-                  ? [...message.metadata.lettaProjection.otids]
-                  : undefined,
-                messageIds: [...message.metadata.lettaProjection.messageIds],
-                approvalRequestIds: message.metadata.lettaProjection
-                  .approvalRequestIds
-                  ? [...message.metadata.lettaProjection.approvalRequestIds]
-                  : undefined,
-                approvalResponseIds: message.metadata.lettaProjection
-                  .approvalResponseIds
-                  ? [...message.metadata.lettaProjection.approvalResponseIds]
-                  : undefined,
-                toolCallIds: message.metadata.lettaProjection.toolCallIds
-                  ? [...message.metadata.lettaProjection.toolCallIds]
+                ...message.metadata.provider,
+                warnings: message.metadata.provider.warnings
+                  ? [...message.metadata.provider.warnings]
                   : undefined,
               }
             : undefined,

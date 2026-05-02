@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { validateUIMessages } from "ai";
 import { createIsolatedCliTestEnv } from "../testProcessEnv";
 
 const projectRoot = process.cwd();
@@ -408,6 +409,27 @@ function payloadMessages(payload: Record<string, unknown>) {
   return payload.messages as Array<{ message_type?: string }>;
 }
 
+function jsonl(text: string): unknown[] {
+  return text
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as unknown);
+}
+
+async function firstPersistedMessages(storageDir: string): Promise<unknown[]> {
+  const conversationDirs = await readdir(join(storageDir, "conversations"));
+  for (const conversationDir of conversationDirs) {
+    const messages = jsonl(
+      await readFile(
+        join(storageDir, "conversations", conversationDir, "messages.jsonl"),
+        "utf8",
+      ),
+    );
+    if (messages.length > 0) return messages;
+  }
+  return [];
+}
+
 describe("headless dev backend smoke", () => {
   test("runs one-shot headless without API credentials", async () => {
     const result = await runCli([
@@ -500,6 +522,21 @@ describe("headless dev backend smoke", () => {
 
       const conversationDirs = await readdir(join(storageDir, "conversations"));
       expect(conversationDirs.length).toBeGreaterThan(0);
+      const persistedMessages = await firstPersistedMessages(storageDir);
+      await expect(
+        validateUIMessages({ messages: persistedMessages }),
+      ).resolves.toHaveLength(2);
+      expect(
+        persistedMessages.map(
+          (message) => (message as { role?: unknown }).role,
+        ),
+      ).toEqual(["user", "assistant"]);
+      expect(
+        persistedMessages.every(
+          (message) =>
+            (message as Record<string, unknown>).message_type === undefined,
+        ),
+      ).toBe(true);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

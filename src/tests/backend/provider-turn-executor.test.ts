@@ -638,9 +638,10 @@ describe("ProviderTurnExecutor", () => {
       openai: { responseId: "resp-raw-1" },
     });
     expect(assistantEntry?.uiMessage.metadata?.provider).toEqual({
-      modelId: "gpt-test",
-      responseId: "resp-raw-1",
-      providerMetadata: { openai: { responseId: "resp-raw-1" } },
+      model_id: "gpt-test",
+      response_id: "resp-raw-1",
+      provider_metadata: { openai: { responseId: "resp-raw-1" } },
+      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
     });
     expect(assistantEntry?.uiMessage.parts).toEqual([
       {

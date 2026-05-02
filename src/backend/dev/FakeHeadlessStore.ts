@@ -24,6 +24,7 @@ import type {
   ConversationUpdateBody,
 } from "../backend";
 import type {
+  LocalMessage,
   ProviderStreamPart,
   ProviderTrajectoryMessage,
   ProviderTrajectoryUIMessage,
@@ -317,6 +318,12 @@ type ProviderUIReasoningPart = ProviderUIMessagePart & {
   state?: "streaming" | "done";
   providerMetadata?: unknown;
 };
+type ProviderUIFilePart = ProviderUIMessagePart & {
+  type: "file";
+};
+type ProviderUISourcePart = ProviderUIMessagePart & {
+  type: "source-url" | "source-document";
+};
 
 function isProviderUIToolPart(
   part: ProviderUIMessagePart,
@@ -326,6 +333,96 @@ function isProviderUIToolPart(
     part.type.startsWith("tool-") &&
     "toolCallId" in part &&
     typeof part.toolCallId === "string"
+  );
+}
+
+function createdAtForLocalMessage(message: LocalMessage): string | undefined {
+  return typeof message.metadata?.created_at === "string"
+    ? message.metadata.created_at
+    : undefined;
+}
+
+function agentIdForLocalMessage(message: LocalMessage): string | undefined {
+  return typeof message.metadata?.agent_id === "string"
+    ? message.metadata.agent_id
+    : undefined;
+}
+
+function conversationIdForLocalMessage(
+  message: LocalMessage,
+): string | undefined {
+  return typeof message.metadata?.conversation_id === "string"
+    ? message.metadata.conversation_id
+    : undefined;
+}
+
+function localMessageDate(message: LocalMessage, fallbackDate: string): string {
+  return createdAtForLocalMessage(message) ?? fallbackDate;
+}
+
+function localMessageAgentId(
+  message: LocalMessage,
+  fallbackAgentId: string,
+): string {
+  return agentIdForLocalMessage(message) ?? fallbackAgentId;
+}
+
+function localMessageConversationId(
+  message: LocalMessage,
+  fallbackConversationId: string,
+): string {
+  return conversationIdForLocalMessage(message) ?? fallbackConversationId;
+}
+
+function cloneLocalMessage(message: LocalMessage): LocalMessage {
+  return cloneProviderUIMessageSnapshot(message) as LocalMessage;
+}
+
+function textPartToContentPart(
+  part: ProviderUITextPart | ProviderUIReasoningPart,
+) {
+  return {
+    type: part.type,
+    text: part.text,
+    ...(part.providerMetadata !== undefined && {
+      providerMetadata: part.providerMetadata,
+    }),
+  };
+}
+
+function isTextOrReasoningPart(
+  part: ProviderUIMessagePart,
+): part is ProviderUITextPart | ProviderUIReasoningPart {
+  return (
+    (part.type === "text" || part.type === "reasoning") &&
+    "text" in part &&
+    typeof part.text === "string"
+  );
+}
+
+function isFileOrSourcePart(
+  part: ProviderUIMessagePart,
+): part is ProviderUIFilePart | ProviderUISourcePart {
+  return (
+    part.type === "file" ||
+    part.type === "source-url" ||
+    part.type === "source-document"
+  );
+}
+
+function localToolName(part: ProviderUIToolPart): string {
+  return part.type.slice("tool-".length);
+}
+
+function stringifyToolArguments(input: unknown): string {
+  return typeof input === "string" ? input : JSON.stringify(input ?? {});
+}
+
+function isToolOutputState(state: unknown): boolean {
+  return (
+    state === "output-available" ||
+    state === "output-error" ||
+    state === "output-denied"
   );
 }
 
@@ -354,6 +451,145 @@ function numericSuffix(value: string, prefix: string): number {
   return value.startsWith(prefix)
     ? Number.parseInt(value.slice(prefix.length), 10) || 0
     : 0;
+}
+
+function projectLocalMessageToStoredMessages(
+  message: LocalMessage,
+  fallbackAgentId: string,
+  fallbackConversationId: string,
+  fallbackDate: string,
+): StoredMessage[] {
+  const agentId = localMessageAgentId(message, fallbackAgentId);
+  const conversationId = localMessageConversationId(
+    message,
+    fallbackConversationId,
+  );
+  const date = localMessageDate(message, fallbackDate);
+
+  if (message.role === "user" || message.role === "system") {
+    return [
+      {
+        id: message.id,
+        date,
+        agent_id: agentId,
+        conversation_id: conversationId,
+        message_type: "user_message",
+        role: message.role,
+        content: message.parts,
+      } as StoredMessage,
+    ];
+  }
+
+  const messages: StoredMessage[] = [];
+  const assistantContent: unknown[] = [];
+
+  for (const part of message.parts) {
+    if (isTextOrReasoningPart(part)) {
+      assistantContent.push(textPartToContentPart(part));
+      continue;
+    }
+
+    if (isFileOrSourcePart(part)) {
+      assistantContent.push(part);
+      continue;
+    }
+
+    if (!isProviderUIToolPart(part)) continue;
+    const toolName = localToolName(part);
+    const requestId = `${message.id}:approval:${part.toolCallId}:request`;
+    messages.push({
+      id: requestId,
+      date,
+      agent_id: agentId,
+      conversation_id: conversationId,
+      message_type: "approval_request_message",
+      tool_call: {
+        tool_call_id: part.toolCallId,
+        name: toolName,
+        arguments: stringifyToolArguments((part as { input?: unknown }).input),
+      },
+    } as StoredMessage);
+
+    if (!isToolOutputState((part as { state?: unknown }).state)) continue;
+    const output = (part as { output?: unknown }).output;
+    const errorText = (part as { errorText?: unknown }).errorText;
+    messages.push({
+      id: `${message.id}:approval:${part.toolCallId}:response`,
+      date,
+      agent_id: agentId,
+      conversation_id: conversationId,
+      message_type: "approval_response_message",
+      approvals: [
+        (part as { state?: unknown }).state === "output-available"
+          ? {
+              type: "tool",
+              tool_call_id: part.toolCallId,
+              tool_return: output,
+              status: "success",
+            }
+          : {
+              type: "approval",
+              tool_call_id: part.toolCallId,
+              approve: false,
+              reason:
+                typeof errorText === "string"
+                  ? errorText
+                  : "Tool execution denied.",
+            },
+      ],
+      content:
+        (part as { state?: unknown }).state === "output-available"
+          ? output
+          : errorText,
+    } as StoredMessage);
+  }
+
+  if (assistantContent.length > 0) {
+    messages.push({
+      id: messages.length > 0 ? `${message.id}:assistant` : message.id,
+      date,
+      agent_id: agentId,
+      conversation_id: conversationId,
+      message_type: "assistant_message",
+      role: "assistant",
+      content: assistantContent,
+    } as StoredMessage);
+  }
+
+  return messages;
+}
+
+function projectLocalMessagesToStoredMessages(
+  messages: LocalMessage[],
+  fallbackAgentId: string,
+  fallbackConversationId: string,
+): StoredMessage[] {
+  return messages.flatMap((message, index) =>
+    projectLocalMessageToStoredMessages(
+      message,
+      fallbackAgentId,
+      fallbackConversationId,
+      new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+    ),
+  );
+}
+
+function localMessageToProviderTrajectoryMessage(
+  message: LocalMessage,
+  fallbackAgentId: string,
+  fallbackConversationId: string,
+): ProviderTrajectoryMessage {
+  return {
+    type: "letta_provider_ui_message",
+    schemaVersion: 1,
+    id: message.id,
+    date:
+      createdAtForLocalMessage(message) ??
+      new Date(Date.UTC(2026, 0, 1)).toISOString(),
+    agentId: localMessageAgentId(message, fallbackAgentId),
+    conversationId: localMessageConversationId(message, fallbackConversationId),
+    uiMessage: cloneLocalMessage(message),
+  };
 }
 
 export class FakeHeadlessStore {
@@ -590,11 +826,10 @@ export class FakeHeadlessStore {
       (body as { agent_id?: string } | undefined)?.agent_id ??
       this.agentIdForConversation(conversationId);
     this.ensureConversation(conversationId, agentId);
-    const messages = [
-      ...(this.messagesByConversationKey.get(
-        this.conversationKey(conversationId, agentId),
-      ) ?? []),
-    ];
+    const messages = this.projectedMessagesForConversation(
+      conversationId,
+      agentId,
+    );
     return this.applyListOptions(messages, body);
   }
 
@@ -612,6 +847,7 @@ export class FakeHeadlessStore {
   }
 
   retrieveMessage(messageId: string): StoredMessage[] {
+    this.rebuildMessageIndex();
     return [...(this.messagesById.get(messageId) ?? [])];
   }
 
@@ -662,9 +898,6 @@ export class FakeHeadlessStore {
             agentId,
             part.text,
             storedMessage,
-            typeof (chunk as { otid?: unknown }).otid === "string"
-              ? (chunk as { otid: string }).otid
-              : undefined,
           );
           continue;
         }
@@ -674,9 +907,6 @@ export class FakeHeadlessStore {
             agentId,
             part.text,
             storedMessage,
-            typeof (chunk as { otid?: unknown }).otid === "string"
-              ? (chunk as { otid: string }).otid
-              : undefined,
           );
         }
       }
@@ -703,41 +933,28 @@ export class FakeHeadlessStore {
       storedMessage?: StoredMessage;
       role: ProviderTrajectoryUIMessage["role"];
       parts: ProviderUIMessagePart[];
-      otid?: string;
-      toolCallIds?: string[];
-      approvalRequestId?: string;
-      approvalResponseId?: string;
     },
   ): ProviderTrajectoryMessage {
     this.providerTrajectorySeq += 1;
     const id = `provider-msg-fake-headless-${this.providerTrajectorySeq}`;
+    const date =
+      options.storedMessage?.date ??
+      new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq + 1)).toISOString();
     const entry: ProviderTrajectoryMessage = {
       type: "letta_provider_ui_message",
       schemaVersion: 1,
       id,
-      date:
-        options.storedMessage?.date ??
-        new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq + 1)).toISOString(),
+      date,
       agentId,
       conversationId,
       uiMessage: {
         id,
         role: options.role,
         metadata: {
-          lettaProjection: {
-            messageTypes: options.storedMessage
-              ? [options.storedMessage.message_type]
-              : [],
-            otids: options.otid ? [options.otid] : undefined,
-            messageIds: options.storedMessage ? [options.storedMessage.id] : [],
-            approvalRequestIds: options.approvalRequestId
-              ? [options.approvalRequestId]
-              : undefined,
-            approvalResponseIds: options.approvalResponseId
-              ? [options.approvalResponseId]
-              : undefined,
-            toolCallIds: options.toolCallIds,
-          },
+          created_at: date,
+          updated_at: date,
+          agent_id: agentId,
+          conversation_id: conversationId,
         },
         parts: options.parts,
       },
@@ -746,6 +963,14 @@ export class FakeHeadlessStore {
     const trajectory = this.providerTrajectoryByConversationKey.get(key) ?? [];
     trajectory.push(entry);
     this.providerTrajectoryByConversationKey.set(key, trajectory);
+    const conversation = this.conversations.get(key);
+    if (conversation && !conversation.in_context_message_ids.includes(id)) {
+      conversation.in_context_message_ids = [
+        ...conversation.in_context_message_ids,
+        id,
+      ];
+      this.conversations.set(key, conversation);
+    }
     this.persistConversationState(conversationId, agentId);
     return entry;
   }
@@ -785,11 +1010,17 @@ export class FakeHeadlessStore {
       id: entry.uiMessage.id,
       role: "assistant",
       metadata: {
+        ...currentMetadata,
         ...snapshot.metadata,
+        created_at:
+          currentMetadata?.created_at ?? snapshot.metadata?.created_at,
+        updated_at:
+          snapshot.metadata?.updated_at ?? currentMetadata?.updated_at,
+        agent_id: currentMetadata?.agent_id ?? snapshot.metadata?.agent_id,
+        conversation_id:
+          currentMetadata?.conversation_id ??
+          snapshot.metadata?.conversation_id,
         provider: snapshot.metadata?.provider ?? currentMetadata?.provider,
-        lettaProjection:
-          currentMetadata?.lettaProjection ??
-          snapshot.metadata?.lettaProjection,
       },
     };
     this.persistConversationState(conversationId, agentId);
@@ -818,11 +1049,13 @@ export class FakeHeadlessStore {
       entry.raw.steps = [...(entry.raw.steps ?? []), part];
       entry.uiMessage.metadata = {
         ...entry.uiMessage.metadata,
+        updated_at: entry.date,
         provider: {
           ...entry.uiMessage.metadata?.provider,
-          modelId: part.response.modelId,
-          responseId: part.response.id,
-          providerMetadata: part.providerMetadata,
+          model_id: part.response.modelId,
+          response_id: part.response.id,
+          provider_metadata: part.providerMetadata,
+          usage: part.usage,
         },
       };
       return;
@@ -830,6 +1063,14 @@ export class FakeHeadlessStore {
 
     if (part.type === "finish") {
       entry.raw.usage = part.totalUsage;
+      entry.uiMessage.metadata = {
+        ...entry.uiMessage.metadata,
+        updated_at: entry.date,
+        provider: {
+          ...entry.uiMessage.metadata?.provider,
+          usage: part.totalUsage,
+        },
+      };
       return;
     }
 
@@ -1128,13 +1369,11 @@ export class FakeHeadlessStore {
     agentId: string,
     text: string,
     storedMessage: StoredMessage,
-    otid?: string,
   ): void {
     const entry = this.assistantEntryForAppend(
       conversationId,
       agentId,
       storedMessage,
-      otid,
     );
     const lastPart = entry.uiMessage.parts.at(-1);
     if (lastPart?.type === "text") {
@@ -1142,7 +1381,7 @@ export class FakeHeadlessStore {
     } else {
       entry.uiMessage.parts.push({ type: "text", text });
     }
-    this.appendStoredMessageProjection(entry, storedMessage, { otid });
+    this.touchLocalMessageMetadata(entry, storedMessage);
   }
 
   private appendAssistantReasoningProviderMessage(
@@ -1150,13 +1389,11 @@ export class FakeHeadlessStore {
     agentId: string,
     text: string,
     storedMessage: StoredMessage,
-    otid?: string,
   ): void {
     const entry = this.assistantEntryForAppend(
       conversationId,
       agentId,
       storedMessage,
-      otid,
     );
     const lastPart = entry.uiMessage.parts.at(-1);
     if (lastPart?.type === "reasoning") {
@@ -1164,7 +1401,7 @@ export class FakeHeadlessStore {
     } else {
       entry.uiMessage.parts.push({ type: "reasoning", text });
     }
-    this.appendStoredMessageProjection(entry, storedMessage, { otid });
+    this.touchLocalMessageMetadata(entry, storedMessage);
   }
 
   private appendAssistantToolCallProviderMessage(
@@ -1195,17 +1432,13 @@ export class FakeHeadlessStore {
     } else {
       entry.uiMessage.parts.push(toolPart);
     }
-    this.appendStoredMessageProjection(entry, storedMessage, {
-      approvalRequestId: storedMessage.id,
-      toolCallIds: [toolCall.toolCallId],
-    });
+    this.touchLocalMessageMetadata(entry, storedMessage);
   }
 
   private assistantEntryForAppend(
     conversationId: string,
     agentId: string,
     storedMessage: StoredMessage,
-    otid?: string,
   ): ProviderTrajectoryMessage {
     const trajectory = this.providerTrajectoryForConversation(
       conversationId,
@@ -1220,49 +1453,19 @@ export class FakeHeadlessStore {
       storedMessage,
       role: "assistant",
       parts: [],
-      otid,
     });
   }
 
-  private appendStoredMessageProjection(
+  private touchLocalMessageMetadata(
     entry: ProviderTrajectoryMessage,
     storedMessage: StoredMessage,
-    options: {
-      otid?: string;
-      toolCallIds?: string[];
-      approvalRequestId?: string;
-      approvalResponseId?: string;
-    } = {},
   ): void {
-    const projection = entry.uiMessage.metadata?.lettaProjection;
-    if (!projection) return;
-    if (!projection.messageIds.includes(storedMessage.id)) {
-      projection.messageIds.push(storedMessage.id);
-    }
-    if (!projection.messageTypes.includes(storedMessage.message_type)) {
-      projection.messageTypes.push(storedMessage.message_type);
-    }
-    if (options.otid) {
-      projection.otids = [...(projection.otids ?? []), options.otid];
-    }
-    if (options.toolCallIds && options.toolCallIds.length > 0) {
-      projection.toolCallIds = [
-        ...(projection.toolCallIds ?? []),
-        ...options.toolCallIds,
-      ];
-    }
-    if (options.approvalRequestId) {
-      projection.approvalRequestIds = [
-        ...(projection.approvalRequestIds ?? []),
-        options.approvalRequestId,
-      ];
-    }
-    if (options.approvalResponseId) {
-      projection.approvalResponseIds = [
-        ...(projection.approvalResponseIds ?? []),
-        options.approvalResponseId,
-      ];
-    }
+    entry.uiMessage.metadata = {
+      ...entry.uiMessage.metadata,
+      updated_at: storedMessage.date,
+      agent_id: entry.agentId,
+      conversation_id: entry.conversationId,
+    };
     this.persistConversationState(entry.conversationId, entry.agentId);
   }
 
@@ -1324,9 +1527,7 @@ export class FakeHeadlessStore {
               ? approval.reason
               : "Tool execution denied.",
         });
-        this.appendStoredMessageProjection(match.entry, storedMessage, {
-          approvalResponseId: storedMessage.id,
-        });
+        this.touchLocalMessageMetadata(match.entry, storedMessage);
         continue;
       }
 
@@ -1336,9 +1537,7 @@ export class FakeHeadlessStore {
         state: "output-available",
         output: textFromContent(approval.tool_return),
       });
-      this.appendStoredMessageProjection(match.entry, storedMessage, {
-        approvalResponseId: storedMessage.id,
-      });
+      this.touchLocalMessageMetadata(match.entry, storedMessage);
     }
   }
 
@@ -1416,12 +1615,6 @@ export class FakeHeadlessStore {
     this.messagesByConversationKey.set(key, messages);
     this.messagesById.set(id, [message]);
 
-    conversation.in_context_message_ids = [
-      ...conversation.in_context_message_ids,
-      id,
-    ];
-    this.conversations.set(key, conversation);
-
     this.ensureAgent(agentId);
     this.persistConversationState(conversation.id, agentId);
 
@@ -1459,6 +1652,37 @@ export class FakeHeadlessStore {
     return limit === undefined ? items : items.slice(0, limit);
   }
 
+  private projectedMessagesForConversation(
+    conversationId: string,
+    agentId: string,
+  ): StoredMessage[] {
+    const key = this.conversationKey(conversationId, agentId);
+    const conversation = this.conversations.get(key);
+    const localMessages = (
+      this.providerTrajectoryByConversationKey.get(key) ?? []
+    ).map((entry) => entry.uiMessage);
+    const messages = projectLocalMessagesToStoredMessages(
+      localMessages,
+      agentId,
+      conversation?.id ?? conversationId,
+    );
+    this.messagesByConversationKey.set(key, messages);
+    for (const message of messages) {
+      this.messagesById.set(message.id, [message]);
+    }
+    return messages;
+  }
+
+  private rebuildMessageIndex(): void {
+    this.messagesById.clear();
+    for (const conversation of this.conversations.values()) {
+      this.projectedMessagesForConversation(
+        conversation.id,
+        conversation.agent_id,
+      );
+    }
+  }
+
   private loadFromStorage(): void {
     if (!this.storageDir || !existsSync(this.storageDir)) return;
 
@@ -1488,11 +1712,20 @@ export class FakeHeadlessStore {
           conversation.id,
           conversation.agent_id,
         );
-        const messages = readJsonlFile<StoredMessage>(
+        const localMessages = readJsonlFile<LocalMessage>(
           join(conversationDir, "messages.jsonl"),
         );
-        const providerTrajectory = readJsonlFile<ProviderTrajectoryMessage>(
-          join(conversationDir, "provider-trajectory.jsonl"),
+        const providerTrajectory = localMessages.map((message) =>
+          localMessageToProviderTrajectoryMessage(
+            message,
+            conversation.agent_id,
+            conversation.id,
+          ),
+        );
+        const messages = projectLocalMessagesToStoredMessages(
+          localMessages,
+          conversation.agent_id,
+          conversation.id,
         );
 
         this.conversations.set(key, conversation);
@@ -1535,7 +1768,10 @@ export class FakeHeadlessStore {
 
   private projectAgent(record: LocalAgentRecord): AgentState {
     const key = this.conversationKey("default", record.id);
-    const defaultMessages = this.messagesByConversationKey.get(key) ?? [];
+    const defaultMessages = this.projectedMessagesForConversation(
+      "default",
+      record.id,
+    );
     const messageIds = defaultMessages.map((message) => message.id);
     const inContextMessageIds =
       this.conversations.get(key)?.in_context_message_ids ?? messageIds;
@@ -1563,11 +1799,11 @@ export class FakeHeadlessStore {
     );
     writeFileSync(
       join(conversationDir, "messages.jsonl"),
-      jsonl(this.messagesByConversationKey.get(key) ?? []),
-    );
-    writeFileSync(
-      join(conversationDir, "provider-trajectory.jsonl"),
-      jsonl(this.providerTrajectoryByConversationKey.get(key) ?? []),
+      jsonl(
+        (this.providerTrajectoryByConversationKey.get(key) ?? []).map(
+          (entry) => entry.uiMessage,
+        ),
+      ),
     );
   }
 

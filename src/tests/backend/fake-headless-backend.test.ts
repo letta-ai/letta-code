@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { validateUIMessages } from "ai";
 import type {
   AgentCreateBody,
   AgentMessageListBody,
@@ -60,6 +61,13 @@ function createBody(
     client_skills: [],
     agent_id: agentId,
   } as unknown as ConversationMessageCreateBody;
+}
+
+function jsonl(text: string): unknown[] {
+  return text
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as unknown);
 }
 
 describe("FakeHeadlessBackend", () => {
@@ -311,6 +319,71 @@ describe("FakeHeadlessBackend", () => {
       conversation.id,
     )) as { in_context_message_ids?: string[] };
     expect(updatedConversation.in_context_message_ids).toHaveLength(2);
+  });
+
+  test("persists AI SDK UIMessage JSONL as the canonical transcript", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "fake-headless-ui-"));
+    try {
+      const backend = new FakeHeadlessBackend("agent-ui", undefined, {
+        storageDir,
+      });
+      const conversation = await backend.createConversation({
+        agent_id: "agent-ui",
+      });
+
+      await drainAssistantText(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("hello ui", "agent-ui"),
+        ),
+      );
+
+      const conversationDirs = await readdir(join(storageDir, "conversations"));
+      expect(conversationDirs).toHaveLength(2);
+      const conversationDir = join(
+        storageDir,
+        "conversations",
+        Buffer.from(`conversation:${conversation.id}`).toString("base64url"),
+      );
+      const files = await readdir(conversationDir);
+      expect(files).toContain("conversation.json");
+      expect(files).toContain("messages.jsonl");
+      expect(files).not.toContain("provider-trajectory.jsonl");
+
+      const persistedMessages = jsonl(
+        await readFile(join(conversationDir, "messages.jsonl"), "utf8"),
+      );
+      await expect(
+        validateUIMessages({ messages: persistedMessages }),
+      ).resolves.toHaveLength(2);
+      expect(
+        persistedMessages.map(
+          (message) => (message as { role?: unknown }).role,
+        ),
+      ).toEqual(["user", "assistant"]);
+      for (const message of persistedMessages) {
+        const record = message as Record<string, unknown>;
+        expect(typeof record.id).toBe("string");
+        expect(Array.isArray(record.parts)).toBe(true);
+        expect(record.message_type).toBeUndefined();
+        expect(record.date).toBeUndefined();
+        expect(record.agent_id).toBeUndefined();
+        expect(record.conversation_id).toBeUndefined();
+        expect(record.metadata).toMatchObject({
+          agent_id: "agent-ui",
+          conversation_id: conversation.id,
+        });
+      }
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      expect(
+        page.getPaginatedItems().map((message) => message.message_type),
+      ).toEqual(["user_message", "assistant_message"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("supports default conversation listing through agent messages", async () => {
