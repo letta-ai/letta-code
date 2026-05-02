@@ -340,6 +340,8 @@ export function getLocalBackendStorageDir(homeDir = homedir()): string {
 function createExperimentalLocalBackend(): Backend {
   return new LocalBackend({
     storageDir: getLocalBackendStorageDir(),
+    executionMode:
+      process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "fake" ? "fake" : "ai-sdk",
   });
 }
 

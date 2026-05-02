@@ -490,6 +490,7 @@ describe("headless dev backend smoke", () => {
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "fake",
         },
       );
 
@@ -558,6 +559,7 @@ describe("headless dev backend smoke", () => {
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "fake",
         },
       );
 
@@ -595,6 +597,7 @@ describe("headless dev backend smoke", () => {
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "fake",
         },
       );
       expect(createResult.exitCode).toBe(0);
@@ -623,6 +626,7 @@ describe("headless dev backend smoke", () => {
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "fake",
         },
       );
 
