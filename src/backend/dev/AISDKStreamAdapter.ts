@@ -12,8 +12,8 @@ import {
   validateUIMessages,
 } from "ai";
 import type { ClientTool } from "../../tools/manager";
+import type { ProviderTrajectoryUIMessage } from "../local/ProviderTrajectory";
 import { createAISDKModelFactoryFromAgent } from "./AISDKModelFactory";
-import type { ProviderTrajectoryUIMessage } from "./ProviderTrajectory";
 import type {
   ProviderStreamAdapter,
   ProviderStreamEvent,

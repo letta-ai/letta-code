@@ -1,12 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type { LocalAgentRecord, StoredMessage } from "./FakeHeadlessStore";
-import type {
-  HeadlessTurnBody,
-  HeadlessTurnExecutor,
-  HeadlessTurnExecutorInput,
-} from "./HeadlessTurnExecutor";
+import type { LocalAgentRecord, StoredMessage } from "../local/LocalStore";
 import {
   attachProviderStreamPart,
   attachProviderUIMessage,
@@ -15,7 +10,12 @@ import {
   type ProviderTrajectoryMessage,
   type ProviderTrajectoryUIMessage,
   providerUIMessages,
-} from "./ProviderTrajectory";
+} from "../local/ProviderTrajectory";
+import type {
+  HeadlessTurnBody,
+  HeadlessTurnExecutor,
+  HeadlessTurnExecutorInput,
+} from "./HeadlessTurnExecutor";
 
 export interface ProviderTurnInput {
   conversationId: string;

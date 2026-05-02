@@ -4,8 +4,8 @@ import type {
   ConversationMessageCreateBody,
   ConversationMessageStreamBody,
 } from "../backend";
-import type { LocalAgentRecord, StoredMessage } from "./FakeHeadlessStore";
-import type { ProviderTrajectoryMessage } from "./ProviderTrajectory";
+import type { LocalAgentRecord, StoredMessage } from "../local/LocalStore";
+import type { ProviderTrajectoryMessage } from "../local/ProviderTrajectory";
 
 export type HeadlessTurnBody =
   | ConversationMessageCreateBody

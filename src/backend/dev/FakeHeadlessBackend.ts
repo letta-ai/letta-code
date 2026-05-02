@@ -14,15 +14,15 @@ import type {
   RunMessageStreamBody,
 } from "../backend";
 import {
-  FakeHeadlessStore,
-  type FakeHeadlessStoreOptions,
   LocalBackendNotFoundError,
-} from "./FakeHeadlessStore";
+  LocalStore,
+  type LocalStoreOptions,
+} from "../local/LocalStore";
+import { isProviderStreamPartOnly } from "../local/ProviderTrajectory";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "./HeadlessTurnExecutor";
-import { isProviderStreamPartOnly } from "./ProviderTrajectory";
 
 function createPage<T>(items: T[]) {
   return {
@@ -90,7 +90,7 @@ function isTerminalRun(run: Run): boolean {
 export class FakeHeadlessBackend implements Backend {
   readonly capabilities = { remoteMemfs: false };
 
-  private readonly store: FakeHeadlessStore;
+  private readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;
   private readonly runs = new Map<string, Run>();
   private readonly activeRunByConversation = new Map<string, string>();
@@ -104,9 +104,9 @@ export class FakeHeadlessBackend implements Backend {
   constructor(
     agentId = "agent-fake-headless",
     executor: HeadlessTurnExecutor = new DeterministicPongExecutor(),
-    storeOptions: FakeHeadlessStoreOptions = {},
+    storeOptions: LocalStoreOptions = {},
   ) {
-    this.store = new FakeHeadlessStore(agentId, storeOptions);
+    this.store = new LocalStore(agentId, storeOptions);
     this.executor = executor;
   }
 
