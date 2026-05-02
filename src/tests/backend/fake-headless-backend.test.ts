@@ -10,6 +10,7 @@ import type {
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
+  ConversationMessageStreamBody,
 } from "../../backend";
 import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
 import { DeterministicToolCallExecutor } from "../../backend/dev/HeadlessTurnExecutor";
@@ -420,6 +421,98 @@ describe("FakeHeadlessBackend", () => {
       conversation.id,
     )) as { in_context_message_ids?: string[] };
     expect(updatedConversation.in_context_message_ids).toHaveLength(2);
+  });
+
+  test("send-turn routes attach local run metadata and persist projected output", async () => {
+    const backend = new FakeHeadlessBackend("agent-run");
+    const conversation = await backend.createConversation({
+      agent_id: "agent-run",
+    } as ConversationCreateBody);
+
+    const chunks = await collectStream(
+      await backend.streamConversationMessages(
+        conversation.id,
+        createBody(
+          "run metadata",
+          "agent-run",
+        ) as unknown as ConversationMessageStreamBody,
+      ),
+    );
+    const runIds = new Set(
+      chunks
+        .map((chunk) => (chunk as { run_id?: unknown }).run_id)
+        .filter((runId): runId is string => typeof runId === "string"),
+    );
+    expect(runIds.size).toBe(1);
+    const runId = [...runIds][0] ?? "";
+    const run = await backend.retrieveRun(runId);
+    expect(run).toMatchObject({
+      id: runId,
+      agent_id: "agent-run",
+      conversation_id: conversation.id,
+      status: "completed",
+      stop_reason: "end_turn",
+      background: true,
+      metadata: { backend: "fake-headless" },
+    });
+
+    expect(chunks.at(-1)).toMatchObject({
+      message_type: "stop_reason",
+      stop_reason: "end_turn",
+      run_id: runId,
+    });
+  });
+
+  test("strict send-turn routes reject before appending local messages", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "fake-headless-turn-"));
+    try {
+      const backend = new FakeHeadlessBackend("agent-default", undefined, {
+        storageDir,
+        seedDefaultAgent: false,
+        strictAgentAccess: true,
+        strictConversationAccess: true,
+      });
+
+      await expect(
+        backend.createConversationMessageStream(
+          "conv-missing",
+          createBody("should not persist", "agent-missing"),
+        ),
+      ).rejects.toThrow("Agent agent-missing not found");
+
+      const agent = await backend.createAgent({
+        name: "Turn Agent",
+        model: "dev/fake-headless",
+      } as AgentCreateBody);
+      await expect(
+        backend.streamConversationMessages(
+          "conv-missing",
+          createBody(
+            "should not persist either",
+            agent.id,
+          ) as unknown as ConversationMessageStreamBody,
+        ),
+      ).rejects.toThrow("Conversation conv-missing not found");
+
+      const missingConversationPath = conversationDir(
+        storageDir,
+        "conv-missing",
+      );
+      await expect(readdir(missingConversationPath)).rejects.toThrow();
+      const conversationDirs = await readdir(join(storageDir, "conversations"));
+      for (const conversationDirName of conversationDirs) {
+        const messagesPath = join(
+          storageDir,
+          "conversations",
+          conversationDirName,
+          "messages.jsonl",
+        );
+        const messages = jsonl(await readFile(messagesPath, "utf8"));
+        expect(messages).toEqual([]);
+      }
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("strict message routes require existing records and retrieve projected messages", async () => {
