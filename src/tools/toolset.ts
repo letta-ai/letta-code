@@ -284,7 +284,11 @@ export async function prepareToolExecutionContextForScope(params: {
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
 
-  if (!effectiveModel && cachedEffectiveModel && cachedEffectiveModel.length > 0) {
+  if (
+    !effectiveModel &&
+    cachedEffectiveModel &&
+    cachedEffectiveModel.length > 0
+  ) {
     effectiveModel = resolveModel(cachedEffectiveModel) ?? cachedEffectiveModel;
   }
 
