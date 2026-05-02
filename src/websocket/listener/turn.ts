@@ -430,7 +430,8 @@ export async function handleIncomingMessage(
     await Promise.all([
       // Memfs is lazy and memoized once per session.
       ensureMemfsSyncedForAgent(runtime.listener, agentId),
-      // Secrets refresh every turn so desktop GUI updates are picked up.
+      // Secrets are cached with a freshness window; mutation paths
+      // invalidate the cache so the next hydration re-fetches.
       ensureSecretsHydratedForAgent(runtime.listener, agentId),
     ]);
 

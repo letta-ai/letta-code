@@ -4082,6 +4082,8 @@ function createRuntime(): ListenerRuntime {
     approvalRuntimeKeyByRequestId: new Map(),
     memfsSyncedAgents: new Map(),
     secretsHydrationByAgent: new Map(),
+    secretsHydrationFreshnessByAgent: new Map(),
+    secretsDirtyAgents: new Set(),
     lastEmittedStatus: null,
   };
 }
@@ -6421,6 +6423,14 @@ async function connectWithRetry(
               { set: parsed.set, unset: parsed.unset },
               parsed.agent_id,
             );
+            // Invalidate the listener's secrets freshness cache so the
+            // next tool execution re-fetches from the server.
+            const { invalidateSecretsCacheForAgent } = await import(
+              "./secrets-sync"
+            );
+            if (parsed.agent_id) {
+              invalidateSecretsCacheForAgent(runtime, parsed.agent_id);
+            }
             safeSocketSend(
               socket,
               {
@@ -6676,6 +6686,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
+  secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
+  secretsDirtyAgents: ListenerRuntime["secretsDirtyAgents"];
   worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
@@ -6712,6 +6724,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
+    secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
+    secretsDirtyAgents: ListenerRuntime["secretsDirtyAgents"];
     worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
@@ -6873,6 +6887,18 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.secretsHydrationByAgent,
       set: (value: ListenerRuntime["secretsHydrationByAgent"]) => {
         listener.secretsHydrationByAgent = value;
+      },
+    },
+    secretsHydrationFreshnessByAgent: {
+      get: () => listener.secretsHydrationFreshnessByAgent,
+      set: (value: ListenerRuntime["secretsHydrationFreshnessByAgent"]) => {
+        listener.secretsHydrationFreshnessByAgent = value;
+      },
+    },
+    secretsDirtyAgents: {
+      get: () => listener.secretsDirtyAgents,
+      set: (value: ListenerRuntime["secretsDirtyAgents"]) => {
+        listener.secretsDirtyAgents = value;
       },
     },
     worktreeWatcherByConversation: {

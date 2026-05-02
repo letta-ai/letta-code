@@ -197,8 +197,12 @@ export type ListenerRuntime = {
   >;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
   memfsSyncedAgents: Map<string, Promise<void>>;
-  /** Agent IDs with an in-flight secrets refresh. Completed refreshes are not memoized so GUI updates are picked up. */
+  /** Agent IDs with an in-flight secrets refresh. Concurrent callers coalesce on the same promise. */
   secretsHydrationByAgent: Map<string, Promise<void>>;
+  /** Per-agent timestamp of the last successful secrets hydration. Used for freshness-based caching. */
+  secretsHydrationFreshnessByAgent: Map<string, number>;
+  /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
+  secretsDirtyAgents: Set<string>;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
   /** Unsubscribe from subagent state store (set on socket open, cleared on close). */
   _unsubscribeSubagentState?: (() => void) | undefined;
