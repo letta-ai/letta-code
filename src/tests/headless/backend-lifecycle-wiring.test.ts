@@ -69,4 +69,18 @@ describe("headless backend lifecycle wiring", () => {
     expect(source).not.toContain("getClient");
     expect(source).not.toContain("client.agents.");
   });
+
+  test("memfs flag application skips remote operations for local backends", () => {
+    const source = readSource("../../agent/memoryFilesystem.ts");
+
+    const capabilityGuardIndex = source.indexOf(
+      "!backend.capabilities.remoteMemfs",
+    );
+    const promptUpdateIndex = source.indexOf("updateAgentSystemPromptMemfs");
+    const tagRemovalIndex = source.indexOf("removeGitMemoryTag");
+
+    expect(capabilityGuardIndex).toBeGreaterThan(-1);
+    expect(promptUpdateIndex).toBeGreaterThan(capabilityGuardIndex);
+    expect(tagRemovalIndex).toBeGreaterThan(capabilityGuardIndex);
+  });
 });

@@ -351,6 +351,19 @@ export async function applyMemfsFlags(
   options?: ApplyMemfsFlagsOptions,
 ): Promise<ApplyMemfsFlagsResult> {
   const { settingsManager } = await import("../settings-manager");
+  const { getBackend } = await import("../backend");
+  const backend = getBackend();
+
+  if (!backend.capabilities.remoteMemfs) {
+    if (memfsFlag) {
+      throw new Error("MemFS is not supported by the active backend.");
+    }
+    if (noMemfsFlag) {
+      settingsManager.setMemfsEnabled(agentId, false);
+      return { action: "disabled" };
+    }
+    return { action: "unchanged" };
+  }
 
   // LCD proxies normal API traffic through localhost, while MemFS git sync can
   // still target api.letta.com through getMemfsServerUrl().

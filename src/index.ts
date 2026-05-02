@@ -1765,14 +1765,25 @@ async function main(): Promise<void> {
           ? true
           : memfsFlag;
         const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
-        const memfsSyncPromise = import("./agent/memoryFilesystem").then(
-          ({ applyMemfsFlags }) =>
-            applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
-              pullOnExistingRepo: true,
-              agentTags,
-              skipPromptUpdate: shouldCreateNew,
-            }),
-        );
+        const memfsSyncPromise = backend.capabilities.remoteMemfs
+          ? import("./agent/memoryFilesystem").then(({ applyMemfsFlags }) =>
+              applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
+                pullOnExistingRepo: true,
+                agentTags,
+                skipPromptUpdate: shouldCreateNew,
+              }),
+            )
+          : Promise.resolve().then(() => {
+              if (memfsFlag) {
+                throw new Error(
+                  "MemFS is not supported by the active backend.",
+                );
+              }
+              if (noMemfsFlag) {
+                settingsManager.setMemfsEnabled(agentId, false);
+              }
+              return null;
+            });
         const memfsSyncBackgroundPromise = memfsSyncPromise.catch((error) => {
           const message =
             error instanceof Error ? error.message : String(error);
