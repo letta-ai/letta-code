@@ -85,6 +85,8 @@ export interface BackendCapabilities {
   serverSecrets: boolean;
   agentFileImportExport: boolean;
   promptRecompile: boolean;
+  byokProviderRefresh: boolean;
+  localModelCatalog: boolean;
 }
 
 export interface Backend {
@@ -193,6 +195,8 @@ export class APIBackend implements Backend {
     serverSecrets: true,
     agentFileImportExport: true,
     promptRecompile: true,
+    byokProviderRefresh: true,
+    localModelCatalog: false,
   };
 
   private readonly getApiClientOverride?: GetAPIClient;

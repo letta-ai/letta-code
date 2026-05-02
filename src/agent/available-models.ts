@@ -94,7 +94,8 @@ export async function getAvailableModelHandles(options?: {
 
   // When forceRefresh is true, first refresh BYOK providers to get latest models
   // This matches the behavior in ADE (letta-cloud) where refresh is called before listing models
-  if (forceRefresh) {
+  const backend = getBackend();
+  if (forceRefresh && backend.capabilities.byokProviderRefresh) {
     await refreshByokProviders();
   }
 

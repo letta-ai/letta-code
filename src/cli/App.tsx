@@ -14508,6 +14508,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       "https://api.letta.com";
                     return !baseURL.includes("api.letta.com");
                   })()}
+                  localModelCatalog={
+                    getBackend().capabilities.localModelCatalog
+                  }
                 />
               ))}
 

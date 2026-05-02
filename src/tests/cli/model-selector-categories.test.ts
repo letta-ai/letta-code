@@ -25,4 +25,11 @@ describe("getModelCategories", () => {
       "server-all",
     ]);
   });
+
+  test("uses server-style categories for local backend model catalogs", () => {
+    expect(getModelCategories("pro", false, true)).toEqual([
+      "server-recommended",
+      "server-all",
+    ]);
+  });
 });

@@ -117,6 +117,8 @@ describe("LocalBackend", () => {
         serverSecrets: false,
         agentFileImportExport: false,
         promptRecompile: false,
+        byokProviderRefresh: false,
+        localModelCatalog: true,
       });
 
       await expect(backend.retrieveAgent("agent-missing")).rejects.toThrow(

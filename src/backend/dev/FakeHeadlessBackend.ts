@@ -94,6 +94,8 @@ export class FakeHeadlessBackend implements Backend {
     serverSecrets: false,
     agentFileImportExport: false,
     promptRecompile: false,
+    byokProviderRefresh: false,
+    localModelCatalog: true,
   };
 
   private readonly store: LocalStore;

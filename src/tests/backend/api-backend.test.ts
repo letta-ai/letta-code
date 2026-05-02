@@ -145,6 +145,8 @@ describe("APIBackend", () => {
       serverSecrets: true,
       agentFileImportExport: true,
       promptRecompile: true,
+      byokProviderRefresh: true,
+      localModelCatalog: false,
     });
     const agentUpdateBody = { system: "system" } as AgentUpdateBody;
     const agentCreateBody = { name: "new agent" } as AgentCreateBody;

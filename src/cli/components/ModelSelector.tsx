@@ -39,8 +39,9 @@ export { buildByokProviderAliases, isByokHandleForSelector };
 export function getModelCategories(
   _billingTier?: string,
   isSelfHosted?: boolean,
+  localModelCatalog?: boolean,
 ): ModelCategory[] {
-  if (isSelfHosted) {
+  if (isSelfHosted || localModelCatalog) {
     return ["server-recommended", "server-all"];
   }
   return ["supported", "all", "byok", "byok-all"];
@@ -90,6 +91,8 @@ interface ModelSelectorProps {
   billingTier?: string;
   /** Whether connected to a self-hosted server (not api.letta.com) */
   isSelfHosted?: boolean;
+  /** Whether the active backend provides a local-only model catalog */
+  localModelCatalog?: boolean;
 }
 
 export function ModelSelector({
@@ -100,15 +103,16 @@ export function ModelSelector({
   forceRefresh: forceRefreshOnMount,
   billingTier,
   isSelfHosted,
+  localModelCatalog,
 }: ModelSelectorProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
 
-  // For self-hosted, only show server-specific tabs
+  // For self-hosted and local backends, only show the active backend's model catalog.
   const modelCategories = useMemo(
-    () => getModelCategories(billingTier, isSelfHosted),
-    [billingTier, isSelfHosted],
+    () => getModelCategories(billingTier, isSelfHosted, localModelCatalog),
+    [billingTier, isSelfHosted, localModelCatalog],
   );
   const isFreeTier = billingTier === "free";
   const defaultCategory = modelCategories[0] ?? "supported";
@@ -180,6 +184,10 @@ export function ModelSelector({
   }, [forceRefreshOnMount]);
 
   useEffect(() => {
+    if (localModelCatalog) {
+      setByokProviderAliases(buildByokProviderAliases([]));
+      return;
+    }
     (async () => {
       try {
         const providers = await listProviders();
@@ -190,7 +198,7 @@ export function ModelSelector({
         setByokProviderAliases(buildByokProviderAliases([]));
       }
     })();
-  }, []);
+  }, [localModelCatalog]);
 
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
