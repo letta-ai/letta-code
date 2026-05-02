@@ -13,6 +13,118 @@ import {
   type SkillSource,
 } from "./skills";
 
+// ---------------------------------------------------------------------------
+// Cache layer
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory cache for `buildClientSkillsPayload` results.
+ *
+ * Stored on `globalThis` via `Symbol.for()` so it survives Bun's bundler
+ * deduplication (same pattern as secretsStore).
+ */
+const CLIENT_SKILLS_CACHE_KEY = Symbol.for("@letta/clientSkillsCache");
+
+interface CacheEntry {
+  key: string;
+  result: BuildClientSkillsPayloadResult;
+}
+
+type ClientSkillsCache = Map<string, CacheEntry>;
+
+type GlobalWithClientSkillsCache = typeof globalThis & {
+  [key: symbol]: ClientSkillsCache | undefined;
+};
+
+function getCache(): ClientSkillsCache {
+  const global = globalThis as GlobalWithClientSkillsCache;
+  if (!global[CLIENT_SKILLS_CACHE_KEY]) {
+    global[CLIENT_SKILLS_CACHE_KEY] = new Map();
+  }
+  return global[CLIENT_SKILLS_CACHE_KEY] as ClientSkillsCache;
+}
+
+/**
+ * Compute a cache key from the parameters that influence skill discovery.
+ *
+ * We include:
+ *  - agentId
+ *  - sorted skill sources
+ *  - cwd (affects `.agents/skills` and `.skills` resolution)
+ *  - legacy skills directory
+ *  - primary project skills directory
+ *  - resolved memory skills dirs (scoped or env-fallback)
+ *
+ * This is conservative: any change in these inputs produces a cache miss,
+ * ensuring correctness while still caching the common case where nothing
+ * changes between `sendMessageStream` calls.
+ */
+function computeCacheKey(components: {
+  agentId: string | undefined;
+  skillSources: SkillSource[];
+  cwd: string;
+  legacySkillsDirectory: string;
+  primaryProjectSkillsDirectory: string;
+  memorySkillsDirs: string[];
+}): string {
+  return [
+    components.agentId ?? "",
+    [...components.skillSources].sort().join(","),
+    components.cwd,
+    components.legacySkillsDirectory,
+    components.primaryProjectSkillsDirectory,
+    [...components.memorySkillsDirs].sort().join(","),
+  ].join("|");
+}
+
+/**
+ * Deep-clone a `BuildClientSkillsPayloadResult` so callers cannot
+ * accidentally mutate the cached object.
+ */
+function cloneResult(
+  result: BuildClientSkillsPayloadResult,
+): BuildClientSkillsPayloadResult {
+  return {
+    clientSkills: result.clientSkills.map((s) => ({ ...s })),
+    skillPathById: { ...result.skillPathById },
+    errors: result.errors.map((e) => ({ ...e })),
+  };
+}
+
+/**
+ * Invalidate the entire client skills payload cache.
+ *
+ * Useful when the process-wide skill configuration changes
+ * (e.g. cwd switch, env var change, or global skill source update).
+ */
+export function invalidateClientSkillsPayloadCache(): void {
+  getCache().clear();
+}
+
+/**
+ * Invalidate cache entries for a specific agent.
+ *
+ * Useful when an agent's memory skills are updated (e.g. skill
+ * creation/deletion via the Skill tool) and the next
+ * `sendMessageStream` call must re-discover.
+ */
+export function invalidateClientSkillsPayloadCacheForAgent(
+  agentId: string,
+): void {
+  const cache = getCache();
+  for (const [k, entry] of cache) {
+    // The agentId is the first component of the key before the first "|".
+    // We also check the stored entry for safety.
+    if (entry.key.startsWith(`${agentId}|`) || k.startsWith(`${agentId}|`)) {
+      cache.delete(k);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Skill discovery helpers
+// ---------------------------------------------------------------------------
+
 function getMemorySkillsDirs(agentId?: string): string[] {
   const dirs = new Set<string>();
 
@@ -75,6 +187,10 @@ async function discoverMemorySkills(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
 export type ClientSkill = NonNullable<
   ConversationMessageCreateParams["client_skills"]
 >[number];
@@ -92,6 +208,10 @@ export interface BuildClientSkillsPayloadResult {
   skillPathById: Record<string, string>;
   errors: SkillDiscoveryError[];
 }
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
 function toClientSkill(skill: Skill): ClientSkill {
   return {
@@ -119,12 +239,20 @@ function getPrimaryProjectSkillsDirectory(): string {
   return join(process.cwd(), ".agents", "skills");
 }
 
+// ---------------------------------------------------------------------------
+// Core function (with cache)
+// ---------------------------------------------------------------------------
+
 /**
  * Build `client_skills` payload for conversations.messages.create.
  *
  * This discovers client-side skills using the same source selection rules as the
  * Skill tool and headless startup flow, then converts them into the server-facing
  * schema expected by the API. Ordering is deterministic by skill id.
+ *
+ * Results are cached in-memory keyed by agent id, skill sources, cwd, and
+ * resolved skill roots so that repeated calls (e.g. during approval
+ * continuations) skip redundant filesystem discovery.
  */
 export async function buildClientSkillsPayload(
   options: BuildClientSkillsPayloadOptions = {},
@@ -132,10 +260,35 @@ export async function buildClientSkillsPayload(
   const { legacySkillsDirectory, skillSources } =
     resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
+
+  // When a custom discoverSkillsFn is provided (tests / DI), bypass the cache
+  // so the injected function is always called.
+  const useCache = !options.discoverSkillsFn;
+
+  const cwd = process.cwd();
+  const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
+  const memorySkillsDirs = getMemorySkillsDirs(options.agentId);
+
+  if (useCache) {
+    const cacheKey = computeCacheKey({
+      agentId: options.agentId,
+      skillSources,
+      cwd,
+      legacySkillsDirectory,
+      primaryProjectSkillsDirectory,
+      memorySkillsDirs,
+    });
+
+    const cache = getCache();
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return cloneResult(cached.result);
+    }
+  }
+
   const skillsById = new Map<string, Skill>();
   const errors: SkillDiscoveryError[] = [];
 
-  const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
   const nonProjectSources = skillSources.filter(
     (source): source is SkillSource => source !== "project",
   );
@@ -219,7 +372,7 @@ export async function buildClientSkillsPayload(
     );
   }
 
-  return {
+  const result: BuildClientSkillsPayloadResult = {
     clientSkills: sortedSkills.map(toClientSkill),
     skillPathById: Object.fromEntries(
       sortedSkills
@@ -230,4 +383,18 @@ export async function buildClientSkillsPayload(
     ),
     errors,
   };
+
+  if (useCache) {
+    const cacheKey = computeCacheKey({
+      agentId: options.agentId,
+      skillSources,
+      cwd,
+      legacySkillsDirectory,
+      primaryProjectSkillsDirectory,
+      memorySkillsDirs,
+    });
+    getCache().set(cacheKey, { key: cacheKey, result: cloneResult(result) });
+  }
+
+  return result;
 }
