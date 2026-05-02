@@ -540,6 +540,83 @@ describe("headless dev backend smoke", () => {
     }
   });
 
+  test("env-selected local backend updates an existing agent without expanding persisted shape", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-local-backend-"));
+    try {
+      const createResult = await runCli(
+        [
+          "-p",
+          "ping",
+          "--new-agent",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+          "--no-memfs",
+          "--memfs-startup",
+          "skip",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+        },
+      );
+      expect(createResult.exitCode).toBe(0);
+
+      const agentFiles = await readdir(join(storageDir, "agents"));
+      expect(agentFiles).toHaveLength(1);
+      const agentPath = join(storageDir, "agents", agentFiles[0] ?? "");
+      const createdAgent = JSON.parse(
+        await readFile(agentPath, "utf8"),
+      ) as Record<string, unknown>;
+      const agentId = createdAgent.id;
+      expect(typeof agentId).toBe("string");
+
+      const updateResult = await runCli(
+        [
+          "-p",
+          "ping",
+          "--agent",
+          agentId as string,
+          "--model",
+          "auto-fast",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+        },
+      );
+
+      expect(updateResult.exitCode).toBe(0);
+      expect(updateResult.stdout).toContain("pong");
+
+      const updatedAgent = JSON.parse(
+        await readFile(agentPath, "utf8"),
+      ) as Record<string, unknown>;
+      expect(Object.keys(updatedAgent).sort()).toEqual([
+        "description",
+        "id",
+        "model",
+        "model_settings",
+        "name",
+        "system",
+        "tags",
+      ]);
+      expect(updatedAgent.id).toBe(agentId);
+      expect(updatedAgent.model).toBe("letta/auto-fast");
+      expect(updatedAgent.tools).toBeUndefined();
+      expect(updatedAgent.memory_blocks).toBeUndefined();
+      expect(updatedAgent.block_ids).toBeUndefined();
+      expect(updatedAgent.llm_config).toBeUndefined();
+      expect(updatedAgent.message_ids).toBeUndefined();
+      expect(updatedAgent.in_context_message_ids).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects remote MemFS enable on dev backends without API credentials", async () => {
     const result = await runCli([
       "-p",

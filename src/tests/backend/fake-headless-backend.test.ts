@@ -161,7 +161,7 @@ describe("FakeHeadlessBackend", () => {
       const backend = new FakeHeadlessBackend("agent-default", undefined, {
         storageDir,
         seedDefaultAgent: false,
-        strictAgentRetrieval: true,
+        strictAgentAccess: true,
       });
 
       await expect(backend.retrieveAgent("agent-missing")).rejects.toThrow(
@@ -184,6 +184,100 @@ describe("FakeHeadlessBackend", () => {
         id: agent.id,
         name: "Created Agent",
       });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("strict agent updates require existing agents and keep persistence minimal", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "fake-headless-update-"));
+    try {
+      const backend = new FakeHeadlessBackend("agent-default", undefined, {
+        storageDir,
+        seedDefaultAgent: false,
+        strictAgentAccess: true,
+      });
+
+      await expect(
+        backend.updateAgent("agent-missing", { name: "Nope" }),
+      ).rejects.toThrow("Agent agent-missing not found");
+
+      let files: string[] = [];
+      try {
+        files = await readdir(join(storageDir, "agents"));
+      } catch {
+        files = [];
+      }
+      expect(files).toEqual([]);
+
+      const agent = await backend.createAgent({
+        name: "Before",
+        description: "old",
+        system: "old system",
+        model: "dev/fake-headless",
+        tags: ["origin:test"],
+        parallel_tool_calls: false,
+      } as AgentCreateBody);
+
+      const updated = await backend.updateAgent(agent.id, {
+        name: "After",
+        description: null,
+        system: "new system",
+        tags: ["origin:test", "updated"],
+        model: "dev/updated",
+        model_settings: { provider_type: "openai", strict: true },
+        context_window_limit: 64000,
+        max_tokens: 2048,
+        tools: ["web_search"],
+        memory_blocks: [{ label: "ignore", value: "ignore" }],
+        block_ids: ["block-ignore"],
+        compaction_settings: { mode: "server-only" },
+      } as unknown as Parameters<typeof backend.updateAgent>[1]);
+
+      expect(updated).toMatchObject({
+        id: agent.id,
+        name: "After",
+        description: null,
+        system: "new system",
+        tags: ["origin:test", "updated"],
+        model: "dev/updated",
+        tools: [],
+        model_settings: {
+          provider_type: "openai",
+          strict: true,
+          context_window_limit: 64000,
+          max_tokens: 2048,
+        },
+      });
+
+      const agentFiles = await readdir(join(storageDir, "agents"));
+      expect(agentFiles).toHaveLength(1);
+      const persisted = JSON.parse(
+        await readFile(join(storageDir, "agents", agentFiles[0] ?? ""), "utf8"),
+      ) as Record<string, unknown>;
+
+      expect(Object.keys(persisted).sort()).toEqual([
+        "description",
+        "id",
+        "model",
+        "model_settings",
+        "name",
+        "system",
+        "tags",
+      ]);
+      expect(persisted).toMatchObject({
+        id: agent.id,
+        name: "After",
+        description: null,
+        system: "new system",
+        tags: ["origin:test", "updated"],
+        model: "dev/updated",
+      });
+      expect(persisted.tools).toBeUndefined();
+      expect(persisted.memory_blocks).toBeUndefined();
+      expect(persisted.block_ids).toBeUndefined();
+      expect(persisted.llm_config).toBeUndefined();
+      expect(persisted.compaction_settings).toBeUndefined();
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

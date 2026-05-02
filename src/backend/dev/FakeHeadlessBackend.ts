@@ -46,9 +46,9 @@ export class FakeHeadlessBackend implements Backend {
     return this.store.retrieveAgent(agentId);
   }
 
-  updateAgent(...args: Parameters<Backend["updateAgent"]>) {
+  async updateAgent(...args: Parameters<Backend["updateAgent"]>) {
     const [agentId, body] = args;
-    return Promise.resolve(this.store.updateAgent(agentId, body));
+    return this.store.updateAgent(agentId, body);
   }
 
   createAgent(...args: Parameters<Backend["createAgent"]>) {

@@ -341,7 +341,7 @@ function createExperimentalLocalBackend(): Backend {
   return new FakeHeadlessBackend(undefined, undefined, {
     storageDir: getLocalBackendStorageDir(),
     seedDefaultAgent: false,
-    strictAgentRetrieval: true,
+    strictAgentAccess: true,
   });
 }
 

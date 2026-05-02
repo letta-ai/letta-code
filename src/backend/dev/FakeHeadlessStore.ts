@@ -288,7 +288,7 @@ export interface StoredTurnInput {
 export interface FakeHeadlessStoreOptions {
   storageDir?: string;
   seedDefaultAgent?: boolean;
-  strictAgentRetrieval?: boolean;
+  strictAgentAccess?: boolean;
 }
 
 export class LocalBackendNotFoundError extends Error {
@@ -358,7 +358,7 @@ function numericSuffix(value: string, prefix: string): number {
 
 export class FakeHeadlessStore {
   private readonly storageDir?: string;
-  private readonly strictAgentRetrieval: boolean;
+  private readonly strictAgentAccess: boolean;
   private readonly agents = new Map<string, LocalAgentRecord>();
   private readonly conversations = new Map<string, StoredConversation>();
   private readonly messagesByConversationKey = new Map<
@@ -379,7 +379,7 @@ export class FakeHeadlessStore {
     options: FakeHeadlessStoreOptions = {},
   ) {
     this.storageDir = options.storageDir;
-    this.strictAgentRetrieval = options.strictAgentRetrieval === true;
+    this.strictAgentAccess = options.strictAgentAccess === true;
     this.loadFromStorage();
     if (options.seedDefaultAgent !== false) {
       this.ensureAgent(this.defaultAgentId);
@@ -387,7 +387,7 @@ export class FakeHeadlessStore {
   }
 
   retrieveAgent(agentId: string): AgentState {
-    if (!this.strictAgentRetrieval) {
+    if (!this.strictAgentAccess) {
       return this.ensureAgent(agentId);
     }
     const existing = this.agents.get(agentId);
@@ -408,17 +408,24 @@ export class FakeHeadlessStore {
   }
 
   updateAgent(agentId: string, body: AgentUpdateBody): AgentState {
-    const current = this.ensureAgent(agentId);
-    void current;
-    const currentRecord =
-      this.agents.get(agentId) ?? createDefaultAgentRecord(agentId);
+    const currentRecord = this.agents.get(agentId);
+    if (!currentRecord) {
+      if (this.strictAgentAccess) {
+        throw new LocalBackendNotFoundError("Agent", agentId);
+      }
+      this.ensureAgent(agentId);
+    }
+    const existingRecord =
+      currentRecord ??
+      this.agents.get(agentId) ??
+      createDefaultAgentRecord(agentId);
     const bodyRecord = body as Record<string, unknown>;
     const nextModelSettings = {
-      ...currentRecord.model_settings,
+      ...existingRecord.model_settings,
       ...supportedModelSettingsFromBody(bodyRecord),
     };
     const updated = {
-      ...currentRecord,
+      ...existingRecord,
       ...(typeof bodyRecord.name === "string" && { name: bodyRecord.name }),
       ...((typeof bodyRecord.description === "string" ||
         bodyRecord.description === null) && {
