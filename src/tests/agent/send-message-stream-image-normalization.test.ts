@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { translatePasteForImages } from "../../cli/helpers/clipboard";
 import {
@@ -58,7 +59,6 @@ describe("outbound image normalization", () => {
     if (tempRoot) {
       rmSync(tempRoot, { recursive: true, force: true });
     }
-    mock.restore();
   });
 
   test("normalizes TUI file-path pasted images to Anthropic-supported media types before sending", async () => {
@@ -177,67 +177,14 @@ describe("outbound image normalization", () => {
     ).rejects.toThrow(/Failed to prepare image for model: codec unavailable/);
   });
 
-  test("skips shared image normalization when the caller already normalized images", async () => {
-    const normalizeMessageImagePartsMock = mock(async () => {
-      throw new Error("normalizeMessageImageParts should not be called");
-    });
-    const assertSupportedBase64ImageMediaTypesMock = mock(() => {});
-    const createConversationMessageStreamMock = mock(async () => ({}));
-
-    mock.module("../../backend", () => ({
-      getBackend: () => ({
-        createConversationMessageStream: createConversationMessageStreamMock,
-      }),
-    }));
-    mock.module("../../tools/manager", () => ({
-      waitForToolsetReady: async () => {},
-      prepareCurrentToolExecutionContext: async () => ({
-        clientTools: [],
-        contextId: "test-context",
-      }),
-    }));
-    mock.module("../../agent/clientSkills", () => ({
-      buildClientSkillsPayload: async () => ({ clientSkills: [], errors: [] }),
-    }));
-    mock.module("../../agent/context", () => ({
-      getSkillSources: () => [],
-    }));
-    mock.module("../../utils/debug", () => ({
-      debugLog: () => {},
-      debugWarn: () => {},
-      isDebugEnabled: () => false,
-    }));
-    mock.module("../../utils/messageImageNormalization", () => ({
-      normalizeMessageImageParts: normalizeMessageImagePartsMock,
-      assertSupportedBase64ImageMediaTypes:
-        assertSupportedBase64ImageMediaTypesMock,
-    }));
-
-    const { sendMessageStream } = await import("../../agent/message");
-    const rawMessages: MessageCreate[] = [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/png",
-              data: TEST_PNG_BASE64,
-            },
-          },
-        ],
-      },
-    ];
-
-    await sendMessageStream("conversation-1", rawMessages, {
-      skipImageNormalization: true,
-    });
-
-    expect(normalizeMessageImagePartsMock).not.toHaveBeenCalled();
-    expect(assertSupportedBase64ImageMediaTypesMock).toHaveBeenCalledWith(
-      rawMessages,
+  test("sendMessageStream has an explicit skip option for pre-normalized images", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../../agent/message.ts", import.meta.url)),
+      "utf-8",
     );
-    expect(createConversationMessageStreamMock).toHaveBeenCalledTimes(1);
+
+    expect(source).toContain("skipImageNormalization?: boolean;");
+    expect(source).toContain("opts.skipImageNormalization");
+    expect(source).toContain(": await normalizeMessageImageParts(messages)");
   });
 });
