@@ -373,6 +373,8 @@ export interface LocalStoreOptions {
   seedDefaultAgent?: boolean;
   strictAgentAccess?: boolean;
   strictConversationAccess?: boolean;
+  defaultAgentModel?: string;
+  defaultAgentModelSettings?: Record<string, unknown>;
 }
 
 export class LocalBackendNotFoundError extends Error {
@@ -679,6 +681,8 @@ export class LocalStore {
   private readonly storageDir?: string;
   private readonly strictAgentAccess: boolean;
   private readonly strictConversationAccess: boolean;
+  private readonly defaultAgentModel?: string;
+  private readonly defaultAgentModelSettings: Record<string, unknown>;
   private readonly agents = new Map<string, LocalAgentRecord>();
   private readonly conversations = new Map<string, StoredConversation>();
   private readonly messagesByConversationKey = new Map<
@@ -702,6 +706,10 @@ export class LocalStore {
     this.strictAgentAccess = options.strictAgentAccess === true;
     this.strictConversationAccess =
       options.strictConversationAccess ?? this.strictAgentAccess;
+    this.defaultAgentModel = options.defaultAgentModel;
+    this.defaultAgentModelSettings = {
+      ...(options.defaultAgentModelSettings ?? {}),
+    };
     this.loadFromStorage();
     if (options.seedDefaultAgent !== false) {
       this.ensureAgent(this.defaultAgentId);
@@ -733,7 +741,7 @@ export class LocalStore {
   ensureAgent(agentId: string): AgentState {
     const existing = this.agents.get(agentId);
     if (existing) return this.projectAgent(existing);
-    const agent = createDefaultAgentRecord(agentId);
+    const agent = this.createDefaultAgentRecord(agentId);
     this.agents.set(agentId, agent);
     this.persistAgent(agentId);
     this.ensureConversation("default", agentId);
@@ -751,7 +759,7 @@ export class LocalStore {
     const existingRecord =
       currentRecord ??
       this.agents.get(agentId) ??
-      createDefaultAgentRecord(agentId);
+      this.createDefaultAgentRecord(agentId);
     const bodyRecord = body as Record<string, unknown>;
     const nextModelSettings = {
       ...existingRecord.model_settings,
@@ -777,12 +785,40 @@ export class LocalStore {
   }
 
   createAgent(body: AgentCreateBody): AgentState {
-    const agent = createLocalAgentRecord(body);
+    const agent = this.createAgentRecord(body);
     const agentId = agent.id;
     this.agents.set(agentId, agent);
     this.persistAgent(agentId);
     this.ensureConversation("default", agentId);
     return this.projectAgent(agent);
+  }
+
+  private createDefaultAgentRecord(agentId: string): LocalAgentRecord {
+    const agent = createDefaultAgentRecord(agentId);
+    return {
+      ...agent,
+      ...(this.defaultAgentModel ? { model: this.defaultAgentModel } : {}),
+      model_settings: {
+        ...agent.model_settings,
+        ...this.defaultAgentModelSettings,
+      },
+    };
+  }
+
+  private createAgentRecord(body: AgentCreateBody): LocalAgentRecord {
+    const agent = createLocalAgentRecord(body);
+    const bodyRecord = body as Record<string, unknown>;
+    if (typeof bodyRecord.model === "string") {
+      return agent;
+    }
+    return {
+      ...agent,
+      ...(this.defaultAgentModel ? { model: this.defaultAgentModel } : {}),
+      model_settings: {
+        ...this.defaultAgentModelSettings,
+        ...agent.model_settings,
+      },
+    };
   }
 
   retrieveConversation(conversationId: string, agentId?: string): Conversation {

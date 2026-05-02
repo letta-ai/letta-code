@@ -8,7 +8,51 @@ import type {
   ConversationCreateBody,
   ConversationMessageCreateBody,
 } from "../../backend";
-import { LocalBackend } from "../../backend/local";
+import { LocalBackend, resolveLocalModelConfig } from "../../backend/local";
+
+async function withLocalModelEnv<T>(
+  env: {
+    provider?: string;
+    model?: string;
+    openAIModel?: string;
+    anthropicModel?: string;
+  },
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const originalProvider = process.env.LETTA_LOCAL_AI_PROVIDER;
+  const originalModel = process.env.LETTA_LOCAL_AI_MODEL;
+  const originalOpenAIModel = process.env.LETTA_LOCAL_OPENAI_MODEL;
+  const originalAnthropicModel = process.env.LETTA_LOCAL_ANTHROPIC_MODEL;
+  try {
+    if (env.provider === undefined) delete process.env.LETTA_LOCAL_AI_PROVIDER;
+    else process.env.LETTA_LOCAL_AI_PROVIDER = env.provider;
+    if (env.model === undefined) delete process.env.LETTA_LOCAL_AI_MODEL;
+    else process.env.LETTA_LOCAL_AI_MODEL = env.model;
+    if (env.openAIModel === undefined)
+      delete process.env.LETTA_LOCAL_OPENAI_MODEL;
+    else process.env.LETTA_LOCAL_OPENAI_MODEL = env.openAIModel;
+    if (env.anthropicModel === undefined) {
+      delete process.env.LETTA_LOCAL_ANTHROPIC_MODEL;
+    } else {
+      process.env.LETTA_LOCAL_ANTHROPIC_MODEL = env.anthropicModel;
+    }
+    return await fn();
+  } finally {
+    if (originalProvider === undefined)
+      delete process.env.LETTA_LOCAL_AI_PROVIDER;
+    else process.env.LETTA_LOCAL_AI_PROVIDER = originalProvider;
+    if (originalModel === undefined) delete process.env.LETTA_LOCAL_AI_MODEL;
+    else process.env.LETTA_LOCAL_AI_MODEL = originalModel;
+    if (originalOpenAIModel === undefined)
+      delete process.env.LETTA_LOCAL_OPENAI_MODEL;
+    else process.env.LETTA_LOCAL_OPENAI_MODEL = originalOpenAIModel;
+    if (originalAnthropicModel === undefined) {
+      delete process.env.LETTA_LOCAL_ANTHROPIC_MODEL;
+    } else {
+      process.env.LETTA_LOCAL_ANTHROPIC_MODEL = originalAnthropicModel;
+    }
+  }
+}
 
 async function drainStream(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
@@ -33,6 +77,20 @@ function createBody(
 }
 
 describe("LocalBackend", () => {
+  test("resolves local provider and model config from local env", async () => {
+    await withLocalModelEnv(
+      { provider: "anthropic", model: "claude-local" },
+      () => {
+        expect(resolveLocalModelConfig()).toEqual({
+          provider: "anthropic",
+          model: "claude-local",
+          handle: "anthropic/claude-local",
+          modelSettings: { provider_type: "anthropic" },
+        });
+      },
+    );
+  });
+
   test("uses strict local flatfile semantics behind the real local entrypoint", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-"));
     try {
@@ -134,6 +192,38 @@ describe("LocalBackend", () => {
         },
       ]);
       expect(JSON.stringify(chunks)).toContain("local ai");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses local model config for agents created without explicit model", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-model-"));
+    try {
+      await withLocalModelEnv(
+        { provider: "anthropic", model: "claude-local" },
+        async () => {
+          const backend = new LocalBackend({
+            storageDir,
+            executionMode: "fake",
+          });
+
+          const models = (await backend.listModels()) as Array<{
+            handle: string;
+          }>;
+          expect(models.map((model) => model.handle)).toContain(
+            "anthropic/claude-local",
+          );
+
+          const agent = await backend.createAgent({
+            name: "Local Model Agent",
+          } as AgentCreateBody);
+          expect(agent.model).toBe("anthropic/claude-local");
+          expect(agent.model_settings).toMatchObject({
+            provider_type: "anthropic",
+          });
+        },
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

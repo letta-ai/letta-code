@@ -16,7 +16,7 @@ function createDefaultOpenAIResponsesModel(options: {
   fetch?: typeof fetch;
 }): LanguageModel {
   const provider = createOpenAI({
-    apiKey: options.apiKey,
+    apiKey: options.apiKey ?? process.env.LETTA_LOCAL_OPENAI_API_KEY,
     fetch: options.fetch,
   });
   return provider.responses(options.model);
@@ -27,6 +27,8 @@ export function createOpenAIResponsesModelFactory(
 ): () => LanguageModel {
   const model =
     options.model ??
+    process.env.LETTA_LOCAL_OPENAI_MODEL ??
+    process.env.LETTA_LOCAL_AI_MODEL ??
     process.env.LETTA_CODE_DEV_OPENAI_MODEL ??
     DEFAULT_OPENAI_RESPONSES_MODEL;
   const createModel =

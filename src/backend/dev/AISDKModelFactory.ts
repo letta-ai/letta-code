@@ -18,9 +18,11 @@ export interface AISDKModelSettings {
 }
 
 export function resolveAISDKProvider(
-  provider = process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER ??
+  provider = process.env.LETTA_LOCAL_AI_PROVIDER ??
+    process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER ??
     DEFAULT_AI_SDK_PROVIDER,
 ): AISDKProvider {
+  if (provider === "openai") return "openai-responses";
   if (provider === "openai-responses" || provider === "anthropic") {
     return provider;
   }
@@ -82,7 +84,10 @@ export function createAISDKModelFactory(
   options: AISDKModelFactoryOptions = {},
 ): () => LanguageModel {
   const provider = resolveAISDKProvider(options.provider);
-  const model = options.model ?? process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
+  const model =
+    options.model ??
+    process.env.LETTA_LOCAL_AI_MODEL ??
+    process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
 
   switch (provider) {
     case "openai-responses":

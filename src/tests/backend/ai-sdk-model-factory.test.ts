@@ -13,11 +13,15 @@ function withAISDKEnv<T>(
   env: {
     provider?: string;
     model?: string;
+    localProvider?: string;
+    localModel?: string;
   },
   fn: () => T,
 ): T {
   const originalProvider = process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER;
   const originalModel = process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
+  const originalLocalProvider = process.env.LETTA_LOCAL_AI_PROVIDER;
+  const originalLocalModel = process.env.LETTA_LOCAL_AI_MODEL;
   try {
     if (env.provider === undefined) {
       delete process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER;
@@ -28,6 +32,16 @@ function withAISDKEnv<T>(
       delete process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
     } else {
       process.env.LETTA_CODE_DEV_AI_SDK_MODEL = env.model;
+    }
+    if (env.localProvider === undefined) {
+      delete process.env.LETTA_LOCAL_AI_PROVIDER;
+    } else {
+      process.env.LETTA_LOCAL_AI_PROVIDER = env.localProvider;
+    }
+    if (env.localModel === undefined) {
+      delete process.env.LETTA_LOCAL_AI_MODEL;
+    } else {
+      process.env.LETTA_LOCAL_AI_MODEL = env.localModel;
     }
     return fn();
   } finally {
@@ -40,6 +54,16 @@ function withAISDKEnv<T>(
       delete process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
     } else {
       process.env.LETTA_CODE_DEV_AI_SDK_MODEL = originalModel;
+    }
+    if (originalLocalProvider === undefined) {
+      delete process.env.LETTA_LOCAL_AI_PROVIDER;
+    } else {
+      process.env.LETTA_LOCAL_AI_PROVIDER = originalLocalProvider;
+    }
+    if (originalLocalModel === undefined) {
+      delete process.env.LETTA_LOCAL_AI_MODEL;
+    } else {
+      process.env.LETTA_LOCAL_AI_MODEL = originalLocalModel;
     }
   }
 }
@@ -95,6 +119,29 @@ describe("AISDKModelFactory", () => {
     expect(factory()).toBe(model);
     expect(capturedAnthropicModel).toBe("claude-env");
     expect(calledOpenAI).toBe(false);
+  });
+
+  test("uses local env provider and model before dev fallback env", () => {
+    let capturedAnthropicModel: string | undefined;
+    const model = {} as LanguageModel;
+    const factory = withAISDKEnv(
+      {
+        provider: "openai-responses",
+        model: "gpt-dev",
+        localProvider: "anthropic",
+        localModel: "claude-local",
+      },
+      () =>
+        createAISDKModelFactory({
+          createAnthropicModel: (modelId) => {
+            capturedAnthropicModel = modelId;
+            return model;
+          },
+        }),
+    );
+
+    expect(factory()).toBe(model);
+    expect(capturedAnthropicModel).toBe("claude-local");
   });
 
   test("rejects unknown providers", () => {

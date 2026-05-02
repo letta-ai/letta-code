@@ -5,6 +5,15 @@ export type {
   LocalMessageProviderMetadata,
 } from "./LocalMessage";
 export {
+  type LocalModelConfig,
+  listLocalModels,
+  localModelHandle,
+  localProviderType,
+  resolveLocalModel,
+  resolveLocalModelConfig,
+  resolveLocalProvider,
+} from "./LocalModelConfig";
+export {
   type LocalAgentRecord,
   LocalBackendNotFoundError,
   LocalStore,

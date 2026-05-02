@@ -9,6 +9,7 @@ import {
   type HeadlessTurnExecutor,
 } from "../dev/HeadlessTurnExecutor";
 import { ProviderTurnExecutor } from "../dev/ProviderTurnExecutor";
+import { listLocalModels, resolveLocalModelConfig } from "./LocalModelConfig";
 import type { LocalStoreOptions } from "./LocalStore";
 
 export type LocalBackendExecutionMode = "ai-sdk" | "fake";
@@ -39,12 +40,19 @@ function createLocalExecutor(
 
 export class LocalBackend extends FakeHeadlessBackend {
   constructor(options: LocalBackendOptions) {
+    const modelConfig = resolveLocalModelConfig();
     const storeOptions: LocalStoreOptions = {
       storageDir: options.storageDir,
       seedDefaultAgent: false,
       strictAgentAccess: true,
       strictConversationAccess: true,
+      defaultAgentModel: modelConfig.handle,
+      defaultAgentModelSettings: modelConfig.modelSettings,
     };
     super(options.defaultAgentId, createLocalExecutor(options), storeOptions);
+  }
+
+  override async listModels() {
+    return listLocalModels() as never;
   }
 }
