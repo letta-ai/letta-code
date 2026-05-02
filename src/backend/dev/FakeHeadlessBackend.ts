@@ -88,7 +88,13 @@ function isTerminalRun(run: Run): boolean {
 }
 
 export class FakeHeadlessBackend implements Backend {
-  readonly capabilities = { remoteMemfs: false };
+  readonly capabilities = {
+    remoteMemfs: false,
+    serverSideToolManagement: false,
+    serverSecrets: false,
+    agentFileImportExport: false,
+    promptRecompile: false,
+  };
 
   private readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;

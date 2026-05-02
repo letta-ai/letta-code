@@ -81,6 +81,10 @@ export type ModelsListOptions = ModelsListParams[0];
 
 export interface BackendCapabilities {
   remoteMemfs: boolean;
+  serverSideToolManagement: boolean;
+  serverSecrets: boolean;
+  agentFileImportExport: boolean;
+  promptRecompile: boolean;
 }
 
 export interface Backend {
@@ -183,7 +187,13 @@ interface APIBackendDeps {
 }
 
 export class APIBackend implements Backend {
-  readonly capabilities: BackendCapabilities = { remoteMemfs: true };
+  readonly capabilities: BackendCapabilities = {
+    remoteMemfs: true,
+    serverSideToolManagement: true,
+    serverSecrets: true,
+    agentFileImportExport: true,
+    promptRecompile: true,
+  };
 
   private readonly getApiClientOverride?: GetAPIClient;
   private readonly forkConversationOverride?: ForkConversation;

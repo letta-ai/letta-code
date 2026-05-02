@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { recompileAgentSystemPrompt } from "../../agent/modify";
+import { __testSetBackend } from "../../backend";
+import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
 
 describe("recompileAgentSystemPrompt", () => {
   test("calls the conversation recompile endpoint with mapped params", async () => {
@@ -85,5 +87,19 @@ describe("recompileAgentSystemPrompt", () => {
       recompileAgentSystemPrompt("default", "", undefined, client),
     ).rejects.toThrow("recompileAgentSystemPrompt requires agentId");
     expect(conversationsRecompileMock).not.toHaveBeenCalled();
+  });
+
+  test("throws clearly when backend has no server-side recompile", async () => {
+    try {
+      __testSetBackend(new FakeHeadlessBackend());
+
+      await expect(
+        recompileAgentSystemPrompt("default", "agent-123"),
+      ).rejects.toThrow(
+        "Server-side prompt recompile is not supported by this backend yet",
+      );
+    } finally {
+      __testSetBackend(null);
+    }
   });
 });

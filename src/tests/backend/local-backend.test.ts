@@ -111,7 +111,13 @@ describe("LocalBackend", () => {
         storageDir,
         executionMode: "fake",
       });
-      expect(backend.capabilities.remoteMemfs).toBe(false);
+      expect(backend.capabilities).toEqual({
+        remoteMemfs: false,
+        serverSideToolManagement: false,
+        serverSecrets: false,
+        agentFileImportExport: false,
+        promptRecompile: false,
+      });
 
       await expect(backend.retrieveAgent("agent-missing")).rejects.toThrow(
         "Agent agent-missing not found",

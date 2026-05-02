@@ -139,7 +139,13 @@ describe("APIBackend", () => {
       getClient: getClientMock as unknown as () => Promise<APIClient>,
       forkConversation: forkConversationMock,
     });
-    expect(backend.capabilities.remoteMemfs).toBe(true);
+    expect(backend.capabilities).toEqual({
+      remoteMemfs: true,
+      serverSideToolManagement: true,
+      serverSecrets: true,
+      agentFileImportExport: true,
+      promptRecompile: true,
+    });
     const agentUpdateBody = { system: "system" } as AgentUpdateBody;
     const agentCreateBody = { name: "new agent" } as AgentCreateBody;
     const conversationCreateBody = {

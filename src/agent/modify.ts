@@ -322,6 +322,11 @@ export async function recompileAgentSystemPrompt(
     };
   },
 ): Promise<string> {
+  if (!clientOverride && !getBackend().capabilities.promptRecompile) {
+    throw new Error(
+      "Server-side prompt recompile is not supported by this backend yet",
+    );
+  }
   const client = (clientOverride ?? (await getClient())) as Exclude<
     typeof clientOverride,
     undefined
