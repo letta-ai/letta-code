@@ -44,4 +44,29 @@ describe("headless backend lifecycle wiring", () => {
     expect(source).not.toContain("client.agents.");
     expect(source).not.toContain("client.messages.");
   });
+
+  test("interactive startup routes lifecycle SDK calls through Backend", () => {
+    const source = readSource("../../index.ts");
+
+    expect(source).toContain("const backend = getBackend();");
+    expect(source).toContain("backend.retrieveAgent(");
+    expect(source).toContain("backend.retrieveConversation(");
+    expect(source).toContain("backend.createConversation(");
+    expect(source).toContain("backend.updateAgent(");
+    expect(source).toContain("getResumeDataFromBackend(");
+
+    expect(source).not.toContain("getClient");
+    expect(source).not.toContain("client.agents.");
+    expect(source).not.toContain("client.conversations.");
+    expect(source).not.toContain("client.messages.");
+  });
+
+  test("interactive profile picker resolves agents through Backend", () => {
+    const source = readSource("../../cli/profile-selection.tsx");
+
+    expect(source).toContain('import { getBackend } from "../backend"');
+    expect(source).toContain("backend.retrieveAgent(");
+    expect(source).not.toContain("getClient");
+    expect(source).not.toContain("client.agents.");
+  });
 });
