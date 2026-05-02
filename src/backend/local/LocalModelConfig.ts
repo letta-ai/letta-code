@@ -9,41 +9,32 @@ export interface LocalModelConfig {
   modelSettings: Record<string, unknown>;
 }
 
-function localProviderEnv(): string | undefined {
-  return (
-    process.env.LETTA_LOCAL_AI_PROVIDER ??
-    process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER
-  );
+interface LocalModelListEntry {
+  handle: string;
+  model: string;
+  model_endpoint_type: string;
 }
 
-function localModelEnv(provider: AISDKProvider): string | undefined {
-  return (
-    process.env.LETTA_LOCAL_AI_MODEL ??
-    (provider === "anthropic"
-      ? process.env.LETTA_LOCAL_ANTHROPIC_MODEL
-      : process.env.LETTA_LOCAL_OPENAI_MODEL) ??
-    process.env.LETTA_CODE_DEV_AI_SDK_MODEL
-  );
+function hasEnvValue(value: string | undefined): boolean {
+  return typeof value === "string" && value.length > 0;
+}
+
+function inferLocalProviderFromStandardKeys(): AISDKProvider {
+  const hasOpenAIKey = hasEnvValue(process.env.OPENAI_API_KEY);
+  const hasAnthropicKey = hasEnvValue(process.env.ANTHROPIC_API_KEY);
+
+  if (!hasOpenAIKey && hasAnthropicKey) return "anthropic";
+  return "openai-responses";
 }
 
 export function resolveLocalProvider(): AISDKProvider {
-  const provider = localProviderEnv() ?? "openai-responses";
-  if (provider === "openai" || provider === "openai-responses") {
-    return "openai-responses";
-  }
-  if (provider === "anthropic") return "anthropic";
-  throw new Error(
-    `Unknown local AI provider "${provider}". Expected "openai-responses" or "anthropic".`,
-  );
+  return inferLocalProviderFromStandardKeys();
 }
 
 export function resolveLocalModel(provider = resolveLocalProvider()): string {
-  return (
-    localModelEnv(provider) ??
-    (provider === "anthropic"
-      ? DEFAULT_ANTHROPIC_MODEL
-      : DEFAULT_OPENAI_RESPONSES_MODEL)
-  );
+  return provider === "anthropic"
+    ? DEFAULT_ANTHROPIC_MODEL
+    : DEFAULT_OPENAI_RESPONSES_MODEL;
 }
 
 export function localModelHandle(
@@ -71,28 +62,25 @@ export function resolveLocalModelConfig(): LocalModelConfig {
 
 export function listLocalModels() {
   const configured = resolveLocalModelConfig();
-  const openAIModel =
-    process.env.LETTA_LOCAL_OPENAI_MODEL ?? DEFAULT_OPENAI_RESPONSES_MODEL;
-  const anthropicModel =
-    process.env.LETTA_LOCAL_ANTHROPIC_MODEL ?? DEFAULT_ANTHROPIC_MODEL;
-  const models = [
-    {
-      handle: localModelHandle("openai-responses", openAIModel),
-      model: localModelHandle("openai-responses", openAIModel),
-      model_endpoint_type: "openai",
-    },
-    {
-      handle: localModelHandle("anthropic", anthropicModel),
-      model: localModelHandle("anthropic", anthropicModel),
-      model_endpoint_type: "anthropic",
-    },
-  ];
-  if (!models.some((model) => model.handle === configured.handle)) {
-    models.unshift({
-      handle: configured.handle,
-      model: configured.handle,
-      model_endpoint_type: localProviderType(configured.provider),
+  const openAIModel = DEFAULT_OPENAI_RESPONSES_MODEL;
+  const anthropicModel = DEFAULT_ANTHROPIC_MODEL;
+  const models: LocalModelListEntry[] = [];
+  const addModel = (provider: AISDKProvider, model: string) => {
+    const handle = localModelHandle(provider, model);
+    if (models.some((entry) => entry.handle === handle)) return;
+    models.push({
+      handle,
+      model: handle,
+      model_endpoint_type: localProviderType(provider),
     });
+  };
+
+  addModel(configured.provider, configured.model);
+  if (hasEnvValue(process.env.OPENAI_API_KEY)) {
+    addModel("openai-responses", openAIModel);
+  }
+  if (hasEnvValue(process.env.ANTHROPIC_API_KEY)) {
+    addModel("anthropic", anthropicModel);
   }
   return models;
 }

@@ -13,15 +13,15 @@ function withAISDKEnv<T>(
   env: {
     provider?: string;
     model?: string;
-    localProvider?: string;
-    localModel?: string;
+    openAIKey?: string;
+    anthropicKey?: string;
   },
   fn: () => T,
 ): T {
   const originalProvider = process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER;
   const originalModel = process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
-  const originalLocalProvider = process.env.LETTA_LOCAL_AI_PROVIDER;
-  const originalLocalModel = process.env.LETTA_LOCAL_AI_MODEL;
+  const originalOpenAIKey = process.env.OPENAI_API_KEY;
+  const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
   try {
     if (env.provider === undefined) {
       delete process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER;
@@ -33,15 +33,15 @@ function withAISDKEnv<T>(
     } else {
       process.env.LETTA_CODE_DEV_AI_SDK_MODEL = env.model;
     }
-    if (env.localProvider === undefined) {
-      delete process.env.LETTA_LOCAL_AI_PROVIDER;
+    if (env.openAIKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
     } else {
-      process.env.LETTA_LOCAL_AI_PROVIDER = env.localProvider;
+      process.env.OPENAI_API_KEY = env.openAIKey;
     }
-    if (env.localModel === undefined) {
-      delete process.env.LETTA_LOCAL_AI_MODEL;
+    if (env.anthropicKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
     } else {
-      process.env.LETTA_LOCAL_AI_MODEL = env.localModel;
+      process.env.ANTHROPIC_API_KEY = env.anthropicKey;
     }
     return fn();
   } finally {
@@ -55,15 +55,15 @@ function withAISDKEnv<T>(
     } else {
       process.env.LETTA_CODE_DEV_AI_SDK_MODEL = originalModel;
     }
-    if (originalLocalProvider === undefined) {
-      delete process.env.LETTA_LOCAL_AI_PROVIDER;
+    if (originalOpenAIKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
     } else {
-      process.env.LETTA_LOCAL_AI_PROVIDER = originalLocalProvider;
+      process.env.OPENAI_API_KEY = originalOpenAIKey;
     }
-    if (originalLocalModel === undefined) {
-      delete process.env.LETTA_LOCAL_AI_MODEL;
+    if (originalAnthropicKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
     } else {
-      process.env.LETTA_LOCAL_AI_MODEL = originalLocalModel;
+      process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
     }
   }
 }
@@ -73,6 +73,14 @@ describe("AISDKModelFactory", () => {
     expect(withAISDKEnv({}, () => resolveAISDKProvider())).toBe(
       DEFAULT_AI_SDK_PROVIDER,
     );
+  });
+
+  test("defaults to Anthropic when it is the only standard provider key", () => {
+    expect(
+      withAISDKEnv({ anthropicKey: "test-anthropic-key" }, () =>
+        resolveAISDKProvider(),
+      ),
+    ).toBe("anthropic");
   });
 
   test("creates an OpenAI Responses factory from explicit provider/model", () => {
@@ -121,15 +129,13 @@ describe("AISDKModelFactory", () => {
     expect(calledOpenAI).toBe(false);
   });
 
-  test("uses local env provider and model before dev fallback env", () => {
+  test("uses explicit dev provider and model env when no agent model is available", () => {
     let capturedAnthropicModel: string | undefined;
     const model = {} as LanguageModel;
     const factory = withAISDKEnv(
       {
-        provider: "openai-responses",
-        model: "gpt-dev",
-        localProvider: "anthropic",
-        localModel: "claude-local",
+        provider: "anthropic",
+        model: "claude-dev",
       },
       () =>
         createAISDKModelFactory({
@@ -141,7 +147,7 @@ describe("AISDKModelFactory", () => {
     );
 
     expect(factory()).toBe(model);
-    expect(capturedAnthropicModel).toBe("claude-local");
+    expect(capturedAnthropicModel).toBe("claude-dev");
   });
 
   test("rejects unknown providers", () => {

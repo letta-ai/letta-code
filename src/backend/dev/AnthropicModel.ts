@@ -16,7 +16,7 @@ function createDefaultAnthropicModel(options: {
   fetch?: typeof fetch;
 }): LanguageModel {
   const provider = createAnthropic({
-    apiKey: options.apiKey ?? process.env.LETTA_LOCAL_ANTHROPIC_API_KEY,
+    apiKey: options.apiKey ?? process.env.ANTHROPIC_API_KEY,
     fetch: options.fetch,
   });
   return provider(options.model);
@@ -27,8 +27,6 @@ export function createAnthropicModelFactory(
 ): () => LanguageModel {
   const model =
     options.model ??
-    process.env.LETTA_LOCAL_ANTHROPIC_MODEL ??
-    process.env.LETTA_LOCAL_AI_MODEL ??
     process.env.LETTA_CODE_DEV_ANTHROPIC_MODEL ??
     DEFAULT_ANTHROPIC_MODEL;
   const createModel =

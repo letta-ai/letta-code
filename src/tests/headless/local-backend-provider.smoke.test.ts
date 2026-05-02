@@ -19,6 +19,11 @@ async function runLocalProviderCli(
     LETTA_LOCAL_BACKEND_DIR: storageDir,
     ...extraEnv,
   });
+  for (const [key, value] of Object.entries(extraEnv)) {
+    if (value === undefined) {
+      delete env[key];
+    }
+  }
   delete env.LETTA_API_KEY;
   delete env.LETTA_BASE_URL;
   delete env.LETTA_API_BASE;
@@ -83,13 +88,12 @@ async function runLocalProviderCli(
 }
 
 describe.skipIf(!providerSmokeEnabled)("headless local provider smoke", () => {
-  test.skipIf(!process.env.LETTA_LOCAL_OPENAI_API_KEY)(
+  test.skipIf(!process.env.OPENAI_API_KEY)(
     "runs local OpenAI Responses headless without Letta API credentials",
     async () => {
       const result = await runLocalProviderCli({
-        LETTA_LOCAL_AI_PROVIDER: "openai-responses",
-        LETTA_LOCAL_AI_MODEL: process.env.LETTA_LOCAL_OPENAI_MODEL,
-        LETTA_LOCAL_OPENAI_API_KEY: process.env.LETTA_LOCAL_OPENAI_API_KEY,
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+        ANTHROPIC_API_KEY: undefined,
       });
 
       expect(result.exitCode).toBe(0);
@@ -99,14 +103,12 @@ describe.skipIf(!providerSmokeEnabled)("headless local provider smoke", () => {
     },
   );
 
-  test.skipIf(!process.env.LETTA_LOCAL_ANTHROPIC_API_KEY)(
+  test.skipIf(!process.env.ANTHROPIC_API_KEY)(
     "runs local Anthropic headless without Letta API credentials",
     async () => {
       const result = await runLocalProviderCli({
-        LETTA_LOCAL_AI_PROVIDER: "anthropic",
-        LETTA_LOCAL_AI_MODEL: process.env.LETTA_LOCAL_ANTHROPIC_MODEL,
-        LETTA_LOCAL_ANTHROPIC_API_KEY:
-          process.env.LETTA_LOCAL_ANTHROPIC_API_KEY,
+        OPENAI_API_KEY: undefined,
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
       });
 
       expect(result.exitCode).toBe(0);

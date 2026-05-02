@@ -17,10 +17,21 @@ export interface AISDKModelSettings {
   provider_type?: unknown;
 }
 
+function hasEnvValue(value: string | undefined): boolean {
+  return typeof value === "string" && value.length > 0;
+}
+
+function inferDefaultProviderFromStandardKeys(): AISDKProvider {
+  const hasOpenAIKey = hasEnvValue(process.env.OPENAI_API_KEY);
+  const hasAnthropicKey = hasEnvValue(process.env.ANTHROPIC_API_KEY);
+
+  if (!hasOpenAIKey && hasAnthropicKey) return "anthropic";
+  return DEFAULT_AI_SDK_PROVIDER;
+}
+
 export function resolveAISDKProvider(
-  provider = process.env.LETTA_LOCAL_AI_PROVIDER ??
-    process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER ??
-    DEFAULT_AI_SDK_PROVIDER,
+  provider = process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER ??
+    inferDefaultProviderFromStandardKeys(),
 ): AISDKProvider {
   if (provider === "openai") return "openai-responses";
   if (provider === "openai-responses" || provider === "anthropic") {
@@ -84,10 +95,7 @@ export function createAISDKModelFactory(
   options: AISDKModelFactoryOptions = {},
 ): () => LanguageModel {
   const provider = resolveAISDKProvider(options.provider);
-  const model =
-    options.model ??
-    process.env.LETTA_LOCAL_AI_MODEL ??
-    process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
+  const model = options.model ?? process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
 
   switch (provider) {
     case "openai-responses":

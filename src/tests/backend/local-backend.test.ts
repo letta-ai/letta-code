@@ -15,45 +15,25 @@ import { LocalBackend, resolveLocalModelConfig } from "../../backend/local";
 
 async function withLocalModelEnv<T>(
   env: {
-    provider?: string;
-    model?: string;
-    openAIModel?: string;
-    anthropicModel?: string;
+    openAIKey?: string;
+    anthropicKey?: string;
   },
   fn: () => T | Promise<T>,
 ): Promise<T> {
-  const originalProvider = process.env.LETTA_LOCAL_AI_PROVIDER;
-  const originalModel = process.env.LETTA_LOCAL_AI_MODEL;
-  const originalOpenAIModel = process.env.LETTA_LOCAL_OPENAI_MODEL;
-  const originalAnthropicModel = process.env.LETTA_LOCAL_ANTHROPIC_MODEL;
+  const originalOpenAIKey = process.env.OPENAI_API_KEY;
+  const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
   try {
-    if (env.provider === undefined) delete process.env.LETTA_LOCAL_AI_PROVIDER;
-    else process.env.LETTA_LOCAL_AI_PROVIDER = env.provider;
-    if (env.model === undefined) delete process.env.LETTA_LOCAL_AI_MODEL;
-    else process.env.LETTA_LOCAL_AI_MODEL = env.model;
-    if (env.openAIModel === undefined)
-      delete process.env.LETTA_LOCAL_OPENAI_MODEL;
-    else process.env.LETTA_LOCAL_OPENAI_MODEL = env.openAIModel;
-    if (env.anthropicModel === undefined) {
-      delete process.env.LETTA_LOCAL_ANTHROPIC_MODEL;
-    } else {
-      process.env.LETTA_LOCAL_ANTHROPIC_MODEL = env.anthropicModel;
-    }
+    if (env.openAIKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = env.openAIKey;
+    if (env.anthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = env.anthropicKey;
     return await fn();
   } finally {
-    if (originalProvider === undefined)
-      delete process.env.LETTA_LOCAL_AI_PROVIDER;
-    else process.env.LETTA_LOCAL_AI_PROVIDER = originalProvider;
-    if (originalModel === undefined) delete process.env.LETTA_LOCAL_AI_MODEL;
-    else process.env.LETTA_LOCAL_AI_MODEL = originalModel;
-    if (originalOpenAIModel === undefined)
-      delete process.env.LETTA_LOCAL_OPENAI_MODEL;
-    else process.env.LETTA_LOCAL_OPENAI_MODEL = originalOpenAIModel;
-    if (originalAnthropicModel === undefined) {
-      delete process.env.LETTA_LOCAL_ANTHROPIC_MODEL;
-    } else {
-      process.env.LETTA_LOCAL_ANTHROPIC_MODEL = originalAnthropicModel;
-    }
+    if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAIKey;
+    if (originalAnthropicKey === undefined)
+      delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
   }
 }
 
@@ -90,18 +70,22 @@ function createBody(
 }
 
 describe("LocalBackend", () => {
-  test("resolves local provider and model config from local env", async () => {
-    await withLocalModelEnv(
-      { provider: "anthropic", model: "claude-local" },
-      () => {
-        expect(resolveLocalModelConfig()).toEqual({
-          provider: "anthropic",
-          model: "claude-local",
-          handle: "anthropic/claude-local",
-          modelSettings: { provider_type: "anthropic" },
-        });
-      },
-    );
+  test("infers the default local provider from standard API keys", async () => {
+    await withLocalModelEnv({ anthropicKey: "test-anthropic-key" }, () => {
+      expect(resolveLocalModelConfig()).toMatchObject({
+        provider: "anthropic",
+        handle: "anthropic/claude-sonnet-4-6",
+        modelSettings: { provider_type: "anthropic" },
+      });
+    });
+
+    await withLocalModelEnv({ openAIKey: "test-openai-key" }, () => {
+      expect(resolveLocalModelConfig()).toMatchObject({
+        provider: "openai-responses",
+        handle: "openai/gpt-5.5",
+        modelSettings: { provider_type: "openai" },
+      });
+    });
   });
 
   test("uses strict local flatfile semantics behind the real local entrypoint", async () => {
@@ -370,7 +354,7 @@ describe("LocalBackend", () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-model-"));
     try {
       await withLocalModelEnv(
-        { provider: "anthropic", model: "claude-local" },
+        { anthropicKey: "test-anthropic-key" },
         async () => {
           const backend = new LocalBackend({
             storageDir,
@@ -381,13 +365,13 @@ describe("LocalBackend", () => {
             handle: string;
           }>;
           expect(models.map((model) => model.handle)).toContain(
-            "anthropic/claude-local",
+            "anthropic/claude-sonnet-4-6",
           );
 
           const agent = await backend.createAgent({
             name: "Local Model Agent",
           } as AgentCreateBody);
-          expect(agent.model).toBe("anthropic/claude-local");
+          expect(agent.model).toBe("anthropic/claude-sonnet-4-6");
           expect(agent.model_settings).toMatchObject({
             provider_type: "anthropic",
           });
@@ -396,7 +380,7 @@ describe("LocalBackend", () => {
             name: "Pseudo Model Agent",
             model: "letta/auto",
           } as AgentCreateBody);
-          expect(pseudoModelAgent.model).toBe("anthropic/claude-local");
+          expect(pseudoModelAgent.model).toBe("anthropic/claude-sonnet-4-6");
         },
       );
     } finally {
