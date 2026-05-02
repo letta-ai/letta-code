@@ -133,6 +133,48 @@ describe("listener secrets sync", () => {
     });
   });
 
+  test("invalidation during in-flight refresh forces a follow-up fetch", async () => {
+    let resolveFirst:
+      | ((value: { secrets: Array<{ key: string; value: string }> }) => void)
+      | undefined;
+    retrieveMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({
+        secrets: [{ key: "WS_SECRET_TOKEN", value: "updated" }],
+      });
+    const listener = __listenClientTestUtils.createListenerRuntime();
+
+    const first = ensureSecretsHydratedForAgent(
+      listener,
+      "agent-listener-secret",
+    );
+    for (let i = 0; i < 10 && !resolveFirst; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(resolveFirst).toBeDefined();
+
+    invalidateSecretsCacheForAgent(listener, "agent-listener-secret");
+    const second = ensureSecretsHydratedForAgent(
+      listener,
+      "agent-listener-secret",
+    );
+
+    resolveFirst?.({
+      secrets: [{ key: "WS_SECRET_TOKEN", value: "stale" }],
+    });
+    await Promise.all([first, second]);
+
+    expect(retrieveMock).toHaveBeenCalledTimes(2);
+    expect(loadSecrets("agent-listener-secret")).toEqual({
+      WS_SECRET_TOKEN: "updated",
+    });
+  });
+
   test("invalidation forces re-fetch even within the freshness window", async () => {
     retrieveMock
       .mockResolvedValueOnce({

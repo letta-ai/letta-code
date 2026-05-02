@@ -110,45 +110,58 @@ export async function ensureSecretsHydratedForAgent(
   listener: ListenerRuntime,
   agentId: string,
 ): Promise<void> {
-  // Fast path: cache is still fresh and not dirty.
-  if (isSecretsCacheFresh(listener, agentId)) {
-    debugLog(
-      "secrets-sync",
-      `Secrets cache hit for agent ${agentId} (age ${Date.now() - (listener.secretsHydrationFreshnessByAgent.get(agentId) ?? 0)}ms)`,
-    );
-    return;
-  }
-
-  // Coalesce concurrent callers onto the same in-flight request.
-  const existing = listener.secretsHydrationByAgent.get(agentId);
-  if (existing) {
-    await existing;
-    return;
-  }
-
-  // Clear dirty flag before fetching so the fresh result is not
-  // immediately considered stale.
-  listener.secretsDirtyAgents.delete(agentId);
-
-  const promise = refreshSecretsForAgent(agentId)
-    .then(() => {
-      // Record freshness timestamp on successful hydration.
-      listener.secretsHydrationFreshnessByAgent.set(agentId, Date.now());
-    })
-    .catch((err) => {
-      // Non-fatal — agent can still process messages, just without local
-      // secret substitution for this turn/tool execution.
-      debugWarn(
+  while (true) {
+    // Fast path: cache is still fresh and not dirty.
+    if (isSecretsCacheFresh(listener, agentId)) {
+      debugLog(
         "secrets-sync",
-        `Failed to refresh secrets for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+        `Secrets cache hit for agent ${agentId} (age ${Date.now() - (listener.secretsHydrationFreshnessByAgent.get(agentId) ?? 0)}ms)`,
       );
-    })
-    .finally(() => {
-      if (listener.secretsHydrationByAgent.get(agentId) === promise) {
-        listener.secretsHydrationByAgent.delete(agentId);
-      }
-    });
+      return;
+    }
 
-  listener.secretsHydrationByAgent.set(agentId, promise);
-  await promise;
+    // Coalesce concurrent callers onto the same in-flight request. If a
+    // mutation marks the agent dirty while that request is in flight, loop back
+    // after it settles so the post-mutation caller forces a fresh hydration
+    // instead of satisfying itself from the stale promise.
+    const existing = listener.secretsHydrationByAgent.get(agentId);
+    if (existing) {
+      await existing;
+      if (listener.secretsDirtyAgents.has(agentId)) {
+        continue;
+      }
+      return;
+    }
+
+    // Clear dirty flag before fetching so the fresh result is not immediately
+    // considered stale. A mutation during the fetch will set it again and the
+    // loop will run another hydration before returning to that caller.
+    listener.secretsDirtyAgents.delete(agentId);
+
+    const promise = refreshSecretsForAgent(agentId)
+      .then(() => {
+        // Record freshness timestamp on successful hydration.
+        listener.secretsHydrationFreshnessByAgent.set(agentId, Date.now());
+      })
+      .catch((err) => {
+        // Non-fatal — agent can still process messages, just without local
+        // secret substitution for this turn/tool execution.
+        debugWarn(
+          "secrets-sync",
+          `Failed to refresh secrets for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      })
+      .finally(() => {
+        if (listener.secretsHydrationByAgent.get(agentId) === promise) {
+          listener.secretsHydrationByAgent.delete(agentId);
+        }
+      });
+
+    listener.secretsHydrationByAgent.set(agentId, promise);
+    await promise;
+    if (listener.secretsDirtyAgents.has(agentId)) {
+      continue;
+    }
+    return;
+  }
 }
