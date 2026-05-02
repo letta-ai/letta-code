@@ -9,6 +9,7 @@ import {
   AISDKStreamAdapter,
   type AISDKStreamTextFunction,
 } from "../../backend/dev/AISDKStreamAdapter";
+import type { LocalAgentRecord } from "../../backend/dev/FakeHeadlessStore";
 import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
 import type { ProviderTrajectoryUIMessage } from "../../backend/dev/ProviderTrajectory";
 import type { ProviderTurnInput } from "../../backend/dev/ProviderTurnExecutor";
@@ -38,10 +39,20 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 
 function providerInput(
   uiMessages: ProviderTrajectoryUIMessage[],
+  agent: LocalAgentRecord = {
+    id: "agent-test",
+    name: "Test Agent",
+    description: null,
+    system: "test system",
+    tags: [],
+    model: "dev/fake-headless",
+    model_settings: {},
+  },
 ): ProviderTurnInput {
   return {
     conversationId: "conv-test",
     agentId: "agent-test",
+    agent,
     body: {} as HeadlessTurnBody,
     history: [],
     providerTrajectory: [],
@@ -65,10 +76,12 @@ describe("AISDKStreamAdapter", () => {
   test("streams AI SDK output through provider events", async () => {
     const model = {} as LanguageModel;
     let capturedModel: LanguageModel | undefined;
+    let capturedSystem: string | undefined;
     let capturedMessages: unknown[] | undefined;
     let capturedTools: ToolSet | undefined;
     const streamText: AISDKStreamTextFunction = (options) => {
       capturedModel = options.model;
+      capturedSystem = options.system;
       capturedMessages = options.messages;
       capturedTools = options.tools;
       return {
@@ -128,6 +141,7 @@ describe("AISDKStreamAdapter", () => {
     );
 
     expect(capturedModel).toBe(model);
+    expect(capturedSystem).toBe("test system");
     expect(capturedMessages).toEqual([
       {
         role: "user",
@@ -161,6 +175,66 @@ describe("AISDKStreamAdapter", () => {
         ],
       },
     });
+  });
+
+  test("derives the AI SDK model from agent model settings when no override is provided", async () => {
+    const originalProvider = process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER;
+    const originalModel = process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
+    process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER = "anthropic";
+    process.env.LETTA_CODE_DEV_AI_SDK_MODEL = "claude-test-env";
+    let capturedModel: LanguageModel | undefined;
+    let capturedSystem: string | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedModel = options.model;
+      capturedSystem = options.system;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    try {
+      const adapter = new AISDKStreamAdapter({ streamText });
+      await collect(
+        adapter.stream(
+          providerInput(
+            [
+              {
+                id: "ui-user-1",
+                role: "user",
+                parts: [{ type: "text", text: "hello" }],
+              },
+            ],
+            {
+              id: "agent-test",
+              name: "Test Agent",
+              description: null,
+              system: "agent system prompt",
+              tags: [],
+              model: "anthropic/claude-agent",
+              model_settings: { provider_type: "anthropic" },
+            },
+          ),
+        ),
+      );
+    } finally {
+      if (originalProvider === undefined) {
+        delete process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER;
+      } else {
+        process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER = originalProvider;
+      }
+      if (originalModel === undefined) {
+        delete process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
+      } else {
+        process.env.LETTA_CODE_DEV_AI_SDK_MODEL = originalModel;
+      }
+    }
+
+    expect(capturedModel).toMatchObject({
+      provider: "anthropic.messages",
+      modelId: "claude-agent",
+    });
+    expect(capturedSystem).toBe("agent system prompt");
   });
 
   test("projects UI tool outputs without AI SDK approval protocol parts", async () => {

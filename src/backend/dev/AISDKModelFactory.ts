@@ -13,6 +13,10 @@ export interface AISDKModelFactoryOptions {
   createAnthropicModel?: (model: string) => LanguageModel;
 }
 
+export interface AISDKModelSettings {
+  provider_type?: unknown;
+}
+
 export function resolveAISDKProvider(
   provider = process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER ??
     DEFAULT_AI_SDK_PROVIDER,
@@ -23,6 +27,55 @@ export function resolveAISDKProvider(
   throw new Error(
     `Unknown AI SDK provider "${provider}". Expected "openai-responses" or "anthropic".`,
   );
+}
+
+export function resolveAISDKProviderFromAgent(
+  model: string | undefined,
+  modelSettings: AISDKModelSettings = {},
+): AISDKProvider {
+  const providerType = modelSettings.provider_type;
+  if (providerType === "anthropic") return "anthropic";
+  if (providerType === "openai" || providerType === "openai-responses") {
+    return "openai-responses";
+  }
+  if (model?.startsWith("anthropic/")) return "anthropic";
+  if (model?.startsWith("openai/") || model?.startsWith("openai-responses/")) {
+    return "openai-responses";
+  }
+  return resolveAISDKProvider();
+}
+
+export function resolveAISDKModelFromAgent(
+  model: string | undefined,
+  provider: AISDKProvider,
+): string | undefined {
+  if (!model) return process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
+  if (provider === "anthropic" && model.startsWith("anthropic/")) {
+    return model.slice("anthropic/".length);
+  }
+  if (
+    provider === "openai-responses" &&
+    model.startsWith("openai-responses/")
+  ) {
+    return model.slice("openai-responses/".length);
+  }
+  if (provider === "openai-responses" && model.startsWith("openai/")) {
+    return model.slice("openai/".length);
+  }
+  return model;
+}
+
+export function createAISDKModelFactoryFromAgent(
+  model: string | undefined,
+  modelSettings: AISDKModelSettings = {},
+  options: Omit<AISDKModelFactoryOptions, "provider" | "model"> = {},
+): () => LanguageModel {
+  const provider = resolveAISDKProviderFromAgent(model, modelSettings);
+  return createAISDKModelFactory({
+    ...options,
+    provider,
+    model: resolveAISDKModelFromAgent(model, provider),
+  });
 }
 
 export function createAISDKModelFactory(

@@ -4,7 +4,7 @@ import type {
   ConversationMessageCreateBody,
   ConversationMessageStreamBody,
 } from "../backend";
-import type { StoredMessage } from "./FakeHeadlessStore";
+import type { LocalAgentRecord, StoredMessage } from "./FakeHeadlessStore";
 import type { ProviderTrajectoryMessage } from "./ProviderTrajectory";
 
 export type HeadlessTurnBody =
@@ -14,6 +14,7 @@ export type HeadlessTurnBody =
 export interface HeadlessTurnExecutorInput {
   conversationId: string;
   agentId: string;
+  agent: LocalAgentRecord;
   body: HeadlessTurnBody;
   history: StoredMessage[];
   providerTrajectory: ProviderTrajectoryMessage[];

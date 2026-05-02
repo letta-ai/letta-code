@@ -361,18 +361,13 @@ function devBackendStoreOptions() {
   return { storageDir: process.env.LETTA_CODE_DEV_BACKEND_DIR };
 }
 
-async function createAISDKDevBackend(provider?: string): Promise<Backend> {
+async function createAISDKDevBackend(): Promise<Backend> {
   const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
   const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
-  const { createAISDKModelFactory } = await import("./dev/AISDKModelFactory");
   const { ProviderTurnExecutor } = await import("./dev/ProviderTurnExecutor");
   return new FakeHeadlessBackend(
     "agent-fake-headless",
-    new ProviderTurnExecutor(
-      new AISDKStreamAdapter({
-        createModel: createAISDKModelFactory({ provider }),
-      }),
-    ),
+    new ProviderTurnExecutor(new AISDKStreamAdapter({})),
     devBackendStoreOptions(),
   );
 }
@@ -410,14 +405,6 @@ export async function configureDevBackend(name: string): Promise<void> {
         new ProviderTurnExecutor(),
         devBackendStoreOptions(),
       );
-      return;
-    }
-    case "fake-headless-openai-responses": {
-      backend = await createAISDKDevBackend("openai-responses");
-      return;
-    }
-    case "fake-headless-anthropic": {
-      backend = await createAISDKDevBackend("anthropic");
       return;
     }
     case "fake-headless-ai-sdk": {

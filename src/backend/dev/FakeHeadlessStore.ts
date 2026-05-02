@@ -633,6 +633,17 @@ export class FakeHeadlessStore {
     return this.projectAgent(existing);
   }
 
+  retrieveAgentRecord(agentId: string): LocalAgentRecord {
+    if (!this.strictAgentAccess) {
+      this.ensureAgent(agentId);
+    }
+    const existing = this.agents.get(agentId);
+    if (!existing) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
+    return existing;
+  }
+
   ensureAgent(agentId: string): AgentState {
     const existing = this.agents.get(agentId);
     if (existing) return this.projectAgent(existing);

@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { LanguageModel } from "ai";
 import {
   createAISDKModelFactory,
+  createAISDKModelFactoryFromAgent,
   DEFAULT_AI_SDK_PROVIDER,
+  resolveAISDKModelFromAgent,
   resolveAISDKProvider,
+  resolveAISDKProviderFromAgent,
 } from "../../backend/dev/AISDKModelFactory";
 
 function withAISDKEnv<T>(
@@ -98,5 +101,38 @@ describe("AISDKModelFactory", () => {
     expect(() => resolveAISDKProvider("gemini")).toThrow(
       'Unknown AI SDK provider "gemini"',
     );
+  });
+
+  test("resolves provider and model from agent state", () => {
+    expect(resolveAISDKProviderFromAgent("anthropic/claude-agent", {})).toBe(
+      "anthropic",
+    );
+    expect(
+      resolveAISDKProviderFromAgent("gpt-agent", { provider_type: "openai" }),
+    ).toBe("openai-responses");
+    expect(
+      resolveAISDKModelFromAgent("anthropic/claude-agent", "anthropic"),
+    ).toBe("claude-agent");
+    expect(
+      resolveAISDKModelFromAgent("openai/gpt-agent", "openai-responses"),
+    ).toBe("gpt-agent");
+  });
+
+  test("creates a model factory from agent state", () => {
+    let capturedAnthropicModel: string | undefined;
+    const model = {} as LanguageModel;
+    const factory = createAISDKModelFactoryFromAgent(
+      "anthropic/claude-agent",
+      { provider_type: "anthropic" },
+      {
+        createAnthropicModel: (modelId) => {
+          capturedAnthropicModel = modelId;
+          return model;
+        },
+      },
+    );
+
+    expect(factory()).toBe(model);
+    expect(capturedAnthropicModel).toBe("claude-agent");
   });
 });

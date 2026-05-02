@@ -124,9 +124,11 @@ export class FakeHeadlessBackend implements Backend {
       turnInput.conversationId,
       turnInput.agentId,
     );
+    const agent = this.store.retrieveAgentRecord(turnInput.agentId);
     const stream = await this.executor.execute({
       conversationId,
       agentId: turnInput.agentId,
+      agent,
       body,
       history,
       providerTrajectory,
@@ -154,9 +156,11 @@ export class FakeHeadlessBackend implements Backend {
       turnInput.conversationId,
       turnInput.agentId,
     );
+    const agent = this.store.retrieveAgentRecord(turnInput.agentId);
     const stream = await this.executor.execute({
       conversationId,
       agentId: turnInput.agentId,
+      agent,
       body,
       history,
       providerTrajectory,

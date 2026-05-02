@@ -12,6 +12,7 @@ import {
   validateUIMessages,
 } from "ai";
 import type { ClientTool } from "../../tools/manager";
+import { createAISDKModelFactoryFromAgent } from "./AISDKModelFactory";
 import type { ProviderTrajectoryUIMessage } from "./ProviderTrajectory";
 import type {
   ProviderStreamAdapter,
@@ -22,6 +23,7 @@ import { providerStreamPart, providerUIMessage } from "./ProviderTurnExecutor";
 
 export type AISDKStreamTextFunction = (options: {
   model: LanguageModel;
+  system?: string;
   messages: ModelMessage[];
   tools?: ToolSet;
   maxRetries: number;
@@ -35,7 +37,7 @@ export type AISDKStreamTextFunction = (options: {
 };
 
 export interface AISDKStreamAdapterOptions {
-  createModel: () => LanguageModel;
+  createModel?: () => LanguageModel;
   abortSignal?: AbortSignal;
   streamText?: AISDKStreamTextFunction;
 }
@@ -86,7 +88,7 @@ async function captureFinalUIMessage(
 }
 
 export class AISDKStreamAdapter implements ProviderStreamAdapter {
-  private readonly createModel: () => LanguageModel;
+  private readonly createModel?: () => LanguageModel;
   private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
 
@@ -103,7 +105,13 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       tools: tools as never,
     });
     const result = this.runStreamText({
-      model: this.createModel(),
+      model:
+        this.createModel?.() ??
+        createAISDKModelFactoryFromAgent(
+          input.agent.model,
+          input.agent.model_settings,
+        )(),
+      system: input.agent.system,
       messages: await convertToModelMessages(uiMessages, { tools }),
       tools,
       maxRetries: 0,
