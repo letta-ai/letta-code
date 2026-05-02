@@ -258,6 +258,7 @@ import {
   normalizeInboundMessages,
   normalizeMessageContentImages,
   scheduleQueuePump,
+  shouldProcessInboundMessageDirectly,
   shouldQueueInboundMessage,
 } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
@@ -4719,9 +4720,75 @@ async function connectWithRetry(
           incoming.conversationId,
         );
 
+        const processIncomingMessageDirectly = (
+          directIncoming: IncomingMessage,
+        ): void => {
+          scopedRuntime.messageQueue = scopedRuntime.messageQueue
+            .then(async () => {
+              if (
+                runtime !== getActiveRuntime() ||
+                runtime.intentionallyClosed
+              ) {
+                return;
+              }
+              emitListenerStatus(
+                runtime,
+                opts.onStatusChange,
+                opts.connectionId,
+              );
+              await handleIncomingMessage(
+                directIncoming,
+                socket,
+                scopedRuntime,
+                opts.onStatusChange,
+                opts.connectionId,
+              );
+              emitListenerStatus(
+                runtime,
+                opts.onStatusChange,
+                opts.connectionId,
+              );
+              if (
+                scopedRuntime.queueRuntime.length > 0 ||
+                scopedRuntime.queuePumpScheduled ||
+                scopedRuntime.queuePumpActive
+              ) {
+                scheduleQueuePump(
+                  scopedRuntime,
+                  socket,
+                  opts,
+                  processQueuedTurn,
+                );
+              }
+            })
+            .catch((error: unknown) => {
+              trackListenerError(
+                "listener_queued_input_failed",
+                error,
+                "listener_message_queue",
+              );
+              if (process.env.DEBUG) {
+                console.error("[Listen] Error handling queued input:", error);
+              }
+              emitListenerStatus(
+                runtime,
+                opts.onStatusChange,
+                opts.connectionId,
+              );
+              scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+            });
+        };
+
         if (shouldQueueInboundMessage(incoming)) {
-          const queuedIncoming = stampInboundUserMessageOtids(incoming);
-          const firstUserPayload = queuedIncoming.messages.find(
+          const stampedIncoming = stampInboundUserMessageOtids(incoming);
+          if (
+            shouldProcessInboundMessageDirectly(scopedRuntime, stampedIncoming)
+          ) {
+            processIncomingMessageDirectly(stampedIncoming);
+            return;
+          }
+
+          const firstUserPayload = stampedIncoming.messages.find(
             (
               payload,
             ): payload is MessageCreate & { client_message_id?: string } =>
@@ -4741,7 +4808,7 @@ async function connectWithRetry(
             if (enqueuedItem) {
               scopedRuntime.queuedMessagesByItemId.set(
                 enqueuedItem.id,
-                queuedIncoming,
+                stampedIncoming,
               );
             }
           }
@@ -4749,34 +4816,7 @@ async function connectWithRetry(
           return;
         }
 
-        scopedRuntime.messageQueue = scopedRuntime.messageQueue
-          .then(async () => {
-            if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-              return;
-            }
-            emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
-            await handleIncomingMessage(
-              incoming,
-              socket,
-              scopedRuntime,
-              opts.onStatusChange,
-              opts.connectionId,
-            );
-            emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
-            scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
-          })
-          .catch((error: unknown) => {
-            trackListenerError(
-              "listener_queued_input_failed",
-              error,
-              "listener_message_queue",
-            );
-            if (process.env.DEBUG) {
-              console.error("[Listen] Error handling queued input:", error);
-            }
-            emitListenerStatus(runtime, opts.onStatusChange, opts.connectionId);
-            scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
-          });
+        processIncomingMessageDirectly(incoming);
         return;
       }
 

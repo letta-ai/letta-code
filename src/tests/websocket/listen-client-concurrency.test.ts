@@ -20,6 +20,7 @@ import type {
 import { sharedReminderProviders } from "../../reminders/engine";
 import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
 import { clearTools, loadSpecificTools } from "../../tools/manager";
+import { shouldProcessInboundMessageDirectly } from "../../websocket/listener/queue";
 import { resolveRecoveredApprovalResponse } from "../../websocket/listener/recovery";
 import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
 import type { IncomingMessage } from "../../websocket/listener/types";
@@ -817,6 +818,34 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queueRuntime.length).toBe(0);
     expect(runtimeA.queuedMessagesByItemId.size).toBe(0);
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
+  });
+
+  test("idle inbound user messages bypass the queue runtime", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-idle",
+    );
+    const incoming = makeIncomingMessage("agent-1", "conv-idle", "hello");
+
+    expect(shouldProcessInboundMessageDirectly(runtime, incoming)).toBe(true);
+
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued",
+      clientMessageId: "cm-queued",
+      agentId: "agent-1",
+      conversationId: "conv-idle",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const queuedItem = runtime.queueRuntime.enqueue(queueInput);
+    if (!queuedItem) {
+      throw new Error("Expected queued item to be created");
+    }
+    runtime.queuedMessagesByItemId.set(queuedItem.id, incoming);
+
+    expect(shouldProcessInboundMessageDirectly(runtime, incoming)).toBe(false);
   });
 
   test("channel queue items re-enter the listener loop as normal queued turns", async () => {

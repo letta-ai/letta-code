@@ -333,6 +333,54 @@ export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
   return parsed.messages.some((payload) => "content" in payload);
 }
 
+export function shouldProcessInboundMessageDirectly(
+  runtime: ConversationRuntime,
+  parsed: IncomingMessage,
+): boolean {
+  if (!shouldQueueInboundMessage(parsed)) {
+    return false;
+  }
+
+  if (
+    runtime.queueRuntime.length > 0 ||
+    runtime.queuePumpActive ||
+    runtime.queuePumpScheduled ||
+    runtime.pendingTurns > 0 ||
+    runtime.queuedMessagesByItemId.size > 0 ||
+    runtime.isProcessing ||
+    runtime.isRecoveringApprovals ||
+    runtime.cancelRequested ||
+    runtime.pendingApprovalResolvers.size > 0 ||
+    runtime.pendingApprovalBatchByToolCallId.size > 0 ||
+    runtime.recoveredApprovalState !== null ||
+    runtime.pendingInterruptedResults !== null ||
+    runtime.pendingInterruptedContext !== null ||
+    runtime.activeExecutingToolCallIds.length > 0 ||
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
+    runtime.activeRunId !== null ||
+    runtime.activeRunStartedAt !== null ||
+    runtime.activeAbortController !== null
+  ) {
+    return false;
+  }
+
+  const activeScope = resolveRuntimeScope(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+  return (
+    getListenerBlockedReason({
+      loopStatus: runtime.loopStatus,
+      isProcessing: runtime.isProcessing,
+      pendingApprovalsLen: activeScope
+        ? getPendingControlRequestCount(runtime.listener, activeScope)
+        : 0,
+      cancelRequested: runtime.cancelRequested,
+      isRecoveringApprovals: runtime.isRecoveringApprovals,
+    }) === null
+  );
+}
+
 export function consumeQueuedTurn(runtime: ConversationRuntime): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
