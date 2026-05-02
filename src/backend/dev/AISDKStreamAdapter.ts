@@ -21,11 +21,14 @@ import type {
 } from "./ProviderTurnExecutor";
 import { providerStreamPart, providerUIMessage } from "./ProviderTurnExecutor";
 
+type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
+
 export type AISDKStreamTextFunction = (options: {
   model: LanguageModel;
   system?: string;
   messages: ModelMessage[];
   tools?: ToolSet;
+  providerOptions?: AISDKProviderOptions;
   maxRetries: number;
   abortSignal?: AbortSignal;
 }) => {
@@ -63,6 +66,119 @@ function toToolSet(clientTools: unknown[]): ToolSet | undefined {
     });
   }
   return Object.keys(tools).length > 0 ? tools : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function boolValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function openAIReasoningEffort(value: unknown) {
+  const effort = stringValue(value);
+  return effort === "none" ||
+    effort === "minimal" ||
+    effort === "low" ||
+    effort === "medium" ||
+    effort === "high" ||
+    effort === "xhigh"
+    ? effort
+    : undefined;
+}
+
+function openAITextVerbosity(value: unknown) {
+  const verbosity = stringValue(value);
+  return verbosity === "low" || verbosity === "medium" || verbosity === "high"
+    ? verbosity
+    : undefined;
+}
+
+function anthropicEffort(value: unknown) {
+  const effort = stringValue(value);
+  if (effort === "none") return undefined;
+  return effort === "low" ||
+    effort === "medium" ||
+    effort === "high" ||
+    effort === "xhigh" ||
+    effort === "max"
+    ? effort
+    : undefined;
+}
+
+function anthropicThinking(value: unknown) {
+  if (!isRecord(value)) return undefined;
+  const type = stringValue(value.type);
+  if (type === "disabled") {
+    return { type };
+  }
+  if (type === "adaptive") {
+    const display = stringValue(value.display);
+    return {
+      type,
+      ...(display === "omitted" || display === "summarized" ? { display } : {}),
+    };
+  }
+  if (type === "enabled") {
+    const budgetTokens =
+      numberValue(value.budgetTokens) ?? numberValue(value.budget_tokens);
+    return {
+      type,
+      ...(budgetTokens !== undefined ? { budgetTokens } : {}),
+    };
+  }
+  return undefined;
+}
+
+export function buildAISDKProviderOptions(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+): AISDKProviderOptions | undefined {
+  const providerType = stringValue(modelSettings.provider_type);
+  const isOpenAI =
+    providerType === "openai" ||
+    modelHandle.startsWith("openai/") ||
+    modelHandle.startsWith("openai-codex/");
+  const isAnthropic =
+    providerType === "anthropic" || modelHandle.startsWith("anthropic/");
+
+  if (isOpenAI) {
+    const reasoning = isRecord(modelSettings.reasoning)
+      ? modelSettings.reasoning
+      : undefined;
+    const reasoningEffort = openAIReasoningEffort(
+      reasoning?.reasoning_effort ?? modelSettings.reasoning_effort,
+    );
+    const textVerbosity = openAITextVerbosity(modelSettings.verbosity);
+    const parallelToolCalls = boolValue(modelSettings.parallel_tool_calls);
+    const openai = {
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+      ...(textVerbosity !== undefined ? { textVerbosity } : {}),
+      ...(parallelToolCalls !== undefined ? { parallelToolCalls } : {}),
+    };
+    return Object.keys(openai).length > 0 ? { openai } : undefined;
+  }
+
+  if (isAnthropic) {
+    const thinking = anthropicThinking(modelSettings.thinking);
+    const effort = anthropicEffort(
+      modelSettings.effort ?? modelSettings.reasoning_effort,
+    );
+    const anthropic = {
+      ...(thinking !== undefined ? { thinking } : {}),
+      ...(effort !== undefined ? { effort } : {}),
+    };
+    return Object.keys(anthropic).length > 0 ? { anthropic } : undefined;
+  }
+
+  return undefined;
 }
 
 function defaultStreamText(options: Parameters<AISDKStreamTextFunction>[0]) {
@@ -114,6 +230,10 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       system: input.agent.system,
       messages: await convertToModelMessages(uiMessages, { tools }),
       tools,
+      providerOptions: buildAISDKProviderOptions(
+        input.agent.model,
+        input.agent.model_settings,
+      ),
       maxRetries: 0,
       abortSignal: this.abortSignal,
     });

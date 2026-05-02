@@ -8,6 +8,7 @@ import type {
 import {
   AISDKStreamAdapter,
   type AISDKStreamTextFunction,
+  buildAISDKProviderOptions,
 } from "../../backend/dev/AISDKStreamAdapter";
 import type { LocalAgentRecord } from "../../backend/dev/FakeHeadlessStore";
 import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
@@ -235,6 +236,75 @@ describe("AISDKStreamAdapter", () => {
       modelId: "claude-agent",
     });
     expect(capturedSystem).toBe("agent system prompt");
+  });
+
+  test("passes provider reasoning options from local model settings", async () => {
+    const model = {} as LanguageModel;
+    let capturedProviderOptions: unknown;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedProviderOptions = options.providerOptions;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => model,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "think hard" }],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "agent system prompt",
+            tags: [],
+            model: "openai/gpt-5.5",
+            model_settings: {
+              provider_type: "openai",
+              reasoning: { reasoning_effort: "xhigh" },
+              verbosity: "medium",
+              parallel_tool_calls: true,
+            },
+          },
+        ),
+      ),
+    );
+
+    expect(capturedProviderOptions).toEqual({
+      openai: {
+        reasoningEffort: "xhigh",
+        textVerbosity: "medium",
+        parallelToolCalls: true,
+      },
+    });
+  });
+
+  test("maps local Anthropic thinking settings to AI SDK provider options", () => {
+    expect(
+      buildAISDKProviderOptions("anthropic/claude-sonnet-4-6", {
+        provider_type: "anthropic",
+        effort: "max",
+        thinking: { type: "enabled", budget_tokens: 12000 },
+      }),
+    ).toEqual({
+      anthropic: {
+        effort: "max",
+        thinking: { type: "enabled", budgetTokens: 12000 },
+      },
+    });
   });
 
   test("projects UI tool outputs without AI SDK approval protocol parts", async () => {

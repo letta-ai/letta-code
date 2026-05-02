@@ -337,6 +337,53 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         break;
       }
 
+      // approval response message - merge into the existing approval/tool call line(s)
+      case "approval_response_message": {
+        const approvals = Array.isArray(msg.approvals) ? msg.approvals : [];
+        for (const approval of approvals) {
+          if (
+            !approval ||
+            typeof approval !== "object" ||
+            !("tool_call_id" in approval) ||
+            typeof approval.tool_call_id !== "string"
+          ) {
+            continue;
+          }
+
+          const toolCallLineId = buffers.toolCallIdToLineId.get(
+            approval.tool_call_id,
+          );
+          if (!toolCallLineId) continue;
+
+          const existingLine = buffers.byId.get(toolCallLineId);
+          if (!existingLine || existingLine.kind !== "tool_call") continue;
+
+          const isSuccess =
+            "type" in approval && approval.type === "tool"
+              ? true
+              : !("approve" in approval && approval.approve === false);
+          const rawResult =
+            "tool_return" in approval
+              ? approval.tool_return
+              : "reason" in approval
+                ? approval.reason
+                : (msg as { content?: unknown }).content;
+
+          buffers.byId.set(toolCallLineId, {
+            ...existingLine,
+            resultText: getDisplayableToolReturn(
+              rawResult as
+                | string
+                | Array<TextContent | ImageContent>
+                | undefined,
+            ),
+            resultOk: isSuccess,
+            phase: "finished",
+          });
+        }
+        break;
+      }
+
       default: {
         // Handle new compaction message types (when include_compaction_messages=true)
         // These are not yet in the SDK types, so we handle them via string comparison
