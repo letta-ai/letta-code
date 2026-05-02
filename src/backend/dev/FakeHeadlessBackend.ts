@@ -43,7 +43,7 @@ export class FakeHeadlessBackend implements Backend {
   }
 
   async retrieveAgent(agentId: string): Promise<AgentState> {
-    return this.store.ensureAgent(agentId);
+    return this.store.retrieveAgent(agentId);
   }
 
   updateAgent(...args: Parameters<Backend["updateAgent"]>) {

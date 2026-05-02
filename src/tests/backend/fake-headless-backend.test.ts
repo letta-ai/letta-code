@@ -155,6 +155,40 @@ describe("FakeHeadlessBackend", () => {
     }
   });
 
+  test("strict agent retrieval returns created agents and rejects missing agents", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "fake-headless-strict-"));
+    try {
+      const backend = new FakeHeadlessBackend("agent-default", undefined, {
+        storageDir,
+        seedDefaultAgent: false,
+        strictAgentRetrieval: true,
+      });
+
+      await expect(backend.retrieveAgent("agent-missing")).rejects.toThrow(
+        "Agent agent-missing not found",
+      );
+
+      let files: string[] = [];
+      try {
+        files = await readdir(join(storageDir, "agents"));
+      } catch {
+        files = [];
+      }
+      expect(files).toEqual([]);
+
+      const agent = await backend.createAgent({
+        name: "Created Agent",
+        model: "dev/fake-headless",
+      } as AgentCreateBody);
+      await expect(backend.retrieveAgent(agent.id)).resolves.toMatchObject({
+        id: agent.id,
+        name: "Created Agent",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("stores user and assistant messages for explicit conversations", async () => {
     const backend = new FakeHeadlessBackend("agent-test");
     const conversation = await backend.createConversation({

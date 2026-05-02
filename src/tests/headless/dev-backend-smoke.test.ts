@@ -505,6 +505,41 @@ describe("headless dev backend smoke", () => {
     }
   });
 
+  test("env-selected local backend does not create missing agents on retrieve", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-local-backend-"));
+    try {
+      const result = await runCli(
+        [
+          "-p",
+          "ping",
+          "--agent",
+          "agent-local-missing",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Agent agent-local-missing not found");
+      expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+
+      let agentFiles: string[] = [];
+      try {
+        agentFiles = await readdir(join(storageDir, "agents"));
+      } catch {
+        agentFiles = [];
+      }
+      expect(agentFiles).toEqual([]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects remote MemFS enable on dev backends without API credentials", async () => {
     const result = await runCli([
       "-p",

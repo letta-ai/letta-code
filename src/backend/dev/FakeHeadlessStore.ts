@@ -287,6 +287,17 @@ export interface StoredTurnInput {
 
 export interface FakeHeadlessStoreOptions {
   storageDir?: string;
+  seedDefaultAgent?: boolean;
+  strictAgentRetrieval?: boolean;
+}
+
+export class LocalBackendNotFoundError extends Error {
+  readonly status = 404;
+
+  constructor(resource: string, id: string) {
+    super(`${resource} ${id} not found`);
+    this.name = "LocalBackendNotFoundError";
+  }
 }
 
 type ProviderUIMessagePart = ProviderTrajectoryUIMessage["parts"][number];
@@ -347,6 +358,7 @@ function numericSuffix(value: string, prefix: string): number {
 
 export class FakeHeadlessStore {
   private readonly storageDir?: string;
+  private readonly strictAgentRetrieval: boolean;
   private readonly agents = new Map<string, LocalAgentRecord>();
   private readonly conversations = new Map<string, StoredConversation>();
   private readonly messagesByConversationKey = new Map<
@@ -367,8 +379,22 @@ export class FakeHeadlessStore {
     options: FakeHeadlessStoreOptions = {},
   ) {
     this.storageDir = options.storageDir;
+    this.strictAgentRetrieval = options.strictAgentRetrieval === true;
     this.loadFromStorage();
-    this.ensureAgent(this.defaultAgentId);
+    if (options.seedDefaultAgent !== false) {
+      this.ensureAgent(this.defaultAgentId);
+    }
+  }
+
+  retrieveAgent(agentId: string): AgentState {
+    if (!this.strictAgentRetrieval) {
+      return this.ensureAgent(agentId);
+    }
+    const existing = this.agents.get(agentId);
+    if (!existing) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
+    return this.projectAgent(existing);
   }
 
   ensureAgent(agentId: string): AgentState {
