@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import { getSkillSources, getSkillsDirectory } from "./context";
@@ -6,6 +6,8 @@ import { resolveScopedMemoryDir } from "./memoryFilesystem";
 import {
   compareSkills,
   discoverSkills,
+  GLOBAL_SKILLS_DIR,
+  getAgentSkillsDir,
   SKILLS_DIR,
   type Skill,
   type SkillDiscoveryError,
@@ -66,6 +68,7 @@ function computeCacheKey(components: {
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
+  skillRootRevisions: string[];
 }): string {
   return [
     components.agentId ?? "",
@@ -74,7 +77,106 @@ function computeCacheKey(components: {
     components.legacySkillsDirectory,
     components.primaryProjectSkillsDirectory,
     [...components.memorySkillsDirs].sort().join(","),
+    [...components.skillRootRevisions].sort().join(","),
   ].join("|");
+}
+
+function getSkillDirectoryRevision(
+  root: string,
+  visitedRealPaths: Set<string> = new Set(),
+): string {
+  const normalizedRoot = root.trim();
+  if (normalizedRoot.length === 0) {
+    return "empty";
+  }
+
+  try {
+    const rootStat = statSync(normalizedRoot);
+    const realPath = realpathSync(normalizedRoot);
+    if (visitedRealPaths.has(realPath)) {
+      return `${normalizedRoot}:cycle`;
+    }
+    visitedRealPaths.add(realPath);
+
+    if (!rootStat.isDirectory()) {
+      return `${normalizedRoot}:file:${rootStat.mtimeMs}:${rootStat.size}`;
+    }
+
+    const entries = readdirSync(normalizedRoot, { withFileTypes: true }).sort(
+      (a, b) => a.name.localeCompare(b.name),
+    );
+    const parts = [`${realPath}:dir:${rootStat.mtimeMs}:${rootStat.size}`];
+
+    for (const entry of entries) {
+      const fullPath = join(normalizedRoot, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          parts.push(
+            `${entry.name}/(${getSkillDirectoryRevision(fullPath, visitedRealPaths)})`,
+          );
+          continue;
+        }
+
+        const isSkillFile = entry.name.toUpperCase() === "SKILL.MD";
+        if (entry.isSymbolicLink()) {
+          const targetStat = statSync(fullPath);
+          if (targetStat.isDirectory()) {
+            parts.push(
+              `${entry.name}@(${getSkillDirectoryRevision(fullPath, visitedRealPaths)})`,
+            );
+          } else if (isSkillFile) {
+            parts.push(
+              `${entry.name}:${targetStat.mtimeMs}:${targetStat.size}`,
+            );
+          }
+          continue;
+        }
+
+        if (entry.isFile() && isSkillFile) {
+          const fileStat = statSync(fullPath);
+          parts.push(`${entry.name}:${fileStat.mtimeMs}:${fileStat.size}`);
+        }
+      } catch (error) {
+        parts.push(
+          `${entry.name}:error:${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    return parts.join(",");
+  } catch (error) {
+    return `${normalizedRoot}:missing:${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function getSkillRootRevisions(components: {
+  agentId: string | undefined;
+  skillSources: SkillSource[];
+  legacySkillsDirectory: string;
+  primaryProjectSkillsDirectory: string;
+  memorySkillsDirs: string[];
+}): string[] {
+  const roots = new Set<string>();
+  const sourceSet = new Set(components.skillSources);
+
+  if (sourceSet.has("project")) {
+    roots.add(components.legacySkillsDirectory);
+    roots.add(components.primaryProjectSkillsDirectory);
+  }
+  if (sourceSet.has("global")) {
+    roots.add(GLOBAL_SKILLS_DIR);
+  }
+  if (components.agentId && sourceSet.has("agent")) {
+    roots.add(getAgentSkillsDir(components.agentId));
+  }
+
+  if (components.skillSources.length > 0) {
+    for (const dir of components.memorySkillsDirs) {
+      roots.add(dir);
+    }
+  }
+
+  return [...roots].map((root) => `${root}=${getSkillDirectoryRevision(root)}`);
 }
 
 /**
@@ -268,17 +370,24 @@ export async function buildClientSkillsPayload(
   const cwd = process.cwd();
   const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
   const memorySkillsDirs = getMemorySkillsDirs(options.agentId);
-
-  if (useCache) {
-    const cacheKey = computeCacheKey({
+  const cacheComponents = {
+    agentId: options.agentId,
+    skillSources,
+    cwd,
+    legacySkillsDirectory,
+    primaryProjectSkillsDirectory,
+    memorySkillsDirs,
+    skillRootRevisions: getSkillRootRevisions({
       agentId: options.agentId,
       skillSources,
-      cwd,
       legacySkillsDirectory,
       primaryProjectSkillsDirectory,
       memorySkillsDirs,
-    });
+    }),
+  };
+  const cacheKey = computeCacheKey(cacheComponents);
 
+  if (useCache) {
     const cache = getCache();
     const cached = cache.get(cacheKey);
     if (cached) {
@@ -385,14 +494,6 @@ export async function buildClientSkillsPayload(
   };
 
   if (useCache) {
-    const cacheKey = computeCacheKey({
-      agentId: options.agentId,
-      skillSources,
-      cwd,
-      legacySkillsDirectory,
-      primaryProjectSkillsDirectory,
-      memorySkillsDirs,
-    });
     getCache().set(cacheKey, { key: cacheKey, result: cloneResult(result) });
   }
 
