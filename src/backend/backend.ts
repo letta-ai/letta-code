@@ -5,7 +5,7 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
-import { FakeHeadlessBackend } from "./dev/FakeHeadlessBackend";
+import { LocalBackend } from "./local/LocalBackend";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
 type GetAPIClient = typeof getClient;
@@ -338,11 +338,8 @@ export function getLocalBackendStorageDir(homeDir = homedir()): string {
 }
 
 function createExperimentalLocalBackend(): Backend {
-  return new FakeHeadlessBackend(undefined, undefined, {
+  return new LocalBackend({
     storageDir: getLocalBackendStorageDir(),
-    seedDefaultAgent: false,
-    strictAgentAccess: true,
-    strictConversationAccess: true,
   });
 }
 

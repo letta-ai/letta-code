@@ -1,11 +1,11 @@
 import type { TextStreamPart, ToolSet } from "ai";
-import type { LocalMessage } from "./LocalMessage";
+import type { LocalMessage } from "../local/LocalMessage";
 
 export type {
   LocalMessage,
   LocalMessageMetadata,
   LocalMessageProviderMetadata,
-} from "./LocalMessage";
+} from "../local/LocalMessage";
 
 export type ProviderStreamPart = TextStreamPart<ToolSet>;
 
