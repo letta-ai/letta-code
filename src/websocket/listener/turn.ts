@@ -1,5 +1,8 @@
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentState,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
   LettaStreamingResponse,
@@ -170,10 +173,17 @@ function buildMaybeLaunchReflectionSubagent(params: {
   agentId: string;
   conversationId: string;
   workingDirectory: string;
+  cachedAgent?: AgentState | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, socket, agentId, conversationId, workingDirectory } =
-      params;
+    const {
+      runtime,
+      socket,
+      agentId,
+      conversationId,
+      workingDirectory,
+      cachedAgent,
+    } = params;
 
     if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
       return false;
@@ -188,19 +198,21 @@ function buildMaybeLaunchReflectionSubagent(params: {
     }
 
     try {
-      // Fetch the agent's system prompt so the reflection payload includes
-      // the core behavioural instructions (filtered to strip dynamic content).
-      let systemPrompt: string | undefined;
-      try {
-        const client = await getClient();
-        const agent = await client.agents.retrieve(agentId);
-        systemPrompt = agent.system ?? undefined;
-      } catch {
-        // Non-fatal — the reflection payload will just omit the system prompt.
-        debugLog(
-          "memory",
-          "Failed to fetch agent system prompt for reflection payload",
-        );
+      // Reuse the cached agent snapshot when available so the reflection
+      // payload can include the current system prompt without another fetch.
+      let systemPrompt: string | undefined = cachedAgent?.system ?? undefined;
+      if (!systemPrompt) {
+        try {
+          const client = await getClient();
+          const agent = await client.agents.retrieve(agentId);
+          systemPrompt = agent.system ?? undefined;
+        } catch {
+          // Non-fatal — the reflection payload will just omit the system prompt.
+          debugLog(
+            "memory",
+            "Failed to fetch agent system prompt for reflection payload",
+          );
+        }
       }
 
       const autoPayload = await buildAutoReflectionPayload(
@@ -497,32 +509,37 @@ export async function handleIncomingMessage(
       firstMessage.type === "approval" &&
       "approvals" in firstMessage;
 
+    let cachedAgent: AgentState | null = null;
+
     if (!isApprovalMessage) {
       try {
         syncReminderStateFromContextTracker(
           runtime.reminderState,
           runtime.contextTracker,
         );
+        if (agentId) {
+          try {
+            const client = await getClient();
+            cachedAgent = (await client.agents.retrieve(agentId)) as AgentState;
+          } catch {
+            // Best-effort only. If the fetch fails, reminder and tool prep
+            // will fall back to the existing null/placeholder behavior.
+          }
+        }
+
         let listenAgentMetadata: {
           name: string | null;
           description: string | null;
           lastRunAt: string | null;
         } | null = null;
-        if (!runtime.reminderState.hasSentAgentInfo && agentId) {
-          try {
-            const client = await getClient();
-            const agent = await client.agents.retrieve(agentId);
-            listenAgentMetadata = {
-              name: agent.name ?? null,
-              description: agent.description ?? null,
-              lastRunAt:
-                (agent as { last_run_completion?: string | null })
-                  .last_run_completion ?? null,
-            };
-          } catch {
-            // Best-effort only. If the fetch fails, reminder building will
-            // fall back to the existing null/placeholder behavior.
-          }
+        if (!runtime.reminderState.hasSentAgentInfo && cachedAgent) {
+          listenAgentMetadata = {
+            name: cachedAgent.name ?? null,
+            description: cachedAgent.description ?? null,
+            lastRunAt:
+              (cachedAgent as { last_run_completion?: string | null })
+                .last_run_completion ?? null,
+          };
         }
         const reflectionSettings = getReflectionSettings(
           agentId || undefined,
@@ -544,6 +561,7 @@ export async function handleIncomingMessage(
                   agentId,
                   conversationId,
                   workingDirectory: turnWorkingDirectory,
+                  cachedAgent,
                 })
               : undefined,
             resolvePlanModeReminder: getPlanModeReminder,
@@ -586,6 +604,7 @@ export async function handleIncomingMessage(
       clientToolAllowlist: msg.clientToolAllowlist,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
+      cachedAgent,
     });
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;

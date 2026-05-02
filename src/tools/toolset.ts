@@ -257,6 +257,7 @@ export async function prepareToolExecutionContextForScope(params: {
   agentId: string;
   conversationId?: string | null;
   overrideModel?: string | null;
+  cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
   workingDirectory?: string;
@@ -267,6 +268,7 @@ export async function prepareToolExecutionContextForScope(params: {
     agentId,
     conversationId,
     overrideModel,
+    cachedEffectiveModel,
     exclude,
     clientToolAllowlist,
     workingDirectory,
@@ -282,11 +284,15 @@ export async function prepareToolExecutionContextForScope(params: {
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
 
+  if (!effectiveModel && cachedEffectiveModel && cachedEffectiveModel.length > 0) {
+    effectiveModel = resolveModel(cachedEffectiveModel) ?? cachedEffectiveModel;
+  }
+
   if (!effectiveModel && conversationId && conversationId !== "default") {
     const conversation = await backend.retrieveConversation(conversationId);
     const conversationModel = (conversation as { model?: string | null }).model;
     if (typeof conversationModel === "string" && conversationModel.length > 0) {
-      effectiveModel = conversationModel;
+      effectiveModel = resolveModel(conversationModel) ?? conversationModel;
     }
   }
 
