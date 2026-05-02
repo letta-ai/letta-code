@@ -126,6 +126,15 @@ function createLocalAgentRecord(body: AgentCreateBody): LocalAgentRecord {
   };
 }
 
+function shouldUseDefaultLocalModel(model: unknown): boolean {
+  return (
+    typeof model !== "string" ||
+    model.length === 0 ||
+    model === "auto" ||
+    model.startsWith("letta/")
+  );
+}
+
 function timestampForSequence(sequence: number): string {
   return new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString();
 }
@@ -761,10 +770,21 @@ export class LocalStore {
       this.agents.get(agentId) ??
       this.createDefaultAgentRecord(agentId);
     const bodyRecord = body as Record<string, unknown>;
+    const requestedModel = bodyRecord.model;
     const nextModelSettings = {
       ...existingRecord.model_settings,
+      ...(shouldUseDefaultLocalModel(requestedModel)
+        ? this.defaultAgentModelSettings
+        : {}),
       ...supportedModelSettingsFromBody(bodyRecord),
     };
+    const nextModel =
+      typeof requestedModel === "string" &&
+      !shouldUseDefaultLocalModel(requestedModel)
+        ? requestedModel
+        : typeof requestedModel === "string" && this.defaultAgentModel
+          ? this.defaultAgentModel
+          : undefined;
     const updated = {
       ...existingRecord,
       ...(typeof bodyRecord.name === "string" && { name: bodyRecord.name }),
@@ -776,7 +796,7 @@ export class LocalStore {
         system: bodyRecord.system,
       }),
       ...(isStringArray(bodyRecord.tags) && { tags: bodyRecord.tags }),
-      ...(typeof bodyRecord.model === "string" && { model: bodyRecord.model }),
+      ...(nextModel && { model: nextModel }),
       model_settings: nextModelSettings,
     };
     this.agents.set(agentId, updated);
@@ -808,7 +828,7 @@ export class LocalStore {
   private createAgentRecord(body: AgentCreateBody): LocalAgentRecord {
     const agent = createLocalAgentRecord(body);
     const bodyRecord = body as Record<string, unknown>;
-    if (typeof bodyRecord.model === "string") {
+    if (!shouldUseDefaultLocalModel(bodyRecord.model)) {
       return agent;
     }
     return {

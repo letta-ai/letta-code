@@ -646,7 +646,10 @@ describe("headless dev backend smoke", () => {
         "tags",
       ]);
       expect(updatedAgent.id).toBe(agentId);
-      expect(updatedAgent.model).toBe("letta/auto-fast");
+      expect(updatedAgent.model).toBe("openai/gpt-5.5");
+      expect(updatedAgent.model_settings).toMatchObject({
+        provider_type: "openai",
+      });
       expect(updatedAgent.tools).toBeUndefined();
       expect(updatedAgent.memory_blocks).toBeUndefined();
       expect(updatedAgent.block_ids).toBeUndefined();

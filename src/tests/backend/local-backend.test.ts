@@ -389,6 +389,12 @@ describe("LocalBackend", () => {
           expect(agent.model_settings).toMatchObject({
             provider_type: "anthropic",
           });
+
+          const pseudoModelAgent = await backend.createAgent({
+            name: "Pseudo Model Agent",
+            model: "letta/auto",
+          } as AgentCreateBody);
+          expect(pseudoModelAgent.model).toBe("anthropic/claude-local");
         },
       );
     } finally {
