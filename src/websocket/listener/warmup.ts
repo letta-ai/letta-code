@@ -37,6 +37,20 @@ async function fetchListenerAgentMetadata(
   };
 }
 
+type ListenerWarmupDeps = {
+  ensureMemfsSyncedForAgent: typeof ensureMemfsSyncedForAgent;
+  ensureSecretsHydratedForAgent: typeof ensureSecretsHydratedForAgent;
+  fetchListenerAgentMetadata: typeof fetchListenerAgentMetadata;
+};
+
+const defaultWarmupDeps: ListenerWarmupDeps = {
+  ensureMemfsSyncedForAgent,
+  ensureSecretsHydratedForAgent,
+  fetchListenerAgentMetadata,
+};
+
+let warmupDeps: ListenerWarmupDeps = defaultWarmupDeps;
+
 /**
  * Hydrate listener-side state needed for the next turn.
  *
@@ -56,7 +70,7 @@ export async function ensureListenerWarmStateForTurn(
     getAgentMetadataPromise(listener, agentId) ??
     (async () => {
       try {
-        return await fetchListenerAgentMetadata(agentId);
+        return await warmupDeps.fetchListenerAgentMetadata(agentId);
       } catch (error) {
         debugWarn(
           "listener-warmup",
@@ -75,8 +89,8 @@ export async function ensureListenerWarmStateForTurn(
 
   try {
     await Promise.all([
-      ensureMemfsSyncedForAgent(listener, agentId),
-      ensureSecretsHydratedForAgent(listener, agentId),
+      warmupDeps.ensureMemfsSyncedForAgent(listener, agentId),
+      warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
       agentMetadataPromise,
     ]);
   } catch (error) {
@@ -123,3 +137,12 @@ export function scheduleListenerWarmupsAfterSync(
 export function clearListenerWarmState(listener: ListenerRuntime): void {
   listener.agentMetadataByAgent.clear();
 }
+
+export const __listenerWarmupTestUtils = {
+  setWarmupDepsForTests(overrides: Partial<ListenerWarmupDeps>): void {
+    warmupDeps = { ...defaultWarmupDeps, ...overrides };
+  },
+  resetWarmupDepsForTests(): void {
+    warmupDeps = defaultWarmupDeps;
+  },
+};

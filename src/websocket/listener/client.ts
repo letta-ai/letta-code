@@ -6769,6 +6769,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
     secretsDirtyAgents: ListenerRuntime["secretsDirtyAgents"];
+    agentMetadataByAgent: ListenerRuntime["agentMetadataByAgent"];
     worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };

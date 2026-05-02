@@ -1,46 +1,34 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { __listenClientTestUtils } from "../../websocket/listen-client";
+import {
+  __listenerWarmupTestUtils,
+  ensureListenerWarmStateForTurn,
+  type ListenerAgentMetadata,
+  scheduleListenerWarmupsAfterSync,
+} from "../../websocket/listener/warmup";
 
 const memfsWarmupMock = mock(async () => {});
 const secretsWarmupMock = mock(async () => {});
-const agentRetrieveMock = mock(async () => ({
-  name: "Listener Agent",
-  description: "Warmup target",
-  last_run_completion: "2026-05-02T06:00:00.000Z",
-}));
-
-mock.module("../../websocket/listener/memfs-sync", () => ({
-  ensureMemfsSyncedForAgent: memfsWarmupMock,
-}));
-
-mock.module("../../websocket/listener/secrets-sync", () => ({
-  ensureSecretsHydratedForAgent: secretsWarmupMock,
-}));
-
-mock.module("../../backend/api/client", () => ({
-  getClient: mock(async () => ({
-    agents: {
-      retrieve: agentRetrieveMock,
-    },
-  })),
-}));
-
-const { __listenClientTestUtils } = await import(
-  "../../websocket/listen-client"
+const fetchAgentMetadataMock = mock(
+  async (): Promise<ListenerAgentMetadata> => ({
+    name: "Listener Agent",
+    description: "Warmup target",
+    lastRunAt: "2026-05-02T06:00:00.000Z",
+  }),
 );
-const { ensureListenerWarmStateForTurn, scheduleListenerWarmupsAfterSync } =
-  await import("../../websocket/listener/warmup");
 
 describe("listener warmup scheduling", () => {
+  afterEach(() => {
+    __listenerWarmupTestUtils.resetWarmupDepsForTests();
+    memfsWarmupMock.mockReset();
+    secretsWarmupMock.mockReset();
+    fetchAgentMetadataMock.mockReset();
+  });
+
   test("sync warmup joins the first turn without duplicating fetches", async () => {
     let resolveMemfs: (() => void) | undefined;
     let resolveSecrets: (() => void) | undefined;
-    let resolveRetrieve:
-      | ((value: {
-          name: string;
-          description: string;
-          last_run_completion: string;
-        }) => void)
-      | undefined;
+    let resolveMetadata: ((value: ListenerAgentMetadata) => void) | undefined;
 
     memfsWarmupMock.mockImplementationOnce(
       () =>
@@ -54,16 +42,17 @@ describe("listener warmup scheduling", () => {
           resolveSecrets = resolve;
         }),
     );
-    agentRetrieveMock.mockImplementationOnce(
+    fetchAgentMetadataMock.mockImplementationOnce(
       () =>
-        new Promise<{
-          name: string;
-          description: string;
-          last_run_completion: string;
-        }>((resolve) => {
-          resolveRetrieve = resolve;
+        new Promise<ListenerAgentMetadata>((resolve) => {
+          resolveMetadata = resolve;
         }),
     );
+    __listenerWarmupTestUtils.setWarmupDepsForTests({
+      ensureMemfsSyncedForAgent: memfsWarmupMock,
+      ensureSecretsHydratedForAgent: secretsWarmupMock,
+      fetchListenerAgentMetadata: fetchAgentMetadataMock,
+    });
 
     const listener = __listenClientTestUtils.createListenerRuntime();
 
@@ -79,14 +68,14 @@ describe("listener warmup scheduling", () => {
 
     expect(memfsWarmupMock).toHaveBeenCalledTimes(1);
     expect(secretsWarmupMock).toHaveBeenCalledTimes(1);
-    expect(agentRetrieveMock).toHaveBeenCalledTimes(1);
+    expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
 
     resolveMemfs?.();
     resolveSecrets?.();
-    resolveRetrieve?.({
+    resolveMetadata?.({
       name: "Listener Agent",
       description: "Warmup target",
-      last_run_completion: "2026-05-02T06:00:00.000Z",
+      lastRunAt: "2026-05-02T06:00:00.000Z",
     });
 
     await expect(turnWarmup).resolves.toEqual({
@@ -97,6 +86,6 @@ describe("listener warmup scheduling", () => {
 
     expect(memfsWarmupMock).toHaveBeenCalledTimes(1);
     expect(secretsWarmupMock).toHaveBeenCalledTimes(1);
-    expect(agentRetrieveMock).toHaveBeenCalledTimes(1);
+    expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
   });
 });
