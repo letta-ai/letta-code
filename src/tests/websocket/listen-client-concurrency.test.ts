@@ -45,6 +45,9 @@ const defaultDrainResult: DrainResult = {
   apiDurationMs: 0,
 };
 
+const TEST_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+
 const sendMessageStreamCalls: Array<{
   conversationId: string;
   messages: unknown[];
@@ -54,6 +57,7 @@ const sendMessageStreamCalls: Array<{
       clientTools: Array<{ name: string }>;
       loadedToolNames: string[];
     };
+    skipImageNormalization?: boolean;
   };
 }> = [];
 const sendMessageStreamMock = mock(
@@ -393,6 +397,53 @@ describe("listen-client multi-worker concurrency", () => {
     await turnA;
     expect(runtimeA.isProcessing).toBe(false);
     expect(__listenClientTestUtils.getListenerStatus(listener)).toBe("idle");
+  });
+
+  test("listener turns skip duplicate shared image normalization", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-image",
+    );
+    const socket = new MockSocket();
+    const drain = createDeferredDrain();
+    drainHandlers.set("conv-image", () => drain.promise);
+
+    const turn = __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-image",
+        messages: [
+          {
+            role: "user" as const,
+            content: [
+              { type: "text" as const, text: "inspect this" },
+              {
+                type: "image" as const,
+                source: {
+                  type: "base64" as const,
+                  media_type: "image/png",
+                  data: TEST_PNG_BASE64,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    await waitFor(() => sendMessageStreamCalls.length === 1);
+
+    expect(sendMessageStreamCalls[0]?.opts).toMatchObject({
+      skipImageNormalization: true,
+    });
+
+    drain.resolve(defaultDrainResult);
+    await turn;
   });
 
   test("keeps default conversations separate for different agents during concurrent turns", async () => {
