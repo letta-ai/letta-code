@@ -10,9 +10,24 @@ describe("listen agent-info wiring", () => {
     const listenContextPath = fileURLToPath(
       new URL("../../reminders/listenContext.ts", import.meta.url),
     );
+    const warmupPath = fileURLToPath(
+      new URL("../../websocket/listener/warmup.ts", import.meta.url),
+    );
     const turnSource = readFileSync(turnPath, "utf-8");
     const listenContextSource = readFileSync(listenContextPath, "utf-8");
+    const warmupSource = readFileSync(warmupPath, "utf-8");
 
+    expect(turnSource).toContain("ensureListenerWarmStateForTurn(");
+    expect(turnSource).toContain(
+      "let listenAgentMetadata = await ensureListenerWarmStateForTurn",
+    );
+    expect(warmupSource).toContain("async function fetchListenerAgentMetadata");
+    expect(warmupSource).toContain(
+      "const agent = await client.agents.retrieve(agentId);",
+    );
+    expect(warmupSource).toContain("name: agent.name ?? null,");
+    expect(warmupSource).toContain("description: agent.description ?? null,");
+    expect(warmupSource).toContain("lastRunAt:");
     expect(turnSource).toContain("let cachedAgent: AgentState | null = null;");
     expect(turnSource).toContain("cachedAgent = (await client.agents.retrieve");
     expect(turnSource).toContain(
@@ -22,7 +37,6 @@ describe("listen agent-info wiring", () => {
     expect(turnSource).toContain(
       "description: cachedAgent.description ?? null,",
     );
-    expect(turnSource).toContain("lastRunAt:");
     expect(turnSource).toContain(
       "agentName: listenAgentMetadata?.name ?? null",
     );

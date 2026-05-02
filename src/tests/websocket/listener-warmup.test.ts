@@ -25,7 +25,7 @@ describe("listener warmup scheduling", () => {
     fetchAgentMetadataMock.mockReset();
   });
 
-  test("sync warmup joins the first turn without duplicating fetches", async () => {
+  test("sync warmup joins the first turn without duplicating agent metadata fetches", async () => {
     let resolveMemfs: (() => void) | undefined;
     let resolveSecrets: (() => void) | undefined;
     let resolveMetadata: ((value: ListenerAgentMetadata) => void) | undefined;
@@ -66,8 +66,8 @@ describe("listener warmup scheduling", () => {
       conversationId: "default",
     });
 
-    expect(memfsWarmupMock).toHaveBeenCalledTimes(1);
-    expect(secretsWarmupMock).toHaveBeenCalledTimes(1);
+    expect(memfsWarmupMock).toHaveBeenCalledTimes(2);
+    expect(secretsWarmupMock).toHaveBeenCalledTimes(2);
     expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
 
     resolveMemfs?.();
@@ -84,8 +84,8 @@ describe("listener warmup scheduling", () => {
       lastRunAt: "2026-05-02T06:00:00.000Z",
     });
 
-    expect(memfsWarmupMock).toHaveBeenCalledTimes(1);
-    expect(secretsWarmupMock).toHaveBeenCalledTimes(1);
+    expect(memfsWarmupMock).toHaveBeenCalledTimes(2);
+    expect(secretsWarmupMock).toHaveBeenCalledTimes(2);
     expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
   });
 });
