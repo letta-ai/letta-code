@@ -132,6 +132,14 @@ async function resolveListenerStartupMode(
     return { kind: "remote", serverUrl };
   }
 
+  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
+  // the local proxy has a full environment server that expects device
+  // registration. Treat it as "remote" so the listener registers and connects
+  // via WebSocket, even when channels are active.
+  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
+    return { kind: "remote", serverUrl };
+  }
+
   if (channelNames.length > 0) {
     return { kind: "local-channels", serverUrl };
   }
