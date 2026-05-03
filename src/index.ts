@@ -21,7 +21,7 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
-import { getBackend } from "./backend";
+import { getBackend, isExperimentalLocalBackendEnabled } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
 import {
   type ParsedCliArgs,
@@ -807,8 +807,9 @@ async function main(): Promise<void> {
     isHeadless &&
     typeof values["dev-backend"] === "string" &&
     values["dev-backend"].length > 0;
+  const isUsingLocalBackend = isExperimentalLocalBackendEnabled();
 
-  if (!isUsingDevBackend) {
+  if (!isUsingDevBackend && !isUsingLocalBackend) {
     // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
     // Stored OAuth credentials (interactive session tokens) are not accepted for
     // automated/headless use — get an API key at https://app.letta.com/api-keys

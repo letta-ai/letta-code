@@ -1,8 +1,11 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { getClient } from "./api/client";
 import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import { LocalBackend } from "./local/LocalBackend";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
 type GetAPIClient = typeof getClient;
@@ -372,17 +375,67 @@ export class APIBackend implements Backend {
   }
 }
 
-let backend: Backend = new APIBackend();
+function isTruthyEnv(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+export function isExperimentalLocalBackendEnabled(): boolean {
+  return isTruthyEnv(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL);
+}
+
+export function getLocalBackendStorageDir(homeDir = homedir()): string {
+  return (
+    process.env.LETTA_LOCAL_BACKEND_DIR ??
+    join(homeDir, ".letta", "lc-local-backend")
+  );
+}
+
+function createExperimentalLocalBackend(): Backend {
+  return new LocalBackend({
+    storageDir: getLocalBackendStorageDir(),
+    executionMode:
+      process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "deterministic"
+        ? "deterministic"
+        : "ai-sdk",
+  });
+}
+
+function createInitialBackend(): Backend {
+  return isExperimentalLocalBackendEnabled()
+    ? createExperimentalLocalBackend()
+    : new APIBackend();
+}
+
+let backend: Backend = createInitialBackend();
 
 export function getBackend(): Backend {
   return backend;
+}
+
+function devBackendStoreOptions() {
+  return { storageDir: process.env.LETTA_CODE_DEV_BACKEND_DIR };
+}
+
+async function createAISDKDevBackend(): Promise<Backend> {
+  const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+  const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
+  const { ProviderTurnExecutor } = await import("./dev/ProviderTurnExecutor");
+  return new FakeHeadlessBackend(
+    "agent-fake-headless",
+    new ProviderTurnExecutor(new AISDKStreamAdapter({})),
+    devBackendStoreOptions(),
+  );
 }
 
 export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
       const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-      backend = new FakeHeadlessBackend();
+      backend = new FakeHeadlessBackend(
+        undefined,
+        undefined,
+        devBackendStoreOptions(),
+      );
       return;
     }
     case "fake-headless-tool-call": {
@@ -393,7 +446,24 @@ export async function configureDevBackend(name: string): Promise<void> {
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
         new DeterministicToolCallExecutor(),
+        devBackendStoreOptions(),
       );
+      return;
+    }
+    case "fake-headless-provider": {
+      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { ProviderTurnExecutor } = await import(
+        "./dev/ProviderTurnExecutor"
+      );
+      backend = new FakeHeadlessBackend(
+        "agent-fake-headless",
+        new ProviderTurnExecutor(),
+        devBackendStoreOptions(),
+      );
+      return;
+    }
+    case "fake-headless-ai-sdk": {
+      backend = await createAISDKDevBackend();
       return;
     }
     default:
@@ -402,5 +472,5 @@ export async function configureDevBackend(name: string): Promise<void> {
 }
 
 export function __testSetBackend(nextBackend: Backend | null): void {
-  backend = nextBackend ?? new APIBackend();
+  backend = nextBackend ?? createInitialBackend();
 }

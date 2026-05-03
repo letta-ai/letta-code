@@ -1,15 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { validateUIMessages } from "ai";
 import { createIsolatedCliTestEnv } from "../testProcessEnv";
 
 const projectRoot = process.cwd();
 
 async function runCli(
   args: string[],
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   const env = createIsolatedCliTestEnv({
     LETTA_DEBUG: "0",
     DISABLE_AUTOUPDATER: "1",
+    ...extraEnv,
   });
   delete env.LETTA_API_KEY;
   delete env.LETTA_BASE_URL;
@@ -403,6 +409,27 @@ function payloadMessages(payload: Record<string, unknown>) {
   return payload.messages as Array<{ message_type?: string }>;
 }
 
+function jsonl(text: string): unknown[] {
+  return text
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as unknown);
+}
+
+async function firstPersistedMessages(storageDir: string): Promise<unknown[]> {
+  const conversationDirs = await readdir(join(storageDir, "conversations"));
+  for (const conversationDir of conversationDirs) {
+    const messages = jsonl(
+      await readFile(
+        join(storageDir, "conversations", conversationDir, "messages.jsonl"),
+        "utf8",
+      ),
+    );
+    if (messages.length > 0) return messages;
+  }
+  return [];
+}
+
 describe("headless dev backend smoke", () => {
   test("runs one-shot headless without API credentials", async () => {
     const result = await runCli([
@@ -443,6 +470,195 @@ describe("headless dev backend smoke", () => {
     expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Failed to connect to Letta server");
     expect(result.stderr).not.toContain("Memory flags failed");
+  });
+
+  test("runs with env-selected local backend and writes flatfiles", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-local-backend-"));
+    try {
+      const result = await runCli(
+        [
+          "-p",
+          "ping",
+          "--new-agent",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+          "--no-memfs",
+          "--memfs-startup",
+          "skip",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("pong");
+      expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+      expect(result.stderr).not.toContain("Failed to connect to Letta server");
+
+      const agentFiles = await readdir(join(storageDir, "agents"));
+      expect(agentFiles.length).toBeGreaterThan(0);
+      const persistedAgent = JSON.parse(
+        await readFile(join(storageDir, "agents", agentFiles[0] ?? ""), "utf8"),
+      ) as Record<string, unknown>;
+      expect(typeof persistedAgent.id).toBe("string");
+      expect(Object.keys(persistedAgent).sort()).toEqual([
+        "description",
+        "id",
+        "model",
+        "model_settings",
+        "name",
+        "system",
+        "tags",
+      ]);
+      expect(persistedAgent.tools).toBeUndefined();
+      expect(persistedAgent.memory_blocks).toBeUndefined();
+      expect(persistedAgent.block_ids).toBeUndefined();
+      expect(persistedAgent.llm_config).toBeUndefined();
+      expect(persistedAgent.message_ids).toBeUndefined();
+      expect(persistedAgent.in_context_message_ids).toBeUndefined();
+
+      const conversationDirs = await readdir(join(storageDir, "conversations"));
+      expect(conversationDirs.length).toBeGreaterThan(0);
+      const persistedMessages = await firstPersistedMessages(storageDir);
+      await expect(
+        validateUIMessages({ messages: persistedMessages }),
+      ).resolves.toHaveLength(2);
+      expect(
+        persistedMessages.map(
+          (message) => (message as { role?: unknown }).role,
+        ),
+      ).toEqual(["user", "assistant"]);
+      expect(
+        persistedMessages.every(
+          (message) =>
+            (message as Record<string, unknown>).message_type === undefined,
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("env-selected local backend does not create missing agents on retrieve", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-local-backend-"));
+    try {
+      const result = await runCli(
+        [
+          "-p",
+          "ping",
+          "--agent",
+          "agent-local-missing",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Agent agent-local-missing not found");
+      expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+
+      let agentFiles: string[] = [];
+      try {
+        agentFiles = await readdir(join(storageDir, "agents"));
+      } catch {
+        agentFiles = [];
+      }
+      expect(agentFiles).toEqual([]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("env-selected local backend updates an existing agent without expanding persisted shape", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-local-backend-"));
+    try {
+      const createResult = await runCli(
+        [
+          "-p",
+          "ping",
+          "--new-agent",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+          "--no-memfs",
+          "--memfs-startup",
+          "skip",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+        },
+      );
+      expect(createResult.exitCode).toBe(0);
+
+      const agentFiles = await readdir(join(storageDir, "agents"));
+      expect(agentFiles).toHaveLength(1);
+      const agentPath = join(storageDir, "agents", agentFiles[0] ?? "");
+      const createdAgent = JSON.parse(
+        await readFile(agentPath, "utf8"),
+      ) as Record<string, unknown>;
+      const agentId = createdAgent.id;
+      expect(typeof agentId).toBe("string");
+
+      const updateResult = await runCli(
+        [
+          "-p",
+          "ping",
+          "--agent",
+          agentId as string,
+          "--model",
+          "auto-fast",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+        },
+      );
+
+      expect(updateResult.exitCode).toBe(0);
+      expect(updateResult.stdout).toContain("pong");
+
+      const updatedAgent = JSON.parse(
+        await readFile(agentPath, "utf8"),
+      ) as Record<string, unknown>;
+      expect(Object.keys(updatedAgent).sort()).toEqual([
+        "description",
+        "id",
+        "model",
+        "model_settings",
+        "name",
+        "system",
+        "tags",
+      ]);
+      expect(updatedAgent.id).toBe(agentId);
+      expect(updatedAgent.model).toBe("openai/gpt-5.5");
+      expect(updatedAgent.model_settings).toMatchObject({
+        provider_type: "openai",
+      });
+      expect(updatedAgent.tools).toBeUndefined();
+      expect(updatedAgent.memory_blocks).toBeUndefined();
+      expect(updatedAgent.block_ids).toBeUndefined();
+      expect(updatedAgent.llm_config).toBeUndefined();
+      expect(updatedAgent.message_ids).toBeUndefined();
+      expect(updatedAgent.in_context_message_ids).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("rejects remote MemFS enable on dev backends without API credentials", async () => {
@@ -538,14 +754,13 @@ describe("headless dev backend smoke", () => {
         (obj) =>
           obj.type === "message" &&
           obj.message_type === "approval_request_message" &&
-          JSON.stringify(obj).includes("ShellCommand"),
+          JSON.stringify(obj).includes("Bash"),
       ),
     ).toBe(true);
     expect(
       result.objects.some(
         (obj) =>
-          obj.type === "auto_approval" &&
-          JSON.stringify(obj).includes("ShellCommand"),
+          obj.type === "auto_approval" && JSON.stringify(obj).includes("Bash"),
       ),
     ).toBe(true);
     expect(
@@ -561,7 +776,7 @@ describe("headless dev backend smoke", () => {
     );
     expect(messages.map((message) => message.message_type)).toEqual([
       "assistant_message",
-      "approval_response_message",
+      "tool_return_message",
       "approval_request_message",
       "user_message",
     ]);
