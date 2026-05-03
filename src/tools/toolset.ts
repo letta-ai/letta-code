@@ -349,6 +349,9 @@ export async function ensureCorrectMemoryTool(
 ): Promise<void> {
   void resolveModel(modelIdentifier);
   void useMemoryPatch;
+  if (!getBackend().capabilities.serverSideToolManagement) {
+    return;
+  }
   const client = await getClient();
 
   try {
@@ -424,6 +427,9 @@ export async function ensureCorrectMemoryTool(
  * @returns true if any tools were detached
  */
 export async function detachMemoryTools(agentId: string): Promise<boolean> {
+  if (!getBackend().capabilities.serverSideToolManagement) {
+    return false;
+  }
   const client = await getClient();
 
   try {
@@ -464,6 +470,9 @@ export async function reattachMemoryTool(
   modelIdentifier: string,
 ): Promise<void> {
   void resolveModel(modelIdentifier);
+  if (!getBackend().capabilities.serverSideToolManagement) {
+    return;
+  }
   const client = await getClient();
 
   try {

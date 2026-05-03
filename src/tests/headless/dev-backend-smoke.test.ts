@@ -245,6 +245,141 @@ async function runStreamJsonCli(): Promise<{
   });
 }
 
+async function runStreamJsonToolCli(): Promise<{
+  objects: Array<Record<string, unknown>>;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}> {
+  const env = createIsolatedCliTestEnv({
+    LETTA_DEBUG: "0",
+    DISABLE_AUTOUPDATER: "1",
+  });
+  delete env.LETTA_API_KEY;
+  delete env.LETTA_BASE_URL;
+  delete env.LETTA_API_BASE;
+  delete env.LETTA_AGENT_ID;
+  delete env.LETTA_CONVERSATION_ID;
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      "bun",
+      [
+        "run",
+        "dev",
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--agent",
+        "agent-fake",
+        "--dev-backend",
+        "fake-headless-tool-call",
+        "--permission-mode",
+        "plan",
+        "--no-skills",
+      ],
+      {
+        cwd: projectRoot,
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    const objects: Array<Record<string, unknown>> = [];
+    let stdout = "";
+    let stderr = "";
+    let buffer = "";
+    let sentUser = false;
+    let sentList = false;
+    let closing = false;
+
+    const sendInput = (input: Record<string, unknown>) => {
+      proc.stdin?.write(`${JSON.stringify(input)}\n`);
+    };
+
+    const maybeClose = () => {
+      const hasResult = objects.some((obj) => obj.type === "result");
+      const hasList = objects.some((obj) => {
+        if (obj.type !== "control_response") return false;
+        const response = obj.response as { request_id?: unknown } | undefined;
+        return response?.request_id === "list-after-tool";
+      });
+      if (!closing && hasResult && hasList) {
+        closing = true;
+        proc.stdin?.end();
+      }
+    };
+
+    const processLine = (line: string) => {
+      if (!line.trim()) return;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      objects.push(parsed);
+      if (parsed.type === "system" && parsed.subtype === "init" && !sentUser) {
+        sentUser = true;
+        sendInput({
+          type: "user",
+          message: {
+            role: "user",
+            content: "please use the deterministic tool",
+          },
+        });
+      }
+      if (parsed.type === "result" && !sentList) {
+        sentList = true;
+        sendInput({
+          type: "control_request",
+          request_id: "list-after-tool",
+          request: { subtype: "list_messages" },
+        });
+      }
+      maybeClose();
+    };
+
+    proc.stdout?.on("data", (data) => {
+      const chunk = data.toString();
+      stdout += chunk;
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        processLine(line);
+      }
+    });
+
+    proc.stderr?.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    const timeout = setTimeout(() => {
+      proc.kill();
+      reject(
+        new Error(
+          `Timeout waiting for stream-json tool dev backend smoke. stdout: ${stdout}, stderr: ${stderr}`,
+        ),
+      );
+    }, 30000);
+
+    proc.on("close", (code) => {
+      clearTimeout(timeout);
+      if (buffer.trim()) {
+        processLine(buffer);
+      }
+      resolve({ objects, stdout, stderr, exitCode: code });
+    });
+    proc.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
 function findControlPayload(
   objects: Array<Record<string, unknown>>,
   requestId: string,
@@ -286,6 +421,49 @@ describe("headless dev backend smoke", () => {
     expect(result.stdout).toContain("pong");
     expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Failed to connect to Letta server");
+  });
+
+  test("creates a new headless agent through the dev backend without API credentials", async () => {
+    const result = await runCli([
+      "-p",
+      "ping",
+      "--new-agent",
+      "--dev-backend",
+      "fake-headless",
+      "--permission-mode",
+      "plan",
+      "--no-skills",
+      "--no-memfs",
+      "--memfs-startup",
+      "skip",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pong");
+    expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Failed to connect to Letta server");
+    expect(result.stderr).not.toContain("Memory flags failed");
+  });
+
+  test("rejects remote MemFS enable on dev backends without API credentials", async () => {
+    const result = await runCli([
+      "-p",
+      "ping",
+      "--agent",
+      "agent-fake",
+      "--dev-backend",
+      "fake-headless",
+      "--permission-mode",
+      "plan",
+      "--no-skills",
+      "--memfs",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "Error: --memfs is not supported by this backend yet",
+    );
+    expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
   });
 
   test("runs stream-json controls and repeated user turns without API credentials", async () => {
@@ -346,5 +524,47 @@ describe("headless dev backend smoke", () => {
       findControlPayload(result.objects, "bootstrap-after-2"),
     );
     expect(bootstrapAfterSecond).toHaveLength(4);
+  });
+
+  test("runs a deterministic tool-call turn without API credentials", async () => {
+    const result = await runStreamJsonToolCli();
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Failed to connect to Letta server");
+
+    expect(
+      result.objects.some(
+        (obj) =>
+          obj.type === "message" &&
+          obj.message_type === "approval_request_message" &&
+          JSON.stringify(obj).includes("ShellCommand"),
+      ),
+    ).toBe(true);
+    expect(
+      result.objects.some(
+        (obj) =>
+          obj.type === "auto_approval" &&
+          JSON.stringify(obj).includes("ShellCommand"),
+      ),
+    ).toBe(true);
+    expect(
+      result.objects.some(
+        (obj) =>
+          obj.type === "result" &&
+          JSON.stringify(obj).includes("tool result received (success)"),
+      ),
+    ).toBe(true);
+
+    const messages = payloadMessages(
+      findControlPayload(result.objects, "list-after-tool"),
+    );
+    expect(messages.map((message) => message.message_type)).toEqual([
+      "assistant_message",
+      "approval_response_message",
+      "approval_request_message",
+      "user_message",
+    ]);
+    expect(JSON.stringify(messages)).toContain("deterministic-tool-ok");
   });
 });

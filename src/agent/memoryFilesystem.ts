@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { Backend } from "../backend";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
@@ -350,6 +351,19 @@ export async function applyMemfsFlags(
   options?: ApplyMemfsFlagsOptions,
 ): Promise<ApplyMemfsFlagsResult> {
   const { settingsManager } = await import("../settings-manager");
+  const { getBackend } = await import("../backend");
+  const backend = getBackend();
+
+  if (!backend.capabilities.remoteMemfs) {
+    if (memfsFlag) {
+      throw new Error("MemFS is not supported by the active backend.");
+    }
+    if (noMemfsFlag) {
+      settingsManager.setMemfsEnabled(agentId, false);
+      return { action: "disabled" };
+    }
+    return { action: "unchanged" };
+  }
 
   // LCD proxies normal API traffic through localhost, while MemFS git sync can
   // still target api.letta.com through getMemfsServerUrl().
@@ -517,7 +531,12 @@ async function getMemfsSyncUnavailableMessage(): Promise<string> {
  * Skips the system prompt update since callers are expected to create
  * the agent with the correct memory mode upfront.
  */
-export async function enableMemfsIfCloud(agentId: string): Promise<void> {
+export async function enableMemfsIfCloud(
+  agentId: string,
+  backend?: Backend,
+): Promise<void> {
+  const resolvedBackend = backend ?? (await import("../backend")).getBackend();
+  if (!resolvedBackend.capabilities.remoteMemfs) return;
   if (!(await isLettaCloud())) return;
 
   try {

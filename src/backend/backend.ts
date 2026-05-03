@@ -31,14 +31,29 @@ export type RunMessageStreamOptions = RunMessageStreamParams[2];
 export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
 export type AgentRetrieveOptions = AgentRetrieveParams[1];
 
+export type AgentListParams = Parameters<APIClient["agents"]["list"]>;
+export type AgentListBody = AgentListParams[0];
+
+export type AgentDeleteParams = Parameters<APIClient["agents"]["delete"]>;
+export type AgentDeleteOptions = AgentDeleteParams[1];
+
 export type AgentUpdateParams = Parameters<APIClient["agents"]["update"]>;
 export type AgentUpdateBody = AgentUpdateParams[1];
 export type AgentUpdateOptions = AgentUpdateParams[2];
+
+export type AgentCreateParams = Parameters<APIClient["agents"]["create"]>;
+export type AgentCreateBody = AgentCreateParams[0];
+export type AgentCreateOptions = AgentCreateParams[1];
 
 export type ConversationRetrieveParams = Parameters<
   APIClient["conversations"]["retrieve"]
 >;
 export type ConversationRetrieveOptions = ConversationRetrieveParams[1];
+
+export type ConversationListParams = Parameters<
+  APIClient["conversations"]["list"]
+>;
+export type ConversationListBody = ConversationListParams[0];
 
 export type ConversationCreateParams = Parameters<
   APIClient["conversations"]["create"]
@@ -69,11 +84,35 @@ export type MessageRetrieveParams = Parameters<
 >;
 export type MessageRetrieveOptions = MessageRetrieveParams[1];
 
+export type ModelsListParams = Parameters<APIClient["models"]["list"]>;
+export type ModelsListOptions = ModelsListParams[0];
+
+export interface BackendCapabilities {
+  remoteMemfs: boolean;
+  serverSideToolManagement: boolean;
+  serverSecrets: boolean;
+  agentFileImportExport: boolean;
+  promptRecompile: boolean;
+  byokProviderRefresh: boolean;
+  localModelCatalog: boolean;
+}
+
 export interface Backend {
+  readonly capabilities: BackendCapabilities;
+
   retrieveAgent(
     agentId: string,
     options?: AgentRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>;
+
+  listAgents(
+    body?: AgentListBody,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["list"]>>>;
+
+  deleteAgent(
+    agentId: string,
+    options?: AgentDeleteOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["delete"]>>>;
 
   updateAgent(
     agentId: string,
@@ -81,10 +120,19 @@ export interface Backend {
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
 
+  createAgent(
+    body: AgentCreateBody,
+    options?: AgentCreateOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["create"]>>>;
+
   retrieveConversation(
     conversationId: string,
     options?: ConversationRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["retrieve"]>>>;
+
+  listConversations(
+    body?: ConversationListBody,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["list"]>>>;
 
   createConversation(
     body: ConversationCreateBody,
@@ -115,6 +163,10 @@ export interface Backend {
     messageId: string,
     options?: MessageRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["messages"]["retrieve"]>>>;
+
+  listModels(
+    options?: ModelsListOptions,
+  ): Promise<Awaited<ReturnType<APIClient["models"]["list"]>>>;
 
   createConversationMessageStream(
     conversationId: string,
@@ -158,6 +210,16 @@ interface APIBackendDeps {
 }
 
 export class APIBackend implements Backend {
+  readonly capabilities: BackendCapabilities = {
+    remoteMemfs: true,
+    serverSideToolManagement: true,
+    serverSecrets: true,
+    agentFileImportExport: true,
+    promptRecompile: true,
+    byokProviderRefresh: true,
+    localModelCatalog: false,
+  };
+
   private readonly getApiClientOverride?: GetAPIClient;
   private readonly forkConversationOverride?: ForkConversation;
 
@@ -179,6 +241,16 @@ export class APIBackend implements Backend {
     return client.agents.retrieve(agentId, options);
   }
 
+  async listAgents(body?: AgentListBody) {
+    const client = await this.getClient();
+    return client.agents.list(body);
+  }
+
+  async deleteAgent(agentId: string, options?: AgentDeleteOptions) {
+    const client = await this.getClient();
+    return client.agents.delete(agentId, options);
+  }
+
   async updateAgent(
     agentId: string,
     body: AgentUpdateBody,
@@ -188,12 +260,22 @@ export class APIBackend implements Backend {
     return client.agents.update(agentId, body, options);
   }
 
+  async createAgent(body: AgentCreateBody, options?: AgentCreateOptions) {
+    const client = await this.getClient();
+    return client.agents.create(body, options);
+  }
+
   async retrieveConversation(
     conversationId: string,
     options?: ConversationRetrieveOptions,
   ) {
     const client = await this.getClient();
     return client.conversations.retrieve(conversationId, options);
+  }
+
+  async listConversations(body?: ConversationListBody) {
+    const client = await this.getClient();
+    return client.conversations.list(body);
   }
 
   async createConversation(
@@ -234,6 +316,11 @@ export class APIBackend implements Backend {
   async retrieveMessage(messageId: string, options?: MessageRetrieveOptions) {
     const client = await this.getClient();
     return client.messages.retrieve(messageId, options);
+  }
+
+  async listModels(options?: ModelsListOptions) {
+    const client = await this.getClient();
+    return client.models.list(options);
   }
 
   async createConversationMessageStream(
@@ -296,6 +383,17 @@ export async function configureDevBackend(name: string): Promise<void> {
     case "fake-headless": {
       const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
       backend = new FakeHeadlessBackend();
+      return;
+    }
+    case "fake-headless-tool-call": {
+      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { DeterministicToolCallExecutor } = await import(
+        "./dev/HeadlessTurnExecutor"
+      );
+      backend = new FakeHeadlessBackend(
+        "agent-fake-headless",
+        new DeterministicToolCallExecutor(),
+      );
       return;
     }
     default:

@@ -1,9 +1,8 @@
-import type { Letta } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getModelDisplayName } from "../../agent/model";
-import { getClient } from "../../backend/api/client";
+import { type Backend, getBackend } from "../../backend";
 import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -122,7 +121,12 @@ export function AgentSelector({
   command = "/agents",
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
-  const clientRef = useRef<Letta | null>(null);
+  const backendRef = useRef<Backend | null>(null);
+  const selectorBackend = useCallback(() => {
+    const backend = backendRef.current ?? getBackend();
+    backendRef.current = backend;
+    return backend;
+  }, []);
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>("pinned");
@@ -178,13 +182,12 @@ export function AgentSelector({
         return;
       }
 
-      const client = clientRef.current || (await getClient());
-      clientRef.current = client;
+      const backend = selectorBackend();
 
       const pinnedData = await Promise.all(
         mergedPinned.map(async ({ agentId, isLocal }) => {
           try {
-            const agent = await client.agents.retrieve(agentId, {
+            const agent = await backend.retrieveAgent(agentId, {
               include: ["agent.blocks"],
             });
             return { agentId, agent, error: null, isLocal };
@@ -200,7 +203,7 @@ export function AgentSelector({
     } finally {
       setPinnedLoading(false);
     }
-  }, []);
+  }, [selectorBackend]);
 
   // Fetch agents for list tabs (Letta Code / All)
   const fetchListAgents = useCallback(
@@ -209,10 +212,9 @@ export function AgentSelector({
       afterCursor?: string | null,
       query?: string,
     ) => {
-      const client = clientRef.current || (await getClient());
-      clientRef.current = client;
+      const backend = selectorBackend();
 
-      const agentList = await client.agents.list({
+      const agentList = await backend.listAgents({
         limit: FETCH_PAGE_SIZE,
         ...(filterLettaCode && { tags: ["origin:letta-code"] }),
         include: ["agent.blocks"],
@@ -229,7 +231,7 @@ export function AgentSelector({
 
       return { agents: agentList.items, nextCursor: cursor };
     },
-    [],
+    [selectorBackend],
   );
 
   // Load Letta Code agents
@@ -447,9 +449,8 @@ export function AgentSelector({
 
     setDeleteLoading(true);
     try {
-      const client = clientRef.current || (await getClient());
-      clientRef.current = client;
-      await client.agents.delete(agentId);
+      const backend = selectorBackend();
+      await backend.deleteAgent(agentId);
 
       // Reset state and refresh tabs
       setViewState({ type: "list" });
@@ -463,7 +464,7 @@ export function AgentSelector({
     } finally {
       setDeleteLoading(false);
     }
-  }, [viewState, deleteConfirmInput, loadPinnedAgents]);
+  }, [viewState, deleteConfirmInput, loadPinnedAgents, selectorBackend]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel

@@ -44,7 +44,6 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
-import { getClient } from "./backend/api/client";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -611,6 +610,15 @@ export async function handleHeadlessCommand(
     : noMemfsFlag
       ? "standard"
       : undefined;
+  if (memfsFlag && !backend.capabilities.remoteMemfs) {
+    trackHeadlessBoundaryError(
+      "headless_memfs_unsupported_backend",
+      "MemFS requires a backend with remote MemFS support",
+      "headless_startup_memfs_flags",
+    );
+    console.error("Error: --memfs is not supported by this backend yet");
+    process.exit(1);
+  }
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
   const fromAfFile = resolveImportFlagAlias({
     importFlagValue: values.import,
@@ -1014,7 +1022,9 @@ export async function handleHeadlessCommand(
     // Pre-determine memfs mode so the agent is created with the correct prompt.
     const { isLettaCloud } = await import("./agent/memoryFilesystem");
     const willAutoEnableMemfs =
-      shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
+      backend.capabilities.remoteMemfs &&
+      shouldAutoEnableMemfsForNewAgent &&
+      (await isLettaCloud());
     const effectiveMemoryMode =
       requestedMemoryPromptMode ?? (willAutoEnableMemfs ? "memfs" : undefined);
 
@@ -1070,8 +1080,7 @@ export async function handleHeadlessCommand(
   // Priority 6: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
-    const client = await getClient();
-    const defaultAgent = await ensureDefaultAgents(client, {
+    const defaultAgent = await ensureDefaultAgents(backend, {
       preferredModel: model,
     });
     if (defaultAgent) {
@@ -1146,7 +1155,11 @@ export async function handleHeadlessCommand(
   //   "blocking"  (default) – await the pull; exit on conflict.
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
-  if (memfsStartupPolicy === "skip") {
+  if (!backend.capabilities.remoteMemfs) {
+    if (noMemfsFlag) {
+      settingsManager.setMemfsEnabled(agent.id, false);
+    }
+  } else if (memfsStartupPolicy === "skip") {
     // Run enable/disable logic but skip the git pull.
     try {
       const { applyMemfsFlags } = await import("./agent/memoryFilesystem");

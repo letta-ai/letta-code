@@ -5,8 +5,8 @@
  * Incognito: Stateless agent - fresh experience without accumulated memory.
  */
 
-import type { Letta } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type { Backend } from "../backend";
 import { getServerUrl } from "../backend/api/client";
 import { settingsManager } from "../settings-manager";
 import { type CreateAgentOptions, createAgent } from "./create";
@@ -97,7 +97,7 @@ export function selectDefaultAgentModel(params: {
 }
 
 async function resolveDefaultAgentModel(
-  client: Letta,
+  backend: Backend,
   preferredModel?: string,
 ): Promise<string | undefined> {
   if (!isSelfHostedServer()) {
@@ -109,7 +109,7 @@ async function resolveDefaultAgentModel(
 
   try {
     const availableHandles = new Set(
-      (await client.models.list())
+      (await backend.listModels())
         .map((model) => model.handle)
         .filter((handle): handle is string => typeof handle === "string"),
     );
@@ -131,15 +131,15 @@ async function resolveDefaultAgentModel(
  * Add a tag to an existing agent.
  */
 async function addTagToAgent(
-  client: Letta,
+  backend: Backend,
   agentId: string,
   newTag: string,
 ): Promise<void> {
   try {
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await backend.retrieveAgent(agentId);
     const currentTags = agent.tags || [];
     if (!currentTags.includes(newTag)) {
-      await client.agents.update(agentId, {
+      await backend.updateAgent(agentId, {
         tags: [...currentTags, newTag],
       });
     }
@@ -160,7 +160,7 @@ async function addTagToAgent(
  * @returns The Letta Code agent (or null if creation disabled/failed).
  */
 export async function ensureDefaultAgents(
-  client: Letta,
+  backend: Backend,
   options?: {
     preferredModel?: string;
   },
@@ -174,19 +174,22 @@ export async function ensureDefaultAgents(
     const { isLettaCloud, enableMemfsIfCloud } = await import(
       "./memoryFilesystem"
     );
-    const willAutoEnableMemfs = await isLettaCloud();
+    const willAutoEnableMemfs =
+      backend.capabilities.remoteMemfs && (await isLettaCloud());
 
     const { agent } = await createAgent({
       ...DEFAULT_AGENT_CONFIGS.memo,
-      model: await resolveDefaultAgentModel(client, options?.preferredModel),
+      model: await resolveDefaultAgentModel(backend, options?.preferredModel),
       memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
     });
-    await addTagToAgent(client, agent.id, MEMO_TAG);
+    await addTagToAgent(backend, agent.id, MEMO_TAG);
     settingsManager.pinGlobal(agent.id);
 
     // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
     // without blocking startup on the initial clone.
-    void enableMemfsIfCloud(agent.id);
+    if (backend.capabilities.remoteMemfs) {
+      void enableMemfsIfCloud(agent.id, backend);
+    }
 
     return agent;
   } catch (err) {

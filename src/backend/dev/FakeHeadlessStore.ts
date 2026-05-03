@@ -1,17 +1,23 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  LettaStreamingResponse,
+  Message,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type {
+  AgentCreateBody,
+  AgentListBody,
   AgentMessageListBody,
   AgentUpdateBody,
   ConversationCreateBody,
+  ConversationListBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationUpdateBody,
 } from "../backend";
 
-type StoredMessage = Message & {
+export type StoredMessage = Message & {
   id: string;
   message_type: string;
   date: string;
@@ -26,7 +32,7 @@ type StoredConversation = Conversation & {
   in_context_message_ids: string[];
 };
 
-function createAgent(agentId: string): AgentState {
+function createDefaultAgent(agentId: string): AgentState {
   return {
     id: agentId,
     name: "Fake Headless Agent",
@@ -86,6 +92,18 @@ function getCursor(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function toStoredOutputFields(chunk: Record<string, unknown>) {
+  const { id: _id, date: _date, agent_id, conversation_id, ...fields } = chunk;
+  void agent_id;
+  void conversation_id;
+  return fields;
+}
+
+export interface StoredTurnInput {
+  agentId: string;
+  conversationId: string;
+}
+
 export class FakeHeadlessStore {
   private readonly agents = new Map<string, AgentState>();
   private readonly conversations = new Map<string, StoredConversation>();
@@ -94,6 +112,7 @@ export class FakeHeadlessStore {
     StoredMessage[]
   >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
+  private agentSeq = 0;
   private conversationSeq = 0;
   private messageSeq = 0;
 
@@ -104,7 +123,7 @@ export class FakeHeadlessStore {
   ensureAgent(agentId: string): AgentState {
     const existing = this.agents.get(agentId);
     if (existing) return existing;
-    const agent = createAgent(agentId);
+    const agent = createDefaultAgent(agentId);
     this.agents.set(agentId, agent);
     this.ensureConversation("default", agentId);
     return agent;
@@ -117,8 +136,91 @@ export class FakeHeadlessStore {
     return updated as AgentState;
   }
 
+  listAgents(body?: AgentListBody): { items: AgentState[] } {
+    const bodyRecord = (body ?? {}) as Record<string, unknown>;
+    const queryText =
+      typeof bodyRecord.query_text === "string"
+        ? bodyRecord.query_text.toLowerCase()
+        : undefined;
+    const tags = Array.isArray(bodyRecord.tags)
+      ? bodyRecord.tags.filter((tag): tag is string => typeof tag === "string")
+      : [];
+    const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
+    let agents = [...this.agents.values()];
+
+    if (tags.length > 0) {
+      agents = agents.filter((agent) =>
+        tags.every((tag) => agent.tags?.includes(tag)),
+      );
+    }
+    if (queryText) {
+      agents = agents.filter((agent) => {
+        const haystack = [agent.name, agent.description, agent.id]
+          .filter((value): value is string => typeof value === "string")
+          .join("\n")
+          .toLowerCase();
+        return haystack.includes(queryText);
+      });
+    }
+    return { items: agents.slice(0, limit) };
+  }
+
+  deleteAgent(agentId: string): void {
+    this.agents.delete(agentId);
+  }
+
+  createAgent(body: AgentCreateBody): AgentState {
+    this.agentSeq += 1;
+    const bodyRecord = body as Record<string, unknown>;
+    const agentId =
+      typeof bodyRecord.id === "string" && bodyRecord.id.length > 0
+        ? bodyRecord.id
+        : `agent-fake-headless-${this.agentSeq}`;
+    const base = createDefaultAgent(agentId);
+    const tools = Array.isArray(bodyRecord.tools)
+      ? bodyRecord.tools.map((name) => ({ name }))
+      : base.tools;
+    const agent = {
+      ...base,
+      ...bodyRecord,
+      id: agentId,
+      tools,
+      tags: Array.isArray(bodyRecord.tags) ? bodyRecord.tags : base.tags,
+      message_ids: [],
+      in_context_message_ids: [],
+      llm_config: {
+        ...base.llm_config,
+        model:
+          typeof bodyRecord.model === "string"
+            ? bodyRecord.model
+            : base.llm_config?.model,
+        context_window:
+          typeof bodyRecord.context_window_limit === "number"
+            ? bodyRecord.context_window_limit
+            : base.llm_config?.context_window,
+      },
+    } as unknown as AgentState;
+    this.agents.set(agentId, agent);
+    this.ensureConversation("default", agentId);
+    return agent;
+  }
+
   retrieveConversation(conversationId: string, agentId?: string): Conversation {
     return this.ensureConversation(conversationId, agentId);
+  }
+
+  listConversations(body?: ConversationListBody): Conversation[] {
+    const bodyRecord = (body ?? {}) as Record<string, unknown>;
+    const agentId =
+      typeof bodyRecord.agent_id === "string" ? bodyRecord.agent_id : undefined;
+    const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
+    return [...this.conversations.values()]
+      .filter(
+        (conversation) =>
+          conversation.id !== "default" &&
+          (!agentId || conversation.agent_id === agentId),
+      )
+      .slice(0, limit);
   }
 
   createConversation(body: ConversationCreateBody): Conversation {
@@ -144,10 +246,10 @@ export class FakeHeadlessStore {
     return updated as Conversation;
   }
 
-  appendTurn(
+  appendTurnInput(
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
-  ): StoredMessage {
+  ): StoredTurnInput {
     const bodyWithAgent = body as {
       agent_id?: string;
       messages?: Array<Record<string, unknown>>;
@@ -161,7 +263,25 @@ export class FakeHeadlessStore {
       this.appendInputMessage(conversationId, agentId, message);
     }
 
-    return this.appendAssistantMessage(conversationId, agentId, "pong");
+    return { agentId, conversationId };
+  }
+
+  appendStreamChunk(
+    conversationId: string,
+    agentId: string,
+    chunk: LettaStreamingResponse,
+  ): LettaStreamingResponse {
+    const messageType = (chunk as { message_type?: unknown })?.message_type;
+    if (typeof messageType !== "string" || messageType === "stop_reason") {
+      return chunk;
+    }
+
+    const storedMessage = this.appendMessage(
+      conversationId,
+      agentId,
+      toStoredOutputFields(chunk as unknown as Record<string, unknown>),
+    );
+    return storedMessage as unknown as LettaStreamingResponse;
   }
 
   listConversationMessages(
@@ -212,18 +332,6 @@ export class FakeHeadlessStore {
       content,
       otid: message.otid,
       approvals: message.approvals,
-    });
-  }
-
-  private appendAssistantMessage(
-    conversationId: string,
-    agentId: string,
-    text: string,
-  ): StoredMessage {
-    return this.appendMessage(conversationId, agentId, {
-      message_type: "assistant_message",
-      role: "assistant",
-      content: textContent(text),
     });
   }
 

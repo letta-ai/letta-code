@@ -48,6 +48,7 @@ const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
 const DEFAULT_RESUME_MESSAGE_TYPES: MessageType[] = [
   ...RESUME_BACKFILL_MESSAGE_TYPES,
   "approval_request_message",
+  "tool_return_message",
   "approval_response_message",
 ];
 
@@ -88,27 +89,23 @@ export interface GetResumeDataOptions {
   includeMessageHistory?: boolean;
 }
 
-/**
- * Extract approval requests from an approval_request_message.
- * Exported for testing parallel tool call handling.
- */
-export function extractApprovals(messageToCheck: Message): {
-  pendingApproval: ApprovalRequest | null;
-  pendingApprovals: ApprovalRequest[];
-} {
-  // Cast to access tool_calls with proper typing
-  const approvalMsg = messageToCheck as Message & {
-    tool_calls?: Array<{
-      tool_call_id?: string;
-      name?: string;
-      arguments?: string;
-    }>;
-    tool_call?: {
-      tool_call_id?: string;
-      name?: string;
-      arguments?: string;
-    };
+type ApprovalMessage = Message & {
+  tool_calls?: Array<{
+    tool_call_id?: string;
+    name?: string;
+    arguments?: string;
+  }>;
+  tool_call?: {
+    tool_call_id?: string;
+    name?: string;
+    arguments?: string;
   };
+};
+
+function approvalRequestsFromMessage(
+  messageToCheck: Message,
+): ApprovalRequest[] {
+  const approvalMsg = messageToCheck as ApprovalMessage;
 
   // Use tool_calls array (new) or fallback to tool_call (deprecated)
   const toolCalls = Array.isArray(approvalMsg.tool_calls)
@@ -123,7 +120,7 @@ export function extractApprovals(messageToCheck: Message): {
     name?: string;
     arguments?: string;
   };
-  const pendingApprovals = toolCalls
+  return toolCalls
     .filter(
       (tc: ToolCallEntry): tc is ToolCallEntry & { tool_call_id: string } =>
         !!tc && !!tc.tool_call_id,
@@ -133,17 +130,91 @@ export function extractApprovals(messageToCheck: Message): {
       toolName: tc.name || "",
       toolArgs: tc.arguments || "",
     }));
+}
 
-  const pendingApproval = pendingApprovals[0] || null;
-
+function logPendingApprovals(pendingApprovals: ApprovalRequest[]): void {
   if (pendingApprovals.length > 0) {
     debugWarn(
       "check-approval",
       `Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
     );
   }
+}
+
+/**
+ * Extract approval requests from an approval_request_message.
+ * Exported for testing parallel tool call handling.
+ */
+export function extractApprovals(messageToCheck: Message): {
+  pendingApproval: ApprovalRequest | null;
+  pendingApprovals: ApprovalRequest[];
+} {
+  const pendingApprovals = approvalRequestsFromMessage(messageToCheck);
+  const pendingApproval = pendingApprovals[0] || null;
+
+  logPendingApprovals(pendingApprovals);
 
   return { pendingApproval, pendingApprovals };
+}
+
+function completedToolCallIdsFromMessages(messages: Message[]): Set<string> {
+  const completed = new Set<string>();
+  for (const message of messages) {
+    if (message.message_type === "tool_return_message") {
+      const toolReturnMessage = message as Message & {
+        tool_call_id?: unknown;
+        tool_returns?: Array<{ tool_call_id?: unknown }>;
+      };
+      if (typeof toolReturnMessage.tool_call_id === "string") {
+        completed.add(toolReturnMessage.tool_call_id);
+      }
+      for (const toolReturn of toolReturnMessage.tool_returns ?? []) {
+        if (typeof toolReturn.tool_call_id === "string") {
+          completed.add(toolReturn.tool_call_id);
+        }
+      }
+      continue;
+    }
+
+    if (message.message_type === "approval_response_message") {
+      const approvalResponseMessage = message as Message & {
+        approvals?: Array<{ tool_call_id?: unknown }>;
+      };
+      for (const approval of approvalResponseMessage.approvals ?? []) {
+        if (typeof approval.tool_call_id === "string") {
+          completed.add(approval.tool_call_id);
+        }
+      }
+    }
+  }
+  return completed;
+}
+
+function pendingApprovalsFromMessageVariants(messages: Message[]): {
+  messageToCheck: Message | undefined;
+  pendingApproval: ApprovalRequest | null;
+  pendingApprovals: ApprovalRequest[];
+} {
+  const approvalRequest = messages.find(
+    (msg) => msg.message_type === "approval_request_message",
+  );
+  if (!approvalRequest) {
+    return {
+      messageToCheck: messages[0],
+      pendingApproval: null,
+      pendingApprovals: [],
+    };
+  }
+
+  const completedToolCallIds = completedToolCallIdsFromMessages(messages);
+  const pendingApprovals = approvalRequestsFromMessage(approvalRequest).filter(
+    (approval) => !completedToolCallIds.has(approval.toolCallId),
+  );
+  const pendingApproval = pendingApprovals[0] || null;
+
+  logPendingApprovals(pendingApprovals);
+
+  return { messageToCheck: approvalRequest, pendingApproval, pendingApprovals };
 }
 
 /**
@@ -264,6 +335,29 @@ export function prepareMessageHistory(
  * The API doesn't guarantee order, so we must sort explicitly.
  */
 function sortChronological(messages: Message[]): Message[] {
+  const messageTypeRank = (messageType: string | undefined): number => {
+    switch (messageType) {
+      case "user_message":
+        return 0;
+      case "reasoning_message":
+        return 1;
+      case "tool_call_message":
+      case "approval_request_message":
+        return 2;
+      case "tool_return_message":
+      case "approval_response_message":
+        return 3;
+      case "assistant_message":
+        return 4;
+      case "event_message":
+        return 5;
+      case "summary_message":
+        return 6;
+      default:
+        return 7;
+    }
+  };
+
   return [...messages].sort((a, b) => {
     // All message types *should* have 'date', but be defensive.
     const ta = a.date ? new Date(a.date).getTime() : 0;
@@ -271,7 +365,8 @@ function sortChronological(messages: Message[]): Message[] {
     if (!Number.isFinite(ta) && !Number.isFinite(tb)) return 0;
     if (!Number.isFinite(ta)) return -1;
     if (!Number.isFinite(tb)) return 1;
-    return ta - tb;
+    if (ta !== tb) return ta - tb;
+    return messageTypeRank(a.message_type) - messageTypeRank(b.message_type);
   });
 }
 
@@ -427,15 +522,16 @@ export async function getResumeDataFromBackend(
         }
       }
 
-      // Find the approval_request_message variant if it exists
-      // (A single DB message can have multiple content types returned as separate Message objects)
-      const messageToCheck =
-        retrievedMessages.find(
-          (msg) => msg.message_type === "approval_request_message",
-        ) ?? retrievedMessages[0];
+      // Find the approval_request_message variant if it exists, but only treat
+      // it as pending when no matching tool result/approval response has been
+      // projected from the same underlying message.
+      const { messageToCheck, pendingApproval, pendingApprovals } =
+        pendingApprovalsFromMessageVariants(retrievedMessages);
 
       if (messageToCheck) {
-        debugWarn(
+        const logFoundMessage =
+          pendingApprovals.length > 0 ? debugWarn : debugLog;
+        logFoundMessage(
           "check-approval",
           `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
             (retrievedMessages.length > 1
@@ -444,9 +540,7 @@ export async function getResumeDataFromBackend(
         );
 
         // Check for pending approval(s) inline since we already have the message
-        if (messageToCheck.message_type === "approval_request_message") {
-          const { pendingApproval, pendingApprovals } =
-            extractApprovals(messageToCheck);
+        if (pendingApprovals.length > 0) {
           return {
             pendingApproval,
             pendingApprovals,
@@ -510,13 +604,13 @@ export async function getResumeDataFromBackend(
       if (lastInContextId) {
         const retrievedMessages =
           await getBackend().retrieveMessage(lastInContextId);
-        const messageToCheck =
-          retrievedMessages.find(
-            (msg) => msg.message_type === "approval_request_message",
-          ) ?? retrievedMessages[0];
+        const { messageToCheck, pendingApproval, pendingApprovals } =
+          pendingApprovalsFromMessageVariants(retrievedMessages);
 
         if (messageToCheck) {
-          debugWarn(
+          const logFoundMessage =
+            pendingApprovals.length > 0 ? debugWarn : debugLog;
+          logFoundMessage(
             "check-approval",
             `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
               (retrievedMessages.length > 1
@@ -524,9 +618,7 @@ export async function getResumeDataFromBackend(
                 : ""),
           );
 
-          if (messageToCheck.message_type === "approval_request_message") {
-            const { pendingApproval, pendingApprovals } =
-              extractApprovals(messageToCheck);
+          if (pendingApprovals.length > 0) {
             return {
               pendingApproval,
               pendingApprovals,
@@ -576,15 +668,24 @@ export async function getResumeDataFromBackend(
             (msg) => msg.id === latestMessageId,
           )
         : [];
-      const messageToCheck =
-        latestMessageVariants.find(
-          (msg) => msg.message_type === "approval_request_message",
-        ) ??
-        latestMessageVariants[latestMessageVariants.length - 1] ??
-        lastDefaultMessage;
+      const fallbackPendingCheck = pendingApprovalsFromMessageVariants(
+        latestMessageVariants.length > 0
+          ? latestMessageVariants
+          : [lastDefaultMessage].filter((msg): msg is Message => !!msg),
+      );
+      const { messageToCheck, pendingApproval, pendingApprovals } =
+        fallbackPendingCheck.messageToCheck
+          ? fallbackPendingCheck
+          : {
+              messageToCheck: lastDefaultMessage,
+              pendingApproval: null,
+              pendingApprovals: [],
+            };
 
       if (messageToCheck) {
-        debugWarn(
+        const logFoundMessage =
+          pendingApprovals.length > 0 ? debugWarn : debugLog;
+        logFoundMessage(
           "check-approval",
           `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
             (latestMessageVariants.length > 1
@@ -592,9 +693,7 @@ export async function getResumeDataFromBackend(
               : ""),
         );
 
-        if (messageToCheck.message_type === "approval_request_message") {
-          const { pendingApproval, pendingApprovals } =
-            extractApprovals(messageToCheck);
+        if (pendingApprovals.length > 0) {
           return {
             pendingApproval,
             pendingApprovals,

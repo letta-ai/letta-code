@@ -1,4 +1,4 @@
-import { getClient } from "../backend/api/client";
+import { getBackend } from "../backend";
 import { refreshByokProviders } from "../backend/api/providers";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -55,8 +55,7 @@ export function getCachedModelHandles(): Set<string> | null {
 }
 
 async function fetchFromNetwork(): Promise<CacheEntry> {
-  const client = await getClient();
-  const modelsList = await client.models.list();
+  const modelsList = await getBackend().listModels();
   const handles = new Set(
     modelsList.map((m) => m.handle).filter((h): h is string => !!h),
   );
@@ -95,7 +94,8 @@ export async function getAvailableModelHandles(options?: {
 
   // When forceRefresh is true, first refresh BYOK providers to get latest models
   // This matches the behavior in ADE (letta-cloud) where refresh is called before listing models
-  if (forceRefresh) {
+  const backend = getBackend();
+  if (forceRefresh && backend.capabilities.byokProviderRefresh) {
     await refreshByokProviders();
   }
 

@@ -5,6 +5,7 @@
  */
 
 import { getCurrentAgentId } from "../agent/context";
+import { getBackend } from "../backend";
 import { getClient } from "../backend/api/client";
 
 /** In-memory cache of secrets (populated on startup from server).
@@ -58,6 +59,10 @@ export async function initSecretsFromServer(
   agentId: string,
   cachedAgent?: { secrets?: Array<{ key?: string; value?: string }> | null },
 ): Promise<void> {
+  if (!cachedAgent && !getBackend().capabilities.serverSecrets) {
+    setCache(agentId, {});
+    return;
+  }
   const agent =
     cachedAgent ??
     (await (
@@ -158,6 +163,9 @@ export async function setSecretOnServer(
   value: string,
   agentIdArg?: string,
 ): Promise<void> {
+  if (!getBackend().capabilities.serverSecrets) {
+    throw new Error("Agent secrets are not supported by this backend yet");
+  }
   const client = await getClient();
   const agentId = resolveSecretsAgentId(agentIdArg);
   if (!agentId) {
@@ -183,6 +191,9 @@ export async function deleteSecretOnServer(
   key: string,
   agentIdArg?: string,
 ): Promise<boolean> {
+  if (!getBackend().capabilities.serverSecrets) {
+    throw new Error("Agent secrets are not supported by this backend yet");
+  }
   const agentId = resolveSecretsAgentId(agentIdArg);
   if (!agentId) {
     throw new Error("No agent context set. Agent ID is required.");
