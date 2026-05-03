@@ -305,6 +305,10 @@ import type {
   StartListenerOptions,
 } from "./types";
 import {
+  clearListenerWarmState,
+  scheduleListenerWarmupsAfterSync,
+} from "./warmup";
+import {
   restartWorktreeWatcher,
   stopAllWorktreeWatchers,
 } from "./worktree-watcher";
@@ -425,6 +429,10 @@ async function replaySyncStateForRuntime(
       runtime: ConversationRuntime,
       scope: { agent_id: string; conversation_id: string },
     ) => Promise<void>;
+    scheduleWarmupsAfterSync?: (
+      runtime: ListenerRuntime,
+      scope: { agent_id: string; conversation_id: string },
+    ) => void;
   },
 ): Promise<void> {
   const syncScopedRuntime = getOrCreateScopedRuntime(
@@ -451,6 +459,10 @@ async function replaySyncStateForRuntime(
   }
 
   emitStateSync(socket, listenerRuntime, scope);
+  (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
+    listenerRuntime,
+    scope,
+  );
 }
 
 async function recoverPendingChannelControlRequests(
@@ -4081,6 +4093,7 @@ function createRuntime(): ListenerRuntime {
     secretsHydrationByAgent: new Map(),
     secretsHydrationFreshnessByAgent: new Map(),
     secretsDirtyAgents: new Set(),
+    agentMetadataByAgent: new Map(),
     lastEmittedStatus: null,
   };
 }
@@ -4105,6 +4118,7 @@ function stopRuntime(
   }
   runtime.conversationRuntimes.clear();
   runtime.approvalRuntimeKeyByRequestId.clear();
+  clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
   runtime.contextTrackerByConversation.clear();
   runtime.systemPromptRecompileByConversation.clear();
@@ -6599,6 +6613,7 @@ async function connectWithRetry(
     runtime._unsubscribeSubagentState = undefined;
     runtime._unsubscribeSubagentStreamEvents?.();
     runtime._unsubscribeSubagentStreamEvents = undefined;
+    clearListenerWarmState(runtime);
     runtime.socket = null;
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
       rejectPendingApprovalResolvers(
@@ -6715,6 +6730,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
   secretsDirtyAgents: ListenerRuntime["secretsDirtyAgents"];
+  agentMetadataByAgent: ListenerRuntime["agentMetadataByAgent"];
   worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
@@ -6753,6 +6769,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
     secretsDirtyAgents: ListenerRuntime["secretsDirtyAgents"];
+    agentMetadataByAgent: ListenerRuntime["agentMetadataByAgent"];
     worktreeWatcherByConversation: ListenerRuntime["worktreeWatcherByConversation"];
     lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
   };
@@ -6928,6 +6945,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.secretsDirtyAgents = value;
       },
     },
+    agentMetadataByAgent: {
+      get: () => listener.agentMetadataByAgent,
+      set: (value: ListenerRuntime["agentMetadataByAgent"]) => {
+        listener.agentMetadataByAgent = value;
+      },
+    },
     worktreeWatcherByConversation: {
       get: () => listener.worktreeWatcherByConversation,
       set: (value: ListenerRuntime["worktreeWatcherByConversation"]) => {
@@ -7039,7 +7062,26 @@ export const __listenClientTestUtils = {
   handleReflectionSettingsCommand,
   enqueueChannelTurn,
   scheduleQueuePump,
-  replaySyncStateForRuntime,
+  replaySyncStateForRuntime: (
+    runtime: ListenerRuntime,
+    socket: WebSocket,
+    scope: { agent_id: string; conversation_id: string },
+    opts?: {
+      recoverApprovals?: boolean;
+      recoverApprovalStateForSync?: (
+        runtime: ConversationRuntime,
+        scope: { agent_id: string; conversation_id: string },
+      ) => Promise<void>;
+      scheduleWarmupsAfterSync?: (
+        runtime: ListenerRuntime,
+        scope: { agent_id: string; conversation_id: string },
+      ) => void;
+    },
+  ) =>
+    replaySyncStateForRuntime(runtime, socket, scope, {
+      ...opts,
+      scheduleWarmupsAfterSync: opts?.scheduleWarmupsAfterSync ?? (() => {}),
+    }),
   recoverPendingChannelControlRequests,
   recoverApprovalStateForSync,
   clearRecoveredApprovalStateForScope: (

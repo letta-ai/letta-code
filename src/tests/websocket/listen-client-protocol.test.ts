@@ -3033,6 +3033,36 @@ describe("listen-client v2 status builders", () => {
     ]);
   });
 
+  test("sync replay schedules background warmups after state sync", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const scheduleWarmupsAfterSync = mock(() => {});
+
+    await __listenClientTestUtils.replaySyncStateForRuntime(
+      listener,
+      socket as unknown as WebSocket,
+      {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      },
+      {
+        recoverApprovals: false,
+        scheduleWarmupsAfterSync,
+      },
+    );
+
+    expect(scheduleWarmupsAfterSync).toHaveBeenCalledTimes(1);
+    expect(scheduleWarmupsAfterSync).toHaveBeenCalledWith(listener, {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+  });
+
   test("sync includes silent background reflection subagents in update_subagent_state", () => {
     clearAllSubagents();
     try {

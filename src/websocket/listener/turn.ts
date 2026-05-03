@@ -114,6 +114,7 @@ import type {
   InboundMessagePayload,
   IncomingMessage,
 } from "./types";
+import { ensureListenerWarmStateForTurn } from "./warmup";
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
@@ -437,15 +438,13 @@ export async function handleIncomingMessage(
     }
 
     // Ensure local per-agent state is ready before reminders and tool execution.
-    const [{ ensureMemfsSyncedForAgent }, { ensureSecretsHydratedForAgent }] =
-      await Promise.all([import("./memfs-sync"), import("./secrets-sync")]);
-    await Promise.all([
-      // Memfs is lazy and memoized once per session.
-      ensureMemfsSyncedForAgent(runtime.listener, agentId),
-      // Secrets are cached with a freshness window; mutation paths
-      // invalidate the cache so the next hydration re-fetches.
-      ensureSecretsHydratedForAgent(runtime.listener, agentId),
-    ]);
+    let listenAgentMetadata = await ensureListenerWarmStateForTurn(
+      runtime.listener,
+      {
+        agentId,
+        conversationId,
+      },
+    );
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
@@ -528,11 +527,6 @@ export async function handleIncomingMessage(
           }
         }
 
-        let listenAgentMetadata: {
-          name: string | null;
-          description: string | null;
-          lastRunAt: string | null;
-        } | null = null;
         if (!runtime.reminderState.hasSentAgentInfo && cachedAgent) {
           listenAgentMetadata = {
             name: cachedAgent.name ?? null,
