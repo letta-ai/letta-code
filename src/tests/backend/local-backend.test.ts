@@ -398,7 +398,7 @@ describe("LocalBackend", () => {
       "user_message",
       "assistant_message",
       "user_message",
-      "tool_call_message",
+      "approval_request_message",
       "tool_return_message",
       "assistant_message",
     ]);
@@ -491,7 +491,7 @@ describe("LocalBackend", () => {
       "default",
     );
     expect(completed.map((message) => message.message_type)).toEqual([
-      "tool_call_message",
+      "approval_request_message",
       "tool_return_message",
     ]);
   });
@@ -955,7 +955,7 @@ describe("LocalBackend", () => {
       expect(
         lastMessageVariants.map((message) => message.message_type),
       ).toEqual([
-        "tool_call_message",
+        "approval_request_message",
         "tool_return_message",
         "assistant_message",
       ]);

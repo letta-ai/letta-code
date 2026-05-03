@@ -858,7 +858,7 @@ describe("FakeHeadlessBackend", () => {
       afterApproval.getPaginatedItems().map((message) => message.message_type),
     ).toEqual([
       "user_message",
-      "tool_call_message",
+      "approval_request_message",
       "tool_return_message",
       "assistant_message",
     ]);

@@ -776,7 +776,7 @@ describe("headless dev backend smoke", () => {
     );
     expect(messages.map((message) => message.message_type)).toEqual([
       "assistant_message",
-      "approval_response_message",
+      "tool_return_message",
       "approval_request_message",
       "user_message",
     ]);

@@ -29,6 +29,7 @@ const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
 const DEFAULT_RESUME_MESSAGE_TYPES: MessageType[] = [
   ...RESUME_BACKFILL_MESSAGE_TYPES,
   "approval_request_message",
+  "tool_return_message",
   "approval_response_message",
 ];
 
@@ -241,18 +242,13 @@ describe("getResumeData", () => {
     const listedMessages = [
       datedMessage("provider-msg-2:assistant", "assistant_message", sameDate),
       datedMessage(
-        "provider-msg-2:approval:call-1:response",
-        "approval_response_message",
+        "provider-msg-2:tool:call-1:return",
+        "tool_return_message",
         sameDate,
         {
-          approvals: [
-            {
-              type: "tool",
-              tool_call_id: "call-1",
-              status: "success",
-              tool_return: "ok",
-            },
-          ],
+          tool_call_id: "call-1",
+          status: "success",
+          tool_return: "ok",
         },
       ),
       datedMessage(
@@ -294,8 +290,53 @@ describe("getResumeData", () => {
     ).toEqual([
       "user_message",
       "approval_request_message",
-      "approval_response_message",
+      "tool_return_message",
       "assistant_message",
     ]);
+  });
+
+  test("completed local approval request variants are not treated as pending", async () => {
+    const messagesRetrieve = mock(async () => [
+      datedMessage(
+        "provider-msg-2:tool:call-1:request",
+        "approval_request_message",
+        "2026-01-01T00:00:02.000Z",
+        {
+          tool_call: {
+            tool_call_id: "call-1",
+            name: "ShellCommand",
+            arguments: '{"command":"pwd"}',
+          },
+        },
+      ),
+      datedMessage(
+        "provider-msg-2:tool:call-1:return",
+        "tool_return_message",
+        "2026-01-01T00:00:02.000Z",
+        {
+          tool_call_id: "call-1",
+          status: "success",
+          tool_return: "ok",
+        },
+      ),
+    ]);
+
+    installBackend({
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeData(
+      dummyClient,
+      makeAgent({
+        message_ids: ["provider-msg-2"],
+        in_context_message_ids: ["provider-msg-2"],
+      }),
+      "default",
+      { includeMessageHistory: false },
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledWith("provider-msg-2");
+    expect(resume.pendingApprovals).toEqual([]);
+    expect(resume.pendingApproval).toBeNull();
   });
 });

@@ -152,12 +152,12 @@ function projectToolPart(
     ];
   }
 
-  const call: StoredMessage = {
-    id: `${message.id}:tool:${part.toolCallId}:call`,
+  const request: StoredMessage = {
+    id: `${message.id}:tool:${part.toolCallId}:request`,
     date,
     agent_id: agentId,
     conversation_id: conversationId,
-    message_type: "tool_call_message",
+    message_type: "approval_request_message",
     tool_call: toolCall,
   } as StoredMessage;
 
@@ -181,7 +181,7 @@ function projectToolPart(
     tool_return: returnValue,
   } as StoredMessage;
 
-  return [call, response];
+  return [request, response];
 }
 
 export function projectLocalMessageToStoredMessages(
