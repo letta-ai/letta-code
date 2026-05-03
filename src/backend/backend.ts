@@ -394,7 +394,9 @@ function createExperimentalLocalBackend(): Backend {
   return new LocalBackend({
     storageDir: getLocalBackendStorageDir(),
     executionMode:
-      process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "fake" ? "fake" : "ai-sdk",
+      process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "deterministic"
+        ? "deterministic"
+        : "ai-sdk",
   });
 }
 

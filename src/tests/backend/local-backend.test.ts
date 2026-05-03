@@ -193,7 +193,7 @@ describe("LocalBackend", () => {
     try {
       const backend = new LocalBackend({
         storageDir,
-        executionMode: "fake",
+        executionMode: "deterministic",
       });
       expect(backend.capabilities).toEqual({
         remoteMemfs: false,
@@ -211,11 +211,12 @@ describe("LocalBackend", () => {
 
       const agent = await backend.createAgent({
         name: "Local Agent",
-        model: "dev/fake-headless",
       } as AgentCreateBody);
+      expect(agent.model).not.toContain("fake");
       const conversation = await backend.createConversation({
         agent_id: agent.id,
       } as ConversationCreateBody);
+      expect(conversation.id).toStartWith("local-conv-");
       await drainStream(
         await backend.createConversationMessageStream(
           conversation.id,
@@ -237,9 +238,22 @@ describe("LocalBackend", () => {
         "system",
         "tags",
       ]);
+      expect(persistedAgent.model).not.toContain("fake");
 
       const conversationDirs = await readdir(join(storageDir, "conversations"));
       expect(conversationDirs.length).toBeGreaterThan(0);
+      const persistedMessageText = (
+        await Promise.all(
+          conversationDirs.map((dir) =>
+            readFile(
+              join(storageDir, "conversations", dir, "messages.jsonl"),
+              "utf8",
+            ),
+          ),
+        )
+      ).join("\n");
+      expect(persistedMessageText).toContain('"id":"ui-msg-');
+      expect(persistedMessageText).not.toContain("fake-headless");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -299,7 +313,7 @@ describe("LocalBackend", () => {
       expect(JSON.stringify(chunks)).toContain("local ai");
 
       const runId = (chunks[0] as { run_id?: string } | undefined)?.run_id;
-      expect(runId).toBe("run-fake-headless-1");
+      expect(runId).toBe("local-run-1");
       const replayed = await collectStream(
         await backend.streamRunMessages(
           runId ?? "",
@@ -319,7 +333,7 @@ describe("LocalBackend", () => {
     try {
       const firstBackend = new LocalBackend({
         storageDir,
-        executionMode: "fake",
+        executionMode: "deterministic",
       });
       const agent = await firstBackend.createAgent({
         name: "Resume Agent",
@@ -336,7 +350,7 @@ describe("LocalBackend", () => {
 
       const secondBackend = new LocalBackend({
         storageDir,
-        executionMode: "fake",
+        executionMode: "deterministic",
       });
       const page = await secondBackend.listConversationMessages(
         conversation.id,
@@ -940,7 +954,7 @@ describe("LocalBackend", () => {
 
       const resumedBackend = new LocalBackend({
         storageDir,
-        executionMode: "fake",
+        executionMode: "deterministic",
       });
       const resumedConversation = await resumedBackend.retrieveConversation(
         conversation.id,
@@ -972,7 +986,7 @@ describe("LocalBackend", () => {
         async () => {
           const backend = new LocalBackend({
             storageDir,
-            executionMode: "fake",
+            executionMode: "deterministic",
           });
 
           const models = (await backend.listModels()) as Array<{

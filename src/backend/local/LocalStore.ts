@@ -65,6 +65,12 @@ export interface LocalAgentRecord {
   model_settings: Record<string, unknown>;
 }
 
+const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
+const DEFAULT_LOCAL_MODEL = "local/default";
+const DEFAULT_LOCAL_CONVERSATION_ID_PREFIX = "local-conv-";
+const DEFAULT_LOCAL_STORED_MESSAGE_ID_PREFIX = "letta-msg-";
+const DEFAULT_LOCAL_UI_MESSAGE_ID_PREFIX = "ui-msg-";
+
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
@@ -102,29 +108,37 @@ function supportedModelSettingsFromBody(
   return modelSettings;
 }
 
-function createDefaultAgentRecord(agentId: string): LocalAgentRecord {
+function createDefaultAgentRecord(
+  agentId: string,
+  defaultAgentName: string,
+  defaultAgentModel: string,
+): LocalAgentRecord {
   return {
     id: agentId,
-    name: "Fake Headless Agent",
+    name: defaultAgentName,
     description: null,
     system: "",
     tags: [],
-    model: "dev/fake-headless",
+    model: defaultAgentModel,
     model_settings: {
       context_window_limit: 128000,
     },
   };
 }
 
-function createLocalAgentRecord(body: AgentCreateBody): LocalAgentRecord {
+function createLocalAgentRecord(
+  body: AgentCreateBody,
+  defaultAgentName: string,
+  defaultAgentModel: string,
+): LocalAgentRecord {
   const bodyRecord = body as Record<string, unknown>;
   return {
     id: `agent-local-${randomUUID()}`,
-    name: optionalString(bodyRecord.name) ?? "Letta Code",
+    name: optionalString(bodyRecord.name) ?? defaultAgentName,
     description: optionalStringOrNull(bodyRecord.description) ?? null,
     system: optionalString(bodyRecord.system) ?? "",
     tags: isStringArray(bodyRecord.tags) ? bodyRecord.tags : [],
-    model: optionalString(bodyRecord.model) ?? "dev/fake-headless",
+    model: optionalString(bodyRecord.model) ?? defaultAgentModel,
     model_settings: supportedModelSettingsFromBody(bodyRecord),
   };
 }
@@ -220,7 +234,10 @@ function updateLocalConversationRecord(
   return next;
 }
 
-function normalizeAgentRecord(value: unknown): LocalAgentRecord | undefined {
+function normalizeAgentRecord(
+  value: unknown,
+  defaultAgentModel: string,
+): LocalAgentRecord | undefined {
   if (!isRecord(value) || typeof value.id !== "string") return undefined;
   const modelSettings = isRecord(value.model_settings)
     ? { ...value.model_settings }
@@ -249,7 +266,7 @@ function normalizeAgentRecord(value: unknown): LocalAgentRecord | undefined {
     model:
       optionalString(value.model) ??
       optionalString(legacyLlmConfig.model) ??
-      "dev/fake-headless",
+      defaultAgentModel,
     model_settings: modelSettings,
   };
 }
@@ -391,8 +408,12 @@ export interface LocalStoreOptions {
   seedDefaultAgent?: boolean;
   strictAgentAccess?: boolean;
   strictConversationAccess?: boolean;
+  defaultAgentName?: string;
   defaultAgentModel?: string;
   defaultAgentModelSettings?: Record<string, unknown>;
+  conversationIdPrefix?: string;
+  storedMessageIdPrefix?: string;
+  localMessageIdPrefix?: string;
 }
 
 export class LocalBackendNotFoundError extends Error {
@@ -471,8 +492,12 @@ export class LocalStore {
   private readonly storageDir?: string;
   private readonly strictAgentAccess: boolean;
   private readonly strictConversationAccess: boolean;
-  private readonly defaultAgentModel?: string;
+  private readonly defaultAgentName: string;
+  private readonly defaultAgentModel: string;
   private readonly defaultAgentModelSettings: Record<string, unknown>;
+  private readonly conversationIdPrefix: string;
+  private readonly storedMessageIdPrefix: string;
+  private readonly localMessageIdPrefix: string;
   private readonly agents = new Map<string, LocalAgentRecord>();
   private readonly conversations = new Map<string, StoredConversation>();
   private readonly localMessagesByConversationKey = new Map<
@@ -492,10 +517,18 @@ export class LocalStore {
     this.strictAgentAccess = options.strictAgentAccess === true;
     this.strictConversationAccess =
       options.strictConversationAccess ?? this.strictAgentAccess;
-    this.defaultAgentModel = options.defaultAgentModel;
+    this.defaultAgentName =
+      options.defaultAgentName ?? DEFAULT_LOCAL_AGENT_NAME;
+    this.defaultAgentModel = options.defaultAgentModel ?? DEFAULT_LOCAL_MODEL;
     this.defaultAgentModelSettings = {
       ...(options.defaultAgentModelSettings ?? {}),
     };
+    this.conversationIdPrefix =
+      options.conversationIdPrefix ?? DEFAULT_LOCAL_CONVERSATION_ID_PREFIX;
+    this.storedMessageIdPrefix =
+      options.storedMessageIdPrefix ?? DEFAULT_LOCAL_STORED_MESSAGE_ID_PREFIX;
+    this.localMessageIdPrefix =
+      options.localMessageIdPrefix ?? DEFAULT_LOCAL_UI_MESSAGE_ID_PREFIX;
     this.loadFromStorage();
     if (options.seedDefaultAgent !== false) {
       this.ensureAgent(this.defaultAgentId);
@@ -660,10 +693,14 @@ export class LocalStore {
   }
 
   private createDefaultAgentRecord(agentId: string): LocalAgentRecord {
-    const agent = createDefaultAgentRecord(agentId);
+    const agent = createDefaultAgentRecord(
+      agentId,
+      this.defaultAgentName,
+      this.defaultAgentModel,
+    );
     return {
       ...agent,
-      ...(this.defaultAgentModel ? { model: this.defaultAgentModel } : {}),
+      model: this.defaultAgentModel,
       model_settings: {
         ...agent.model_settings,
         ...this.defaultAgentModelSettings,
@@ -672,14 +709,18 @@ export class LocalStore {
   }
 
   private createAgentRecord(body: AgentCreateBody): LocalAgentRecord {
-    const agent = createLocalAgentRecord(body);
+    const agent = createLocalAgentRecord(
+      body,
+      this.defaultAgentName,
+      this.defaultAgentModel,
+    );
     const bodyRecord = body as Record<string, unknown>;
     if (!shouldUseDefaultLocalModel(bodyRecord.model)) {
       return agent;
     }
     return {
       ...agent,
-      ...(this.defaultAgentModel ? { model: this.defaultAgentModel } : {}),
+      model: this.defaultAgentModel,
       model_settings: {
         ...this.defaultAgentModelSettings,
         ...agent.model_settings,
@@ -728,7 +769,7 @@ export class LocalStore {
     this.ensureAgent(agentId);
     this.conversationSeq += 1;
     const conversation = createLocalConversationRecord(
-      `conv-fake-headless-${this.conversationSeq}`,
+      `${this.conversationIdPrefix}${this.conversationSeq}`,
       agentId,
       this.conversationSeq,
       body,
@@ -793,7 +834,7 @@ export class LocalStore {
     this.ensureAgent(targetAgentId);
     this.conversationSeq += 1;
     const forked = createLocalConversationRecord(
-      `conv-fake-headless-${this.conversationSeq}`,
+      `${this.conversationIdPrefix}${this.conversationSeq}`,
       targetAgentId,
       this.conversationSeq,
       {
@@ -1329,7 +1370,7 @@ export class LocalStore {
     const conversation = this.ensureConversation(conversationId, agentId);
     this.messageSeq += 1;
     return {
-      id: `msg-fake-headless-${this.messageSeq}`,
+      id: `${this.storedMessageIdPrefix}${this.messageSeq}`,
       date: new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq)).toISOString(),
       agent_id: agentId,
       conversation_id: conversation.id,
@@ -1490,7 +1531,7 @@ export class LocalStore {
 
   private nextLocalMessageId(): string {
     this.localMessageSeq += 1;
-    return `provider-msg-fake-headless-${this.localMessageSeq}`;
+    return `${this.localMessageIdPrefix}${this.localMessageSeq}`;
   }
 
   private nextLocalMessageDate(): string {
@@ -1510,6 +1551,7 @@ export class LocalStore {
         if (!file.endsWith(".json")) continue;
         const agent = normalizeAgentRecord(
           readJsonFile<unknown>(join(agentsDir, file)),
+          this.defaultAgentModel,
         );
         if (agent?.id) {
           this.agents.set(agent.id, agent);
@@ -1543,20 +1585,20 @@ export class LocalStore {
         this.localMessagesByConversationKey.set(key, localMessages);
         this.conversationSeq = Math.max(
           this.conversationSeq,
-          numericSuffix(conversation.id, "conv-fake-headless-"),
+          numericSuffix(conversation.id, this.conversationIdPrefix),
         );
 
         for (const localMessage of localMessages) {
           this.localMessageSeq = Math.max(
             this.localMessageSeq,
-            numericSuffix(localMessage.id, "provider-msg-fake-headless-"),
+            numericSuffix(localMessage.id, this.localMessageIdPrefix),
           );
         }
         for (const message of messages) {
           this.messagesById.set(message.id, [message]);
           this.messageSeq = Math.max(
             this.messageSeq,
-            numericSuffix(message.id, "msg-fake-headless-"),
+            numericSuffix(message.id, this.storedMessageIdPrefix),
           );
         }
       }

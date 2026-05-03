@@ -3,7 +3,7 @@ import {
   AISDKStreamAdapter,
   type AISDKStreamTextFunction,
 } from "../dev/AISDKStreamAdapter";
-import { FakeHeadlessBackend } from "../dev/FakeHeadlessBackend";
+import { HeadlessBackend } from "../dev/HeadlessBackend";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
@@ -12,7 +12,7 @@ import { ProviderTurnExecutor } from "../dev/ProviderTurnExecutor";
 import { listLocalModels, resolveLocalModelConfig } from "./LocalModelConfig";
 import type { LocalStoreOptions } from "./LocalStore";
 
-export type LocalBackendExecutionMode = "ai-sdk" | "fake";
+export type LocalBackendExecutionMode = "ai-sdk" | "deterministic";
 
 export interface LocalBackendOptions {
   storageDir: string;
@@ -27,7 +27,7 @@ function createLocalExecutor(
   options: LocalBackendOptions,
 ): HeadlessTurnExecutor {
   if (options.executor) return options.executor;
-  if (options.executionMode === "fake") {
+  if (options.executionMode === "deterministic") {
     return new DeterministicPongExecutor();
   }
   return new ProviderTurnExecutor(
@@ -38,7 +38,7 @@ function createLocalExecutor(
   );
 }
 
-export class LocalBackend extends FakeHeadlessBackend {
+export class LocalBackend extends HeadlessBackend {
   constructor(options: LocalBackendOptions) {
     const modelConfig = resolveLocalModelConfig();
     const storeOptions: LocalStoreOptions = {
@@ -46,10 +46,23 @@ export class LocalBackend extends FakeHeadlessBackend {
       seedDefaultAgent: false,
       strictAgentAccess: true,
       strictConversationAccess: true,
+      defaultAgentName: "Letta Code",
       defaultAgentModel: modelConfig.handle,
       defaultAgentModelSettings: modelConfig.modelSettings,
+      conversationIdPrefix: "local-conv-",
+      storedMessageIdPrefix: "letta-msg-",
+      localMessageIdPrefix: "ui-msg-",
     };
-    super(options.defaultAgentId, createLocalExecutor(options), storeOptions);
+    super(
+      options.defaultAgentId ?? "agent-local-default",
+      createLocalExecutor(options),
+      storeOptions,
+      {
+        modelHandle: modelConfig.handle,
+        runIdPrefix: "local-run-",
+        runMetadataBackend: "local",
+      },
+    );
   }
 
   override async listModels() {

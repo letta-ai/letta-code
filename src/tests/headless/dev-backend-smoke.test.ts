@@ -490,7 +490,7 @@ describe("headless dev backend smoke", () => {
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: storageDir,
-          LETTA_LOCAL_BACKEND_EXECUTOR: "fake",
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
         },
       );
 
@@ -559,7 +559,7 @@ describe("headless dev backend smoke", () => {
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: storageDir,
-          LETTA_LOCAL_BACKEND_EXECUTOR: "fake",
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
         },
       );
 
@@ -597,7 +597,7 @@ describe("headless dev backend smoke", () => {
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: storageDir,
-          LETTA_LOCAL_BACKEND_EXECUTOR: "fake",
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
         },
       );
       expect(createResult.exitCode).toBe(0);
@@ -626,7 +626,7 @@ describe("headless dev backend smoke", () => {
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: storageDir,
-          LETTA_LOCAL_BACKEND_EXECUTOR: "fake",
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
         },
       );
 

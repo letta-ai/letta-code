@@ -87,7 +87,15 @@ function isTerminalRun(run: Run): boolean {
   );
 }
 
-export class FakeHeadlessBackend implements Backend {
+export interface HeadlessBackendOptions {
+  modelHandle?: string;
+  runIdPrefix?: string;
+  runMetadataBackend?: string;
+}
+
+const FAKE_HEADLESS_MODEL = "dev/fake-headless";
+
+export class HeadlessBackend implements Backend {
   readonly capabilities = {
     remoteMemfs: false,
     serverSideToolManagement: false,
@@ -107,14 +115,28 @@ export class FakeHeadlessBackend implements Backend {
     string,
     LettaStreamingResponse[]
   >();
+  private readonly modelHandle: string;
+  private readonly runIdPrefix: string;
+  private readonly runMetadataBackend: string;
   private runSeq = 0;
 
   constructor(
     agentId = "agent-fake-headless",
     executor: HeadlessTurnExecutor = new DeterministicPongExecutor(),
     storeOptions: LocalStoreOptions = {},
+    options: HeadlessBackendOptions = {},
   ) {
-    this.store = new LocalStore(agentId, storeOptions);
+    this.modelHandle = options.modelHandle ?? FAKE_HEADLESS_MODEL;
+    this.runIdPrefix = options.runIdPrefix ?? "run-fake-headless-";
+    this.runMetadataBackend = options.runMetadataBackend ?? "fake-headless";
+    this.store = new LocalStore(agentId, {
+      defaultAgentName: "Fake Headless Agent",
+      defaultAgentModel: this.modelHandle,
+      conversationIdPrefix: "conv-fake-headless-",
+      storedMessageIdPrefix: "msg-fake-headless-",
+      localMessageIdPrefix: "provider-msg-fake-headless-",
+      ...storeOptions,
+    });
     this.executor = executor;
   }
 
@@ -189,8 +211,8 @@ export class FakeHeadlessBackend implements Backend {
   async listModels(): ReturnType<Backend["listModels"]> {
     return [
       {
-        handle: "dev/fake-headless",
-        model: "dev/fake-headless",
+        handle: this.modelHandle,
+        model: this.modelHandle,
         model_endpoint_type: "openai",
       },
     ] as never;
@@ -306,7 +328,7 @@ export class FakeHeadlessBackend implements Backend {
     this.runSeq += 1;
     const createdAt = timestampForRun(this.runSeq);
     const run = {
-      id: `run-fake-headless-${this.runSeq}`,
+      id: `${this.runIdPrefix}${this.runSeq}`,
       agent_id: agentId,
       conversation_id: conversationId,
       status: "running",
@@ -316,7 +338,7 @@ export class FakeHeadlessBackend implements Backend {
           ? (body as { background: boolean }).background
           : null,
       metadata: {
-        backend: "fake-headless",
+        backend: this.runMetadataBackend,
       },
     } as Run;
     this.runs.set(run.id, run);
@@ -441,3 +463,5 @@ export class FakeHeadlessBackend implements Backend {
     } as unknown as Stream<LettaStreamingResponse>;
   }
 }
+
+export { HeadlessBackend as FakeHeadlessBackend };
