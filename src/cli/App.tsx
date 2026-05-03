@@ -3496,15 +3496,22 @@ export default function App({
                 );
               };
 
+              const promptMatches = (prompt: {
+                content: string;
+                memfsContent?: string;
+              }): boolean =>
+                contentMatches(prompt.content) ||
+                (prompt.memfsContent
+                  ? contentMatches(prompt.memfsContent)
+                  : false);
+
               const defaultPrompt = SYSTEM_PROMPTS.find(
                 (p) => p.id === "default",
               );
-              if (defaultPrompt && contentMatches(defaultPrompt.content)) {
+              if (defaultPrompt && promptMatches(defaultPrompt)) {
                 matched = "default";
               } else {
-                const found = SYSTEM_PROMPTS.find((p) =>
-                  contentMatches(p.content),
-                );
+                const found = SYSTEM_PROMPTS.find((p) => promptMatches(p));
                 if (found) {
                   matched = found.id;
                 } else if (contentMatches(SYSTEM_PROMPT)) {
