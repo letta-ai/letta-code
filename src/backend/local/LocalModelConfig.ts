@@ -1,3 +1,4 @@
+import modelsData from "../../models.json";
 import type { AISDKProvider } from "../dev/AISDKModelFactory";
 import { DEFAULT_ANTHROPIC_MODEL } from "../dev/AnthropicModel";
 import { DEFAULT_OPENAI_RESPONSES_MODEL } from "../dev/OpenAIResponsesModel";
@@ -78,9 +79,19 @@ export function listLocalModels() {
   addModel(configured.provider, configured.model);
   if (hasEnvValue(process.env.OPENAI_API_KEY)) {
     addModel("openai-responses", openAIModel);
+    for (const model of modelsData.models) {
+      if (model.handle.startsWith("openai/")) {
+        addModel("openai-responses", model.handle);
+      }
+    }
   }
   if (hasEnvValue(process.env.ANTHROPIC_API_KEY)) {
     addModel("anthropic", anthropicModel);
+    for (const model of modelsData.models) {
+      if (model.handle.startsWith("anthropic/")) {
+        addModel("anthropic", model.handle);
+      }
+    }
   }
   return models;
 }

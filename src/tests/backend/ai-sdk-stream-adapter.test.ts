@@ -12,8 +12,8 @@ import {
 } from "../../backend/dev/AISDKStreamAdapter";
 import type { LocalAgentRecord } from "../../backend/dev/FakeHeadlessStore";
 import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
-import type { ProviderTrajectoryUIMessage } from "../../backend/dev/ProviderTrajectory";
 import type { ProviderTurnInput } from "../../backend/dev/ProviderTurnExecutor";
+import type { LocalMessage } from "../../backend/local/LocalMessage";
 
 function streamPart(part: Record<string, unknown>): TextStreamPart<ToolSet> {
   return part as unknown as TextStreamPart<ToolSet>;
@@ -30,6 +30,37 @@ function uiMessageStream(chunks: Array<Record<string, unknown>>) {
   });
 }
 
+type MockUIMessageStreamOptions = Parameters<
+  NonNullable<ReturnType<AISDKStreamTextFunction>["toUIMessageStream"]>
+>[0];
+
+function uiMessageStreamWithFinish(
+  chunks: Array<Record<string, unknown>>,
+  responseMessage:
+    | LocalMessage
+    | ((options: MockUIMessageStreamOptions | undefined) => LocalMessage),
+  finishReason: unknown = "stop",
+) {
+  return (options?: MockUIMessageStreamOptions) => {
+    const response =
+      typeof responseMessage === "function"
+        ? responseMessage(options)
+        : responseMessage;
+    const originalMessages = options?.originalMessages ?? [];
+    const isContinuation = originalMessages.at(-1)?.id === response.id;
+    void options?.onFinish?.({
+      messages: isContinuation
+        ? [...originalMessages.slice(0, -1), response]
+        : [...originalMessages, response],
+      responseMessage: response,
+      isContinuation,
+      isAborted: false,
+      finishReason,
+    });
+    return uiMessageStream(chunks);
+  };
+}
+
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];
   for await (const value of iterable) {
@@ -39,7 +70,7 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 }
 
 function providerInput(
-  uiMessages: ProviderTrajectoryUIMessage[],
+  uiMessages: LocalMessage[],
   agent: LocalAgentRecord = {
     id: "agent-test",
     name: "Test Agent",
@@ -56,7 +87,6 @@ function providerInput(
     agent,
     body: {} as HeadlessTurnBody,
     history: [],
-    providerTrajectory: [],
     uiMessages,
     clientTools: [
       {
@@ -101,8 +131,8 @@ describe("AISDKStreamAdapter", () => {
           });
           yield streamPart({ type: "finish", finishReason: "tool-calls" });
         })(),
-        toUIMessageStream: () =>
-          uiMessageStream([
+        toUIMessageStream: uiMessageStreamWithFinish(
+          [
             { type: "start" },
             { type: "reasoning-start", id: "reasoning-1" },
             {
@@ -121,7 +151,23 @@ describe("AISDKStreamAdapter", () => {
               input: { command: "pwd" },
             },
             { type: "finish", finishReason: "tool-calls" },
-          ]),
+          ],
+          {
+            id: "ui-assistant-1",
+            role: "assistant",
+            parts: [
+              { type: "reasoning", text: "thinking", state: "done" },
+              { type: "text", text: "hi", state: "done" },
+              {
+                type: "tool-ShellCommand",
+                toolCallId: "call-2",
+                state: "input-available",
+                input: { command: "pwd" },
+              },
+            ],
+          },
+          "tool-calls",
+        ),
       };
     };
     const adapter = new AISDKStreamAdapter({
@@ -292,7 +338,7 @@ describe("AISDKStreamAdapter", () => {
     });
   });
 
-  test("maps local Anthropic thinking settings to AI SDK provider options", () => {
+  test("maps Claude 4.6 Anthropic thinking settings to adaptive AI SDK provider options", () => {
     expect(
       buildAISDKProviderOptions("anthropic/claude-sonnet-4-6", {
         provider_type: "anthropic",
@@ -302,9 +348,218 @@ describe("AISDKStreamAdapter", () => {
     ).toEqual({
       anthropic: {
         effort: "max",
+        thinking: { type: "adaptive" },
+      },
+    });
+  });
+
+  test("maps Claude 4.7 thinking to adaptive summarized output", () => {
+    expect(
+      buildAISDKProviderOptions("anthropic/claude-opus-4-7", {
+        provider_type: "anthropic",
+        effort: "xhigh",
+        thinking: { type: "enabled", budget_tokens: 12000 },
+      }),
+    ).toEqual({
+      anthropic: {
+        effort: "xhigh",
+        thinking: { type: "adaptive", display: "summarized" },
+      },
+    });
+  });
+
+  test("keeps manual Anthropic thinking budgets for legacy Claude 4.5", () => {
+    expect(
+      buildAISDKProviderOptions("anthropic/claude-opus-4-5-20251101", {
+        provider_type: "anthropic",
+        effort: "high",
+        thinking: { type: "enabled", budget_tokens: 12000 },
+      }),
+    ).toEqual({
+      anthropic: {
+        effort: "high",
         thinking: { type: "enabled", budgetTokens: 12000 },
       },
     });
+  });
+
+  test("drops cross-provider reasoning parts before OpenAI conversion", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+            {
+              id: "ui-assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "reasoning",
+                  text: "anthropic reasoning",
+                  providerMetadata: { anthropic: { signature: "sig" } },
+                },
+                {
+                  type: "reasoning",
+                  text: "openai reasoning",
+                  providerMetadata: {
+                    openai: { itemId: "rs_1", reasoningEncryptedContent: null },
+                  },
+                },
+                { type: "text", text: "answer" },
+              ],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "agent system prompt",
+            tags: [],
+            model: "openai/gpt-5.5",
+            model_settings: { provider_type: "openai" },
+          },
+        ),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).not.toContain("anthropic reasoning");
+    expect(serialized).toContain("openai reasoning");
+  });
+
+  test("drops Anthropic providerOptions reasoning parts before OpenAI conversion", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+            {
+              id: "ui-assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "reasoning",
+                  text: "anthropic providerOptions reasoning",
+                  providerOptions: { anthropic: { signature: "sig" } },
+                } as unknown as LocalMessage["parts"][number],
+                { type: "text", text: "answer" },
+              ],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "agent system prompt",
+            tags: [],
+            model: "openai/gpt-5.5",
+            model_settings: { provider_type: "openai" },
+          },
+        ),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).not.toContain("anthropic providerOptions reasoning");
+    expect(serialized).toContain("answer");
+  });
+
+  test("drops cross-provider reasoning parts before Anthropic conversion", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+            {
+              id: "ui-assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "reasoning",
+                  text: "anthropic reasoning",
+                  providerMetadata: { anthropic: { signature: "sig" } },
+                },
+                {
+                  type: "reasoning",
+                  text: "openai reasoning",
+                  providerMetadata: {
+                    openai: { itemId: "rs_1", reasoningEncryptedContent: null },
+                  },
+                },
+                { type: "text", text: "answer" },
+              ],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "agent system prompt",
+            tags: [],
+            model: "anthropic/claude-sonnet-4-6",
+            model_settings: { provider_type: "anthropic", effort: "high" },
+          },
+        ),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).toContain("anthropic reasoning");
+    expect(serialized).not.toContain("openai reasoning");
   });
 
   test("projects UI tool outputs without AI SDK approval protocol parts", async () => {

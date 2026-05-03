@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -15,27 +16,29 @@ import type {
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type {
   AgentCreateBody,
+  AgentListBody,
   AgentMessageListBody,
   AgentUpdateBody,
   ConversationCreateBody,
+  ConversationListBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationUpdateBody,
 } from "../backend";
-import type {
-  LocalMessage,
-  ProviderStreamPart,
-  ProviderTrajectoryMessage,
-  ProviderTrajectoryUIMessage,
-} from "./ProviderTrajectory";
+import type { LocalMessage } from "./LocalMessage";
 import {
-  cloneProviderStreamPart,
-  cloneProviderUIMessageSnapshot,
-  getAttachedProviderStreamPart,
-  getAttachedProviderUIMessage,
-  isProviderStreamPartOnly,
-} from "./ProviderTrajectory";
+  cloneLocalMessage,
+  isLocalToolPart,
+  mergeSnapshotPartsWithExistingTools,
+  projectedMessageLookupKeys,
+  projectLocalMessagesToStoredMessages,
+  projectLocalMessageToStoredMessages,
+} from "./LocalMessageProjection";
+import {
+  getAttachedLocalUIMessage,
+  isLocalStateChunkOnly,
+} from "./LocalStreamChunks";
 
 export type StoredMessage = Message & {
   id: string;
@@ -255,7 +258,26 @@ function projectAgentState(
   record: LocalAgentRecord,
   messageIds: string[] = [],
   inContextMessageIds: string[] = messageIds,
+  lastRunCompletion?: string | null,
 ): AgentState {
+  const nestedReasoning = isRecord(record.model_settings.reasoning)
+    ? record.model_settings.reasoning
+    : undefined;
+  const reasoningEffort =
+    typeof nestedReasoning?.reasoning_effort === "string"
+      ? nestedReasoning.reasoning_effort
+      : typeof record.model_settings.effort === "string"
+        ? record.model_settings.effort
+        : typeof record.model_settings.reasoning_effort === "string"
+          ? record.model_settings.reasoning_effort
+          : undefined;
+  const enableReasoner =
+    isRecord(record.model_settings.thinking) &&
+    record.model_settings.thinking.type === "disabled"
+      ? false
+      : typeof record.model_settings.enable_reasoner === "boolean"
+        ? record.model_settings.enable_reasoner
+        : undefined;
   return {
     id: record.id,
     name: record.name,
@@ -267,6 +289,7 @@ function projectAgentState(
     model_settings: record.model_settings,
     message_ids: messageIds,
     in_context_message_ids: inContextMessageIds,
+    ...(lastRunCompletion ? { last_run_completion: lastRunCompletion } : {}),
     // Temporary compatibility shim for older runtime call sites. Local storage
     // keeps only `model` + `model_settings`.
     llm_config: {
@@ -277,12 +300,8 @@ function projectAgentState(
         typeof record.model_settings.context_window_limit === "number"
           ? record.model_settings.context_window_limit
           : 128000,
-      ...(typeof record.model_settings.reasoning_effort === "string" && {
-        reasoning_effort: record.model_settings.reasoning_effort,
-      }),
-      ...(typeof record.model_settings.enable_reasoner === "boolean" && {
-        enable_reasoner: record.model_settings.enable_reasoner,
-      }),
+      ...(reasoningEffort && { reasoning_effort: reasoningEffort }),
+      ...(enableReasoner !== undefined && { enable_reasoner: enableReasoner }),
       ...((typeof record.model_settings.max_tokens === "number" ||
         record.model_settings.max_tokens === null) && {
         max_tokens: record.model_settings.max_tokens,
@@ -331,16 +350,6 @@ function parseToolInput(input: unknown): unknown {
   } catch {
     return input;
   }
-}
-
-function getMessageType(message: Record<string, unknown>): string {
-  if (message.type === "approval") {
-    return "approval_response_message";
-  }
-  if (message.role === "assistant") {
-    return "assistant_message";
-  }
-  return "user_message";
 }
 
 function getListLimit(
@@ -395,124 +404,25 @@ export class LocalBackendNotFoundError extends Error {
   }
 }
 
-type ProviderUIMessagePart = ProviderTrajectoryUIMessage["parts"][number];
-type ProviderUIToolPart = ProviderUIMessagePart & {
+type LocalMessagePart = LocalMessage["parts"][number];
+type LocalToolPart = LocalMessagePart & {
   type: `tool-${string}`;
   toolCallId: string;
 };
-type ProviderUITextPart = ProviderUIMessagePart & {
+type LocalTextPart = LocalMessagePart & {
   type: "text";
   text: string;
   state?: "streaming" | "done";
   providerMetadata?: unknown;
 };
-type ProviderUIReasoningPart = ProviderUIMessagePart & {
+type LocalReasoningPart = LocalMessagePart & {
   type: "reasoning";
   text: string;
   state?: "streaming" | "done";
   providerMetadata?: unknown;
 };
-type ProviderUIFilePart = ProviderUIMessagePart & {
-  type: "file";
-};
-type ProviderUISourcePart = ProviderUIMessagePart & {
-  type: "source-url" | "source-document";
-};
 
-function isProviderUIToolPart(
-  part: ProviderUIMessagePart,
-): part is ProviderUIToolPart {
-  return (
-    typeof part.type === "string" &&
-    part.type.startsWith("tool-") &&
-    "toolCallId" in part &&
-    typeof part.toolCallId === "string"
-  );
-}
-
-function createdAtForLocalMessage(message: LocalMessage): string | undefined {
-  return typeof message.metadata?.created_at === "string"
-    ? message.metadata.created_at
-    : undefined;
-}
-
-function agentIdForLocalMessage(message: LocalMessage): string | undefined {
-  return typeof message.metadata?.agent_id === "string"
-    ? message.metadata.agent_id
-    : undefined;
-}
-
-function conversationIdForLocalMessage(
-  message: LocalMessage,
-): string | undefined {
-  return typeof message.metadata?.conversation_id === "string"
-    ? message.metadata.conversation_id
-    : undefined;
-}
-
-function localMessageDate(message: LocalMessage, fallbackDate: string): string {
-  return createdAtForLocalMessage(message) ?? fallbackDate;
-}
-
-function localMessageAgentId(
-  message: LocalMessage,
-  fallbackAgentId: string,
-): string {
-  return agentIdForLocalMessage(message) ?? fallbackAgentId;
-}
-
-function localMessageConversationId(
-  message: LocalMessage,
-  fallbackConversationId: string,
-): string {
-  return conversationIdForLocalMessage(message) ?? fallbackConversationId;
-}
-
-function cloneLocalMessage(message: LocalMessage): LocalMessage {
-  return cloneProviderUIMessageSnapshot(message) as LocalMessage;
-}
-
-function textPartToContentPart(
-  part: ProviderUITextPart | ProviderUIReasoningPart,
-) {
-  return {
-    type: part.type,
-    text: part.text,
-    ...(part.providerMetadata !== undefined && {
-      providerMetadata: part.providerMetadata,
-    }),
-  };
-}
-
-function isTextOrReasoningPart(
-  part: ProviderUIMessagePart,
-): part is ProviderUITextPart | ProviderUIReasoningPart {
-  return (
-    (part.type === "text" || part.type === "reasoning") &&
-    "text" in part &&
-    typeof part.text === "string"
-  );
-}
-
-function isFileOrSourcePart(
-  part: ProviderUIMessagePart,
-): part is ProviderUIFilePart | ProviderUISourcePart {
-  return (
-    part.type === "file" ||
-    part.type === "source-url" ||
-    part.type === "source-document"
-  );
-}
-
-function localToolName(part: ProviderUIToolPart): string {
-  return part.type.slice("tool-".length);
-}
-
-function stringifyToolArguments(input: unknown): string {
-  return typeof input === "string" ? input : JSON.stringify(input ?? {});
-}
-
-function isToolOutputState(state: unknown): boolean {
+function isSettledLocalToolState(state: unknown): boolean {
   return (
     state === "output-available" ||
     state === "output-error" ||
@@ -547,143 +457,14 @@ function numericSuffix(value: string, prefix: string): number {
     : 0;
 }
 
-function projectLocalMessageToStoredMessages(
-  message: LocalMessage,
-  fallbackAgentId: string,
-  fallbackConversationId: string,
-  fallbackDate: string,
-): StoredMessage[] {
-  const agentId = localMessageAgentId(message, fallbackAgentId);
-  const conversationId = localMessageConversationId(
-    message,
-    fallbackConversationId,
-  );
-  const date = localMessageDate(message, fallbackDate);
-
-  if (message.role === "user" || message.role === "system") {
-    return [
-      {
-        id: message.id,
-        date,
-        agent_id: agentId,
-        conversation_id: conversationId,
-        message_type: "user_message",
-        role: message.role,
-        content: message.parts,
-      } as StoredMessage,
-    ];
-  }
-
-  const messages: StoredMessage[] = [];
-  const assistantContent: unknown[] = [];
-
-  for (const part of message.parts) {
-    if (isTextOrReasoningPart(part)) {
-      assistantContent.push(textPartToContentPart(part));
-      continue;
-    }
-
-    if (isFileOrSourcePart(part)) {
-      assistantContent.push(part);
-      continue;
-    }
-
-    if (!isProviderUIToolPart(part)) continue;
-    const toolName = localToolName(part);
-    const requestId = `${message.id}:approval:${part.toolCallId}:request`;
-    messages.push({
-      id: requestId,
-      date,
-      agent_id: agentId,
-      conversation_id: conversationId,
-      message_type: "approval_request_message",
-      tool_call: {
-        tool_call_id: part.toolCallId,
-        name: toolName,
-        arguments: stringifyToolArguments((part as { input?: unknown }).input),
-      },
-    } as StoredMessage);
-
-    if (!isToolOutputState((part as { state?: unknown }).state)) continue;
-    const output = (part as { output?: unknown }).output;
-    const errorText = (part as { errorText?: unknown }).errorText;
-    messages.push({
-      id: `${message.id}:approval:${part.toolCallId}:response`,
-      date,
-      agent_id: agentId,
-      conversation_id: conversationId,
-      message_type: "approval_response_message",
-      approvals: [
-        (part as { state?: unknown }).state === "output-available"
-          ? {
-              type: "tool",
-              tool_call_id: part.toolCallId,
-              tool_return: output,
-              status: "success",
-            }
-          : {
-              type: "approval",
-              tool_call_id: part.toolCallId,
-              approve: false,
-              reason:
-                typeof errorText === "string"
-                  ? errorText
-                  : "Tool execution denied.",
-            },
-      ],
-      content:
-        (part as { state?: unknown }).state === "output-available"
-          ? output
-          : errorText,
-    } as StoredMessage);
-  }
-
-  if (assistantContent.length > 0) {
-    messages.push({
-      id: messages.length > 0 ? `${message.id}:assistant` : message.id,
-      date,
-      agent_id: agentId,
-      conversation_id: conversationId,
-      message_type: "assistant_message",
-      role: "assistant",
-      content: assistantContent,
-    } as StoredMessage);
-  }
-
-  return messages;
+function createdAtForLocalMessage(message: LocalMessage): string | undefined {
+  return typeof message.metadata?.created_at === "string"
+    ? message.metadata.created_at
+    : undefined;
 }
 
-function projectLocalMessagesToStoredMessages(
-  messages: LocalMessage[],
-  fallbackAgentId: string,
-  fallbackConversationId: string,
-): StoredMessage[] {
-  return messages.flatMap((message, index) =>
-    projectLocalMessageToStoredMessages(
-      message,
-      fallbackAgentId,
-      fallbackConversationId,
-      new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
-    ),
-  );
-}
-
-function localMessageToProviderTrajectoryMessage(
-  message: LocalMessage,
-  fallbackAgentId: string,
-  fallbackConversationId: string,
-): ProviderTrajectoryMessage {
-  return {
-    type: "letta_provider_ui_message",
-    schemaVersion: 1,
-    id: message.id,
-    date:
-      createdAtForLocalMessage(message) ??
-      new Date(Date.UTC(2026, 0, 1)).toISOString(),
-    agentId: localMessageAgentId(message, fallbackAgentId),
-    conversationId: localMessageConversationId(message, fallbackConversationId),
-    uiMessage: cloneLocalMessage(message),
-  };
+function localMessageDate(message: LocalMessage, fallbackDate: string): string {
+  return createdAtForLocalMessage(message) ?? fallbackDate;
 }
 
 export class LocalStore {
@@ -694,18 +475,14 @@ export class LocalStore {
   private readonly defaultAgentModelSettings: Record<string, unknown>;
   private readonly agents = new Map<string, LocalAgentRecord>();
   private readonly conversations = new Map<string, StoredConversation>();
-  private readonly messagesByConversationKey = new Map<
+  private readonly localMessagesByConversationKey = new Map<
     string,
-    StoredMessage[]
-  >();
-  private readonly providerTrajectoryByConversationKey = new Map<
-    string,
-    ProviderTrajectoryMessage[]
+    LocalMessage[]
   >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
   private conversationSeq = 0;
   private messageSeq = 0;
-  private providerTrajectorySeq = 0;
+  private localMessageSeq = 0;
 
   constructor(
     private readonly defaultAgentId: string,
@@ -734,6 +511,75 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
     return this.projectAgent(existing);
+  }
+
+  listAgents(body?: AgentListBody): { items: AgentState[] } {
+    const bodyRecord = (body ?? {}) as Record<string, unknown>;
+    const queryText = optionalString(bodyRecord.query_text)?.toLowerCase();
+    const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
+    const after = optionalString(bodyRecord.after);
+    const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
+    let agents = [...this.agents.values()].map((agent) =>
+      this.projectAgent(agent),
+    );
+
+    if (tags.length > 0) {
+      agents = agents.filter((agent) =>
+        tags.every((tag) => agent.tags?.includes(tag)),
+      );
+    }
+    if (queryText) {
+      agents = agents.filter((agent) => {
+        const haystack = [agent.name, agent.description, agent.id, agent.model]
+          .filter((value): value is string => typeof value === "string")
+          .join("\n")
+          .toLowerCase();
+        return haystack.includes(queryText);
+      });
+    }
+    agents.sort((a, b) => {
+      const aDate =
+        (a as { last_run_completion?: string | null }).last_run_completion ??
+        "";
+      const bDate =
+        (b as { last_run_completion?: string | null }).last_run_completion ??
+        "";
+      return bDate.localeCompare(aDate);
+    });
+    if (after) {
+      const afterIndex = agents.findIndex((agent) => agent.id === after);
+      if (afterIndex >= 0) agents = agents.slice(afterIndex + 1);
+    }
+
+    return { items: agents.slice(0, limit) };
+  }
+
+  deleteAgent(agentId: string): void {
+    if (this.strictAgentAccess && !this.agents.has(agentId)) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
+    this.agents.delete(agentId);
+    for (const [key, conversation] of [...this.conversations.entries()]) {
+      if (conversation.agent_id === agentId) {
+        this.conversations.delete(key);
+        this.localMessagesByConversationKey.delete(key);
+        if (this.storageDir) {
+          rmSync(
+            join(this.storageDir, "conversations", encodePathSegment(key)),
+            {
+              recursive: true,
+              force: true,
+            },
+          );
+        }
+      }
+    }
+    if (this.storageDir) {
+      rmSync(
+        join(this.storageDir, "agents", `${encodePathSegment(agentId)}.json`),
+        { force: true },
+      );
+    }
   }
 
   retrieveAgentRecord(agentId: string): LocalAgentRecord {
@@ -850,6 +696,30 @@ export class LocalStore {
     return this.ensureConversation(conversationId, agentId);
   }
 
+  listConversations(body?: ConversationListBody): Conversation[] {
+    const bodyRecord = (body ?? {}) as Record<string, unknown>;
+    const agentId = optionalString(bodyRecord.agent_id);
+    const after = optionalString(bodyRecord.after);
+    const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
+    let conversations = [...this.conversations.values()].filter(
+      (conversation) =>
+        conversation.id !== "default" &&
+        (!agentId || conversation.agent_id === agentId),
+    );
+    conversations.sort((a, b) => {
+      const aDate = a.last_message_at ?? a.updated_at ?? a.created_at ?? "";
+      const bDate = b.last_message_at ?? b.updated_at ?? b.created_at ?? "";
+      return bDate.localeCompare(aDate);
+    });
+    if (after) {
+      const afterIndex = conversations.findIndex(
+        (conversation) => conversation.id === after,
+      );
+      if (afterIndex >= 0) conversations = conversations.slice(afterIndex + 1);
+    }
+    return conversations.slice(0, limit);
+  }
+
   createConversation(body: ConversationCreateBody): Conversation {
     const agentId = body.agent_id ?? this.defaultAgentId;
     if (this.strictAgentAccess && !this.agents.has(agentId)) {
@@ -865,8 +735,7 @@ export class LocalStore {
     );
     const key = this.conversationKey(conversation.id, agentId);
     this.conversations.set(key, conversation);
-    this.messagesByConversationKey.set(key, []);
-    this.providerTrajectoryByConversationKey.set(key, []);
+    this.localMessagesByConversationKey.set(key, []);
     this.persistConversationState(conversation.id, agentId);
     return conversation;
   }
@@ -932,24 +801,17 @@ export class LocalStore {
           : {}),
       } as Partial<ConversationCreateBody>,
     );
-    const sourceKey = this.conversationKey(source.id, source.agent_id);
+    const sourceMessages = this.localMessagesForConversation(
+      source.id,
+      source.agent_id,
+    );
+    const forkedMessages = sourceMessages.map((message) =>
+      this.cloneLocalMessageForConversation(message, forked.id, targetAgentId),
+    );
+    forked.in_context_message_ids = forkedMessages.map((message) => message.id);
     const targetKey = this.conversationKey(forked.id, targetAgentId);
-    const forkedTrajectory = this.cloneProviderTrajectoryForFork(
-      this.providerTrajectoryByConversationKey.get(sourceKey) ?? [],
-      forked.id,
-      targetAgentId,
-    );
-    forked.in_context_message_ids = forkedTrajectory.map((entry) => entry.id);
     this.conversations.set(targetKey, forked);
-    this.messagesByConversationKey.set(
-      targetKey,
-      projectLocalMessagesToStoredMessages(
-        forkedTrajectory.map((entry) => entry.uiMessage),
-        targetAgentId,
-        forked.id,
-      ),
-    );
-    this.providerTrajectoryByConversationKey.set(targetKey, forkedTrajectory);
+    this.localMessagesByConversationKey.set(targetKey, forkedMessages);
     this.persistConversationState(forked.id, targetAgentId);
     return { id: forked.id };
   }
@@ -977,17 +839,17 @@ export class LocalStore {
     this.ensureConversation(conversationId, agentId);
 
     for (const message of bodyWithAgent.messages ?? []) {
-      const storedMessage = this.appendInputMessage(
-        conversationId,
-        agentId,
-        message,
-      );
-      this.appendProviderInputMessage(
-        conversationId,
-        agentId,
-        message,
-        storedMessage,
-      );
+      if (message.type === "approval") {
+        this.applyApprovalResults(
+          conversationId,
+          agentId,
+          Array.isArray(message.approvals) ? message.approvals : [],
+        );
+        continue;
+      }
+      if (message.role === "user") {
+        this.appendUserLocalMessage(conversationId, agentId, message);
+      }
     }
 
     return { agentId, conversationId };
@@ -998,71 +860,45 @@ export class LocalStore {
     agentId: string,
     chunk: LettaStreamingResponse,
   ): LettaStreamingResponse {
+    const localUIMessage = getAttachedLocalUIMessage(chunk);
+    if (isLocalStateChunkOnly(chunk)) {
+      if (localUIMessage) {
+        this.applyFinalAssistantUIMessage(
+          conversationId,
+          agentId,
+          localUIMessage,
+        );
+      }
+      return chunk;
+    }
+
     const messageType = (chunk as { message_type?: unknown })?.message_type;
-    const providerStreamPart = getAttachedProviderStreamPart(chunk);
-    const providerUIMessage = getAttachedProviderUIMessage(chunk);
-    if (isProviderStreamPartOnly(chunk)) {
-      if (providerStreamPart) {
-        this.appendProviderStreamPart(
-          conversationId,
-          agentId,
-          providerStreamPart,
-        );
-      }
-      if (providerUIMessage) {
-        this.applyProviderUIMessageSnapshot(
-          conversationId,
-          agentId,
-          providerUIMessage,
-        );
-      }
-      return chunk;
-    }
-
     if (typeof messageType !== "string" || messageType === "stop_reason") {
-      if (providerStreamPart) {
-        this.appendProviderStreamPart(
-          conversationId,
-          agentId,
-          providerStreamPart,
-        );
-      }
       return chunk;
     }
 
-    const storedMessage = this.appendMessage(
+    const storedChunk = this.createStoredChunk(
       conversationId,
       agentId,
       toStoredOutputFields(chunk as unknown as Record<string, unknown>),
     );
-    this.appendProviderOutputChunk(
+    this.applyVisibleChunkToLocalMessages(
       conversationId,
       agentId,
       chunk,
-      storedMessage,
+      storedChunk,
     );
-    if (providerStreamPart) {
-      this.appendProviderStreamPart(
-        conversationId,
-        agentId,
-        providerStreamPart,
-      );
-    }
-    return storedMessage as unknown as LettaStreamingResponse;
+    return storedChunk as unknown as LettaStreamingResponse;
   }
 
-  listProviderTrajectory(
-    conversationId: string,
-    agentId?: string,
-  ): ProviderTrajectoryMessage[] {
+  listLocalMessages(conversationId: string, agentId?: string): LocalMessage[] {
     const resolvedAgentId =
       agentId ?? this.agentIdForConversation(conversationId);
     this.ensureConversation(conversationId, resolvedAgentId);
-    return [
-      ...(this.providerTrajectoryByConversationKey.get(
-        this.conversationKey(conversationId, resolvedAgentId),
-      ) ?? []),
-    ];
+    return this.localMessagesForConversation(
+      conversationId,
+      resolvedAgentId,
+    ).map(cloneLocalMessage);
   }
 
   listConversationMessages(
@@ -1114,40 +950,48 @@ export class LocalStore {
     return [...messages];
   }
 
-  private appendProviderInputMessage(
+  private appendUserLocalMessage(
     conversationId: string,
     agentId: string,
     message: Record<string, unknown>,
-    storedMessage: StoredMessage,
-  ): void {
-    if (message.type === "approval") {
-      this.applyApprovalResultsToProviderTrajectory(
-        conversationId,
-        agentId,
-        Array.isArray(message.approvals) ? message.approvals : [],
-        storedMessage,
-      );
-      return;
-    }
-
-    if (message.role === "user") {
-      const text = textFromContent(normalizeContent(message.content));
-      if (text.length > 0) {
-        this.appendProviderTrajectoryMessage(conversationId, agentId, {
-          storedMessage,
-          role: "user",
-          parts: [{ type: "text", text }],
-        });
-      }
-    }
+  ): LocalMessage {
+    const conversation = this.ensureConversation(conversationId, agentId);
+    const id = this.nextLocalMessageId();
+    const date = this.currentLocalMessageDate();
+    const localMessage: LocalMessage = {
+      id,
+      role: "user",
+      metadata: {
+        created_at: date,
+        updated_at: date,
+        agent_id: agentId,
+        conversation_id: conversation.id,
+      },
+      parts: this.localPartsFromInputContent(normalizeContent(message.content)),
+    };
+    this.pushLocalMessage(conversation.id, agentId, localMessage);
+    return localMessage;
   }
 
-  private appendProviderOutputChunk(
+  private applyVisibleChunkToLocalMessages(
     conversationId: string,
     agentId: string,
     chunk: LettaStreamingResponse,
-    storedMessage: StoredMessage,
+    storedChunk: StoredMessage,
   ): void {
+    if (chunk.message_type === "reasoning_message") {
+      const reasoning = (chunk as { reasoning?: unknown }).reasoning;
+      if (typeof reasoning === "string") {
+        this.appendAssistantReasoning(
+          conversationId,
+          agentId,
+          reasoning,
+          storedChunk,
+        );
+      }
+      return;
+    }
+
     if (chunk.message_type === "assistant_message") {
       const content = (chunk as { content?: unknown }).content;
       const parts = Array.isArray(content)
@@ -1156,20 +1000,20 @@ export class LocalStore {
       for (const part of parts) {
         if (!isRecord(part)) continue;
         if (part.type === "text" && typeof part.text === "string") {
-          this.appendAssistantTextProviderMessage(
+          this.appendAssistantText(
             conversationId,
             agentId,
             part.text,
-            storedMessage,
+            storedChunk,
           );
           continue;
         }
         if (part.type === "reasoning" && typeof part.text === "string") {
-          this.appendAssistantReasoningProviderMessage(
+          this.appendAssistantReasoning(
             conversationId,
             agentId,
             part.text,
-            storedMessage,
+            storedChunk,
           );
         }
       }
@@ -1179,517 +1023,120 @@ export class LocalStore {
     if (chunk.message_type === "approval_request_message") {
       const toolCall = this.toolCallFromChunk(chunk);
       if (toolCall) {
-        this.appendAssistantToolCallProviderMessage(
+        this.appendAssistantToolCall(
           conversationId,
           agentId,
           toolCall,
-          storedMessage,
+          storedChunk,
         );
       }
     }
   }
 
-  private appendProviderTrajectoryMessage(
+  private applyFinalAssistantUIMessage(
     conversationId: string,
     agentId: string,
-    options: {
-      storedMessage?: StoredMessage;
-      role: ProviderTrajectoryUIMessage["role"];
-      parts: ProviderUIMessagePart[];
-    },
-  ): ProviderTrajectoryMessage {
-    this.providerTrajectorySeq += 1;
-    const id = `provider-msg-fake-headless-${this.providerTrajectorySeq}`;
+    message: LocalMessage,
+  ): void {
+    const conversation = this.ensureConversation(conversationId, agentId);
+    const key = this.conversationKey(conversation.id, agentId);
+    const localMessages = this.localMessagesByConversationKey.get(key) ?? [];
+    const last = localMessages.at(-1);
+    const existingAssistant = last?.role === "assistant" ? last : undefined;
+    const id = existingAssistant?.id ?? this.nextLocalMessageId();
     const date =
-      options.storedMessage?.date ??
-      new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq + 1)).toISOString();
-    const entry: ProviderTrajectoryMessage = {
-      type: "letta_provider_ui_message",
-      schemaVersion: 1,
-      id,
-      date,
-      agentId,
-      conversationId,
-      uiMessage: {
-        id,
-        role: options.role,
-        metadata: {
-          created_at: date,
-          updated_at: date,
-          agent_id: agentId,
-          conversation_id: conversationId,
-        },
-        parts: options.parts,
-      },
-    };
-    const key = this.conversationKey(conversationId, agentId);
-    const trajectory = this.providerTrajectoryByConversationKey.get(key) ?? [];
-    trajectory.push(entry);
-    this.providerTrajectoryByConversationKey.set(key, trajectory);
-    const conversation = this.conversations.get(key);
-    if (conversation && !conversation.in_context_message_ids.includes(id)) {
-      conversation.in_context_message_ids = [
-        ...conversation.in_context_message_ids,
-        id,
-      ];
-    }
-    if (conversation) {
-      conversation.last_message_at = date;
-      conversation.updated_at = date;
-      this.conversations.set(key, conversation);
-    }
-    this.persistConversationState(conversationId, agentId);
-    return entry;
-  }
-
-  private appendProviderStreamPart(
-    conversationId: string,
-    agentId: string,
-    part: ProviderStreamPart,
-  ): void {
-    const entry = this.assistantEntryForProviderStreamPart(
-      conversationId,
-      agentId,
-    );
-    const capturedPart = cloneProviderStreamPart(part);
-    entry.raw = {
-      ...entry.raw,
-      streamParts: [...(entry.raw?.streamParts ?? []), capturedPart],
-    };
-    this.applyProviderRawCapture(entry, capturedPart);
-    this.applyProviderStreamPartToUI(conversationId, agentId, entry, part);
-    this.persistConversationState(conversationId, agentId);
-  }
-
-  private applyProviderUIMessageSnapshot(
-    conversationId: string,
-    agentId: string,
-    message: ProviderTrajectoryUIMessage,
-  ): void {
-    const entry = this.assistantEntryForProviderStreamPart(
-      conversationId,
-      agentId,
-    );
-    const currentMetadata = entry.uiMessage.metadata;
-    const snapshot = cloneProviderUIMessageSnapshot(message);
-    entry.uiMessage = {
+      existingAssistant?.metadata?.created_at ?? this.currentLocalMessageDate();
+    const snapshot = cloneLocalMessage(message);
+    const localMessage: LocalMessage = {
       ...snapshot,
-      id: entry.uiMessage.id,
+      id,
       role: "assistant",
+      parts: mergeSnapshotPartsWithExistingTools(
+        snapshot.parts,
+        existingAssistant?.parts ?? [],
+      ),
       metadata: {
-        ...currentMetadata,
+        ...existingAssistant?.metadata,
         ...snapshot.metadata,
-        created_at:
-          currentMetadata?.created_at ?? snapshot.metadata?.created_at,
-        updated_at:
-          snapshot.metadata?.updated_at ?? currentMetadata?.updated_at,
-        agent_id: currentMetadata?.agent_id ?? snapshot.metadata?.agent_id,
-        conversation_id:
-          currentMetadata?.conversation_id ??
-          snapshot.metadata?.conversation_id,
-        provider: snapshot.metadata?.provider ?? currentMetadata?.provider,
+        created_at: date,
+        updated_at: date,
+        agent_id: agentId,
+        conversation_id: conversation.id,
       },
     };
-    this.persistConversationState(conversationId, agentId);
-  }
-
-  private applyProviderRawCapture(
-    entry: ProviderTrajectoryMessage,
-    part: ProviderStreamPart,
-  ): void {
-    if (!entry.raw) entry.raw = {};
-
-    if (part.type === "start-step") {
-      entry.raw.request = part.request;
-      entry.raw.warnings = [
-        ...(entry.raw.warnings ?? []),
-        ...(part.warnings ?? []),
-      ];
-      entry.raw.steps = [...(entry.raw.steps ?? []), part];
-      return;
+    if (existingAssistant) {
+      localMessages[localMessages.length - 1] = localMessage;
+    } else {
+      localMessages.push(localMessage);
     }
-
-    if (part.type === "finish-step") {
-      entry.raw.response = part.response;
-      entry.raw.usage = part.usage;
-      entry.raw.providerMetadata = part.providerMetadata;
-      entry.raw.steps = [...(entry.raw.steps ?? []), part];
-      entry.uiMessage.metadata = {
-        ...entry.uiMessage.metadata,
-        updated_at: entry.date,
-        provider: {
-          ...entry.uiMessage.metadata?.provider,
-          model_id: part.response.modelId,
-          response_id: part.response.id,
-          provider_metadata: part.providerMetadata,
-          usage: part.usage,
-        },
-      };
-      return;
-    }
-
-    if (part.type === "finish") {
-      entry.raw.usage = part.totalUsage;
-      entry.uiMessage.metadata = {
-        ...entry.uiMessage.metadata,
-        updated_at: entry.date,
-        provider: {
-          ...entry.uiMessage.metadata?.provider,
-          usage: part.totalUsage,
-        },
-      };
-      return;
-    }
-
-    if ("providerMetadata" in part && part.providerMetadata) {
-      entry.raw.providerMetadata = part.providerMetadata;
-    }
-  }
-
-  private applyProviderStreamPartToUI(
-    conversationId: string,
-    agentId: string,
-    entry: ProviderTrajectoryMessage,
-    part: ProviderStreamPart,
-  ): void {
-    if (part.type === "text-start") {
-      const textPart = this.ensureTextLikePart(entry, "text");
-      textPart.state = "streaming";
-      this.applyPartProviderMetadata(textPart, part);
-      return;
-    }
-
-    if (part.type === "text-delta") {
-      const textPart = this.lastTextLikePart(entry, "text");
-      if (textPart) this.applyPartProviderMetadata(textPart, part);
-      return;
-    }
-
-    if (part.type === "text-end") {
-      const textPart = this.lastTextLikePart(entry, "text");
-      if (textPart) {
-        textPart.state = "done";
-        this.applyPartProviderMetadata(textPart, part);
-      }
-      return;
-    }
-
-    if (part.type === "reasoning-start") {
-      const reasoningPart = this.ensureTextLikePart(entry, "reasoning");
-      reasoningPart.state = "streaming";
-      this.applyPartProviderMetadata(reasoningPart, part);
-      return;
-    }
-
-    if (part.type === "reasoning-delta") {
-      const reasoningPart = this.lastTextLikePart(entry, "reasoning");
-      if (reasoningPart) this.applyPartProviderMetadata(reasoningPart, part);
-      return;
-    }
-
-    if (part.type === "reasoning-end") {
-      const reasoningPart = this.lastTextLikePart(entry, "reasoning");
-      if (reasoningPart) {
-        reasoningPart.state = "done";
-        this.applyPartProviderMetadata(reasoningPart, part);
-      }
-      return;
-    }
-
-    if (part.type === "tool-input-start") {
-      const toolPart = this.ensureStreamingToolPart(entry, part);
-      this.applyToolCallMetadata(toolPart, part);
-      return;
-    }
-
-    if (part.type === "tool-input-delta" || part.type === "tool-input-end") {
-      const match = this.findToolUIPart(conversationId, agentId, part.id);
-      if (match) this.applyToolCallMetadata(match.part, part);
-      return;
-    }
-
-    if (part.type === "tool-call") {
-      const match = this.findToolUIPart(
-        conversationId,
-        agentId,
-        part.toolCallId,
-      );
-      if (match) this.applyToolCallMetadata(match.part, part);
-      return;
-    }
-
-    if (part.type === "tool-result") {
-      this.applyProviderToolResult(conversationId, agentId, entry, part);
-      return;
-    }
-
-    if (part.type === "tool-error") {
-      this.applyProviderToolError(conversationId, agentId, entry, part);
-      return;
-    }
-
-    if (part.type === "source") {
-      this.appendSourcePart(entry, part);
-      return;
-    }
-
-    if (part.type === "file") {
-      entry.uiMessage.parts.push({
-        type: "file",
-        mediaType: part.file.mediaType,
-        url: `data:${part.file.mediaType};base64,${part.file.base64}`,
-        providerMetadata: part.providerMetadata,
-      } as ProviderUIMessagePart);
-    }
-  }
-
-  private assistantEntryForProviderStreamPart(
-    conversationId: string,
-    agentId: string,
-  ): ProviderTrajectoryMessage {
-    const trajectory = this.providerTrajectoryForConversation(
-      conversationId,
+    this.localMessagesByConversationKey.set(key, localMessages);
+    this.touchConversationForLocalMessage(
+      conversation.id,
       agentId,
+      localMessage,
     );
-    const last = trajectory.at(-1);
-    if (last?.uiMessage.role === "assistant") return last;
-
-    return this.appendProviderTrajectoryMessage(conversationId, agentId, {
-      role: "assistant",
-      parts: [],
-    });
+    this.persistConversationState(conversation.id, agentId);
   }
 
-  private ensureTextLikePart(
-    entry: ProviderTrajectoryMessage,
-    type: "text",
-  ): ProviderUITextPart;
-  private ensureTextLikePart(
-    entry: ProviderTrajectoryMessage,
-    type: "reasoning",
-  ): ProviderUIReasoningPart;
-  private ensureTextLikePart(
-    entry: ProviderTrajectoryMessage,
-    type: "text" | "reasoning",
-  ): ProviderUITextPart | ProviderUIReasoningPart {
-    const last =
-      type === "text"
-        ? this.lastTextLikePart(entry, "text")
-        : this.lastTextLikePart(entry, "reasoning");
-    if (last) return last;
-    const part = { type, text: "" } as
-      | ProviderUITextPart
-      | ProviderUIReasoningPart;
-    entry.uiMessage.parts.push(part as ProviderUIMessagePart);
-    return part;
-  }
-
-  private lastTextLikePart(
-    entry: ProviderTrajectoryMessage,
-    type: "text",
-  ): ProviderUITextPart | undefined;
-  private lastTextLikePart(
-    entry: ProviderTrajectoryMessage,
-    type: "reasoning",
-  ): ProviderUIReasoningPart | undefined;
-  private lastTextLikePart(
-    entry: ProviderTrajectoryMessage,
-    type: "text" | "reasoning",
-  ): ProviderUITextPart | ProviderUIReasoningPart | undefined {
-    for (let index = entry.uiMessage.parts.length - 1; index >= 0; index--) {
-      const part = entry.uiMessage.parts[index];
-      if (part?.type === type) {
-        return part as ProviderUITextPart | ProviderUIReasoningPart;
-      }
-    }
-    return undefined;
-  }
-
-  private applyPartProviderMetadata(
-    uiPart: ProviderUITextPart | ProviderUIReasoningPart,
-    streamPart: ProviderStreamPart,
-  ): void {
-    if ("providerMetadata" in streamPart && streamPart.providerMetadata) {
-      uiPart.providerMetadata = streamPart.providerMetadata;
-    }
-  }
-
-  private ensureStreamingToolPart(
-    entry: ProviderTrajectoryMessage,
-    part: Extract<ProviderStreamPart, { type: "tool-input-start" }>,
-  ): ProviderUIToolPart {
-    const existing = entry.uiMessage.parts.find(
-      (uiPart): uiPart is ProviderUIToolPart =>
-        isProviderUIToolPart(uiPart) && uiPart.toolCallId === part.id,
-    );
-    if (existing) return existing;
-    const toolPart = {
-      type: `tool-${part.toolName}`,
-      toolCallId: part.id,
-      state: "input-streaming",
-      input: undefined,
-      title: part.title,
-      providerExecuted: part.providerExecuted,
-    } as ProviderUIToolPart;
-    entry.uiMessage.parts.push(toolPart);
-    return toolPart;
-  }
-
-  private applyToolCallMetadata(
-    uiPart: ProviderUIToolPart,
-    streamPart: ProviderStreamPart,
-  ): void {
-    if ("providerMetadata" in streamPart && streamPart.providerMetadata) {
-      (uiPart as { callProviderMetadata?: unknown }).callProviderMetadata =
-        streamPart.providerMetadata;
-    }
-    if ("providerExecuted" in streamPart) {
-      (uiPart as { providerExecuted?: unknown }).providerExecuted =
-        streamPart.providerExecuted;
-    }
-    if ("title" in streamPart) {
-      (uiPart as { title?: unknown }).title = streamPart.title;
-    }
-  }
-
-  private applyProviderToolResult(
-    conversationId: string,
-    agentId: string,
-    entry: ProviderTrajectoryMessage,
-    part: Extract<ProviderStreamPart, { type: "tool-result" }>,
-  ): void {
-    const match = this.findToolUIPart(conversationId, agentId, part.toolCallId);
-    const toolPart = match?.part ?? this.pushToolPart(entry, part);
-    Object.assign(toolPart, {
-      state: "output-available",
-      input: part.input,
-      output: part.output,
-      preliminary: part.preliminary,
-    });
-    if (part.providerMetadata) {
-      (
-        toolPart as { resultProviderMetadata?: unknown }
-      ).resultProviderMetadata = part.providerMetadata;
-    }
-  }
-
-  private applyProviderToolError(
-    conversationId: string,
-    agentId: string,
-    entry: ProviderTrajectoryMessage,
-    part: Extract<ProviderStreamPart, { type: "tool-error" }>,
-  ): void {
-    const match = this.findToolUIPart(conversationId, agentId, part.toolCallId);
-    const toolPart = match?.part ?? this.pushToolPart(entry, part);
-    Object.assign(toolPart, {
-      state: "output-error",
-      input: part.input,
-      errorText: textFromContent(part.error),
-    });
-    if (part.providerMetadata) {
-      (
-        toolPart as { resultProviderMetadata?: unknown }
-      ).resultProviderMetadata = part.providerMetadata;
-    }
-  }
-
-  private pushToolPart(
-    entry: ProviderTrajectoryMessage,
-    part: Extract<ProviderStreamPart, { toolCallId: string; toolName: string }>,
-  ): ProviderUIToolPart {
-    const toolPart = {
-      type: `tool-${part.toolName}`,
-      toolCallId: part.toolCallId,
-      input: "input" in part ? part.input : undefined,
-    } as ProviderUIToolPart;
-    entry.uiMessage.parts.push(toolPart);
-    return toolPart;
-  }
-
-  private appendSourcePart(
-    entry: ProviderTrajectoryMessage,
-    part: Extract<ProviderStreamPart, { type: "source" }>,
-  ): void {
-    if (part.sourceType === "url") {
-      entry.uiMessage.parts.push({
-        type: "source-url",
-        sourceId: part.id,
-        url: part.url,
-        title: part.title,
-        providerMetadata: part.providerMetadata,
-      } as ProviderUIMessagePart);
-      return;
-    }
-
-    entry.uiMessage.parts.push({
-      type: "source-document",
-      sourceId: part.id,
-      mediaType: part.mediaType,
-      title: part.title,
-      filename: part.filename,
-      providerMetadata: part.providerMetadata,
-    } as ProviderUIMessagePart);
-  }
-
-  private appendAssistantTextProviderMessage(
+  private appendAssistantText(
     conversationId: string,
     agentId: string,
     text: string,
-    storedMessage: StoredMessage,
+    storedChunk: StoredMessage,
   ): void {
-    const entry = this.assistantEntryForAppend(
+    const message = this.assistantLocalMessageForAppend(
       conversationId,
       agentId,
-      storedMessage,
+      storedChunk,
     );
-    const lastPart = entry.uiMessage.parts.at(-1);
+    const lastPart = message.parts.at(-1);
     if (lastPart?.type === "text") {
-      lastPart.text += text;
+      (lastPart as LocalTextPart).text += text;
     } else {
-      entry.uiMessage.parts.push({ type: "text", text });
+      message.parts.push({ type: "text", text } as LocalMessagePart);
     }
-    this.touchLocalMessageMetadata(entry, storedMessage);
+    this.touchLocalMessage(message, storedChunk);
   }
 
-  private appendAssistantReasoningProviderMessage(
+  private appendAssistantReasoning(
     conversationId: string,
     agentId: string,
     text: string,
-    storedMessage: StoredMessage,
+    storedChunk: StoredMessage,
   ): void {
-    const entry = this.assistantEntryForAppend(
+    const message = this.assistantLocalMessageForAppend(
       conversationId,
       agentId,
-      storedMessage,
+      storedChunk,
     );
-    const lastPart = entry.uiMessage.parts.at(-1);
+    const lastPart = message.parts.at(-1);
     if (lastPart?.type === "reasoning") {
-      lastPart.text += text;
+      (lastPart as LocalReasoningPart).text += text;
     } else {
-      entry.uiMessage.parts.push({ type: "reasoning", text });
+      message.parts.push({ type: "reasoning", text } as LocalMessagePart);
     }
-    this.touchLocalMessageMetadata(entry, storedMessage);
+    this.touchLocalMessage(message, storedChunk);
   }
 
-  private appendAssistantToolCallProviderMessage(
+  private appendAssistantToolCall(
     conversationId: string,
     agentId: string,
     toolCall: { toolCallId: string; toolName: string; input: unknown },
-    storedMessage: StoredMessage,
+    storedChunk: StoredMessage,
   ): void {
-    const entry = this.assistantEntryForAppend(
+    const message = this.assistantLocalMessageForAppend(
       conversationId,
       agentId,
-      storedMessage,
+      storedChunk,
     );
     const toolPart = {
       type: `tool-${toolCall.toolName}`,
       toolCallId: toolCall.toolCallId,
       state: "approval-requested",
       input: toolCall.input,
-      approval: { id: storedMessage.id },
-    } as ProviderUIMessagePart;
-    const existing = this.findToolUIPart(
+      approval: { id: storedChunk.id },
+    } as LocalMessagePart;
+    const existing = this.findToolPart(
       conversationId,
       agentId,
       toolCall.toolCallId,
@@ -1697,53 +1144,152 @@ export class LocalStore {
     if (existing) {
       Object.assign(existing.part, toolPart);
     } else {
-      entry.uiMessage.parts.push(toolPart);
+      message.parts.push(toolPart);
     }
-    this.touchLocalMessageMetadata(entry, storedMessage);
+    this.touchLocalMessage(message, storedChunk);
   }
 
-  private assistantEntryForAppend(
+  private applyApprovalResults(
     conversationId: string,
     agentId: string,
-    storedMessage: StoredMessage,
-  ): ProviderTrajectoryMessage {
-    const trajectory = this.providerTrajectoryForConversation(
-      conversationId,
-      agentId,
-    );
-    const last = trajectory.at(-1);
-    if (last?.uiMessage.role === "assistant") {
+    approvals: unknown[],
+  ): void {
+    let touched = false;
+    for (const approval of approvals) {
+      if (!isRecord(approval)) continue;
+      const toolCallId = approval.tool_call_id;
+      if (typeof toolCallId !== "string") continue;
+      const match = this.findToolPart(conversationId, agentId, toolCallId);
+      if (!match) continue;
+      if (isSettledLocalToolState((match.part as { state?: unknown }).state)) {
+        continue;
+      }
+
+      if (approval.type === "approval" && approval.approve === false) {
+        delete (match.part as { approval?: unknown }).approval;
+        Object.assign(match.part, {
+          state: "output-error",
+          errorText:
+            typeof approval.reason === "string"
+              ? approval.reason
+              : "Tool execution denied.",
+        });
+        this.touchLocalMessageForApproval(match.message);
+        touched = true;
+        continue;
+      }
+
+      if (approval.type !== "tool") continue;
+      delete (match.part as { approval?: unknown }).approval;
+      Object.assign(match.part, {
+        state: "output-available",
+        output: approval.tool_return,
+      });
+      this.touchLocalMessageForApproval(match.message);
+      touched = true;
+    }
+    if (touched) {
+      this.persistConversationState(conversationId, agentId);
+    }
+  }
+
+  private findToolPart(
+    conversationId: string,
+    agentId: string,
+    toolCallId: string,
+  ): { message: LocalMessage; part: LocalToolPart } | undefined {
+    const messages = this.localMessagesForConversation(conversationId, agentId);
+    for (
+      let messageIndex = messages.length - 1;
+      messageIndex >= 0;
+      messageIndex--
+    ) {
+      const message = messages[messageIndex];
+      if (!message || message.role !== "assistant") continue;
+      for (
+        let partIndex = message.parts.length - 1;
+        partIndex >= 0;
+        partIndex--
+      ) {
+        const part = message.parts[partIndex];
+        if (part && isLocalToolPart(part) && part.toolCallId === toolCallId) {
+          return { message, part };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private assistantLocalMessageForAppend(
+    conversationId: string,
+    agentId: string,
+    _storedChunk: StoredMessage,
+  ): LocalMessage {
+    const conversation = this.ensureConversation(conversationId, agentId);
+    const key = this.conversationKey(conversation.id, agentId);
+    const messages = this.localMessagesByConversationKey.get(key) ?? [];
+    const last = messages.at(-1);
+    if (last?.role === "assistant") {
       return last;
     }
 
-    return this.appendProviderTrajectoryMessage(conversationId, agentId, {
-      storedMessage,
+    const id = this.nextLocalMessageId();
+    const date = this.currentLocalMessageDate();
+    const message: LocalMessage = {
+      id,
       role: "assistant",
+      metadata: {
+        created_at: date,
+        updated_at: date,
+        agent_id: agentId,
+        conversation_id: conversation.id,
+      },
       parts: [],
-    });
-  }
-
-  private touchLocalMessageMetadata(
-    entry: ProviderTrajectoryMessage,
-    storedMessage: StoredMessage,
-  ): void {
-    entry.uiMessage.metadata = {
-      ...entry.uiMessage.metadata,
-      updated_at: storedMessage.date,
-      agent_id: entry.agentId,
-      conversation_id: entry.conversationId,
     };
-    this.persistConversationState(entry.conversationId, entry.agentId);
+    messages.push(message);
+    this.localMessagesByConversationKey.set(key, messages);
+    this.touchConversationForLocalMessage(conversation.id, agentId, message);
+    return message;
   }
 
-  private providerTrajectoryForConversation(
-    conversationId: string,
-    agentId: string,
-  ): ProviderTrajectoryMessage[] {
-    const key = this.conversationKey(conversationId, agentId);
-    const trajectory = this.providerTrajectoryByConversationKey.get(key) ?? [];
-    this.providerTrajectoryByConversationKey.set(key, trajectory);
-    return trajectory;
+  private touchLocalMessage(
+    message: LocalMessage,
+    storedChunk: StoredMessage,
+  ): void {
+    message.metadata = {
+      ...message.metadata,
+      updated_at: storedChunk.date,
+      agent_id: storedChunk.agent_id,
+      conversation_id: storedChunk.conversation_id,
+    };
+    this.touchConversationForLocalMessage(
+      storedChunk.conversation_id,
+      storedChunk.agent_id,
+      message,
+    );
+    this.persistConversationState(
+      storedChunk.conversation_id,
+      storedChunk.agent_id,
+    );
+  }
+
+  private touchLocalMessageForApproval(message: LocalMessage): void {
+    const agentId =
+      typeof message.metadata?.agent_id === "string"
+        ? message.metadata.agent_id
+        : this.defaultAgentId;
+    const conversationId =
+      typeof message.metadata?.conversation_id === "string"
+        ? message.metadata.conversation_id
+        : "default";
+    const updatedAt = this.nextLocalMessageDate();
+    message.metadata = {
+      ...message.metadata,
+      updated_at: updatedAt,
+      agent_id: agentId,
+      conversation_id: conversationId,
+    };
+    this.touchConversationForLocalMessage(conversationId, agentId, message);
   }
 
   private toolCallFromChunk(
@@ -1772,120 +1318,20 @@ export class LocalStore {
     };
   }
 
-  private applyApprovalResultsToProviderTrajectory(
-    conversationId: string,
-    agentId: string,
-    approvals: unknown[],
-    storedMessage: StoredMessage,
-  ): void {
-    for (const approval of approvals) {
-      if (!isRecord(approval)) continue;
-      const toolCallId = approval.tool_call_id;
-      if (typeof toolCallId !== "string") continue;
-      const match = this.findToolUIPart(conversationId, agentId, toolCallId);
-      if (!match) continue;
-
-      if (approval.type === "approval" && approval.approve === false) {
-        delete (match.part as { approval?: unknown }).approval;
-        Object.assign(match.part, {
-          state: "output-error",
-          errorText:
-            typeof approval.reason === "string"
-              ? approval.reason
-              : "Tool execution denied.",
-        });
-        this.touchLocalMessageMetadata(match.entry, storedMessage);
-        continue;
-      }
-
-      if (approval.type !== "tool") continue;
-      delete (match.part as { approval?: unknown }).approval;
-      Object.assign(match.part, {
-        state: "output-available",
-        output: textFromContent(approval.tool_return),
-      });
-      this.touchLocalMessageMetadata(match.entry, storedMessage);
-    }
-  }
-
-  private findToolUIPart(
-    conversationId: string,
-    agentId: string,
-    toolCallId: string,
-  ):
-    | { entry: ProviderTrajectoryMessage; part: ProviderUIToolPart }
-    | undefined {
-    const trajectory = this.providerTrajectoryForConversation(
-      conversationId,
-      agentId,
-    );
-    for (
-      let entryIndex = trajectory.length - 1;
-      entryIndex >= 0;
-      entryIndex--
-    ) {
-      const entry = trajectory[entryIndex];
-      if (!entry) continue;
-      if (entry.uiMessage.role !== "assistant") continue;
-      for (
-        let partIndex = entry.uiMessage.parts.length - 1;
-        partIndex >= 0;
-        partIndex--
-      ) {
-        const part = entry.uiMessage.parts[partIndex];
-        if (!part) continue;
-        if (isProviderUIToolPart(part) && part.toolCallId === toolCallId) {
-          return { entry, part };
-        }
-      }
-    }
-    return undefined;
-  }
-
-  private appendInputMessage(
-    conversationId: string,
-    agentId: string,
-    message: Record<string, unknown>,
-  ): StoredMessage {
-    const content =
-      message.type === "approval"
-        ? (message.approvals ?? [])
-        : normalizeContent(message.content);
-    return this.appendMessage(conversationId, agentId, {
-      message_type: getMessageType(message),
-      role: message.role,
-      content,
-      otid: message.otid,
-      approvals: message.approvals,
-    });
-  }
-
-  private appendMessage(
+  private createStoredChunk(
     conversationId: string,
     agentId: string,
     fields: Record<string, unknown>,
   ): StoredMessage {
     const conversation = this.ensureConversation(conversationId, agentId);
     this.messageSeq += 1;
-    const id = `msg-fake-headless-${this.messageSeq}`;
-    const message = {
-      id,
+    return {
+      id: `msg-fake-headless-${this.messageSeq}`,
       date: new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq)).toISOString(),
       agent_id: agentId,
       conversation_id: conversation.id,
       ...fields,
     } as StoredMessage;
-
-    const key = this.conversationKey(conversation.id, agentId);
-    const messages = this.messagesByConversationKey.get(key) ?? [];
-    messages.push(message);
-    this.messagesByConversationKey.set(key, messages);
-    this.messagesById.set(id, [message]);
-
-    this.ensureAgent(agentId);
-    this.persistConversationState(conversation.id, agentId);
-
-    return message;
   }
 
   private applyListOptions(
@@ -1925,25 +1371,25 @@ export class LocalStore {
   ): StoredMessage[] {
     const key = this.conversationKey(conversationId, agentId);
     const conversation = this.conversations.get(key);
-    const localMessages = (
-      this.providerTrajectoryByConversationKey.get(key) ?? []
-    ).map((entry) => entry.uiMessage);
     const resolvedConversationId = conversation?.id ?? conversationId;
-    const messages = localMessages.flatMap((message, index) => {
+    const localMessages = this.localMessagesByConversationKey.get(key) ?? [];
+    const messages: StoredMessage[] = [];
+    for (let index = 0; index < localMessages.length; index++) {
+      const localMessage = localMessages[index];
+      if (!localMessage) continue;
       const projected = projectLocalMessageToStoredMessages(
-        message,
+        localMessage,
         agentId,
         resolvedConversationId,
         new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
       );
-      if (projected.length > 0) {
-        this.messagesById.set(message.id, projected);
+      messages.push(...projected);
+      for (const [lookupKey, lookupMessages] of projectedMessageLookupKeys(
+        localMessage,
+        projected,
+      )) {
+        this.messagesById.set(lookupKey, lookupMessages);
       }
-      return projected;
-    });
-    this.messagesByConversationKey.set(key, messages);
-    for (const message of messages) {
-      this.messagesById.set(message.id, [message]);
     }
     return messages;
   }
@@ -1958,33 +1404,98 @@ export class LocalStore {
     }
   }
 
-  private cloneProviderTrajectoryForFork(
-    trajectory: ProviderTrajectoryMessage[],
+  private localMessagesForConversation(
     conversationId: string,
     agentId: string,
-  ): ProviderTrajectoryMessage[] {
-    return trajectory.map((entry) => {
-      this.providerTrajectorySeq += 1;
-      const id = `provider-msg-fake-headless-${this.providerTrajectorySeq}`;
-      const uiMessage = cloneLocalMessage(entry.uiMessage);
-      return {
-        type: "letta_provider_ui_message",
-        schemaVersion: 1,
-        id,
-        date: entry.date,
-        agentId,
-        conversationId,
-        uiMessage: {
-          ...uiMessage,
-          id,
-          metadata: {
-            ...uiMessage.metadata,
-            agent_id: agentId,
-            conversation_id: conversationId,
-          },
-        },
-      };
-    });
+  ): LocalMessage[] {
+    const key = this.conversationKey(conversationId, agentId);
+    const messages = this.localMessagesByConversationKey.get(key) ?? [];
+    this.localMessagesByConversationKey.set(key, messages);
+    return messages;
+  }
+
+  private pushLocalMessage(
+    conversationId: string,
+    agentId: string,
+    message: LocalMessage,
+  ): void {
+    const key = this.conversationKey(conversationId, agentId);
+    const messages = this.localMessagesByConversationKey.get(key) ?? [];
+    messages.push(message);
+    this.localMessagesByConversationKey.set(key, messages);
+    this.touchConversationForLocalMessage(conversationId, agentId, message);
+    this.persistConversationState(conversationId, agentId);
+  }
+
+  private touchConversationForLocalMessage(
+    conversationId: string,
+    agentId: string,
+    message: LocalMessage,
+  ): void {
+    const key = this.conversationKey(conversationId, agentId);
+    const conversation = this.conversations.get(key);
+    if (!conversation) return;
+    if (!conversation.in_context_message_ids.includes(message.id)) {
+      conversation.in_context_message_ids = [
+        ...conversation.in_context_message_ids,
+        message.id,
+      ];
+    }
+    const date = localMessageDate(
+      message,
+      new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq + 1)).toISOString(),
+    );
+    conversation.last_message_at = date;
+    conversation.updated_at = date;
+    this.conversations.set(key, conversation);
+  }
+
+  private cloneLocalMessageForConversation(
+    message: LocalMessage,
+    conversationId: string,
+    agentId: string,
+  ): LocalMessage {
+    const cloned = cloneLocalMessage(message);
+    const date = cloned.metadata?.created_at ?? this.nextLocalMessageDate();
+    return {
+      ...cloned,
+      id: this.nextLocalMessageId(),
+      metadata: {
+        ...cloned.metadata,
+        created_at: date,
+        updated_at: cloned.metadata?.updated_at ?? date,
+        agent_id: agentId,
+        conversation_id: conversationId,
+      },
+    };
+  }
+
+  private localPartsFromInputContent(content: unknown): LocalMessagePart[] {
+    if (typeof content === "string") return [{ type: "text", text: content }];
+    if (!Array.isArray(content)) return textContent(textFromContent(content));
+    const parts: LocalMessagePart[] = [];
+    for (const part of content) {
+      if (!isRecord(part)) continue;
+      if (part.type === "text" && typeof part.text === "string") {
+        parts.push({ type: "text", text: part.text } as LocalMessagePart);
+        continue;
+      }
+      parts.push(part as LocalMessagePart);
+    }
+    return parts.length > 0 ? parts : textContent(textFromContent(content));
+  }
+
+  private nextLocalMessageId(): string {
+    this.localMessageSeq += 1;
+    return `provider-msg-fake-headless-${this.localMessageSeq}`;
+  }
+
+  private nextLocalMessageDate(): string {
+    return timestampForSequence(this.localMessageSeq + 1);
+  }
+
+  private currentLocalMessageDate(): string {
+    return timestampForSequence(this.localMessageSeq);
   }
 
   private loadFromStorage(): void {
@@ -2019,13 +1530,6 @@ export class LocalStore {
         const localMessages = readJsonlFile<LocalMessage>(
           join(conversationDir, "messages.jsonl"),
         );
-        const providerTrajectory = localMessages.map((message) =>
-          localMessageToProviderTrajectoryMessage(
-            message,
-            conversation.agent_id,
-            conversation.id,
-          ),
-        );
         const messages = projectLocalMessagesToStoredMessages(
           localMessages,
           conversation.agent_id,
@@ -2033,25 +1537,23 @@ export class LocalStore {
         );
 
         this.conversations.set(key, conversation);
-        this.messagesByConversationKey.set(key, messages);
-        this.providerTrajectoryByConversationKey.set(key, providerTrajectory);
+        this.localMessagesByConversationKey.set(key, localMessages);
         this.conversationSeq = Math.max(
           this.conversationSeq,
           numericSuffix(conversation.id, "conv-fake-headless-"),
         );
 
+        for (const localMessage of localMessages) {
+          this.localMessageSeq = Math.max(
+            this.localMessageSeq,
+            numericSuffix(localMessage.id, "provider-msg-fake-headless-"),
+          );
+        }
         for (const message of messages) {
           this.messagesById.set(message.id, [message]);
           this.messageSeq = Math.max(
             this.messageSeq,
             numericSuffix(message.id, "msg-fake-headless-"),
-          );
-        }
-
-        for (const entry of providerTrajectory) {
-          this.providerTrajectorySeq = Math.max(
-            this.providerTrajectorySeq,
-            numericSuffix(entry.id, "provider-msg-fake-headless-"),
           );
         }
       }
@@ -2079,7 +1581,13 @@ export class LocalStore {
     const messageIds = defaultMessages.map((message) => message.id);
     const inContextMessageIds =
       this.conversations.get(key)?.in_context_message_ids ?? messageIds;
-    return projectAgentState(record, messageIds, inContextMessageIds);
+    const lastRunCompletion = defaultMessages.at(-1)?.date ?? null;
+    return projectAgentState(
+      record,
+      messageIds,
+      inContextMessageIds,
+      lastRunCompletion,
+    );
   }
 
   private persistConversationState(
@@ -2103,11 +1611,7 @@ export class LocalStore {
     );
     writeFileSync(
       join(conversationDir, "messages.jsonl"),
-      jsonl(
-        (this.providerTrajectoryByConversationKey.get(key) ?? []).map(
-          (entry) => entry.uiMessage,
-        ),
-      ),
+      jsonl(this.localMessagesByConversationKey.get(key) ?? []),
     );
   }
 
@@ -2130,8 +1634,7 @@ export class LocalStore {
       shouldAdvanceSequence ? this.conversationSeq : this.conversationSeq + 1,
     );
     this.conversations.set(key, conversation);
-    this.messagesByConversationKey.set(key, []);
-    this.providerTrajectoryByConversationKey.set(key, []);
+    this.localMessagesByConversationKey.set(key, []);
     this.persistConversationState(conversation.id, resolvedAgentId);
     return conversation;
   }

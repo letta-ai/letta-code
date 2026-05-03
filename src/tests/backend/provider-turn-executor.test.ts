@@ -8,7 +8,6 @@ import type {
   ConversationMessageListBody,
 } from "../../backend";
 import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
-import type { ProviderStreamPart } from "../../backend/dev/ProviderTrajectory";
 import {
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
@@ -16,6 +15,7 @@ import {
   providerStreamPart,
   providerUIMessage,
 } from "../../backend/dev/ProviderTurnExecutor";
+import type { ProviderStreamPart } from "../../backend/local/LocalStreamChunks";
 
 function streamPart(part: Record<string, unknown>) {
   return providerStreamPart(part as ProviderStreamPart);
@@ -118,9 +118,6 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual([
       { role: "user", parts: [{ type: "text", text: "hello provider" }] },
     ]);
-    expect(captured?.providerTrajectory[0]?.type).toBe(
-      "letta_provider_ui_message",
-    );
     expect(captured?.clientTools).toHaveLength(1);
 
     const page = await backend.listConversationMessages(conversation.id, {
@@ -180,7 +177,7 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual(["user_message", "approval_request_message"]);
   });
 
-  test("passes AI SDK provider trajectory through tool-call continuations", async () => {
+  test("passes persisted UIMessage tool outputs through continuations", async () => {
     const capturedMessages: ProviderTurnInput["uiMessages"][] = [];
     const adapter: ProviderStreamAdapter = {
       async *stream(input) {
@@ -404,7 +401,7 @@ describe("ProviderTurnExecutor", () => {
     expect(assistantChunks[0]?.otid).toBe(assistantChunks[1]?.otid);
   });
 
-  test("persists reasoning deltas in the provider UI trajectory", async () => {
+  test("persists reasoning deltas in local UIMessage history", async () => {
     const capturedMessages: ProviderTurnInput["uiMessages"][] = [];
     let turn = 0;
     const adapter: ProviderStreamAdapter = {
@@ -430,11 +427,34 @@ describe("ProviderTurnExecutor", () => {
       agent_id: "agent-provider",
     });
 
-    await drainAssistantText(
+    const firstTurnChunks = await collectStream(
       await backend.createConversationMessageStream(
         conversation.id,
         createBody("reason first"),
       ),
+    );
+    expect(
+      firstTurnChunks.map((chunk) =>
+        chunk.message_type === "reasoning_message"
+          ? { message_type: chunk.message_type, reasoning: chunk.reasoning }
+          : { message_type: chunk.message_type },
+      ),
+    ).toContainEqual({
+      message_type: "reasoning_message",
+      reasoning: "think",
+    });
+    expect(
+      firstTurnChunks.some(
+        (chunk) =>
+          chunk.message_type === "assistant_message" &&
+          JSON.stringify(chunk).includes("think"),
+      ),
+    ).toBe(false);
+
+    await drainAssistantText(
+      (async function* () {
+        for (const chunk of firstTurnChunks) yield chunk;
+      })(),
     );
     await drainAssistantText(
       await backend.createConversationMessageStream(
@@ -467,7 +487,7 @@ describe("ProviderTurnExecutor", () => {
     ]);
   });
 
-  test("uses AI SDK UIMessage snapshots as the provider trajectory source", async () => {
+  test("uses AI SDK UIMessage snapshots as the local history source", async () => {
     const capturedMessages: ProviderTurnInput["uiMessages"][] = [];
     let turn = 0;
     const adapter: ProviderStreamAdapter = {
@@ -537,12 +557,56 @@ describe("ProviderTurnExecutor", () => {
     ]);
   });
 
-  test("preserves full provider stream parts in the raw trajectory sidecar", async () => {
-    const capturedTrajectories: ProviderTurnInput["providerTrajectory"][] = [];
+  test("preserves pending tool parts when the final UI snapshot omits them", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield streamPart({
+          type: "tool-call",
+          toolCallId: "provider-tool-snapshot",
+          toolName: "ShellCommand",
+          input: { command: "echo snapshot", login: false },
+        });
+        yield streamPart({ type: "finish", finishReason: "tool-calls" });
+        yield providerUIMessage({
+          id: "sdk-snapshot-without-tool",
+          role: "assistant",
+          parts: [{ type: "step-start" }],
+        });
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("call snapshot tool"),
+      ),
+    );
+
+    const page = await backend.listConversationMessages(conversation.id, {
+      order: "asc",
+    } as ConversationMessageListBody);
+    const messages = page.getPaginatedItems();
+    expect(messages.map((message) => message.message_type)).toEqual([
+      "user_message",
+      "approval_request_message",
+    ]);
+    expect(JSON.stringify(messages)).toContain("provider-tool-snapshot");
+    expect(JSON.stringify(messages)).toContain("ShellCommand");
+  });
+
+  test("passes persisted UI messages back to later provider turns", async () => {
+    const capturedMessages: ProviderTurnInput["uiMessages"][] = [];
     let turn = 0;
     const adapter: ProviderStreamAdapter = {
       async *stream(input) {
-        capturedTrajectories.push(input.providerTrajectory);
+        capturedMessages.push(input.uiMessages);
         turn += 1;
         if (turn === 1) {
           yield streamPart({
@@ -611,49 +675,19 @@ describe("ProviderTurnExecutor", () => {
       ),
     );
 
-    const assistantEntry = capturedTrajectories[1]?.find(
-      (entry) => entry.uiMessage.role === "assistant",
-    );
     expect(
-      assistantEntry?.raw?.streamParts?.map(
-        (part) => (part as { type?: unknown }).type,
-      ),
+      capturedMessages[1]?.map((message) => ({
+        role: message.role,
+        parts: message.parts,
+      })),
     ).toEqual([
-      "start-step",
-      "text-start",
-      "text-delta",
-      "text-end",
-      "raw",
-      "finish-step",
-      "finish",
-    ]);
-    expect(assistantEntry?.raw?.request).toEqual({
-      body: { input: "raw first" },
-    });
-    expect(assistantEntry?.raw?.response).toMatchObject({
-      id: "resp-raw-1",
-      modelId: "gpt-test",
-    });
-    expect(assistantEntry?.raw?.providerMetadata).toEqual({
-      openai: { responseId: "resp-raw-1" },
-    });
-    expect(assistantEntry?.uiMessage.metadata?.provider).toEqual({
-      model_id: "gpt-test",
-      response_id: "resp-raw-1",
-      provider_metadata: { openai: { responseId: "resp-raw-1" } },
-      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
-    });
-    expect(assistantEntry?.uiMessage.parts).toEqual([
-      {
-        type: "text",
-        text: "raw hello",
-        state: "done",
-        providerMetadata: { openai: { itemId: "item-text" } },
-      },
+      { role: "user", parts: [{ type: "text", text: "raw first" }] },
+      { role: "assistant", parts: [{ type: "text", text: "raw hello" }] },
+      { role: "user", parts: [{ type: "text", text: "raw second" }] },
     ]);
   });
 
-  test("reloads provider UI trajectory from flatfile storage", async () => {
+  test("reloads local UIMessage history from flatfile storage", async () => {
     const storageDir = mkdtempSync(join(tmpdir(), "letta-provider-store-"));
     try {
       const firstAdapter: ProviderStreamAdapter = {
@@ -758,8 +792,8 @@ describe("ProviderTurnExecutor", () => {
         page.getPaginatedItems().map((message) => message.message_type),
       ).toEqual([
         "user_message",
-        "approval_request_message",
-        "approval_response_message",
+        "tool_call_message",
+        "tool_return_message",
         "assistant_message",
       ]);
     } finally {

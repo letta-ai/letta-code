@@ -1,16 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type { LocalMessage } from "../local/LocalMessage";
 import type { LocalAgentRecord, StoredMessage } from "../local/LocalStore";
 import {
-  attachProviderStreamPart,
-  attachProviderUIMessage,
-  markProviderStreamPartOnly,
+  attachLocalUIMessage,
+  markLocalStateChunkOnly,
   type ProviderStreamPart,
-  type ProviderTrajectoryMessage,
-  type ProviderTrajectoryUIMessage,
-  providerUIMessages,
-} from "../local/ProviderTrajectory";
+} from "../local/LocalStreamChunks";
 import type {
   HeadlessTurnBody,
   HeadlessTurnExecutor,
@@ -23,15 +20,14 @@ export interface ProviderTurnInput {
   agent: LocalAgentRecord;
   body: HeadlessTurnBody;
   history: StoredMessage[];
-  providerTrajectory: ProviderTrajectoryMessage[];
-  uiMessages: ProviderTrajectoryUIMessage[];
+  uiMessages: LocalMessage[];
   clientTools: unknown[];
   clientSkills: unknown[];
 }
 
 export type ProviderStreamEvent =
   | { type: "ai-sdk-part"; part: ProviderStreamPart }
-  | { type: "ai-sdk-ui-message"; message: ProviderTrajectoryUIMessage }
+  | { type: "ai-sdk-ui-message"; message: LocalMessage }
   | { type: "error"; error: unknown };
 
 export function providerStreamPart(
@@ -40,9 +36,7 @@ export function providerStreamPart(
   return { type: "ai-sdk-part", part };
 }
 
-export function providerUIMessage(
-  message: ProviderTrajectoryUIMessage,
-): ProviderStreamEvent {
+export function providerUIMessage(message: LocalMessage): ProviderStreamEvent {
   return { type: "ai-sdk-ui-message", message };
 }
 
@@ -79,8 +73,7 @@ export function buildProviderTurnInput(
     agent: input.agent,
     body: input.body,
     history: input.history,
-    providerTrajectory: input.providerTrajectory,
-    uiMessages: providerUIMessages(input.providerTrajectory),
+    uiMessages: input.uiMessages,
     clientTools: bodyListField(input.body, "client_tools"),
     clientSkills: bodyListField(input.body, "client_skills"),
   };
@@ -95,27 +88,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function createProviderStreamPartChunk(
-  part: ProviderStreamPart,
+function createLocalUIMessageChunk(
+  message: LocalMessage,
 ): LettaStreamingResponse {
-  return markProviderStreamPartOnly(
-    attachProviderStreamPart({ message_type: "provider_stream_part" }, part),
+  return markLocalStateChunkOnly(
+    attachLocalUIMessage({ message_type: "local_ui_message" }, message),
   ) as unknown as LettaStreamingResponse;
-}
-
-function createProviderUIMessageChunk(
-  message: ProviderTrajectoryUIMessage,
-): LettaStreamingResponse {
-  return markProviderStreamPartOnly(
-    attachProviderUIMessage({ message_type: "provider_ui_message" }, message),
-  ) as unknown as LettaStreamingResponse;
-}
-
-function withProviderStreamPart(
-  chunk: LettaStreamingResponse,
-  part: ProviderStreamPart,
-): LettaStreamingResponse {
-  return attachProviderStreamPart(chunk, part);
 }
 
 function createProviderLettaStream(
@@ -127,6 +105,7 @@ function createProviderLettaStream(
     async *[Symbol.asyncIterator]() {
       let sawToolCall = false;
       const assistantOtid = `provider-assistant-${randomUUID()}`;
+      const reasoningOtid = `provider-reasoning-${randomUUID()}`;
       try {
         for await (const event of events) {
           if (event.type === "error") {
@@ -142,84 +121,64 @@ function createProviderLettaStream(
           }
 
           if (event.type === "ai-sdk-ui-message") {
-            yield createProviderUIMessageChunk(event.message);
+            yield createLocalUIMessageChunk(event.message);
             continue;
           }
 
           const { part } = event;
           if (part.type === "text-delta") {
-            yield withProviderStreamPart(
-              {
-                message_type: "assistant_message",
-                otid: assistantOtid,
-                content: [{ type: "text", text: part.text }],
-              } as LettaStreamingResponse,
-              part,
-            );
+            yield {
+              message_type: "assistant_message",
+              otid: assistantOtid,
+              content: [{ type: "text", text: part.text }],
+            } as LettaStreamingResponse;
             continue;
           }
 
           if (part.type === "reasoning-delta") {
-            yield withProviderStreamPart(
-              {
-                message_type: "assistant_message",
-                otid: assistantOtid,
-                content: [{ type: "reasoning", text: part.text }],
-              } as unknown as LettaStreamingResponse,
-              part,
-            );
+            yield {
+              message_type: "reasoning_message",
+              otid: reasoningOtid,
+              reasoning: part.text,
+            } as LettaStreamingResponse;
             continue;
           }
 
           if (part.type === "tool-call") {
             sawToolCall = true;
-            yield withProviderStreamPart(
-              {
-                message_type: "approval_request_message",
-                tool_call: {
-                  tool_call_id: part.toolCallId,
-                  name: part.toolName,
-                  arguments: stringifyToolInput(part.input),
-                },
-              } as LettaStreamingResponse,
-              part,
-            );
+            yield {
+              message_type: "approval_request_message",
+              tool_call: {
+                tool_call_id: part.toolCallId,
+                name: part.toolName,
+                arguments: stringifyToolInput(part.input),
+              },
+            } as LettaStreamingResponse;
             continue;
           }
 
           if (part.type === "finish") {
-            yield withProviderStreamPart(
-              {
-                message_type: "stop_reason",
-                stop_reason:
-                  sawToolCall || part.finishReason === "tool-calls"
-                    ? "requires_approval"
-                    : "end_turn",
-              } as LettaStreamingResponse,
-              part,
-            );
+            yield {
+              message_type: "stop_reason",
+              stop_reason:
+                sawToolCall || part.finishReason === "tool-calls"
+                  ? "requires_approval"
+                  : "end_turn",
+            } as LettaStreamingResponse;
             continue;
           }
 
           if (part.type === "error") {
-            yield withProviderStreamPart(
-              {
-                message_type: "error_message",
-                message: errorMessage(part.error),
-              } as LettaStreamingResponse,
-              part,
-            );
-            yield withProviderStreamPart(
-              {
-                message_type: "stop_reason",
-                stop_reason: "error",
-              } as LettaStreamingResponse,
-              part,
-            );
+            yield {
+              message_type: "error_message",
+              message: errorMessage(part.error),
+            } as LettaStreamingResponse;
+            yield {
+              message_type: "stop_reason",
+              stop_reason: "error",
+            } as LettaStreamingResponse;
             return;
           }
-
-          yield createProviderStreamPartChunk(part);
         }
       } catch (error) {
         yield {

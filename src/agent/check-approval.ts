@@ -88,27 +88,23 @@ export interface GetResumeDataOptions {
   includeMessageHistory?: boolean;
 }
 
-/**
- * Extract approval requests from an approval_request_message.
- * Exported for testing parallel tool call handling.
- */
-export function extractApprovals(messageToCheck: Message): {
-  pendingApproval: ApprovalRequest | null;
-  pendingApprovals: ApprovalRequest[];
-} {
-  // Cast to access tool_calls with proper typing
-  const approvalMsg = messageToCheck as Message & {
-    tool_calls?: Array<{
-      tool_call_id?: string;
-      name?: string;
-      arguments?: string;
-    }>;
-    tool_call?: {
-      tool_call_id?: string;
-      name?: string;
-      arguments?: string;
-    };
+type ApprovalMessage = Message & {
+  tool_calls?: Array<{
+    tool_call_id?: string;
+    name?: string;
+    arguments?: string;
+  }>;
+  tool_call?: {
+    tool_call_id?: string;
+    name?: string;
+    arguments?: string;
   };
+};
+
+function approvalRequestsFromMessage(
+  messageToCheck: Message,
+): ApprovalRequest[] {
+  const approvalMsg = messageToCheck as ApprovalMessage;
 
   // Use tool_calls array (new) or fallback to tool_call (deprecated)
   const toolCalls = Array.isArray(approvalMsg.tool_calls)
@@ -123,7 +119,7 @@ export function extractApprovals(messageToCheck: Message): {
     name?: string;
     arguments?: string;
   };
-  const pendingApprovals = toolCalls
+  return toolCalls
     .filter(
       (tc: ToolCallEntry): tc is ToolCallEntry & { tool_call_id: string } =>
         !!tc && !!tc.tool_call_id,
@@ -133,15 +129,29 @@ export function extractApprovals(messageToCheck: Message): {
       toolName: tc.name || "",
       toolArgs: tc.arguments || "",
     }));
+}
 
-  const pendingApproval = pendingApprovals[0] || null;
-
+function logPendingApprovals(pendingApprovals: ApprovalRequest[]): void {
   if (pendingApprovals.length > 0) {
     debugWarn(
       "check-approval",
       `Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
     );
   }
+}
+
+/**
+ * Extract approval requests from an approval_request_message.
+ * Exported for testing parallel tool call handling.
+ */
+export function extractApprovals(messageToCheck: Message): {
+  pendingApproval: ApprovalRequest | null;
+  pendingApprovals: ApprovalRequest[];
+} {
+  const pendingApprovals = approvalRequestsFromMessage(messageToCheck);
+  const pendingApproval = pendingApprovals[0] || null;
+
+  logPendingApprovals(pendingApprovals);
 
   return { pendingApproval, pendingApprovals };
 }
@@ -459,7 +469,11 @@ export async function getResumeDataFromBackend(
         ) ?? retrievedMessages[0];
 
       if (messageToCheck) {
-        debugWarn(
+        const logFoundMessage =
+          messageToCheck.message_type === "approval_request_message"
+            ? debugWarn
+            : debugLog;
+        logFoundMessage(
           "check-approval",
           `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
             (retrievedMessages.length > 1
@@ -540,7 +554,11 @@ export async function getResumeDataFromBackend(
           ) ?? retrievedMessages[0];
 
         if (messageToCheck) {
-          debugWarn(
+          const logFoundMessage =
+            messageToCheck.message_type === "approval_request_message"
+              ? debugWarn
+              : debugLog;
+          logFoundMessage(
             "check-approval",
             `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
               (retrievedMessages.length > 1
@@ -608,7 +626,11 @@ export async function getResumeDataFromBackend(
         lastDefaultMessage;
 
       if (messageToCheck) {
-        debugWarn(
+        const logFoundMessage =
+          messageToCheck.message_type === "approval_request_message"
+            ? debugWarn
+            : debugLog;
+        logFoundMessage(
           "check-approval",
           `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
             (latestMessageVariants.length > 1

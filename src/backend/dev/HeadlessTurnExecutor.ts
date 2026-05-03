@@ -4,8 +4,8 @@ import type {
   ConversationMessageCreateBody,
   ConversationMessageStreamBody,
 } from "../backend";
+import type { LocalMessage } from "../local/LocalMessage";
 import type { LocalAgentRecord, StoredMessage } from "../local/LocalStore";
-import type { ProviderTrajectoryMessage } from "../local/ProviderTrajectory";
 
 export type HeadlessTurnBody =
   | ConversationMessageCreateBody
@@ -17,7 +17,7 @@ export interface HeadlessTurnExecutorInput {
   agent: LocalAgentRecord;
   body: HeadlessTurnBody;
   history: StoredMessage[];
-  providerTrajectory: ProviderTrajectoryMessage[];
+  uiMessages: LocalMessage[];
 }
 
 export interface HeadlessTurnExecutor {

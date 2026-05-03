@@ -18,7 +18,7 @@ import {
   LocalStore,
   type LocalStoreOptions,
 } from "../local/LocalStore";
-import { isProviderStreamPartOnly } from "../local/ProviderTrajectory";
+import { isLocalStateChunkOnly } from "../local/LocalStreamChunks";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
@@ -122,6 +122,17 @@ export class FakeHeadlessBackend implements Backend {
     return this.store.retrieveAgent(agentId);
   }
 
+  async listAgents(...args: Parameters<Backend["listAgents"]>) {
+    const [body] = args;
+    return this.store.listAgents(body) as never;
+  }
+
+  async deleteAgent(...args: Parameters<Backend["deleteAgent"]>) {
+    const [agentId] = args;
+    this.store.deleteAgent(agentId);
+    return undefined as never;
+  }
+
   async updateAgent(...args: Parameters<Backend["updateAgent"]>) {
     const [agentId, body] = args;
     return this.store.updateAgent(agentId, body);
@@ -134,6 +145,11 @@ export class FakeHeadlessBackend implements Backend {
 
   async retrieveConversation(conversationId: string): Promise<Conversation> {
     return this.store.retrieveConversation(conversationId);
+  }
+
+  async listConversations(...args: Parameters<Backend["listConversations"]>) {
+    const [body] = args;
+    return this.store.listConversations(body) as never;
   }
 
   async createConversation(
@@ -254,7 +270,7 @@ export class FakeHeadlessBackend implements Backend {
         order: "asc",
       } as ConversationMessageListBody,
     );
-    const providerTrajectory = this.store.listProviderTrajectory(
+    const uiMessages = this.store.listLocalMessages(
       turnInput.conversationId,
       turnInput.agentId,
     );
@@ -267,7 +283,7 @@ export class FakeHeadlessBackend implements Backend {
         agent,
         body,
         history,
-        providerTrajectory,
+        uiMessages,
       });
     } catch (error) {
       this.failRun(run.id, error);
@@ -407,7 +423,7 @@ export class FakeHeadlessBackend implements Backend {
               agentId,
               chunk,
             );
-            if (!isProviderStreamPartOnly(persisted)) {
+            if (!isLocalStateChunkOnly(persisted)) {
               yield backend.recordRunChunk(
                 runId,
                 attachRunId(persisted, runId),

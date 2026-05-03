@@ -21,9 +21,4 @@ export {
   type StoredMessage,
   type StoredTurnInput,
 } from "./LocalStore";
-export type {
-  ProviderStreamPart,
-  ProviderTrajectoryMessage,
-  ProviderTrajectoryRawCapture,
-  ProviderTrajectoryUIMessage,
-} from "./ProviderTrajectory";
+export type { ProviderStreamPart } from "./LocalStreamChunks";

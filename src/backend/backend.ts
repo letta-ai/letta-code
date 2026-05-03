@@ -34,6 +34,12 @@ export type RunMessageStreamOptions = RunMessageStreamParams[2];
 export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
 export type AgentRetrieveOptions = AgentRetrieveParams[1];
 
+export type AgentListParams = Parameters<APIClient["agents"]["list"]>;
+export type AgentListBody = AgentListParams[0];
+
+export type AgentDeleteParams = Parameters<APIClient["agents"]["delete"]>;
+export type AgentDeleteOptions = AgentDeleteParams[1];
+
 export type AgentUpdateParams = Parameters<APIClient["agents"]["update"]>;
 export type AgentUpdateBody = AgentUpdateParams[1];
 export type AgentUpdateOptions = AgentUpdateParams[2];
@@ -46,6 +52,11 @@ export type ConversationRetrieveParams = Parameters<
   APIClient["conversations"]["retrieve"]
 >;
 export type ConversationRetrieveOptions = ConversationRetrieveParams[1];
+
+export type ConversationListParams = Parameters<
+  APIClient["conversations"]["list"]
+>;
+export type ConversationListBody = ConversationListParams[0];
 
 export type ConversationCreateParams = Parameters<
   APIClient["conversations"]["create"]
@@ -97,6 +108,15 @@ export interface Backend {
     options?: AgentRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>;
 
+  listAgents(
+    body?: AgentListBody,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["list"]>>>;
+
+  deleteAgent(
+    agentId: string,
+    options?: AgentDeleteOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["delete"]>>>;
+
   updateAgent(
     agentId: string,
     body: AgentUpdateBody,
@@ -112,6 +132,10 @@ export interface Backend {
     conversationId: string,
     options?: ConversationRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["retrieve"]>>>;
+
+  listConversations(
+    body?: ConversationListBody,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["list"]>>>;
 
   createConversation(
     body: ConversationCreateBody,
@@ -220,6 +244,16 @@ export class APIBackend implements Backend {
     return client.agents.retrieve(agentId, options);
   }
 
+  async listAgents(body?: AgentListBody) {
+    const client = await this.getClient();
+    return client.agents.list(body);
+  }
+
+  async deleteAgent(agentId: string, options?: AgentDeleteOptions) {
+    const client = await this.getClient();
+    return client.agents.delete(agentId, options);
+  }
+
   async updateAgent(
     agentId: string,
     body: AgentUpdateBody,
@@ -240,6 +274,11 @@ export class APIBackend implements Backend {
   ) {
     const client = await this.getClient();
     return client.conversations.retrieve(conversationId, options);
+  }
+
+  async listConversations(body?: ConversationListBody) {
+    const client = await this.getClient();
+    return client.conversations.list(body);
   }
 
   async createConversation(
