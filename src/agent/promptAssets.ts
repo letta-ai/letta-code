@@ -7,7 +7,7 @@ import humanLinusPrompt from "./prompts/human_linus.mdx";
 import humanMemoPrompt from "./prompts/human_memo.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaMemfsPrompt from "./prompts/letta.md";
-import lettaStandardPrompt from "./prompts/letta_standard.md";
+import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import personaPrompt from "./prompts/persona.mdx";
@@ -25,7 +25,7 @@ import sourceGeminiPrompt from "./prompts/source_gemini.md";
 
 import stylePrompt from "./prompts/style.mdx";
 
-export const SYSTEM_PROMPT = lettaStandardPrompt;
+export const SYSTEM_PROMPT = lettaNoMemfsPrompt;
 export const PLAN_MODE_REMINDER = planModeReminder;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
@@ -66,7 +66,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     id: "default",
     label: "Default",
     description: "Alias for letta",
-    content: lettaStandardPrompt,
+    content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
     isDefault: true,
     isFeatured: true,
@@ -75,7 +75,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     id: "letta",
     label: "Letta Code",
     description: "Full Letta Code system prompt",
-    content: lettaStandardPrompt,
+    content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
     isFeatured: true,
   },

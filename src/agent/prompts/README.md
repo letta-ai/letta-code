@@ -8,7 +8,7 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 
 | File | Used | Description |
 |------|------|-------------|
-| `letta_standard.md` | Default for non-memfs agents | Letta-tuned system prompt for standard memory blocks |
+| `letta_no_memfs.md` | Default for non-memfs agents | Letta-tuned system prompt for standard memory blocks |
 | `letta.md` | Default for memfs agents | Letta-tuned system prompt for git-backed MemFS memory |
 | `source_claude.md` | `/system source-claude` | Near-verbatim Claude Code prompt for benchmarking |
 | `source_codex.md` | `/system source-codex` | Near-verbatim OpenAI Codex prompt for benchmarking |
