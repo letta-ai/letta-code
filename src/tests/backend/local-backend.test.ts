@@ -412,6 +412,41 @@ describe("LocalBackend", () => {
     ]);
   });
 
+  test("projects local reasoning parts as reasoning messages", () => {
+    const projected = projectLocalMessagesToStoredMessages(
+      [
+        {
+          id: "ui-assistant-reasoning",
+          role: "assistant",
+          parts: [
+            { type: "reasoning", text: "think through the request" },
+            { type: "text", text: "final answer" },
+          ],
+        },
+      ],
+      "agent-local-test",
+      "default",
+    );
+
+    expect(projected.map((message) => message.message_type)).toEqual([
+      "reasoning_message",
+      "assistant_message",
+    ]);
+    expect(projected[0]).toMatchObject({
+      message_type: "reasoning_message",
+      reasoning: "think through the request",
+    });
+    expect(projected[1]).toMatchObject({
+      message_type: "assistant_message",
+      content: [{ type: "text", text: "final answer" }],
+    });
+    expect(
+      (
+        (projected[1] as { content?: Array<{ type?: unknown }> }).content ?? []
+      ).map((part) => part.type),
+    ).toEqual(["text"]);
+  });
+
   test("projects unresolved local tool parts as pending approvals only until a tool result exists", () => {
     const pending = projectLocalMessagesToStoredMessages(
       [

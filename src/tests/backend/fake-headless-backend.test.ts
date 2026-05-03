@@ -683,9 +683,7 @@ describe("FakeHeadlessBackend", () => {
         Buffer.from(`conversation:${conversation.id}`).toString("base64url"),
       );
       const files = await readdir(conversationDir);
-      expect(files).toContain("conversation.json");
-      expect(files).toContain("messages.jsonl");
-      expect(files).not.toContain("provider-trajectory.jsonl");
+      expect(files.sort()).toEqual(["conversation.json", "messages.jsonl"]);
 
       const persistedMessages = jsonl(
         await readFile(join(conversationDir, "messages.jsonl"), "utf8"),
@@ -931,5 +929,30 @@ describe("FakeHeadlessBackend", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("forks the requested agent's default conversation", async () => {
+    const backend = new FakeHeadlessBackend("agent-default-source");
+    const otherAgent = await backend.createAgent({
+      name: "Other Agent",
+    } as AgentCreateBody);
+
+    await drainAssistantText(
+      await backend.createConversationMessageStream(
+        "default",
+        createBody("fork other default", otherAgent.id),
+      ),
+    );
+
+    const forked = await backend.forkConversation("default", {
+      agentId: otherAgent.id,
+    });
+    const forkedPage = await backend.listConversationMessages(forked.id, {
+      order: "asc",
+    } as ConversationMessageListBody);
+
+    expect(JSON.stringify(forkedPage.getPaginatedItems())).toContain(
+      "fork other default",
+    );
   });
 });

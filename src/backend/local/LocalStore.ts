@@ -779,7 +779,10 @@ export class LocalStore {
     conversationId: string,
     options: { agentId?: string } = {},
   ): { id: string } {
-    const source = this.findConversation(conversationId);
+    const source = this.findConversation(
+      conversationId,
+      conversationId === "default" ? options.agentId : undefined,
+    );
     if (!source) {
       throw new LocalBackendNotFoundError("Conversation", conversationId);
     }

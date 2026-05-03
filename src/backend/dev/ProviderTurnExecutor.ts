@@ -104,6 +104,7 @@ function createProviderLettaStream(
     controller,
     async *[Symbol.asyncIterator]() {
       let sawToolCall = false;
+      let pendingStopReason: LettaStreamingResponse | undefined;
       const assistantOtid = `provider-assistant-${randomUUID()}`;
       const reasoningOtid = `provider-reasoning-${randomUUID()}`;
       try {
@@ -158,7 +159,7 @@ function createProviderLettaStream(
           }
 
           if (part.type === "finish") {
-            yield {
+            pendingStopReason = {
               message_type: "stop_reason",
               stop_reason:
                 sawToolCall || part.finishReason === "tool-calls"
@@ -179,6 +180,9 @@ function createProviderLettaStream(
             } as LettaStreamingResponse;
             return;
           }
+        }
+        if (pendingStopReason) {
+          yield pendingStopReason;
         }
       } catch (error) {
         yield {

@@ -195,9 +195,9 @@ describe("ProviderTurnExecutor", () => {
         if (!hasToolResult) {
           yield streamPart({
             type: "tool-call",
-            toolCallId: "provider-tool-trajectory",
+            toolCallId: "provider-tool-history",
             toolName: "ShellCommand",
-            input: { command: "echo provider-trajectory", login: false },
+            input: { command: "echo provider-history", login: false },
           });
           yield streamPart({ type: "finish", finishReason: "tool-calls" });
           return;
@@ -205,7 +205,7 @@ describe("ProviderTurnExecutor", () => {
         yield streamPart({
           type: "text-delta",
           id: "text-1",
-          text: "trajectory ok",
+          text: "history ok",
         });
         yield streamPart({ type: "finish", finishReason: "stop" });
       },
@@ -221,7 +221,7 @@ describe("ProviderTurnExecutor", () => {
     const firstChunks = await collectStream(
       await backend.createConversationMessageStream(
         conversation.id,
-        createBody("call a trajectory tool"),
+        createBody("call a history tool"),
       ),
     );
     const approvalChunk = firstChunks.find(
@@ -229,9 +229,7 @@ describe("ProviderTurnExecutor", () => {
     ) as LettaStreamingResponse & {
       tool_call?: { tool_call_id?: string };
     };
-    expect(approvalChunk.tool_call?.tool_call_id).toBe(
-      "provider-tool-trajectory",
-    );
+    expect(approvalChunk.tool_call?.tool_call_id).toBe("provider-tool-history");
 
     const finalText = await drainAssistantText(
       await backend.createConversationMessageStream(conversation.id, {
@@ -243,7 +241,7 @@ describe("ProviderTurnExecutor", () => {
               {
                 type: "tool",
                 tool_call_id: approvalChunk.tool_call?.tool_call_id,
-                tool_return: "provider-trajectory",
+                tool_return: "provider-history",
                 status: "success",
               },
             ],
@@ -252,7 +250,7 @@ describe("ProviderTurnExecutor", () => {
       } as unknown as ConversationMessageCreateBody),
     );
 
-    expect(finalText).toBe("trajectory ok");
+    expect(finalText).toBe("history ok");
     expect(
       capturedMessages[0]?.map((message) => ({
         role: message.role,
@@ -261,7 +259,7 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual([
       {
         role: "user",
-        parts: [{ type: "text", text: "call a trajectory tool" }],
+        parts: [{ type: "text", text: "call a history tool" }],
       },
     ]);
     expect(
@@ -272,17 +270,17 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual([
       {
         role: "user",
-        parts: [{ type: "text", text: "call a trajectory tool" }],
+        parts: [{ type: "text", text: "call a history tool" }],
       },
       {
         role: "assistant",
         parts: [
           {
             type: "tool-ShellCommand",
-            toolCallId: "provider-tool-trajectory",
+            toolCallId: "provider-tool-history",
             state: "output-available",
-            input: { command: "echo provider-trajectory", login: false },
-            output: "provider-trajectory",
+            input: { command: "echo provider-history", login: false },
+            output: "provider-history",
           },
         ],
       },
@@ -485,6 +483,49 @@ describe("ProviderTurnExecutor", () => {
         parts: [{ type: "text", text: "reason second" }],
       },
     ]);
+  });
+
+  test("persists final UIMessage snapshots before stop_reason", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield streamPart({ type: "finish", finishReason: "stop" });
+        yield providerUIMessage({
+          id: "ui-final-after-finish",
+          role: "assistant",
+          parts: [
+            { type: "reasoning", text: "persisted reasoning" },
+            { type: "text", text: "persisted answer" },
+          ],
+        });
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    const stream = await backend.createConversationMessageStream(
+      conversation.id,
+      createBody("finish before snapshot"),
+    );
+    for await (const chunk of stream) {
+      if (chunk.message_type === "stop_reason") break;
+    }
+
+    const page = await backend.listConversationMessages(conversation.id, {
+      order: "asc",
+    } as ConversationMessageListBody);
+    const messages = page.getPaginatedItems();
+    expect(messages.map((message) => message.message_type)).toEqual([
+      "user_message",
+      "reasoning_message",
+      "assistant_message",
+    ]);
+    expect(JSON.stringify(messages)).toContain("persisted reasoning");
+    expect(JSON.stringify(messages)).toContain("persisted answer");
   });
 
   test("uses AI SDK UIMessage snapshots as the local history source", async () => {
@@ -729,7 +770,7 @@ describe("ProviderTurnExecutor", () => {
           yield streamPart({
             type: "text-delta",
             id: "text-1",
-            text: "persisted trajectory ok",
+            text: "persisted history ok",
           });
           yield streamPart({ type: "finish", finishReason: "stop" });
         },
@@ -759,7 +800,7 @@ describe("ProviderTurnExecutor", () => {
         } as unknown as ConversationMessageCreateBody),
       );
 
-      expect(finalText).toBe("persisted trajectory ok");
+      expect(finalText).toBe("persisted history ok");
       expect(
         capturedMessages?.map((message) => ({
           role: message.role,

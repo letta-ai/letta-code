@@ -49,7 +49,7 @@ function isFileOrSourcePart(
   );
 }
 
-function textPartToContentPart(part: LocalTextPart | LocalReasoningPart) {
+function textPartToContentPart(part: LocalTextPart) {
   return {
     type: part.type,
     text: part.text,
@@ -96,7 +96,7 @@ function localMessageConversationId(
 function projectedAssistantContent(message: LocalMessage): unknown[] {
   const content: unknown[] = [];
   for (const part of message.parts) {
-    if (isTextOrReasoningPart(part)) {
+    if (part.type === "text" && isTextOrReasoningPart(part)) {
       content.push(textPartToContentPart(part));
       continue;
     }
@@ -105,6 +105,25 @@ function projectedAssistantContent(message: LocalMessage): unknown[] {
     }
   }
   return content;
+}
+
+function projectReasoningPart(
+  message: LocalMessage,
+  part: LocalReasoningPart,
+  partIndex: number,
+  date: string,
+  agentId: string,
+  conversationId: string,
+): StoredMessage | undefined {
+  if (part.text.length === 0) return undefined;
+  return {
+    id: `${message.id}:reasoning:${partIndex}`,
+    date,
+    agent_id: agentId,
+    conversation_id: conversationId,
+    message_type: "reasoning_message",
+    reasoning: part.text,
+  } as StoredMessage;
 }
 
 function projectToolPart(
@@ -193,11 +212,26 @@ export function projectLocalMessageToStoredMessages(
   }
 
   const messages: StoredMessage[] = [];
-  for (const part of message.parts) {
-    if (!isLocalToolPart(part)) continue;
-    messages.push(
-      ...projectToolPart(message, part, date, agentId, conversationId),
-    );
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    const part = message.parts[partIndex];
+    if (!part) continue;
+    if (part.type === "reasoning" && isTextOrReasoningPart(part)) {
+      const reasoningMessage = projectReasoningPart(
+        message,
+        part,
+        partIndex,
+        date,
+        agentId,
+        conversationId,
+      );
+      if (reasoningMessage) messages.push(reasoningMessage);
+      continue;
+    }
+    if (isLocalToolPart(part)) {
+      messages.push(
+        ...projectToolPart(message, part, date, agentId, conversationId),
+      );
+    }
   }
 
   const assistantContent = projectedAssistantContent(message);
