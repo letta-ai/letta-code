@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { validateUIMessages } from "ai";
 import { createIsolatedCliTestEnv } from "../testProcessEnv";
 
 const projectRoot = process.cwd();
+const execFile = promisify(execFileCb);
 
 async function runCli(
   args: string[],
@@ -58,6 +60,11 @@ async function runCli(
       reject(error);
     });
   });
+}
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFile("git", args, { cwd });
+  return String(stdout ?? "").trim();
 }
 
 async function runStreamJsonCli(): Promise<{
@@ -483,9 +490,6 @@ describe("headless dev backend smoke", () => {
           "--permission-mode",
           "plan",
           "--no-skills",
-          "--no-memfs",
-          "--memfs-startup",
-          "skip",
         ],
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
@@ -538,6 +542,22 @@ describe("headless dev backend smoke", () => {
             (message as Record<string, unknown>).message_type === undefined,
         ),
       ).toBe(true);
+
+      const memoryDir = join(
+        storageDir,
+        "memfs",
+        persistedAgent.id as string,
+        "memory",
+      );
+      expect(
+        await git(memoryDir, ["rev-parse", "--verify", "HEAD"]),
+      ).toHaveLength(40);
+      expect(
+        await readFile(join(memoryDir, "system", "persona.md"), "utf8"),
+      ).toContain("coding assistant");
+      expect(
+        await readFile(join(memoryDir, "system", "human.md"), "utf8"),
+      ).toContain("person");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -590,9 +610,6 @@ describe("headless dev backend smoke", () => {
           "--permission-mode",
           "plan",
           "--no-skills",
-          "--no-memfs",
-          "--memfs-startup",
-          "skip",
         ],
         {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",

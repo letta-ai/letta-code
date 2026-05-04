@@ -43,9 +43,6 @@ async function runLocalProviderCli(
           "--permission-mode",
           "plan",
           "--no-skills",
-          "--no-memfs",
-          "--memfs-startup",
-          "skip",
         ],
         {
           cwd: projectRoot,
