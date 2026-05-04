@@ -56,7 +56,6 @@ function withStartupTimeout<T>(
     timer = setTimeout(() => {
       reject(new Error(`${label} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-    timer.unref?.();
 
     promise.then(
       (value) => {
