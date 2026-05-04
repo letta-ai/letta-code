@@ -1756,6 +1756,18 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
+        if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
+          const { reconcileMemfsSettingFromAgent } = await import(
+            "./agent/memoryFilesystem"
+          );
+          const memfsSetting = await reconcileMemfsSettingFromAgent(agent);
+          if (!memfsSetting.enabledOnServer) {
+            console.warn(
+              "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
+            );
+          }
+        }
+
         // Start memfs sync early. Interactive startup is optimistic: keep the
         // session moving and let memfs clone/pull finish in the background
         // unless the user explicitly requested a memfs mode toggle.

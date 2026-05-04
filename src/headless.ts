@@ -1139,6 +1139,18 @@ export async function handleHeadlessCommand(
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
   const startupMemfsFlag = autoEnableMemfsForFreshAgent ? true : memfsFlag;
 
+  if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
+    const { reconcileMemfsSettingFromAgent } = await import(
+      "./agent/memoryFilesystem"
+    );
+    const memfsSetting = await reconcileMemfsSettingFromAgent(agent);
+    if (!memfsSetting.enabledOnServer) {
+      console.warn(
+        "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
+      );
+    }
+  }
+
   // Captured so prompt logic below can await it when needed.
   let memfsBgPromise: Promise<unknown> | undefined;
 

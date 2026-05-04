@@ -9959,7 +9959,10 @@ export default function App({
 
           if (subcommand === "status") {
             // Show status
-            const enabled = settingsManager.isMemfsEnabled(agentId);
+            const { isMemfsEnabledOnServer } = await import(
+              "../agent/memoryFilesystem"
+            );
+            const enabled = await isMemfsEnabledOnServer(agentId);
             let output: string;
             if (enabled) {
               const memoryDir = getMemoryFilesystemRoot(agentId);
