@@ -685,13 +685,17 @@ export interface ClientTool {
   name: string;
   description?: string | null;
   parameters?: { [key: string]: unknown } | null;
-  native?: {
-    type: "computer";
-    target: "browser";
-    display_width_px: number;
-    display_height_px: number;
-    enable_zoom?: boolean;
-    anthropic_tool_version?: "computer_20251124" | "computer_20250124";
+  config?: {
+    openai?: {
+      type: "computer";
+    } | null;
+    anthropic?: {
+      type: "computer_20251124" | "computer_20250124";
+      display_width_px: number;
+      display_height_px: number;
+      display_number?: number;
+      enable_zoom?: boolean;
+    } | null;
   } | null;
 }
 
@@ -850,20 +854,24 @@ export function getClientToolsFromRegistry(): ClientTool[] {
   );
 }
 
-function getNativeToolMetadata(
+function getClientToolConfig(
   serverName: string,
-): ClientTool["native"] | undefined {
+): ClientTool["config"] | undefined {
   if (serverName !== "computer") return undefined;
+  const anthropicType =
+    process.env.LETTA_ANTHROPIC_COMPUTER_TOOL_VERSION === "computer_20250124"
+      ? "computer_20250124"
+      : "computer_20251124";
   return {
-    type: "computer",
-    target: "browser",
-    display_width_px: Number(process.env.LETTA_COMPUTER_WIDTH || 1280),
-    display_height_px: Number(process.env.LETTA_COMPUTER_HEIGHT || 800),
-    enable_zoom: process.env.LETTA_COMPUTER_ENABLE_ZOOM === "1",
-    anthropic_tool_version:
-      process.env.LETTA_ANTHROPIC_COMPUTER_TOOL_VERSION === "computer_20250124"
-        ? "computer_20250124"
-        : "computer_20251124",
+    openai: {
+      type: "computer",
+    },
+    anthropic: {
+      type: anthropicType,
+      display_width_px: Number(process.env.LETTA_COMPUTER_WIDTH || 1280),
+      display_height_px: Number(process.env.LETTA_COMPUTER_HEIGHT || 800),
+      enable_zoom: process.env.LETTA_COMPUTER_ENABLE_ZOOM === "1",
+    },
   };
 }
 
@@ -877,7 +885,7 @@ function buildClientToolsFromSnapshot(
       name: serverName,
       description: tool.schema.description,
       parameters: tool.schema.input_schema,
-      native: getNativeToolMetadata(serverName),
+      config: getClientToolConfig(serverName),
     };
   });
   const externalClientTools = Array.from(externalTools.values()).map(
