@@ -319,9 +319,26 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         env.LETTA_MEMORY_DIR = memoryDir;
         env.MEMORY_DIR = memoryDir;
       } else {
-        // Clear inherited/stale memory-dir vars for non-memfs agents.
-        delete env.LETTA_MEMORY_DIR;
-        delete env.MEMORY_DIR;
+        const inheritedMemoryDir = process.env.MEMORY_DIR?.trim();
+        const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
+        const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
+        const inheritedParentMemoryDir = parentAgentId
+          ? getMemoryFilesystemRoot(parentAgentId)
+          : null;
+
+        if (
+          inheritedMemoryDir &&
+          inheritedParentMemoryDir &&
+          path.resolve(inheritedMemoryDir) ===
+            path.resolve(inheritedParentMemoryDir)
+        ) {
+          env.MEMORY_DIR = inheritedMemoryDir;
+          env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;
+        } else {
+          // Clear inherited/stale memory-dir vars for non-memfs agents.
+          delete env.LETTA_MEMORY_DIR;
+          delete env.MEMORY_DIR;
+        }
       }
     } catch {
       // Settings may not be initialized in tests/startup; preserve inherited values.

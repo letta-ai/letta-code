@@ -350,6 +350,44 @@ test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", ()
   });
 });
 
+test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
+  const parentAgentId = `agent-parent-${Date.now()}`;
+  const childAgentId = `agent-child-${Date.now()}`;
+  const parentMemoryDir = getMemoryFilesystemRoot(parentAgentId);
+
+  withTemporaryAgentEnv(childAgentId, () => {
+    withTemporaryEnv(
+      {
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_PARENT_AGENT_ID: parentAgentId,
+        MEMORY_DIR: parentMemoryDir,
+        LETTA_MEMORY_DIR: parentMemoryDir,
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBe(parentMemoryDir);
+          expect(env.LETTA_MEMORY_DIR).toBe(parentMemoryDir);
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
 test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
   withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
     const original = settingsManager.isMemfsEnabled.bind(settingsManager);
