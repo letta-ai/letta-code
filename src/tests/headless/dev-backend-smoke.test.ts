@@ -563,6 +563,55 @@ describe("headless dev backend smoke", () => {
     }
   });
 
+  test("creates a local backend agent from a personality preset without API credentials", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-local-backend-"));
+    try {
+      const result = await runCli(
+        [
+          "-p",
+          "ping",
+          "--new-agent",
+          "--personality",
+          "kawaii",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("pong");
+      expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
+
+      const agentFiles = await readdir(join(storageDir, "agents"));
+      expect(agentFiles).toHaveLength(1);
+      const persistedAgent = JSON.parse(
+        await readFile(join(storageDir, "agents", agentFiles[0] ?? ""), "utf8"),
+      ) as Record<string, unknown>;
+      expect(persistedAgent.name).toBe("Letta-Chan");
+
+      const memoryDir = join(
+        storageDir,
+        "memfs",
+        persistedAgent.id as string,
+        "memory",
+      );
+      expect(
+        await readFile(join(memoryDir, "system", "persona.md"), "utf8"),
+      ).toContain("My name is Letta Code~");
+      expect(
+        await readFile(join(memoryDir, "system", "human.md"), "utf8"),
+      ).toContain("Senpai");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("env-selected local backend does not create missing agents on retrieve", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "lc-local-backend-"));
     try {

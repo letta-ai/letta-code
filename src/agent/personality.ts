@@ -2,10 +2,12 @@ import { execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { getBackend } from "../backend";
 import { getClient } from "../backend/api/client";
 import { settingsManager } from "../settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
+import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
 import {
   commitAndSyncMemoryWrite,
   GIT_MEMORY_ENABLED_TAG,
@@ -558,7 +560,10 @@ export async function applyPersonalityToMemory(
   const personality = getPersonalityOption(params.personalityId);
   const blockDefinitions = getPersonalityBlockDefinitions(params.personalityId);
 
-  const repoDir = getMemoryRepoDir(params.agentId);
+  const isLocalMemfs = getBackend().capabilities.localMemfs;
+  const repoDir = isLocalMemfs
+    ? getScopedMemoryFilesystemRoot(params.agentId)
+    : getMemoryRepoDir(params.agentId);
 
   // Fail early if the memory repo has uncommitted changes
   const statusResult = await execFile("git", ["status", "--porcelain"], {
@@ -571,7 +576,9 @@ export async function applyPersonalityToMemory(
     );
   }
 
-  await pullMemory(params.agentId);
+  if (!isLocalMemfs) {
+    await pullMemory(params.agentId);
+  }
 
   const personaRelativePath = getPersonaRelativePathForRepo(repoDir);
   const humanRelativePath = getHumanRelativePathForRepo(repoDir);
@@ -616,6 +623,7 @@ export async function applyPersonalityToMemory(
     pathspecs: changedPaths,
     reason: commitMessage,
     author,
+    syncMode: isLocalMemfs ? "local" : "remote",
     replay: async () => applyPersonalityFiles(filesToUpdate),
   });
 
