@@ -3962,6 +3962,7 @@ export default function App({
           await initializeLocalMemoryRepo({
             memoryDir: getScopedMemoryFilesystemRoot(agentId),
             agentId,
+            authorName: agentName ?? undefined,
             files: [],
           });
           return;
@@ -3988,7 +3989,7 @@ export default function App({
         };
       }
     })();
-  }, [agentId, loadingState, appendError]);
+  }, [agentId, agentName, loadingState, appendError]);
 
   // Set up fs.watch on the memory directory to detect external file edits.
   // When a change is detected, set a dirty flag — the actual conflict check
@@ -10108,6 +10109,7 @@ export default function App({
                 await initializeLocalMemoryRepo({
                   memoryDir,
                   agentId,
+                  authorName: agentName ?? undefined,
                   files: [],
                 });
                 cmd.finish(
@@ -10182,6 +10184,7 @@ export default function App({
                 await initializeLocalMemoryRepo({
                   memoryDir,
                   agentId,
+                  authorName: agentName ?? undefined,
                   files: [],
                 });
               } else {

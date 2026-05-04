@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { getBackend } from "../backend";
-import { getClient } from "../backend/api/client";
 import { settingsManager } from "../settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
@@ -497,8 +496,7 @@ async function getMemoryCommitAuthor(agentId: string): Promise<{
   let authorName = agentId;
 
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await getBackend().retrieveAgent(agentId);
     if (agent.name?.trim()) {
       authorName = agent.name.trim();
     }

@@ -16,7 +16,6 @@ import {
   commitAndSyncMemoryWrite,
   type MemoryWriteSyncMode,
 } from "../../agent/memoryGit";
-import { getClient } from "../../backend/api/client";
 import { validateRequiredParams } from "./validation";
 
 type ParsedPatchOp =
@@ -92,8 +91,8 @@ async function getAgentIdentity(): Promise<{
 
   let agentName = "";
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const { getBackend } = await import("../../backend");
+    const agent = await getBackend().retrieveAgent(agentId);
     agentName = (agent.name || "").trim();
   } catch {
     // best-effort fallback below

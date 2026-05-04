@@ -89,6 +89,9 @@ const { memory_apply_patch } = await import(
 );
 const { __testSetBackend } = await import("../../backend");
 const { LocalBackend } = await import("../../backend/local");
+const { getLocalBackendMemoryFilesystemRoot } = await import(
+  "../../backend/local/paths"
+);
 const { getToolSchema, loadSpecificTools } = await import(
   "../../tools/manager"
 );
@@ -275,6 +278,71 @@ describe("memory_apply_patch tool", () => {
     await expect(
       runGit(memoryDir, ["remote", "get-url", "origin"]),
     ).rejects.toThrow();
+  });
+
+  test("uses local backend agent name as the local MemFS commit author", async () => {
+    const originalLocalBackendFlag =
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+    const storageDir = join(tempRoot, "local-store");
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+
+    try {
+      const agent = await backend.createAgent({
+        name: "Letta-Chan",
+      } as Parameters<InstanceType<typeof LocalBackend>["createAgent"]>[0]);
+      __testSetBackend(backend);
+
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "true";
+      process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+      delete process.env.AGENT_NAME;
+
+      const localMemoryDir = getLocalBackendMemoryFilesystemRoot(
+        agent.id,
+        storageDir,
+      );
+      process.env.MEMORY_DIR = localMemoryDir;
+
+      await runWithRuntimeContext({ agentId: agent.id }, () =>
+        memory_apply_patch({
+          reason: "remember user name",
+          input: [
+            "*** Begin Patch",
+            "*** Add File: system/user.md",
+            "+---",
+            "+description: User identity",
+            "+---",
+            "+The user's name is Charles.",
+            "*** End Patch",
+          ].join("\n"),
+        }),
+      );
+
+      const logOutput = await runGit(localMemoryDir, [
+        "log",
+        "-1",
+        "--pretty=format:%s%n%an%n%ae",
+      ]);
+      const [subject, authorName, authorEmail] = logOutput.split("\n");
+      expect(subject).toBe("remember user name");
+      expect(authorName).toBe("Letta-Chan");
+      expect(authorEmail).toBe(`${agent.id}@letta.com`);
+    } finally {
+      if (originalLocalBackendFlag === undefined) {
+        delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+      } else {
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
+      }
+
+      if (originalLocalBackendDir === undefined) {
+        delete process.env.LETTA_LOCAL_BACKEND_DIR;
+      } else {
+        process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+      }
+    }
   });
 
   test("uses local-only wording for memory tool descriptions on local backend", async () => {
