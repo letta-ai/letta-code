@@ -554,6 +554,15 @@ export const commands: Record<string, Command> = {
       return "Compacting conversation...";
     },
   },
+  "/set-max-context": {
+    desc: "Set or reset the max context window",
+    args: "[tokens] [--override]",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Setting max context window...";
+    },
+  },
   "/link": {
     desc: "Attach all Letta Code tools to agent (deprecated, use /toolset instead)",
     hidden: true,

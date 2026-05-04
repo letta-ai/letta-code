@@ -14,6 +14,8 @@ import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
 } from "../../agent/personality";
+import { __testSetBackend, type AgentCreateBody } from "../../backend";
+import { LocalBackend } from "../../backend/local";
 import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
 import {
   ensureFileIndex,
@@ -47,6 +49,10 @@ import {
   requestApprovalOverWS,
   resolvePendingApprovalResolver,
 } from "../../websocket/listen-client";
+import {
+  handleExecuteCommand,
+  SUPPORTED_REMOTE_COMMANDS,
+} from "../../websocket/listener/commands";
 import { isEditFileCommand } from "../../websocket/listener/protocol-inbound";
 import {
   DESKTOP_DEBUG_PANEL_INFO_PREFIX,
@@ -88,6 +94,7 @@ class MockSocket {
 const actualChannelsService = await import("../../channels/service");
 
 afterEach(() => {
+  __testSetBackend(null);
   __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
   mock.restore();
 });
@@ -931,6 +938,76 @@ describe("listen-client parseServerMessage", () => {
 
     expect(getExperiments?.type).toBe("get_experiments");
     expect(setExperiment?.type).toBe("set_experiment");
+  });
+
+  test("advertises and parses remote set-max-context execute_command", () => {
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("set-max-context");
+
+    const command = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "execute_command",
+          command_id: "set-max-context",
+          request_id: "set-max-context-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          args: "10000 --override",
+        }),
+      ),
+    );
+
+    expect(command).toMatchObject({
+      type: "execute_command",
+      command_id: "set-max-context",
+      args: "10000 --override",
+    });
+  });
+
+  test("runs remote set-max-context execute_command", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-max-context-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "WS Max Context Agent",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "set-max-context",
+          request_id: "set-max-context-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "default" },
+          args: "10000 --override",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      expect(
+        (
+          (await backend.retrieveAgent(agent.id)) as {
+            llm_config?: { context_window?: number };
+          }
+        ).llm_config?.context_window,
+      ).toBe(10_000);
+      expect(socket.sentPayloads.join("\n")).toContain(
+        "Agent max context set to 10,000 tokens with override.",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {

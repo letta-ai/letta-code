@@ -193,6 +193,9 @@ function createLocalConversationRecord(
       ? { model: bodyRecord.model }
       : {}),
     ...(modelSettings !== undefined ? { model_settings: modelSettings } : {}),
+    ...(typeof bodyRecord.context_window_limit === "number"
+      ? { context_window_limit: bodyRecord.context_window_limit }
+      : {}),
   } as StoredConversation;
 }
 
@@ -228,6 +231,10 @@ function updateLocalConversationRecord(
   const modelSettings = conversationModelSettings(bodyRecord.model_settings);
   if (modelSettings !== undefined) {
     next.model_settings = modelSettings as StoredConversation["model_settings"];
+  }
+  if (typeof bodyRecord.context_window_limit === "number") {
+    (next as unknown as Record<string, unknown>).context_window_limit =
+      bodyRecord.context_window_limit;
   }
   if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
     next.summary = bodyRecord.summary;

@@ -51,6 +51,10 @@ import { getResumeData } from "../agent/check-approval";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { selectDefaultAgentModel } from "../agent/defaults";
+import {
+  applySetMaxContext,
+  formatSetMaxContextResult,
+} from "../agent/maxContext";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   ensureMemoryFilesystemDirs,
@@ -3687,7 +3691,10 @@ export default function App({
           conversationModel !== undefined && conversationModel !== null
             ? true
             : conversationModelSettings !== undefined &&
-              conversationModelSettings !== null;
+                conversationModelSettings !== null
+              ? true
+              : conversationContextWindowLimit !== undefined &&
+                conversationContextWindowLimit !== null;
 
         if (!hasOverride) {
           applyAgentModelLocally();
@@ -8620,6 +8627,55 @@ export default function App({
           return { submitted: true };
         }
 
+        // Hidden command for setting/resetting the active scope's max context window.
+        if (
+          trimmed === "/set-max-context" ||
+          trimmed.startsWith("/set-max-context ")
+        ) {
+          const args = trimmed.slice("/set-max-context".length).trim();
+          const cmd = commandRunner.start(
+            trimmed,
+            "Setting max context window...",
+          );
+          setCommandRunning(true);
+
+          try {
+            const result = await applySetMaxContext({
+              agentId: agentIdRef.current,
+              conversationId: conversationIdRef.current,
+              args,
+              currentModelId,
+              currentModelHandle,
+              currentLlmConfig: llmConfigRef.current,
+              currentContextWindow: effectiveContextWindowSize ?? null,
+            });
+
+            if (result.updatedAgent) {
+              setAgentState(result.updatedAgent);
+              setHasConversationModelOverride(false);
+              setConversationOverrideModelSettings(null);
+              setConversationOverrideContextWindowLimit(null);
+            } else {
+              setHasConversationModelOverride(true);
+              setConversationOverrideContextWindowLimit(result.contextWindow);
+            }
+
+            setLlmConfig({
+              ...(llmConfigRef.current ?? ({} as LlmConfig)),
+              context_window: result.contextWindow,
+            } as LlmConfig);
+            resetContextHistory(contextTrackerRef.current);
+            cmd.finish(formatSetMaxContextResult(result), true);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to set max context: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /recompile command - recompile agent + current conversation
         if (trimmed === "/recompile") {
           const cmd = commandRunner.start(
@@ -11125,6 +11181,9 @@ ${SYSTEM_REMINDER_CLOSE}
       agentDescription,
       agentLastRunAt,
       conversationId,
+      currentModelHandle,
+      currentModelId,
+      effectiveContextWindowSize,
       commandRunner,
       handleExit,
       isExecutingTool,
