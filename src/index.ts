@@ -1312,7 +1312,9 @@ async function main(): Promise<void> {
           // Try local LRU first
           if (localAgentId) {
             try {
-              const agent = await backend.retrieveAgent(localAgentId);
+              const agent = await backend.retrieveAgent(localAgentId, {
+                include: ["agent.tags"],
+              });
               setResumeAgentId(localAgentId);
               setResumeAgentName(agent.name ?? null);
               setLoadingState("selecting_conversation");
@@ -1332,7 +1334,9 @@ async function main(): Promise<void> {
           const globalAgentId = globalSession?.agentId;
           if (globalAgentId) {
             try {
-              const agent = await backend.retrieveAgent(globalAgentId);
+              const agent = await backend.retrieveAgent(globalAgentId, {
+                include: ["agent.tags"],
+              });
               setResumeAgentId(globalAgentId);
               setResumeAgentName(agent.name ?? null);
               setLoadingState("selecting_conversation");
@@ -1389,7 +1393,9 @@ async function main(): Promise<void> {
           // Same agent — only need one fetch
           if (localAgentId) {
             try {
-              cachedAgent = await backend.retrieveAgent(localAgentId);
+              cachedAgent = await backend.retrieveAgent(localAgentId, {
+                include: ["agent.tags"],
+              });
               localAgentExists = true;
             } catch {
               setFailedAgentMessage(
@@ -1402,10 +1408,12 @@ async function main(): Promise<void> {
           // Different agents — fetch in parallel
           const [localResult, globalResult] = await Promise.allSettled([
             localAgentId
-              ? backend.retrieveAgent(localAgentId)
+              ? backend.retrieveAgent(localAgentId, { include: ["agent.tags"] })
               : Promise.reject(new Error("no local")),
             globalAgentId
-              ? backend.retrieveAgent(globalAgentId)
+              ? backend.retrieveAgent(globalAgentId, {
+                  include: ["agent.tags"],
+                })
               : Promise.reject(new Error("no global")),
           ]);
 
@@ -1527,7 +1535,7 @@ async function main(): Promise<void> {
           } else {
             try {
               const agent = await backend.retrieveAgent(agentIdArg, {
-                include: ["agent.secrets", "agent.tools"],
+                include: ["agent.secrets", "agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;
@@ -1553,7 +1561,7 @@ async function main(): Promise<void> {
           } else {
             try {
               const agent = await backend.retrieveAgent(selectedGlobalAgentId, {
-                include: ["agent.secrets", "agent.tools"],
+                include: ["agent.secrets", "agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;
@@ -1650,7 +1658,9 @@ async function main(): Promise<void> {
         // Priority 2: Try to use --agent specified ID
         if (!agent && agentIdArg) {
           try {
-            agent = await backend.retrieveAgent(agentIdArg);
+            agent = await backend.retrieveAgent(agentIdArg, {
+              include: ["agent.tags"],
+            });
           } catch (error) {
             console.error(
               `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)})`,
@@ -1721,7 +1731,9 @@ async function main(): Promise<void> {
                 ? resolvedAgent
                 : validatedAgent && validatedAgent.id === resumingAgentId
                   ? validatedAgent
-                  : await backend.retrieveAgent(resumingAgentId);
+                  : await backend.retrieveAgent(resumingAgentId, {
+                      include: ["agent.tags"],
+                    });
           } catch (error) {
             // Agent disappeared between validation and now - show selector
             console.error(
@@ -1757,11 +1769,11 @@ async function main(): Promise<void> {
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
         if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
-          const { reconcileMemfsSettingFromAgent } = await import(
+          const { hydrateMemfsSettingFromAgent } = await import(
             "./agent/memoryFilesystem"
           );
-          const memfsSetting = await reconcileMemfsSettingFromAgent(agent);
-          if (!memfsSetting.enabledOnServer) {
+          const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
+          if (!memfsEnabled) {
             console.warn(
               "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
             );

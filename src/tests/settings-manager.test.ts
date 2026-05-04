@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { reconcileMemfsSettingFromAgent } from "../agent/memoryFilesystem";
 import type { CommandHookConfig, HookCommand } from "../hooks/types";
 import { runWithRuntimeContext } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
@@ -1144,49 +1143,6 @@ describe("Settings Manager - Agents Array Migration", () => {
 
     settingsManager.setMemfsEnabled("agent-test", false);
     expect(settingsManager.isMemfsEnabled("agent-test")).toBe(false);
-  });
-
-  test("reconcileMemfsSettingFromAgent hydrates local memfs flag from server tag", async () => {
-    await settingsManager.initialize();
-
-    settingsManager.setSystemPromptPreset("agent-tagged", "default");
-    expect(settingsManager.isMemfsEnabled("agent-tagged")).toBe(false);
-
-    const result = await reconcileMemfsSettingFromAgent({
-      id: "agent-tagged",
-      tags: ["git-memory-enabled"],
-    });
-
-    expect(result).toEqual({
-      enabledOnServer: true,
-      wasEnabledLocally: false,
-      changed: true,
-    });
-    expect(settingsManager.isMemfsEnabled("agent-tagged")).toBe(true);
-  });
-
-  test("reconcileMemfsSettingFromAgent clears stale local memfs flag when server tag is absent", async () => {
-    await settingsManager.initialize();
-
-    settingsManager.setMemfsEnabled("agent-untagged", true);
-    expect(settingsManager.isMemfsEnabled("agent-untagged")).toBe(true);
-
-    const result = await reconcileMemfsSettingFromAgent(
-      {
-        id: "agent-untagged",
-        tags: [],
-      },
-      {
-        verifyWhenTagsEmpty: false,
-      },
-    );
-
-    expect(result).toEqual({
-      enabledOnServer: false,
-      wasEnabledLocally: true,
-      changed: true,
-    });
-    expect(settingsManager.isMemfsEnabled("agent-untagged")).toBe(false);
   });
 
   test("isMemfsEnabled uses LETTA_MEMFS_BASE_URL before LETTA_BASE_URL", async () => {

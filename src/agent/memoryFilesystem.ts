@@ -118,43 +118,15 @@ export function ensureMemoryFilesystemDirs(
   }
 }
 
-export interface ReconcileMemfsSettingResult {
-  enabledOnServer: boolean;
-  wasEnabledLocally: boolean;
-  changed: boolean;
-}
-
-export async function reconcileMemfsSettingFromAgent(
+export async function hydrateMemfsSettingFromAgent(
   agent: Pick<AgentState, "id" | "tags">,
-  options: { verifyWhenTagsEmpty?: boolean } = {},
-): Promise<ReconcileMemfsSettingResult> {
+): Promise<boolean> {
   const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");
-  let tags = agent.tags ?? [];
-
-  // Normal agent retrieval can omit tags and return `[]`. Verify with the
-  // explicit include before treating an empty tag list as authoritative.
-  if (tags.length === 0 && options.verifyWhenTagsEmpty !== false) {
-    const { getClient } = await import("../backend/api/client");
-    const client = await getClient();
-    const agentWithTags = await client.agents.retrieve(agent.id, {
-      include: ["agent.tags"],
-    });
-    tags = agentWithTags.tags ?? [];
-  }
-
-  const enabledOnServer = tags.includes(GIT_MEMORY_ENABLED_TAG);
+  const enabled = agent.tags?.includes(GIT_MEMORY_ENABLED_TAG) ?? false;
 
   const { settingsManager } = await import("../settings-manager");
-  const wasEnabledLocally = settingsManager.isMemfsEnabled(agent.id);
-  if (wasEnabledLocally !== enabledOnServer) {
-    settingsManager.setMemfsEnabled(agent.id, enabledOnServer);
-  }
-
-  return {
-    enabledOnServer,
-    wasEnabledLocally,
-    changed: wasEnabledLocally !== enabledOnServer,
-  };
+  settingsManager.setMemfsEnabled(agent.id, enabled);
+  return enabled;
 }
 
 /**
@@ -172,10 +144,12 @@ export async function isMemfsEnabledOnServer(
   const agent = await client.agents.retrieve(agentId, {
     include: ["agent.tags"],
   });
-  const result = await reconcileMemfsSettingFromAgent(agent, {
-    verifyWhenTagsEmpty: false,
-  });
-  return result.enabledOnServer;
+  const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");
+  const enabled = agent.tags?.includes(GIT_MEMORY_ENABLED_TAG) ?? false;
+
+  const { settingsManager } = await import("../settings-manager");
+  settingsManager.setMemfsEnabled(agentId, enabled);
+  return enabled;
 }
 
 /**
