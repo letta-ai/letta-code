@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import { isValidChannelPluginConfigPayload } from "../../channels/accountConfig";
+import { isSupportedChannelId } from "../../channels/pluginRegistry";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
@@ -46,9 +47,12 @@ import type {
   MemoryFileAtRefCommand,
   MemoryHistoryCommand,
   ReadFileCommand,
+  ReadMemoryFileCommand,
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
+  SecretApplyCommand,
+  SecretListCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -63,6 +67,7 @@ import type {
   UpdateToolsetCommand,
   WatchFileCommand,
   WriteFileCommand,
+  WriteMemoryFileCommand,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
@@ -536,6 +541,54 @@ export function isMemoryFileAtRefCommand(
   );
 }
 
+export function isReadMemoryFileCommand(
+  value: unknown,
+): value is ReadMemoryFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    path?: unknown;
+    encoding?: unknown;
+  };
+  return (
+    c.type === "read_memory_file" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.path === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64")
+  );
+}
+
+export function isWriteMemoryFileCommand(
+  value: unknown,
+): value is WriteMemoryFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    path?: unknown;
+    content?: unknown;
+    encoding?: unknown;
+    commit_message?: unknown;
+  };
+  return (
+    c.type === "write_memory_file" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.path === "string" &&
+    typeof c.content === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64") &&
+    (c.commit_message === undefined || typeof c.commit_message === "string")
+  );
+}
+
 export function isEnableMemfsCommand(
   value: unknown,
 ): value is EnableMemfsCommand {
@@ -850,10 +903,8 @@ export function isSetExperimentCommand(
   );
 }
 
-function isChannelId(
-  value: unknown,
-): value is "telegram" | "slack" | "discord" {
-  return value === "telegram" || value === "slack" || value === "discord";
+function isChannelId(value: unknown): value is string {
+  return typeof value === "string" && isSupportedChannelId(value);
 }
 
 function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
@@ -1362,6 +1413,55 @@ export function isCheckoutBranchCommand(
   );
 }
 
+export function isSecretListCommand(
+  value: unknown,
+): value is SecretListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "secret_list" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    c.agent_id.length > 0
+  );
+}
+
+export function isSecretApplyCommand(
+  value: unknown,
+): value is SecretApplyCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    set?: unknown;
+    unset?: unknown;
+  };
+  if (
+    c.type !== "secret_apply" ||
+    typeof c.request_id !== "string" ||
+    typeof c.agent_id !== "string" ||
+    c.agent_id.length === 0
+  ) {
+    return false;
+  }
+  if (!c.set || typeof c.set !== "object" || Array.isArray(c.set)) {
+    return false;
+  }
+  for (const v of Object.values(c.set as Record<string, unknown>)) {
+    if (typeof v !== "string") return false;
+  }
+  if (!Array.isArray(c.unset)) return false;
+  for (const k of c.unset) {
+    if (typeof k !== "string" || k.length === 0) return false;
+  }
+  return true;
+}
+
 export function isExecuteCommandCommand(
   value: unknown,
 ): value is ExecuteCommandCommand {
@@ -1412,6 +1512,8 @@ export function parseServerMessage(
       isMemoryHistoryCommand(parsed) ||
       isMemoryFileAtRefCommand(parsed) ||
       isMemoryCommitDiffCommand(parsed) ||
+      isReadMemoryFileCommand(parsed) ||
+      isWriteMemoryFileCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
@@ -1450,7 +1552,9 @@ export function parseServerMessage(
       isChannelRouteRemoveCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
-      isCheckoutBranchCommand(parsed)
+      isCheckoutBranchCommand(parsed) ||
+      isSecretListCommand(parsed) ||
+      isSecretApplyCommand(parsed)
     ) {
       return parsed as WsProtocolCommand;
     }

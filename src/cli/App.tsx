@@ -51,6 +51,10 @@ import { getResumeData } from "../agent/check-approval";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { selectDefaultAgentModel } from "../agent/defaults";
+import {
+  applySetMaxContext,
+  formatSetMaxContextResult,
+} from "../agent/maxContext";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   ensureMemoryFilesystemDirs,
@@ -77,6 +81,7 @@ import {
 import { reconcileExistingAgentState } from "../agent/reconcileExistingAgentState";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
+import { type ConversationMessageStreamBody, getBackend } from "../backend";
 import { getAgentContextOverview } from "../backend/api/agents";
 import { getClient, getServerUrl } from "../backend/api/client";
 import { forkConversation } from "../backend/api/conversations";
@@ -885,8 +890,7 @@ async function isRetriableError(
   // underlying cause is a transient LLM/network issue that should be retried
   if (lastRunId) {
     try {
-      const client = await getClient();
-      const run = await client.runs.retrieve(lastRunId);
+      const run = await getBackend().retrieveRun(lastRunId);
       const metaError = run.metadata?.error as
         | {
             error_type?: string;
@@ -3454,13 +3458,12 @@ export default function App({
       const fetchConfig = async () => {
         try {
           // Use pre-loaded agent state if available, otherwise fetch
-          const { getClient } = await import("../backend/api/client");
-          const client = await getClient();
+          const backend = getBackend();
           let agent: AgentState;
           if (initialAgentState && initialAgentState.id === agentId) {
             agent = initialAgentState;
           } else {
-            agent = await client.agents.retrieve(agentId);
+            agent = await backend.retrieveAgent(agentId);
           }
 
           setAgentState(agent);
@@ -3473,8 +3476,7 @@ export default function App({
             const agentSystem = (agent as { system?: unknown }).system;
             if (typeof agentSystem === "string") {
               const normalize = (s: string) => {
-                // Match prompt presets even if memfs addon is enabled/disabled.
-                // The memfs addon is appended to the stored agent.system prompt.
+                // Match prompt presets even if a managed memory section is present.
                 const withoutMemfs = s.replace(/\n# Memory[\s\S]*$/, "");
                 return withoutMemfs.replace(/\r\n/g, "\n").trim();
               };
@@ -3497,15 +3499,22 @@ export default function App({
                 );
               };
 
+              const promptMatches = (prompt: {
+                content: string;
+                memfsContent?: string;
+              }): boolean =>
+                contentMatches(prompt.content) ||
+                (prompt.memfsContent
+                  ? contentMatches(prompt.memfsContent)
+                  : false);
+
               const defaultPrompt = SYSTEM_PROMPTS.find(
                 (p) => p.id === "default",
               );
-              if (defaultPrompt && contentMatches(defaultPrompt.content)) {
+              if (defaultPrompt && promptMatches(defaultPrompt)) {
                 matched = "default";
               } else {
-                const found = SYSTEM_PROMPTS.find((p) =>
-                  contentMatches(p.content),
-                );
+                const found = SYSTEM_PROMPTS.find((p) => promptMatches(p));
                 if (found) {
                   matched = found.id;
                 } else if (contentMatches(SYSTEM_PROMPT)) {
@@ -3572,28 +3581,31 @@ export default function App({
             setCurrentToolset(persistedToolsetPreference);
           }
 
-          void reconcileExistingAgentState(client, agent)
-            .then((reconcileResult) => {
-              if (!reconcileResult.updated || cancelled) {
-                return;
-              }
-              if (agentIdRef.current !== agent.id) {
-                return;
-              }
+          if (backend.capabilities.serverSideToolManagement) {
+            const client = await getClient();
+            void reconcileExistingAgentState(client, agent)
+              .then((reconcileResult) => {
+                if (!reconcileResult.updated || cancelled) {
+                  return;
+                }
+                if (agentIdRef.current !== agent.id) {
+                  return;
+                }
 
-              setAgentState(reconcileResult.agent);
-              setAgentDescription(reconcileResult.agent.description ?? null);
-            })
-            .catch((reconcileError) => {
-              debugWarn(
-                "agent-config",
-                `Failed to reconcile existing agent settings for ${agentId}: ${
-                  reconcileError instanceof Error
-                    ? reconcileError.message
-                    : String(reconcileError)
-                }`,
-              );
-            });
+                setAgentState(reconcileResult.agent);
+                setAgentDescription(reconcileResult.agent.description ?? null);
+              })
+              .catch((reconcileError) => {
+                debugWarn(
+                  "agent-config",
+                  `Failed to reconcile existing agent settings for ${agentId}: ${
+                    reconcileError instanceof Error
+                      ? reconcileError.message
+                      : String(reconcileError)
+                  }`,
+                );
+              });
+          }
         } catch (error) {
           debugLog("agent-config", "Error fetching agent config: %O", error);
         }
@@ -3685,7 +3697,10 @@ export default function App({
           conversationModel !== undefined && conversationModel !== null
             ? true
             : conversationModelSettings !== undefined &&
-              conversationModelSettings !== null;
+                conversationModelSettings !== null
+              ? true
+              : conversationContextWindowLimit !== undefined &&
+                conversationContextWindowLimit !== null;
 
         if (!hasOverride) {
           applyAgentModelLocally();
@@ -4465,7 +4480,7 @@ export default function App({
               // Attempt to resume the in-flight run via the conversation stream endpoint.
               // Server resolves: (1) otid lookup, (2) active run fallback.
               try {
-                const client = await getClient();
+                const backend = getBackend();
                 const messageOtid = currentInput
                   .map((item) => (item as Record<string, unknown>).otid)
                   .find((v): v is string => typeof v === "string");
@@ -4485,7 +4500,7 @@ export default function App({
                 }
 
                 const conversationId = conversationIdRef.current ?? "default";
-                const resumeStream = await client.conversations.messages.stream(
+                const resumeStream = await backend.streamConversationMessages(
                   conversationId,
                   // Cast needed until SDK MessageStreamParams includes otid field
                   {
@@ -4496,9 +4511,7 @@ export default function App({
                     otid: messageOtid ?? undefined,
                     starting_after: 0,
                     batch_size: 1000,
-                  } as unknown as Parameters<
-                    typeof client.conversations.messages.stream
-                  >[1],
+                  } as unknown as ConversationMessageStreamBody,
                 );
 
                 // Only reset buffer state after confirming stream is available
@@ -6166,8 +6179,7 @@ export default function App({
           // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
-              const client = await getClient();
-              const run = await client.runs.retrieve(lastRunId);
+              const run = await getBackend().retrieveRun(lastRunId);
 
               // Check if run has error information in metadata
               if (run.metadata?.error) {
@@ -6695,8 +6707,8 @@ export default function App({
       // Send cancel request to backend (fire-and-forget).
       // Without this, the backend stays in requires_approval state after tool interrupt,
       // causing CONFLICT on the next user message.
-      getClient()
-        .then((client) => {
+      Promise.resolve()
+        .then(() => {
           const cancelConversationId =
             conversationIdRef.current === "default"
               ? agentIdRef.current
@@ -6704,7 +6716,7 @@ export default function App({
           if (!cancelConversationId || cancelConversationId === "loading") {
             return;
           }
-          return client.conversations.cancel(cancelConversationId);
+          return getBackend().cancelConversation(cancelConversationId);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -6817,8 +6829,8 @@ export default function App({
 
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
-      getClient()
-        .then((client) => {
+      Promise.resolve()
+        .then(() => {
           const cancelConversationId =
             conversationIdRef.current === "default"
               ? agentIdRef.current
@@ -6826,7 +6838,7 @@ export default function App({
           if (!cancelConversationId || cancelConversationId === "loading") {
             return;
           }
-          return client.conversations.cancel(cancelConversationId);
+          return getBackend().cancelConversation(cancelConversationId);
         })
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
@@ -6845,7 +6857,6 @@ export default function App({
     } else {
       setInterruptRequested(true);
       try {
-        const client = await getClient();
         const cancelConversationId =
           conversationIdRef.current === "default"
             ? agentIdRef.current
@@ -6853,7 +6864,7 @@ export default function App({
         if (!cancelConversationId || cancelConversationId === "loading") {
           return;
         }
-        await client.conversations.cancel(cancelConversationId);
+        await getBackend().cancelConversation(cancelConversationId);
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
@@ -6935,7 +6946,6 @@ export default function App({
       setBtwState({ status: "forking", question });
 
       try {
-        const client = await getClient();
         const isDefault = conversationIdRef.current === "default";
 
         // Fork the conversation
@@ -6951,10 +6961,13 @@ export default function App({
         }));
 
         // Send the question to the forked conversation
-        const stream = await client.conversations.messages.create(forked.id, {
-          messages: [{ role: "user", content: question }],
-          stream_tokens: true,
-        });
+        const stream = await getBackend().createConversationMessageStream(
+          forked.id,
+          {
+            messages: [{ role: "user", content: question }],
+            stream_tokens: true,
+          },
+        );
 
         let responseText = "";
         for await (const chunk of stream) {
@@ -8620,6 +8633,55 @@ export default function App({
           return { submitted: true };
         }
 
+        // Hidden command for setting/resetting the active scope's max context window.
+        if (
+          trimmed === "/set-max-context" ||
+          trimmed.startsWith("/set-max-context ")
+        ) {
+          const args = trimmed.slice("/set-max-context".length).trim();
+          const cmd = commandRunner.start(
+            trimmed,
+            "Setting max context window...",
+          );
+          setCommandRunning(true);
+
+          try {
+            const result = await applySetMaxContext({
+              agentId: agentIdRef.current,
+              conversationId: conversationIdRef.current,
+              args,
+              currentModelId,
+              currentModelHandle,
+              currentLlmConfig: llmConfigRef.current,
+              currentContextWindow: effectiveContextWindowSize ?? null,
+            });
+
+            if (result.updatedAgent) {
+              setAgentState(result.updatedAgent);
+              setHasConversationModelOverride(false);
+              setConversationOverrideModelSettings(null);
+              setConversationOverrideContextWindowLimit(null);
+            } else {
+              setHasConversationModelOverride(true);
+              setConversationOverrideContextWindowLimit(result.contextWindow);
+            }
+
+            setLlmConfig({
+              ...(llmConfigRef.current ?? ({} as LlmConfig)),
+              context_window: result.contextWindow,
+            } as LlmConfig);
+            resetContextHistory(contextTrackerRef.current);
+            cmd.finish(formatSetMaxContextResult(result), true);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to set max context: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /recompile command - recompile agent + current conversation
         if (trimmed === "/recompile") {
           const cmd = commandRunner.start(
@@ -8630,20 +8692,13 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const client = await getClient();
             const currentConversationId = conversationIdRef.current;
-
-            await client.agents.recompile(agentId, {
-              update_timestamp: true,
-            });
-
-            const conversationParams =
-              currentConversationId === "default"
-                ? { agent_id: agentId }
-                : undefined;
-            const compiledSystemPrompt = await client.conversations.recompile(
+            const { recompileAgentSystemPrompt } = await import(
+              "../agent/modify"
+            );
+            const compiledSystemPrompt = await recompileAgentSystemPrompt(
               currentConversationId,
-              conversationParams,
+              agentId,
             );
             setSystemPromptDoctorState(
               agentId,
@@ -11130,6 +11185,9 @@ ${SYSTEM_REMINDER_CLOSE}
       agentDescription,
       agentLastRunAt,
       conversationId,
+      currentModelHandle,
+      currentModelId,
+      effectiveContextWindowSize,
       commandRunner,
       handleExit,
       isExecutingTool,
@@ -14508,6 +14566,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       "https://api.letta.com";
                     return !baseURL.includes("api.letta.com");
                   })()}
+                  localModelCatalog={
+                    getBackend().capabilities.localModelCatalog
+                  }
                 />
               ))}
 

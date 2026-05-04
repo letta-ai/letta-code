@@ -1,4 +1,3 @@
-import type { Letta } from "@letta-ai/letta-client";
 import type {
   Message,
   MessageType,
@@ -6,7 +5,7 @@ import type {
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getClient } from "../../backend/api/client";
+import { type Backend, getBackend } from "../../backend";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -54,6 +53,10 @@ const RESUME_PREVIEW_MESSAGE_TYPES: MessageType[] = [
   "user_message",
   "assistant_message",
 ];
+
+function paginatedItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
+  return Array.isArray(value) ? value : value.getPaginatedItems();
+}
 
 /**
  * Format a relative time string from a date
@@ -216,7 +219,12 @@ export function ConversationSelector({
   onNewConversation,
   onCancel,
 }: ConversationSelectorProps) {
-  const clientRef = useRef<Letta | null>(null);
+  const backendRef = useRef<Backend | null>(null);
+  const selectorBackend = useCallback(() => {
+    const backend = backendRef.current ?? getBackend();
+    backendRef.current = backend;
+    return backend;
+  }, []);
 
   // Conversation list state (enriched with message data)
   const [conversations, setConversations] = useState<EnrichedConversation[]>(
@@ -235,16 +243,15 @@ export function ConversationSelector({
 
   // Enrich a single conversation with message data, updating state in-place
   const enrichConversation = useCallback(
-    async (client: Letta, convId: string) => {
+    async (backend: Backend, convId: string) => {
       try {
-        const messages = await client.conversations.messages.list(convId, {
+        const messages = await backend.listConversationMessages(convId, {
           limit: ENRICH_MESSAGE_LIMIT,
           order: "desc",
           include_return_message_types: RESUME_PREVIEW_MESSAGE_TYPES,
-        } as unknown as Parameters<
-          typeof client.conversations.messages.list
-        >[1]);
-        const chronological = [...messages.getPaginatedItems()].reverse();
+          agent_id: agentId,
+        });
+        const chronological = [...paginatedItems(messages)].reverse();
         const stats = getMessageStats(chronological);
         setConversations((prev) =>
           prev.map((c) =>
@@ -272,7 +279,7 @@ export function ConversationSelector({
         return -1;
       }
     },
-    [],
+    [agentId],
   );
 
   // Load conversations — shows list immediately, enriches progressively
@@ -287,11 +294,10 @@ export function ConversationSelector({
       setError(null);
 
       try {
-        const client = clientRef.current || (await getClient());
-        clientRef.current = client;
+        const backend = selectorBackend();
 
         // Phase 1: Fetch conversation list + default messages in parallel
-        const conversationListPromise = client.conversations.list({
+        const conversationListPromise = backend.listConversations({
           agent_id: agentId,
           limit: FETCH_PAGE_SIZE,
           ...(afterCursor && { after: afterCursor }),
@@ -302,17 +308,15 @@ export function ConversationSelector({
         // Fetch default conversation in parallel (not sequentially before)
         const defaultPromise: Promise<EnrichedConversation | null> =
           !afterCursor
-            ? client.agents.messages
-                .list(agentId, {
+            ? backend
+                .listAgentMessages(agentId, {
                   conversation_id: "default",
                   limit: ENRICH_MESSAGE_LIMIT,
                   order: "desc",
                   include_return_message_types: RESUME_PREVIEW_MESSAGE_TYPES,
-                } as unknown as Parameters<
-                  typeof client.agents.messages.list
-                >[1])
+                })
                 .then((msgs) => {
-                  const items = msgs.getPaginatedItems();
+                  const items = paginatedItems(msgs);
                   if (items.length === 0) return null;
                   const stats = getMessageStats([...items].reverse());
                   return {
@@ -382,7 +386,7 @@ export function ConversationSelector({
         // Enrich first page in parallel
         const firstPageResults = await Promise.all(
           firstPageItems.map((c) =>
-            enrichConversation(client, c.conversation.id),
+            enrichConversation(backend, c.conversation.id),
           ),
         );
 
@@ -400,7 +404,7 @@ export function ConversationSelector({
 
         // Enrich remaining conversations one by one in background
         for (const item of restItems) {
-          const count = await enrichConversation(client, item.conversation.id);
+          const count = await enrichConversation(backend, item.conversation.id);
           if (count === 0) {
             setConversations((prev) =>
               prev.filter((c) => c.conversation.id !== item.conversation.id),
@@ -415,7 +419,7 @@ export function ConversationSelector({
         setLoadingMore(false);
       }
     },
-    [agentId, enrichConversation],
+    [agentId, enrichConversation, selectorBackend],
   );
 
   // Initial load
@@ -425,8 +429,8 @@ export function ConversationSelector({
 
   // Re-enrich when page changes (prioritize newly visible unenriched items)
   useEffect(() => {
-    const client = clientRef.current;
-    if (!client || loading) return;
+    const backend = backendRef.current;
+    if (!backend || loading) return;
 
     const visibleItems = conversations.slice(
       page * DISPLAY_PAGE_SIZE,
@@ -436,7 +440,7 @@ export function ConversationSelector({
     if (unenriched.length === 0) return;
 
     for (const item of unenriched) {
-      enrichConversation(client, item.conversation.id);
+      enrichConversation(backend, item.conversation.id);
     }
   }, [page, loading, conversations, enrichConversation]);
 

@@ -5,6 +5,7 @@
  */
 
 import { getCurrentAgentId } from "../agent/context";
+import { getBackend } from "../backend";
 import { getClient } from "../backend/api/client";
 
 /** In-memory cache of secrets (populated on startup from server).
@@ -58,6 +59,10 @@ export async function initSecretsFromServer(
   agentId: string,
   cachedAgent?: { secrets?: Array<{ key?: string; value?: string }> | null },
 ): Promise<void> {
+  if (!cachedAgent && !getBackend().capabilities.serverSecrets) {
+    setCache(agentId, {});
+    return;
+  }
   const agent =
     cachedAgent ??
     (await (
@@ -98,6 +103,58 @@ export function listSecretNames(agentId?: string): string[] {
 }
 
 /**
+ * Refresh the cache from core, then return the full entries. Used by the
+ * modal's `secret_list` WS handler to pre-populate the form.
+ */
+export async function refreshAndListSecrets(
+  agentIdArg?: string,
+): Promise<Array<{ key: string; value: string }>> {
+  const agentId = resolveSecretsAgentId(agentIdArg);
+  if (!agentId) {
+    throw new Error("No agent context set. Agent ID is required.");
+  }
+  await initSecretsFromServer(agentId);
+  const cache = loadSecrets(agentId);
+  return Object.keys(cache)
+    .sort()
+    .map((key) => ({ key, value: cache[key] ?? "" }));
+}
+
+/**
+ * Apply a batch of mutations atomically: a single read + single PATCH that
+ * overlays `set` and removes `unset`. Avoids the read-modify-write race when
+ * multiple keys change at once. Used by the modal's `secret_apply` WS handler.
+ *
+ * @returns sorted final secret name list after the apply
+ */
+export async function applySecretBatch(
+  options: {
+    set?: Record<string, string>;
+    unset?: string[];
+  },
+  agentIdArg?: string,
+): Promise<string[]> {
+  const agentId = resolveSecretsAgentId(agentIdArg);
+  if (!agentId) {
+    throw new Error("No agent context set. Agent ID is required.");
+  }
+
+  const next: Record<string, string> = { ...loadSecrets(agentId) };
+  for (const [rawKey, value] of Object.entries(options.set ?? {})) {
+    next[rawKey.toUpperCase()] = value;
+  }
+  for (const rawKey of options.unset ?? []) {
+    delete next[rawKey.toUpperCase()];
+  }
+
+  const client = await getClient();
+  await client.agents.update(agentId, { secrets: next });
+  setCache(agentId, next);
+
+  return Object.keys(next).sort();
+}
+
+/**
  * Set a secret on the server and update the in-memory cache.
  * PATCH replaces the entire secrets map, so we rebuild from cache.
  */
@@ -106,6 +163,9 @@ export async function setSecretOnServer(
   value: string,
   agentIdArg?: string,
 ): Promise<void> {
+  if (!getBackend().capabilities.serverSecrets) {
+    throw new Error("Agent secrets are not supported by this backend yet");
+  }
   const client = await getClient();
   const agentId = resolveSecretsAgentId(agentIdArg);
   if (!agentId) {
@@ -131,6 +191,9 @@ export async function deleteSecretOnServer(
   key: string,
   agentIdArg?: string,
 ): Promise<boolean> {
+  if (!getBackend().capabilities.serverSecrets) {
+    throw new Error("Agent secrets are not supported by this backend yet");
+  }
   const agentId = resolveSecretsAgentId(agentIdArg);
   if (!agentId) {
     throw new Error("No agent context set. Agent ID is required.");

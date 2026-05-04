@@ -3,16 +3,10 @@ import { describe, expect, test } from "bun:test";
 import {
   buildSystemPrompt,
   isKnownPreset,
-  SYSTEM_PROMPT_BLOCKS_ADDON,
-  SYSTEM_PROMPT_MEMFS_ADDON,
+  resolveAndBuildSystemPrompt,
+  SYSTEM_PROMPTS,
   shouldRecommendDefaultPrompt,
-  swapMemoryAddon,
 } from "../../agent/promptAssets";
-
-function countOccurrences(haystack: string, needle: string): number {
-  if (!needle) return 0;
-  return haystack.split(needle).length - 1;
-}
 
 describe("isKnownPreset", () => {
   test("returns true for known preset IDs", () => {
@@ -31,20 +25,27 @@ describe("isKnownPreset", () => {
 });
 
 describe("buildSystemPrompt", () => {
-  test("builds standard prompt with memory addon", () => {
+  test("returns the standard full prompt for standard memory mode", () => {
     const result = buildSystemPrompt("letta", "standard");
-    expect(result).toContain(
-      "Your memory consists of core memory (composed of memory blocks)",
-    );
-    expect(result).not.toContain("## Memory structure");
+    const preset = SYSTEM_PROMPTS.find((p) => p.id === "letta");
+    expect(preset).toBeDefined();
+
+    expect(result).toBe(preset?.content.trim() ?? "");
+    expect(result).toContain("**In-context memory blocks**");
+    expect(result).not.toContain("$MEMORY_DIR");
+    expect(result).not.toContain("MemFS");
   });
 
-  test("builds memfs prompt with memfs addon", () => {
+  test("returns the memfs full prompt for memfs memory mode", () => {
     const result = buildSystemPrompt("letta", "memfs");
-    expect(result).toContain("## Memory structure");
-    expect(result).not.toContain(
-      "Your memory consists of core memory (composed of memory blocks)",
-    );
+    const preset = SYSTEM_PROMPTS.find((p) => p.id === "letta");
+    expect(preset).toBeDefined();
+    expect(preset?.memfsContent).toBeDefined();
+
+    expect(result).toBe(preset?.memfsContent?.trim() ?? "");
+    expect(result).toContain("MemFS");
+    expect(result).toContain("$MEMORY_DIR");
+    expect(result).not.toContain("**In-context memory blocks**");
   });
 
   test("throws on unknown preset", () => {
@@ -59,98 +60,29 @@ describe("buildSystemPrompt", () => {
     expect(first).toBe(second);
   });
 
-  test("default and letta presets resolve to same content", () => {
-    const defaultResult = buildSystemPrompt("default", "standard");
-    const lettaResult = buildSystemPrompt("letta", "standard");
-    expect(defaultResult).toBe(lettaResult);
+  test("default and letta presets resolve to same content in both memory modes", () => {
+    expect(buildSystemPrompt("default", "standard")).toBe(
+      buildSystemPrompt("letta", "standard"),
+    );
+    expect(buildSystemPrompt("default", "memfs")).toBe(
+      buildSystemPrompt("letta", "memfs"),
+    );
+  });
+
+  test("presets without a memfs variant are treated as complete prompts", () => {
+    expect(buildSystemPrompt("source-claude", "memfs")).toBe(
+      buildSystemPrompt("source-claude", "standard"),
+    );
   });
 });
 
-describe("swapMemoryAddon", () => {
-  test("swaps standard to memfs", () => {
-    const base = "You are a test agent.";
-    const standard = `${base}\n\n${SYSTEM_PROMPT_BLOCKS_ADDON.trimStart()}`;
+describe("resolveAndBuildSystemPrompt", () => {
+  test("returns known presets without appending memory sections", async () => {
+    const standard = await resolveAndBuildSystemPrompt("letta", "standard");
+    const memfs = await resolveAndBuildSystemPrompt("letta", "memfs");
 
-    const result = swapMemoryAddon(standard, "memfs");
-
-    expect(result).toContain("## Memory structure");
-    expect(result).not.toContain(
-      "Your memory consists of core memory (composed of memory blocks)",
-    );
-    expect(countOccurrences(result, "## Memory structure")).toBe(1);
-  });
-
-  test("swaps memfs to standard without orphan fragments", () => {
-    const base = "You are a test agent.";
-    const memfs = `${base}\n\n${SYSTEM_PROMPT_MEMFS_ADDON.trimStart()}`;
-
-    const result = swapMemoryAddon(memfs, "standard");
-
-    expect(result).toContain(
-      "Your memory consists of core memory (composed of memory blocks)",
-    );
-    expect(result).not.toContain("## Memory structure");
-    expect(result).not.toContain("# See what changed");
-    expect(result).not.toContain('git commit -m "<type>: <what changed>"');
-  });
-
-  test("handles duplicate addons", () => {
-    const base = "You are a test agent.";
-    const doubled = `${base}\n\n${SYSTEM_PROMPT_BLOCKS_ADDON}\n\n${SYSTEM_PROMPT_BLOCKS_ADDON}`;
-
-    const result = swapMemoryAddon(doubled, "memfs");
-
-    expect(countOccurrences(result, "## Memory structure")).toBe(1);
-    expect(result).not.toContain(
-      "Your memory consists of core memory (composed of memory blocks)",
-    );
-  });
-
-  test("strips orphan memfs tail fragment", () => {
-    const tailStart = SYSTEM_PROMPT_MEMFS_ADDON.indexOf("# See what changed");
-    expect(tailStart).toBeGreaterThanOrEqual(0);
-    const orphanTail = SYSTEM_PROMPT_MEMFS_ADDON.slice(tailStart).trim();
-
-    const drifted = `Header text\n\n${orphanTail}`;
-    const result = swapMemoryAddon(drifted, "standard");
-
-    expect(result).toContain(
-      "Your memory consists of core memory (composed of memory blocks)",
-    );
-    expect(result).not.toContain("# See what changed");
-  });
-
-  test("strips legacy heading-based ## Memory section", () => {
-    const legacy =
-      "You are a test agent.\n\n## Memory\nLegacy memory instructions here.\n\nSome other details.";
-
-    const result = swapMemoryAddon(legacy, "memfs");
-
-    expect(result).toContain("## Memory structure");
-    expect(result).not.toContain("Legacy memory instructions");
-    expect(countOccurrences(result, "## Memory structure")).toBe(1);
-  });
-
-  test("strips legacy heading-based ## Memory Filesystem section", () => {
-    const legacy =
-      "You are a test agent.\n\n## Memory Filesystem\nOld memfs instructions.";
-
-    const result = swapMemoryAddon(legacy, "standard");
-
-    expect(result).toContain(
-      "Your memory consists of core memory (composed of memory blocks)",
-    );
-    expect(result).not.toContain("Old memfs instructions");
-  });
-
-  test("is idempotent", () => {
-    const base = "You are a test agent.";
-    const once = swapMemoryAddon(base, "memfs");
-    const twice = swapMemoryAddon(once, "memfs");
-
-    expect(twice).toBe(once);
-    expect(countOccurrences(twice, "## Syncing")).toBe(1);
-    expect(countOccurrences(twice, "# See what changed")).toBe(1);
+    expect(standard).toBe(buildSystemPrompt("letta", "standard"));
+    expect(memfs).toBe(buildSystemPrompt("letta", "memfs"));
   });
 });
 

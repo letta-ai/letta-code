@@ -7,14 +7,15 @@ import type {
   OutboundChannelMessage,
   SlackChannelMode,
   SlackDefaultPermissionMode,
-  SupportedChannelId,
 } from "./types";
 
 export interface ChannelPluginMetadata {
-  id: SupportedChannelId;
+  id: string;
   displayName: string;
   runtimePackages: string[];
   runtimeModules: string[];
+  source?: "first-party" | "user";
+  firstParty?: boolean;
 }
 
 export type ChannelProtocolConfig = Record<string, unknown>;
@@ -65,7 +66,7 @@ export interface ChannelAccountConfigAdapter<TAccount extends ChannelAccount> {
   shouldRefreshDisplayName(patch: ChannelPluginAccountPatch): boolean;
 }
 
-export type ChannelMessageActionName = "send" | "react" | "upload-file";
+export type ChannelMessageActionName = string;
 
 export interface ChannelMessageToolSchemaContribution {
   properties: Record<string, unknown>;
@@ -88,7 +89,7 @@ export interface ChannelMessageToolDiscovery {
 
 export interface ChannelMessageActionRequest {
   action: ChannelMessageActionName;
-  channel: SupportedChannelId;
+  channel: string;
   chatId: string;
   message?: string;
   replyToMessageId?: string;

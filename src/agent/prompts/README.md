@@ -4,11 +4,12 @@ All prompt files are imported as text via `promptAssets.ts` (or `create.ts` for 
 
 ## System prompts
 
-Selectable via the `/system` command. Each is a complete system prompt that gets a memory addon appended at build time.
+Selectable via the `/system` command. Each preset is a complete system prompt. Presets that need different standard vs memfs instructions keep separate full prompt files rather than appending memory sections at build time.
 
 | File | Used | Description |
 |------|------|-------------|
-| `letta.md` | Default for all agents | Letta-tuned system prompt |
+| `letta_no_memfs.md` | Default for non-memfs agents | Letta-tuned system prompt for standard memory blocks |
+| `letta.md` | Default for memfs agents | Letta-tuned system prompt for git-backed MemFS memory |
 | `source_claude.md` | `/system source-claude` | Near-verbatim Claude Code prompt for benchmarking |
 | `source_codex.md` | `/system source-codex` | Near-verbatim OpenAI Codex prompt for benchmarking |
 | `source_gemini.md` | `/system source-gemini` | Near-verbatim Gemini CLI prompt for benchmarking |
@@ -35,15 +36,6 @@ Selectable via the `/system` command. Each is a complete system prompt that gets
 - **Version:** snippets.ts (Feb 2026, copyright 2026 Google LLC)
 - **Reference:** https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/prompts/snippets.ts
 - **Notes:** Rendered for interactive mode, git repo present, outside sandbox, standard tools, no sub-agents, no skills, no YOLO mode, no approved plan. Tool name variables resolved. Conditional sections (YOLO mode, Plan mode, sandbox, GEMINI.md) noted but not inlined.
-
-## Memory addons
-
-Appended to the system prompt at build time based on the agent's memory mode. Exactly one is used per agent.
-
-| File | Used | Description |
-|------|------|-------------|
-| `system_prompt_blocks.md` | Standard memory mode | Describes the virtual memory block system |
-| `system_prompt_memfs.md` | Memfs memory mode | Describes the git-backed memory filesystem |
 
 ## Memory blocks (`.mdx`)
 

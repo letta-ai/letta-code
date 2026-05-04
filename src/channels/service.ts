@@ -59,15 +59,21 @@ import type {
   ChannelAccount,
   ChannelBindableTarget,
   ChannelRoute,
+  CustomChannelAccount,
   DmPolicy,
   PendingPairing,
   SlackChannelMode,
   SlackDefaultPermissionMode,
   SupportedChannelId,
 } from "./types";
+import {
+  isDiscordChannelAccount,
+  isSlackChannelAccount,
+  isTelegramChannelAccount,
+} from "./types";
 
 export interface ChannelSummary {
-  channelId: SupportedChannelId;
+  channelId: string;
   displayName: string;
   configured: boolean;
   enabled: boolean;
@@ -78,43 +84,23 @@ export interface ChannelSummary {
   routesCount: number;
 }
 
-export type ChannelConfigSnapshot =
-  | {
-      channelId: "telegram";
-      accountId: string;
-      displayName?: string;
-      enabled: boolean;
-      dmPolicy: DmPolicy;
-      allowedUsers: string[];
-      config: ChannelProtocolConfig;
-      hasToken: boolean;
-    }
-  | {
-      channelId: "slack";
-      accountId: string;
-      displayName?: string;
-      enabled: boolean;
-      mode: SlackChannelMode;
-      dmPolicy: DmPolicy;
-      allowedUsers: string[];
-      config: ChannelProtocolConfig;
-      hasBotToken: boolean;
-      hasAppToken: boolean;
-      agentId: string | null;
-      defaultPermissionMode: SlackDefaultPermissionMode;
-    }
-  | {
-      channelId: "discord";
-      accountId: string;
-      displayName?: string;
-      enabled: boolean;
-      dmPolicy: DmPolicy;
-      allowedUsers: string[];
-      config: ChannelProtocolConfig;
-      allowedChannels: string[];
-      hasToken: boolean;
-      agentId: string | null;
-    };
+export interface ChannelConfigSnapshot {
+  [key: string]: unknown;
+  channelId: string;
+  accountId: string;
+  displayName?: string;
+  enabled: boolean;
+  mode?: SlackChannelMode;
+  dmPolicy: DmPolicy;
+  allowedUsers: string[];
+  config: ChannelProtocolConfig;
+  hasToken?: boolean;
+  hasBotToken?: boolean;
+  hasAppToken?: boolean;
+  agentId?: string | null;
+  defaultPermissionMode?: SlackDefaultPermissionMode;
+  allowedChannels?: string[];
+}
 
 export interface PendingPairingSnapshot {
   accountId: string;
@@ -127,7 +113,7 @@ export interface PendingPairingSnapshot {
 }
 
 export interface ChannelRouteSnapshot {
-  channelId: SupportedChannelId;
+  channelId: string;
   accountId: string;
   chatId: string;
   chatType?: "direct" | "channel";
@@ -140,7 +126,7 @@ export interface ChannelRouteSnapshot {
 }
 
 export interface ChannelTargetSnapshot {
-  channelId: SupportedChannelId;
+  channelId: string;
   accountId: string;
   targetId: string;
   targetType: "channel";
@@ -155,60 +141,32 @@ async function refreshLoadedMessageChannelTool(): Promise<void> {
   await refreshDynamicChannelToolsInLoadedRegistry();
 }
 
-export type ChannelAccountSnapshot =
-  | {
-      channelId: "telegram";
-      accountId: string;
-      displayName?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      dmPolicy: DmPolicy;
-      allowedUsers: string[];
-      config: ChannelProtocolConfig;
-      hasToken: boolean;
-      transcribeVoice: boolean;
-      binding: {
-        agentId: string | null;
-        conversationId: string | null;
-      };
-      createdAt: string;
-      updatedAt: string;
-    }
-  | {
-      channelId: "slack";
-      accountId: string;
-      displayName?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      mode: SlackChannelMode;
-      dmPolicy: DmPolicy;
-      allowedUsers: string[];
-      config: ChannelProtocolConfig;
-      hasBotToken: boolean;
-      hasAppToken: boolean;
-      agentId: string | null;
-      defaultPermissionMode: SlackDefaultPermissionMode;
-      createdAt: string;
-      updatedAt: string;
-    }
-  | {
-      channelId: "discord";
-      accountId: string;
-      displayName?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      dmPolicy: DmPolicy;
-      allowedUsers: string[];
-      config: ChannelProtocolConfig;
-      allowedChannels: string[];
-      hasToken: boolean;
-      agentId: string | null;
-      createdAt: string;
-      updatedAt: string;
-    };
+export interface ChannelAccountSnapshot {
+  [key: string]: unknown;
+  channelId: string;
+  accountId: string;
+  displayName?: string;
+  enabled: boolean;
+  configured: boolean;
+  running: boolean;
+  mode?: SlackChannelMode;
+  dmPolicy: DmPolicy;
+  allowedUsers: string[];
+  config: ChannelProtocolConfig;
+  hasToken?: boolean;
+  hasBotToken?: boolean;
+  hasAppToken?: boolean;
+  transcribeVoice?: boolean;
+  binding?: {
+    agentId: string | null;
+    conversationId: string | null;
+  };
+  agentId?: string | null;
+  defaultPermissionMode?: SlackDefaultPermissionMode;
+  allowedChannels?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
 
 export type { ChannelAccountPatch, ChannelConfigPatch } from "./pluginTypes";
 
@@ -245,7 +203,7 @@ async function resolveChannelAccountDisplayName(
   }
 
   try {
-    if (account.channel === "telegram") {
+    if (isTelegramChannelAccount(account)) {
       if (!account.token.trim()) {
         return undefined;
       }
@@ -255,13 +213,17 @@ async function resolveChannelAccountDisplayName(
       );
     }
 
-    if (account.channel === "discord") {
+    if (isDiscordChannelAccount(account)) {
       if (!account.token.trim()) {
         return undefined;
       }
       return normalizeDisplayName(
         await resolveDiscordAccountDisplayName(account.token),
       );
+    }
+
+    if (!isSlackChannelAccount(account)) {
+      return undefined;
     }
 
     if (!account.botToken.trim() || !account.appToken.trim()) {
@@ -277,7 +239,7 @@ async function resolveChannelAccountDisplayName(
 }
 
 function getSelectedChannelAccount(
-  channelId: SupportedChannelId,
+  channelId: string,
   accountId?: string,
 ): ChannelAccount | null {
   const normalizedAccountId = accountId?.trim();
@@ -299,7 +261,7 @@ function getSelectedChannelAccount(
 }
 
 function getSelectedRouteByChatId(
-  channelId: SupportedChannelId,
+  channelId: string,
   chatId: string,
   accountId?: string,
 ): ChannelRoute | null {
@@ -319,7 +281,7 @@ function getSelectedRouteByChatId(
 }
 
 function getSelectedTargetById(
-  channelId: SupportedChannelId,
+  channelId: string,
   targetId: string,
   accountId?: string,
 ): ChannelBindableTarget | null {
@@ -362,7 +324,7 @@ function toPendingPairingSnapshot(
 }
 
 function toRouteSnapshot(
-  channelId: SupportedChannelId,
+  channelId: string,
   route: ChannelRoute,
 ): ChannelRouteSnapshot {
   return {
@@ -380,7 +342,7 @@ function toRouteSnapshot(
 }
 
 function toTargetSnapshot(
-  channelId: SupportedChannelId,
+  channelId: string,
   target: ChannelBindableTarget,
 ): ChannelTargetSnapshot {
   return {
@@ -397,12 +359,16 @@ function toTargetSnapshot(
 }
 
 function isAccountConfigured(account: ChannelAccount): boolean {
-  if (account.channel === "telegram") {
+  if (isTelegramChannelAccount(account)) {
     return account.token.trim().length > 0;
   }
 
-  if (account.channel === "discord") {
+  if (isDiscordChannelAccount(account)) {
     return account.token.trim().length > 0;
+  }
+
+  if (!isSlackChannelAccount(account)) {
+    return Object.keys(account.config).length > 0;
   }
 
   return (
@@ -416,7 +382,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       ?.getAdapter(account.channel, account.accountId)
       ?.isRunning() ?? false;
 
-  if (account.channel === "telegram") {
+  if (isTelegramChannelAccount(account)) {
     loadRoutes(account.channel);
     const fallbackRoute = getRoutesForChannel(
       account.channel,
@@ -457,7 +423,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     };
   }
 
-  if (account.channel === "discord") {
+  if (isDiscordChannelAccount(account)) {
     return {
       channelId: "discord",
       accountId: account.accountId,
@@ -471,6 +437,22 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       allowedChannels: [...(account.allowedChannels ?? [])],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
+  if (!isSlackChannelAccount(account)) {
+    return {
+      channelId: account.channel,
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelAccountProtocolConfig(account),
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -538,6 +520,20 @@ function createAccountFromPatch(
     };
   }
 
+  if (channelId !== "slack") {
+    return {
+      channel: channelId,
+      accountId,
+      displayName: normalizeDisplayName(normalizedPatch.displayName),
+      enabled: normalizedPatch.enabled ?? false,
+      dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      allowedUsers: normalizedPatch.allowedUsers ?? [],
+      config: { ...(normalizedPatch.config ?? {}) },
+      createdAt: now,
+      updatedAt: now,
+    } satisfies CustomChannelAccount;
+  }
+
   return {
     channel: "slack",
     accountId,
@@ -561,7 +557,7 @@ function mergeAccountPatch(
 ): ChannelAccount {
   const normalizedPatch = normalizeChannelAccountPatch(existing.channel, patch);
   const nextUpdatedAt = new Date().toISOString();
-  if (existing.channel === "telegram") {
+  if (isTelegramChannelAccount(existing)) {
     return {
       ...existing,
       displayName:
@@ -578,7 +574,7 @@ function mergeAccountPatch(
     };
   }
 
-  if (existing.channel === "discord") {
+  if (isDiscordChannelAccount(existing)) {
     return {
       ...existing,
       displayName:
@@ -592,6 +588,24 @@ function mergeAccountPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       allowedChannels:
         normalizedPatch.allowedChannels ?? existing.allowedChannels,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
+  if (!isSlackChannelAccount(existing)) {
+    return {
+      ...existing,
+      displayName:
+        normalizedPatch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPatch.displayName)
+          : existing.displayName,
+      enabled: normalizedPatch.enabled ?? existing.enabled,
+      dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      config:
+        normalizedPatch.config !== undefined
+          ? { ...normalizedPatch.config }
+          : { ...existing.config },
       updatedAt: nextUpdatedAt,
     };
   }
@@ -668,7 +682,7 @@ export function getChannelConfigSnapshot(
   if (!account) {
     return null;
   }
-  if (account.channel === "telegram") {
+  if (isTelegramChannelAccount(account)) {
     return {
       channelId: "telegram",
       accountId: account.accountId,
@@ -681,7 +695,7 @@ export function getChannelConfigSnapshot(
     };
   }
 
-  if (account.channel === "discord") {
+  if (isDiscordChannelAccount(account)) {
     return {
       channelId: "discord",
       accountId: account.accountId,
@@ -693,6 +707,18 @@ export function getChannelConfigSnapshot(
       allowedChannels: [...(account.allowedChannels ?? [])],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
+    };
+  }
+
+  if (!isSlackChannelAccount(account)) {
+    return {
+      channelId: account.channel,
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelConfigSnapshotProtocolConfig(account),
     };
   }
 
@@ -732,6 +758,7 @@ export async function setChannelConfigLive(
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
+      config: normalizedPatch.config,
       displayName: existing.displayName,
     });
     shouldRefreshDisplayName = channelPluginConfigShouldRefreshDisplayName(
@@ -751,6 +778,7 @@ export async function setChannelConfigLive(
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
         transcribeVoice: normalizedPatch.transcribeVoice,
+        config: normalizedPatch.config,
       },
       accountId ? { accountId } : undefined,
     );
@@ -802,14 +830,19 @@ export async function startChannelLive(
     );
   }
   if (!isAccountConfigured(existing)) {
-    if (existing.channel === "telegram") {
+    if (isTelegramChannelAccount(existing)) {
       throw new Error(
         'Channel "telegram" is missing a token. Configure it first.',
       );
     }
-    if (existing.channel === "discord") {
+    if (isDiscordChannelAccount(existing)) {
       throw new Error(
         'Channel "discord" is missing a token. Configure it first.',
+      );
+    }
+    if (!isSlackChannelAccount(existing)) {
+      throw new Error(
+        `Channel "${channelId}" account is not configured. Configure it first.`,
       );
     }
     throw new Error(
@@ -983,17 +1016,25 @@ export function bindChannelAccountLive(
   }
 
   let updated: ChannelAccount;
-  if (existing.channel === "telegram") {
+  if (isTelegramChannelAccount(existing)) {
     updated = upsertChannelAccount(channelId, {
       ...existing,
       binding: { agentId, conversationId },
       updatedAt: new Date().toISOString(),
     });
-  } else {
+  } else if (
+    isSlackChannelAccount(existing) ||
+    isDiscordChannelAccount(existing)
+  ) {
     // Slack and Discord both use a top-level agentId
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId,
+      updatedAt: new Date().toISOString(),
+    });
+  } else {
+    updated = upsertChannelAccount(channelId, {
+      ...existing,
       updatedAt: new Date().toISOString(),
     });
   }
@@ -1014,17 +1055,25 @@ export function unbindChannelAccountLive(
   }
 
   let updated: ChannelAccount;
-  if (existing.channel === "telegram") {
+  if (isTelegramChannelAccount(existing)) {
     updated = upsertChannelAccount(channelId, {
       ...existing,
       binding: { agentId: null, conversationId: null },
       updatedAt: new Date().toISOString(),
     });
-  } else {
+  } else if (
+    isSlackChannelAccount(existing) ||
+    isDiscordChannelAccount(existing)
+  ) {
     // Slack and Discord both use a top-level agentId
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId: null,
+      updatedAt: new Date().toISOString(),
+    });
+  } else {
+    updated = upsertChannelAccount(channelId, {
+      ...existing,
       updatedAt: new Date().toISOString(),
     });
   }
@@ -1044,14 +1093,19 @@ export async function startChannelAccountLive(
     );
   }
   if (!isAccountConfigured(existing)) {
-    if (existing.channel === "telegram") {
+    if (isTelegramChannelAccount(existing)) {
       throw new Error(
         'Channel "telegram" account is missing a token. Configure it first.',
       );
     }
-    if (existing.channel === "discord") {
+    if (isDiscordChannelAccount(existing)) {
       throw new Error(
         'Channel "discord" account is missing a token. Configure it first.',
+      );
+    }
+    if (!isSlackChannelAccount(existing)) {
+      throw new Error(
+        `Channel "${channelId}" account is not configured. Configure it first.`,
       );
     }
     throw new Error(
@@ -1287,7 +1341,7 @@ export function updateChannelRouteLive(
     ? getChannelAccount(channelId, resolvedAccountId)
     : null;
 
-  if (existingAccount?.channel === "telegram") {
+  if (existingAccount && isTelegramChannelAccount(existingAccount)) {
     upsertChannelAccount(channelId, {
       ...existingAccount,
       binding: {
@@ -1316,7 +1370,7 @@ export function updateChannelRouteLive(
     );
     setRouteInMemory(channelId, existingRoute);
 
-    if (existingAccount?.channel === "telegram") {
+    if (existingAccount && isTelegramChannelAccount(existingAccount)) {
       try {
         upsertChannelAccount(channelId, existingAccount);
       } catch (rollbackError) {

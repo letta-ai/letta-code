@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { __testOverrideChannelsRoot } from "../../channels/config";
 import type { InboundChannelMessage } from "../../channels/types";
 
 type FakeBotStartOptions = {
@@ -107,11 +108,10 @@ class FakeBot {
   }
 }
 
-mock.module("../../channels/config", () => ({
-  getChannelDir: (channelId: string) => join(channelRoot, channelId),
-}));
-
 mock.module("../../channels/telegram/runtime", () => ({
+  ensureTelegramRuntimeInstalled: async () => false,
+  installTelegramRuntime: async () => {},
+  isTelegramRuntimeInstalled: () => true,
   loadGrammyModule: async () => ({
     Bot: FakeBot,
     InputFile: FakeInputFile,
@@ -140,6 +140,7 @@ const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
   channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
+  __testOverrideChannelsRoot(channelRoot);
   FakeBot.instances.length = 0;
   FakeBot.nextStartImpl = async (options, botInfo) => {
     await options?.onStart?.(
@@ -159,6 +160,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __testOverrideChannelsRoot(null);
   console.error = originalConsoleError;
   globalThis.fetch = originalFetch;
   if (originalOpenAiApiKey === undefined) {
@@ -673,6 +675,69 @@ test("telegram adapter batches media groups and downloads inbound images", async
       expect(existsSync(localPath)).toBe(true);
       expect(readFileSync(localPath, "utf-8").startsWith("image-")).toBe(true);
     }
+  } finally {
+    rmSync(channelRoot, { recursive: true, force: true });
+    channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
+  }
+});
+
+test("telegram adapter preserves photo mime type when Telegram download responds with octet-stream", async () => {
+  globalThis.fetch = mock(
+    async () =>
+      new Response(Buffer.from("fake-jpeg"), {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      }),
+  ) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "photos/photo.jpg",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  try {
+    await bot?.emit("message", {
+      message: {
+        chat: { id: 123 },
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        date: 1_736_380_800,
+        message_id: 10,
+        photo: [
+          { file_id: "photo1", file_unique_id: "unique-1", file_size: 9 },
+        ],
+      },
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const firstCall = onMessage.mock.calls[0] as unknown as
+      | [InboundChannelMessage]
+      | undefined;
+    expect(firstCall).toBeDefined();
+    if (!firstCall) {
+      throw new Error("Expected inbound Telegram photo to emit a message");
+    }
+
+    const [inbound] = firstCall;
+    expect(inbound.attachments).toHaveLength(1);
+    expect(inbound.attachments?.[0]).toMatchObject({
+      kind: "image",
+      mimeType: "image/jpeg",
+      imageDataBase64: Buffer.from("fake-jpeg").toString("base64"),
+    });
   } finally {
     rmSync(channelRoot, { recursive: true, force: true });
     channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));

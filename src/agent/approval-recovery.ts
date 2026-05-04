@@ -6,7 +6,7 @@
  * helper (`fetchRunErrorDetail`) that requires network access.
  */
 
-import { getClient } from "../backend/api/client";
+import { getBackend } from "../backend";
 
 export interface RunErrorInfo {
   error_type?: string;
@@ -72,8 +72,7 @@ export async function fetchRunErrorInfo(
 ): Promise<RunErrorInfo | null> {
   if (!runId) return null;
   try {
-    const client = await getClient();
-    const run = await client.runs.retrieve(runId);
+    const run = await getBackend().retrieveRun(runId);
     const metaError = run.metadata?.error as RunErrorMetadata;
     const nestedError = metaError?.error;
     const errorInfo: RunErrorInfo = {

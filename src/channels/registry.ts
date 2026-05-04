@@ -35,7 +35,11 @@ import {
   removePendingControlRequest as removePersistedPendingControlRequest,
   upsertPendingControlRequest as upsertPersistedPendingControlRequest,
 } from "./pendingControlRequests";
-import { loadChannelPlugin } from "./pluginRegistry";
+import {
+  getChannelDisplayName,
+  isFirstPartyChannelPlugin,
+  loadChannelPlugin,
+} from "./pluginRegistry";
 import {
   addRoute,
   getRoute as getRouteFromStore,
@@ -57,30 +61,56 @@ import type {
   SlackChannelAccount,
   SlackDefaultPermissionMode,
 } from "./types";
+import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
-  if (channelId === "slack") return "Slack";
-  if (channelId === "discord") return "Discord";
-  return "Telegram";
+  try {
+    return getChannelDisplayName(channelId);
+  } catch {
+    return channelId;
+  }
 }
 
-function buildPairingInstructions(channelId: string, code: string): string {
+export function buildPairingInstructions(
+  channelId: string,
+  code: string,
+): string {
+  // First-party channels (telegram, slack, discord) have UI in the desktop
+  // app. Community plugins installed under ~/.letta/channels/<id>/ do not,
+  // so the user-facing copy needs to point at CLI commands instead.
   const displayName = channelDisplayName(channelId);
+  if (!isFirstPartyChannelPlugin(channelId)) {
+    return (
+      `This chat isn't connected to a Letta agent yet.\n\n` +
+      `Pairing code: ${code} (expires in 15 minutes)\n\n` +
+      `On the machine where your listener runs:\n\n` +
+      `letta channels pair --channel ${channelId} --code ${code} --agent <agent-id>\n\n` +
+      `Find your agent id with letta agents list.`
+    );
+  }
   return (
-    `To connect this chat to a Letta Code agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
+    `To connect this chat to a Letta agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
     `Pairing code: ${code}\n\n` +
     `This code expires in 15 minutes.`
   );
 }
 
-function buildUnboundRouteInstructions(
+export function buildUnboundRouteInstructions(
   channelId: string,
   chatId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
+  if (!isFirstPartyChannelPlugin(channelId)) {
+    return (
+      `This chat isn't connected to a Letta agent yet.\n\n` +
+      `On the machine where your listener runs:\n\n` +
+      `letta channels route add --channel ${channelId} --chat-id ${chatId} --agent <agent-id>\n\n` +
+      `Find your agent id with letta agents list.`
+    );
+  }
   return (
-    `This chat isn't bound to a Letta Code agent yet.\n\n` +
+    `This chat isn't connected to a Letta agent yet.\n\n` +
     `Open Channels > ${displayName} in Letta Code and connect this chat there.\n\n` +
     `Chat ID: ${chatId}`
   );
@@ -762,7 +792,7 @@ export class ChannelRegistry {
     const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
-    if (msg.channel === "slack" && config.channel === "slack") {
+    if (msg.channel === "slack" && isSlackChannelAccount(config)) {
       const slackResult = await this.ensureSlackRoute(adapter, msg, config);
       if (!slackResult) {
         return;
@@ -787,7 +817,7 @@ export class ChannelRegistry {
     // standard pairing flow below.
     if (
       msg.channel === "discord" &&
-      config.channel === "discord" &&
+      isDiscordChannelAccount(config) &&
       (msg.chatType === "channel" || config.dmPolicy !== "pairing")
     ) {
       const discordResult = await this.ensureDiscordRoute(adapter, msg, config);

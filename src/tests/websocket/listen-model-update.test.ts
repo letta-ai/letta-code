@@ -12,6 +12,16 @@ import { __listenClientTestUtils } from "../../websocket/listen-client";
  * verify wiring that can't be tested without mocking API calls.
  */
 
+function readModelToolsetCommandSource(): string {
+  const commandPath = fileURLToPath(
+    new URL(
+      "../../websocket/listener/commands/model-toolset.ts",
+      import.meta.url,
+    ),
+  );
+  return readFileSync(commandPath, "utf-8");
+}
+
 describe("listen-client model update status message", () => {
   test("emits only model name when toolset did not change", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
@@ -153,10 +163,7 @@ describe("listen-client model update status message", () => {
 
 describe("listen-client applyModelUpdateForRuntime wiring", () => {
   test("uses scoped runtime tool snapshots for change detection and wraps toolset refresh in try/catch", () => {
-    const clientPath = fileURLToPath(
-      new URL("../../websocket/listener/client.ts", import.meta.url),
-    );
-    const source = readFileSync(clientPath, "utf-8");
+    const source = readModelToolsetCommandSource();
 
     // Toolset change detection should compare scoped loaded-tool snapshots,
     // not the mutable process-global registry.
@@ -183,10 +190,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
   });
 
   test("routes default conversations to agent update and non-default to conversation update", () => {
-    const clientPath = fileURLToPath(
-      new URL("../../websocket/listener/client.ts", import.meta.url),
-    );
-    const source = readFileSync(clientPath, "utf-8");
+    const source = readModelToolsetCommandSource();
 
     // Agent-scoped update for default conversation
     expect(source).toContain('conversationId === "default"');
@@ -202,10 +206,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
 
 describe("listen-client list_models response wiring", () => {
   test("buildListModelsResponse is async and uses Promise.allSettled for parallel fetches", () => {
-    const clientPath = fileURLToPath(
-      new URL("../../websocket/listener/client.ts", import.meta.url),
-    );
-    const source = readFileSync(clientPath, "utf-8");
+    const source = readModelToolsetCommandSource();
 
     // The response builder should use Promise.allSettled for parallel fetches
     expect(source).toContain("Promise.allSettled");
@@ -215,20 +216,14 @@ describe("listen-client list_models response wiring", () => {
   });
 
   test("handler uses async pattern with buildListModelsResponse", () => {
-    const clientPath = fileURLToPath(
-      new URL("../../websocket/listener/client.ts", import.meta.url),
-    );
-    const source = readFileSync(clientPath, "utf-8");
+    const source = readModelToolsetCommandSource();
 
     // Handler should be wrapped in void (async () => { ... })() pattern
     expect(source).toContain("buildListModelsResponse(parsed.request_id)");
   });
 
   test("response type includes available_handles and byok_provider_aliases fields", () => {
-    const clientPath = fileURLToPath(
-      new URL("../../websocket/listener/client.ts", import.meta.url),
-    );
-    const source = readFileSync(clientPath, "utf-8");
+    const source = readModelToolsetCommandSource();
 
     // The response payload should include the new fields
     expect(source).toContain("available_handles: availableHandles");
@@ -236,10 +231,7 @@ describe("listen-client list_models response wiring", () => {
   });
 
   test("available_handles is null when availability fetch fails (degraded path)", () => {
-    const clientPath = fileURLToPath(
-      new URL("../../websocket/listener/client.ts", import.meta.url),
-    );
-    const source = readFileSync(clientPath, "utf-8");
+    const source = readModelToolsetCommandSource();
 
     // Should handle rejected availability fetch by returning null
     expect(source).toContain('handlesResult.status === "fulfilled"');

@@ -1,4 +1,8 @@
 import type WebSocket from "ws";
+import {
+  applySetMaxContext,
+  formatSetMaxContextResult,
+} from "../../agent/maxContext";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { REMEMBER_PROMPT } from "../../agent/promptAssets";
@@ -37,8 +41,13 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "doctor",
   "init",
   "remember",
+  "set-max-context",
   "channels",
   "toolset",
+  // /secret opens the EditSecretsDialog and routes reads/writes through the
+  // dedicated secret_list / secret_apply WS commands — not via
+  // execute_command — so it has no case in handleExecuteCommand.
+  "secret",
 ];
 
 /**
@@ -102,6 +111,13 @@ export async function handleExecuteCommand(
           conversationRuntime,
           trimmedArgs,
           opts,
+        );
+        break;
+
+      case "set-max-context":
+        output = await handleSetMaxContextCommand(
+          conversationRuntime,
+          trimmedArgs,
         );
         break;
 
@@ -378,6 +394,24 @@ async function handleRememberCommand(
   );
 
   return "Memory request submitted";
+}
+
+/** /set-max-context — Set or reset the active scope's max context window. */
+async function handleSetMaxContextCommand(
+  conversationRuntime: ConversationRuntime,
+  args: string | undefined,
+): Promise<string> {
+  const agentId = conversationRuntime.agentId;
+  if (!agentId) {
+    throw new Error("No agent ID available for /set-max-context command");
+  }
+
+  const result = await applySetMaxContext({
+    agentId,
+    conversationId: conversationRuntime.conversationId,
+    args,
+  });
+  return formatSetMaxContextResult(result);
 }
 
 /**

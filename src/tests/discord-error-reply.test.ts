@@ -96,6 +96,12 @@ describe("formatDiscordDeliveryError", () => {
     expect(msg).toContain("`something exploded`");
   });
 
+  test("escapes generic error details for inline code", () => {
+    const msg = formatDiscordDeliveryError(new Error("bad `code`\n@everyone"));
+    expect(msg).toContain("bad \\`code\\` @everyone");
+    expect(msg).not.toContain("\n");
+  });
+
   test("truncates very long detail strings", () => {
     const detail = "x".repeat(500);
     const msg = formatDiscordDeliveryError(new Error(detail));

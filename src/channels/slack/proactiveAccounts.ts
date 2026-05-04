@@ -2,6 +2,7 @@ import { getChannelAccount, LEGACY_CHANNEL_ACCOUNT_ID } from "../accounts";
 import { getChannelRegistry } from "../registry";
 import { getRoutesForChannel, loadRoutes } from "../routing";
 import type { ChannelAdapter, SlackChannelAccount } from "../types";
+import { isSlackChannelAccount } from "../types";
 
 export interface EligibleProactiveSlackAccount {
   account: SlackChannelAccount;
@@ -39,7 +40,7 @@ export function listEligibleProactiveSlackAccounts(params: {
     const account = getChannelAccount("slack", accountId);
     if (
       !account ||
-      account.channel !== "slack" ||
+      !isSlackChannelAccount(account) ||
       account.agentId !== params.agentId
     ) {
       continue;

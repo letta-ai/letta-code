@@ -9,7 +9,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
-import { getClient } from "../backend/api/client";
+import { getBackend } from "../backend";
 import {
   type ClientTool,
   type PermissionModeState,
@@ -77,6 +77,8 @@ export type SendMessageStreamOptions = {
   overrideModel?: string;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
+  /** Skip shared image normalization when the caller already did it. */
+  skipImageNormalization?: boolean;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -136,8 +138,10 @@ export async function sendMessageStream(
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
-  const client = await getClient();
-  const normalizedMessages = await normalizeMessageImageParts(messages);
+  const backend = getBackend();
+  const normalizedMessages = opts.skipImageNormalization
+    ? messages
+    : await normalizeMessageImageParts(messages);
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext
@@ -235,7 +239,7 @@ export async function sendMessageStream(
   let stream: Stream<LettaStreamingResponse>;
   const abortRelay = createStreamAbortRelay(requestOptions.signal);
   try {
-    stream = await client.conversations.messages.create(
+    stream = await backend.createConversationMessageStream(
       resolvedConversationId,
       requestBody,
       {

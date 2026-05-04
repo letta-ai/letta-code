@@ -16,6 +16,7 @@ import {
   parseRetryAfterHeaderMs,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "../../agent/turn-recovery-policy";
+import { type ConversationMessageStreamBody, getBackend } from "../../backend";
 import { getClient } from "../../backend/api/client";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
@@ -368,7 +369,7 @@ export async function sendMessageStreamWithRetry(
           conversation_id: conversationId,
         });
         try {
-          const client = await getClient();
+          const backend = getBackend();
           const messageOtid = messages
             .map((item) => (item as Record<string, unknown>).otid)
             .find((value): value is string => typeof value === "string");
@@ -379,7 +380,7 @@ export async function sendMessageStreamWithRetry(
           }
 
           try {
-            const resumeStream = await client.conversations.messages.stream(
+            const resumeStream = await backend.streamConversationMessages(
               conversationId,
               {
                 agent_id:
@@ -389,9 +390,7 @@ export async function sendMessageStreamWithRetry(
                 otid: messageOtid ?? undefined,
                 starting_after: 0,
                 batch_size: 1000,
-              } as unknown as Parameters<
-                typeof client.conversations.messages.stream
-              >[1],
+              } as unknown as ConversationMessageStreamBody,
               resumeAbortRelay
                 ? { signal: resumeAbortRelay.signal }
                 : undefined,
@@ -600,7 +599,7 @@ export async function sendApprovalContinuationWithRetry(
         });
 
         try {
-          const client = await getClient();
+          const backend = getBackend();
           const messageOtid = messages
             .map((item) => (item as Record<string, unknown>).otid)
             .find((value): value is string => typeof value === "string");
@@ -611,7 +610,7 @@ export async function sendApprovalContinuationWithRetry(
           }
 
           try {
-            const resumeStream = await client.conversations.messages.stream(
+            const resumeStream = await backend.streamConversationMessages(
               conversationId,
               {
                 agent_id:
@@ -621,9 +620,7 @@ export async function sendApprovalContinuationWithRetry(
                 otid: messageOtid ?? undefined,
                 starting_after: 0,
                 batch_size: 1000,
-              } as unknown as Parameters<
-                typeof client.conversations.messages.stream
-              >[1],
+              } as unknown as ConversationMessageStreamBody,
               resumeAbortRelay
                 ? { signal: resumeAbortRelay.signal }
                 : undefined,

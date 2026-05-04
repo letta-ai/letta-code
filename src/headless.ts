@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { Letta } from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -40,7 +39,11 @@ import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
-import { getClient } from "./backend/api/client";
+import {
+  type ConversationCreateBody,
+  type ConversationMessageStreamBody,
+  getBackend,
+} from "./backend";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -546,7 +549,12 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  const client = await getClient();
+  const devBackend = values["dev-backend"];
+  if (typeof devBackend === "string" && devBackend.length > 0) {
+    const { configureDevBackend } = await import("./backend");
+    await configureDevBackend(devBackend);
+  }
+  const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
 
   // Check for --resume flag (interactive only)
@@ -602,6 +610,15 @@ export async function handleHeadlessCommand(
     : noMemfsFlag
       ? "standard"
       : undefined;
+  if (memfsFlag && !backend.capabilities.remoteMemfs) {
+    trackHeadlessBoundaryError(
+      "headless_memfs_unsupported_backend",
+      "MemFS requires a backend with remote MemFS support",
+      "headless_startup_memfs_flags",
+    );
+    console.error("Error: --memfs is not supported by this backend yet");
+    process.exit(1);
+  }
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
   const fromAfFile = resolveImportFlagAlias({
     importFlagValue: values.import,
@@ -930,10 +947,10 @@ export async function handleHeadlessCommand(
         "conversations",
         `retrieve(${specifiedConversationId}) [headless conv→agent lookup]`,
       );
-      const conversation = await client.conversations.retrieve(
+      const conversation = await backend.retrieveConversation(
         specifiedConversationId,
       );
-      agent = await client.agents.retrieve(conversation.agent_id);
+      agent = await backend.retrieveAgent(conversation.agent_id);
     } catch (error) {
       trackHeadlessBoundaryError(
         "headless_conversation_lookup_failed",
@@ -990,8 +1007,8 @@ export async function handleHeadlessCommand(
   // Priority 2: Try to use --agent specified ID
   if (!agent && specifiedAgentId) {
     try {
-      agent = await client.agents.retrieve(specifiedAgentId, {
-        include: ["agent.secrets", "agent.tools"],
+      agent = await backend.retrieveAgent(specifiedAgentId, {
+        include: ["agent.secrets", "agent.tools", "agent.tags"],
       });
     } catch (_error) {
       console.error(`Agent ${specifiedAgentId} not found`);
@@ -1005,7 +1022,9 @@ export async function handleHeadlessCommand(
     // Pre-determine memfs mode so the agent is created with the correct prompt.
     const { isLettaCloud } = await import("./agent/memoryFilesystem");
     const willAutoEnableMemfs =
-      shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
+      backend.capabilities.remoteMemfs &&
+      shouldAutoEnableMemfsForNewAgent &&
+      (await isLettaCloud());
     const effectiveMemoryMode =
       requestedMemoryPromptMode ?? (willAutoEnableMemfs ? "memfs" : undefined);
 
@@ -1037,7 +1056,9 @@ export async function handleHeadlessCommand(
     );
     if (localAgentId) {
       try {
-        agent = await client.agents.retrieve(localAgentId);
+        agent = await backend.retrieveAgent(localAgentId, {
+          include: ["agent.tags"],
+        });
       } catch (_error) {
         // Local LRU agent doesn't exist - log and continue
         console.error(`Unable to locate agent ${localAgentId} in .letta/`);
@@ -1051,7 +1072,9 @@ export async function handleHeadlessCommand(
     const globalAgentId = settingsManager.getGlobalLastAgentId();
     if (globalAgentId) {
       try {
-        agent = await client.agents.retrieve(globalAgentId);
+        agent = await backend.retrieveAgent(globalAgentId, {
+          include: ["agent.tags"],
+        });
       } catch (_error) {
         // Global LRU agent doesn't exist
       }
@@ -1061,7 +1084,7 @@ export async function handleHeadlessCommand(
   // Priority 6: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
-    const defaultAgent = await ensureDefaultAgents(client, {
+    const defaultAgent = await ensureDefaultAgents(backend, {
       preferredModel: model,
     });
     if (defaultAgent) {
@@ -1120,6 +1143,18 @@ export async function handleHeadlessCommand(
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
   const startupMemfsFlag = autoEnableMemfsForFreshAgent ? true : memfsFlag;
 
+  if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
+    const { hydrateMemfsSettingFromAgent } = await import(
+      "./agent/memoryFilesystem"
+    );
+    const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
+    if (!memfsEnabled) {
+      console.warn(
+        "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
+      );
+    }
+  }
+
   // Captured so prompt logic below can await it when needed.
   let memfsBgPromise: Promise<unknown> | undefined;
 
@@ -1136,7 +1171,11 @@ export async function handleHeadlessCommand(
   //   "blocking"  (default) – await the pull; exit on conflict.
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
-  if (memfsStartupPolicy === "skip") {
+  if (!backend.capabilities.remoteMemfs) {
+    if (noMemfsFlag) {
+      settingsManager.setMemfsEnabled(agent.id, false);
+    }
+  } else if (memfsStartupPolicy === "skip") {
     // Run enable/disable logic but skip the git pull.
     try {
       const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
@@ -1269,9 +1308,8 @@ export async function handleHeadlessCommand(
           : "standard";
         const expected = rebuildPrompt(storedPreset, memoryMode);
         if (agent.system !== expected) {
-          const client = await getClient();
-          await client.agents.update(agent.id, { system: expected });
-          agent = await client.agents.retrieve(agent.id);
+          await backend.updateAgent(agent.id, { system: expected });
+          agent = await backend.retrieveAgent(agent.id);
         }
       } else {
         settingsManager.clearSystemPromptPreset(agent.id);
@@ -1336,7 +1374,7 @@ export async function handleHeadlessCommand(
           "conversations",
           `retrieve(${specifiedConversationId}) [headless --conv validate]`,
         );
-        await client.conversations.retrieve(specifiedConversationId);
+        await backend.retrieveConversation(specifiedConversationId);
         conversationId = specifiedConversationId;
       } catch {
         console.error(
@@ -1353,14 +1391,14 @@ export async function handleHeadlessCommand(
     // missing from @letta-ai/letta-client@1.10.1 types, but the core
     // endpoint accepts it and the SDK's create impl forwards unknown
     // body fields unchanged — remove the cast once the SDK is bumped.
-    const createParams: Parameters<typeof client.conversations.create>[0] = {
+    const createParams: ConversationCreateBody = {
       agent_id: agent.id,
       isolated_block_labels: isolatedBlockLabels,
     };
     if (fromAgentId) {
       (createParams as { hidden?: boolean }).hidden = true;
     }
-    const conversation = await client.conversations.create(createParams);
+    const conversation = await backend.createConversation(createParams);
     conversationId = conversation.id;
   } else if (isSubagent) {
     // Freshly created subagents have no concurrency risk — use the default
@@ -1371,7 +1409,7 @@ export async function handleHeadlessCommand(
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
     // Use --conv default to explicitly target the agent's
     // primary conversation.
-    const conversation = await client.conversations.create({
+    const conversation = await backend.createConversation({
       agent_id: agent.id,
       isolated_block_labels: isolatedBlockLabels,
     });
@@ -1435,7 +1473,6 @@ export async function handleHeadlessCommand(
     await runBidirectionalMode(
       agent,
       conversationId,
-      client,
       outputFormat,
       includePartialMessages,
       availableTools,
@@ -1500,14 +1537,14 @@ export async function handleHeadlessCommand(
   const resolveAllPendingApprovals = async (
     mode: "queue_for_next_turn" | "send_immediately" = "send_immediately",
   ) => {
-    const { getResumeData } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("./agent/check-approval");
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
-      const freshAgent = await client.agents.retrieve(agent.id);
+      const freshAgent = await backend.retrieveAgent(agent.id);
 
-      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      let resume: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
       try {
-        resume = await getResumeData(client, freshAgent, conversationId);
+        resume = await getResumeDataFromBackend(freshAgent, conversationId);
       } catch (error) {
         // Treat 404/422 as "no approvals" - stale message/conversation state
         if (
@@ -1629,7 +1666,7 @@ export async function handleHeadlessCommand(
 
   if (fromAgentId) {
     const senderAgentId = fromAgentId;
-    const senderAgent = await client.agents.retrieve(senderAgentId);
+    const senderAgent = await backend.retrieveAgent(senderAgentId);
     const systemReminder = `${SYSTEM_REMINDER_OPEN}
 This message is from "${senderAgent.name}" (agent ID: ${senderAgentId}), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
 The sender will only see the final message you generate (not tool calls or reasoning).
@@ -1870,8 +1907,7 @@ ${SYSTEM_REMINDER_CLOSE}
             .find((v): v is string => typeof v === "string");
 
           try {
-            const client = await getClient();
-            stream = (await client.conversations.messages.stream(
+            stream = (await getBackend().streamConversationMessages(
               conversationId,
               // Cast needed until SDK MessageStreamParams includes otid field
               {
@@ -1882,9 +1918,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 otid: messageOtid ?? undefined,
                 starting_after: 0,
                 batch_size: 1000,
-              } as unknown as Parameters<
-                typeof client.conversations.messages.stream
-              >[1],
+              } as unknown as ConversationMessageStreamBody,
             )) as Awaited<ReturnType<typeof sendMessageStream>>;
             conversationBusyRetries = 0;
             // Fall through to drain
@@ -2422,7 +2456,7 @@ ${SYSTEM_REMINDER_CLOSE}
           let detail = detailFromRun ?? latestErrorText ?? "";
 
           if (lastRunId) {
-            const run = await client.runs.retrieve(lastRunId);
+            const run = await getBackend().retrieveRun(lastRunId);
             const metaError = run.metadata?.error as
               | {
                   error_type?: string;
@@ -2590,7 +2624,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Fetch detailed error from run metadata if available (same as TUI mode)
       if (lastRunId && errorMessages.length === 0) {
         try {
-          const run = await client.runs.retrieve(lastRunId);
+          const run = await getBackend().retrieveRun(lastRunId);
           if (run.metadata?.error) {
             const errorData = run.metadata.error as {
               type?: string;
@@ -2784,7 +2818,6 @@ ${SYSTEM_REMINDER_CLOSE}
 async function runBidirectionalMode(
   agent: AgentState,
   conversationId: string,
-  client: Letta,
   _outputFormat: string,
   includePartialMessages: boolean,
   availableTools: string[],
@@ -2793,6 +2826,7 @@ async function runBidirectionalMode(
   reflectionSettings: ReflectionSettings,
 ): Promise<void> {
   const sessionId = agent.id;
+  const backend = getBackend();
   const telemetryModelId = agent.llm_config?.model ?? "unknown";
   const readline = await import("node:readline");
   const exitBidirectional = async (
@@ -2834,14 +2868,14 @@ async function runBidirectionalMode(
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
-    const { getResumeData } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("./agent/check-approval");
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
-      const freshAgent = await client.agents.retrieve(agent.id);
+      const freshAgent = await backend.retrieveAgent(agent.id);
 
-      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      let resume: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
       try {
-        resume = await getResumeData(client, freshAgent, conversationId);
+        resume = await getResumeDataFromBackend(freshAgent, conversationId);
       } catch (error) {
         // Treat 404/422 as "no approvals" - stale message/conversation state
         if (
@@ -3213,19 +3247,23 @@ async function runBidirectionalMode(
       );
     }
 
-    const { getResumeData } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("./agent/check-approval");
 
     let approvalsProcessed = 0;
     const MAX_RECOVERY_PASSES = 8;
 
     for (let pass = 0; pass < MAX_RECOVERY_PASSES; pass += 1) {
-      const freshAgent = await client.agents.retrieve(agent.id);
+      const freshAgent = await backend.retrieveAgent(agent.id);
 
-      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      let resume: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
       try {
-        resume = await getResumeData(client, freshAgent, targetConversationId, {
-          includeMessageHistory: false,
-        });
+        resume = await getResumeDataFromBackend(
+          freshAgent,
+          targetConversationId,
+          {
+            includeMessageHistory: false,
+          },
+        );
       } catch (error) {
         if (
           error instanceof APIError &&
@@ -3436,14 +3474,15 @@ async function runBidirectionalMode(
         writeWireMessage(registerResponse);
       } else if (subtype === "bootstrap_session_state") {
         const bootstrapReq = message.request as BootstrapSessionStateRequest;
-        const { getResumeData } = await import("./agent/check-approval");
+        const { getResumeDataFromBackend } = await import(
+          "./agent/check-approval"
+        );
         let hasPendingApproval = false;
 
         try {
           // Re-fetch for parity with approval checks elsewhere in headless mode.
-          const freshAgent = await client.agents.retrieve(agent.id);
-          const resume = await getResumeData(
-            client,
+          const freshAgent = await backend.retrieveAgent(agent.id);
+          const resume = await getResumeDataFromBackend(
             freshAgent,
             conversationId,
             {
@@ -3474,7 +3513,7 @@ async function runBidirectionalMode(
             sessionId,
           },
           requestId: requestId ?? "",
-          client,
+          backend,
           hasPendingApproval,
         });
         writeWireMessage(bootstrapResp);
@@ -3486,7 +3525,7 @@ async function runBidirectionalMode(
           sessionAgentId: agent.id,
           sessionId,
           requestId: requestId ?? "",
-          client,
+          backend,
         });
         writeWireMessage(listResp);
       } else if (subtype === "recover_pending_approvals") {

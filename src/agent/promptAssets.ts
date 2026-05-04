@@ -6,7 +6,8 @@ import humanKawaiiPrompt from "./prompts/human_kawaii.mdx";
 import humanLinusPrompt from "./prompts/human_linus.mdx";
 import humanMemoPrompt from "./prompts/human_memo.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
-import lettaPrompt from "./prompts/letta.md";
+import lettaMemfsPrompt from "./prompts/letta.md";
+import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import personaPrompt from "./prompts/persona.mdx";
@@ -23,12 +24,8 @@ import sourceCodexPrompt from "./prompts/source_codex.md";
 import sourceGeminiPrompt from "./prompts/source_gemini.md";
 
 import stylePrompt from "./prompts/style.mdx";
-import systemPromptBlocksAddon from "./prompts/system_prompt_blocks.md";
-import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.md";
 
-export const SYSTEM_PROMPT = lettaPrompt;
-export const SYSTEM_PROMPT_BLOCKS_ADDON = systemPromptBlocksAddon;
-export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
+export const SYSTEM_PROMPT = lettaNoMemfsPrompt;
 export const PLAN_MODE_REMINDER = planModeReminder;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
@@ -59,6 +56,7 @@ export interface SystemPromptOption {
   label: string;
   description: string;
   content: string;
+  memfsContent?: string;
   isDefault?: boolean;
   isFeatured?: boolean;
 }
@@ -68,7 +66,8 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     id: "default",
     label: "Default",
     description: "Alias for letta",
-    content: lettaPrompt,
+    content: lettaNoMemfsPrompt,
+    memfsContent: lettaMemfsPrompt,
     isDefault: true,
     isFeatured: true,
   },
@@ -76,7 +75,8 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     id: "letta",
     label: "Letta Code",
     description: "Full Letta Code system prompt",
-    content: lettaPrompt,
+    content: lettaNoMemfsPrompt,
+    memfsContent: lettaMemfsPrompt,
     isFeatured: true,
   },
   {
@@ -101,73 +101,6 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
 
 export type MemoryPromptMode = "standard" | "memfs";
 
-// --- Heading-aware section stripping (for legacy/custom prompts) ---
-
-interface Heading {
-  level: number;
-  title: string;
-  startOffset: number;
-}
-
-function scanHeadingsOutsideFences(text: string): Heading[] {
-  const lines = text.split("\n");
-  const headings: Heading[] = [];
-  let inFence = false;
-  let fenceToken = "";
-  let offset = 0;
-
-  for (const line of lines) {
-    const trimmed = line.trimStart();
-    const fenceMatch = trimmed.match(/^(```+|~~~+)/);
-    if (fenceMatch) {
-      const token = fenceMatch[1] ?? fenceMatch[0] ?? "";
-      const tokenChar = token.startsWith("`") ? "`" : "~";
-      if (!inFence) {
-        inFence = true;
-        fenceToken = tokenChar;
-      } else if (fenceToken === tokenChar) {
-        inFence = false;
-        fenceToken = "";
-      }
-    }
-
-    if (!inFence) {
-      const headingMatch = line.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
-      if (headingMatch) {
-        const hashes = headingMatch[1] ?? "";
-        const rawTitle = headingMatch[2] ?? "";
-        if (hashes && rawTitle) {
-          const level = hashes.length;
-          const title = rawTitle.replace(/\s+#*$/, "").trim();
-          headings.push({ level, title, startOffset: offset });
-        }
-      }
-    }
-
-    offset += line.length + 1;
-  }
-
-  return headings;
-}
-
-function stripHeadingSections(
-  text: string,
-  shouldStrip: (heading: Heading) => boolean,
-): string {
-  let current = text;
-  while (true) {
-    const headings = scanHeadingsOutsideFences(current);
-    const target = headings.find(shouldStrip);
-    if (!target) return current;
-
-    const nextHeading = headings.find(
-      (h) => h.startOffset > target.startOffset && h.level <= target.level,
-    );
-    const end = nextHeading ? nextHeading.startOffset : current.length;
-    current = `${current.slice(0, target.startOffset)}${current.slice(end)}`;
-  }
-}
-
 /**
  * Check if a preset ID exists in SYSTEM_PROMPTS.
  */
@@ -189,48 +122,11 @@ export function buildSystemPrompt(
       `Unknown preset "${presetId}" — cannot rebuild system prompt`,
     );
   }
-  const addon =
-    memoryMode === "memfs"
-      ? SYSTEM_PROMPT_MEMFS_ADDON
-      : SYSTEM_PROMPT_BLOCKS_ADDON;
-  return `${preset.content.trimEnd()}\n\n${addon.trimStart()}`.trim();
-}
+  if (memoryMode === "memfs") {
+    return (preset.memfsContent ?? preset.content).trim();
+  }
 
-/**
- * Swap the memory addon on a custom/subagent/legacy prompt.
- * Strips all existing addons (handles duplicates) and orphan memfs tail fragments,
- * then appends the target addon.
- */
-export function swapMemoryAddon(
-  systemPrompt: string,
-  mode: MemoryPromptMode,
-): string {
-  let result = systemPrompt;
-  // Strip all existing addons (replaceAll handles duplicates)
-  for (const addon of [
-    SYSTEM_PROMPT_BLOCKS_ADDON.trim(),
-    SYSTEM_PROMPT_MEMFS_ADDON.trim(),
-  ]) {
-    result = result.replaceAll(addon, "");
-  }
-  // Strip orphan memfs tail fragment (from old drift bugs)
-  const tailAnchor = "# See what changed";
-  const tailStart = SYSTEM_PROMPT_MEMFS_ADDON.indexOf(tailAnchor);
-  if (tailStart !== -1) {
-    const orphanTail = SYSTEM_PROMPT_MEMFS_ADDON.slice(tailStart).trim();
-    result = result.replaceAll(orphanTail, "");
-  }
-  // Strip legacy/variant memory sections by markdown heading parsing
-  // (handles edited or older ## Memory / ## Memory Filesystem sections)
-  result = stripHeadingSections(result, (h) => h.title === "Memory");
-  result = stripHeadingSections(result, (h) =>
-    h.title.startsWith("Memory Filesystem"),
-  );
-  // Compact blank lines and append target addon
-  result = result.replace(/\n{3,}/g, "\n\n").trimEnd();
-  const target =
-    mode === "memfs" ? SYSTEM_PROMPT_MEMFS_ADDON : SYSTEM_PROMPT_BLOCKS_ADDON;
-  return `${result}\n\n${target.trimStart()}`.trim();
+  return preset.content.trim();
 }
 
 /**
@@ -277,9 +173,9 @@ export function shouldRecommendDefaultPrompt(
 }
 
 /**
- * Resolve a prompt ID and build the full system prompt with memory addon.
- * Known presets are rebuilt deterministically; unknown IDs (subagent names)
- * are resolved async and have the addon swapped in.
+ * Resolve a prompt ID and build the full system prompt for the memory mode.
+ * Known presets are rebuilt deterministically. Unknown IDs (subagent names)
+ * are resolved as complete prompts and are not modified.
  */
 export async function resolveAndBuildSystemPrompt(
   promptId: string | undefined,
@@ -289,8 +185,7 @@ export async function resolveAndBuildSystemPrompt(
   if (isKnownPreset(id)) {
     return buildSystemPrompt(id, memoryMode);
   }
-  const resolved = await resolveSystemPrompt(id);
-  return swapMemoryAddon(resolved, memoryMode);
+  return resolveSystemPrompt(id);
 }
 
 /**

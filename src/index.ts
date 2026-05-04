@@ -2,7 +2,10 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-import { getResumeData, type ResumeData } from "./agent/check-approval";
+import {
+  getResumeDataFromBackend,
+  type ResumeData,
+} from "./agent/check-approval";
 import {
   setAgentContext,
   setConversationId as setContextConversationId,
@@ -18,7 +21,7 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
-import { getClient } from "./backend/api/client";
+import { getBackend, isExperimentalLocalBackendEnabled } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
 import {
   type ParsedCliArgs,
@@ -187,12 +190,12 @@ async function printInfo() {
 
   if (allAgentIds.length > 0) {
     try {
-      const client = await getClient();
+      const backend = getBackend();
       // Fetch each agent individually to get accurate names
       await Promise.all(
         allAgentIds.map(async (id) => {
           try {
-            const agent = await client.agents.retrieve(id);
+            const agent = await backend.retrieveAgent(id);
             agentNames[id] = agent.name;
           } catch {
             // Agent not found or error - leave as not found
@@ -285,7 +288,7 @@ function getModelForToolLoading(
 async function resolveAgentByName(
   name: string,
 ): Promise<{ id: string; name: string; agent: AgentState } | null> {
-  const client = await getClient();
+  const backend = getBackend();
 
   // Get all pinned agents (local first, then global, deduplicated)
   const localPinned = settingsManager.getLocalPinnedAgents();
@@ -303,7 +306,7 @@ async function resolveAgentByName(
   await Promise.all(
     allPinned.map(async (id) => {
       try {
-        const agent = await client.agents.retrieve(id);
+        const agent = await backend.retrieveAgent(id);
         if (agent.name?.toLowerCase() === normalizedSearchName) {
           matches.push({ id, name: agent.name, agent });
         }
@@ -335,7 +338,7 @@ async function resolveAgentByName(
  * Get all pinned agent names for error messages
  */
 async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
-  const client = await getClient();
+  const backend = getBackend();
   const localPinned = settingsManager.getLocalPinnedAgents();
   const globalPinned = settingsManager.getGlobalPinnedAgents();
   const allPinned = [...new Set([...localPinned, ...globalPinned])];
@@ -344,7 +347,7 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
   await Promise.all(
     allPinned.map(async (id) => {
       try {
-        const agent = await client.agents.retrieve(id);
+        const agent = await backend.retrieveAgent(id);
         agents.push({ id, name: agent.name || "(unnamed)" });
       } catch {
         // Agent not found, skip
@@ -800,95 +803,105 @@ async function main(): Promise<void> {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
-  // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
-  // Stored OAuth credentials (interactive session tokens) are not accepted for
-  // automated/headless use — get an API key at https://app.letta.com/api-keys
-  if (
+  const isUsingDevBackend =
     isHeadless &&
-    baseURL === LETTA_CLOUD_API_URL &&
-    !process.env.LETTA_API_KEY
-  ) {
-    console.error("Missing LETTA_API_KEY");
-    console.error(
-      "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
-    );
-    console.error("Get an API key at https://app.letta.com/api-keys");
-    process.exit(1);
-  }
+    typeof values["dev-backend"] === "string" &&
+    values["dev-backend"].length > 0;
+  const isUsingLocalBackend = isExperimentalLocalBackendEnabled();
 
-  // Check if refresh token is missing for Letta Cloud (only when not using env var)
-  // Skip this check if we already have an API key from env
-  if (
-    !isHeadless &&
-    baseURL === LETTA_CLOUD_API_URL &&
-    !settings.refreshToken &&
-    !apiKey
-  ) {
-    // For interactive mode, show setup flow
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main().catch((err: unknown) => {
-      // Handle top-level errors gracefully without raw stack traces
-      trackCliBoundaryError("setup_restart_failed", err, "tui_setup_restart");
-      const message =
-        err instanceof Error ? err.message : "An unexpected error occurred";
-      console.error(`\nError: ${message}`);
-      if (isDebugEnabled()) {
-        console.error(err);
-      }
-      process.exit(1);
-    });
-  }
-
-  if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-    // For interactive mode, show setup flow
-    console.log("No credentials found. Let's get you set up!\n");
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main();
-  }
-
-  // Validate credentials by checking health endpoint
-  const { validateCredentials } = await import("./auth/oauth");
-  const isValid = await validateCredentials(baseURL, apiKey ?? "");
-  markMilestone("CREDENTIALS_VALIDATED");
-
-  // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
-  // Must run after credentials are validated so OAuth tokens are available.
-  if (isValid) {
-    const { bootstrapBaseToolsIfNeeded } = await import(
-      "./agent/bootstrap-tools"
-    );
-    await bootstrapBaseToolsIfNeeded();
-  }
-
-  if (!isValid) {
-    // For headless mode, error out with helpful message
-    if (isHeadless) {
-      console.error("Failed to connect to Letta server");
-      console.error(`Base URL: ${baseURL}`);
+  if (!isUsingDevBackend && !isUsingLocalBackend) {
+    // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
+    // Stored OAuth credentials (interactive session tokens) are not accepted for
+    // automated/headless use — get an API key at https://app.letta.com/api-keys
+    if (
+      isHeadless &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      !process.env.LETTA_API_KEY
+    ) {
+      console.error("Missing LETTA_API_KEY");
       console.error(
-        "Your credentials may be invalid or the server may be unreachable.",
+        "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
       );
-      console.error(
-        "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
-      );
+      console.error("Get an API key at https://app.letta.com/api-keys");
       process.exit(1);
     }
 
-    // For interactive mode, show setup flow
-    console.log("Failed to connect to Letta server.");
-    console.log(`Base URL: ${baseURL}\n`);
-    console.log(
-      "Your credentials may be invalid or the server may be unreachable.",
-    );
-    console.log("Let's reconfigure your setup.\n");
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main();
+    // Check if refresh token is missing for Letta Cloud (only when not using env var)
+    // Skip this check if we already have an API key from env
+    if (
+      !isHeadless &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      !settings.refreshToken &&
+      !apiKey
+    ) {
+      // For interactive mode, show setup flow
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main().catch((err: unknown) => {
+        // Handle top-level errors gracefully without raw stack traces
+        trackCliBoundaryError("setup_restart_failed", err, "tui_setup_restart");
+        const message =
+          err instanceof Error ? err.message : "An unexpected error occurred";
+        console.error(`\nError: ${message}`);
+        if (isDebugEnabled()) {
+          console.error(err);
+        }
+        process.exit(1);
+      });
+    }
+
+    if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
+      // For interactive mode, show setup flow
+      console.log("No credentials found. Let's get you set up!\n");
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main();
+    }
+
+    // Validate credentials by checking health endpoint
+    const { validateCredentials } = await import("./auth/oauth");
+    const isValid = await validateCredentials(baseURL, apiKey ?? "");
+    markMilestone("CREDENTIALS_VALIDATED");
+
+    // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
+    // Must run after credentials are validated so OAuth tokens are available.
+    if (isValid) {
+      const { bootstrapBaseToolsIfNeeded } = await import(
+        "./agent/bootstrap-tools"
+      );
+      await bootstrapBaseToolsIfNeeded();
+    }
+
+    if (!isValid) {
+      // For headless mode, error out with helpful message
+      if (isHeadless) {
+        console.error("Failed to connect to Letta server");
+        console.error(`Base URL: ${baseURL}`);
+        console.error(
+          "Your credentials may be invalid or the server may be unreachable.",
+        );
+        console.error(
+          "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
+        );
+        process.exit(1);
+      }
+
+      // For interactive mode, show setup flow
+      console.log("Failed to connect to Letta server.");
+      console.log(`Base URL: ${baseURL}\n`);
+      console.log(
+        "Your credentials may be invalid or the server may be unreachable.",
+      );
+      console.log("Let's reconfigure your setup.\n");
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      // After setup, restart main flow
+      return main();
+    }
+  } else {
+    markMilestone("CREDENTIALS_VALIDATED");
   }
 
   // Resolve --name to agent ID if provided
@@ -1204,7 +1217,7 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
-        const client = await getClient();
+        const backend = getBackend();
 
         // For self-hosted servers, pre-fetch available models
         // This is needed so ProfileSelectionInline can show model picker
@@ -1224,7 +1237,7 @@ async function main(): Promise<void> {
             const { getDefaultModel } = await import("./agent/model");
             const defaultModel = getDefaultModel();
             setSelfHostedDefaultModel(defaultModel);
-            const modelsList = await client.models.list();
+            const modelsList = await backend.listModels();
             const handles = modelsList
               .map((m) => m.handle)
               .filter((h): h is string => typeof h === "string");
@@ -1264,7 +1277,7 @@ async function main(): Promise<void> {
               "conversations",
               `retrieve(${specifiedConversationId}) [TUI conv→agent lookup]`,
             );
-            const conversation = await client.conversations.retrieve(
+            const conversation = await backend.retrieveConversation(
               specifiedConversationId,
             );
             // Use the agent that owns this conversation
@@ -1299,7 +1312,9 @@ async function main(): Promise<void> {
           // Try local LRU first
           if (localAgentId) {
             try {
-              const agent = await client.agents.retrieve(localAgentId);
+              const agent = await backend.retrieveAgent(localAgentId, {
+                include: ["agent.tags"],
+              });
               setResumeAgentId(localAgentId);
               setResumeAgentName(agent.name ?? null);
               setLoadingState("selecting_conversation");
@@ -1319,7 +1334,9 @@ async function main(): Promise<void> {
           const globalAgentId = globalSession?.agentId;
           if (globalAgentId) {
             try {
-              const agent = await client.agents.retrieve(globalAgentId);
+              const agent = await backend.retrieveAgent(globalAgentId, {
+                include: ["agent.tags"],
+              });
               setResumeAgentId(globalAgentId);
               setResumeAgentName(agent.name ?? null);
               setLoadingState("selecting_conversation");
@@ -1376,7 +1393,9 @@ async function main(): Promise<void> {
           // Same agent — only need one fetch
           if (localAgentId) {
             try {
-              cachedAgent = await client.agents.retrieve(localAgentId);
+              cachedAgent = await backend.retrieveAgent(localAgentId, {
+                include: ["agent.tags"],
+              });
               localAgentExists = true;
             } catch {
               setFailedAgentMessage(
@@ -1389,10 +1408,12 @@ async function main(): Promise<void> {
           // Different agents — fetch in parallel
           const [localResult, globalResult] = await Promise.allSettled([
             localAgentId
-              ? client.agents.retrieve(localAgentId)
+              ? backend.retrieveAgent(localAgentId, { include: ["agent.tags"] })
               : Promise.reject(new Error("no local")),
             globalAgentId
-              ? client.agents.retrieve(globalAgentId)
+              ? backend.retrieveAgent(globalAgentId, {
+                  include: ["agent.tags"],
+                })
               : Promise.reject(new Error("no global")),
           ]);
 
@@ -1447,7 +1468,7 @@ async function main(): Promise<void> {
           case "create": {
             const { ensureDefaultAgents } = await import("./agent/defaults");
             try {
-              const defaultAgent = await ensureDefaultAgents(client, {
+              const defaultAgent = await ensureDefaultAgents(getBackend(), {
                 preferredModel: model,
               });
               if (defaultAgent) {
@@ -1498,7 +1519,7 @@ async function main(): Promise<void> {
       initStartedRef.current = true;
 
       async function init() {
-        const client = await getClient();
+        const backend = getBackend();
 
         // Determine which agent we'll be using (before loading tools)
         let resumingAgentId: string | null = null;
@@ -1513,8 +1534,8 @@ async function main(): Promise<void> {
             resumingAgentId = agentIdArg;
           } else {
             try {
-              const agent = await client.agents.retrieve(agentIdArg, {
-                include: ["agent.secrets", "agent.tools"],
+              const agent = await backend.retrieveAgent(agentIdArg, {
+                include: ["agent.secrets", "agent.tools", "agent.tags"],
               });
               setValidatedAgent(agent);
               resolvedAgent = agent;
@@ -1539,12 +1560,9 @@ async function main(): Promise<void> {
             resumingAgentId = selectedGlobalAgentId;
           } else {
             try {
-              const agent = await client.agents.retrieve(
-                selectedGlobalAgentId,
-                {
-                  include: ["agent.secrets", "agent.tools"],
-                },
-              );
+              const agent = await backend.retrieveAgent(selectedGlobalAgentId, {
+                include: ["agent.secrets", "agent.tools", "agent.tags"],
+              });
               setValidatedAgent(agent);
               resolvedAgent = agent;
               resumingAgentId = selectedGlobalAgentId;
@@ -1562,7 +1580,7 @@ async function main(): Promise<void> {
             settingsManager.getLocalProjectSettings();
           if (localProjectSettings?.lastAgent) {
             try {
-              await client.agents.retrieve(localProjectSettings.lastAgent);
+              await backend.retrieveAgent(localProjectSettings.lastAgent);
               resumingAgentId = localProjectSettings.lastAgent;
             } catch {
               // LRU agent doesn't exist (wrong org, deleted, etc.)
@@ -1640,7 +1658,9 @@ async function main(): Promise<void> {
         // Priority 2: Try to use --agent specified ID
         if (!agent && agentIdArg) {
           try {
-            agent = await client.agents.retrieve(agentIdArg);
+            agent = await backend.retrieveAgent(agentIdArg, {
+              include: ["agent.tags"],
+            });
           } catch (error) {
             console.error(
               `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)})`,
@@ -1666,7 +1686,11 @@ async function main(): Promise<void> {
           // 2. Use model if --model flag was passed
           // 3. Otherwise, use billing-tier-aware default (free tier gets GLM-5)
           let effectiveModel = selectedServerModel || model;
-          if (!effectiveModel && !selfHostedBaseUrl) {
+          if (
+            !effectiveModel &&
+            !selfHostedBaseUrl &&
+            !backend.capabilities.localModelCatalog
+          ) {
             // On Letta API without explicit model - check billing tier for appropriate default
             const { getDefaultModelForTier } = await import("./agent/model");
             const billingTier = await getBillingTier();
@@ -1707,7 +1731,9 @@ async function main(): Promise<void> {
                 ? resolvedAgent
                 : validatedAgent && validatedAgent.id === resumingAgentId
                   ? validatedAgent
-                  : await client.agents.retrieve(resumingAgentId);
+                  : await backend.retrieveAgent(resumingAgentId, {
+                      include: ["agent.tags"],
+                    });
           } catch (error) {
             // Agent disappeared between validation and now - show selector
             console.error(
@@ -1742,6 +1768,18 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
+        if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
+          const { hydrateMemfsSettingFromAgent } = await import(
+            "./agent/memoryFilesystem"
+          );
+          const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
+          if (!memfsEnabled) {
+            console.warn(
+              "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
+            );
+          }
+        }
+
         // Start memfs sync early. Interactive startup is optimistic: keep the
         // session moving and let memfs clone/pull finish in the background
         // unless the user explicitly requested a memfs mode toggle.
@@ -1751,14 +1789,25 @@ async function main(): Promise<void> {
           ? true
           : memfsFlag;
         const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
-        const memfsSyncPromise = import("./agent/memoryFilesystem").then(
-          ({ applyMemfsFlags }) =>
-            applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
-              pullOnExistingRepo: true,
-              agentTags,
-              skipPromptUpdate: shouldCreateNew,
-            }),
-        );
+        const memfsSyncPromise = backend.capabilities.remoteMemfs
+          ? import("./agent/memoryFilesystem").then(({ applyMemfsFlags }) =>
+              applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
+                pullOnExistingRepo: true,
+                agentTags,
+                skipPromptUpdate: shouldCreateNew,
+              }),
+            )
+          : Promise.resolve().then(() => {
+              if (memfsFlag) {
+                throw new Error(
+                  "MemFS is not supported by the active backend.",
+                );
+              }
+              if (noMemfsFlag) {
+                settingsManager.setMemfsEnabled(agentId, false);
+              }
+              return null;
+            });
         const memfsSyncBackgroundPromise = memfsSyncPromise.catch((error) => {
           const message =
             error instanceof Error ? error.message : String(error);
@@ -1901,8 +1950,7 @@ async function main(): Promise<void> {
           try {
             // Load message history and pending approvals from the conversation
             setLoadingState("checking");
-            const data = await getResumeData(
-              client,
+            const data = await getResumeDataFromBackend(
               agent,
               specifiedConversationId,
             );
@@ -1924,8 +1972,7 @@ async function main(): Promise<void> {
           // Conversation selected from --resume selector or auto-restored from local project settings
           try {
             setLoadingState("checking");
-            const data = await getResumeData(
-              client,
+            const data = await getResumeDataFromBackend(
               agent,
               selectedConversationId,
             );
@@ -1943,7 +1990,7 @@ async function main(): Promise<void> {
               );
               conversationIdToUse = "default";
               setLoadingState("checking");
-              const data = await getResumeData(client, agent, "default");
+              const data = await getResumeDataFromBackend(agent, "default");
               setResumeData(data);
               setResumedExistingConversation(data.messageHistory.length > 0);
             } else {
@@ -1952,7 +1999,7 @@ async function main(): Promise<void> {
           }
         } else if (forceNewConversation) {
           // --new flag: create a new conversation (for concurrent sessions)
-          const conversation = await client.conversations.create({
+          const conversation = await backend.createConversation({
             agent_id: agent.id,
             isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
@@ -1963,7 +2010,7 @@ async function main(): Promise<void> {
 
           // Load message history without waiting on memfs sync.
           setLoadingState("checking");
-          const data = await getResumeData(client, agent, "default");
+          const data = await getResumeDataFromBackend(agent, "default");
           setResumeData(data);
           setResumedExistingConversation(data.messageHistory.length > 0);
         }
@@ -2017,9 +2064,8 @@ async function main(): Promise<void> {
                 : "standard";
               const expected = rebuildPrompt(storedPreset, memoryMode);
               if (agent.system !== expected) {
-                const client = await getClient();
-                await client.agents.update(agent.id, { system: expected });
-                agent = await client.agents.retrieve(agent.id);
+                await backend.updateAgent(agent.id, { system: expected });
+                agent = await backend.retrieveAgent(agent.id);
               }
             } else {
               settingsManager.clearSystemPromptPreset(agent.id);

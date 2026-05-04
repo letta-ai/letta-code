@@ -554,17 +554,7 @@ function normalizeMessageAction(
   rawAction: string,
 ): ChannelMessageActionName | null {
   const normalized = rawAction.trim().toLowerCase();
-
-  switch (normalized) {
-    case "send":
-      return "send";
-    case "react":
-      return "react";
-    case "upload-file":
-      return "upload-file";
-    default:
-      return null;
-  }
+  return normalized.length > 0 ? normalized : null;
 }
 
 function normalizeMessageChannelInput(

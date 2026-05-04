@@ -491,6 +491,19 @@ function resolveLineIdForKind(
   return `${kind}:${canonicalId}`;
 }
 
+function hasExistingOtidAlias(
+  aliasMap: Map<string, string>,
+  canonical: string,
+  nextOtid?: string,
+): boolean {
+  for (const [mappedOtid, mappedCanonical] of aliasMap.entries()) {
+    if (mappedCanonical === canonical && mappedOtid !== nextOtid) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function resolveAssistantLineId(
   b: Buffers,
   chunk: LettaStreamingResponse & { id?: string; otid?: string },
@@ -521,11 +534,16 @@ function resolveAssistantLineId(
       "assistant",
     );
     const existingLine = b.byId.get(existingLineId);
+    const hasPriorOtidAlias = hasExistingOtidAlias(
+      b.assistantCanonicalByOtid,
+      canonicalFromMessageId,
+      otid,
+    );
     if (
       existingLine &&
       existingLine.kind === "assistant" &&
       "phase" in existingLine &&
-      existingLine.phase === "finished"
+      (existingLine.phase === "finished" || hasPriorOtidAlias)
     ) {
       canonical = otid;
     }
@@ -597,11 +615,16 @@ function resolveReasoningLineId(
       "reasoning",
     );
     const existingLine = b.byId.get(existingLineId);
+    const hasPriorOtidAlias = hasExistingOtidAlias(
+      b.reasoningCanonicalByOtid,
+      canonicalFromMessageId,
+      otid,
+    );
     if (
       existingLine &&
       existingLine.kind === "reasoning" &&
       "phase" in existingLine &&
-      existingLine.phase === "finished"
+      (existingLine.phase === "finished" || hasPriorOtidAlias)
     ) {
       canonical = otid;
     }
@@ -707,6 +730,13 @@ function trySplitContent(
   return true;
 }
 
+// OpenAI reasoning summaries can start a new `**Section Title**\n\n` block inside the
+// same otid without a leading separator. Insert the missing blank line so markdown
+// renders the title as a new paragraph instead of gluing it to the previous sentence.
+function normalizeReasoningSectionBoundaries(text: string): string {
+  return text.replace(/([^\n])(\*\*[^*\n]+\*\*\n\n)/g, "$1\n\n$2");
+}
+
 // Feed one SDK chunk; mutate buffers in place.
 export function onChunk(
   b: Buffers,
@@ -752,7 +782,7 @@ export function onChunk(
         messageId,
       }));
       if (delta) {
-        const newText = line.text + delta;
+        const newText = normalizeReasoningSectionBoundaries(line.text + delta);
         b.tokenCount += Buffer.byteLength(delta, "utf8");
 
         // Try to split at paragraph boundary (only if streaming enabled)

@@ -124,7 +124,7 @@ describe("listen-mode session context", () => {
   );
 
   test(
-    "WS reconnect (state reset) re-arms session-context on next turn",
+    "manual state reset re-arms session-context on next turn",
     withStubbedProviders(async () => {
       const state = createSharedReminderState();
       const ctx = listenContext(state);
@@ -133,11 +133,11 @@ describe("listen-mode session context", () => {
       await buildSharedReminderParts(ctx);
       expect(state.hasSentSessionContext).toBe(true);
 
-      // Simulate WS reconnect: reset state (open handler)
+      // Simulate a manual reset of bootstrap reminder state.
       resetSharedReminderState(state);
       expect(state.hasSentSessionContext).toBe(false);
 
-      // Next turn after reconnect — should fire again
+      // Next turn after reset — should fire again
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).toContain("session-context");
       expect(result.appliedReminderIds).toContain("agent-info");

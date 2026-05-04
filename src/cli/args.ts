@@ -125,6 +125,7 @@ export const CLI_FLAG_CATALOG = {
   // Advanced/internal flags intentionally hidden from --help output.
   // They remain in the shared catalog for strict parsing parity.
   run: { parser: { type: "boolean" }, mode: "headless" },
+  "dev-backend": { parser: { type: "string" }, mode: "headless" },
   tools: { parser: { type: "string" }, mode: "both" },
   allowedTools: { parser: { type: "string" }, mode: "both" },
   disallowedTools: { parser: { type: "string" }, mode: "both" },
