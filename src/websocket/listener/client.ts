@@ -8,7 +8,6 @@ import path from "node:path";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
-import { resolveModel } from "../../agent/model";
 import { getBackend } from "../../backend";
 import {
   channelPluginConfigShouldRefreshDisplayName,
@@ -74,12 +73,9 @@ import type {
   ChannelsListCommand,
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
-  CreateAgentCommand,
   ListMemoryCommand,
   ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
   ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
-  SkillDisableCommand,
-  SkillEnableCommand,
 } from "../../types/protocol_v2";
 import { isDebugEnabled } from "../../utils/debug";
 import {
@@ -114,6 +110,11 @@ import {
   handleReflectionSettingsCommand,
   handleSettingsProtocolCommand,
 } from "./commands/settings";
+import {
+  handleCreateAgentCommand,
+  handleSkillAgentProtocolCommand,
+  handleSkillCommand,
+} from "./commands/skills-agents";
 import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -161,7 +162,6 @@ import {
   isChannelsListCommand,
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
-  isCreateAgentCommand,
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
@@ -176,8 +176,6 @@ import {
   isReadFileCommand,
   isReadMemoryFileCommand,
   isSearchFilesCommand,
-  isSkillDisableCommand,
-  isSkillEnableCommand,
   isUnwatchFileCommand,
   isWatchFileCommand,
   isWriteFileCommand,
@@ -2143,277 +2141,6 @@ async function handleChannelsProtocolCommand(
   }
 
   return true;
-}
-
-type SkillCommand = SkillEnableCommand | SkillDisableCommand;
-
-function emitSkillsUpdated(socket: WebSocket): void {
-  safeSocketSend(
-    socket,
-    {
-      type: "skills_updated",
-      timestamp: Date.now(),
-    },
-    "listener_skill_send_failed",
-    "listener_skill_command",
-  );
-}
-
-async function handleSkillCommand(
-  parsed: SkillCommand,
-  socket: WebSocket,
-): Promise<boolean> {
-  const {
-    existsSync,
-    lstatSync,
-    mkdirSync,
-    rmdirSync,
-    symlinkSync,
-    unlinkSync,
-  } = await import("node:fs");
-  const { basename, join } = await import("node:path");
-
-  // Compute skills dir dynamically to respect LETTA_HOME (important for tests)
-  const lettaHome =
-    process.env.LETTA_HOME ||
-    join(process.env.HOME || process.env.USERPROFILE || "~", ".letta");
-  const globalSkillsDir = join(lettaHome, "skills");
-
-  if (parsed.type === "skill_enable") {
-    try {
-      // Validate the skill path exists
-      if (!existsSync(parsed.skill_path)) {
-        safeSocketSend(
-          socket,
-          {
-            type: "skill_enable_response",
-            request_id: parsed.request_id,
-            success: false,
-            error: `Path does not exist: ${parsed.skill_path}`,
-          },
-          "listener_skill_send_failed",
-          "listener_skill_command",
-        );
-        return true;
-      }
-
-      // Check it contains a SKILL.md
-      const skillMdPath = join(parsed.skill_path, "SKILL.md");
-      if (!existsSync(skillMdPath)) {
-        safeSocketSend(
-          socket,
-          {
-            type: "skill_enable_response",
-            request_id: parsed.request_id,
-            success: false,
-            error: `No SKILL.md found in ${parsed.skill_path}`,
-          },
-          "listener_skill_send_failed",
-          "listener_skill_command",
-        );
-        return true;
-      }
-
-      const linkName = basename(parsed.skill_path);
-      const linkPath = join(globalSkillsDir, linkName);
-
-      // Ensure ~/.letta/skills/ exists
-      mkdirSync(globalSkillsDir, { recursive: true });
-
-      // If symlink/junction already exists, remove it first
-      if (existsSync(linkPath)) {
-        const stat = lstatSync(linkPath);
-        if (stat.isSymbolicLink()) {
-          if (process.platform === "win32") {
-            rmdirSync(linkPath);
-          } else {
-            unlinkSync(linkPath);
-          }
-        } else {
-          safeSocketSend(
-            socket,
-            {
-              type: "skill_enable_response",
-              request_id: parsed.request_id,
-              success: false,
-              error: `${linkPath} already exists and is not a symlink — refusing to overwrite`,
-            },
-            "listener_skill_send_failed",
-            "listener_skill_command",
-          );
-          return true;
-        }
-      }
-
-      // Use junctions on Windows — they don't require admin/Developer Mode
-      const linkType = process.platform === "win32" ? "junction" : "dir";
-      symlinkSync(parsed.skill_path, linkPath, linkType);
-
-      safeSocketSend(
-        socket,
-        {
-          type: "skill_enable_response",
-          request_id: parsed.request_id,
-          success: true,
-          name: linkName,
-          skill_path: parsed.skill_path,
-          link_path: linkPath,
-        },
-        "listener_skill_send_failed",
-        "listener_skill_command",
-      );
-      emitSkillsUpdated(socket);
-    } catch (err) {
-      safeSocketSend(
-        socket,
-        {
-          type: "skill_enable_response",
-          request_id: parsed.request_id,
-          success: false,
-          error: err instanceof Error ? err.message : "Failed to enable skill",
-        },
-        "listener_skill_send_failed",
-        "listener_skill_command",
-      );
-    }
-    return true;
-  }
-
-  if (parsed.type === "skill_disable") {
-    try {
-      const linkPath = join(globalSkillsDir, parsed.name);
-
-      if (!existsSync(linkPath)) {
-        safeSocketSend(
-          socket,
-          {
-            type: "skill_disable_response",
-            request_id: parsed.request_id,
-            success: false,
-            error: `Skill not found: ${parsed.name}`,
-          },
-          "listener_skill_send_failed",
-          "listener_skill_command",
-        );
-        return true;
-      }
-
-      const stat = lstatSync(linkPath);
-      if (!stat.isSymbolicLink()) {
-        safeSocketSend(
-          socket,
-          {
-            type: "skill_disable_response",
-            request_id: parsed.request_id,
-            success: false,
-            error: `${parsed.name} is not a symlink — refusing to delete. Remove it manually if intended.`,
-          },
-          "listener_skill_send_failed",
-          "listener_skill_command",
-        );
-        return true;
-      }
-
-      if (process.platform === "win32") {
-        rmdirSync(linkPath);
-      } else {
-        unlinkSync(linkPath);
-      }
-
-      safeSocketSend(
-        socket,
-        {
-          type: "skill_disable_response",
-          request_id: parsed.request_id,
-          success: true,
-          name: parsed.name,
-        },
-        "listener_skill_send_failed",
-        "listener_skill_command",
-      );
-      emitSkillsUpdated(socket);
-    } catch (err) {
-      safeSocketSend(
-        socket,
-        {
-          type: "skill_disable_response",
-          request_id: parsed.request_id,
-          success: false,
-          error: err instanceof Error ? err.message : "Failed to disable skill",
-        },
-        "listener_skill_send_failed",
-        "listener_skill_command",
-      );
-    }
-    return true;
-  }
-
-  return false;
-}
-
-async function handleCreateAgentCommand(
-  parsed: CreateAgentCommand,
-  socket: WebSocket,
-): Promise<void> {
-  try {
-    // Pre-validate model so invalid requests soft-fail before createAgent().
-    if (parsed.model) {
-      const resolved = resolveModel(parsed.model);
-      if (!resolved) {
-        safeSocketSend(
-          socket,
-          {
-            type: "create_agent_response",
-            request_id: parsed.request_id,
-            success: false,
-            error: `Unknown model "${parsed.model}"`,
-          },
-          "listener_create_agent_send_failed",
-          "listener_create_agent",
-        );
-        return;
-      }
-    }
-
-    const { createAgentForPersonality } = await import(
-      "../../agent/personality"
-    );
-    const result = await createAgentForPersonality({
-      personalityId: parsed.personality,
-      model: parsed.model,
-    });
-
-    // Pin the agent globally (favorites it) unless explicitly disabled
-    if (parsed.pin_global !== false) {
-      settingsManager.pinGlobal(result.agent.id);
-    }
-
-    safeSocketSend(
-      socket,
-      {
-        type: "create_agent_response",
-        request_id: parsed.request_id,
-        success: true,
-        agent_id: result.agent.id,
-        name: result.agent.name,
-        model: result.agent.model ?? null,
-      },
-      "listener_create_agent_send_failed",
-      "listener_create_agent",
-    );
-  } catch (err) {
-    safeSocketSend(
-      socket,
-      {
-        type: "create_agent_response",
-        request_id: parsed.request_id,
-        success: false,
-        error: err instanceof Error ? err.message : "Failed to create agent",
-      },
-      "listener_create_agent_send_failed",
-      "listener_create_agent",
-    );
-  }
 }
 
 /**
@@ -5185,19 +4912,13 @@ async function connectWithRetry(
         return;
       }
 
-      // ── Skill enable/disable commands (no runtime scope required) ─────
-      if (isSkillEnableCommand(parsed) || isSkillDisableCommand(parsed)) {
-        runDetachedListenerTask("skill_command", async () => {
-          await handleSkillCommand(parsed, socket);
-        });
-        return;
-      }
-
-      // ── Agent management commands (no runtime scope required) ─────────
-      if (isCreateAgentCommand(parsed)) {
-        runDetachedListenerTask("create_agent_command", async () => {
-          await handleCreateAgentCommand(parsed, socket);
-        });
+      if (
+        handleSkillAgentProtocolCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
         return;
       }
 
@@ -5825,8 +5546,14 @@ export const __listenClientTestUtils = {
   isDetachedChannelsCommand,
   handleChannelsProtocolCommand,
   handleChannelRegistryEvent,
-  handleSkillCommand,
-  handleCreateAgentCommand,
+  handleSkillCommand: (
+    parsed: Parameters<typeof handleSkillCommand>[0],
+    socket: WebSocket,
+  ) => handleSkillCommand(parsed, socket, safeSocketSend),
+  handleCreateAgentCommand: (
+    parsed: Parameters<typeof handleCreateAgentCommand>[0],
+    socket: WebSocket,
+  ) => handleCreateAgentCommand(parsed, socket, safeSocketSend),
   handleExperimentCommand: (
     parsed: Parameters<typeof handleExperimentCommand>[0],
     socket: WebSocket,
