@@ -474,6 +474,16 @@ describe("LocalBackend", () => {
             value: "Committed human.",
             description: "Human description",
           },
+          {
+            label: "project/gotchas",
+            value: "Committed project gotcha.",
+            description: "Project gotchas",
+          },
+          {
+            label: "style",
+            value: "Committed style preference.",
+            description: "Style preferences",
+          },
         ],
       } as AgentCreateBody);
       const memoryDir = getLocalBackendMemoryFilesystemRoot(
@@ -490,6 +500,15 @@ describe("LocalBackend", () => {
       expect(
         await readFile(join(memoryDir, "system", "human.md"), "utf8"),
       ).toContain("Committed human.");
+      expect(
+        await readFile(
+          join(memoryDir, "system", "project", "gotchas.md"),
+          "utf8",
+        ),
+      ).toContain("Committed project gotcha.");
+      expect(
+        await readFile(join(memoryDir, "system", "style.md"), "utf8"),
+      ).toContain("Committed style preference.");
       expect(git(memoryDir, ["status", "--porcelain"])).toBe("");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
