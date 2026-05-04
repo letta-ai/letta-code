@@ -338,8 +338,10 @@ export interface DiscordChannelConfig {
   /**
    * When the bot is @-mentioned in a guild channel and not already in a
    * thread, controls whether a new thread is auto-created for the resulting
-   * conversation. Default `true` (preserves the legacy behavior of spawning
-   * a thread). Set to `false` to keep the conversation in the parent channel.
+   * response. Default `true` (preserves the legacy behavior of spawning a
+   * thread). Set to `false` to keep the response in the parent channel; in
+   * `"mention"` channel policy, follow-up parent-channel messages still need
+   * another @mention.
    */
   autoThreadOnMention?: boolean;
 }
@@ -394,8 +396,9 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   channelPolicy?: DiscordChannelPolicy;
   /**
    * When `true` (default), an @-mention in a guild channel auto-creates a
-   * thread for the conversation. Set to `false` to keep mention-triggered
-   * conversations in the parent channel.
+   * thread for the conversation. Set to `false` to keep the first response in
+   * the parent channel; in `"mention"` channel policy, follow-up parent-channel
+   * messages still need another @mention.
    */
   autoThreadOnMention?: boolean;
   /**

@@ -27,9 +27,7 @@ function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
 }
 
-function isDiscordChannelPolicy(
-  value: unknown,
-): value is DiscordChannelPolicy {
+function isDiscordChannelPolicy(value: unknown): value is DiscordChannelPolicy {
   return value === "mention" || value === "open";
 }
 

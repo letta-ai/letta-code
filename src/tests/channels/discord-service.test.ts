@@ -230,6 +230,32 @@ describe("discord channel service", () => {
     expect(created.dmPolicy).toBe("pairing");
   });
 
+  test("discord account snapshots expose effective channelPolicy defaults", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      { token: "test-token" },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.channelPolicy).toBe("mention");
+    expect(created.autoThreadOnMention).toBe(true);
+    expect(created.config).toMatchObject({
+      channel_policy: "mention",
+      auto_thread_on_mention: true,
+    });
+
+    const config = getChannelConfigSnapshot("discord", "discord-bot");
+    if (!config || config.channelId !== "discord")
+      throw new Error("wrong channel");
+    expect(config.channelPolicy).toBe("mention");
+    expect(config.autoThreadOnMention).toBe(true);
+    expect(config.config).toMatchObject({
+      channel_policy: "mention",
+      auto_thread_on_mention: true,
+    });
+  });
+
   test("placeholder display names are scrubbed", () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [

@@ -92,8 +92,9 @@ export async function runDiscordSetup(): Promise<boolean> {
 
     // Auto-thread on mention — when @-mentioned in a guild channel, should
     // the bot spawn a new thread for the conversation? The legacy behavior
-    // is to always create a thread; users with quieter channels may prefer
-    // to keep the conversation inline.
+    // is to always create a thread. Setting this to false keeps the first
+    // response inline; in "mention" channel policy, follow-ups still need
+    // another @mention unless the channel policy is "open".
     const autoThreadInput = await rl.question(
       "\nAuto-create a thread when @-mentioned in a channel? [Y/n]: ",
     );
@@ -128,6 +129,11 @@ export async function runDiscordSetup(): Promise<boolean> {
       console.log(
         "\nWarning: No agent bound. DM pairing will still work, but open/allowlist DMs and guild @mentions won't route until you bind an agent.",
       );
+      if (channelPolicy === "open") {
+        console.log(
+          "  Because channel policy is open, unmentioned guild messages will be ignored until the bot is bound. This avoids spamming visible channels.",
+        );
+      }
       console.log(
         "  You can bind later: letta channels bind --channel discord --agent <id>",
       );

@@ -172,6 +172,100 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(1);
   });
 
+  test("drops unbound open-policy guild traffic without replying to ambient messages", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: null,
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        channelPolicy: "open",
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("../../channels/registry");
+    const registry = new ChannelRegistry();
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "channel-1",
+        threadId: null,
+        chatType: "channel",
+        isMention: false,
+        messageId: "msg-open-ambient",
+      }),
+    );
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(getRoute("discord", "channel-1", "discord-bot")).toBe(null);
+    expect(deliveries).toHaveLength(0);
+    expect(replies).toEqual([]);
+  });
+
+  test("warns when an unbound Discord bot is explicitly mentioned", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: null,
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        channelPolicy: "open",
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("../../channels/registry");
+    const registry = new ChannelRegistry();
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "channel-1",
+        threadId: null,
+        chatType: "channel",
+        isMention: true,
+        messageId: "msg-open-mention",
+      }),
+    );
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(getRoute("discord", "channel-1", "discord-bot")).toBe(null);
+    expect(deliveries).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.chatId).toBe("channel-1");
+    expect(replies[0]?.text).toContain(
+      "This Discord bot isn't connected to a Letta agent yet.",
+    );
+  });
+
   test("auto-creates a direct-message route for bound open Discord accounts", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
