@@ -26,10 +26,6 @@ import {
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
-import {
-  getReflectionSettings,
-  persistReflectionSettingsForAgent,
-} from "../../cli/helpers/memoryReminder";
 import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import {
@@ -46,7 +42,6 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
-import { experimentManager } from "../../experiments/manager";
 import { type DequeuedBatch, QueueRuntime } from "../../queue/queueRuntime";
 import { createSharedReminderState } from "../../reminders/state";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
@@ -80,16 +75,9 @@ import type {
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
   CreateAgentCommand,
-  GetExperimentsCommand,
-  GetExperimentsResponseMessage,
-  GetReflectionSettingsCommand,
   ListMemoryCommand,
   ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
   ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
-  ReflectionSettingsScope,
-  SetExperimentCommand,
-  SetExperimentResponseMessage,
-  SetReflectionSettingsCommand,
   SkillDisableCommand,
   SkillEnableCommand,
 } from "../../types/protocol_v2";
@@ -121,6 +109,11 @@ import {
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import { handleSecretsCommand } from "./commands/secrets";
+import {
+  handleExperimentCommand,
+  handleReflectionSettingsCommand,
+  handleSettingsProtocolCommand,
+} from "./commands/settings";
 import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -173,8 +166,6 @@ import {
   isEnableMemfsCommand,
   isExecuteCommandCommand,
   isFileOpsCommand,
-  isGetExperimentsCommand,
-  isGetReflectionSettingsCommand,
   isGetTreeCommand,
   isGrepInFilesCommand,
   isListInDirectoryCommand,
@@ -185,8 +176,6 @@ import {
   isReadFileCommand,
   isReadMemoryFileCommand,
   isSearchFilesCommand,
-  isSetExperimentCommand,
-  isSetReflectionSettingsCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
   isUnwatchFileCommand,
@@ -623,12 +612,6 @@ function handleModeChange(
     }
   }
 }
-
-type ReflectionSettingsCommand =
-  | GetReflectionSettingsCommand
-  | SetReflectionSettingsCommand;
-
-type ExperimentCommand = GetExperimentsCommand | SetExperimentCommand;
 
 type ChannelsCommand =
   | ChannelsListCommand
@@ -2431,207 +2414,6 @@ async function handleCreateAgentCommand(
       "listener_create_agent",
     );
   }
-}
-
-function toReflectionSettingsResponse(
-  agentId: string,
-  workingDirectory: string,
-): {
-  agent_id: string;
-  trigger: "off" | "step-count" | "compaction-event";
-  step_count: number;
-} {
-  const settings = getReflectionSettings(agentId, workingDirectory);
-  return {
-    agent_id: agentId,
-    trigger: settings.trigger,
-    step_count: settings.stepCount,
-  };
-}
-
-function resolveReflectionSettingsScope(
-  scope: ReflectionSettingsScope | undefined,
-): {
-  persistLocalProject: boolean;
-  persistGlobal: boolean;
-  normalizedScope: ReflectionSettingsScope;
-} {
-  if (scope === "local_project") {
-    return {
-      persistLocalProject: true,
-      persistGlobal: false,
-      normalizedScope: scope,
-    };
-  }
-  if (scope === "global") {
-    return {
-      persistLocalProject: false,
-      persistGlobal: true,
-      normalizedScope: scope,
-    };
-  }
-  return {
-    persistLocalProject: true,
-    persistGlobal: true,
-    normalizedScope: "both",
-  };
-}
-
-async function handleExperimentCommand(
-  parsed: ExperimentCommand,
-  socket: WebSocket,
-  listener: ListenerRuntime,
-): Promise<boolean> {
-  if (parsed.type === "get_experiments") {
-    const response: GetExperimentsResponseMessage = {
-      type: "get_experiments_response",
-      request_id: parsed.request_id,
-      success: true,
-      experiments: experimentManager.list(),
-    };
-    safeSocketSend(
-      socket,
-      response,
-      "listener_experiments_send_failed",
-      "listener_experiments",
-    );
-    return true;
-  }
-
-  try {
-    experimentManager.set(parsed.experiment_id, parsed.enabled);
-    const response: SetExperimentResponseMessage = {
-      type: "set_experiment_response",
-      request_id: parsed.request_id,
-      success: true,
-      experiments: experimentManager.list(),
-    };
-    safeSocketSend(
-      socket,
-      response,
-      "listener_experiments_send_failed",
-      "listener_experiments",
-    );
-
-    emitDeviceStatusUpdate(socket, listener);
-  } catch (err) {
-    const response: SetExperimentResponseMessage = {
-      type: "set_experiment_response",
-      request_id: parsed.request_id,
-      success: false,
-      experiments: experimentManager.list(),
-      error: err instanceof Error ? err.message : "Failed to update experiment",
-    };
-    safeSocketSend(
-      socket,
-      response,
-      "listener_experiments_send_failed",
-      "listener_experiments",
-    );
-  }
-
-  return true;
-}
-
-async function handleReflectionSettingsCommand(
-  parsed: ReflectionSettingsCommand,
-  socket: WebSocket,
-  listener: ListenerRuntime,
-): Promise<boolean> {
-  const agentId = parsed.runtime.agent_id;
-  const workingDirectory = getConversationWorkingDirectory(
-    listener,
-    parsed.runtime.agent_id,
-    parsed.runtime.conversation_id,
-  );
-
-  if (parsed.type === "get_reflection_settings") {
-    try {
-      safeSocketSend(
-        socket,
-        {
-          type: "get_reflection_settings_response",
-          request_id: parsed.request_id,
-          success: true,
-          reflection_settings: toReflectionSettingsResponse(
-            agentId,
-            workingDirectory,
-          ),
-        },
-        "listener_reflection_settings_send_failed",
-        "listener_reflection_settings",
-      );
-    } catch (err) {
-      safeSocketSend(
-        socket,
-        {
-          type: "get_reflection_settings_response",
-          request_id: parsed.request_id,
-          success: false,
-          reflection_settings: null,
-          error:
-            err instanceof Error
-              ? err.message
-              : "Failed to load reflection settings",
-        },
-        "listener_reflection_settings_send_failed",
-        "listener_reflection_settings",
-      );
-    }
-    return true;
-  }
-
-  const { persistLocalProject, persistGlobal, normalizedScope } =
-    resolveReflectionSettingsScope(parsed.scope);
-
-  try {
-    await persistReflectionSettingsForAgent(
-      agentId,
-      {
-        trigger: parsed.settings.trigger,
-        stepCount: parsed.settings.step_count,
-      },
-      {
-        workingDirectory,
-        persistLocalProject,
-        persistGlobal,
-      },
-    );
-    safeSocketSend(
-      socket,
-      {
-        type: "set_reflection_settings_response",
-        request_id: parsed.request_id,
-        success: true,
-        scope: normalizedScope,
-        reflection_settings: toReflectionSettingsResponse(
-          agentId,
-          workingDirectory,
-        ),
-      },
-      "listener_reflection_settings_send_failed",
-      "listener_reflection_settings",
-    );
-    emitDeviceStatusUpdate(socket, listener, parsed.runtime);
-  } catch (err) {
-    safeSocketSend(
-      socket,
-      {
-        type: "set_reflection_settings_response",
-        request_id: parsed.request_id,
-        success: false,
-        scope: normalizedScope,
-        reflection_settings: null,
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to update reflection settings",
-      },
-      "listener_reflection_settings_send_failed",
-      "listener_reflection_settings",
-    );
-  }
-  return true;
 }
 
 /**
@@ -5419,20 +5201,14 @@ async function connectWithRetry(
         return;
       }
 
-      if (isGetExperimentsCommand(parsed) || isSetExperimentCommand(parsed)) {
-        runDetachedListenerTask("experiment_command", async () => {
-          await handleExperimentCommand(parsed, socket, runtime);
-        });
-        return;
-      }
-
       if (
-        isGetReflectionSettingsCommand(parsed) ||
-        isSetReflectionSettingsCommand(parsed)
+        handleSettingsProtocolCommand(parsed, {
+          socket,
+          runtime,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
       ) {
-        runDetachedListenerTask("reflection_settings_command", async () => {
-          await handleReflectionSettingsCommand(parsed, socket, runtime);
-        });
         return;
       }
 
@@ -6051,8 +5827,17 @@ export const __listenClientTestUtils = {
   handleChannelRegistryEvent,
   handleSkillCommand,
   handleCreateAgentCommand,
-  handleExperimentCommand,
-  handleReflectionSettingsCommand,
+  handleExperimentCommand: (
+    parsed: Parameters<typeof handleExperimentCommand>[0],
+    socket: WebSocket,
+    listener: ListenerRuntime,
+  ) => handleExperimentCommand(parsed, socket, listener, safeSocketSend),
+  handleReflectionSettingsCommand: (
+    parsed: Parameters<typeof handleReflectionSettingsCommand>[0],
+    socket: WebSocket,
+    listener: ListenerRuntime,
+  ) =>
+    handleReflectionSettingsCommand(parsed, socket, listener, safeSocketSend),
   enqueueChannelTurn,
   scheduleQueuePump,
   replaySyncStateForRuntime: (
