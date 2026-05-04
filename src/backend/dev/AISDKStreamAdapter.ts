@@ -349,7 +349,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
           input.agent.model,
           input.agent.model_settings,
         )(),
-      system: input.agent.system,
+      system: input.systemPrompt ?? input.agent.system,
       messages: await convertToModelMessages(uiMessages, { tools }),
       tools,
       providerOptions: buildAISDKProviderOptions(

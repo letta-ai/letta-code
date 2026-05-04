@@ -39,6 +39,7 @@ import {
   getAttachedLocalUIMessage,
   isLocalStateChunkOnly,
 } from "./LocalStreamChunks";
+import type { LocalCompiledSystemPrompt } from "./systemPromptCompilation";
 
 export type StoredMessage = Message & {
   id: string;
@@ -504,6 +505,10 @@ export class LocalStore {
     string,
     LocalMessage[]
   >();
+  private readonly compiledSystemPromptByConversationKey = new Map<
+    string,
+    LocalCompiledSystemPrompt
+  >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
   private conversationSeq = 0;
   private messageSeq = 0;
@@ -649,6 +654,10 @@ export class LocalStore {
       this.agents.get(agentId) ??
       this.createDefaultAgentRecord(agentId);
     const bodyRecord = body as Record<string, unknown>;
+    const nextSystem =
+      typeof bodyRecord.system === "string" ? bodyRecord.system : undefined;
+    const systemChanged =
+      nextSystem !== undefined && nextSystem !== existingRecord.system;
     const requestedModel = bodyRecord.model;
     const nextModelSettings = {
       ...existingRecord.model_settings,
@@ -680,6 +689,9 @@ export class LocalStore {
     };
     this.agents.set(agentId, updated);
     this.persistAgent(agentId);
+    if (systemChanged) {
+      this.clearCompiledSystemPromptsForAgent(agentId);
+    }
     return this.projectAgent(updated);
   }
 
@@ -943,6 +955,47 @@ export class LocalStore {
       conversationId,
       resolvedAgentId,
     ).map(cloneLocalMessage);
+  }
+
+  resolveAgentIdForConversation(conversationId: string): string {
+    return this.agentIdForConversation(conversationId);
+  }
+
+  getCompiledSystemPrompt(
+    conversationId: string,
+    agentId: string,
+  ): LocalCompiledSystemPrompt | undefined {
+    const key = this.conversationKey(conversationId, agentId);
+    return this.compiledSystemPromptByConversationKey.get(key);
+  }
+
+  setCompiledSystemPrompt(
+    conversationId: string,
+    agentId: string,
+    prompt: LocalCompiledSystemPrompt,
+  ): void {
+    const conversation = this.ensureConversation(conversationId, agentId);
+    const key = this.conversationKey(conversation.id, agentId);
+    this.compiledSystemPromptByConversationKey.set(key, prompt);
+    this.persistCompiledSystemPrompt(conversation.id, agentId);
+  }
+
+  clearCompiledSystemPromptsForAgent(agentId: string): void {
+    for (const [key, conversation] of this.conversations.entries()) {
+      if (conversation.agent_id !== agentId) continue;
+      this.compiledSystemPromptByConversationKey.delete(key);
+      if (this.storageDir) {
+        rmSync(
+          join(
+            this.storageDir,
+            "conversations",
+            encodePathSegment(key),
+            "system-prompt.json",
+          ),
+          { force: true },
+        );
+      }
+    }
   }
 
   listConversationMessages(
@@ -1575,6 +1628,9 @@ export class LocalStore {
         const localMessages = readJsonlFile<LocalMessage>(
           join(conversationDir, "messages.jsonl"),
         );
+        const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
+          join(conversationDir, "system-prompt.json"),
+        );
         const messages = projectLocalMessagesToStoredMessages(
           localMessages,
           conversation.agent_id,
@@ -1583,6 +1639,12 @@ export class LocalStore {
 
         this.conversations.set(key, conversation);
         this.localMessagesByConversationKey.set(key, localMessages);
+        if (compiledSystemPrompt?.content) {
+          this.compiledSystemPromptByConversationKey.set(
+            key,
+            compiledSystemPrompt,
+          );
+        }
         this.conversationSeq = Math.max(
           this.conversationSeq,
           numericSuffix(conversation.id, this.conversationIdPrefix),
@@ -1657,6 +1719,27 @@ export class LocalStore {
     writeFileSync(
       join(conversationDir, "messages.jsonl"),
       jsonl(this.localMessagesByConversationKey.get(key) ?? []),
+    );
+    this.persistCompiledSystemPrompt(conversationId, agentId);
+  }
+
+  private persistCompiledSystemPrompt(
+    conversationId: string,
+    agentId: string,
+  ): void {
+    if (!this.storageDir) return;
+    const key = this.conversationKey(conversationId, agentId);
+    const prompt = this.compiledSystemPromptByConversationKey.get(key);
+    if (!prompt) return;
+    const conversationDir = join(
+      this.storageDir,
+      "conversations",
+      encodePathSegment(key),
+    );
+    mkdirSync(conversationDir, { recursive: true });
+    writeFileSync(
+      join(conversationDir, "system-prompt.json"),
+      `${JSON.stringify(prompt, null, 2)}\n`,
     );
   }
 

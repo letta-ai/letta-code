@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   LanguageModel,
@@ -84,6 +91,41 @@ async function readPersistedLocalMessages(storageDir: string) {
     );
   }
   return messages;
+}
+
+async function readPersistedSystemPrompts(storageDir: string) {
+  const conversationDirs = await readdir(join(storageDir, "conversations"));
+  const prompts = [] as Array<{ content?: string; rawSystemHash?: string }>;
+  for (const dir of conversationDirs) {
+    try {
+      prompts.push(
+        JSON.parse(
+          await readFile(
+            join(storageDir, "conversations", dir, "system-prompt.json"),
+            "utf8",
+          ),
+        ) as { content?: string; rawSystemHash?: string },
+      );
+    } catch {
+      // Conversation may not have compiled yet.
+    }
+  }
+  return prompts;
+}
+
+async function writeMemoryFile(
+  memoryDir: string,
+  relativePath: string,
+  description: string,
+  body: string,
+) {
+  const fullPath = join(memoryDir, relativePath);
+  await mkdir(dirname(fullPath), { recursive: true });
+  await writeFile(
+    fullPath,
+    `---\ndescription: ${description}\n---\n${body}\n`,
+    "utf8",
+  );
 }
 
 function createBody(
@@ -200,9 +242,10 @@ describe("LocalBackend", () => {
         serverSideToolManagement: false,
         serverSecrets: false,
         agentFileImportExport: false,
-        promptRecompile: false,
+        promptRecompile: true,
         byokProviderRefresh: false,
         localModelCatalog: true,
+        localMemfs: true,
       });
 
       await expect(backend.retrieveAgent("agent-missing")).rejects.toThrow(
@@ -303,7 +346,10 @@ describe("LocalBackend", () => {
         chunks.push(chunk);
       }
 
-      expect(capturedSystem).toBe("local system");
+      expect(capturedSystem).toContain("local system");
+      expect(capturedSystem).toContain("<memory_metadata>");
+      expect(capturedSystem).toContain(`- AGENT_ID: ${agent.id}`);
+      expect(capturedSystem).toContain(`- CONVERSATION_ID: ${conversation.id}`);
       expect(capturedMessages).toEqual([
         {
           role: "user",
@@ -323,6 +369,157 @@ describe("LocalBackend", () => {
       expect(replayed.map((chunk) => chunk.message_type)).toEqual(
         (chunks as LettaStreamingResponse[]).map((chunk) => chunk.message_type),
       );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("persists compiled system prompt snapshots and reuses them for turns", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-prompt-"));
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-backend-memory-"));
+    try {
+      await writeMemoryFile(
+        memoryDir,
+        "system/project.md",
+        "Project memory",
+        "Use local compiled memory.",
+      );
+      let capturedSystem: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        memoryDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: (options) => {
+          capturedSystem = options.system;
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Prompt Agent",
+        system: "base {CORE_MEMORY}",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const promptsAfterCreate = await readPersistedSystemPrompts(storageDir);
+      expect(
+        promptsAfterCreate.some((prompt) =>
+          prompt.content?.includes("Use local compiled memory."),
+        ),
+      ).toBe(true);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("hello compiled prompt", agent.id),
+        ),
+      );
+      expect(capturedSystem).toContain("base Reminder: <projection>");
+      expect(capturedSystem).toContain("Use local compiled memory.");
+      expect(capturedSystem).toContain("<memory_metadata>");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
+  test("appends client skills per request without persisting them", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-skills-"));
+    try {
+      let capturedSystem: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: (options) => {
+          capturedSystem = options.system;
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+          };
+        },
+      });
+      const agent = await backend.createAgent({
+        name: "Skills Agent",
+        system: "base {CORE_MEMORY}",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(conversation.id, {
+          ...createBody("hello skills", agent.id),
+          client_skills: [
+            {
+              name: "pdf",
+              description: "Read PDFs",
+              location: "/repo/skills/pdf/SKILL.md",
+            },
+          ],
+        } as unknown as ConversationMessageCreateBody),
+      );
+
+      expect(capturedSystem).toContain("<available_skills>");
+      expect(capturedSystem).toContain("SKILL.md (Read PDFs)");
+      const persistedPrompts = await readPersistedSystemPrompts(storageDir);
+      expect(JSON.stringify(persistedPrompts)).not.toContain(
+        "<available_skills>",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("recompiles local system prompt after raw system changes", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-recompile-"),
+    );
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      const agent = await backend.createAgent({
+        name: "Recompile Agent",
+        system: "first {CORE_MEMORY}",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const first = await backend.recompileConversation(conversation.id, {
+        agent_id: agent.id,
+        dry_run: true,
+      });
+      expect(first).toContain("first");
+
+      await backend.updateAgent(agent.id, { system: "second {CORE_MEMORY}" });
+      const promptsAfterUpdate = await readPersistedSystemPrompts(storageDir);
+      expect(JSON.stringify(promptsAfterUpdate)).not.toContain("first");
+
+      const second = await backend.recompileConversation(conversation.id, {
+        agent_id: agent.id,
+        dry_run: false,
+      });
+      expect(second).toContain("second");
+      const promptsAfterRecompile =
+        await readPersistedSystemPrompts(storageDir);
+      expect(JSON.stringify(promptsAfterRecompile)).toContain("second");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

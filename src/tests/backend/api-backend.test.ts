@@ -8,6 +8,7 @@ import type {
   ConversationMessageCreateBody,
   ConversationMessageListBody,
   ConversationMessageStreamBody,
+  ConversationRecompileBody,
   ConversationUpdateBody,
   RunMessageStreamBody,
 } from "../../backend";
@@ -35,6 +36,10 @@ const updateConversationMock = mock(
   async (_conversationId: string, _body: unknown, _options?: unknown) => ({
     id: "conv-1",
   }),
+);
+const recompileConversationMock = mock(
+  async (_conversationId: string, _body?: unknown, _options?: unknown) =>
+    "compiled system",
 );
 const listConversationMessagesMock = mock(
   async (_conversationId: string, _body?: unknown, _options?: unknown) => ({
@@ -90,6 +95,7 @@ const getClientMock = mock(async () => ({
     retrieve: retrieveConversationMock,
     create: createConversationMock,
     update: updateConversationMock,
+    recompile: recompileConversationMock,
     messages: {
       list: listConversationMessagesMock,
       create: createMessageStreamMock,
@@ -122,6 +128,7 @@ describe("APIBackend", () => {
     retrieveConversationMock.mockClear();
     createConversationMock.mockClear();
     updateConversationMock.mockClear();
+    recompileConversationMock.mockClear();
     listConversationMessagesMock.mockClear();
     listAgentMessagesMock.mockClear();
     retrieveMessageMock.mockClear();
@@ -147,6 +154,7 @@ describe("APIBackend", () => {
       promptRecompile: true,
       byokProviderRefresh: true,
       localModelCatalog: false,
+      localMemfs: false,
     });
     const agentUpdateBody = { system: "system" } as AgentUpdateBody;
     const agentCreateBody = { name: "new agent" } as AgentCreateBody;
@@ -156,6 +164,10 @@ describe("APIBackend", () => {
     const conversationUpdateBody = {
       summary: "summary",
     } as ConversationUpdateBody;
+    const conversationRecompileBody = {
+      agent_id: "agent-1",
+      dry_run: true,
+    } as ConversationRecompileBody;
     const conversationListBody = {
       limit: 1,
     } as ConversationMessageListBody;
@@ -183,6 +195,7 @@ describe("APIBackend", () => {
     await backend.retrieveConversation("conv-1");
     await backend.createConversation(conversationCreateBody);
     await backend.updateConversation("conv-1", conversationUpdateBody);
+    await backend.recompileConversation("conv-1", conversationRecompileBody);
     await backend.listConversationMessages("conv-1", conversationListBody);
     await backend.listAgentMessages("agent-1", agentListBody);
     await backend.retrieveMessage("msg-1");
@@ -196,7 +209,7 @@ describe("APIBackend", () => {
     await backend.streamRunMessages("run-1", runStreamBody);
     await backend.forkConversation("conv-1", { agentId: "agent-1" });
 
-    expect(getClientMock).toHaveBeenCalledTimes(15);
+    expect(getClientMock).toHaveBeenCalledTimes(16);
     expect(retrieveAgentMock).toHaveBeenCalledWith("agent-1", {
       include: ["agent.tools"],
     });
@@ -214,6 +227,11 @@ describe("APIBackend", () => {
     expect(updateConversationMock).toHaveBeenCalledWith(
       "conv-1",
       conversationUpdateBody,
+      undefined,
+    );
+    expect(recompileConversationMock).toHaveBeenCalledWith(
+      "conv-1",
+      conversationRecompileBody,
       undefined,
     );
     expect(listConversationMessagesMock).toHaveBeenCalledWith(

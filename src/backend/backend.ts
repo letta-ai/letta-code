@@ -70,6 +70,12 @@ export type ConversationUpdateParams = Parameters<
 export type ConversationUpdateBody = ConversationUpdateParams[1];
 export type ConversationUpdateOptions = ConversationUpdateParams[2];
 
+export type ConversationRecompileParams = Parameters<
+  APIClient["conversations"]["recompile"]
+>;
+export type ConversationRecompileBody = ConversationRecompileParams[1];
+export type ConversationRecompileOptions = ConversationRecompileParams[2];
+
 export type ConversationMessageListParams = Parameters<
   APIClient["conversations"]["messages"]["list"]
 >;
@@ -98,6 +104,7 @@ export interface BackendCapabilities {
   promptRecompile: boolean;
   byokProviderRefresh: boolean;
   localModelCatalog: boolean;
+  localMemfs: boolean;
 }
 
 export interface Backend {
@@ -147,6 +154,12 @@ export interface Backend {
     body: ConversationUpdateBody,
     options?: ConversationUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["update"]>>>;
+
+  recompileConversation(
+    conversationId: string,
+    body?: ConversationRecompileBody,
+    options?: ConversationRecompileOptions,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["recompile"]>>>;
 
   listConversationMessages(
     conversationId: string,
@@ -221,6 +234,7 @@ export class APIBackend implements Backend {
     promptRecompile: true,
     byokProviderRefresh: true,
     localModelCatalog: false,
+    localMemfs: false,
   };
 
   private readonly getApiClientOverride?: GetAPIClient;
@@ -296,6 +310,15 @@ export class APIBackend implements Backend {
   ) {
     const client = await this.getClient();
     return client.conversations.update(conversationId, body, options);
+  }
+
+  async recompileConversation(
+    conversationId: string,
+    body?: ConversationRecompileBody,
+    options?: ConversationRecompileOptions,
+  ) {
+    const client = await this.getClient();
+    return client.conversations.recompile(conversationId, body, options);
   }
 
   async listConversationMessages(

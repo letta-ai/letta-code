@@ -104,9 +104,10 @@ export class HeadlessBackend implements Backend {
     promptRecompile: false,
     byokProviderRefresh: false,
     localModelCatalog: true,
+    localMemfs: false,
   };
 
-  private readonly store: LocalStore;
+  protected readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;
   private readonly runs = new Map<string, Run>();
   private readonly activeRunByConversation = new Map<string, string>();
@@ -183,6 +184,12 @@ export class HeadlessBackend implements Backend {
   updateConversation(...args: Parameters<Backend["updateConversation"]>) {
     const [conversationId, body] = args;
     return Promise.resolve(this.store.updateConversation(conversationId, body));
+  }
+
+  async recompileConversation(
+    ..._args: Parameters<Backend["recompileConversation"]>
+  ): ReturnType<Backend["recompileConversation"]> {
+    throw new Error("Prompt recompile is not supported by this backend yet");
   }
 
   async listConversationMessages(
@@ -297,12 +304,21 @@ export class HeadlessBackend implements Backend {
       turnInput.agentId,
     );
     const agent = this.store.retrieveAgentRecord(turnInput.agentId);
+    const systemPrompt = await this.resolveSystemPromptForTurn({
+      conversationId: turnInput.conversationId,
+      agentId: turnInput.agentId,
+      agent,
+      body,
+      history,
+      uiMessages,
+    });
     let stream: Stream<LettaStreamingResponse>;
     try {
       stream = await this.executor.execute({
         conversationId: turnInput.conversationId,
         agentId: turnInput.agentId,
         agent,
+        systemPrompt,
         body,
         history,
         uiMessages,
@@ -318,6 +334,17 @@ export class HeadlessBackend implements Backend {
       stream,
       run.id,
     );
+  }
+
+  protected async resolveSystemPromptForTurn(input: {
+    conversationId: string;
+    agentId: string;
+    agent: ReturnType<LocalStore["retrieveAgentRecord"]>;
+    body: ConversationMessageCreateBody | ConversationMessageStreamBody;
+    history: ReturnType<LocalStore["listConversationMessages"]>;
+    uiMessages: ReturnType<LocalStore["listLocalMessages"]>;
+  }): Promise<string> {
+    return input.agent.system;
   }
 
   private startRun(

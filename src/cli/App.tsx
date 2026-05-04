@@ -8630,20 +8630,13 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const client = await getClient();
             const currentConversationId = conversationIdRef.current;
-
-            await client.agents.recompile(agentId, {
-              update_timestamp: true,
-            });
-
-            const conversationParams =
-              currentConversationId === "default"
-                ? { agent_id: agentId }
-                : undefined;
-            const compiledSystemPrompt = await client.conversations.recompile(
+            const { recompileAgentSystemPrompt } = await import(
+              "../agent/modify"
+            );
+            const compiledSystemPrompt = await recompileAgentSystemPrompt(
               currentConversationId,
-              conversationParams,
+              agentId,
             );
             setSystemPromptDoctorState(
               agentId,

@@ -9,7 +9,6 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import { getBackend } from "../backend";
-import { getClient } from "../backend/api/client";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { debugLog } from "../utils/debug";
 import { getModelContextWindow } from "./available-models";
@@ -322,15 +321,12 @@ export async function recompileAgentSystemPrompt(
     };
   },
 ): Promise<string> {
-  if (!clientOverride && !getBackend().capabilities.promptRecompile) {
+  const backend = getBackend();
+  if (!clientOverride && !backend.capabilities.promptRecompile) {
     throw new Error(
       "Server-side prompt recompile is not supported by this backend yet",
     );
   }
-  const client = (clientOverride ?? (await getClient())) as Exclude<
-    typeof clientOverride,
-    undefined
-  >;
 
   if (!agentId) {
     throw new Error("recompileAgentSystemPrompt requires agentId");
@@ -341,7 +337,11 @@ export async function recompileAgentSystemPrompt(
     agent_id: agentId,
   };
 
-  return client.conversations.recompile(conversationId, params);
+  if (clientOverride) {
+    return clientOverride.conversations.recompile(conversationId, params);
+  }
+
+  return backend.recompileConversation(conversationId, params);
 }
 
 export interface SystemPromptUpdateResult {

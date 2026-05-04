@@ -176,11 +176,13 @@ export async function ensureDefaultAgents(
     );
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs && (await isLettaCloud());
+    const shouldUseMemfsPrompt =
+      backend.capabilities.localMemfs || willAutoEnableMemfs;
 
     const { agent } = await createAgent({
       ...DEFAULT_AGENT_CONFIGS.memo,
       model: await resolveDefaultAgentModel(backend, options?.preferredModel),
-      memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
+      memoryPromptMode: shouldUseMemfsPrompt ? "memfs" : undefined,
     });
     await addTagToAgent(backend, agent.id, MEMO_TAG);
     settingsManager.pinGlobal(agent.id);
