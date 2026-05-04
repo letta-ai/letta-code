@@ -185,6 +185,38 @@ describe("resolveSubagentWorkingDirectory", () => {
 
     expect(cwd).toBe("/tmp/repo-root");
   });
+
+  test("reflection memory-mode subagents run from the inherited parent memory root", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/project-root",
+      } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "reflection",
+        permissionMode: "memory",
+        inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
+      },
+    );
+
+    expect(cwd).toBe("/Users/test/.letta/agents/agent-parent/memory");
+  });
+
+  test("non-reflection subagents still prefer USER_CWD", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/project-root",
+      } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "general-purpose",
+        permissionMode: "memory",
+        inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
+      },
+    );
+
+    expect(cwd).toBe("/tmp/project-root");
+  });
 });
 
 describe("buildSubagentArgs", () => {

@@ -172,8 +172,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
   workingDirectory: string;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, socket, agentId, conversationId, workingDirectory } =
-      params;
+    const { runtime, socket, agentId, conversationId } = params;
 
     if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
       return false;
@@ -221,7 +220,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const reflectionPrompt = buildReflectionSubagentPrompt({
         transcriptPath: autoPayload.payloadPath,
         memoryDir,
-        cwd: workingDirectory,
+        cwd: memoryDir,
         parentMemory,
       });
 
