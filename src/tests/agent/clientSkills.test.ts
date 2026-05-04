@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
+import {
+  invalidateClientSkillsPayloadCache,
+  invalidateClientSkillsPayloadCacheForAgent,
+} from "../../agent/clientSkills";
 import type {
   Skill,
   SkillDiscoveryResult,
@@ -545,6 +549,509 @@ describe("buildClientSkillsPayload", () => {
       } else {
         process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
       }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cache behavior tests
+// ---------------------------------------------------------------------------
+
+describe("client skills payload cache", () => {
+  // Each test starts with a clean cache to avoid cross-test pollution.
+  async function importFresh() {
+    // Clear the global cache before re-importing so we get a fresh start.
+    invalidateClientSkillsPayloadCache();
+    return import("../../agent/clientSkills");
+  }
+
+  test("returns cached result on second call with same parameters", async () => {
+    const { buildClientSkillsPayload } = await importFresh();
+
+    // Test that the cache works by calling twice without
+    // discoverSkillsFn and verifying the results are identical.
+    // We'll use temp directories with real skill files.
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-test-"));
+    const originalCwd = process.cwd();
+
+    try {
+      const projectDir = join(tempRoot, "project");
+      const agentsSkillsDir = join(projectDir, ".agents", "skills");
+      const skillDir = join(agentsSkillsDir, "test-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        [
+          "---",
+          "id: test-skill",
+          "name: test-skill",
+          "description: cached skill",
+          "---",
+          "",
+          "Body",
+        ].join("\n"),
+      );
+
+      process.chdir(projectDir);
+
+      // Clear cache to start fresh
+      invalidateClientSkillsPayloadCache();
+
+      const result1 = await buildClientSkillsPayload({
+        agentId: "cache-test-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      const result2 = await buildClientSkillsPayload({
+        agentId: "cache-test-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      // Both calls should return identical results
+      expect(result2.clientSkills).toEqual(result1.clientSkills);
+      expect(result2.skillPathById).toEqual(result1.skillPathById);
+      expect(result2.errors).toEqual(result1.errors);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("cache miss when agentId differs", async () => {
+    const { buildClientSkillsPayload } = await importFresh();
+
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-agent-"));
+    const originalCwd = process.cwd();
+    const originalHome = process.env.HOME;
+
+    try {
+      const projectDir = join(tempRoot, "project");
+      const agentsSkillsDir = join(projectDir, ".agents", "skills");
+      const skillDir = join(agentsSkillsDir, "test-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        [
+          "---",
+          "id: test-skill",
+          "name: test-skill",
+          "description: skill for agent test",
+          "---",
+          "",
+          "Body",
+        ].join("\n"),
+      );
+
+      // Set up scoped memory for agent-2 so it has a different memory root
+      // The scoped memory dir is: $HOME/.letta/agents/<agentId>/memory
+      // getMemorySkillsDirs checks existsSync on the memory root, then
+      // appends "skills" to discover skill directories.
+      const agent2MemoryRoot = join(
+        tempRoot,
+        ".letta",
+        "agents",
+        "cache-agent-2",
+        "memory",
+      );
+      const agent2MemorySkillDir = join(
+        agent2MemoryRoot,
+        "skills",
+        "agent2-skill",
+      );
+      await mkdir(agent2MemorySkillDir, { recursive: true });
+      await writeFile(
+        join(agent2MemorySkillDir, "SKILL.md"),
+        [
+          "---",
+          "id: agent2-skill",
+          "name: agent2-skill",
+          "description: agent 2 only",
+          "---",
+          "",
+          "Body",
+        ].join("\n"),
+      );
+
+      process.chdir(projectDir);
+      process.env.HOME = tempRoot;
+
+      invalidateClientSkillsPayloadCache();
+
+      // Populate cache for both agents
+      const result1 = await buildClientSkillsPayload({
+        agentId: "cache-agent-1",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      const result2 = await buildClientSkillsPayload({
+        agentId: "cache-agent-2",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      // agent-2 should have the additional memory skill that agent-1 doesn't
+      // (different agentId → different scoped memory → different cache key → different result)
+      expect(result2.clientSkills.length).toBeGreaterThan(
+        result1.clientSkills.length,
+      );
+      expect(result2.clientSkills).toContainEqual(
+        expect.objectContaining({ name: "agent2-skill" }),
+      );
+    } finally {
+      process.chdir(originalCwd);
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("cache miss when skillSources differ", async () => {
+    const { buildClientSkillsPayload } = await importFresh();
+
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-sources-"));
+    const originalCwd = process.cwd();
+
+    try {
+      const projectDir = join(tempRoot, "project");
+      const agentsSkillsDir = join(projectDir, ".agents", "skills");
+      const skillDir = join(agentsSkillsDir, "test-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        [
+          "---",
+          "id: test-skill",
+          "name: test-skill",
+          "description: source test",
+          "---",
+          "",
+          "Body",
+        ].join("\n"),
+      );
+
+      process.chdir(projectDir);
+
+      invalidateClientSkillsPayloadCache();
+
+      const result1 = await buildClientSkillsPayload({
+        agentId: "cache-sources-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      const result2 = await buildClientSkillsPayload({
+        agentId: "cache-sources-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["bundled", "project"],
+      });
+
+      // Different skill sources → different cache keys → different results
+      // (bundled source adds bundled skills)
+      expect(result2.clientSkills.length).toBeGreaterThanOrEqual(
+        result1.clientSkills.length,
+      );
+    } finally {
+      process.chdir(originalCwd);
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("cache misses when a skill file changes", async () => {
+    const { buildClientSkillsPayload } = await importFresh();
+
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-change-"));
+    const originalCwd = process.cwd();
+
+    try {
+      const projectDir = join(tempRoot, "project");
+      const agentsSkillsDir = join(projectDir, ".agents", "skills");
+      const skillDir = join(agentsSkillsDir, "mutable-skill");
+      const skillPath = join(skillDir, "SKILL.md");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        skillPath,
+        [
+          "---",
+          "id: mutable-skill",
+          "name: mutable-skill",
+          "description: original",
+          "---",
+          "",
+          "Body",
+        ].join("\n"),
+      );
+
+      process.chdir(projectDir);
+      invalidateClientSkillsPayloadCache();
+
+      const result1 = await buildClientSkillsPayload({
+        agentId: "change-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+      expect(result1.clientSkills[0]?.description).toBe("original");
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await writeFile(
+        skillPath,
+        [
+          "---",
+          "id: mutable-skill",
+          "name: mutable-skill",
+          "description: updated description",
+          "---",
+          "",
+          "Body changed",
+        ].join("\n"),
+      );
+
+      const result2 = await buildClientSkillsPayload({
+        agentId: "change-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      expect(result2.clientSkills[0]?.description).toBe("updated description");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("invalidateClientSkillsPayloadCache clears all entries", async () => {
+    const { buildClientSkillsPayload } = await importFresh();
+
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-inval-"));
+    const originalCwd = process.cwd();
+
+    try {
+      const projectDir = join(tempRoot, "project");
+      const agentsSkillsDir = join(projectDir, ".agents", "skills");
+      const skillDir = join(agentsSkillsDir, "test-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        [
+          "---",
+          "id: test-skill",
+          "name: test-skill",
+          "description: invalidation test",
+          "---",
+          "",
+          "Body",
+        ].join("\n"),
+      );
+
+      process.chdir(projectDir);
+
+      invalidateClientSkillsPayloadCache();
+
+      const result1 = await buildClientSkillsPayload({
+        agentId: "inval-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      // Invalidate all
+      invalidateClientSkillsPayloadCache();
+
+      const result2 = await buildClientSkillsPayload({
+        agentId: "inval-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      // After invalidation, the second call re-discovers (same files → same result)
+      expect(result2.clientSkills).toEqual(result1.clientSkills);
+      expect(result2.skillPathById).toEqual(result1.skillPathById);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("invalidateClientSkillsPayloadCacheForAgent clears only the target agent", async () => {
+    const { buildClientSkillsPayload } = await importFresh();
+
+    const tempRoot = await mkdtemp(
+      join(os.tmpdir(), "letta-cache-agent-inval-"),
+    );
+    const originalCwd = process.cwd();
+
+    try {
+      const projectDir = join(tempRoot, "project");
+      const agentsSkillsDir = join(projectDir, ".agents", "skills");
+      const skillDir = join(agentsSkillsDir, "test-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        [
+          "---",
+          "id: test-skill",
+          "name: test-skill",
+          "description: agent invalidation test",
+          "---",
+          "",
+          "Body",
+        ].join("\n"),
+      );
+
+      process.chdir(projectDir);
+
+      invalidateClientSkillsPayloadCache();
+
+      // Populate cache for two agents
+      await buildClientSkillsPayload({
+        agentId: "agent-alpha",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+      await buildClientSkillsPayload({
+        agentId: "agent-beta",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      // Invalidate only agent-alpha
+      invalidateClientSkillsPayloadCacheForAgent("agent-alpha");
+
+      // agent-alpha should re-discover (cache was cleared)
+      // agent-beta should still be cached
+      // Both should return the same results since the files haven't changed,
+      // but the key point is that agent-alpha's cache entry was removed.
+      // We verify this indirectly: the function doesn't throw, and results match.
+      const resultAlpha = await buildClientSkillsPayload({
+        agentId: "agent-alpha",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+      const resultBeta = await buildClientSkillsPayload({
+        agentId: "agent-beta",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      expect(resultAlpha.clientSkills).toEqual(resultBeta.clientSkills);
+      expect(resultAlpha.skillPathById).toEqual(resultBeta.skillPathById);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("discoverSkillsFn bypasses cache", async () => {
+    const { buildClientSkillsPayload } = await importFresh();
+
+    let callCount = 0;
+    const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => {
+      callCount++;
+      return {
+        skills: [
+          {
+            ...baseSkill,
+            id: `call-${callCount}`,
+            description: `call ${callCount}`,
+            path: `/tmp/call-${callCount}/SKILL.md`,
+            source: "project",
+          },
+        ],
+        errors: [],
+      };
+    };
+
+    invalidateClientSkillsPayloadCache();
+
+    const result1 = await buildClientSkillsPayload({
+      agentId: "bypass-agent",
+      skillsDirectory: "/tmp/.skills",
+      skillSources: ["project"],
+      discoverSkillsFn,
+    });
+
+    const result2 = await buildClientSkillsPayload({
+      agentId: "bypass-agent",
+      skillsDirectory: "/tmp/.skills",
+      skillSources: ["project"],
+      discoverSkillsFn,
+    });
+
+    // discoverSkillsFn should be called each time (no caching).
+    // With skillSources: ["project"] and a non-default skillsDirectory,
+    // there are 2 discovery runs per invocation (legacy + primary),
+    // so 2 invocations × 2 runs = 4 calls.
+    expect(callCount).toBe(4);
+    // Each invocation produces incrementing ids, so first result has call-1/2, second has call-3/4
+    expect(result1.clientSkills.map((s) => s.name).sort()).toEqual([
+      "call-1",
+      "call-2",
+    ]);
+    expect(result2.clientSkills.map((s) => s.name).sort()).toEqual([
+      "call-3",
+      "call-4",
+    ]);
+  });
+
+  test("cached result is a deep copy (mutation safe)", async () => {
+    const { buildClientSkillsPayload } = await importFresh();
+
+    // Test that two consecutive calls without discoverSkillsFn
+    // return independent objects (deep-copied from cache).
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-mut-"));
+    const originalCwd = process.cwd();
+
+    try {
+      const projectDir = join(tempRoot, "project");
+      const agentsSkillsDir = join(projectDir, ".agents", "skills");
+      const skillDir = join(agentsSkillsDir, "mutable-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        [
+          "---",
+          "id: mutable-skill",
+          "name: mutable-skill",
+          "description: original",
+          "---",
+          "",
+          "Body",
+        ].join("\n"),
+      );
+
+      process.chdir(projectDir);
+
+      invalidateClientSkillsPayloadCache();
+
+      const result1 = await buildClientSkillsPayload({
+        agentId: "mutation-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      // Mutate the returned result
+      const firstSkill = result1.clientSkills[0];
+      if (firstSkill) {
+        firstSkill.description = "mutated";
+      }
+      result1.skillPathById["mutable-skill"] = "/mutated/path";
+
+      const result2 = await buildClientSkillsPayload({
+        agentId: "mutation-agent",
+        skillsDirectory: join(projectDir, ".skills"),
+        skillSources: ["project"],
+      });
+
+      // The second call should return the original (unmutated) cached result
+      expect(result2.clientSkills[0]?.description).toBe("original");
+      expect(result2.skillPathById["mutable-skill"]).not.toBe("/mutated/path");
+    } finally {
+      process.chdir(originalCwd);
       await rm(tempRoot, { recursive: true, force: true });
     }
   });

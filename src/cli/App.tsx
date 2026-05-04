@@ -3454,13 +3454,12 @@ export default function App({
       const fetchConfig = async () => {
         try {
           // Use pre-loaded agent state if available, otherwise fetch
-          const { getClient } = await import("../backend/api/client");
-          const client = await getClient();
+          const backend = getBackend();
           let agent: AgentState;
           if (initialAgentState && initialAgentState.id === agentId) {
             agent = initialAgentState;
           } else {
-            agent = await client.agents.retrieve(agentId);
+            agent = await backend.retrieveAgent(agentId);
           }
 
           setAgentState(agent);
@@ -3578,28 +3577,31 @@ export default function App({
             setCurrentToolset(persistedToolsetPreference);
           }
 
-          void reconcileExistingAgentState(client, agent)
-            .then((reconcileResult) => {
-              if (!reconcileResult.updated || cancelled) {
-                return;
-              }
-              if (agentIdRef.current !== agent.id) {
-                return;
-              }
+          if (backend.capabilities.serverSideToolManagement) {
+            const client = await getClient();
+            void reconcileExistingAgentState(client, agent)
+              .then((reconcileResult) => {
+                if (!reconcileResult.updated || cancelled) {
+                  return;
+                }
+                if (agentIdRef.current !== agent.id) {
+                  return;
+                }
 
-              setAgentState(reconcileResult.agent);
-              setAgentDescription(reconcileResult.agent.description ?? null);
-            })
-            .catch((reconcileError) => {
-              debugWarn(
-                "agent-config",
-                `Failed to reconcile existing agent settings for ${agentId}: ${
-                  reconcileError instanceof Error
-                    ? reconcileError.message
-                    : String(reconcileError)
-                }`,
-              );
-            });
+                setAgentState(reconcileResult.agent);
+                setAgentDescription(reconcileResult.agent.description ?? null);
+              })
+              .catch((reconcileError) => {
+                debugWarn(
+                  "agent-config",
+                  `Failed to reconcile existing agent settings for ${agentId}: ${
+                    reconcileError instanceof Error
+                      ? reconcileError.message
+                      : String(reconcileError)
+                  }`,
+                );
+              });
+          }
         } catch (error) {
           debugLog("agent-config", "Error fetching agent config: %O", error);
         }
@@ -8634,20 +8636,13 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const client = await getClient();
             const currentConversationId = conversationIdRef.current;
-
-            await client.agents.recompile(agentId, {
-              update_timestamp: true,
-            });
-
-            const conversationParams =
-              currentConversationId === "default"
-                ? { agent_id: agentId }
-                : undefined;
-            const compiledSystemPrompt = await client.conversations.recompile(
+            const { recompileAgentSystemPrompt } = await import(
+              "../agent/modify"
+            );
+            const compiledSystemPrompt = await recompileAgentSystemPrompt(
               currentConversationId,
-              conversationParams,
+              agentId,
             );
             setSystemPromptDoctorState(
               agentId,
@@ -14514,6 +14509,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       "https://api.letta.com";
                     return !baseURL.includes("api.letta.com");
                   })()}
+                  localModelCatalog={
+                    getBackend().capabilities.localModelCatalog
+                  }
                 />
               ))}
 

@@ -33,14 +33,22 @@ type ModelCategory =
 // Re-export for consumers that import from ModelSelector
 export { buildByokProviderAliases, isByokHandleForSelector };
 
+export function usesBackendModelCatalog(
+  isSelfHosted?: boolean,
+  localModelCatalog?: boolean,
+): boolean {
+  return Boolean(isSelfHosted || localModelCatalog);
+}
+
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
 // For Letta-hosted, keep ordering consistent across billing tiers.
 export function getModelCategories(
   _billingTier?: string,
   isSelfHosted?: boolean,
+  localModelCatalog?: boolean,
 ): ModelCategory[] {
-  if (isSelfHosted) {
+  if (usesBackendModelCatalog(isSelfHosted, localModelCatalog)) {
     return ["server-recommended", "server-all"];
   }
   return ["supported", "all", "byok", "byok-all"];
@@ -90,6 +98,8 @@ interface ModelSelectorProps {
   billingTier?: string;
   /** Whether connected to a self-hosted server (not api.letta.com) */
   isSelfHosted?: boolean;
+  /** Whether the active backend provides a local-only model catalog */
+  localModelCatalog?: boolean;
 }
 
 export function ModelSelector({
@@ -100,15 +110,20 @@ export function ModelSelector({
   forceRefresh: forceRefreshOnMount,
   billingTier,
   isSelfHosted,
+  localModelCatalog,
 }: ModelSelectorProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
 
-  // For self-hosted, only show server-specific tabs
+  // For self-hosted and local backends, only show the active backend's model catalog.
   const modelCategories = useMemo(
-    () => getModelCategories(billingTier, isSelfHosted),
-    [billingTier, isSelfHosted],
+    () => getModelCategories(billingTier, isSelfHosted, localModelCatalog),
+    [billingTier, isSelfHosted, localModelCatalog],
+  );
+  const backendModelCatalog = usesBackendModelCatalog(
+    isSelfHosted,
+    localModelCatalog,
   );
   const isFreeTier = billingTier === "free";
   const defaultCategory = modelCategories[0] ?? "supported";
@@ -180,6 +195,10 @@ export function ModelSelector({
   }, [forceRefreshOnMount]);
 
   useEffect(() => {
+    if (localModelCatalog) {
+      setByokProviderAliases(buildByokProviderAliases([]));
+      return;
+    }
     (async () => {
       try {
         const providers = await listProviders();
@@ -190,7 +209,7 @@ export function ModelSelector({
         setByokProviderAliases(buildByokProviderAliases([]));
       }
     })();
-  }, []);
+  }, [localModelCatalog]);
 
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
@@ -405,7 +424,7 @@ export function ModelSelector({
   // Server-recommended models: models.json entries available on the server (for self-hosted)
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
-    if (!isSelfHosted || availableHandles === undefined) return [];
+    if (!backendModelCatalog || availableHandles === undefined) return [];
     let available = typedModels.filter(
       (m) => availableHandles?.has(m.handle) && m.handle !== "letta/letta-free",
     );
@@ -430,7 +449,7 @@ export function ModelSelector({
     }
     return deduped;
   }, [
-    isSelfHosted,
+    backendModelCatalog,
     typedModels,
     availableHandles,
     searchQuery,
@@ -440,14 +459,14 @@ export function ModelSelector({
   // Server-all models: ALL handles from the server (for self-hosted)
   // Filter out letta/letta-free legacy model
   const serverAllModels = useMemo(() => {
-    if (!isSelfHosted) return [];
+    if (!backendModelCatalog) return [];
     let handles = allApiHandles.filter((h) => h !== "letta/letta-free");
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       handles = handles.filter((h) => h.toLowerCase().includes(query));
     }
     return handles;
-  }, [isSelfHosted, allApiHandles, searchQuery]);
+  }, [backendModelCatalog, allApiHandles, searchQuery]);
 
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {

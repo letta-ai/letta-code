@@ -6,7 +6,7 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
-import { getClient } from "../backend/api/client";
+import { getBackend } from "../backend";
 import { settingsManager } from "../settings-manager";
 import { colors } from "./components/colors";
 import { Text } from "./components/Text";
@@ -101,7 +101,7 @@ function ProfileSelectionUI({
     setInternalLoading(true);
     try {
       const mergedPinned = settingsManager.getMergedPinnedAgents();
-      const client = await getClient();
+      const backend = getBackend();
 
       const optionsToFetch: ProfileOption[] = [];
       const seenAgentIds = new Set<string>();
@@ -139,7 +139,7 @@ function ProfileSelectionUI({
       const fetchedOptions = await Promise.all(
         optionsToFetch.map(async (opt) => {
           try {
-            const agent = await client.agents.retrieve(opt.agentId, {
+            const agent = await backend.retrieveAgent(opt.agentId, {
               include: ["agent.blocks"],
             });
             return { ...opt, agent };

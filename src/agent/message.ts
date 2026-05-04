@@ -77,6 +77,8 @@ export type SendMessageStreamOptions = {
   overrideModel?: string;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
+  /** Skip shared image normalization when the caller already did it. */
+  skipImageNormalization?: boolean;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -137,7 +139,9 @@ export async function sendMessageStream(
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
   const backend = getBackend();
-  const normalizedMessages = await normalizeMessageImageParts(messages);
+  const normalizedMessages = opts.skipImageNormalization
+    ? messages
+    : await normalizeMessageImageParts(messages);
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext

@@ -48,12 +48,15 @@
     "@vscode/ripgrep": "^1.17.0"
   },
   "devDependencies": {
+    "@ai-sdk/anthropic": "^3.0.73",
+    "@ai-sdk/openai": "^3.0.55",
     "@slack/bolt": "^4.7.0",
     "@types/bun": "^1.3.7",
     "@types/diff": "^8.0.0",
     "@types/picomatch": "^4.0.2",
     "@types/react": "^19.2.9",
     "@types/ws": "^8.18.1",
+    "ai": "^6.0.171",
     "diff": "^8.0.2",
     "grammy": "^1.42.0",
     "husky": "9.1.7",

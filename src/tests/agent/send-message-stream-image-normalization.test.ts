@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { translatePasteForImages } from "../../cli/helpers/clipboard";
 import {
@@ -174,5 +175,16 @@ describe("outbound image normalization", () => {
         throw new Error("codec unavailable");
       }),
     ).rejects.toThrow(/Failed to prepare image for model: codec unavailable/);
+  });
+
+  test("sendMessageStream has an explicit skip option for pre-normalized images", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../../agent/message.ts", import.meta.url)),
+      "utf-8",
+    );
+
+    expect(source).toContain("skipImageNormalization?: boolean;");
+    expect(source).toContain("opts.skipImageNormalization");
+    expect(source).toContain(": await normalizeMessageImageParts(messages)");
   });
 });

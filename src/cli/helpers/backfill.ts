@@ -141,6 +141,41 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
   buffers.reasoningCanonicalByOtid.clear();
   // Note: we don't reset tokenCount here (it resets per-turn in onSubmit)
 
+  const pendingToolResults = new Map<
+    string,
+    { resultText: string; resultOk: boolean }
+  >();
+
+  const applyToolResult = (
+    toolCallId: string,
+    result: { resultText: string; resultOk: boolean },
+  ) => {
+    const toolCallLineId = buffers.toolCallIdToLineId.get(toolCallId);
+    if (!toolCallLineId) {
+      pendingToolResults.set(toolCallId, result);
+      return;
+    }
+
+    const existingLine = buffers.byId.get(toolCallLineId);
+    if (!existingLine || existingLine.kind !== "tool_call") {
+      pendingToolResults.set(toolCallId, result);
+      return;
+    }
+
+    pendingToolResults.delete(toolCallId);
+    buffers.byId.set(toolCallLineId, {
+      ...existingLine,
+      ...result,
+      phase: "finished",
+    });
+  };
+
+  const applyPendingToolResult = (toolCallId: string) => {
+    const pending = pendingToolResults.get(toolCallId);
+    if (!pending) return;
+    applyToolResult(toolCallId, pending);
+  };
+
   // Iterate over the history and add the messages to the buffers
   // Want to add user, reasoning, assistant, tool call + tool return
   for (const msg of history) {
@@ -282,6 +317,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
 
           // Maintain mapping for tool return to find this line
           buffers.toolCallIdToLineId.set(toolCallId, uniqueLineId);
+          applyPendingToolResult(toolCallId);
         }
         break;
       }
@@ -308,13 +344,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           const toolCallId = toolReturn.tool_call_id;
           if (!toolCallId) continue;
 
-          // Look up the line using the mapping (like streaming does)
-          const toolCallLineId = buffers.toolCallIdToLineId.get(toolCallId);
-          if (!toolCallLineId) continue;
-
-          const existingLine = buffers.byId.get(toolCallLineId);
-          if (!existingLine || existingLine.kind !== "tool_call") continue;
-
           // Update the existing line with the result
           // Handle both func_response (streaming) and tool_return (SDK) properties
           // tool_return can be multimodal (string or array of content parts)
@@ -326,12 +355,46 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
               ? toolReturn.tool_return
               : undefined) ||
             "";
-          const resultText = getDisplayableToolReturn(rawResult);
-          buffers.byId.set(toolCallLineId, {
-            ...existingLine,
-            resultText,
+          applyToolResult(toolCallId, {
+            resultText: getDisplayableToolReturn(rawResult),
             resultOk: toolReturn.status === "success",
-            phase: "finished",
+          });
+        }
+        break;
+      }
+
+      // approval response message - merge into the existing approval/tool call line(s)
+      case "approval_response_message": {
+        const approvals = Array.isArray(msg.approvals) ? msg.approvals : [];
+        for (const approval of approvals) {
+          if (
+            !approval ||
+            typeof approval !== "object" ||
+            !("tool_call_id" in approval) ||
+            typeof approval.tool_call_id !== "string"
+          ) {
+            continue;
+          }
+
+          const isSuccess =
+            "type" in approval && approval.type === "tool"
+              ? true
+              : !("approve" in approval && approval.approve === false);
+          const rawResult =
+            "tool_return" in approval
+              ? approval.tool_return
+              : "reason" in approval
+                ? approval.reason
+                : (msg as { content?: unknown }).content;
+
+          applyToolResult(approval.tool_call_id, {
+            resultText: getDisplayableToolReturn(
+              rawResult as
+                | string
+                | Array<TextContent | ImageContent>
+                | undefined,
+            ),
+            resultOk: isSuccess,
           });
         }
         break;

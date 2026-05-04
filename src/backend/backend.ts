@@ -1,8 +1,11 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { getClient } from "./api/client";
 import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import { LocalBackend } from "./local/LocalBackend";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
 type GetAPIClient = typeof getClient;
@@ -31,14 +34,29 @@ export type RunMessageStreamOptions = RunMessageStreamParams[2];
 export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
 export type AgentRetrieveOptions = AgentRetrieveParams[1];
 
+export type AgentListParams = Parameters<APIClient["agents"]["list"]>;
+export type AgentListBody = AgentListParams[0];
+
+export type AgentDeleteParams = Parameters<APIClient["agents"]["delete"]>;
+export type AgentDeleteOptions = AgentDeleteParams[1];
+
 export type AgentUpdateParams = Parameters<APIClient["agents"]["update"]>;
 export type AgentUpdateBody = AgentUpdateParams[1];
 export type AgentUpdateOptions = AgentUpdateParams[2];
+
+export type AgentCreateParams = Parameters<APIClient["agents"]["create"]>;
+export type AgentCreateBody = AgentCreateParams[0];
+export type AgentCreateOptions = AgentCreateParams[1];
 
 export type ConversationRetrieveParams = Parameters<
   APIClient["conversations"]["retrieve"]
 >;
 export type ConversationRetrieveOptions = ConversationRetrieveParams[1];
+
+export type ConversationListParams = Parameters<
+  APIClient["conversations"]["list"]
+>;
+export type ConversationListBody = ConversationListParams[0];
 
 export type ConversationCreateParams = Parameters<
   APIClient["conversations"]["create"]
@@ -51,6 +69,12 @@ export type ConversationUpdateParams = Parameters<
 >;
 export type ConversationUpdateBody = ConversationUpdateParams[1];
 export type ConversationUpdateOptions = ConversationUpdateParams[2];
+
+export type ConversationRecompileParams = Parameters<
+  APIClient["conversations"]["recompile"]
+>;
+export type ConversationRecompileBody = ConversationRecompileParams[1];
+export type ConversationRecompileOptions = ConversationRecompileParams[2];
 
 export type ConversationMessageListParams = Parameters<
   APIClient["conversations"]["messages"]["list"]
@@ -69,11 +93,36 @@ export type MessageRetrieveParams = Parameters<
 >;
 export type MessageRetrieveOptions = MessageRetrieveParams[1];
 
+export type ModelsListParams = Parameters<APIClient["models"]["list"]>;
+export type ModelsListOptions = ModelsListParams[0];
+
+export interface BackendCapabilities {
+  remoteMemfs: boolean;
+  serverSideToolManagement: boolean;
+  serverSecrets: boolean;
+  agentFileImportExport: boolean;
+  promptRecompile: boolean;
+  byokProviderRefresh: boolean;
+  localModelCatalog: boolean;
+  localMemfs: boolean;
+}
+
 export interface Backend {
+  readonly capabilities: BackendCapabilities;
+
   retrieveAgent(
     agentId: string,
     options?: AgentRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>;
+
+  listAgents(
+    body?: AgentListBody,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["list"]>>>;
+
+  deleteAgent(
+    agentId: string,
+    options?: AgentDeleteOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["delete"]>>>;
 
   updateAgent(
     agentId: string,
@@ -81,10 +130,19 @@ export interface Backend {
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
 
+  createAgent(
+    body: AgentCreateBody,
+    options?: AgentCreateOptions,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["create"]>>>;
+
   retrieveConversation(
     conversationId: string,
     options?: ConversationRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["retrieve"]>>>;
+
+  listConversations(
+    body?: ConversationListBody,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["list"]>>>;
 
   createConversation(
     body: ConversationCreateBody,
@@ -96,6 +154,12 @@ export interface Backend {
     body: ConversationUpdateBody,
     options?: ConversationUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["update"]>>>;
+
+  recompileConversation(
+    conversationId: string,
+    body?: ConversationRecompileBody,
+    options?: ConversationRecompileOptions,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["recompile"]>>>;
 
   listConversationMessages(
     conversationId: string,
@@ -115,6 +179,10 @@ export interface Backend {
     messageId: string,
     options?: MessageRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["messages"]["retrieve"]>>>;
+
+  listModels(
+    options?: ModelsListOptions,
+  ): Promise<Awaited<ReturnType<APIClient["models"]["list"]>>>;
 
   createConversationMessageStream(
     conversationId: string,
@@ -158,6 +226,17 @@ interface APIBackendDeps {
 }
 
 export class APIBackend implements Backend {
+  readonly capabilities: BackendCapabilities = {
+    remoteMemfs: true,
+    serverSideToolManagement: true,
+    serverSecrets: true,
+    agentFileImportExport: true,
+    promptRecompile: true,
+    byokProviderRefresh: true,
+    localModelCatalog: false,
+    localMemfs: false,
+  };
+
   private readonly getApiClientOverride?: GetAPIClient;
   private readonly forkConversationOverride?: ForkConversation;
 
@@ -179,6 +258,16 @@ export class APIBackend implements Backend {
     return client.agents.retrieve(agentId, options);
   }
 
+  async listAgents(body?: AgentListBody) {
+    const client = await this.getClient();
+    return client.agents.list(body);
+  }
+
+  async deleteAgent(agentId: string, options?: AgentDeleteOptions) {
+    const client = await this.getClient();
+    return client.agents.delete(agentId, options);
+  }
+
   async updateAgent(
     agentId: string,
     body: AgentUpdateBody,
@@ -188,12 +277,22 @@ export class APIBackend implements Backend {
     return client.agents.update(agentId, body, options);
   }
 
+  async createAgent(body: AgentCreateBody, options?: AgentCreateOptions) {
+    const client = await this.getClient();
+    return client.agents.create(body, options);
+  }
+
   async retrieveConversation(
     conversationId: string,
     options?: ConversationRetrieveOptions,
   ) {
     const client = await this.getClient();
     return client.conversations.retrieve(conversationId, options);
+  }
+
+  async listConversations(body?: ConversationListBody) {
+    const client = await this.getClient();
+    return client.conversations.list(body);
   }
 
   async createConversation(
@@ -211,6 +310,15 @@ export class APIBackend implements Backend {
   ) {
     const client = await this.getClient();
     return client.conversations.update(conversationId, body, options);
+  }
+
+  async recompileConversation(
+    conversationId: string,
+    body?: ConversationRecompileBody,
+    options?: ConversationRecompileOptions,
+  ) {
+    const client = await this.getClient();
+    return client.conversations.recompile(conversationId, body, options);
   }
 
   async listConversationMessages(
@@ -234,6 +342,11 @@ export class APIBackend implements Backend {
   async retrieveMessage(messageId: string, options?: MessageRetrieveOptions) {
     const client = await this.getClient();
     return client.messages.retrieve(messageId, options);
+  }
+
+  async listModels(options?: ModelsListOptions) {
+    const client = await this.getClient();
+    return client.models.list(options);
   }
 
   async createConversationMessageStream(
@@ -285,17 +398,95 @@ export class APIBackend implements Backend {
   }
 }
 
-let backend: Backend = new APIBackend();
+function isTruthyEnv(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+export function isExperimentalLocalBackendEnabled(): boolean {
+  return isTruthyEnv(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL);
+}
+
+export function getLocalBackendStorageDir(homeDir = homedir()): string {
+  return (
+    process.env.LETTA_LOCAL_BACKEND_DIR ??
+    join(homeDir, ".letta", "lc-local-backend")
+  );
+}
+
+function createExperimentalLocalBackend(): Backend {
+  return new LocalBackend({
+    storageDir: getLocalBackendStorageDir(),
+    executionMode:
+      process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "deterministic"
+        ? "deterministic"
+        : "ai-sdk",
+  });
+}
+
+function createInitialBackend(): Backend {
+  return isExperimentalLocalBackendEnabled()
+    ? createExperimentalLocalBackend()
+    : new APIBackend();
+}
+
+let backend: Backend = createInitialBackend();
 
 export function getBackend(): Backend {
   return backend;
+}
+
+function devBackendStoreOptions() {
+  return { storageDir: process.env.LETTA_CODE_DEV_BACKEND_DIR };
+}
+
+async function createAISDKDevBackend(): Promise<Backend> {
+  const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+  const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
+  const { ProviderTurnExecutor } = await import("./dev/ProviderTurnExecutor");
+  return new FakeHeadlessBackend(
+    "agent-fake-headless",
+    new ProviderTurnExecutor(new AISDKStreamAdapter({})),
+    devBackendStoreOptions(),
+  );
 }
 
 export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
       const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-      backend = new FakeHeadlessBackend();
+      backend = new FakeHeadlessBackend(
+        undefined,
+        undefined,
+        devBackendStoreOptions(),
+      );
+      return;
+    }
+    case "fake-headless-tool-call": {
+      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { DeterministicToolCallExecutor } = await import(
+        "./dev/HeadlessTurnExecutor"
+      );
+      backend = new FakeHeadlessBackend(
+        "agent-fake-headless",
+        new DeterministicToolCallExecutor(),
+        devBackendStoreOptions(),
+      );
+      return;
+    }
+    case "fake-headless-provider": {
+      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { ProviderTurnExecutor } = await import(
+        "./dev/ProviderTurnExecutor"
+      );
+      backend = new FakeHeadlessBackend(
+        "agent-fake-headless",
+        new ProviderTurnExecutor(),
+        devBackendStoreOptions(),
+      );
+      return;
+    }
+    case "fake-headless-ai-sdk": {
+      backend = await createAISDKDevBackend();
       return;
     }
     default:
@@ -304,5 +495,5 @@ export async function configureDevBackend(name: string): Promise<void> {
 }
 
 export function __testSetBackend(nextBackend: Backend | null): void {
-  backend = nextBackend ?? new APIBackend();
+  backend = nextBackend ?? createInitialBackend();
 }

@@ -8,7 +8,7 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { getClient } from "../backend/api/client";
+import { getBackend } from "../backend";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { debugLog } from "../utils/debug";
 import { getModelContextWindow } from "./available-models";
@@ -227,7 +227,7 @@ export async function updateAgentLLMConfig(
   updateArgs?: Record<string, unknown>,
   options?: UpdateAgentLLMConfigOptions,
 ): Promise<AgentState> {
-  const client = await getClient();
+  const backend = getBackend();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const explicitContextWindow = updateArgs?.context_window as
@@ -242,7 +242,7 @@ export async function updateAgentLLMConfig(
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
-  await client.agents.update(agentId, {
+  await backend.updateAgent(agentId, {
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
@@ -252,7 +252,7 @@ export async function updateAgentLLMConfig(
     }),
   });
 
-  const finalAgent = await client.agents.retrieve(agentId);
+  const finalAgent = await backend.retrieveAgent(agentId);
   return finalAgent;
 }
 
@@ -273,7 +273,7 @@ export async function updateConversationLLMConfig(
   updateArgs?: Record<string, unknown>,
   options?: UpdateAgentLLMConfigOptions,
 ): Promise<Conversation> {
-  const client = await getClient();
+  const backend = getBackend();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const explicitContextWindow = updateArgs?.context_window as
@@ -290,9 +290,9 @@ export async function updateConversationLLMConfig(
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
-  } as unknown as Parameters<typeof client.conversations.update>[1];
+  } as Parameters<typeof backend.updateConversation>[1];
 
-  return client.conversations.update(conversationId, payload);
+  return backend.updateConversation(conversationId, payload);
 }
 
 /**
@@ -321,10 +321,12 @@ export async function recompileAgentSystemPrompt(
     };
   },
 ): Promise<string> {
-  const client = (clientOverride ?? (await getClient())) as Exclude<
-    typeof clientOverride,
-    undefined
-  >;
+  const backend = getBackend();
+  if (!clientOverride && !backend.capabilities.promptRecompile) {
+    throw new Error(
+      "Server-side prompt recompile is not supported by this backend yet",
+    );
+  }
 
   if (!agentId) {
     throw new Error("recompileAgentSystemPrompt requires agentId");
@@ -335,7 +337,11 @@ export async function recompileAgentSystemPrompt(
     agent_id: agentId,
   };
 
-  return client.conversations.recompile(conversationId, params);
+  if (clientOverride) {
+    return clientOverride.conversations.recompile(conversationId, params);
+  }
+
+  return backend.recompileConversation(conversationId, params);
 }
 
 export interface SystemPromptUpdateResult {
@@ -355,9 +361,7 @@ export async function updateAgentSystemPromptRaw(
   systemPromptContent: string,
 ): Promise<SystemPromptUpdateResult> {
   try {
-    const client = await getClient();
-
-    await client.agents.update(agentId, {
+    await getBackend().updateAgent(agentId, {
       system: systemPromptContent,
     });
 
@@ -400,7 +404,7 @@ export async function updateAgentSystemPrompt(
     );
     const { settingsManager } = await import("../settings-manager");
 
-    const client = await getClient();
+    const backend = getBackend();
     const memoryMode =
       settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
         ? "memfs"
@@ -435,7 +439,7 @@ export async function updateAgentSystemPrompt(
     }
 
     // Re-fetch agent to get updated state
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await backend.retrieveAgent(agentId);
 
     return {
       success: true,
@@ -477,13 +481,11 @@ export async function updateAgentSystemPromptMemfs(
     if (storedPreset && isKnownPreset(storedPreset)) {
       nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
     } else {
-      const client = await getClient();
-      const agent = await client.agents.retrieve(agentId);
+      const agent = await getBackend().retrieveAgent(agentId);
       nextSystemPrompt = agent.system || "";
     }
 
-    const client = await getClient();
-    await client.agents.update(agentId, {
+    await getBackend().updateAgent(agentId, {
       system: nextSystemPrompt,
     });
 

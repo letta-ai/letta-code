@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
+  AgentCreateBody,
   AgentMessageListBody,
   AgentUpdateBody,
   APIClient,
@@ -7,6 +8,7 @@ import type {
   ConversationMessageCreateBody,
   ConversationMessageListBody,
   ConversationMessageStreamBody,
+  ConversationRecompileBody,
   ConversationUpdateBody,
   RunMessageStreamBody,
 } from "../../backend";
@@ -19,6 +21,9 @@ const updateAgentMock = mock(
     id: "agent-1",
   }),
 );
+const createAgentMock = mock(async (_body: unknown, _options?: unknown) => ({
+  id: "agent-created",
+}));
 const retrieveConversationMock = mock(
   async (_conversationId: string, _options?: unknown) => ({ id: "conv-1" }),
 );
@@ -31,6 +36,10 @@ const updateConversationMock = mock(
   async (_conversationId: string, _body: unknown, _options?: unknown) => ({
     id: "conv-1",
   }),
+);
+const recompileConversationMock = mock(
+  async (_conversationId: string, _body?: unknown, _options?: unknown) =>
+    "compiled system",
 );
 const listConversationMessagesMock = mock(
   async (_conversationId: string, _body?: unknown, _options?: unknown) => ({
@@ -45,6 +54,9 @@ const listAgentMessagesMock = mock(
 const retrieveMessageMock = mock(
   async (_messageId: string, _options?: unknown) => [],
 );
+const listModelsMock = mock(async (_options?: unknown) => [
+  { handle: "model-1" },
+]);
 const createMessageStreamMock = mock(
   async (_conversationId: string, _body: unknown, _options?: unknown) => ({
     kind: "create-stream",
@@ -72,6 +84,7 @@ const forkConversationMock = mock(
 );
 const getClientMock = mock(async () => ({
   agents: {
+    create: createAgentMock,
     retrieve: retrieveAgentMock,
     update: updateAgentMock,
     messages: {
@@ -82,6 +95,7 @@ const getClientMock = mock(async () => ({
     retrieve: retrieveConversationMock,
     create: createConversationMock,
     update: updateConversationMock,
+    recompile: recompileConversationMock,
     messages: {
       list: listConversationMessagesMock,
       create: createMessageStreamMock,
@@ -91,6 +105,9 @@ const getClientMock = mock(async () => ({
   },
   messages: {
     retrieve: retrieveMessageMock,
+  },
+  models: {
+    list: listModelsMock,
   },
   runs: {
     retrieve: retrieveRunMock,
@@ -105,14 +122,17 @@ import { APIBackend } from "../../backend";
 describe("APIBackend", () => {
   beforeEach(() => {
     getClientMock.mockClear();
+    createAgentMock.mockClear();
     retrieveAgentMock.mockClear();
     updateAgentMock.mockClear();
     retrieveConversationMock.mockClear();
     createConversationMock.mockClear();
     updateConversationMock.mockClear();
+    recompileConversationMock.mockClear();
     listConversationMessagesMock.mockClear();
     listAgentMessagesMock.mockClear();
     retrieveMessageMock.mockClear();
+    listModelsMock.mockClear();
     createMessageStreamMock.mockClear();
     streamConversationMessagesMock.mockClear();
     cancelConversationMock.mockClear();
@@ -126,13 +146,28 @@ describe("APIBackend", () => {
       getClient: getClientMock as unknown as () => Promise<APIClient>,
       forkConversation: forkConversationMock,
     });
+    expect(backend.capabilities).toEqual({
+      remoteMemfs: true,
+      serverSideToolManagement: true,
+      serverSecrets: true,
+      agentFileImportExport: true,
+      promptRecompile: true,
+      byokProviderRefresh: true,
+      localModelCatalog: false,
+      localMemfs: false,
+    });
     const agentUpdateBody = { system: "system" } as AgentUpdateBody;
+    const agentCreateBody = { name: "new agent" } as AgentCreateBody;
     const conversationCreateBody = {
       agent_id: "agent-1",
     } as ConversationCreateBody;
     const conversationUpdateBody = {
       summary: "summary",
     } as ConversationUpdateBody;
+    const conversationRecompileBody = {
+      agent_id: "agent-1",
+      dry_run: true,
+    } as ConversationRecompileBody;
     const conversationListBody = {
       limit: 1,
     } as ConversationMessageListBody;
@@ -156,12 +191,15 @@ describe("APIBackend", () => {
 
     await backend.retrieveAgent("agent-1", { include: ["agent.tools"] });
     await backend.updateAgent("agent-1", agentUpdateBody);
+    await backend.createAgent(agentCreateBody);
     await backend.retrieveConversation("conv-1");
     await backend.createConversation(conversationCreateBody);
     await backend.updateConversation("conv-1", conversationUpdateBody);
+    await backend.recompileConversation("conv-1", conversationRecompileBody);
     await backend.listConversationMessages("conv-1", conversationListBody);
     await backend.listAgentMessages("agent-1", agentListBody);
     await backend.retrieveMessage("msg-1");
+    await backend.listModels();
     await backend.createConversationMessageStream("conv-1", createBody, {
       maxRetries: 0,
     });
@@ -171,7 +209,7 @@ describe("APIBackend", () => {
     await backend.streamRunMessages("run-1", runStreamBody);
     await backend.forkConversation("conv-1", { agentId: "agent-1" });
 
-    expect(getClientMock).toHaveBeenCalledTimes(13);
+    expect(getClientMock).toHaveBeenCalledTimes(16);
     expect(retrieveAgentMock).toHaveBeenCalledWith("agent-1", {
       include: ["agent.tools"],
     });
@@ -180,6 +218,7 @@ describe("APIBackend", () => {
       agentUpdateBody,
       undefined,
     );
+    expect(createAgentMock).toHaveBeenCalledWith(agentCreateBody, undefined);
     expect(retrieveConversationMock).toHaveBeenCalledWith("conv-1", undefined);
     expect(createConversationMock).toHaveBeenCalledWith(
       conversationCreateBody,
@@ -188,6 +227,11 @@ describe("APIBackend", () => {
     expect(updateConversationMock).toHaveBeenCalledWith(
       "conv-1",
       conversationUpdateBody,
+      undefined,
+    );
+    expect(recompileConversationMock).toHaveBeenCalledWith(
+      "conv-1",
+      conversationRecompileBody,
       undefined,
     );
     expect(listConversationMessagesMock).toHaveBeenCalledWith(
@@ -201,6 +245,7 @@ describe("APIBackend", () => {
       undefined,
     );
     expect(retrieveMessageMock).toHaveBeenCalledWith("msg-1", undefined);
+    expect(listModelsMock).toHaveBeenCalledWith(undefined);
     expect(createMessageStreamMock).toHaveBeenCalledWith("conv-1", createBody, {
       maxRetries: 0,
     });

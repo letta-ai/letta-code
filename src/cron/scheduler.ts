@@ -13,7 +13,7 @@
  */
 
 import type { CronPromptQueueItem, DequeuedBatch } from "../queue/queueRuntime";
-import { ensureConversationQueueRuntime } from "../websocket/listener/client";
+import { ensureConversationQueueRuntime } from "../websocket/listener/conversation-runtime";
 import { scheduleQueuePump } from "../websocket/listener/queue";
 import {
   getActiveRuntime,
