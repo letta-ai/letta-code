@@ -3,10 +3,8 @@
  * Connects to Letta Cloud and receives messages to execute locally
  */
 
-import { execFile } from "node:child_process";
 import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -33,7 +31,6 @@ import {
   searchFileIndex,
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
-import { getGitContext } from "../../cli/helpers/gitContext";
 import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
@@ -145,6 +142,8 @@ import {
   resolveRecoveryBatchId,
 } from "./approval";
 import { handleExecuteCommand } from "./commands";
+import { handleGitBranchCommand } from "./commands/git-branches";
+import { handleSecretsCommand } from "./commands/secrets";
 import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -192,7 +191,6 @@ import {
   isChannelsListCommand,
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
-  isCheckoutBranchCommand,
   isCreateAgentCommand,
   isCronAddCommand,
   isCronDeleteAllCommand,
@@ -215,10 +213,7 @@ import {
   isMemoryHistoryCommand,
   isReadFileCommand,
   isReadMemoryFileCommand,
-  isSearchBranchesCommand,
   isSearchFilesCommand,
-  isSecretApplyCommand,
-  isSecretListCommand,
   isSetExperimentCommand,
   isSetReflectionSettingsCommand,
   isSkillDisableCommand,
@@ -6267,240 +6262,25 @@ async function connectWithRetry(
         return;
       }
 
-      // ── Git branch commands (no runtime scope required) ────────────────
-      if (isSearchBranchesCommand(parsed)) {
-        runDetachedListenerTask("search_branches", async () => {
-          try {
-            const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
-            const maxResults = parsed.max_results ?? 20;
-            const execFileAsync = promisify(execFile);
-
-            // Get local + remote branches with format
-            const { stdout } = await execFileAsync(
-              "git",
-              ["branch", "-a", "--format=%(refname:short)\t%(HEAD)"],
-              {
-                cwd,
-                encoding: "utf-8",
-                timeout: 5000,
-              },
-            );
-
-            const query = parsed.query.toLowerCase();
-            const branches = stdout
-              .split("\n")
-              .filter((line) => line.trim().length > 0)
-              .map((line) => {
-                const parts = line.split("\t");
-                const trimmedName = (parts[0] ?? "").trim();
-                const isRemote = trimmedName.startsWith("origin/");
-                return {
-                  name: trimmedName,
-                  is_current: parts[1]?.trim() === "*",
-                  is_remote: isRemote,
-                };
-              })
-              .filter(
-                (b) =>
-                  query.length === 0 || b.name.toLowerCase().includes(query),
-              )
-              .slice(0, maxResults);
-
-            safeSocketSend(
-              socket,
-              {
-                type: "search_branches_response",
-                request_id: parsed.request_id,
-                branches,
-                success: true,
-              },
-              "listener_search_branches_send_failed",
-              "listener_search_branches",
-            );
-          } catch (error) {
-            safeSocketSend(
-              socket,
-              {
-                type: "search_branches_response",
-                request_id: parsed.request_id,
-                branches: [],
-                success: false,
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to search branches",
-              },
-              "listener_search_branches_send_failed",
-              "listener_search_branches",
-            );
-          }
-        });
+      if (
+        handleGitBranchCommand(parsed, {
+          socket,
+          runtime,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
         return;
       }
 
-      if (isCheckoutBranchCommand(parsed)) {
-        runDetachedListenerTask("checkout_branch", async () => {
-          try {
-            const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
-            const execFileAsync = promisify(execFile);
-
-            const args = parsed.create
-              ? ["checkout", "-b", parsed.branch]
-              : ["checkout", parsed.branch];
-
-            await execFileAsync("git", args, {
-              cwd,
-              encoding: "utf-8",
-              timeout: 10000,
-            });
-
-            // Re-read the current branch after checkout to confirm
-            const gitCtx = getGitContext(cwd);
-
-            safeSocketSend(
-              socket,
-              {
-                type: "checkout_branch_response",
-                request_id: parsed.request_id,
-                branch: gitCtx?.branch ?? parsed.branch,
-                success: true,
-              },
-              "listener_checkout_branch_send_failed",
-              "listener_checkout_branch",
-            );
-
-            // Emit updated device status so UIs pick up the new branch
-            emitDeviceStatusUpdate(socket, runtime);
-          } catch (error) {
-            safeSocketSend(
-              socket,
-              {
-                type: "checkout_branch_response",
-                request_id: parsed.request_id,
-                branch: parsed.branch,
-                success: false,
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to checkout branch",
-              },
-              "listener_checkout_branch_send_failed",
-              "listener_checkout_branch",
-            );
-          }
-        });
-        return;
-      }
-
-      // ── Secrets management (modal + CLI source of truth) ───────────────
-      // letta-code owns the secrets cache. The modal and CLI both reach
-      // the server through these three commands so the cache stays in sync
-      // and per-turn hydration can stay one-shot.
-      if (isSecretListCommand(parsed)) {
-        runDetachedListenerTask("secret_list", async () => {
-          try {
-            const { refreshAndListSecrets } = await import(
-              "../../utils/secretsStore"
-            );
-            const secrets = await refreshAndListSecrets(parsed.agent_id);
-            safeSocketSend(
-              socket,
-              {
-                type: "secret_list_response",
-                request_id: parsed.request_id,
-                success: true,
-                secrets,
-              },
-              "listener_secret_list_send_failed",
-              "listener_secret_list",
-            );
-          } catch (error) {
-            safeSocketSend(
-              socket,
-              {
-                type: "secret_list_response",
-                request_id: parsed.request_id,
-                success: false,
-                secrets: [],
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to list secrets",
-              },
-              "listener_secret_list_send_failed",
-              "listener_secret_list",
-            );
-          }
-        });
-        return;
-      }
-
-      if (isSecretApplyCommand(parsed)) {
-        runDetachedListenerTask("secret_apply", async () => {
-          // Validate keys up front. Reject with a clear error so the modal
-          // surfaces the bad key without partially applying anything.
-          for (const key of Object.keys(parsed.set)) {
-            if (!/^[A-Z_][A-Z0-9_]*$/.test(key.toUpperCase())) {
-              safeSocketSend(
-                socket,
-                {
-                  type: "secret_apply_response",
-                  request_id: parsed.request_id,
-                  success: false,
-                  names: [],
-                  error: `Invalid secret name '${key}'. Use uppercase letters, numbers, and underscores only.`,
-                },
-                "listener_secret_apply_send_failed",
-                "listener_secret_apply",
-              );
-              return;
-            }
-          }
-          try {
-            const { applySecretBatch } = await import(
-              "../../utils/secretsStore"
-            );
-            const names = await applySecretBatch(
-              { set: parsed.set, unset: parsed.unset },
-              parsed.agent_id,
-            );
-            // Invalidate the listener's secrets freshness cache so the
-            // next tool execution re-fetches from the server.
-            const { invalidateSecretsCacheForAgent } = await import(
-              "./secrets-sync"
-            );
-            if (parsed.agent_id) {
-              invalidateSecretsCacheForAgent(runtime, parsed.agent_id);
-            }
-            safeSocketSend(
-              socket,
-              {
-                type: "secret_apply_response",
-                request_id: parsed.request_id,
-                success: true,
-                names,
-              },
-              "listener_secret_apply_send_failed",
-              "listener_secret_apply",
-            );
-          } catch (error) {
-            safeSocketSend(
-              socket,
-              {
-                type: "secret_apply_response",
-                request_id: parsed.request_id,
-                success: false,
-                names: [],
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to apply secrets",
-              },
-              "listener_secret_apply_send_failed",
-              "listener_secret_apply",
-            );
-          }
-        });
+      if (
+        handleSecretsCommand(parsed, {
+          socket,
+          runtime,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
         return;
       }
 
