@@ -92,6 +92,22 @@ async function maybeResolveDynamicChannelTool(
   };
 }
 
+function nativeComputerUseEnabled(): boolean {
+  return (
+    process.env.LETTA_ENABLE_COMPUTER_USE === "1" ||
+    process.env.LETTA_ENABLE_COMPUTER_USE === "true"
+  );
+}
+
+function maybeApplyComputerUseTool(toolNames: ToolName[]): ToolName[] {
+  if (!nativeComputerUseEnabled()) {
+    return toolNames.filter((name) => name !== "computer");
+  }
+  return toolNames.includes("computer" as ToolName)
+    ? toolNames
+    : [...toolNames, "computer" as ToolName];
+}
+
 function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
   const nextRegistry = new Map(registry);
   const existing = nextRegistry.get("MessageChannel");
@@ -335,6 +351,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   LS: { requiresApproval: false },
   memory: { requiresApproval: false },
   memory_apply_patch: { requiresApproval: false },
+  computer: { requiresApproval: true },
   MessageChannel: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
@@ -668,6 +685,14 @@ export interface ClientTool {
   name: string;
   description?: string | null;
   parameters?: { [key: string]: unknown } | null;
+  native?: {
+    type: "computer";
+    target: "browser";
+    display_width_px: number;
+    display_height_px: number;
+    enable_zoom?: boolean;
+    anthropic_tool_version?: "computer_20251124" | "computer_20250124";
+  } | null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -825,15 +850,36 @@ export function getClientToolsFromRegistry(): ClientTool[] {
   );
 }
 
+function getNativeToolMetadata(
+  serverName: string,
+): ClientTool["native"] | undefined {
+  if (serverName !== "computer") return undefined;
+  return {
+    type: "computer",
+    target: "browser",
+    display_width_px: Number(process.env.LETTA_COMPUTER_WIDTH || 1280),
+    display_height_px: Number(process.env.LETTA_COMPUTER_HEIGHT || 800),
+    enable_zoom: process.env.LETTA_COMPUTER_ENABLE_ZOOM === "1",
+    anthropic_tool_version:
+      process.env.LETTA_ANTHROPIC_COMPUTER_TOOL_VERSION === "computer_20250124"
+        ? "computer_20250124"
+        : "computer_20251124",
+  };
+}
+
 function buildClientToolsFromSnapshot(
   registry: ToolRegistry,
   externalTools: Map<string, ExternalToolDefinition>,
 ): ClientTool[] {
-  const builtInTools = Array.from(registry.entries()).map(([name, tool]) => ({
-    name: getServerToolName(name),
-    description: tool.schema.description,
-    parameters: tool.schema.input_schema,
-  }));
+  const builtInTools = Array.from(registry.entries()).map(([name, tool]) => {
+    const serverName = getServerToolName(name);
+    return {
+      name: serverName,
+      description: tool.schema.description,
+      parameters: tool.schema.input_schema,
+      native: getNativeToolMetadata(serverName),
+    };
+  });
   const externalClientTools = Array.from(externalTools.values()).map(
     (tool) => ({
       name: tool.name,
@@ -1220,6 +1266,8 @@ async function resolveBaseToolNamesForModel(
   }
 
   // Append channel tool if channels are active
+  baseToolNames = maybeApplyComputerUseTool(baseToolNames);
+
   baseToolNames = maybeAppendChannelTools(
     baseToolNames,
     options?.channelToolScope,

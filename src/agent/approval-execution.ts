@@ -230,7 +230,7 @@ async function executeSingleDecision(
       return {
         type: "tool",
         tool_call_id: decision.approval.toolCallId,
-        tool_return: decision.precomputedResult.toolReturn,
+        tool_return: decision.precomputedResult.toolReturn as unknown as string,
         status: decision.precomputedResult.status,
         stdout: decision.precomputedResult.stdout,
         stderr: decision.precomputedResult.stderr,
@@ -291,7 +291,7 @@ async function executeSingleDecision(
       return {
         type: "tool",
         tool_call_id: decision.approval.toolCallId,
-        tool_return: toolResult.toolReturn, // Full multimodal content for backend
+        tool_return: toolResult.toolReturn as unknown as string, // Full multimodal content for backend
         status: toolResult.status,
         stdout: toolResult.stdout,
         stderr: toolResult.stderr,
