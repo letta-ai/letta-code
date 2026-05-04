@@ -5,7 +5,6 @@ import {
   estimateSystemPromptTokensFromMemoryDir,
   setSystemPromptDoctorState,
 } from "../../cli/helpers/systemPromptWarning";
-import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
 import type {
   AbortMessageCommand,
@@ -53,13 +52,9 @@ import type {
   ConversationRuntime,
   IncomingMessage,
   ListenerRuntime,
+  ProcessQueuedTurn,
   StartListenerOptions,
 } from "./types";
-
-export type ProcessQueuedTurn = (
-  queuedTurn: IncomingMessage,
-  dequeuedBatch: DequeuedBatch,
-) => Promise<void>;
 
 type SafeSocketSend = (
   socket: WebSocket,

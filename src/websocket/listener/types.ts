@@ -63,6 +63,11 @@ export interface IncomingMessage {
   >;
 }
 
+export type ProcessQueuedTurn = (
+  queuedTurn: IncomingMessage,
+  dequeuedBatch: DequeuedBatch,
+) => Promise<void>;
+
 export interface ModeChangePayload {
   mode: "default" | "acceptEdits" | "plan" | "memory" | "bypassPermissions";
 }
