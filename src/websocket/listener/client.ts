@@ -43,13 +43,6 @@ import {
 } from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import {
-  addTask as addCronTask,
-  deleteAllTasks as deleteAllCronTasks,
-  deleteTask as deleteCronTask,
-  getTask as getCronTask,
-  listTasks as listCronTasks,
-} from "../../cron";
-import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "../../cron/scheduler";
@@ -87,11 +80,6 @@ import type {
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
   CreateAgentCommand,
-  CronAddCommand,
-  CronDeleteAllCommand,
-  CronDeleteCommand,
-  CronGetCommand,
-  CronListCommand,
   GetExperimentsCommand,
   GetExperimentsResponseMessage,
   GetReflectionSettingsCommand,
@@ -122,6 +110,7 @@ import {
   resolveRecoveryBatchId,
 } from "./approval";
 import { handleExecuteCommand } from "./commands";
+import { handleCronCommand, handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import {
   applyModelUpdateForRuntime,
@@ -180,11 +169,6 @@ import {
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
   isCreateAgentCommand,
-  isCronAddCommand,
-  isCronDeleteAllCommand,
-  isCronDeleteCommand,
-  isCronGetCommand,
-  isCronListCommand,
   isEditFileCommand,
   isEnableMemfsCommand,
   isExecuteCommandCommand,
@@ -640,13 +624,6 @@ function handleModeChange(
   }
 }
 
-type CronCommand =
-  | CronListCommand
-  | CronAddCommand
-  | CronGetCommand
-  | CronDeleteCommand
-  | CronDeleteAllCommand;
-
 type ReflectionSettingsCommand =
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand;
@@ -697,25 +674,6 @@ function isDetachedChannelsCommand(parsed: unknown): parsed is ChannelsCommand {
     isChannelTargetBindCommand(parsed) ||
     isChannelRouteUpdateCommand(parsed) ||
     isChannelRouteRemoveCommand(parsed)
-  );
-}
-
-function emitCronsUpdated(
-  socket: WebSocket,
-  scope?: { agent_id?: string; conversation_id?: string | null },
-): void {
-  safeSocketSend(
-    socket,
-    {
-      type: "crons_updated",
-      timestamp: Date.now(),
-      ...(scope?.agent_id ? { agent_id: scope.agent_id } : {}),
-      ...(scope?.conversation_id !== undefined
-        ? { conversation_id: scope.conversation_id }
-        : {}),
-    },
-    "listener_cron_send_failed",
-    "listener_cron_command",
   );
 }
 
@@ -1065,203 +1023,6 @@ async function handleListMemoryCommand(
     );
   }
 
-  return true;
-}
-
-async function handleCronCommand(
-  parsed: CronCommand,
-  socket: WebSocket,
-): Promise<boolean> {
-  if (parsed.type === "cron_list") {
-    try {
-      const tasks = listCronTasks({
-        agent_id: parsed.agent_id,
-        conversation_id: parsed.conversation_id,
-      });
-      safeSocketSend(
-        socket,
-        {
-          type: "cron_list_response",
-          request_id: parsed.request_id,
-          tasks,
-          success: true,
-        },
-        "listener_cron_send_failed",
-        "listener_cron_command",
-      );
-    } catch (err) {
-      safeSocketSend(
-        socket,
-        {
-          type: "cron_list_response",
-          request_id: parsed.request_id,
-          tasks: [],
-          success: false,
-          error: err instanceof Error ? err.message : "Failed to list crons",
-        },
-        "listener_cron_send_failed",
-        "listener_cron_command",
-      );
-    }
-    return true;
-  }
-
-  if (parsed.type === "cron_add") {
-    try {
-      const scheduledFor = parsed.scheduled_for
-        ? new Date(parsed.scheduled_for)
-        : undefined;
-      if (scheduledFor && Number.isNaN(scheduledFor.getTime())) {
-        throw new Error("Invalid scheduled_for timestamp");
-      }
-      const result = addCronTask({
-        agent_id: parsed.agent_id,
-        conversation_id: parsed.conversation_id,
-        name: parsed.name,
-        description: parsed.description,
-        cron: parsed.cron,
-        timezone: parsed.timezone,
-        recurring: parsed.recurring,
-        prompt: parsed.prompt,
-        scheduled_for: scheduledFor,
-      });
-      safeSocketSend(
-        socket,
-        {
-          type: "cron_add_response",
-          request_id: parsed.request_id,
-          success: true,
-          task: result.task,
-          ...(result.warning ? { warning: result.warning } : {}),
-        },
-        "listener_cron_send_failed",
-        "listener_cron_command",
-      );
-      emitCronsUpdated(socket, {
-        agent_id: result.task.agent_id,
-        conversation_id: result.task.conversation_id,
-      });
-    } catch (err) {
-      safeSocketSend(
-        socket,
-        {
-          type: "cron_add_response",
-          request_id: parsed.request_id,
-          success: false,
-          error: err instanceof Error ? err.message : "Failed to add cron",
-        },
-        "listener_cron_send_failed",
-        "listener_cron_command",
-      );
-    }
-    return true;
-  }
-
-  if (parsed.type === "cron_get") {
-    try {
-      const task = getCronTask(parsed.task_id);
-      safeSocketSend(
-        socket,
-        {
-          type: "cron_get_response",
-          request_id: parsed.request_id,
-          success: true,
-          found: task !== null,
-          task,
-        },
-        "listener_cron_send_failed",
-        "listener_cron_command",
-      );
-    } catch (err) {
-      safeSocketSend(
-        socket,
-        {
-          type: "cron_get_response",
-          request_id: parsed.request_id,
-          success: false,
-          found: false,
-          task: null,
-          error: err instanceof Error ? err.message : "Failed to get cron",
-        },
-        "listener_cron_send_failed",
-        "listener_cron_command",
-      );
-    }
-    return true;
-  }
-
-  if (parsed.type === "cron_delete") {
-    try {
-      const existingTask = getCronTask(parsed.task_id);
-      const found = deleteCronTask(parsed.task_id);
-      safeSocketSend(
-        socket,
-        {
-          type: "cron_delete_response",
-          request_id: parsed.request_id,
-          success: true,
-          found,
-        },
-        "listener_cron_send_failed",
-        "listener_cron_command",
-      );
-      if (found) {
-        emitCronsUpdated(socket, {
-          agent_id: existingTask?.agent_id,
-          conversation_id: existingTask?.conversation_id,
-        });
-      }
-    } catch (err) {
-      safeSocketSend(
-        socket,
-        {
-          type: "cron_delete_response",
-          request_id: parsed.request_id,
-          success: false,
-          found: false,
-          error: err instanceof Error ? err.message : "Failed to delete cron",
-        },
-        "listener_cron_send_failed",
-        "listener_cron_command",
-      );
-    }
-    return true;
-  }
-
-  try {
-    const deleted = deleteAllCronTasks(parsed.agent_id);
-    safeSocketSend(
-      socket,
-      {
-        type: "cron_delete_all_response",
-        request_id: parsed.request_id,
-        success: true,
-        agent_id: parsed.agent_id,
-        deleted,
-      },
-      "listener_cron_send_failed",
-      "listener_cron_command",
-    );
-    if (deleted > 0) {
-      emitCronsUpdated(socket, {
-        agent_id: parsed.agent_id,
-      });
-    }
-  } catch (err) {
-    safeSocketSend(
-      socket,
-      {
-        type: "cron_delete_all_response",
-        request_id: parsed.request_id,
-        success: false,
-        agent_id: parsed.agent_id,
-        deleted: 0,
-        error: err instanceof Error ? err.message : "Failed to delete crons",
-      },
-      "listener_cron_send_failed",
-      "listener_cron_command",
-    );
-  }
   return true;
 }
 
@@ -5618,17 +5379,13 @@ async function connectWithRetry(
         return;
       }
 
-      // ── Cron CRUD commands (no runtime scope required) ────────────────
       if (
-        isCronListCommand(parsed) ||
-        isCronAddCommand(parsed) ||
-        isCronGetCommand(parsed) ||
-        isCronDeleteCommand(parsed) ||
-        isCronDeleteAllCommand(parsed)
+        handleCronProtocolCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
       ) {
-        runDetachedListenerTask("cron_command", async () => {
-          await handleCronCommand(parsed, socket);
-        });
         return;
       }
 
@@ -6284,7 +6041,10 @@ export const __listenClientTestUtils = {
   handleApprovalResponseInput,
   handleAbortMessageInput,
   handleChangeDeviceStateInput,
-  handleCronCommand,
+  handleCronCommand: (
+    parsed: Parameters<typeof handleCronCommand>[0],
+    socket: WebSocket,
+  ) => handleCronCommand(parsed, socket, safeSocketSend),
   handleListMemoryCommand,
   isDetachedChannelsCommand,
   handleChannelsProtocolCommand,
