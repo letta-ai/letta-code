@@ -220,7 +220,6 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const reflectionPrompt = buildReflectionSubagentPrompt({
         transcriptPath: autoPayload.payloadPath,
         memoryDir,
-        cwd: memoryDir,
         parentMemory,
       });
 

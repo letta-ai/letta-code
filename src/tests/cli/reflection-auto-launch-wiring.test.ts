@@ -24,16 +24,9 @@ describe("reflection auto-launch wiring", () => {
       ),
     ].map((match) => match[0]);
     expect(reflectionPromptBlocks.length).toBeGreaterThanOrEqual(2);
-    expect(
-      reflectionPromptBlocks.every((block) =>
-        block.includes("cwd: memoryDir,"),
-      ),
-    ).toBe(true);
-    expect(
-      reflectionPromptBlocks.some((block) =>
-        block.includes("cwd: process.cwd(),"),
-      ),
-    ).toBe(false);
+    expect(reflectionPromptBlocks.some((block) => block.includes("cwd:"))).toBe(
+      false,
+    );
     expect(appSource).toContain("maybeLaunchReflectionSubagent,");
 
     expect(engineSource).toContain(

@@ -16,7 +16,7 @@ describe("listen reflection wiring", () => {
     expect(turnSource).toContain("function buildMaybeLaunchReflectionSubagent");
     expect(turnSource).toContain("buildAutoReflectionPayload(");
     expect(turnSource).toContain("finalizeAutoReflectionPayload(");
-    expect(turnSource).toContain("cwd: memoryDir,");
+    expect(turnSource).not.toContain("cwd: memoryDir,");
     expect(turnSource).not.toContain("cwd: workingDirectory,");
     expect(turnSource).toContain("handleMemorySubagentCompletion(");
     expect(turnSource).toContain("emitCanonicalMessageDelta(");
