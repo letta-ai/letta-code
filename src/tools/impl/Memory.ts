@@ -14,6 +14,7 @@ import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
 import {
   assertMemoryRepoReadyForWrite,
   commitAndSyncMemoryWrite,
+  type MemoryWriteSyncMode,
 } from "../../agent/memoryGit";
 import { getClient } from "../../backend/api/client";
 import { validateRequiredParams } from "./validation";
@@ -38,6 +39,11 @@ interface MemoryArgs {
   insert_text?: string;
   description?: string;
   file_text?: string;
+}
+
+async function getMemoryWriteSyncMode(): Promise<MemoryWriteSyncMode> {
+  const { getBackend } = await import("../../backend");
+  return getBackend().capabilities.localMemfs ? "local" : "remote";
 }
 
 async function getAgentIdentity(): Promise<{
@@ -106,7 +112,8 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   ensureMemoryRepo(memoryDir);
 
   const { agentId, agentName } = await getAgentIdentity();
-  await assertMemoryRepoReadyForWrite(memoryDir, agentId);
+  const syncMode = await getMemoryWriteSyncMode();
+  await assertMemoryRepoReadyForWrite(memoryDir, agentId, { syncMode });
 
   const affectedPaths = await applyMemoryCommand(memoryDir, args);
   if (affectedPaths.length === 0) {
@@ -124,12 +131,16 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       authorName: agentName.trim() || agentId,
       authorEmail: `${agentId}@letta.com`,
     },
+    syncMode,
     replay: async () =>
       applyMemoryCommand(memoryDir, args, { replaying: true }),
   });
   if (!commitResult.committed) {
     return {
-      message: `Memory ${args.command} made no effective changes; skipped commit and push.`,
+      message:
+        syncMode === "local"
+          ? `Memory ${args.command} made no effective changes; skipped commit.`
+          : `Memory ${args.command} made no effective changes; skipped commit and push.`,
     };
   }
 
@@ -149,7 +160,10 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   }
 
   return {
-    message: `Memory ${args.command} applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+    message:
+      syncMode === "local"
+        ? `Memory ${args.command} committed locally (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`
+        : `Memory ${args.command} applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
   };
 }
 

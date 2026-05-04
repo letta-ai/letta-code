@@ -19,6 +19,7 @@ import {
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
+import type { MemoryPromptMode } from "./agent/promptAssets";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { getBackend, isExperimentalLocalBackendEnabled } from "./backend";
@@ -1701,9 +1702,11 @@ async function main(): Promise<void> {
           const { isLettaCloud } = await import("./agent/memoryFilesystem");
           const willAutoEnableMemfs =
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
-          const effectiveMemoryMode =
-            requestedMemoryPromptMode ??
-            (willAutoEnableMemfs ? "memfs" : undefined);
+          const effectiveMemoryMode: MemoryPromptMode | undefined = backend
+            .capabilities.localMemfs
+            ? "local-memfs"
+            : (requestedMemoryPromptMode ??
+              (willAutoEnableMemfs ? "memfs" : undefined));
 
           const updateArgs = getModelUpdateArgs(effectiveModel);
           const result = await createAgent({
@@ -1798,6 +1801,15 @@ async function main(): Promise<void> {
               }),
             )
           : Promise.resolve().then(() => {
+              if (backend.capabilities.localMemfs) {
+                if (noMemfsFlag) {
+                  throw new Error(
+                    "Disabling MemFS is not supported by the local backend.",
+                  );
+                }
+                settingsManager.setMemfsEnabled(agentId, true);
+                return { action: "enabled" };
+              }
               if (memfsFlag) {
                 throw new Error(
                   "MemFS is not supported by the active backend.",

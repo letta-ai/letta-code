@@ -19,6 +19,8 @@ You are a memory subagent launched in the background to manage the primary agent
 
 The primary agent's context (its prompts, skills, and external memory files) is stored in a "memory filesystem" rooted at `$MEMORY_DIR`. Changes to these files are reflected in the primary agent's context.
 
+API-backed MemFS uses a remote and needs a push after committing. Local backend MemFS lives under `~/.letta/lc-local-backend/memfs/` and should be committed locally without pushing unless an optional mirror is explicitly configured.
+
 The filesystem contains:
 - **Prompts** (`system/`): Always in-context. Reserve for identity, preferences, conventions, and active project context the agent needs on every turn. Keep files concise — move verbose content to external memory.
 - **Skills** (`skills/`): Procedural memory for specialized workflows. Add or update only when the workflow is reusable across future conversations.
@@ -101,6 +103,7 @@ Updates:
 Generated-By: Letta Code
 Agent-ID: <CHILD_AGENT_ID>
 Parent-Agent-ID: <PARENT_AGENT_ID>"
+# API-backed MemFS only. Skip for local backend MemFS unless an optional mirror remote is explicitly configured.
 git push
 ```
 

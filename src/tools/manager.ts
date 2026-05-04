@@ -92,6 +92,38 @@ async function maybeResolveDynamicChannelTool(
   };
 }
 
+async function resolveBackendSpecificToolDescription(
+  name: string,
+  description: string,
+): Promise<string> {
+  let isLocalMemfs = false;
+  try {
+    const { getBackend } = await import("../backend");
+    isLocalMemfs = getBackend().capabilities.localMemfs;
+  } catch {
+    isLocalMemfs = false;
+  }
+  if (!isLocalMemfs) return description;
+
+  if (name === "memory_apply_patch") {
+    return description
+      .replace(
+        "then automatically commit and push the change.",
+        "then automatically commit the change locally.",
+      )
+      .replace("- Pushes to remote", "- Does not push to a Letta remote");
+  }
+
+  if (name === "memory") {
+    return description.replace(
+      "automatically commits and pushes changes.",
+      "automatically commits changes locally.",
+    );
+  }
+
+  return description;
+}
+
 function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
   const nextRegistry = new Map(registry);
   const existing = nextRegistry.get("MessageChannel");
@@ -1167,9 +1199,14 @@ async function buildSpecificToolRegistry(
       throw new Error(`Tool implementation not found for ${internalName}`);
     }
 
-    const resolvedTool = await maybeResolveDynamicChannelTool(
+    const description = await resolveBackendSpecificToolDescription(
       internalName,
       definition.description,
+    );
+
+    const resolvedTool = await maybeResolveDynamicChannelTool(
+      internalName,
+      description,
       definition.schema,
       channelToolScope,
     );
@@ -1271,7 +1308,10 @@ async function buildRegistryForModel(
         throw new Error(`Tool implementation not found for ${name}`);
       }
 
-      let description = definition.description;
+      let description = await resolveBackendSpecificToolDescription(
+        name,
+        definition.description,
+      );
       if (name === "Task" && discoveredSubagents.length > 0) {
         description = injectSubagentsIntoTaskDescription(
           description,

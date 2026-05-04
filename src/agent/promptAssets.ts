@@ -24,8 +24,10 @@ import sourceCodexPrompt from "./prompts/source_codex.md";
 import sourceGeminiPrompt from "./prompts/source_gemini.md";
 
 import stylePrompt from "./prompts/style.mdx";
+import systemPromptLocalMemfsAddon from "./prompts/system_prompt_local_memfs.md";
 
 export const SYSTEM_PROMPT = lettaNoMemfsPrompt;
+export const SYSTEM_PROMPT_LOCAL_MEMFS_ADDON = systemPromptLocalMemfsAddon;
 export const PLAN_MODE_REMINDER = planModeReminder;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
@@ -99,7 +101,60 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   },
 ];
 
-export type MemoryPromptMode = "standard" | "memfs";
+export type MemoryPromptMode = "standard" | "memfs" | "local-memfs";
+
+function replaceMemorySection(
+  systemPrompt: string,
+  memorySection: string,
+): string {
+  const lines = systemPrompt.split("\n");
+  let inFence = false;
+  let memoryStart = -1;
+
+  const isFence = (line: string) => /^\s*(```+|~~~+)/.test(line);
+  const isTopLevelMemoryHeading = (line: string) =>
+    /^#\s+Memory\s*$/.test(line.trim());
+  const isTopLevelHeading = (line: string) => /^#\s+\S/.test(line.trim());
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (isFence(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && isTopLevelMemoryHeading(line)) {
+      memoryStart = i;
+      break;
+    }
+  }
+
+  if (memoryStart === -1) {
+    return `${systemPrompt.trimEnd()}\n\n${memorySection.trimStart()}`.trim();
+  }
+
+  inFence = false;
+  let memoryEnd = lines.length;
+  for (let i = memoryStart + 1; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (isFence(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && isTopLevelHeading(line)) {
+      memoryEnd = i;
+      break;
+    }
+  }
+
+  return [
+    ...lines.slice(0, memoryStart),
+    memorySection.trim(),
+    ...lines.slice(memoryEnd),
+  ]
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 /**
  * Check if a preset ID exists in SYSTEM_PROMPTS.
@@ -120,6 +175,12 @@ export function buildSystemPrompt(
   if (!preset) {
     throw new Error(
       `Unknown preset "${presetId}" — cannot rebuild system prompt`,
+    );
+  }
+  if (memoryMode === "local-memfs") {
+    return replaceMemorySection(
+      preset.memfsContent ?? preset.content,
+      SYSTEM_PROMPT_LOCAL_MEMFS_ADDON,
     );
   }
   if (memoryMode === "memfs") {

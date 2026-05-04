@@ -7319,6 +7319,7 @@ export default function App({
         const { isLettaCloud, enableMemfsIfCloud } = await import(
           "../agent/memoryFilesystem"
         );
+        const backend = getBackend();
         const willAutoEnableMemfs = await isLettaCloud();
 
         let effectiveModel = currentModelId || currentModelHandle || undefined;
@@ -7346,7 +7347,11 @@ export default function App({
         const { agent } = await createAgent({
           name,
           model: effectiveModel,
-          memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
+          memoryPromptMode: backend.capabilities.localMemfs
+            ? "local-memfs"
+            : willAutoEnableMemfs
+              ? "memfs"
+              : undefined,
         });
 
         // Enable memfs on Letta Cloud (tags, repo clone, tool detach)

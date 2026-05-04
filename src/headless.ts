@@ -36,6 +36,7 @@ import {
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
+import type { MemoryPromptMode } from "./agent/promptAssets";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -1025,8 +1026,11 @@ export async function handleHeadlessCommand(
       backend.capabilities.remoteMemfs &&
       shouldAutoEnableMemfsForNewAgent &&
       (await isLettaCloud());
-    const effectiveMemoryMode =
-      requestedMemoryPromptMode ?? (willAutoEnableMemfs ? "memfs" : undefined);
+    const effectiveMemoryMode: MemoryPromptMode | undefined = backend
+      .capabilities.localMemfs
+      ? "local-memfs"
+      : (requestedMemoryPromptMode ??
+        (willAutoEnableMemfs ? "memfs" : undefined));
 
     const createOptions = {
       model,
@@ -1172,7 +1176,13 @@ export async function handleHeadlessCommand(
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
   if (!backend.capabilities.remoteMemfs) {
-    if (noMemfsFlag) {
+    if (backend.capabilities.localMemfs) {
+      if (noMemfsFlag) {
+        console.error("Disabling MemFS is not supported by the local backend.");
+        process.exit(1);
+      }
+      settingsManager.setMemfsEnabled(agent.id, true);
+    } else if (noMemfsFlag) {
       settingsManager.setMemfsEnabled(agent.id, false);
     }
   } else if (memfsStartupPolicy === "skip") {

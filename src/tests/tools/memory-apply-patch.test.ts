@@ -87,6 +87,11 @@ mock.module("../../backend/api/client", () => ({
 const { memory_apply_patch } = await import(
   "../../tools/impl/MemoryApplyPatch"
 );
+const { __testSetBackend } = await import("../../backend");
+const { LocalBackend } = await import("../../backend/local");
+const { getToolSchema, loadSpecificTools } = await import(
+  "../../tools/manager"
+);
 
 function runScopedMemoryApplyPatch(
   args: Parameters<typeof memory_apply_patch>[0],
@@ -163,6 +168,8 @@ describe("memory_apply_patch tool", () => {
   });
 
   afterEach(async () => {
+    __testSetBackend(null);
+
     if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = originalMemoryDir;
 
@@ -237,6 +244,58 @@ describe("memory_apply_patch tool", () => {
     expect(subject).toBe("Refine contacts memory via patch");
     expect(authorName).toBe(TEST_AGENT_NAME);
     expect(authorEmail).toBe(`${TEST_AGENT_ID}@letta.com`);
+  });
+
+  test("commits locally without requiring a remote for local backend MemFS", async () => {
+    await runGit(memoryDir, ["remote", "remove", "origin"]);
+    __testSetBackend(
+      new LocalBackend({
+        storageDir: join(tempRoot, "local-store"),
+        executionMode: "deterministic",
+      }),
+    );
+
+    const result = await runScopedMemoryApplyPatch({
+      reason: "Create local-only memory",
+      input: [
+        "*** Begin Patch",
+        "*** Add File: system/local.md",
+        "+---",
+        "+description: Local memory",
+        "+---",
+        "+Local-only memory",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    expect(result.message).toContain("committed locally");
+    expect(await runGit(memoryDir, ["show", "HEAD:system/local.md"])).toContain(
+      "Local-only memory",
+    );
+    await expect(
+      runGit(memoryDir, ["remote", "get-url", "origin"]),
+    ).rejects.toThrow();
+  });
+
+  test("uses local-only wording for memory tool descriptions on local backend", async () => {
+    __testSetBackend(
+      new LocalBackend({
+        storageDir: join(tempRoot, "local-store"),
+        executionMode: "deterministic",
+      }),
+    );
+
+    await loadSpecificTools(["memory", "memory_apply_patch"]);
+
+    expect(getToolSchema("memory")?.description).toContain(
+      "automatically commits changes locally",
+    );
+    expect(getToolSchema("memory_apply_patch")?.description).toContain(
+      "automatically commit the change locally",
+    );
+    expect(getToolSchema("memory_apply_patch")?.description).not.toContain(
+      "Pushes to remote",
+    );
   });
 
   test("prefers scoped agent memory over stale MEMORY_DIR env", async () => {

@@ -47,11 +47,13 @@ Create directories and write all memory files **in parallel in a single turn**. 
 
 If you created a file at a new path that replaces an existing file at a different path, **delete the old file**. Include any `rm` commands in the bash call in step 5.
 
-### 5. Commit and push (1 bash call)
+### 5. Commit and sync (1 bash call)
 
-Stage, commit, and push in a single Bash call:
+Stage and commit in a single Bash call. For API-backed MemFS, push after committing. For local backend MemFS under `~/.letta/lc-local-backend/memfs/`, do not push unless an optional mirror is explicitly configured.
 ```bash
-cd "$MEMORY_DIR" && git add -A && git commit -m "..." && git push
+cd "$MEMORY_DIR" && git add -A && git commit -m "..."
+# API-backed MemFS only:
+git push
 ```
 
 ## Memory hierarchy

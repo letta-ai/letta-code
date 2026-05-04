@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { resolveAndBuildSystemPrompt } from "../../agent/promptAssets";
 import type { LocalAgentRecord } from "../../backend/local/LocalStore";
 import {
   appendAvailableSkillsBlock,
@@ -37,6 +39,25 @@ async function writeMemoryFile(
   );
 }
 
+function git(memoryDir: string, args: string[]) {
+  execFileSync("git", args, {
+    cwd: memoryDir,
+    stdio: "ignore",
+  });
+}
+
+function initAndCommitMemory(memoryDir: string, message = "initial memory") {
+  git(memoryDir, ["init"]);
+  git(memoryDir, ["config", "user.email", "agent-local-test@letta.com"]);
+  git(memoryDir, ["config", "user.name", "Local Test"]);
+  git(memoryDir, ["add", "."]);
+  git(memoryDir, ["commit", "-m", message]);
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: memoryDir,
+    encoding: "utf8",
+  }).trim();
+}
+
 describe("local system prompt compilation", () => {
   test("injects MemFS system files and metadata into CORE_MEMORY", async () => {
     const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-memfs-"));
@@ -59,6 +80,7 @@ describe("local system prompt compilation", () => {
         "Detailed reference",
         "Only projected as an external file.",
       );
+      const head = initAndCommitMemory(memoryDir);
 
       const compiled = compileLocalSystemPrompt({
         agent: agent("hello {CORE_MEMORY}"),
@@ -71,6 +93,7 @@ describe("local system prompt compilation", () => {
       expect(compiled.rawSystemHash).toBe(
         hashRawSystemPrompt("hello {CORE_MEMORY}"),
       );
+      expect(compiled.memfsRevision).toBe(head);
       expect(compiled.content).toContain("hello Reminder: <projection>");
       expect(compiled.content).toContain("<self>");
       expect(compiled.content).toContain("I am a local agent.");
@@ -93,6 +116,39 @@ describe("local system prompt compilation", () => {
       );
       expect(compiled.content).toContain(
         "- 7 previous messages between you and the user are stored in recall memory",
+      );
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reads committed MemFS state instead of dirty working tree files", async () => {
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-head-"));
+    try {
+      await writeMemoryFile(
+        memoryDir,
+        "system/persona.md",
+        "Who the agent is",
+        "Committed persona.",
+      );
+      const head = initAndCommitMemory(memoryDir);
+      await writeMemoryFile(
+        memoryDir,
+        "system/persona.md",
+        "Who the agent is",
+        "Dirty persona should not compile yet.",
+      );
+
+      const compiled = compileLocalSystemPrompt({
+        agent: agent(),
+        conversationId: "local-conv-test",
+        memoryDir,
+      });
+
+      expect(compiled.memfsRevision).toBe(head);
+      expect(compiled.content).toContain("Committed persona.");
+      expect(compiled.content).not.toContain(
+        "Dirty persona should not compile yet.",
       );
     } finally {
       await rm(memoryDir, { recursive: true, force: true });
@@ -145,5 +201,15 @@ describe("local system prompt compilation", () => {
         },
       ]),
     ).toContain("compiled\n\n<available_skills>");
+  });
+
+  test("uses local-only wording for the local MemFS prompt addon", async () => {
+    const prompt = await resolveAndBuildSystemPrompt("default", "local-memfs");
+
+    expect(prompt).toContain("~/.letta/lc-local-backend/memfs/");
+    expect(prompt).toContain("Commit memory changes locally");
+    expect(prompt).not.toContain(
+      "Changes you commit and push sync to the Letta server",
+    );
   });
 });
