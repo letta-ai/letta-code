@@ -35,7 +35,7 @@ describe("normalizeApprovalResultsForPersistence", () => {
         tool_call_id: "call-1",
         tool_return: "some return",
         status: "success",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     const normalized = normalizeApprovalResultsForPersistence(approvals, {
@@ -56,7 +56,7 @@ describe("normalizeApprovalResultsForPersistence", () => {
         tool_call_id: "call-2",
         tool_return: "ok",
         status: "success",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     const normalized = normalizeApprovalResultsForPersistence(approvals, {
@@ -77,7 +77,7 @@ describe("normalizeApprovalResultsForPersistence", () => {
         tool_call_id: "call-3",
         tool_return: [{ type: "text", text: INTERRUPTED_BY_USER }],
         status: "success",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     const normalized = normalizeApprovalResultsForPersistence(approvals, {
@@ -99,7 +99,7 @@ describe("normalizeApprovalResultsForPersistence", () => {
         tool_return: "bash output",
         status: "success",
         reason: "Ship it",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     const normalized = normalizeApprovalResultsForPersistence(approvals);
@@ -126,7 +126,7 @@ describe("normalizeApprovalResultsForPersistence", () => {
         tool_return: [{ type: "text", text: "line 1" }],
         status: "success",
         reason: "Run exactly this",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     const normalized = normalizeApprovalResultsForPersistence(approvals);
@@ -181,7 +181,7 @@ describe("normalizeOutgoingApprovalMessages", () => {
           tool_call_id: "call-7",
           tool_return: "foo",
           status: "success",
-        } as ApprovalResult,
+        } as unknown as ApprovalResult,
       ],
     };
 

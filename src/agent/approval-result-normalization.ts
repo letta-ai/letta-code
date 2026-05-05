@@ -64,10 +64,16 @@ function isToolReturnContent(value: unknown): value is ToolReturnContent {
         "text" in part &&
         typeof (part as { text?: unknown }).text === "string") ||
         ((part as { type?: unknown }).type === "image" &&
-          "data" in part &&
-          typeof (part as { data?: unknown }).data === "string" &&
-          "mimeType" in part &&
-          typeof (part as { mimeType?: unknown }).mimeType === "string")),
+          (("data" in part &&
+            typeof (part as { data?: unknown }).data === "string" &&
+            "mimeType" in part &&
+            typeof (part as { mimeType?: unknown }).mimeType === "string") ||
+            ("source" in part &&
+              typeof (part as { source?: unknown }).source === "object" &&
+              (part as { source?: { type?: unknown; data?: unknown } }).source
+                ?.type === "base64" &&
+              typeof (part as { source?: { data?: unknown } }).source?.data ===
+                "string")))),
   );
 }
 
@@ -118,7 +124,7 @@ export function normalizeApprovalResultsForPersistence(
           typeof approval.tool_call_id === "string"
             ? approval.tool_call_id
             : "",
-        tool_return: approval.tool_return,
+        tool_return: approval.tool_return as unknown as string,
         status:
           "status" in approval && approval.status === "error"
             ? "error"
@@ -169,7 +175,7 @@ export function normalizeApprovalResultsForPersistence(
     ) {
       return {
         ...approval,
-        tool_return: toolReturn,
+        tool_return: toolReturn as unknown as string,
         status: "error" as const,
       };
     }
@@ -177,7 +183,7 @@ export function normalizeApprovalResultsForPersistence(
     if (toolReturn !== approval.tool_return) {
       return {
         ...approval,
-        tool_return: toolReturn,
+        tool_return: toolReturn as unknown as string,
       };
     }
 

@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "provider": {
+      "type": "string",
+      "description": "Provider that produced the computer action payload, if known."
+    },
+    "actions": {
+      "type": "array",
+      "description": "OpenAI Responses API batched computer actions.",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "action": {
+      "type": "string",
+      "description": "Anthropic computer-use action name when a single action is provided."
+    }
+  },
+  "additionalProperties": true
+}

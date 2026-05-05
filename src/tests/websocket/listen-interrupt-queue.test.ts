@@ -152,14 +152,14 @@ describe("extractInterruptToolReturns", () => {
         tool_call_id: "call-ok",
         status: "success",
         tool_return: "704",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
       {
         type: "tool",
         tool_call_id: "call-err",
         status: "error",
         tool_return: "User interrupted the stream",
         stderr: ["interrupted"],
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     const mapped = extractInterruptToolReturns(results);
@@ -185,7 +185,7 @@ describe("extractInterruptToolReturns", () => {
         tool_call_id: "call-denied",
         approve: false,
         reason: "User interrupted the stream",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     const mapped = extractInterruptToolReturns(results);
@@ -208,7 +208,7 @@ describe("extractInterruptToolReturns", () => {
           { type: "text", text: "Interrupted by user" },
           { type: "image", image_url: "https://example.com/image.png" },
         ],
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     const mapped = extractInterruptToolReturns(results);
@@ -232,13 +232,13 @@ describe("extractInterruptToolReturns", () => {
         tool_call_id: "call-a",
         status: "success",
         tool_return: "704",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
       {
         type: "approval",
         tool_call_id: "call-b",
         approve: false,
         reason: "User interrupted the stream",
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     emitInterruptToolReturnMessage(socket, runtime, approvals, "run-1");
@@ -302,7 +302,7 @@ describe("extractInterruptToolReturns", () => {
         status: "success",
         tool_return: hugeOutput,
         stdout: [hugeOutput],
-      } as ApprovalResult,
+      } as unknown as ApprovalResult,
     ];
 
     emitInterruptToolReturnMessage(socket, runtime, approvals, "run-1");
