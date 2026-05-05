@@ -161,6 +161,7 @@ const SAFE_MEMORY_COMMANDS = new Set([
   "find",
   "sort",
   "echo",
+  "printf",
   "wc",
   "split",
   "cd",
@@ -581,6 +582,195 @@ function isSafeEnvInvocation(
   }
 
   return true;
+}
+
+function readRedirectTarget(
+  input: string,
+  pos: number,
+): { token: string; end: number } | null {
+  let cursor = pos;
+  while (cursor < input.length && /\s/.test(input[cursor] ?? "")) {
+    cursor += 1;
+  }
+  if (cursor >= input.length) {
+    return null;
+  }
+
+  const quote = input[cursor];
+  if (quote === "'" || quote === '"') {
+    let end = cursor + 1;
+    while (end < input.length) {
+      const ch = input[end];
+      if (quote === '"' && ch === "\\" && end + 1 < input.length) {
+        end += 2;
+        continue;
+      }
+      if (ch === quote) {
+        return { token: input.slice(cursor, end + 1), end: end + 1 };
+      }
+      end += 1;
+    }
+    return null;
+  }
+
+  let end = cursor;
+  while (end < input.length && !/[\s;|&><()`]/.test(input[end] ?? "")) {
+    end += 1;
+  }
+  if (end === cursor) {
+    return null;
+  }
+  return { token: input.slice(cursor, end), end };
+}
+
+function isScopedRedirectTarget(
+  token: string,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean {
+  const stripped = stripShellQuotes(token);
+  if (stripped === "/dev/null" || /^&\d+$/.test(stripped)) {
+    return true;
+  }
+  const resolved = normalizeScopePath(stripped, cwd, env, shellVars);
+  return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
+}
+
+function rewriteScopedMemoryRedirects(
+  input: string,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): string | null {
+  let rewritten = "";
+  let i = 0;
+  let quote: "single" | "double" | null = null;
+
+  while (i < input.length) {
+    const ch = input[i];
+    if (!ch) {
+      i += 1;
+      continue;
+    }
+
+    if (quote === "single") {
+      rewritten += ch;
+      if (ch === "'") quote = null;
+      i += 1;
+      continue;
+    }
+
+    if (quote === "double") {
+      if (ch === "\\" && i + 1 < input.length) {
+        rewritten += input.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (ch === "`" || input.startsWith("$(", i)) {
+        return null;
+      }
+      rewritten += ch;
+      if (ch === '"') quote = null;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "'") {
+      quote = "single";
+      rewritten += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      quote = "double";
+      rewritten += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "\\" && i + 1 < input.length) {
+      rewritten += input.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+
+    if (ch === "`" || input.startsWith("$(", i)) {
+      return null;
+    }
+
+    if (input.startsWith(">>", i) || ch === ">") {
+      const op = input.startsWith(">>", i) ? ">>" : ">";
+      const target = readRedirectTarget(input, i + op.length);
+      if (!target) {
+        return null;
+      }
+      if (
+        !isScopedRedirectTarget(target.token, cwd, allowedRoots, env, shellVars)
+      ) {
+        return null;
+      }
+      // Preserve shell shape but replace the target with /dev/null so the
+      // read-only shell splitter can continue to reject unsafe commands while
+      // tolerating this already-validated scoped write redirection.
+      rewritten += `${op} /dev/null`;
+      i = target.end;
+      continue;
+    }
+
+    rewritten += ch;
+    i += 1;
+  }
+
+  return rewritten;
+}
+
+function extractScopedHeredocWritePath(command: string): string | null {
+  const lines = command.split(/\r?\n/);
+  const firstLine = lines[0]?.trim() ?? "";
+  if (!firstLine) {
+    return null;
+  }
+
+  const firstLineMatch = firstLine.match(
+    /^cat\s+(?:>\s*(?<path1>"[^"]+"|'[^']+'|\S+)\s+<<-?\s*(?<delim1>"[^"]+"|'[^']+'|\S+)|<<-?\s*(?<delim2>"[^"]+"|'[^']+'|\S+)\s+>\s*(?<path2>"[^"]+"|'[^']+'|\S+))\s*$/,
+  );
+  if (!firstLineMatch?.groups) {
+    return null;
+  }
+
+  const rawPath = firstLineMatch.groups.path1 || firstLineMatch.groups.path2;
+  const rawDelim = firstLineMatch.groups.delim1 || firstLineMatch.groups.delim2;
+  if (!rawPath || !rawDelim) {
+    return null;
+  }
+
+  const delimiter = stripShellQuotes(rawDelim);
+  if (!delimiter) {
+    return null;
+  }
+
+  let terminatorLine = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if ((lines[i] ?? "") === delimiter) {
+      terminatorLine = i;
+      break;
+    }
+  }
+  if (terminatorLine === -1) {
+    return null;
+  }
+
+  for (let i = terminatorLine + 1; i < lines.length; i += 1) {
+    if ((lines[i] ?? "").trim().length > 0) {
+      return null;
+    }
+  }
+
+  return stripShellQuotes(rawPath);
 }
 
 function isReadOnlyGhApiInvocation(args: string[]): boolean {
@@ -1386,7 +1576,35 @@ export function isScopedMemoryShellCommand(
     return false;
   }
 
-  const segments = splitShellSegments(trimmed);
+  const env = options.env ?? process.env;
+  const shellVars: ScopedShellVars = {};
+  const initialCwd = options.workingDirectory
+    ? normalizeScopePath(options.workingDirectory, null, env, shellVars)
+    : null;
+
+  const heredocWritePath = extractScopedHeredocWritePath(trimmed);
+  if (heredocWritePath) {
+    const resolved = normalizeScopePath(
+      heredocWritePath,
+      initialCwd,
+      env,
+      shellVars,
+    );
+    return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
+  }
+
+  const scopedCommand = rewriteScopedMemoryRedirects(
+    trimmed,
+    initialCwd,
+    allowedRoots,
+    env,
+    shellVars,
+  );
+  if (!scopedCommand) {
+    return false;
+  }
+
+  const segments = splitShellSegments(scopedCommand);
   if (!segments) {
     return false;
   }
@@ -1394,11 +1612,6 @@ export function isScopedMemoryShellCommand(
     return false;
   }
 
-  const env = options.env ?? process.env;
-  const shellVars: ScopedShellVars = {};
-  const initialCwd = options.workingDirectory
-    ? normalizeScopePath(options.workingDirectory, null, env, shellVars)
-    : null;
   let cwd: string | null = initialCwd;
   for (const segment of segments) {
     const result = isAllowedMemorySegment(
