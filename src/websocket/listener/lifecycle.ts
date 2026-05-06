@@ -330,6 +330,46 @@ function getParsedRuntimeScope(
   };
 }
 
+async function waitForStreamSocketOpen(
+  streamSocket: WebSocket,
+  runtime: ListenerRuntime,
+): Promise<ListenerTransport | null> {
+  if (streamSocket.readyState === WebSocket.OPEN) {
+    runtime.streamTransport = streamSocket;
+    return streamSocket;
+  }
+
+  if (
+    streamSocket.readyState === WebSocket.CLOSING ||
+    streamSocket.readyState === WebSocket.CLOSED
+  ) {
+    return null;
+  }
+
+  return await new Promise<ListenerTransport | null>((resolve) => {
+    const handleOpen = () => {
+      cleanup();
+      runtime.streamTransport = streamSocket;
+      resolve(streamSocket);
+    };
+
+    const handleFailure = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    const cleanup = () => {
+      streamSocket.off("open", handleOpen);
+      streamSocket.off("error", handleFailure);
+      streamSocket.off("close", handleFailure);
+    };
+
+    streamSocket.once("open", handleOpen);
+    streamSocket.once("error", handleFailure);
+    streamSocket.once("close", handleFailure);
+  });
+}
+
 /**
  * Wire channel ingress into the listener.
  *
@@ -483,6 +523,8 @@ export function createRuntime(): ListenerRuntime {
   return {
     socket: null,
     transport: null,
+    streamSocket: null,
+    streamTransport: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
     intentionallyClosed: false,
@@ -544,6 +586,15 @@ export function stopRuntime(
   stopAllWorktreeWatchers(runtime);
 
   if (!runtime.socket) {
+    if (
+      runtime.streamSocket &&
+      (runtime.streamSocket.readyState === WebSocket.OPEN ||
+        runtime.streamSocket.readyState === WebSocket.CONNECTING)
+    ) {
+      runtime.streamSocket.close();
+    }
+    runtime.streamSocket = null;
+    runtime.streamTransport = null;
     runtime.transport = null;
     return;
   }
@@ -551,6 +602,9 @@ export function stopRuntime(
   const socket = runtime.socket;
   runtime.socket = null;
   runtime.transport = null;
+  const streamSocket = runtime.streamSocket;
+  runtime.streamSocket = null;
+  runtime.streamTransport = null;
 
   // Stale runtimes being replaced should not emit callbacks/retries.
   if (suppressCallbacks) {
@@ -562,6 +616,14 @@ export function stopRuntime(
     socket.readyState === WebSocket.CONNECTING
   ) {
     socket.close();
+  }
+
+  if (
+    streamSocket &&
+    (streamSocket.readyState === WebSocket.OPEN ||
+      streamSocket.readyState === WebSocket.CONNECTING)
+  ) {
+    streamSocket.close();
   }
 }
 
@@ -576,6 +638,7 @@ export async function startConnectedListenerRuntime(
   options: {
     startHeartbeat?: boolean;
     startCronScheduler?: boolean;
+    streamTransport?: ListenerTransport | null;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
@@ -593,6 +656,7 @@ export async function startConnectedListenerRuntime(
     options.startCronScheduler !== false && !cronSchedulerDisabledByEnv;
 
   runtime.transport = transport;
+  runtime.streamTransport = options.streamTransport ?? null;
   safeEmitWsEvent("recv", "lifecycle", {
     type:
       getListenerTransportKind(transport) === "websocket"
@@ -893,11 +957,32 @@ async function connectWithRetry(
   url.searchParams.set("deviceId", opts.deviceId);
   url.searchParams.set("connectionName", opts.connectionName);
 
+  const supportsSplitStatusChannels = opts.supportsSplitStatusChannels === true;
+  if (supportsSplitStatusChannels) {
+    url.searchParams.set("channel", "control");
+  }
+
+  let streamUrl: URL | null = null;
+  if (supportsSplitStatusChannels) {
+    streamUrl = new URL(opts.wsUrl);
+    streamUrl.searchParams.set("deviceId", opts.deviceId);
+    streamUrl.searchParams.set("connectionName", opts.connectionName);
+    streamUrl.searchParams.set("channel", "stream");
+  }
+
   const socket = new WebSocket(url.toString(), {
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
   });
+
+  const streamSocket = streamUrl
+    ? new WebSocket(streamUrl.toString(), {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
+    : null;
 
   const fileCommandSession = createFileCommandSession({
     socket,
@@ -906,6 +991,7 @@ async function connectWithRetry(
   });
 
   runtime.socket = socket;
+  runtime.streamSocket = streamSocket;
   const transport = socket;
   const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,
@@ -927,12 +1013,20 @@ async function connectWithRetry(
   };
 
   socket.on("open", async () => {
+    let streamTransport: ListenerTransport | null = null;
+    if (streamSocket) {
+      streamTransport = await waitForStreamSocketOpen(streamSocket, runtime);
+    }
     await startConnectedListenerRuntime(
       runtime,
       transport,
       opts,
       processQueuedTurn,
-      { startHeartbeat: true, startCronScheduler: true },
+      {
+        startHeartbeat: true,
+        startCronScheduler: true,
+        streamTransport,
+      },
     );
   });
 
@@ -1007,7 +1101,18 @@ async function connectWithRetry(
     runtime._unsubscribeSubagentStreamEvents?.();
     runtime._unsubscribeSubagentStreamEvents = undefined;
     clearListenerWarmState(runtime);
+    if (streamSocket) {
+      streamSocket.removeAllListeners();
+      if (
+        streamSocket.readyState === WebSocket.OPEN ||
+        streamSocket.readyState === WebSocket.CONNECTING
+      ) {
+        streamSocket.close();
+      }
+    }
     runtime.socket = null;
+    runtime.streamSocket = null;
+    runtime.streamTransport = null;
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
       rejectPendingApprovalResolvers(
         conversationRuntime,
@@ -1061,6 +1166,32 @@ async function connectWithRetry(
     }
     // Error triggers close(), which handles retry logic.
   });
+
+  if (streamSocket) {
+    streamSocket.on("error", (error: Error) => {
+      trackListenerError(
+        "listener_stream_socket_error",
+        error,
+        "listener_stream_socket",
+      );
+      if (isDebugEnabled()) {
+        console.error("[Listen] Stream WebSocket error:", error);
+      }
+    });
+
+    streamSocket.on("close", (code: number, reason: Buffer) => {
+      if (isDebugEnabled()) {
+        console.log(
+          `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
+        );
+      }
+
+      if (runtime.streamSocket === streamSocket) {
+        runtime.streamSocket = null;
+        runtime.streamTransport = null;
+      }
+    });
+  }
 }
 
 /**

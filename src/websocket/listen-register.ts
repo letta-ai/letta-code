@@ -7,6 +7,7 @@ import { getVersion } from "../version.ts";
 export interface RegisterResult {
   connectionId: string;
   wsUrl: string;
+  supportsSplitStatusChannels: boolean;
 }
 
 export interface RegisterOptions {
@@ -117,6 +118,7 @@ export async function registerWithCloud(
   return {
     connectionId: result.connectionId,
     wsUrl: result.wsUrl,
+    supportsSplitStatusChannels: result.supportsSplitStatusChannels === true,
   };
 }
 

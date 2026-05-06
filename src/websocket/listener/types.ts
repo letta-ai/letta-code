@@ -29,6 +29,7 @@ import type { ListenerTransport } from "./transport";
 export interface StartListenerOptions {
   connectionId: string;
   wsUrl: string;
+  supportsSplitStatusChannels?: boolean;
   deviceId: string;
   connectionName: string;
   onConnected: (connectionId: string) => void;
@@ -161,6 +162,8 @@ export type ConversationRuntime = {
 export type ListenerRuntime = {
   socket: WebSocket | null;
   transport?: ListenerTransport | null;
+  streamSocket?: WebSocket | null;
+  streamTransport?: ListenerTransport | null;
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
   intentionallyClosed: boolean;
