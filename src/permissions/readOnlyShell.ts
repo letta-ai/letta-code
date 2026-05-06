@@ -133,14 +133,18 @@ const SAFE_MEMORY_GIT_SUBCOMMANDS = new Set([
   "add",
   "commit",
   "config",
+  "check-ignore",
+  "fetch",
   "push",
   "pull",
   "rebase",
   "reset",
+  "restore",
   "status",
   "diff",
   "log",
   "show",
+  "show-ref",
   "branch",
   "tag",
   "remote",
@@ -1096,26 +1100,127 @@ function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
   return false;
 }
 
-// `git config --global` writes to ~/.gitconfig and `git config --system`
-// writes to /etc/gitconfig — both outside the memory dir. These tokens
-// don't look like paths, so validateScopedTokens can't catch them.
-// Reject both the read and write forms uniformly: agents operating on
-// memory should only touch the local repo config (the implicit default
-// or an explicit --local / --worktree).
-function hasUnsafeConfigOption(tokens: string[], startIndex: number): boolean {
+function isSafeMemoryGitConfig(tokens: string[], startIndex: number): boolean {
+  const args = tokens.slice(startIndex);
+  // Preserve main's behavior: memory-mode git config is allowed except for
+  // scopes that write outside the memory repo.
+  return !args.some((arg) => {
+    const lower = arg.toLowerCase();
+    return lower === "--global" || lower === "--system";
+  });
+}
+
+function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
+  // Permit fetching from configured remotes, but not arbitrary URL/refspecs.
+  const allowedFlags = new Set(["--prune", "--tags", "--quiet", "-q"]);
+  const args = tokens.slice(startIndex);
+  if (args.length === 0) {
+    return true;
+  }
+
+  let remoteCount = 0;
+  for (const arg of args) {
+    if (allowedFlags.has(arg)) {
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      return false;
+    }
+    // Remote names are local config aliases (usually "origin"). Disallow
+    // URL-like or path-like values so memory mode cannot fetch arbitrary URLs.
+    if (!/^[A-Za-z0-9._-]+$/.test(arg)) {
+      return false;
+    }
+    remoteCount += 1;
+    if (remoteCount > 1) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isSafeMemoryGitShowRef(tokens: string[], startIndex: number): boolean {
+  // Keep this intentionally narrow; the observed rollout need is plain
+  // `git show-ref` for local ref introspection.
+  return tokens.length === startIndex;
+}
+
+function isSafeMemoryGitCheckIgnore(
+  tokens: string[],
+  startIndex: number,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean {
+  const allowedFlags = new Set(["-v", "--verbose", "-q", "--quiet"]);
+  const paths: string[] = [];
+
   for (let i = startIndex; i < tokens.length; i += 1) {
     const token = tokens[i];
     if (!token) {
       continue;
     }
-    const lower = token.toLowerCase();
-
-    if (lower === "--global" || lower === "--system") {
-      return true;
+    if (allowedFlags.has(token)) {
+      continue;
     }
+    if (token === "--") {
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return false;
+    }
+    paths.push(token);
   }
 
-  return false;
+  if (paths.length === 0) {
+    return false;
+  }
+
+  return paths.every((pathToken) => {
+    const resolved = normalizeScopePath(pathToken, cwd, env, shellVars);
+    return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
+  });
+}
+
+function isSafeMemoryGitRestore(
+  tokens: string[],
+  startIndex: number,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean {
+  let sawStaged = false;
+  const paths: string[] = [];
+
+  for (let i = startIndex; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token) {
+      continue;
+    }
+    if (token === "--staged") {
+      sawStaged = true;
+      continue;
+    }
+    if (token === "--") {
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return false;
+    }
+    paths.push(token);
+  }
+
+  if (!sawStaged || paths.length === 0) {
+    return false;
+  }
+
+  return paths.every((pathToken) => {
+    const resolved = normalizeScopePath(pathToken, cwd, env, shellVars);
+    return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
+  });
 }
 
 function parseScopedGitInvocation(
@@ -1236,7 +1341,66 @@ function parseScopedGitInvocation(
       };
     }
 
-    if (subcommand === "config" && hasUnsafeConfigOption(tokens, index + 1)) {
+    if (subcommand === "config" && !isSafeMemoryGitConfig(tokens, index + 1)) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (subcommand === "fetch" && !isSafeMemoryGitFetch(tokens, index + 1)) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (
+      subcommand === "show-ref" &&
+      !isSafeMemoryGitShowRef(tokens, index + 1)
+    ) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (
+      subcommand === "check-ignore" &&
+      !isSafeMemoryGitCheckIgnore(
+        tokens,
+        index + 1,
+        resolvedCwd,
+        allowedRoots,
+        env,
+        shellVars,
+      )
+    ) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (
+      subcommand === "restore" &&
+      !isSafeMemoryGitRestore(
+        tokens,
+        index + 1,
+        resolvedCwd,
+        allowedRoots,
+        env,
+        shellVars,
+      )
+    ) {
       return {
         subcommand,
         worktreeSubcommand,
