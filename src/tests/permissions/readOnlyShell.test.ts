@@ -27,6 +27,99 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
+      test("allows constrained memory-scoped git introspection and index cleanup", () => {
+        const env = {
+          MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+        } as NodeJS.ProcessEnv;
+
+        expect(
+          isScopedMemoryShellCommand(
+            "git config --get remote.origin.url",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env,
+            },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            'git check-ignore -v "$MEMORY_DIR/skills/a11y-audit-automation/SKILL.md"',
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env,
+            },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand("git show-ref", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            env,
+          }),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd "$MEMORY_DIR" && git remote -v && git fetch && git status',
+            roots,
+            { env },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd "$MEMORY_DIR" && git restore --staged "$MEMORY_DIR/.letta/.lettaignore" "$MEMORY_DIR/.letta/settings.local.json"',
+            roots,
+            { env },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git reset HEAD",
+            roots,
+          ),
+        ).toBe(true);
+      });
+
+      test("denies unsafe variants of memory-scoped git allowlist additions", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "git config remote.origin.url https://example.com/repo.git",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            },
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            "git fetch https://example.com/repo.git",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            },
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            "git check-ignore -v /Users/test/project/file.md",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            },
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand("git restore README.md", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+          }),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand("git reset --hard HEAD", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+          }),
+        ).toBe(false);
+      });
+
       test("allows builtin-required worktree and backoff commands", () => {
         expect(
           isScopedMemoryShellCommand(
