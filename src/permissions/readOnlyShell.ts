@@ -1101,16 +1101,43 @@ function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
 }
 
 function isSafeMemoryGitConfig(tokens: string[], startIndex: number): boolean {
+  const args = tokens.slice(startIndex);
+  if (
+    args.some((arg) => {
+      const lower = arg.toLowerCase();
+      return lower === "--global" || lower === "--system";
+    })
+  ) {
+    return false;
+  }
+
   // Permit read-only config inspection only, e.g.:
   //   git config --get remote.origin.url
-  if (tokens.length !== startIndex + 2) {
+  //   git config --local --get remote.origin.url
+  const safeKey = (key: string | undefined): boolean =>
+    !!key && /^[A-Za-z0-9_.-]+$/.test(key);
+
+  if (args[0] === "--get") {
+    return args.length === 2 && safeKey(args[1]);
+  }
+
+  const scope = args[0];
+  if (scope !== "--local" && scope !== "--worktree") {
     return false;
   }
-  if (tokens[startIndex] !== "--get") {
-    return false;
+
+  if (args[1] === "--get") {
+    return args.length === 3 && safeKey(args[2]);
   }
-  const key = tokens[startIndex + 1];
-  return !!key && /^[A-Za-z0-9_.-]+$/.test(key);
+
+  // Permit the local identity setup used by memory-mode commit flows, but do
+  // not allow arbitrary config writes such as changing remotes, hooks, aliases,
+  // or credential helpers.
+  return (
+    args.length === 3 &&
+    (args[1] === "user.email" || args[1] === "user.name") &&
+    !!args[2]
+  );
 }
 
 function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
@@ -1234,10 +1261,18 @@ function isSafeMemoryGitReset(
   env: NodeJS.ProcessEnv,
   shellVars: ScopedShellVars,
 ): boolean {
-  // Allow only index reset/unstage forms:
+  if (
+    tokens[startIndex] === "--soft" &&
+    tokens.length === startIndex + 2 &&
+    tokens[startIndex + 1] === "HEAD~1"
+  ) {
+    return true;
+  }
+
+  // Otherwise allow only index reset/unstage forms:
   //   git reset HEAD
   //   git reset HEAD -- path/in/memory
-  // Explicitly deny --hard/--soft/--merge/--keep and arbitrary refs.
+  // Explicitly deny --hard/--merge/--keep and arbitrary refs.
   if (tokens[startIndex] !== "HEAD") {
     return false;
   }

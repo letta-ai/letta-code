@@ -177,14 +177,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
   cachedAgent?: AgentState | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const {
-      runtime,
-      socket,
-      agentId,
-      conversationId,
-      workingDirectory,
-      cachedAgent,
-    } = params;
+    const { runtime, socket, agentId, conversationId, cachedAgent } = params;
 
     if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
       return false;
@@ -234,7 +227,6 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const reflectionPrompt = buildReflectionSubagentPrompt({
         transcriptPath: autoPayload.payloadPath,
         memoryDir,
-        cwd: workingDirectory,
         parentMemory,
       });
 

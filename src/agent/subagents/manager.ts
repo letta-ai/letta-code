@@ -498,7 +498,20 @@ interface SubagentLauncher {
 export function resolveSubagentWorkingDirectory(
   env: NodeJS.ProcessEnv = process.env,
   fallbackCwd: string = getCurrentWorkingDirectory(),
+  options: {
+    subagentType?: string;
+    permissionMode?: string;
+    inheritedPrimaryRoot?: string | null;
+  } = {},
 ): string {
+  if (
+    options.subagentType === "reflection" &&
+    options.permissionMode === "memory" &&
+    options.inheritedPrimaryRoot
+  ) {
+    return options.inheritedPrimaryRoot;
+  }
+
   return env.USER_CWD || fallbackCwd;
 }
 
@@ -921,10 +934,18 @@ async function executeSubagent(
       process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
-    const subagentWorkingDirectory = resolveSubagentWorkingDirectory();
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
       currentAgentId: parentAgentId ?? null,
     });
+    const subagentWorkingDirectory = resolveSubagentWorkingDirectory(
+      process.env,
+      getCurrentWorkingDirectory(),
+      {
+        subagentType: type,
+        permissionMode: config.permissionMode,
+        inheritedPrimaryRoot: inheritedMemoryRoots.primaryRoot,
+      },
+    );
     const childEnv = composeSubagentChildEnv({
       parentProcessEnv: {
         ...process.env,

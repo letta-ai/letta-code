@@ -59,7 +59,6 @@ export interface AutoReflectionPayload {
 export interface ReflectionPromptInput {
   transcriptPath: string;
   memoryDir: string;
-  cwd?: string;
   parentMemory?: string;
 }
 
@@ -67,11 +66,6 @@ export function buildReflectionSubagentPrompt(
   input: ReflectionPromptInput,
 ): string {
   const lines: string[] = [];
-
-  if (input.cwd) {
-    lines.push(`Your current working directory is: ${input.cwd}`);
-    lines.push("");
-  }
 
   lines.push(
     `Review the conversation transcript and update memory files. The current conversation transcript has been saved to: ${input.transcriptPath}`,

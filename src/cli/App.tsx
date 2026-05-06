@@ -10415,7 +10415,6 @@ export default function App({
             const reflectionPrompt = buildReflectionSubagentPrompt({
               transcriptPath: autoPayload.payloadPath,
               memoryDir,
-              cwd: process.cwd(),
               parentMemory,
             });
 
@@ -10916,7 +10915,6 @@ ${SYSTEM_REMINDER_CLOSE}
           const reflectionPrompt = buildReflectionSubagentPrompt({
             transcriptPath: autoPayload.payloadPath,
             memoryDir,
-            cwd: process.cwd(),
             parentMemory,
           });
 
