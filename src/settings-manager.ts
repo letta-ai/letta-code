@@ -82,7 +82,6 @@ export interface Settings {
     }
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
-  globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
@@ -154,7 +153,6 @@ const DEFAULT_SETTINGS: Settings = {
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
-  globalSharedBlockIds: {},
 };
 
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
