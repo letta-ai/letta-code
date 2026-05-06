@@ -9391,8 +9391,7 @@ export default function App({
               "",
               "USAGE",
               "  /rename agent <name>      — rename the agent",
-              "  /rename convo <title>     — set a manual conversation title",
-              "  /rename convo auto        — generate a conversation title",
+              "  /rename convo [title]     — set a title, or auto-generate when omitted",
               "  /rename help              — show this help",
             ].join("\n");
             cmd.finish(output, true);
@@ -9403,24 +9402,20 @@ export default function App({
             !subcommand ||
             (subcommand !== "agent" && subcommand !== "convo")
           ) {
-            cmd.fail(
-              "Usage: /rename agent <name> or /rename convo <title|auto>",
-            );
+            cmd.fail("Usage: /rename agent <name> or /rename convo [title]");
             return { submitted: true };
           }
 
           const newValue = parts.slice(2).join(" ");
-          if (!newValue) {
-            cmd.fail(
-              subcommand === "convo"
-                ? "Please provide a title or use /rename convo auto"
-                : "Please provide a name: /rename agent <name>",
-            );
+          if (subcommand === "agent" && !newValue) {
+            cmd.fail("Please provide a name: /rename agent <name>");
             return { submitted: true };
           }
 
           if (subcommand === "convo") {
-            const shouldAutoGenerate = newValue.trim().toLowerCase() === "auto";
+            const shouldAutoGenerate =
+              newValue.trim().length === 0 ||
+              newValue.trim().toLowerCase() === "auto";
             cmd.update({
               output: shouldAutoGenerate
                 ? "Generating conversation title..."
