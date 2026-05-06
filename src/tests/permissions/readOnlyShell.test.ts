@@ -133,6 +133,45 @@ describe("isReadOnlyShellCommand", () => {
           ),
         ).toBe(true);
       });
+
+      test("denies git config --global / --system in memory-scoped commands", () => {
+        // --global writes to ~/.gitconfig, --system writes to /etc/gitconfig.
+        // Neither flag looks like a path token, so validateScopedTokens
+        // can't catch them — must be rejected explicitly.
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git config --global user.email evil@example.com",
+            roots,
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git config --system core.editor 'rm -rf /'",
+            roots,
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git config --get --global user.email",
+            roots,
+          ),
+        ).toBe(false);
+      });
+
+      test("allows git config without --global / --system in memory-scoped commands", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git config --get remote.origin.url",
+            roots,
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git config --local user.email reflection@letta.com",
+            roots,
+          ),
+        ).toBe(true);
+      });
     });
 
     test("allows grep", () => {

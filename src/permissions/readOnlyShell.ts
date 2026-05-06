@@ -1096,6 +1096,28 @@ function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
   return false;
 }
 
+// `git config --global` writes to ~/.gitconfig and `git config --system`
+// writes to /etc/gitconfig — both outside the memory dir. These tokens
+// don't look like paths, so validateScopedTokens can't catch them.
+// Reject both the read and write forms uniformly: agents operating on
+// memory should only touch the local repo config (the implicit default
+// or an explicit --local / --worktree).
+function hasUnsafeConfigOption(tokens: string[], startIndex: number): boolean {
+  for (let i = startIndex; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token) {
+      continue;
+    }
+    const lower = token.toLowerCase();
+
+    if (lower === "--global" || lower === "--system") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function parseScopedGitInvocation(
   tokens: string[],
   cwd: string | null,
@@ -1206,6 +1228,15 @@ function parseScopedGitInvocation(
     }
 
     if (subcommand === "rebase" && hasUnsafeRebaseOption(tokens, index + 1)) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (subcommand === "config" && hasUnsafeConfigOption(tokens, index + 1)) {
       return {
         subcommand,
         worktreeSubcommand,
