@@ -23,6 +23,17 @@ export type PermissionMode =
   | "memory"
   | "bypassPermissions";
 
+/**
+ * Result of a permission-mode check. Includes a decision and an optional
+ * `reason` string the caller can surface to the agent (e.g. denial guidance
+ * like "use heredoc instead of $()"). When `reason` is omitted the caller
+ * falls back to a generic `"Permission mode: {mode}"` message.
+ */
+export interface ModeOverrideResult {
+  decision: "allow" | "deny";
+  reason?: string;
+}
+
 // Use globalThis to ensure singleton across bundle
 // This prevents Bun's bundler from creating duplicate instances of the mode manager
 const MODE_KEY = Symbol.for("@letta/permissionMode");
@@ -249,6 +260,11 @@ class PermissionModeManager {
    * scoped PermissionModeState (listener/remote mode) can bypass the global
    * singleton without requiring a temporary mutation of global state.
    * Returns null if mode doesn't apply to this tool.
+   *
+   * When returning a deny decision, the result may include a `reason` string
+   * to help the agent recover (e.g. "use heredoc instead of $()"). If
+   * `reason` is omitted callers fall back to a generic
+   * `"Permission mode: {mode}"` message.
    */
   checkModeOverride(
     toolName: string,
@@ -256,7 +272,7 @@ class PermissionModeManager {
     workingDirectory: string = process.cwd(),
     modeOverride?: PermissionMode,
     planFilePathOverride?: string | null,
-  ): "allow" | "deny" | null {
+  ): ModeOverrideResult | null {
     const effectiveMode = modeOverride ?? this.currentMode;
     const _effectivePlanFilePath =
       planFilePathOverride !== undefined
@@ -269,7 +285,7 @@ class PermissionModeManager {
           return null;
         }
         // Auto-allow everything else (except explicit deny rules checked earlier)
-        return "allow";
+        return { decision: "allow" };
 
       case "acceptEdits":
         // Auto-allow edit/write tools across Anthropic, Codex, and Gemini
@@ -293,7 +309,7 @@ class PermissionModeManager {
             "WriteFileGemini",
           ].includes(toolName)
         ) {
-          return "allow";
+          return { decision: "allow" };
         }
         return null;
 
@@ -358,7 +374,7 @@ class PermissionModeManager {
         ];
 
         if (allowedInPlan.includes(toolName)) {
-          return "allow";
+          return { decision: "allow" };
         }
 
         // Special case: allow writes to any plan file in ~/.letta/plans/
@@ -397,7 +413,7 @@ class PermissionModeManager {
                 : false;
             })
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
         }
 
@@ -412,13 +428,13 @@ class PermissionModeManager {
         if (canonicalToolName(toolName) === "Task") {
           const subagentType = toolArgs?.subagent_type as string | undefined;
           if (subagentType && readOnlySubagentTypes.has(subagentType)) {
-            return "allow";
+            return { decision: "allow" };
           }
         }
 
         // Allow Skill tool — skills are read-only (load instructions, not modify files)
         if (toolName === "Skill" || toolName === "skill") {
-          return "allow";
+          return { decision: "allow" };
         }
 
         // Allow read-only shell commands (ls, git status, git log, etc.)
@@ -439,7 +455,7 @@ class PermissionModeManager {
             command &&
             isReadOnlyShellCommand(command, { allowExternalPaths: true })
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
 
           // Special case: allow shell heredoc writes when they ONLY target
@@ -454,13 +470,13 @@ class PermissionModeManager {
             );
 
             if (resolvedPath && isPathInPlansDir(resolvedPath, plansDir)) {
-              return "allow";
+              return { decision: "allow" };
             }
           }
         }
 
         // Everything else denied in plan mode
-        return "deny";
+        return { decision: "deny" };
       }
 
       case "memory": {
@@ -524,11 +540,13 @@ class PermissionModeManager {
         ];
 
         if (allowedReadOnlyTools.includes(toolName)) {
-          return "allow";
+          return { decision: "allow" };
         }
 
         if (toolName === "memory_apply_patch") {
-          return allowedMemoryRoots.length > 0 ? "allow" : "deny";
+          return {
+            decision: allowedMemoryRoots.length > 0 ? "allow" : "deny",
+          };
         }
 
         if (writeTools.includes(toolName)) {
@@ -553,10 +571,10 @@ class PermissionModeManager {
               workingDirectory,
             )
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
 
-          return "deny";
+          return { decision: "deny" };
         }
 
         if (shellTools.includes(toolName)) {
@@ -565,7 +583,7 @@ class PermissionModeManager {
             command &&
             isReadOnlyShellCommand(command, { allowExternalPaths: true })
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
 
           if (
@@ -575,13 +593,13 @@ class PermissionModeManager {
               workingDirectory,
             })
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
 
-          return "deny";
+          return { decision: "deny" };
         }
 
-        return "deny";
+        return { decision: "deny" };
       }
 
       case "default":
