@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { canonicalToolName } from "./canonical";
 import { extractApplyPatchPaths } from "./crossAgentGuard";
+import { classifyMemoryBashDenial } from "./memoryDenialReason";
 import {
   isPathWithinRoots,
   resolveAllowedMemoryRoots,
@@ -57,6 +58,37 @@ function everyResolvedTargetIsWithinRoots(
       const resolvedPath = resolveScopedTargetPath(path, workingDirectory);
       return resolvedPath ? isPathWithinRoots(resolvedPath, roots) : false;
     })
+  );
+}
+
+/**
+ * Build a denial reason for write/edit tools whose target is outside the
+ * allowed memory roots (or where the tool was invoked without any target
+ * path at all). Names the offending path and the allowed roots so the
+ * agent can correct course.
+ */
+function buildWriteOutsideRootsReason(
+  candidatePaths: string[],
+  allowedRoots: string[],
+): string {
+  if (allowedRoots.length === 0) {
+    return (
+      "Memory mode requires $MEMORY_DIR (or LETTA_MEMORY_SCOPE / " +
+      "--memory-scope) to be set so write targets can be resolved against " +
+      "an allowed memory root."
+    );
+  }
+  const rootsList = allowedRoots.join(", ");
+  if (candidatePaths.length === 0) {
+    return (
+      `Memory mode requires Write/Edit targets to be inside $MEMORY_DIR ` +
+      `(${rootsList}). The tool was invoked without a resolvable target path.`
+    );
+  }
+  const targetList = candidatePaths.join(", ");
+  return (
+    `Memory mode requires Write/Edit targets to be inside $MEMORY_DIR. ` +
+    `Got: ${targetList}. Allowed roots: ${rootsList}.`
   );
 }
 
@@ -544,8 +576,15 @@ class PermissionModeManager {
         }
 
         if (toolName === "memory_apply_patch") {
+          if (allowedMemoryRoots.length > 0) {
+            return { decision: "allow" };
+          }
           return {
-            decision: allowedMemoryRoots.length > 0 ? "allow" : "deny",
+            decision: "deny",
+            reason:
+              "Memory mode requires $MEMORY_DIR (or LETTA_MEMORY_SCOPE / " +
+              "--memory-scope) to be set so the apply-patch target can be " +
+              "resolved.",
           };
         }
 
@@ -574,7 +613,13 @@ class PermissionModeManager {
             return { decision: "allow" };
           }
 
-          return { decision: "deny" };
+          return {
+            decision: "deny",
+            reason: buildWriteOutsideRootsReason(
+              candidatePaths,
+              allowedMemoryRoots,
+            ),
+          };
         }
 
         if (shellTools.includes(toolName)) {
@@ -596,10 +641,30 @@ class PermissionModeManager {
             return { decision: "allow" };
           }
 
-          return { decision: "deny" };
+          if (!command) {
+            return {
+              decision: "deny",
+              reason:
+                "Memory mode requires the Bash tool to be invoked with a " +
+                "`command` argument.",
+            };
+          }
+
+          const { reason } = classifyMemoryBashDenial(
+            command,
+            allowedMemoryRoots,
+            { workingDirectory },
+          );
+          return { decision: "deny", reason };
         }
 
-        return { decision: "deny" };
+        return {
+          decision: "deny",
+          reason:
+            `Memory mode only permits read-only tools, Edit/Write to paths ` +
+            `under $MEMORY_DIR, and scoped Bash. Tool '${toolName}' is not ` +
+            `available.`,
+        };
       }
 
       case "default":
