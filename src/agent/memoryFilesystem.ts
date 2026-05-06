@@ -13,6 +13,11 @@ import { join, resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Backend } from "../backend";
 import {
+  getLocalBackendMemoryFilesystemRoot,
+  getLocalBackendStorageDir,
+  isLocalBackendEnvEnabled,
+} from "../backend/local/paths";
+import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
 } from "../utils/directoryLimits";
@@ -55,6 +60,25 @@ export function getMemorySystemDir(
   return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_SYSTEM_DIR);
 }
 
+export function getScopedMemoryFilesystemRoot(
+  agentId: string,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    homeDir?: string;
+    localBackendStorageDir?: string;
+  } = {},
+): string {
+  const env = options.env ?? process.env;
+  if (isLocalBackendEnvEnabled(env)) {
+    const storageDir =
+      options.localBackendStorageDir ??
+      env.LETTA_LOCAL_BACKEND_DIR ??
+      getLocalBackendStorageDir(options.homeDir ?? homedir());
+    return getLocalBackendMemoryFilesystemRoot(agentId, storageDir);
+  }
+  return getMemoryFilesystemRoot(agentId, options.homeDir ?? homedir());
+}
+
 export interface ResolveScopedMemoryDirOptions {
   agentId?: string | null;
   env?: NodeJS.ProcessEnv;
@@ -78,13 +102,13 @@ export function resolveScopedMemoryDir(
 
   const explicitAgentId = options.agentId?.trim();
   if (explicitAgentId) {
-    return getMemoryFilesystemRoot(explicitAgentId, homeDir);
+    return getScopedMemoryFilesystemRoot(explicitAgentId, { env, homeDir });
   }
 
   try {
     const scopedAgentId = getCurrentAgentId().trim();
     if (scopedAgentId) {
-      return getMemoryFilesystemRoot(scopedAgentId, homeDir);
+      return getScopedMemoryFilesystemRoot(scopedAgentId, { env, homeDir });
     }
   } catch {
     // No runtime-scoped agent context; fall back below.
@@ -97,7 +121,7 @@ export function resolveScopedMemoryDir(
 
   const envAgentId = (env.LETTA_AGENT_ID || env.AGENT_ID || "").trim();
   if (envAgentId) {
-    return getMemoryFilesystemRoot(envAgentId, homeDir);
+    return getScopedMemoryFilesystemRoot(envAgentId, { env, homeDir });
   }
 
   return null;
@@ -366,6 +390,21 @@ export async function applyMemfsFlags(
   const { settingsManager } = await import("../settings-manager");
   const { getBackend } = await import("../backend");
   const backend = getBackend();
+
+  if (backend.capabilities.localMemfs) {
+    if (noMemfsFlag) {
+      throw new Error("Disabling MemFS is not supported by the local backend.");
+    }
+    const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+    const { initializeLocalMemoryRepo } = await import("./memoryGit");
+    await initializeLocalMemoryRepo({
+      memoryDir,
+      agentId,
+      files: [],
+    });
+    settingsManager.setMemfsEnabled(agentId, true);
+    return { action: "enabled", memoryDir };
+  }
 
   if (!backend.capabilities.remoteMemfs) {
     if (memfsFlag) {

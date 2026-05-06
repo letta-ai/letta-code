@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, relative } from "node:path";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { parseFrontmatter } from "../../utils/frontmatter";
 import type { LocalAgentRecord } from "./LocalStore";
@@ -46,67 +47,69 @@ function labelFromPath(relativePath: string): string {
   return normalizePath(relativePath).replace(/\.md$/, "");
 }
 
-function collectMemoryFiles(memoryDir: string): LocalMemoryFile[] {
-  const files: LocalMemoryFile[] = [];
-
-  const walk = (currentDir: string) => {
-    let entries: string[] = [];
-    try {
-      entries = readdirSync(currentDir);
-    } catch {
-      return;
-    }
-
-    for (const entry of entries.sort((a, b) => a.localeCompare(b))) {
-      if (entry.startsWith(".")) continue;
-      const fullPath = join(currentDir, entry);
-      let stat: ReturnType<typeof statSync>;
-      try {
-        stat = statSync(fullPath);
-      } catch {
-        continue;
-      }
-
-      if (stat.isDirectory()) {
-        walk(fullPath);
-        continue;
-      }
-      if (!stat.isFile() || !entry.endsWith(".md")) continue;
-
-      try {
-        const raw = readFileSync(fullPath, "utf8");
-        const { frontmatter, body } = parseFrontmatter(raw);
-        const relativePath = normalizePath(relative(memoryDir, fullPath));
-        files.push({
-          relativePath,
-          label: labelFromPath(relativePath),
-          value: body,
-          description:
-            typeof frontmatter.description === "string"
-              ? frontmatter.description.trim()
-              : "",
-        });
-      } catch {
-        // Skip unreadable files. MemFS tooling surfaces read/write errors at
-        // the tool boundary; prompt compilation should stay best-effort.
-      }
-    }
-  };
-
-  if (existsSync(memoryDir)) {
-    walk(memoryDir);
-  }
-  return files.sort((a, b) => a.label.localeCompare(b.label));
+function gitOutput(memoryDir: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: memoryDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
 }
 
-function computeMemfsRevision(files: LocalMemoryFile[]): string {
-  return hashString(
-    files
-      .map((file) =>
-        [file.relativePath, file.description, file.value].join("\0"),
-      )
-      .join("\0\0"),
-  );
+function getCommittedMemfsRevision(memoryDir: string): string | undefined {
+  if (!existsSync(memoryDir)) return undefined;
+  try {
+    const revision = gitOutput(memoryDir, [
+      "rev-parse",
+      "--verify",
+      "HEAD",
+    ]).trim();
+    return revision.length > 0 ? revision : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function collectCommittedMemoryFiles(memoryDir: string): {
+  files: LocalMemoryFile[];
+  revision?: string;
+} {
+  const revision = getCommittedMemfsRevision(memoryDir);
+  if (!revision) return { files: [], revision };
+
+  const files: LocalMemoryFile[] = [];
+  let paths: string[] = [];
+  try {
+    paths = gitOutput(memoryDir, ["ls-tree", "-r", "--name-only", "HEAD"])
+      .split("\n")
+      .map((path) => normalizePath(path.trim()))
+      .filter((path) => path.length > 0 && path.endsWith(".md"));
+  } catch {
+    return { files: [], revision };
+  }
+
+  for (const relativePath of paths) {
+    try {
+      const raw = gitOutput(memoryDir, ["show", `HEAD:${relativePath}`]);
+      const { frontmatter, body } = parseFrontmatter(raw);
+      files.push({
+        relativePath,
+        label: labelFromPath(relativePath),
+        value: body,
+        description:
+          typeof frontmatter.description === "string"
+            ? frontmatter.description.trim()
+            : "",
+      });
+    } catch {
+      // Skip unreadable committed files. MemFS tooling surfaces validation
+      // issues at write/commit time; prompt compilation should stay best-effort.
+    }
+  }
+
+  return {
+    files: files.sort((a, b) => a.label.localeCompare(b.label)),
+    revision,
+  };
 }
 
 function renderExternalProjection(files: LocalMemoryFile[]): string {
@@ -215,10 +218,9 @@ function renderSystemTree(files: LocalMemoryFile[]): string {
 
 function renderMemfsProjection(memoryDir: string): {
   content: string;
-  revision: string;
+  revision?: string;
 } {
-  const files = collectMemoryFiles(memoryDir);
-  const revision = computeMemfsRevision(files);
+  const { files, revision } = collectCommittedMemoryFiles(memoryDir);
   if (files.length === 0) return { content: "", revision };
 
   const lines = [

@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import {
+  getMemoryFilesystemRoot,
+  resolveScopedMemoryDir,
+} from "../../agent/memoryFilesystem";
 import { getServerUrl } from "../../backend/api/client";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
@@ -314,8 +317,15 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.AGENT_ID = agentId;
 
     try {
-      if (settingsManager.isMemfsEnabled(agentId)) {
-        const memoryDir = getMemoryFilesystemRoot(agentId);
+      if (
+        settingsManager.isMemfsEnabled(agentId) ||
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true"
+      ) {
+        const memoryDir = resolveScopedMemoryDir({ agentId });
+        if (!memoryDir) {
+          throw new Error("Unable to resolve memory directory");
+        }
         env.LETTA_MEMORY_DIR = memoryDir;
         env.MEMORY_DIR = memoryDir;
       } else {

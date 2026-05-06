@@ -1,11 +1,11 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
 import type { getClient } from "./api/client";
 import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
 import { LocalBackend } from "./local/LocalBackend";
+import { getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths } from "./local/paths";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
 type GetAPIClient = typeof getClient;
@@ -407,10 +407,7 @@ export function isExperimentalLocalBackendEnabled(): boolean {
 }
 
 export function getLocalBackendStorageDir(homeDir = homedir()): string {
-  return (
-    process.env.LETTA_LOCAL_BACKEND_DIR ??
-    join(homeDir, ".letta", "lc-local-backend")
-  );
+  return getLocalBackendStorageDirFromPaths(homeDir);
 }
 
 function createExperimentalLocalBackend(): Backend {

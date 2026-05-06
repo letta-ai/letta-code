@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -32,6 +33,7 @@ import {
 import type { LocalMessage } from "../../backend/local/LocalMessage";
 import { projectLocalMessagesToStoredMessages } from "../../backend/local/LocalMessageProjection";
 import { LocalStore } from "../../backend/local/LocalStore";
+import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
 
 async function withLocalModelEnv<T>(
   env: {
@@ -126,6 +128,23 @@ async function writeMemoryFile(
     `---\ndescription: ${description}\n---\n${body}\n`,
     "utf8",
   );
+}
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+}
+
+function initAndCommitMemory(memoryDir: string, message = "initial memory") {
+  git(memoryDir, ["init"]);
+  git(memoryDir, ["config", "user.email", "agent-local-test@letta.com"]);
+  git(memoryDir, ["config", "user.name", "Local Test"]);
+  git(memoryDir, ["add", "."]);
+  git(memoryDir, ["commit", "-m", message]);
+  return git(memoryDir, ["rev-parse", "HEAD"]);
 }
 
 function createBody(
@@ -384,6 +403,7 @@ describe("LocalBackend", () => {
         "Project memory",
         "Use local compiled memory.",
       );
+      initAndCommitMemory(memoryDir);
       let capturedSystem: string | undefined;
       const backend = new LocalBackend({
         storageDir,
@@ -430,6 +450,98 @@ describe("LocalBackend", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
       await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
+  test("initializes local MemFS from memory blocks with an initial commit", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-memfs-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      const agent = await backend.createAgent({
+        name: "MemFS Agent",
+        system: "base {CORE_MEMORY}",
+        memory_blocks: [
+          {
+            label: "persona",
+            value: "Committed persona.",
+            description: "Persona description",
+          },
+          {
+            label: "human",
+            value: "Committed human.",
+            description: "Human description",
+          },
+          {
+            label: "project/gotchas",
+            value: "Committed project gotcha.",
+            description: "Project gotchas",
+          },
+          {
+            label: "style",
+            value: "Committed style preference.",
+            description: "Style preferences",
+          },
+        ],
+      } as AgentCreateBody);
+      const memoryDir = getLocalBackendMemoryFilesystemRoot(
+        agent.id,
+        storageDir,
+      );
+
+      expect(git(memoryDir, ["rev-parse", "--verify", "HEAD"])).toHaveLength(
+        40,
+      );
+      expect(
+        await readFile(join(memoryDir, "system", "persona.md"), "utf8"),
+      ).toContain("Committed persona.");
+      expect(
+        await readFile(join(memoryDir, "system", "human.md"), "utf8"),
+      ).toContain("Committed human.");
+      expect(
+        await readFile(
+          join(memoryDir, "system", "project", "gotchas.md"),
+          "utf8",
+        ),
+      ).toContain("Committed project gotcha.");
+      expect(
+        await readFile(join(memoryDir, "system", "style.md"), "utf8"),
+      ).toContain("Committed style preference.");
+      expect(git(memoryDir, ["status", "--porcelain"])).toBe("");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("initializes local MemFS with an empty commit when no blocks are provided", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-empty-memfs-"),
+    );
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      const agent = await backend.createAgent({
+        name: "Empty MemFS Agent",
+        system: "base {CORE_MEMORY}",
+      } as AgentCreateBody);
+      const memoryDir = getLocalBackendMemoryFilesystemRoot(
+        agent.id,
+        storageDir,
+      );
+
+      expect(git(memoryDir, ["rev-parse", "--verify", "HEAD"])).toHaveLength(
+        40,
+      );
+      expect(git(memoryDir, ["log", "-1", "--pretty=%s"])).toBe(
+        "chore: initialize empty local memory",
+      );
+      expect(git(memoryDir, ["status", "--porcelain"])).toBe("");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
     }
   });
 
@@ -480,6 +592,77 @@ describe("LocalBackend", () => {
       expect(JSON.stringify(persistedPrompts)).not.toContain(
         "<available_skills>",
       );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("recompiles local system prompt when committed MemFS revision changes", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-memfs-revision-"),
+    );
+    try {
+      let capturedSystem = "";
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: (options) => {
+          capturedSystem = options.system ?? "";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+          };
+        },
+      });
+      const agent = await backend.createAgent({
+        name: "Revision Agent",
+        system: "base {CORE_MEMORY}",
+        model: "openai/gpt-test",
+        memory_blocks: [
+          {
+            label: "persona",
+            value: "First committed memory.",
+            description: "Persona",
+          },
+        ],
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first", agent.id),
+        ),
+      );
+      expect(capturedSystem).toContain("First committed memory.");
+
+      const memoryDir = getLocalBackendMemoryFilesystemRoot(
+        agent.id,
+        storageDir,
+      );
+      await writeMemoryFile(
+        memoryDir,
+        "system/persona.md",
+        "Persona",
+        "Second committed memory.",
+      );
+      git(memoryDir, ["add", "system/persona.md"]);
+      git(memoryDir, ["commit", "-m", "update memory"]);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second", agent.id),
+        ),
+      );
+      expect(capturedSystem).toContain("Second committed memory.");
+      expect(capturedSystem).not.toContain("First committed memory.");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

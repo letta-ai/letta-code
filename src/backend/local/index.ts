@@ -22,3 +22,8 @@ export {
   type StoredTurnInput,
 } from "./LocalStore";
 export type { ProviderStreamPart } from "./LocalStreamChunks";
+export {
+  getLocalBackendMemoryFilesystemRoot,
+  getLocalBackendStorageDir,
+  isLocalBackendEnvEnabled,
+} from "./paths";

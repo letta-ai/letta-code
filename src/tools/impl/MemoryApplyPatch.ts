@@ -14,8 +14,8 @@ import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
 import {
   assertMemoryRepoReadyForWrite,
   commitAndSyncMemoryWrite,
+  type MemoryWriteSyncMode,
 } from "../../agent/memoryGit";
-import { getClient } from "../../backend/api/client";
 import { validateRequiredParams } from "./validation";
 
 type ParsedPatchOp =
@@ -41,6 +41,11 @@ type ParsedPatchOp =
 
 interface Hunk {
   lines: string[];
+}
+
+async function getMemoryWriteSyncMode(): Promise<MemoryWriteSyncMode> {
+  const { getBackend } = await import("../../backend");
+  return getBackend().capabilities.localMemfs ? "local" : "remote";
 }
 
 interface ParsedMemoryFile {
@@ -86,8 +91,8 @@ async function getAgentIdentity(): Promise<{
 
   let agentName = "";
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const { getBackend } = await import("../../backend");
+    const agent = await getBackend().retrieveAgent(agentId);
     agentName = (agent.name || "").trim();
   } catch {
     // best-effort fallback below
@@ -119,7 +124,8 @@ export async function memory_apply_patch(
   ensureMemoryRepo(memoryDir);
 
   const { agentId, agentName } = await getAgentIdentity();
-  await assertMemoryRepoReadyForWrite(memoryDir, agentId);
+  const syncMode = await getMemoryWriteSyncMode();
+  await assertMemoryRepoReadyForWrite(memoryDir, agentId, { syncMode });
 
   const pathspecs = await applyMemoryPatch(memoryDir, input);
   if (pathspecs.length === 0) {
@@ -135,12 +141,15 @@ export async function memory_apply_patch(
       authorName: agentName.trim() || agentId,
       authorEmail: `${agentId}@letta.com`,
     },
+    syncMode,
     replay: async () => applyMemoryPatch(memoryDir, input),
   });
   if (!commitResult.committed) {
     return {
       message:
-        "memory_apply_patch made no effective changes; skipped commit and push.",
+        syncMode === "local"
+          ? "memory_apply_patch made no effective changes; skipped commit."
+          : "memory_apply_patch made no effective changes; skipped commit and push.",
     };
   }
 
@@ -158,7 +167,10 @@ export async function memory_apply_patch(
   }
 
   return {
-    message: `memory_apply_patch applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+    message:
+      syncMode === "local"
+        ? `memory_apply_patch committed locally (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`
+        : `memory_apply_patch applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
   };
 }
 

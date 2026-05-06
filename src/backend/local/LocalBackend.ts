@@ -1,5 +1,11 @@
 import type { LanguageModel } from "ai";
+import {
+  getMemoryHeadRevision,
+  type InitializeLocalMemoryRepoFile,
+  initializeLocalMemoryRepo,
+} from "../../agent/memoryGit";
 import type {
+  AgentCreateBody,
   BackendCapabilities,
   ConversationCreateBody,
   ConversationMessageCreateBody,
@@ -24,6 +30,7 @@ import type {
   LocalStoreOptions,
   StoredMessage,
 } from "./LocalStore";
+import { getLocalBackendMemoryFilesystemRoot } from "./paths";
 import {
   appendAvailableSkillsBlock,
   compileLocalSystemPrompt,
@@ -41,6 +48,71 @@ export interface LocalBackendOptions {
   createModel?: () => LanguageModel;
   streamText?: AISDKStreamTextFunction;
   memoryDir?: string;
+}
+
+function sanitizeFrontmatterValue(value: string): string {
+  return value.replace(/\r?\n/g, " ").trim();
+}
+
+function memoryBlockPath(label: string): string {
+  const normalized = label.trim().replace(/\\/g, "/").replace(/\.md$/, "");
+  if (normalized === "system" || normalized.startsWith("system/")) {
+    return `${normalized}.md`;
+  }
+  return `system/${normalized}.md`;
+}
+
+function renderInitialMemoryFile(input: {
+  label: string;
+  value: string;
+  description?: string | null;
+}): InitializeLocalMemoryRepoFile | null {
+  const relativePath = memoryBlockPath(input.label);
+  const segments = relativePath.split("/").filter(Boolean);
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+  const description =
+    typeof input.description === "string" && input.description.trim()
+      ? input.description.trim()
+      : `Memory block ${input.label}`;
+  return {
+    relativePath: segments.join("/"),
+    content: [
+      "---",
+      `description: ${sanitizeFrontmatterValue(description)}`,
+      "---",
+      input.value,
+    ].join("\n"),
+  };
+}
+
+function initialMemoryFilesFromCreateBody(
+  body: AgentCreateBody,
+): InitializeLocalMemoryRepoFile[] {
+  const bodyRecord = body as Record<string, unknown>;
+  const blocks = Array.isArray(bodyRecord.memory_blocks)
+    ? bodyRecord.memory_blocks
+    : [];
+  const files = new Map<string, InitializeLocalMemoryRepoFile>();
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") continue;
+    const record = block as Record<string, unknown>;
+    if (typeof record.label !== "string") continue;
+    const file = renderInitialMemoryFile({
+      label: record.label,
+      value: typeof record.value === "string" ? record.value : "",
+      description:
+        typeof record.description === "string" ? record.description : null,
+    });
+    if (file) files.set(file.relativePath, file);
+  }
+  return [...files.values()].sort((a, b) =>
+    a.relativePath.localeCompare(b.relativePath),
+  );
 }
 
 function createLocalExecutor(
@@ -71,6 +143,7 @@ export class LocalBackend extends HeadlessBackend {
   };
 
   private readonly memoryDir?: string;
+  private readonly storageDir: string;
 
   constructor(options: LocalBackendOptions) {
     const modelConfig = resolveLocalModelConfig();
@@ -96,6 +169,7 @@ export class LocalBackend extends HeadlessBackend {
         runMetadataBackend: "local",
       },
     );
+    this.storageDir = options.storageDir;
     this.memoryDir = options.memoryDir;
   }
 
@@ -106,7 +180,13 @@ export class LocalBackend extends HeadlessBackend {
   override async createAgent(
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
+    const [body] = args;
     const agent = await super.createAgent(...args);
+    await this.ensureLocalMemoryRepo(
+      agent.id,
+      initialMemoryFilesFromCreateBody(body),
+      agent.name ?? undefined,
+    );
     await this.compileAndMaybePersistSystemPrompt("default", agent.id, {
       dryRun: false,
     });
@@ -164,8 +244,24 @@ export class LocalBackend extends HeadlessBackend {
     return appendAvailableSkillsBlock(persisted.content, clientSkills);
   }
 
-  private memoryDirForAgent(_agentId: string): string | undefined {
-    return this.memoryDir ?? undefined;
+  private memoryDirForAgent(agentId: string): string {
+    return (
+      this.memoryDir ??
+      getLocalBackendMemoryFilesystemRoot(agentId, this.storageDir)
+    );
+  }
+
+  private async ensureLocalMemoryRepo(
+    agentId: string,
+    files: InitializeLocalMemoryRepoFile[] = [],
+    authorName?: string,
+  ): Promise<void> {
+    await initializeLocalMemoryRepo({
+      memoryDir: this.memoryDirForAgent(agentId),
+      agentId,
+      authorName,
+      files,
+    });
   }
 
   private async getOrCompileSystemPrompt(
@@ -178,7 +274,14 @@ export class LocalBackend extends HeadlessBackend {
       conversationId,
       agentId,
     );
-    if (existing?.rawSystemHash === hashRawSystemPrompt(agent.system)) {
+    const memfsRevision = await getMemoryHeadRevision(
+      this.memoryDirForAgent(agentId),
+    );
+    if (
+      existing?.rawSystemHash === hashRawSystemPrompt(agent.system) &&
+      memfsRevision !== null &&
+      existing.memfsRevision === memfsRevision
+    ) {
       return existing;
     }
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
@@ -193,6 +296,7 @@ export class LocalBackend extends HeadlessBackend {
     options: { dryRun: boolean; previousMessageCount?: number },
   ): Promise<LocalCompiledSystemPrompt> {
     const agent = this.store.retrieveAgentRecord(agentId);
+    await this.ensureLocalMemoryRepo(agentId, [], agent.name);
     const previousMessageCount =
       options.previousMessageCount ??
       this.store.listConversationMessages(conversationId, {
