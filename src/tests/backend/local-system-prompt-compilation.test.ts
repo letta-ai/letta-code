@@ -203,13 +203,15 @@ describe("local system prompt compilation", () => {
     ).toContain("compiled\n\n<available_skills>");
   });
 
-  test("uses local-only wording for the local MemFS prompt addon", async () => {
+  test("uses local-only wording for the local MemFS prompt", async () => {
     const prompt = await resolveAndBuildSystemPrompt("default", "local-memfs");
 
     expect(prompt).toContain("~/.letta/lc-local-backend/memfs/");
-    expect(prompt).toContain("Commit memory changes locally");
+    expect(prompt).toContain("Local backend MemFS is a local git repository");
+    expect(prompt).toContain("git commit");
     expect(prompt).not.toContain(
       "Changes you commit and push sync to the Letta server",
     );
+    expect(prompt).not.toContain("git push");
   });
 });

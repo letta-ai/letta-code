@@ -5,7 +5,7 @@ description: Manage git-backed memory repos. Load this skill when working with g
 
 # Git-Backed Memory Repos
 
-API-backed agents with the `git-memory-enabled` tag have their memory blocks stored in git repositories accessible via the Letta API. Local backend agents use a local-only MemFS repo under `~/.letta/lc-local-backend/memfs/<agent-id>/memory/` instead. Both modes use git for version control and external editing of agent memory; only API-backed MemFS has required pull/push sync with Letta.
+Agents with the `git-memory-enabled` tag have their memory blocks stored in git repositories accessible via the Letta API. This enables version control, collaboration, and external editing of agent memory.
 
 **Features:**
 - Stored in cloud (GCS)
@@ -25,8 +25,6 @@ When memfs is enabled, the Letta Code CLI automatically:
 6. Sets canonical local git identity (`letta.agentId`, `user.name`, `user.email`) so direct `git commit` from the agent's shell attributes correctly to the agent — not the operator's global git identity
 7. On subsequent startups: pulls latest changes, reconfigures credentials, hooks, and identity (self-healing)
 8. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
-
-For local backend MemFS, initialization is simpler: the CLI creates the local repo, installs the hooks, seeds the first commit from initial memory blocks (or creates an empty initial commit), and subsequent memory tools commit locally without pushing to a Letta remote.
 
 If any of these steps fail, you can replicate them manually using the sections below.
 
@@ -89,7 +87,7 @@ If the hook rejects a commit, read the error message — it tells you exactly wh
 
 ## Additional Memory-Repository Remote
 
-In addition to API-backed sync with the Letta server, you can push every commit to a second git remote — e.g. a private GitHub repo — so you have a backup or a copy you can browse with regular tools. For local backend MemFS this optional remote is the only push target; normal memory updates commit locally without a required remote push.
+In addition to pushing to the Letta server, you can push every commit to a second git remote — e.g. a private GitHub repo — so you have a backup or a copy you can browse with regular tools.
 
 **Via the slash command (recommended):**
 ```
