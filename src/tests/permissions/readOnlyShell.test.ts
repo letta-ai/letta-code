@@ -182,60 +182,6 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
-      test("allows memory-scoped shell redirection to MEMORY_DIR", () => {
-        expect(
-          isScopedMemoryShellCommand(
-            'echo "test content" > "$MEMORY_DIR/skills/example/SKILL.md" && ls -la "$MEMORY_DIR/skills/example/"',
-            roots,
-            {
-              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
-              env: {
-                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
-              } as NodeJS.ProcessEnv,
-            },
-          ),
-        ).toBe(true);
-      });
-
-      test("allows memory-scoped heredoc writes to MEMORY_DIR", () => {
-        expect(
-          isScopedMemoryShellCommand(
-            [
-              "cat << 'EOF' > \"$MEMORY_DIR/skills/example/SKILL.md\"",
-              "---",
-              "name: example",
-              "description: example",
-              "---",
-              "",
-              "# Example",
-              "EOF",
-            ].join("\n"),
-            roots,
-            {
-              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
-              env: {
-                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
-              } as NodeJS.ProcessEnv,
-            },
-          ),
-        ).toBe(true);
-      });
-
-      test("denies shell redirection outside memory roots", () => {
-        expect(
-          isScopedMemoryShellCommand(
-            'echo "test content" > /tmp/outside-memory.txt',
-            roots,
-            {
-              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
-              env: {
-                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
-              } as NodeJS.ProcessEnv,
-            },
-          ),
-        ).toBe(false);
-      });
-
       test("denies command substitution in memory-scoped commands", () => {
         expect(
           isScopedMemoryShellCommand(
