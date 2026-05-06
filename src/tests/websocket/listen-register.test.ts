@@ -33,6 +33,7 @@ describe("registerWithCloud", () => {
     expect(result).toEqual({
       connectionId: "conn-1",
       wsUrl: "wss://example.com",
+      supportsSplitStatusChannels: false,
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
@@ -58,6 +59,26 @@ describe("registerWithCloud", () => {
         nodeVersion: expect.any(String),
       },
     });
+  });
+
+  it("returns advertised split-channel support when present", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          connectionId: "conn-2",
+          wsUrl: "wss://example.com",
+          supportsSplitStatusChannels: true,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await registerWithCloud(
+      defaultOpts,
+      mockFetch as unknown as typeof fetch,
+    );
+
+    expect(result.supportsSplitStatusChannels).toBe(true);
   });
 
   it("throws with body message on non-OK response with JSON error", async () => {

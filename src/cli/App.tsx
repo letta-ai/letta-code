@@ -58,7 +58,7 @@ import {
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   ensureMemoryFilesystemDirs,
-  getMemoryFilesystemRoot,
+  getScopedMemoryFilesystemRoot,
 } from "../agent/memoryFilesystem";
 import { getStreamToolContextId, sendMessageStream } from "../agent/message";
 import {
@@ -2826,7 +2826,7 @@ export default function App({
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
   const memfsDirectory =
     memfsEnabled && agentId && agentId !== "loading"
-      ? getMemoryFilesystemRoot(agentId)
+      ? getScopedMemoryFilesystemRoot(agentId)
       : null;
   const statusLine = useConfigurableStatusLine({
     modelId: llmConfigRef.current?.model ?? null,
@@ -3950,9 +3950,24 @@ export default function App({
 
     memoryFilesystemInitializedRef.current = true;
 
-    // Git-backed memory: clone or pull on startup
+    // Git-backed memory: API-backed MemFS clones/pulls from the Letta remote.
+    // Local backend MemFS is already a local git repo under the local backend
+    // store, so startup only needs to ensure the repo exists.
     (async () => {
       try {
+        if (getBackend().capabilities.localMemfs) {
+          const { initializeLocalMemoryRepo } = await import(
+            "../agent/memoryGit"
+          );
+          await initializeLocalMemoryRepo({
+            memoryDir: getScopedMemoryFilesystemRoot(agentId),
+            agentId,
+            authorName: agentName ?? undefined,
+            files: [],
+          });
+          return;
+        }
+
         const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
           "../agent/memoryGit"
         );
@@ -3970,11 +3985,11 @@ export default function App({
         pendingGitReminderRef.current = {
           dirty: false,
           aheadOfRemote: false,
-          summary: `Git memory sync failed on startup: ${errMsg}\nMemory may be stale. Try running: git -C ~/.letta/agents/${agentId}/memory pull`,
+          summary: `Git memory sync failed on startup: ${errMsg}\nMemory may be stale. Try running: git -C ${getScopedMemoryFilesystemRoot(agentId)} pull`,
         };
       }
     })();
-  }, [agentId, loadingState, appendError]);
+  }, [agentId, agentName, loadingState, appendError]);
 
   // Set up fs.watch on the memory directory to detect external file edits.
   // When a change is detected, set a dirty flag — the actual conflict check
@@ -3989,7 +4004,7 @@ export default function App({
       try {
         const { watch } = await import("node:fs");
         const { existsSync } = await import("node:fs");
-        const memRoot = getMemoryFilesystemRoot(agentId);
+        const memRoot = getScopedMemoryFilesystemRoot(agentId);
         if (!existsSync(memRoot)) return;
 
         watcher = watch(memRoot, { recursive: true }, () => {
@@ -7319,6 +7334,7 @@ export default function App({
         const { isLettaCloud, enableMemfsIfCloud } = await import(
           "../agent/memoryFilesystem"
         );
+        const backend = getBackend();
         const willAutoEnableMemfs = await isLettaCloud();
 
         let effectiveModel = currentModelId || currentModelHandle || undefined;
@@ -7346,7 +7362,11 @@ export default function App({
         const { agent } = await createAgent({
           name,
           model: effectiveModel,
-          memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
+          memoryPromptMode: backend.capabilities.localMemfs
+            ? "local-memfs"
+            : willAutoEnableMemfs
+              ? "memfs"
+              : undefined,
         });
 
         // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
@@ -8022,7 +8042,7 @@ export default function App({
 
           if (settingsManager.isMemfsEnabled(agentId)) {
             try {
-              const memoryRoot = getMemoryFilesystemRoot(agentId);
+              const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
               const personaCandidates = [
                 join(memoryRoot, "system", "persona.md"),
                 join(memoryRoot, "memory", "system", "persona.md"),
@@ -8479,7 +8499,7 @@ export default function App({
                     memfsDirectory:
                       agentId !== "loading" &&
                       settingsManager.isMemfsEnabled(agentId)
-                        ? getMemoryFilesystemRoot(agentId)
+                        ? getScopedMemoryFilesystemRoot(agentId)
                         : null,
                     permissionMode: uiPermissionMode,
                     networkPhase,
@@ -10024,7 +10044,7 @@ export default function App({
             const enabled = settingsManager.isMemfsEnabled(agentId);
             let output: string;
             if (enabled) {
-              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               output = `Memory filesystem is enabled.\nPath: ${memoryDir}`;
             } else {
               output =
@@ -10080,6 +10100,30 @@ export default function App({
               return { submitted: true };
             }
 
+            if (getBackend().capabilities.localMemfs) {
+              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+              try {
+                const { initializeLocalMemoryRepo } = await import(
+                  "../agent/memoryGit"
+                );
+                await initializeLocalMemoryRepo({
+                  memoryDir,
+                  agentId,
+                  authorName: agentName ?? undefined,
+                  files: [],
+                });
+                cmd.finish(
+                  `Local backend MemFS is stored locally; no remote sync is required.\nPath: ${memoryDir}`,
+                  true,
+                );
+              } catch (error) {
+                const errorText =
+                  error instanceof Error ? error.message : String(error);
+                cmd.fail(`Failed: ${errorText}`);
+              }
+              return { submitted: true };
+            }
+
             updateMemorySyncCommand(
               cmdId,
               "Pulling latest memory from server...",
@@ -10116,7 +10160,7 @@ export default function App({
             setCommandRunning(true);
 
             try {
-              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               if (!existsSync(memoryDir)) {
                 updateMemorySyncCommand(
                   cmdId,
@@ -10133,11 +10177,25 @@ export default function App({
               );
               renameSync(memoryDir, backupDir);
 
-              ensureMemoryFilesystemDirs(agentId);
+              if (getBackend().capabilities.localMemfs) {
+                const { initializeLocalMemoryRepo } = await import(
+                  "../agent/memoryGit"
+                );
+                await initializeLocalMemoryRepo({
+                  memoryDir,
+                  agentId,
+                  authorName: agentName ?? undefined,
+                  files: [],
+                });
+              } else {
+                ensureMemoryFilesystemDirs(agentId);
+              }
 
               updateMemorySyncCommand(
                 cmdId,
-                `Memory filesystem reset.\nBackup moved to ${backupDir}\nRun \`/memfs sync\` to repopulate from API.`,
+                getBackend().capabilities.localMemfs
+                  ? `Memory filesystem reset.\nBackup moved to ${backupDir}\nInitialized a fresh local MemFS repo.`
+                  : `Memory filesystem reset.\nBackup moved to ${backupDir}\nRun \`/memfs sync\` to repopulate from API.`,
                 true,
                 msg,
               );
@@ -10158,6 +10216,13 @@ export default function App({
           }
 
           if (subcommand === "disable") {
+            if (getBackend().capabilities.localMemfs) {
+              cmd.fail(
+                "Disabling MemFS is not supported by the local backend.",
+              );
+              return { submitted: true };
+            }
+
             updateMemorySyncCommand(
               cmdId,
               "Disabling memory filesystem...",
@@ -10188,7 +10253,7 @@ export default function App({
 
               // 5. Move local memory dir to /tmp (backup, not delete)
               let backupInfo = "";
-              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               if (existsSync(memoryDir)) {
                 const backupDir = join(
                   tmpdir(),
@@ -10410,12 +10475,11 @@ export default function App({
               return { submitted: true };
             }
 
-            const memoryDir = getMemoryFilesystemRoot(agentId);
+            const memoryDir = getScopedMemoryFilesystemRoot(agentId);
             const parentMemory = await buildParentMemorySnapshot(memoryDir);
             const reflectionPrompt = buildReflectionSubagentPrompt({
               transcriptPath: autoPayload.payloadPath,
               memoryDir,
-              cwd: process.cwd(),
               parentMemory,
             });
 
@@ -10534,7 +10598,7 @@ export default function App({
 
             const { context: gitContext } = gatherInitGitContext();
             const memoryDir = settingsManager.isMemfsEnabled(agentId)
-              ? getMemoryFilesystemRoot(agentId)
+              ? getScopedMemoryFilesystemRoot(agentId)
               : undefined;
 
             const initMessage = buildInitMessage({
@@ -10580,7 +10644,7 @@ export default function App({
 
             const { context: gitContext } = gatherInitGitContext();
             const memoryDir = settingsManager.isMemfsEnabled(agentId)
-              ? getMemoryFilesystemRoot(agentId)
+              ? getScopedMemoryFilesystemRoot(agentId)
               : undefined;
 
             const doctorMessage = buildDoctorMessage({
@@ -10911,12 +10975,11 @@ ${SYSTEM_REMINDER_CLOSE}
             return false;
           }
 
-          const memoryDir = getMemoryFilesystemRoot(agentId);
+          const memoryDir = getScopedMemoryFilesystemRoot(agentId);
           const parentMemory = await buildParentMemorySnapshot(memoryDir);
           const reflectionPrompt = buildReflectionSubagentPrompt({
             transcriptPath: autoPayload.payloadPath,
             memoryDir,
-            cwd: process.cwd(),
             parentMemory,
           });
 
@@ -12459,6 +12522,22 @@ ${SYSTEM_REMINDER_CLOSE}
           }
 
           setCurrentPersonalityId(personalityId);
+
+          if (getBackend().capabilities.localMemfs) {
+            cmd.update({
+              output: "Recompiling local system prompt...",
+              phase: "running",
+            });
+            const currentConversationId = conversationIdRef.current;
+            await getBackend().recompileConversation(currentConversationId, {
+              agent_id: agentId,
+            });
+            cmd.finish(
+              `Personality swapped to ${personality.label}. Run \`/clear\` or \`/new\` to reset your message history for the personality to take full effect.`,
+              true,
+            );
+            return;
+          }
 
           // Wait for the remote block to pick up the git push
           cmd.update({

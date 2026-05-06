@@ -132,13 +132,19 @@ const UNSAFE_GIT_FLAGS = new Set([
 const SAFE_MEMORY_GIT_SUBCOMMANDS = new Set([
   "add",
   "commit",
+  "config",
+  "check-ignore",
+  "fetch",
   "push",
   "pull",
   "rebase",
+  "reset",
+  "restore",
   "status",
   "diff",
   "log",
   "show",
+  "show-ref",
   "branch",
   "tag",
   "remote",
@@ -161,6 +167,7 @@ const SAFE_MEMORY_COMMANDS = new Set([
   "find",
   "sort",
   "echo",
+  "printf",
   "wc",
   "split",
   "cd",
@@ -578,6 +585,389 @@ function isSafeEnvInvocation(
     }
 
     return isReadOnlyShellCommand(tokens.slice(index).join(" "), options);
+  }
+
+  return true;
+}
+
+function readRedirectTarget(
+  input: string,
+  pos: number,
+): { token: string; end: number } | null {
+  let cursor = pos;
+  while (cursor < input.length && /\s/.test(input[cursor] ?? "")) {
+    cursor += 1;
+  }
+  if (cursor >= input.length) {
+    return null;
+  }
+
+  const quote = input[cursor];
+  if (quote === "'" || quote === '"') {
+    let end = cursor + 1;
+    while (end < input.length) {
+      const ch = input[end];
+      if (quote === '"' && ch === "\\" && end + 1 < input.length) {
+        end += 2;
+        continue;
+      }
+      if (ch === quote) {
+        return { token: input.slice(cursor, end + 1), end: end + 1 };
+      }
+      end += 1;
+    }
+    return null;
+  }
+
+  let end = cursor;
+  while (end < input.length && !/[\s;|&><()`]/.test(input[end] ?? "")) {
+    end += 1;
+  }
+  if (end === cursor) {
+    return null;
+  }
+  return { token: input.slice(cursor, end), end };
+}
+
+function isScopedRedirectTarget(
+  token: string,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean {
+  const stripped = stripShellQuotes(token);
+  if (stripped === "/dev/null" || /^&\d+$/.test(stripped)) {
+    return true;
+  }
+  const resolved = normalizeScopePath(stripped, cwd, env, shellVars);
+  return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
+}
+
+function rewriteScopedMemoryRedirects(
+  input: string,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): string | null {
+  let rewritten = "";
+  let i = 0;
+  let quote: "single" | "double" | null = null;
+
+  while (i < input.length) {
+    const ch = input[i];
+    if (!ch) {
+      i += 1;
+      continue;
+    }
+
+    if (quote === "single") {
+      rewritten += ch;
+      if (ch === "'") quote = null;
+      i += 1;
+      continue;
+    }
+
+    if (quote === "double") {
+      if (ch === "\\" && i + 1 < input.length) {
+        rewritten += input.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (ch === "`" || input.startsWith("$(", i)) {
+        return null;
+      }
+      rewritten += ch;
+      if (ch === '"') quote = null;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "'") {
+      quote = "single";
+      rewritten += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      quote = "double";
+      rewritten += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "\\" && i + 1 < input.length) {
+      rewritten += input.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+
+    if (ch === "`" || input.startsWith("$(", i)) {
+      return null;
+    }
+
+    if (input.startsWith(">>", i) || ch === ">") {
+      const op = input.startsWith(">>", i) ? ">>" : ">";
+      const target = readRedirectTarget(input, i + op.length);
+      if (!target) {
+        return null;
+      }
+      if (
+        !isScopedRedirectTarget(target.token, cwd, allowedRoots, env, shellVars)
+      ) {
+        return null;
+      }
+      // Preserve shell shape but replace the target with /dev/null so the
+      // read-only shell splitter can continue to reject unsafe commands while
+      // tolerating this already-validated scoped write redirection.
+      rewritten += `${op} /dev/null`;
+      i = target.end;
+      continue;
+    }
+
+    rewritten += ch;
+    i += 1;
+  }
+
+  return rewritten;
+}
+
+function splitShellSegmentsAllowUnsafeRedirects(
+  input: string,
+): string[] | null {
+  const segments: string[] = [];
+  let current = "";
+  let i = 0;
+  let quote: "single" | "double" | null = null;
+
+  while (i < input.length) {
+    const ch = input[i];
+
+    if (!ch) {
+      i += 1;
+      continue;
+    }
+
+    if (quote === "single") {
+      current += ch;
+      if (ch === "'") {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (quote === "double") {
+      if (ch === "\\" && i + 1 < input.length) {
+        current += input.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (ch === "`" || input.startsWith("$(", i)) {
+        return null;
+      }
+      current += ch;
+      if (ch === '"') {
+        quote = null;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === "'") {
+      quote = "single";
+      current += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      quote = "double";
+      current += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "\\" && i + 1 < input.length) {
+      current += input.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+
+    if (ch === "`" || input.startsWith("$(", i)) {
+      return null;
+    }
+
+    if (input.startsWith("&&", i) || input.startsWith("||", i)) {
+      segments.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+
+    if (ch === ";" || ch === "|" || ch === "\n" || ch === "\r") {
+      segments.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    current += ch;
+    i += 1;
+  }
+
+  segments.push(current);
+  return segments.map((segment) => segment.trim()).filter(Boolean);
+}
+
+function extractHeredocWrite(segment: string): {
+  path: string;
+  delimiter: string;
+} | null {
+  const match = segment.match(
+    /^cat\s+(?:(?:>|>>)\s*(?<path1>"[^"]+"|'[^']+'|\S+)\s+<<-?\s*(?<delim1>"[^"]+"|'[^']+'|\S+)|<<-?\s*(?<delim2>"[^"]+"|'[^']+'|\S+)\s+(?:>|>>)\s*(?<path2>"[^"]+"|'[^']+'|\S+))\s*$/,
+  );
+  if (!match?.groups) {
+    return null;
+  }
+
+  const rawPath = match.groups.path1 || match.groups.path2;
+  const rawDelim = match.groups.delim1 || match.groups.delim2;
+  if (!rawPath || !rawDelim) {
+    return null;
+  }
+
+  const delimiter = stripShellQuotes(rawDelim);
+  if (!delimiter) {
+    return null;
+  }
+
+  return { path: stripShellQuotes(rawPath), delimiter };
+}
+
+function validateScopedSegments(
+  command: string,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): { safe: boolean; cwd: string | null } {
+  const scopedCommand = rewriteScopedMemoryRedirects(
+    command,
+    cwd,
+    allowedRoots,
+    env,
+    shellVars,
+  );
+  if (!scopedCommand) {
+    return { safe: false, cwd };
+  }
+
+  const segments = splitShellSegments(scopedCommand);
+  if (!segments || segments.length === 0) {
+    return { safe: false, cwd };
+  }
+
+  let nextCwd: string | null = cwd;
+  for (const segment of segments) {
+    const result = isAllowedMemorySegment(
+      segment,
+      nextCwd,
+      allowedRoots,
+      env,
+      shellVars,
+    );
+    if (!result.safe) {
+      return { safe: false, cwd: nextCwd };
+    }
+    nextCwd = result.nextCwd;
+  }
+
+  return { safe: true, cwd: nextCwd };
+}
+
+function isScopedHeredocMemoryCommand(
+  command: string,
+  initialCwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean | null {
+  const lines = command.split(/\r?\n/);
+  const firstLine = lines[0]?.trim() ?? "";
+  if (!firstLine) {
+    return null;
+  }
+
+  const firstLineSegments = splitShellSegmentsAllowUnsafeRedirects(firstLine);
+  if (!firstLineSegments) {
+    return false;
+  }
+
+  const heredocIndex = firstLineSegments.findIndex((segment) =>
+    Boolean(extractHeredocWrite(segment)),
+  );
+  if (heredocIndex === -1) {
+    return null;
+  }
+
+  if (firstLineSegments.slice(heredocIndex + 1).length > 0) {
+    return false;
+  }
+
+  let cwd: string | null = initialCwd;
+  if (heredocIndex > 0) {
+    const prefixResult = validateScopedSegments(
+      firstLineSegments.slice(0, heredocIndex).join(" && "),
+      cwd,
+      allowedRoots,
+      env,
+      shellVars,
+    );
+    if (!prefixResult.safe) {
+      return false;
+    }
+    cwd = prefixResult.cwd;
+  }
+
+  const heredoc = extractHeredocWrite(firstLineSegments[heredocIndex] ?? "");
+  if (!heredoc) {
+    return false;
+  }
+
+  const resolved = normalizeScopePath(heredoc.path, cwd, env, shellVars);
+  if (!resolved || !isPathWithinRoots(resolved, allowedRoots)) {
+    return false;
+  }
+
+  let terminatorLine = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if ((lines[i] ?? "") === heredoc.delimiter) {
+      terminatorLine = i;
+      break;
+    }
+  }
+  if (terminatorLine === -1) {
+    return false;
+  }
+
+  const trailingCommand = lines
+    .slice(terminatorLine + 1)
+    .join("\n")
+    .trim();
+  if (trailingCommand) {
+    const trailingResult = validateScopedSegments(
+      trailingCommand,
+      cwd,
+      allowedRoots,
+      env,
+      shellVars,
+    );
+    if (!trailingResult.safe) {
+      return false;
+    }
   }
 
   return true;
@@ -1094,6 +1484,129 @@ function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
   return false;
 }
 
+function isSafeMemoryGitConfig(tokens: string[], startIndex: number): boolean {
+  const args = tokens.slice(startIndex);
+  // Preserve main's behavior: memory-mode git config is allowed except for
+  // scopes that write outside the memory repo.
+  return !args.some((arg) => {
+    const lower = arg.toLowerCase();
+    return lower === "--global" || lower === "--system";
+  });
+}
+
+function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
+  // Permit fetching from configured remotes, but not arbitrary URL/refspecs.
+  const allowedFlags = new Set(["--prune", "--tags", "--quiet", "-q"]);
+  const args = tokens.slice(startIndex);
+  if (args.length === 0) {
+    return true;
+  }
+
+  let remoteCount = 0;
+  for (const arg of args) {
+    if (allowedFlags.has(arg)) {
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      return false;
+    }
+    // Remote names are local config aliases (usually "origin"). Disallow
+    // URL-like or path-like values so memory mode cannot fetch arbitrary URLs.
+    if (!/^[A-Za-z0-9._-]+$/.test(arg)) {
+      return false;
+    }
+    remoteCount += 1;
+    if (remoteCount > 1) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isSafeMemoryGitShowRef(tokens: string[], startIndex: number): boolean {
+  // Keep this intentionally narrow; the observed rollout need is plain
+  // `git show-ref` for local ref introspection.
+  return tokens.length === startIndex;
+}
+
+function isSafeMemoryGitCheckIgnore(
+  tokens: string[],
+  startIndex: number,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean {
+  const allowedFlags = new Set(["-v", "--verbose", "-q", "--quiet"]);
+  const paths: string[] = [];
+
+  for (let i = startIndex; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token) {
+      continue;
+    }
+    if (allowedFlags.has(token)) {
+      continue;
+    }
+    if (token === "--") {
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return false;
+    }
+    paths.push(token);
+  }
+
+  if (paths.length === 0) {
+    return false;
+  }
+
+  return paths.every((pathToken) => {
+    const resolved = normalizeScopePath(pathToken, cwd, env, shellVars);
+    return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
+  });
+}
+
+function isSafeMemoryGitRestore(
+  tokens: string[],
+  startIndex: number,
+  cwd: string | null,
+  allowedRoots: string[],
+  env: NodeJS.ProcessEnv,
+  shellVars: ScopedShellVars,
+): boolean {
+  let sawStaged = false;
+  const paths: string[] = [];
+
+  for (let i = startIndex; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token) {
+      continue;
+    }
+    if (token === "--staged") {
+      sawStaged = true;
+      continue;
+    }
+    if (token === "--") {
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return false;
+    }
+    paths.push(token);
+  }
+
+  if (!sawStaged || paths.length === 0) {
+    return false;
+  }
+
+  return paths.every((pathToken) => {
+    const resolved = normalizeScopePath(pathToken, cwd, env, shellVars);
+    return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
+  });
+}
+
 function parseScopedGitInvocation(
   tokens: string[],
   cwd: string | null,
@@ -1204,6 +1717,74 @@ function parseScopedGitInvocation(
     }
 
     if (subcommand === "rebase" && hasUnsafeRebaseOption(tokens, index + 1)) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (subcommand === "config" && !isSafeMemoryGitConfig(tokens, index + 1)) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (subcommand === "fetch" && !isSafeMemoryGitFetch(tokens, index + 1)) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (
+      subcommand === "show-ref" &&
+      !isSafeMemoryGitShowRef(tokens, index + 1)
+    ) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (
+      subcommand === "check-ignore" &&
+      !isSafeMemoryGitCheckIgnore(
+        tokens,
+        index + 1,
+        resolvedCwd,
+        allowedRoots,
+        env,
+        shellVars,
+      )
+    ) {
+      return {
+        subcommand,
+        worktreeSubcommand,
+        resolvedCwd,
+        isSafe: false,
+      };
+    }
+
+    if (
+      subcommand === "restore" &&
+      !isSafeMemoryGitRestore(
+        tokens,
+        index + 1,
+        resolvedCwd,
+        allowedRoots,
+        env,
+        shellVars,
+      )
+    ) {
       return {
         subcommand,
         worktreeSubcommand,
@@ -1386,35 +1967,32 @@ export function isScopedMemoryShellCommand(
     return false;
   }
 
-  const segments = splitShellSegments(trimmed);
-  if (!segments) {
-    return false;
-  }
-  if (segments.length === 0) {
-    return false;
-  }
-
   const env = options.env ?? process.env;
   const shellVars: ScopedShellVars = {};
   const initialCwd = options.workingDirectory
     ? normalizeScopePath(options.workingDirectory, null, env, shellVars)
     : null;
-  let cwd: string | null = initialCwd;
-  for (const segment of segments) {
-    const result = isAllowedMemorySegment(
-      segment,
-      cwd,
+
+  if (trimmed.includes("<<")) {
+    const heredocResult = isScopedHeredocMemoryCommand(
+      trimmed,
+      initialCwd,
       allowedRoots,
       env,
       shellVars,
     );
-    if (!result.safe) {
-      return false;
+    if (heredocResult !== null) {
+      return heredocResult;
     }
-    cwd = result.nextCwd;
   }
 
-  return true;
+  return validateScopedSegments(
+    trimmed,
+    initialCwd,
+    allowedRoots,
+    env,
+    shellVars,
+  ).safe;
 }
 
 /**

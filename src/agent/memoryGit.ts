@@ -23,13 +23,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { getClient } from "../backend/api/client";
 import {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
 } from "../backend/api/memfs-git-proxy";
+import {
+  getLocalBackendMemoryFilesystemRoot,
+  isLocalBackendEnvEnabled,
+} from "../backend/local/paths";
 import { debugLog, debugWarn } from "../utils/debug";
 
 const execFile = promisify(execFileCb);
@@ -61,7 +65,10 @@ export interface CommitAndSyncMemoryWriteParams {
   reason: string;
   author: MemoryCommitAuthor;
   replay?: () => Promise<string[]>;
+  syncMode?: MemoryWriteSyncMode;
 }
+
+export type MemoryWriteSyncMode = "remote" | "local";
 
 export interface CommitAndSyncMemoryWriteResult {
   committed: boolean;
@@ -79,6 +86,12 @@ export function getAgentRootDir(agentId: string): string {
 /** Get the git repo directory for memory (now ~/.letta/agents/{id}/memory/) */
 export function getMemoryRepoDir(agentId: string): string {
   return join(getAgentRootDir(agentId), "memory");
+}
+
+function getMemoryRepositoryRepoDir(agentId: string): string {
+  return isLocalBackendEnvEnabled()
+    ? getLocalBackendMemoryFilesystemRoot(agentId)
+    : getMemoryRepoDir(agentId);
 }
 
 /**
@@ -851,7 +864,7 @@ const MEMORY_REPOSITORY_PUSH_LOG = "memory-repository-push.log";
 export async function getMemoryRepositoryUrl(
   agentId: string,
 ): Promise<string | null> {
-  const dir = getMemoryRepoDir(agentId);
+  const dir = getMemoryRepositoryRepoDir(agentId);
   if (!existsSync(join(dir, ".git"))) {
     return null;
   }
@@ -867,7 +880,7 @@ export async function setMemoryRepositoryUrl(
   agentId: string,
   url: string,
 ): Promise<void> {
-  const dir = getMemoryRepoDir(agentId);
+  const dir = getMemoryRepositoryRepoDir(agentId);
   if (!existsSync(join(dir, ".git"))) {
     throw new Error(
       `Memory repo not initialized for ${agentId} — cannot configure memory-repository endpoint.`,
@@ -879,7 +892,7 @@ export async function setMemoryRepositoryUrl(
 
 /** Remove the memory-repository URL configuration for this agent. */
 export async function unsetMemoryRepositoryUrl(agentId: string): Promise<void> {
-  const dir = getMemoryRepoDir(agentId);
+  const dir = getMemoryRepositoryRepoDir(agentId);
   if (!existsSync(join(dir, ".git"))) {
     return;
   }
@@ -901,7 +914,7 @@ export interface MemoryRepositoryPushResult {
 export async function pushToMemoryRepository(
   agentId: string,
 ): Promise<MemoryRepositoryPushResult> {
-  const dir = getMemoryRepoDir(agentId);
+  const dir = getMemoryRepositoryRepoDir(agentId);
   const url = await getMemoryRepositoryUrl(agentId);
   if (!url) {
     return {
@@ -975,7 +988,7 @@ export function readMemoryRepositoryPushLog(
   tailLines: number = 20,
 ): string {
   const logPath = join(
-    getMemoryRepoDir(agentId),
+    getMemoryRepositoryRepoDir(agentId),
     ".git",
     MEMORY_REPOSITORY_PUSH_LOG,
   );
@@ -1012,6 +1025,21 @@ async function prepareMemoryRepoForGitOps(
   installPreCommitHook(memoryDir);
   installPostCommitHook(memoryDir);
   await ensureLocalMemfsGitConfig(memoryDir, agentId);
+}
+
+async function prepareLocalOnlyMemoryRepoForGitOps(
+  memoryDir: string,
+  author: MemoryCommitAuthor,
+): Promise<void> {
+  installPreCommitHook(memoryDir);
+  installPostCommitHook(memoryDir);
+  await setLocalGitConfig(memoryDir, "letta.agentId", author.agentId);
+  await setLocalGitConfig(memoryDir, "user.email", author.authorEmail);
+  await setLocalGitConfig(
+    memoryDir,
+    "user.name",
+    author.authorName.trim() || "Letta Agent",
+  );
 }
 
 async function stageMemoryPaths(
@@ -1259,7 +1287,9 @@ async function recoverMemoryPushConflict(
 export async function assertMemoryRepoReadyForWrite(
   memoryDir: string,
   agentId?: string,
+  options: { syncMode?: MemoryWriteSyncMode } = {},
 ): Promise<void> {
+  const syncMode = options.syncMode ?? "remote";
   const status = await runGit(memoryDir, ["status", "--porcelain"]);
   if (status.stdout.trim().length > 0) {
     throw new Error(
@@ -1267,9 +1297,13 @@ export async function assertMemoryRepoReadyForWrite(
     );
   }
 
-  if (agentId) {
+  if (syncMode === "remote" && agentId) {
     const token = await getAuthToken();
     await pushCleanPendingMemoryCommitsForWrite(memoryDir, agentId, token);
+  }
+
+  if (syncMode === "local") {
+    return;
   }
 
   try {
@@ -1295,6 +1329,16 @@ export async function commitAndSyncMemoryWrite(
   const normalizedPathspecs = normalizePathspecs(params.pathspecs);
   if (normalizedPathspecs.length === 0) {
     return { committed: false };
+  }
+
+  if (params.syncMode === "local") {
+    await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, params.author);
+    return commitMemoryPaths(
+      params.memoryDir,
+      normalizedPathspecs,
+      params.reason,
+      params.author,
+    );
   }
 
   const token = await getAuthToken();
@@ -1332,6 +1376,106 @@ export async function commitAndSyncMemoryWrite(
 /** Check if the memory directory is a git repo */
 export function isGitRepo(agentId: string): boolean {
   return existsSync(join(getMemoryRepoDir(agentId), ".git"));
+}
+
+export interface InitializeLocalMemoryRepoFile {
+  relativePath: string;
+  content: string;
+}
+
+export interface InitializeLocalMemoryRepoParams {
+  memoryDir: string;
+  agentId: string;
+  authorName?: string;
+  files: InitializeLocalMemoryRepoFile[];
+}
+
+async function hasMemoryHead(memoryDir: string): Promise<boolean> {
+  try {
+    await runGit(memoryDir, ["rev-parse", "--verify", "HEAD"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function getMemoryHeadRevision(
+  memoryDir: string,
+): Promise<string | null> {
+  try {
+    const { stdout } = await runGit(memoryDir, [
+      "rev-parse",
+      "--verify",
+      "HEAD",
+    ]);
+    const revision = stdout.trim();
+    return revision.length > 0 ? revision : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function initializeLocalMemoryRepo(
+  params: InitializeLocalMemoryRepoParams,
+): Promise<void> {
+  mkdirSync(params.memoryDir, { recursive: true });
+
+  if (!existsSync(join(params.memoryDir, ".git"))) {
+    await runGit(params.memoryDir, ["init"]);
+    await runGit(params.memoryDir, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+  }
+
+  const author: MemoryCommitAuthor = {
+    agentId: params.agentId,
+    authorName: params.authorName?.trim() || "Letta Agent",
+    authorEmail: `${params.agentId}@letta.com`,
+  };
+  await prepareLocalOnlyMemoryRepoForGitOps(params.memoryDir, author);
+
+  if (await hasMemoryHead(params.memoryDir)) {
+    return;
+  }
+
+  const pathspecs: string[] = [];
+  for (const file of params.files) {
+    const relativePath = file.relativePath.replace(/\\/g, "/");
+    const segments = relativePath.split("/").filter(Boolean);
+    if (
+      !relativePath ||
+      relativePath.startsWith("/") ||
+      segments.length === 0 ||
+      segments.some((segment) => segment === "." || segment === "..")
+    ) {
+      continue;
+    }
+    const fullPath = join(params.memoryDir, relativePath);
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, file.content, "utf8");
+    pathspecs.push(relativePath);
+  }
+
+  if (pathspecs.length > 0) {
+    const commit = await commitMemoryPaths(
+      params.memoryDir,
+      pathspecs,
+      "chore: initialize local memory",
+      author,
+    );
+    if (commit.committed) {
+      return;
+    }
+  }
+
+  await runGit(params.memoryDir, [
+    "-c",
+    `user.name=${author.authorName}`,
+    "-c",
+    `user.email=${author.authorEmail}`,
+    "commit",
+    "--allow-empty",
+    "-m",
+    "chore: initialize empty local memory",
+  ]);
 }
 
 /**

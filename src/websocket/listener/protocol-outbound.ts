@@ -573,6 +573,21 @@ export function setLoopStatus(
   emitLoopStatusIfOpen(runtime, scope);
 }
 
+/** Message types that belong on the stream channel.
+ *  These are high-frequency runtime emissions that should be separated
+ *  from control/command-response traffic on the control channel. */
+const STREAM_CHANNEL_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  "stream_delta",
+  "update_device_status",
+  "update_loop_status",
+  "update_queue",
+  "update_subagent_state",
+]);
+
+function isStreamChannelMessage(type: string): boolean {
+  return STREAM_CHANNEL_MESSAGE_TYPES.has(type);
+}
+
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -585,10 +600,20 @@ export function emitProtocolV2Message(
     conversation_id?: string | null;
   },
 ): void {
-  if (!isListenerTransportOpen(socket)) {
+  const listener = getListenerRuntime(runtime);
+
+  // Route stream-type messages to the stream transport when available.
+  // Falls back to the control socket if the stream transport is not open.
+  let targetSocket: ListenerTransport = socket;
+  if (listener?.streamTransport && isStreamChannelMessage(message.type)) {
+    if (isListenerTransportOpen(listener.streamTransport)) {
+      targetSocket = listener.streamTransport;
+    }
+  }
+
+  if (!isListenerTransportOpen(targetSocket)) {
     return;
   }
-  const listener = getListenerRuntime(runtime);
   const runtimeScope = resolveRuntimeScope(
     listener,
     getScopeForRuntime(runtime, scope),
@@ -615,16 +640,16 @@ export function emitProtocolV2Message(
     const stringifyMs = perfEnabled
       ? performance.now() - stringifyStartedAt
       : 0;
-    const bufferedBefore = perfEnabled ? socket.bufferedAmount : 0;
+    const bufferedBefore = perfEnabled ? targetSocket.bufferedAmount : 0;
     const sendStartedAt = perfEnabled ? performance.now() : 0;
-    socket.send(payload);
+    targetSocket.send(payload);
     if (perfEnabled) {
       recordProtocolPerfTelemetry(getProtocolPerfKey(message), {
         bytes: Buffer.byteLength(payload),
         stringifyMs,
         sendMs: performance.now() - sendStartedAt,
         bufferedBefore,
-        bufferedAfter: socket.bufferedAmount,
+        bufferedAfter: targetSocket.bufferedAmount,
       });
     }
   } catch (error) {

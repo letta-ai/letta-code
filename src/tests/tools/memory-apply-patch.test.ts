@@ -87,6 +87,14 @@ mock.module("../../backend/api/client", () => ({
 const { memory_apply_patch } = await import(
   "../../tools/impl/MemoryApplyPatch"
 );
+const { __testSetBackend } = await import("../../backend");
+const { LocalBackend } = await import("../../backend/local");
+const { getLocalBackendMemoryFilesystemRoot } = await import(
+  "../../backend/local/paths"
+);
+const { getToolSchema, loadSpecificTools } = await import(
+  "../../tools/manager"
+);
 
 function runScopedMemoryApplyPatch(
   args: Parameters<typeof memory_apply_patch>[0],
@@ -163,6 +171,8 @@ describe("memory_apply_patch tool", () => {
   });
 
   afterEach(async () => {
+    __testSetBackend(null);
+
     if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = originalMemoryDir;
 
@@ -237,6 +247,123 @@ describe("memory_apply_patch tool", () => {
     expect(subject).toBe("Refine contacts memory via patch");
     expect(authorName).toBe(TEST_AGENT_NAME);
     expect(authorEmail).toBe(`${TEST_AGENT_ID}@letta.com`);
+  });
+
+  test("commits locally without requiring a remote for local backend MemFS", async () => {
+    await runGit(memoryDir, ["remote", "remove", "origin"]);
+    __testSetBackend(
+      new LocalBackend({
+        storageDir: join(tempRoot, "local-store"),
+        executionMode: "deterministic",
+      }),
+    );
+
+    const result = await runScopedMemoryApplyPatch({
+      reason: "Create local-only memory",
+      input: [
+        "*** Begin Patch",
+        "*** Add File: system/local.md",
+        "+---",
+        "+description: Local memory",
+        "+---",
+        "+Local-only memory",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    expect(result.message).toContain("committed locally");
+    expect(await runGit(memoryDir, ["show", "HEAD:system/local.md"])).toContain(
+      "Local-only memory",
+    );
+    await expect(
+      runGit(memoryDir, ["remote", "get-url", "origin"]),
+    ).rejects.toThrow();
+  });
+
+  test("uses local backend agent name as the local MemFS commit author", async () => {
+    const originalLocalBackendFlag =
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+    const storageDir = join(tempRoot, "local-store");
+    const backend = new LocalBackend({
+      storageDir,
+      executionMode: "deterministic",
+    });
+
+    try {
+      const agent = await backend.createAgent({
+        name: "Letta-Chan",
+      } as Parameters<InstanceType<typeof LocalBackend>["createAgent"]>[0]);
+      __testSetBackend(backend);
+
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "true";
+      process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+      delete process.env.AGENT_NAME;
+
+      const localMemoryDir = getLocalBackendMemoryFilesystemRoot(
+        agent.id,
+        storageDir,
+      );
+      process.env.MEMORY_DIR = localMemoryDir;
+
+      await runWithRuntimeContext({ agentId: agent.id }, () =>
+        memory_apply_patch({
+          reason: "remember user name",
+          input: [
+            "*** Begin Patch",
+            "*** Add File: system/user.md",
+            "+---",
+            "+description: User identity",
+            "+---",
+            "+The user's name is Charles.",
+            "*** End Patch",
+          ].join("\n"),
+        }),
+      );
+
+      const logOutput = await runGit(localMemoryDir, [
+        "log",
+        "-1",
+        "--pretty=format:%s%n%an%n%ae",
+      ]);
+      const [subject, authorName, authorEmail] = logOutput.split("\n");
+      expect(subject).toBe("remember user name");
+      expect(authorName).toBe("Letta-Chan");
+      expect(authorEmail).toBe(`${agent.id}@letta.com`);
+    } finally {
+      if (originalLocalBackendFlag === undefined) {
+        delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+      } else {
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
+      }
+
+      if (originalLocalBackendDir === undefined) {
+        delete process.env.LETTA_LOCAL_BACKEND_DIR;
+      } else {
+        process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+      }
+    }
+  });
+
+  test("uses local-only wording for memory tool descriptions on local backend", async () => {
+    __testSetBackend(
+      new LocalBackend({
+        storageDir: join(tempRoot, "local-store"),
+        executionMode: "deterministic",
+      }),
+    );
+
+    await loadSpecificTools(["memory", "memory_apply_patch"]);
+
+    expect(getToolSchema("memory")?.description).toContain(
+      "automatically commits changes locally",
+    );
+    expect(getToolSchema("memory_apply_patch")?.description).toContain(
+      "automatically commit the change locally",
+    );
+    expect(getToolSchema("memory_apply_patch")?.description).not.toContain(
+      "Pushes to remote",
+    );
   });
 
   test("prefers scoped agent memory over stale MEMORY_DIR env", async () => {

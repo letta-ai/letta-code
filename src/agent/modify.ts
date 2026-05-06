@@ -405,8 +405,9 @@ export async function updateAgentSystemPrompt(
     const { settingsManager } = await import("../settings-manager");
 
     const backend = getBackend();
-    const memoryMode =
-      settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
+    const memoryMode = backend.capabilities.localMemfs
+      ? "local-memfs"
+      : settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
         ? "memfs"
         : "standard";
 

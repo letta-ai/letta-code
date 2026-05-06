@@ -18,6 +18,15 @@ describe("reflection auto-launch wiring", () => {
     expect(appSource).toContain("buildAutoReflectionPayload(");
     expect(appSource).toContain("finalizeAutoReflectionPayload(");
     expect(appSource).toContain("spawnBackgroundSubagentTask({");
+    const reflectionPromptBlocks = [
+      ...appSource.matchAll(
+        /buildReflectionSubagentPrompt\(\{[\s\S]*?\n\s*\}\);/g,
+      ),
+    ].map((match) => match[0]);
+    expect(reflectionPromptBlocks.length).toBeGreaterThanOrEqual(2);
+    expect(reflectionPromptBlocks.some((block) => block.includes("cwd:"))).toBe(
+      false,
+    );
     expect(appSource).toContain("maybeLaunchReflectionSubagent,");
 
     expect(engineSource).toContain(

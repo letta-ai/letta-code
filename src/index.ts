@@ -19,6 +19,11 @@ import {
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
+import {
+  buildCreateAgentOptionsForPersonality,
+  resolvePersonalityId,
+} from "./agent/personality";
+import type { MemoryPromptMode } from "./agent/promptAssets";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { getBackend, isExperimentalLocalBackendEnabled } from "./backend";
@@ -524,6 +529,7 @@ async function main(): Promise<void> {
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
+  const personalityInput = values.personality ?? undefined;
   const memoryBlocksJson = values["memory-blocks"] ?? undefined;
   const specifiedToolset = values.toolset ?? undefined;
   const skillsDirectory = values.skills ?? undefined;
@@ -605,6 +611,26 @@ async function main(): Promise<void> {
   }
 
   const baseTools = parseCsvListFlag(baseToolsRaw);
+
+  const personality = personalityInput
+    ? resolvePersonalityId(personalityInput)
+    : null;
+  if (personalityInput && !personality) {
+    console.error(
+      `Error: Unknown personality "${personalityInput}". Valid: letta-code, linus, kawaii, claude, codex`,
+    );
+    process.exit(1);
+  }
+  if (personalityInput && !forceNew) {
+    console.error("Error: --personality can only be used with --new-agent");
+    process.exit(1);
+  }
+  if (personalityInput && (memoryBlocksJson || initBlocksRaw)) {
+    console.error(
+      "Error: --personality cannot be combined with --memory-blocks or --init-blocks",
+    );
+    process.exit(1);
+  }
 
   // Validate toolset if provided
   if (
@@ -1701,13 +1727,24 @@ async function main(): Promise<void> {
           const { isLettaCloud } = await import("./agent/memoryFilesystem");
           const willAutoEnableMemfs =
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
-          const effectiveMemoryMode =
-            requestedMemoryPromptMode ??
-            (willAutoEnableMemfs ? "memfs" : undefined);
+          const effectiveMemoryMode: MemoryPromptMode | undefined = backend
+            .capabilities.localMemfs
+            ? "local-memfs"
+            : (requestedMemoryPromptMode ??
+              (willAutoEnableMemfs ? "memfs" : undefined));
 
-          const updateArgs = getModelUpdateArgs(effectiveModel);
+          const personalityOptions = personality
+            ? await buildCreateAgentOptionsForPersonality({
+                personalityId: personality,
+                model: effectiveModel,
+              })
+            : undefined;
+          const modelForUpdateArgs =
+            personalityOptions?.model ?? effectiveModel;
+          const updateArgs = getModelUpdateArgs(modelForUpdateArgs);
           const result = await createAgent({
-            model: effectiveModel,
+            ...(personalityOptions ?? {}),
+            model: modelForUpdateArgs,
             updateArgs,
             skillsDirectory,
             parallelToolCalls: true,
@@ -1798,6 +1835,15 @@ async function main(): Promise<void> {
               }),
             )
           : Promise.resolve().then(() => {
+              if (backend.capabilities.localMemfs) {
+                if (noMemfsFlag) {
+                  throw new Error(
+                    "Disabling MemFS is not supported by the local backend.",
+                  );
+                }
+                settingsManager.setMemfsEnabled(agentId, true);
+                return { action: "enabled" };
+              }
               if (memfsFlag) {
                 throw new Error(
                   "MemFS is not supported by the active backend.",

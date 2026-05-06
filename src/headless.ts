@@ -36,6 +36,11 @@ import {
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
+import {
+  buildCreateAgentOptionsForPersonality,
+  resolvePersonalityId,
+} from "./agent/personality";
+import type { MemoryPromptMode } from "./agent/promptAssets";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -585,6 +590,7 @@ export async function handleHeadlessCommand(
   const forceNew = values["new-agent"];
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
+  const personalityInput = values.personality;
   const embeddingModel = values.embedding;
   const memoryBlocksJson = values["memory-blocks"];
   const blockValueArgs = values["block-value"];
@@ -856,6 +862,26 @@ export async function handleHeadlessCommand(
 
   const baseTools = parseCsvListFlag(baseToolsRaw);
 
+  const personality = personalityInput
+    ? resolvePersonalityId(personalityInput)
+    : null;
+  if (personalityInput && !personality) {
+    console.error(
+      `Error: Unknown personality "${personalityInput}". Valid: letta-code, linus, kawaii, claude, codex`,
+    );
+    process.exit(1);
+  }
+  if (personalityInput && !forceNew) {
+    console.error("Error: --personality can only be used with --new-agent");
+    process.exit(1);
+  }
+  if (personalityInput && (memoryBlocksJson !== undefined || initBlocksRaw)) {
+    console.error(
+      "Error: --personality cannot be combined with --memory-blocks or --init-blocks",
+    );
+    process.exit(1);
+  }
+
   // Validate system prompt options (--system and --system-custom are mutually exclusive)
   if (systemPromptPreset && systemCustom) {
     console.error(
@@ -1018,18 +1044,30 @@ export async function handleHeadlessCommand(
 
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
-    const updateArgs = getModelUpdateArgs(model);
     // Pre-determine memfs mode so the agent is created with the correct prompt.
     const { isLettaCloud } = await import("./agent/memoryFilesystem");
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs &&
       shouldAutoEnableMemfsForNewAgent &&
       (await isLettaCloud());
-    const effectiveMemoryMode =
-      requestedMemoryPromptMode ?? (willAutoEnableMemfs ? "memfs" : undefined);
+    const effectiveMemoryMode: MemoryPromptMode | undefined = backend
+      .capabilities.localMemfs
+      ? "local-memfs"
+      : (requestedMemoryPromptMode ??
+        (willAutoEnableMemfs ? "memfs" : undefined));
 
+    const personalityOptions = personality
+      ? await buildCreateAgentOptionsForPersonality({
+          personalityId: personality,
+          model,
+          tags,
+        })
+      : undefined;
+    const modelForUpdateArgs = personalityOptions?.model ?? model;
+    const updateArgs = getModelUpdateArgs(modelForUpdateArgs);
     const createOptions = {
-      model,
+      ...(personalityOptions ?? {}),
+      model: modelForUpdateArgs,
       embeddingModel,
       updateArgs,
       skillsDirectory,
@@ -1039,9 +1077,9 @@ export async function handleHeadlessCommand(
       memoryPromptMode: effectiveMemoryMode,
       initBlocks,
       baseTools,
-      memoryBlocks,
+      memoryBlocks: personalityOptions?.memoryBlocks ?? memoryBlocks,
       blockValues,
-      tags,
+      tags: personalityOptions?.tags ?? tags,
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
@@ -1172,7 +1210,13 @@ export async function handleHeadlessCommand(
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
   if (!backend.capabilities.remoteMemfs) {
-    if (noMemfsFlag) {
+    if (backend.capabilities.localMemfs) {
+      if (noMemfsFlag) {
+        console.error("Disabling MemFS is not supported by the local backend.");
+        process.exit(1);
+      }
+      settingsManager.setMemfsEnabled(agent.id, true);
+    } else if (noMemfsFlag) {
       settingsManager.setMemfsEnabled(agent.id, false);
     }
   } else if (memfsStartupPolicy === "skip") {

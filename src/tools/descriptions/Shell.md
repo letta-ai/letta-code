@@ -40,17 +40,16 @@ Important notes:
 - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
 - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
 - If there are no changes to commit (i.e., no untracked files and no modifications), do not create an empty commit
-- In order to ensure good formatting, ALWAYS pass the commit message via a HEREDOC, a la this example:
+- In order to ensure good formatting, ALWAYS pass the commit message as a single-quoted string with embedded newlines, a la this example:
 <example>
-git commit -m "$(cat <<'EOF'
-   Commit message here.
+git commit -m 'Commit message here.
 
-   👾 Generated with [Letta Code](https://letta.com)
+👾 Generated with [Letta Code](https://letta.com)
 
-   Co-Authored-By: Letta Code <noreply@letta.com>
-   EOF
-   )"
+Co-Authored-By: Letta Code <noreply@letta.com>'
 </example>
+
+Use single quotes (not double quotes) and do NOT wrap the message in `$(...)` or backticks — single-quoting preserves the message verbatim (including `$VAR`, backticks, and other special characters) without needing escapes.
 
 # Creating pull requests
 Use the gh command for ALL GitHub-related tasks including working with issues, pull requests, checks, and releases. If given a Github URL use the gh command to get the information needed.
@@ -66,18 +65,15 @@ IMPORTANT: When the user asks you to create a pull request, follow these steps c
 3. Run the following commands in parallel:
    - Create new branch if needed
    - Push to remote with -u flag if needed
-   - Create PR using gh pr create with the format below. Use a HEREDOC to pass the body to ensure correct formatting.
+   - Create PR using gh pr create with the format below. Pass the body as a single-quoted string with embedded newlines (do NOT wrap it in `$(...)` or backticks).
 <example>
-gh pr create --title "the pr title" --body "$(cat <<'EOF'
-## Summary
+gh pr create --title "the pr title" --body '## Summary
 <1-3 bullet points>
 
 ## Test plan
 [Bulleted markdown checklist of TODOs for testing the pull request...]
 
-👾 Generated with [Letta Code](https://letta.com)
-EOF
-)"
+👾 Generated with [Letta Code](https://letta.com)'
 </example>
 
 Important:

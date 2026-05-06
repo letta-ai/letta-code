@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import {
+  getMemoryFilesystemRoot,
+  resolveScopedMemoryDir,
+} from "../../agent/memoryFilesystem";
 import { getServerUrl } from "../../backend/api/client";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
@@ -314,14 +317,38 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.AGENT_ID = agentId;
 
     try {
-      if (settingsManager.isMemfsEnabled(agentId)) {
-        const memoryDir = getMemoryFilesystemRoot(agentId);
+      if (
+        settingsManager.isMemfsEnabled(agentId) ||
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true"
+      ) {
+        const memoryDir = resolveScopedMemoryDir({ agentId });
+        if (!memoryDir) {
+          throw new Error("Unable to resolve memory directory");
+        }
         env.LETTA_MEMORY_DIR = memoryDir;
         env.MEMORY_DIR = memoryDir;
       } else {
-        // Clear inherited/stale memory-dir vars for non-memfs agents.
-        delete env.LETTA_MEMORY_DIR;
-        delete env.MEMORY_DIR;
+        const inheritedMemoryDir = process.env.MEMORY_DIR?.trim();
+        const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
+        const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
+        const inheritedParentMemoryDir = parentAgentId
+          ? getMemoryFilesystemRoot(parentAgentId)
+          : null;
+
+        if (
+          inheritedMemoryDir &&
+          inheritedParentMemoryDir &&
+          path.resolve(inheritedMemoryDir) ===
+            path.resolve(inheritedParentMemoryDir)
+        ) {
+          env.MEMORY_DIR = inheritedMemoryDir;
+          env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;
+        } else {
+          // Clear inherited/stale memory-dir vars for non-memfs agents.
+          delete env.LETTA_MEMORY_DIR;
+          delete env.MEMORY_DIR;
+        }
       }
     } catch {
       // Settings may not be initialized in tests/startup; preserve inherited values.

@@ -7,6 +7,7 @@ import humanLinusPrompt from "./prompts/human_linus.mdx";
 import humanMemoPrompt from "./prompts/human_memo.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaMemfsPrompt from "./prompts/letta.md";
+import lettaLocalMemfsPrompt from "./prompts/letta_local_memfs.md";
 import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
@@ -57,6 +58,7 @@ export interface SystemPromptOption {
   description: string;
   content: string;
   memfsContent?: string;
+  localMemfsContent?: string;
   isDefault?: boolean;
   isFeatured?: boolean;
 }
@@ -68,6 +70,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     description: "Alias for letta",
     content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
+    localMemfsContent: lettaLocalMemfsPrompt,
     isDefault: true,
     isFeatured: true,
   },
@@ -77,6 +80,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     description: "Full Letta Code system prompt",
     content: lettaNoMemfsPrompt,
     memfsContent: lettaMemfsPrompt,
+    localMemfsContent: lettaLocalMemfsPrompt,
     isFeatured: true,
   },
   {
@@ -99,7 +103,7 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   },
 ];
 
-export type MemoryPromptMode = "standard" | "memfs";
+export type MemoryPromptMode = "standard" | "memfs" | "local-memfs";
 
 /**
  * Check if a preset ID exists in SYSTEM_PROMPTS.
@@ -121,6 +125,13 @@ export function buildSystemPrompt(
     throw new Error(
       `Unknown preset "${presetId}" — cannot rebuild system prompt`,
     );
+  }
+  if (memoryMode === "local-memfs") {
+    return (
+      preset.localMemfsContent ??
+      preset.memfsContent ??
+      preset.content
+    ).trim();
   }
   if (memoryMode === "memfs") {
     return (preset.memfsContent ?? preset.content).trim();

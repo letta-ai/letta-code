@@ -227,12 +227,13 @@ export async function handleListen(
     }
 
     // Register with cloud
-    const { connectionId, wsUrl } = await registerWithCloud({
-      serverUrl,
-      apiKey,
-      deviceId,
-      connectionName,
-    });
+    const { connectionId, wsUrl, supportsSplitStatusChannels } =
+      await registerWithCloud({
+        serverUrl,
+        apiKey,
+        deviceId,
+        connectionName,
+      });
 
     updateCommandResult(
       ctx.buffersRef,
@@ -257,10 +258,12 @@ export async function handleListen(
     const startClient = async (
       connId: string,
       wsUrlValue: string,
+      nextSupportsSplitStatusChannels: boolean,
     ): Promise<void> => {
       await startListenerClient({
         connectionId: connId,
         wsUrl: wsUrlValue,
+        supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
         deviceId,
         connectionName,
         onStatusChange: (status, id) => {
@@ -349,6 +352,7 @@ export async function handleListen(
             await startClient(
               reregisterResult.connectionId,
               reregisterResult.wsUrl,
+              reregisterResult.supportsSplitStatusChannels,
             );
           } catch (error) {
             updateCommandResult(
@@ -391,7 +395,7 @@ export async function handleListen(
       });
     };
 
-    await startClient(connectionId, wsUrl);
+    await startClient(connectionId, wsUrl, supportsSplitStatusChannels);
   } catch (error) {
     updateCommandResult(
       ctx.buffersRef,

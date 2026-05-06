@@ -638,6 +638,51 @@ test("memory mode - allows Write inside MEMORY_DIR", () => {
   }
 });
 
+test("memory mode - allows Bash redirection inside MEMORY_DIR", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      {
+        command:
+          'echo "test content" > "$MEMORY_DIR/skills/example/SKILL.md" && ls -la "$MEMORY_DIR/skills/example/"',
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+
+    expect(result.decision).toBe("allow");
+    expect(result.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - denies Bash redirection outside MEMORY_DIR", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      { command: 'echo "test content" > /tmp/outside-memory.txt' },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+
+    expect(result.decision).toBe("deny");
+    expect(result.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
 test("memory mode - denies Write outside memory roots", () => {
   permissionMode.setMode("memory");
   const originalMemoryDir = process.env.MEMORY_DIR;

@@ -31,6 +31,7 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  DeleteMemoryFileCommand,
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
@@ -585,6 +586,26 @@ export function isWriteMemoryFileCommand(
     (c.encoding === undefined ||
       c.encoding === "utf8" ||
       c.encoding === "base64") &&
+    (c.commit_message === undefined || typeof c.commit_message === "string")
+  );
+}
+
+export function isDeleteMemoryFileCommand(
+  value: unknown,
+): value is DeleteMemoryFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    path?: unknown;
+    commit_message?: unknown;
+  };
+  return (
+    c.type === "delete_memory_file" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.path === "string" &&
     (c.commit_message === undefined || typeof c.commit_message === "string")
   );
 }
@@ -1514,6 +1535,7 @@ export function parseServerMessage(
       isMemoryCommitDiffCommand(parsed) ||
       isReadMemoryFileCommand(parsed) ||
       isWriteMemoryFileCommand(parsed) ||
+      isDeleteMemoryFileCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
