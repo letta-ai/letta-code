@@ -734,107 +734,22 @@ function rewriteScopedMemoryRedirects(
   return rewritten;
 }
 
-function splitShellSegmentsAllowUnsafeRedirects(
-  input: string,
-): string[] | null {
-  const segments: string[] = [];
-  let current = "";
-  let i = 0;
-  let quote: "single" | "double" | null = null;
-
-  while (i < input.length) {
-    const ch = input[i];
-
-    if (!ch) {
-      i += 1;
-      continue;
-    }
-
-    if (quote === "single") {
-      current += ch;
-      if (ch === "'") {
-        quote = null;
-      }
-      i += 1;
-      continue;
-    }
-
-    if (quote === "double") {
-      if (ch === "\\" && i + 1 < input.length) {
-        current += input.slice(i, i + 2);
-        i += 2;
-        continue;
-      }
-      if (ch === "`" || input.startsWith("$(", i)) {
-        return null;
-      }
-      current += ch;
-      if (ch === '"') {
-        quote = null;
-      }
-      i += 1;
-      continue;
-    }
-
-    if (ch === "'") {
-      quote = "single";
-      current += ch;
-      i += 1;
-      continue;
-    }
-
-    if (ch === '"') {
-      quote = "double";
-      current += ch;
-      i += 1;
-      continue;
-    }
-
-    if (ch === "\\" && i + 1 < input.length) {
-      current += input.slice(i, i + 2);
-      i += 2;
-      continue;
-    }
-
-    if (ch === "`" || input.startsWith("$(", i)) {
-      return null;
-    }
-
-    if (input.startsWith("&&", i) || input.startsWith("||", i)) {
-      segments.push(current);
-      current = "";
-      i += 2;
-      continue;
-    }
-
-    if (ch === ";" || ch === "|" || ch === "\n" || ch === "\r") {
-      segments.push(current);
-      current = "";
-      i += 1;
-      continue;
-    }
-
-    current += ch;
-    i += 1;
-  }
-
-  segments.push(current);
-  return segments.map((segment) => segment.trim()).filter(Boolean);
-}
-
-function extractHeredocWrite(segment: string): {
-  path: string;
-  delimiter: string;
-} | null {
-  const match = segment.match(
-    /^cat\s+(?:(?:>|>>)\s*(?<path1>"[^"]+"|'[^']+'|\S+)\s+<<-?\s*(?<delim1>"[^"]+"|'[^']+'|\S+)|<<-?\s*(?<delim2>"[^"]+"|'[^']+'|\S+)\s+(?:>|>>)\s*(?<path2>"[^"]+"|'[^']+'|\S+))\s*$/,
-  );
-  if (!match?.groups) {
+function extractScopedHeredocWritePath(command: string): string | null {
+  const lines = command.split(/\r?\n/);
+  const firstLine = lines[0]?.trim() ?? "";
+  if (!firstLine) {
     return null;
   }
 
-  const rawPath = match.groups.path1 || match.groups.path2;
-  const rawDelim = match.groups.delim1 || match.groups.delim2;
+  const firstLineMatch = firstLine.match(
+    /^cat\s+(?:>\s*(?<path1>"[^"]+"|'[^']+'|\S+)\s+<<-?\s*(?<delim1>"[^"]+"|'[^']+'|\S+)|<<-?\s*(?<delim2>"[^"]+"|'[^']+'|\S+)\s+>\s*(?<path2>"[^"]+"|'[^']+'|\S+))\s*$/,
+  );
+  if (!firstLineMatch?.groups) {
+    return null;
+  }
+
+  const rawPath = firstLineMatch.groups.path1 || firstLineMatch.groups.path2;
+  const rawDelim = firstLineMatch.groups.delim1 || firstLineMatch.groups.delim2;
   if (!rawPath || !rawDelim) {
     return null;
   }
@@ -844,133 +759,24 @@ function extractHeredocWrite(segment: string): {
     return null;
   }
 
-  return { path: stripShellQuotes(rawPath), delimiter };
-}
-
-function validateScopedSegments(
-  command: string,
-  cwd: string | null,
-  allowedRoots: string[],
-  env: NodeJS.ProcessEnv,
-  shellVars: ScopedShellVars,
-): { safe: boolean; cwd: string | null } {
-  const scopedCommand = rewriteScopedMemoryRedirects(
-    command,
-    cwd,
-    allowedRoots,
-    env,
-    shellVars,
-  );
-  if (!scopedCommand) {
-    return { safe: false, cwd };
-  }
-
-  const segments = splitShellSegments(scopedCommand);
-  if (!segments || segments.length === 0) {
-    return { safe: false, cwd };
-  }
-
-  let nextCwd: string | null = cwd;
-  for (const segment of segments) {
-    const result = isAllowedMemorySegment(
-      segment,
-      nextCwd,
-      allowedRoots,
-      env,
-      shellVars,
-    );
-    if (!result.safe) {
-      return { safe: false, cwd: nextCwd };
-    }
-    nextCwd = result.nextCwd;
-  }
-
-  return { safe: true, cwd: nextCwd };
-}
-
-function isScopedHeredocMemoryCommand(
-  command: string,
-  initialCwd: string | null,
-  allowedRoots: string[],
-  env: NodeJS.ProcessEnv,
-  shellVars: ScopedShellVars,
-): boolean | null {
-  const lines = command.split(/\r?\n/);
-  const firstLine = lines[0]?.trim() ?? "";
-  if (!firstLine) {
-    return null;
-  }
-
-  const firstLineSegments = splitShellSegmentsAllowUnsafeRedirects(firstLine);
-  if (!firstLineSegments) {
-    return false;
-  }
-
-  const heredocIndex = firstLineSegments.findIndex((segment) =>
-    Boolean(extractHeredocWrite(segment)),
-  );
-  if (heredocIndex === -1) {
-    return null;
-  }
-
-  if (firstLineSegments.slice(heredocIndex + 1).length > 0) {
-    return false;
-  }
-
-  let cwd: string | null = initialCwd;
-  if (heredocIndex > 0) {
-    const prefixResult = validateScopedSegments(
-      firstLineSegments.slice(0, heredocIndex).join(" && "),
-      cwd,
-      allowedRoots,
-      env,
-      shellVars,
-    );
-    if (!prefixResult.safe) {
-      return false;
-    }
-    cwd = prefixResult.cwd;
-  }
-
-  const heredoc = extractHeredocWrite(firstLineSegments[heredocIndex] ?? "");
-  if (!heredoc) {
-    return false;
-  }
-
-  const resolved = normalizeScopePath(heredoc.path, cwd, env, shellVars);
-  if (!resolved || !isPathWithinRoots(resolved, allowedRoots)) {
-    return false;
-  }
-
   let terminatorLine = -1;
   for (let i = 1; i < lines.length; i += 1) {
-    if ((lines[i] ?? "") === heredoc.delimiter) {
+    if ((lines[i] ?? "") === delimiter) {
       terminatorLine = i;
       break;
     }
   }
   if (terminatorLine === -1) {
-    return false;
+    return null;
   }
 
-  const trailingCommand = lines
-    .slice(terminatorLine + 1)
-    .join("\n")
-    .trim();
-  if (trailingCommand) {
-    const trailingResult = validateScopedSegments(
-      trailingCommand,
-      cwd,
-      allowedRoots,
-      env,
-      shellVars,
-    );
-    if (!trailingResult.safe) {
-      return false;
+  for (let i = terminatorLine + 1; i < lines.length; i += 1) {
+    if ((lines[i] ?? "").trim().length > 0) {
+      return null;
     }
   }
 
-  return true;
+  return stripShellQuotes(rawPath);
 }
 
 function isReadOnlyGhApiInvocation(args: string[]): boolean {
@@ -2067,26 +1873,52 @@ export function isScopedMemoryShellCommand(
     ? normalizeScopePath(options.workingDirectory, null, env, shellVars)
     : null;
 
-  if (trimmed.includes("<<")) {
-    const heredocResult = isScopedHeredocMemoryCommand(
-      trimmed,
+  const heredocWritePath = extractScopedHeredocWritePath(trimmed);
+  if (heredocWritePath) {
+    const resolved = normalizeScopePath(
+      heredocWritePath,
       initialCwd,
-      allowedRoots,
       env,
       shellVars,
     );
-    if (heredocResult !== null) {
-      return heredocResult;
-    }
+    return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
   }
 
-  return validateScopedSegments(
+  const scopedCommand = rewriteScopedMemoryRedirects(
     trimmed,
     initialCwd,
     allowedRoots,
     env,
     shellVars,
-  ).safe;
+  );
+  if (!scopedCommand) {
+    return false;
+  }
+
+  const segments = splitShellSegments(scopedCommand);
+  if (!segments) {
+    return false;
+  }
+  if (segments.length === 0) {
+    return false;
+  }
+
+  let cwd: string | null = initialCwd;
+  for (const segment of segments) {
+    const result = isAllowedMemorySegment(
+      segment,
+      cwd,
+      allowedRoots,
+      env,
+      shellVars,
+    );
+    if (!result.safe) {
+      return false;
+    }
+    cwd = result.nextCwd;
+  }
+
+  return true;
 }
 
 /**
