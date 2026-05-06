@@ -769,6 +769,30 @@ describe("isMemoryDirCommand", () => {
       );
     });
 
+    test("allows git reset", () => {
+      expect(
+        isMemoryDirCommand(`cd ${memDir} && git reset HEAD`, AGENT_ID),
+      ).toBe(true);
+      expect(
+        isMemoryDirCommand(`cd ${memDir} && git reset --soft HEAD~1`, AGENT_ID),
+      ).toBe(true);
+    });
+
+    test("allows git config", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git config --get remote.origin.url`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git config --local user.email reflection@letta.com`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+
     test("allows git rm", () => {
       expect(
         isMemoryDirCommand(`cd ${memDir} && git rm file.md`, AGENT_ID),

@@ -132,9 +132,11 @@ const UNSAFE_GIT_FLAGS = new Set([
 const SAFE_MEMORY_GIT_SUBCOMMANDS = new Set([
   "add",
   "commit",
+  "config",
   "push",
   "pull",
   "rebase",
+  "reset",
   "status",
   "diff",
   "log",
