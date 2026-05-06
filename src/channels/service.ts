@@ -440,6 +440,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       allowedUsers: [...account.allowedUsers],
       config: toChannelAccountProtocolConfig(account),
       allowedChannels: [...(account.allowedChannels ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
       channelPolicy: account.channelPolicy ?? "mention",
       autoThreadOnMention: account.autoThreadOnMention ?? true,
       hasToken: account.token.trim().length > 0,
@@ -522,6 +523,7 @@ function createAccountFromPatch(
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
+      transcribeVoice: normalizedPatch.transcribeVoice === true,
       channelPolicy: normalizedPatch.channelPolicy ?? "mention",
       autoThreadOnMention: normalizedPatch.autoThreadOnMention ?? true,
       createdAt: now,
@@ -597,6 +599,8 @@ function mergeAccountPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       allowedChannels:
         normalizedPatch.allowedChannels ?? existing.allowedChannels,
+      transcribeVoice:
+        normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
       channelPolicy: normalizedPatch.channelPolicy ?? existing.channelPolicy,
       autoThreadOnMention:
         normalizedPatch.autoThreadOnMention ?? existing.autoThreadOnMention,
@@ -717,6 +721,7 @@ export function getChannelConfigSnapshot(
       allowedUsers: [...account.allowedUsers],
       config: toChannelConfigSnapshotProtocolConfig(account),
       allowedChannels: [...(account.allowedChannels ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
       channelPolicy: account.channelPolicy ?? "mention",
       autoThreadOnMention: account.autoThreadOnMention ?? true,
       hasToken: account.token.trim().length > 0,
@@ -772,6 +777,7 @@ export async function setChannelConfigLive(
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
+      transcribeVoice: normalizedPatch.transcribeVoice,
       channelPolicy: normalizedPatch.channelPolicy,
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       config: normalizedPatch.config,

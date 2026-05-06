@@ -33,7 +33,7 @@ export interface ChannelMessageAttachment {
   kind: "image" | "file" | "audio" | "video";
   localPath: string;
   imageDataBase64?: string;
-  /** Best-effort speech-to-text transcription (voice memos only). */
+  /** Best-effort speech-to-text transcription for voice/audio attachments. */
   transcription?: string;
 }
 
@@ -329,6 +329,8 @@ export interface DiscordChannelConfig {
    * of listening in every guild channel the bot can see.
    */
   allowedChannels?: string[];
+  /** When true and OPENAI_API_KEY is set, audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
   /**
    * Controls when the bot responds in guild channels. Default `"mention"`
    * (require @-mention or thread). Set to `"open"` for channels where the
@@ -388,6 +390,8 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * of listening in every guild channel the bot can see. DMs are unaffected.
    */
   allowedChannels?: string[];
+  /** When true and OPENAI_API_KEY is set, audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
   /**
    * Controls when the bot responds in guild channels. Default `"mention"`.
    * Set to `"open"` for channels where the bot should respond to every

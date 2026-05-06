@@ -131,6 +131,7 @@ function makeDefaultLegacyAccount(
       allowedChannels: config.allowedChannels
         ? [...config.allowedChannels]
         : undefined,
+      transcribeVoice: config.transcribeVoice === true,
       agentId: null,
       createdAt: now,
       updatedAt: now,

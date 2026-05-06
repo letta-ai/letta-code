@@ -61,6 +61,24 @@ describe("discordAccountConfigAdapter", () => {
       ).toBe(true);
     });
 
+    test("accepts transcribe_voice: true", () => {
+      expect(
+        discordAccountConfigAdapter.isValidConfig({
+          token: "test.token.value",
+          transcribe_voice: true,
+        }),
+      ).toBe(true);
+    });
+
+    test("rejects transcribe_voice with non-boolean value", () => {
+      expect(
+        discordAccountConfigAdapter.isValidConfig({
+          token: "test.token.value",
+          transcribe_voice: "yes",
+        }),
+      ).toBe(false);
+    });
+
     test("rejects auto_thread_on_mention with non-boolean value", () => {
       expect(
         discordAccountConfigAdapter.isValidConfig({
@@ -97,10 +115,18 @@ describe("discordAccountConfigAdapter", () => {
       expect(patch.autoThreadOnMention).toBe(false);
     });
 
+    test("maps transcribe_voice to transcribeVoice", () => {
+      const patch = discordAccountConfigAdapter.toAccountPatch({
+        transcribe_voice: true,
+      });
+      expect(patch.transcribeVoice).toBe(true);
+    });
+
     test("returns undefined for missing new fields", () => {
       const patch = discordAccountConfigAdapter.toAccountPatch({
         token: "test.token.value",
       });
+      expect(patch.transcribeVoice).toBeUndefined();
       expect(patch.channelPolicy).toBeUndefined();
       expect(patch.autoThreadOnMention).toBeUndefined();
     });
@@ -169,6 +195,22 @@ describe("discordAccountConfigAdapter", () => {
         updatedAt: "2026-01-01T00:00:00Z",
       });
       expect(config.auto_thread_on_mention).toBe(false);
+    });
+
+    test("serializes transcribeVoice", () => {
+      const config = discordAccountConfigAdapter.toAccountConfig({
+        channel: "discord",
+        accountId: "acc-1",
+        enabled: true,
+        token: "test.token.value",
+        agentId: null,
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        transcribeVoice: true,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      });
+      expect(config.transcribe_voice).toBe(true);
     });
   });
 });

@@ -104,6 +104,11 @@ export async function runDiscordSetup(): Promise<boolean> {
       trimmedAutoThread === "y" ||
       trimmedAutoThread === "yes";
 
+    const transcriptionInput = await rl.question(
+      "\nAuto-transcribe audio attachments when OPENAI_API_KEY is set? [y/N]: ",
+    );
+    const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
+
     // Agent binding — required for account-bound DMs and guild @mentions.
     // Without this, the bot won't know which agent to create conversations for.
     const envAgentId = process.env.LETTA_AGENT_ID || "";
@@ -153,6 +158,7 @@ export async function runDiscordSetup(): Promise<boolean> {
       allowedUsers,
       channelPolicy,
       autoThreadOnMention,
+      transcribeVoice,
       createdAt: now,
       updatedAt: now,
     };

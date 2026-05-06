@@ -654,6 +654,7 @@ export function createDiscordAdapter(
         url: a.url,
       })),
       chatId,
+      transcribeVoice: config.transcribeVoice,
     });
   }
 

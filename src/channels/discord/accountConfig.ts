@@ -5,6 +5,7 @@ const DISCORD_CONFIG_KEYS = new Set([
   "token",
   "agent_id",
   "allowed_channels",
+  "transcribe_voice",
   "channel_policy",
   "auto_thread_on_mention",
 ]);
@@ -44,6 +45,8 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         (config.agent_id === undefined || isNullableString(config.agent_id)) &&
         (config.allowed_channels === undefined ||
           isStringArray(config.allowed_channels)) &&
+        (config.transcribe_voice === undefined ||
+          isBoolean(config.transcribe_voice)) &&
         (config.channel_policy === undefined ||
           isDiscordChannelPolicy(config.channel_policy)) &&
         (config.auto_thread_on_mention === undefined ||
@@ -60,6 +63,9 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         allowedChannels: isStringArray(config.allowed_channels)
           ? [...config.allowed_channels]
           : undefined,
+        transcribeVoice: isBoolean(config.transcribe_voice)
+          ? config.transcribe_voice
+          : undefined,
         channelPolicy: isDiscordChannelPolicy(config.channel_policy)
           ? config.channel_policy
           : undefined,
@@ -74,6 +80,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         has_token: account.token.trim().length > 0,
         agent_id: account.agentId,
         allowed_channels: [...(account.allowedChannels ?? [])],
+        transcribe_voice: account.transcribeVoice === true,
         channel_policy: account.channelPolicy ?? "mention",
         auto_thread_on_mention: account.autoThreadOnMention ?? true,
       };
@@ -84,6 +91,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         has_token: account.token.trim().length > 0,
         agent_id: account.agentId,
         allowed_channels: [...(account.allowedChannels ?? [])],
+        transcribe_voice: account.transcribeVoice === true,
         channel_policy: account.channelPolicy ?? "mention",
         auto_thread_on_mention: account.autoThreadOnMention ?? true,
       };

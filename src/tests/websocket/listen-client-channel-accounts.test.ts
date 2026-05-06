@@ -285,7 +285,7 @@ describe("channel account list responses", () => {
     }
   });
 
-  test("round-trips channel_policy and auto_thread_on_mention through create, update, list, and get", async () => {
+  test("round-trips discord config fields through create, update, list, and get", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => []);
     __testOverrideSaveChannelAccounts(() => {});
@@ -306,6 +306,7 @@ describe("channel account list responses", () => {
             dm_policy: "pairing",
             config: {
               token: "discord-token",
+              transcribe_voice: true,
               channel_policy: "open",
               auto_thread_on_mention: false,
             },
@@ -384,6 +385,7 @@ describe("channel account list responses", () => {
           config: {
             channel_policy: "open",
             auto_thread_on_mention: false,
+            transcribe_voice: true,
           },
         },
       });
@@ -393,9 +395,10 @@ describe("channel account list responses", () => {
         account: {
           account_id: "discord-bot",
           config: {
-            // Partial patch: channel_policy updated, auto_thread_on_mention preserved.
+            // Partial patch: channel_policy updated, other fields preserved.
             channel_policy: "mention",
             auto_thread_on_mention: false,
+            transcribe_voice: true,
           },
         },
       });
@@ -408,6 +411,7 @@ describe("channel account list responses", () => {
             config: {
               channel_policy: "mention",
               auto_thread_on_mention: false,
+              transcribe_voice: true,
             },
           },
         ],
@@ -420,6 +424,7 @@ describe("channel account list responses", () => {
           config: {
             channel_policy: "mention",
             auto_thread_on_mention: false,
+            transcribe_voice: true,
           },
         },
       });

@@ -173,6 +173,7 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
       allowedChannels: Array.isArray(rawAllowedChannels)
         ? (rawAllowedChannels as string[])
         : undefined,
+      transcribeVoice: parsed.transcribe_voice === true,
     };
   },
 };

@@ -218,6 +218,35 @@ describe("discord channel service", () => {
     expect(config.autoThreadOnMention).toBe(false);
   });
 
+  test("discord account snapshots round-trip transcribeVoice", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        transcribeVoice: true,
+      },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.transcribeVoice).toBe(true);
+    expect(created.config).toMatchObject({ transcribe_voice: true });
+
+    const updated = updateChannelAccountLive("discord", "discord-bot", {
+      transcribeVoice: false,
+    });
+
+    if (updated.channelId !== "discord") throw new Error("wrong channel");
+    expect(updated.transcribeVoice).toBe(false);
+    expect(updated.config).toMatchObject({ transcribe_voice: false });
+
+    const config = getChannelConfigSnapshot("discord", "discord-bot");
+    if (!config || config.channelId !== "discord")
+      throw new Error("wrong channel");
+    expect(config.transcribeVoice).toBe(false);
+    expect(config.config).toMatchObject({ transcribe_voice: false });
+  });
+
   test("default dmPolicy is 'pairing' when not specified", () => {
     const created = createChannelAccountLive(
       "discord",
@@ -240,7 +269,9 @@ describe("discord channel service", () => {
     if (created.channelId !== "discord") throw new Error("wrong channel");
     expect(created.channelPolicy).toBe("mention");
     expect(created.autoThreadOnMention).toBe(true);
+    expect(created.transcribeVoice).toBe(false);
     expect(created.config).toMatchObject({
+      transcribe_voice: false,
       channel_policy: "mention",
       auto_thread_on_mention: true,
     });
@@ -250,7 +281,9 @@ describe("discord channel service", () => {
       throw new Error("wrong channel");
     expect(config.channelPolicy).toBe("mention");
     expect(config.autoThreadOnMention).toBe(true);
+    expect(config.transcribeVoice).toBe(false);
     expect(config.config).toMatchObject({
+      transcribe_voice: false,
       channel_policy: "mention",
       auto_thread_on_mention: true,
     });
