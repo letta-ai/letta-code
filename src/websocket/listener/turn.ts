@@ -24,6 +24,7 @@ import {
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
+  normalizeStreamErrorTypeToStopReason,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
 } from "../../agent/turn-recovery-policy";
@@ -695,7 +696,9 @@ export async function handleIncomingMessage(
             latestErrorText = errorInfo.message || latestErrorText;
             emitLoopErrorNotice(socket, runtime, {
               message: errorInfo.message || "Stream error",
-              stopReason: (errorInfo.error_type as StopReasonType) || "error",
+              stopReason: normalizeStreamErrorTypeToStopReason(
+                errorInfo.error_type,
+              ),
               isTerminal: false,
               runId: runId || errorInfo.run_id,
               agentId,

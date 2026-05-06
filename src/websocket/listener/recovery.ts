@@ -14,6 +14,7 @@ import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  normalizeStreamErrorTypeToStopReason,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
@@ -182,7 +183,9 @@ export async function drainRecoveryStreamWithEmission(
       if (errorInfo) {
         emitLoopErrorNotice(socket, runtime, {
           message: errorInfo.message || "Stream error",
-          stopReason: (errorInfo.error_type as StopReasonType) || "error",
+          stopReason: normalizeStreamErrorTypeToStopReason(
+            errorInfo.error_type,
+          ),
           isTerminal: false,
           runId: runtime.activeRunId || errorInfo.run_id,
           agentId: params.agentId ?? undefined,
