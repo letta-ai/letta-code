@@ -1,3 +1,9 @@
+export { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
+export {
+  formatLocalMessagesForSummary,
+  LOCAL_ALL_COMPACTION_PROMPT,
+  type LocalCompactionStats,
+} from "./compaction";
 export { LocalBackend, type LocalBackendOptions } from "./LocalBackend";
 export type {
   LocalMessage,

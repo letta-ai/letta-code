@@ -11,14 +11,20 @@ import {
   validateUIMessages,
 } from "ai";
 import type { ClientTool } from "../../tools/manager";
+import type { LocalCompactionStats } from "../local/compaction";
 import type { LocalMessage } from "../local/LocalMessage";
 import { createAISDKModelFactoryFromAgent } from "./AISDKModelFactory";
+import { isContextWindowOverflowError } from "./contextWindowOverflow";
 import type {
   ProviderStreamAdapter,
   ProviderStreamEvent,
   ProviderTurnInput,
 } from "./ProviderTurnExecutor";
-import { providerStreamPart, providerUIMessage } from "./ProviderTurnExecutor";
+import {
+  providerLettaChunk,
+  providerStreamPart,
+  providerUIMessage,
+} from "./ProviderTurnExecutor";
 
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
 type AISDKProviderKind = "anthropic" | "openai" | "unknown";
@@ -53,6 +59,14 @@ export interface AISDKStreamAdapterOptions {
   createModel?: () => LanguageModel;
   abortSignal?: AbortSignal;
   streamText?: AISDKStreamTextFunction;
+  onContextWindowOverflow?: (
+    input: ProviderTurnInput,
+    error: unknown,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -325,14 +339,18 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
   private readonly createModel?: () => LanguageModel;
   private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
+  private readonly onContextWindowOverflow?: AISDKStreamAdapterOptions["onContextWindowOverflow"];
 
   constructor(options: AISDKStreamAdapterOptions) {
     this.createModel = options.createModel;
     this.runStreamText = options.streamText ?? defaultStreamText;
     this.abortSignal = options.abortSignal;
+    this.onContextWindowOverflow = options.onContextWindowOverflow;
   }
 
-  async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
+  private async *streamOnce(
+    input: ProviderTurnInput,
+  ): AsyncIterable<ProviderStreamEvent> {
     const tools = toToolSet(input.clientTools);
     const provider = aiSDKProviderKind(
       input.agent.model,
@@ -367,14 +385,56 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       },
     );
 
+    let streamError: unknown;
     for await (const part of result.fullStream) {
+      if (part.type === "error" && isContextWindowOverflowError(part.error)) {
+        streamError = part.error;
+        break;
+      }
       yield providerStreamPart(part);
+    }
+
+    if (streamError) {
+      await finalUIMessage.catch(() => undefined);
+      throw streamError;
     }
 
     const message = await finalUIMessage;
     if (uiMessageError) throw uiMessageError;
     if (message) {
       yield providerUIMessage(message);
+    }
+  }
+
+  async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
+    try {
+      yield* this.streamOnce(input);
+    } catch (error) {
+      if (
+        !isContextWindowOverflowError(error) ||
+        !this.onContextWindowOverflow
+      ) {
+        throw error;
+      }
+
+      const compaction = await this.onContextWindowOverflow(input, error);
+      if (!compaction) throw error;
+
+      yield providerLettaChunk({
+        message_type: "event_message",
+        event_type: "compaction",
+        event_data: { trigger: "context_window_overflow" },
+      } as never);
+      yield providerLettaChunk({
+        message_type: "summary_message",
+        summary: compaction.summary,
+        ...(compaction.stats ? { compaction_stats: compaction.stats } : {}),
+      } as never);
+
+      yield* this.streamOnce({
+        ...input,
+        uiMessages: compaction.uiMessages,
+      });
     }
   }
 }

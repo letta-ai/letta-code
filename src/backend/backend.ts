@@ -82,6 +82,14 @@ export type ConversationMessageListParams = Parameters<
 export type ConversationMessageListBody = ConversationMessageListParams[1];
 export type ConversationMessageListOptions = ConversationMessageListParams[2];
 
+export type ConversationMessageCompactParams = Parameters<
+  APIClient["conversations"]["messages"]["compact"]
+>;
+export type ConversationMessageCompactBody =
+  ConversationMessageCompactParams[1];
+export type ConversationMessageCompactOptions =
+  ConversationMessageCompactParams[2];
+
 export type AgentMessageListParams = Parameters<
   APIClient["agents"]["messages"]["list"]
 >;
@@ -167,6 +175,14 @@ export interface Backend {
     options?: ConversationMessageListOptions,
   ): Promise<
     Awaited<ReturnType<APIClient["conversations"]["messages"]["list"]>>
+  >;
+
+  compactConversationMessages(
+    conversationId: string,
+    body?: ConversationMessageCompactBody,
+    options?: ConversationMessageCompactOptions,
+  ): Promise<
+    Awaited<ReturnType<APIClient["conversations"]["messages"]["compact"]>>
   >;
 
   listAgentMessages(
@@ -328,6 +344,15 @@ export class APIBackend implements Backend {
   ) {
     const client = await this.getClient();
     return client.conversations.messages.list(conversationId, body, options);
+  }
+
+  async compactConversationMessages(
+    conversationId: string,
+    body?: ConversationMessageCompactBody,
+    options?: ConversationMessageCompactOptions,
+  ) {
+    const client = await this.getClient();
+    return client.conversations.messages.compact(conversationId, body, options);
   }
 
   async listAgentMessages(

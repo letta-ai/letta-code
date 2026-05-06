@@ -15,6 +15,17 @@ export interface LocalMessageMetadata {
   agent_id?: string;
   conversation_id?: string;
   provider?: LocalMessageProviderMetadata;
+  compaction?: {
+    summary: string;
+    stats?: {
+      trigger?: string;
+      context_tokens_before?: number;
+      context_tokens_after?: number;
+      context_window?: number;
+      messages_count_before?: number;
+      messages_count_after?: number;
+    };
+  };
 }
 
 export type LocalMessage = UIMessage<LocalMessageMetadata>;

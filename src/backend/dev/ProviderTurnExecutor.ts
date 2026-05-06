@@ -29,6 +29,7 @@ export interface ProviderTurnInput {
 export type ProviderStreamEvent =
   | { type: "ai-sdk-part"; part: ProviderStreamPart }
   | { type: "ai-sdk-ui-message"; message: LocalMessage }
+  | { type: "letta-chunk"; chunk: LettaStreamingResponse }
   | { type: "error"; error: unknown };
 
 export function providerStreamPart(
@@ -39,6 +40,12 @@ export function providerStreamPart(
 
 export function providerUIMessage(message: LocalMessage): ProviderStreamEvent {
   return { type: "ai-sdk-ui-message", message };
+}
+
+export function providerLettaChunk(
+  chunk: LettaStreamingResponse,
+): ProviderStreamEvent {
+  return { type: "letta-chunk", chunk };
 }
 
 export interface ProviderStreamAdapter {
@@ -125,6 +132,11 @@ function createProviderLettaStream(
 
           if (event.type === "ai-sdk-ui-message") {
             yield createLocalUIMessageChunk(event.message);
+            continue;
+          }
+
+          if (event.type === "letta-chunk") {
+            yield event.chunk;
             continue;
           }
 

@@ -18,6 +18,7 @@ import type {
   ToolSet,
   UIMessageChunk,
 } from "ai";
+import { APICallError } from "ai";
 import type {
   AgentCreateBody,
   ConversationCreateBody,
@@ -26,6 +27,7 @@ import type {
   RunMessageStreamBody,
 } from "../../backend";
 import {
+  LOCAL_ALL_COMPACTION_PROMPT,
   LocalBackend,
   listLocalModels,
   resolveLocalModelConfig,
@@ -388,6 +390,192 @@ describe("LocalBackend", () => {
       expect(replayed.map((chunk) => chunk.message_type)).toEqual(
         (chunks as LettaStreamingResponse[]).map((chunk) => chunk.message_type),
       );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts local conversation history with the backend all-compaction prompt", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-compact-"));
+    try {
+      let capturedSystem: string | undefined;
+      let capturedPrompt: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: {
+          system?: string;
+          prompt?: string;
+        }) => {
+          capturedSystem = options.system;
+          capturedPrompt = options.prompt;
+          return { text: "manual local summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Compact Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+        {
+          compaction_settings: { mode: "all" },
+        } as never,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 4,
+        num_messages_after: 1,
+        summary: "manual local summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+      expect(capturedPrompt).toContain("first request");
+      expect(capturedPrompt).toContain("second request");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain("manual local summary");
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      expect(persistedMessages).toHaveLength(1);
+      expect(JSON.stringify(persistedMessages[0])).toContain("system_alert");
+      expect(JSON.stringify(persistedMessages[0])).toContain(
+        "manual local summary",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("auto-compacts and retries local AI SDK turns on context overflow", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-auto-compact-"),
+    );
+    try {
+      let streamCalls = 0;
+      let summaryPrompt: string | undefined;
+      const modelMessagesByCall: ModelMessage[][] = [];
+      const overflow = new APICallError({
+        message: "context_length_exceeded: maximum context length exceeded",
+        url: "https://example.invalid/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: "maximum context length exceeded",
+        isRetryable: false,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "overflow local summary" } as never;
+        }) as never,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+
+          if (streamCalls === 2) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Auto Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(3);
+      expect(summaryPrompt).toContain("first request");
+      expect(summaryPrompt).toContain("overflowing request");
+      const chunkTypes = chunks.map((chunk) => chunk.message_type as string);
+      expect(chunkTypes).toContain("event_message");
+      expect(chunkTypes).toContain("summary_message");
+      expect(JSON.stringify(chunks)).toContain("after compaction");
+      expect(JSON.stringify(modelMessagesByCall[2])).toContain(
+        "overflow local summary",
+      );
+      expect(JSON.stringify(modelMessagesByCall[2])).not.toContain(
+        "first request",
+      );
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      expect(
+        page.getPaginatedItems().map((message) => message.message_type),
+      ).toEqual(["summary_message", "assistant_message"]);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
