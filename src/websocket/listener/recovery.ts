@@ -34,10 +34,7 @@ import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
-import {
-  MAX_POST_STOP_APPROVAL_RECOVERY,
-  NO_AWAITING_APPROVAL_DETAIL_FRAGMENT,
-} from "./constants";
+import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   createToolExecutionOutputEmitter,
@@ -71,13 +68,7 @@ import type {
 } from "./types";
 
 export function isApprovalToolCallDesyncError(detail: unknown): boolean {
-  if (isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail)) {
-    return true;
-  }
-  return (
-    typeof detail === "string" &&
-    detail.toLowerCase().includes(NO_AWAITING_APPROVAL_DETAIL_FRAGMENT)
-  );
+  return isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail);
 }
 
 export function shouldAttemptPostStopApprovalRecovery(params: {
@@ -91,11 +82,8 @@ export function shouldAttemptPostStopApprovalRecovery(params: {
     isApprovalToolCallDesyncError(params.runErrorDetail) ||
     isApprovalToolCallDesyncError(params.latestErrorText);
 
-  const genericNoRunError =
-    params.stopReason === "error" && params.runIdsSeen === 0;
-
   return shouldAttemptApprovalRecovery({
-    approvalPendingDetected: approvalDesyncDetected || genericNoRunError,
+    approvalPendingDetected: approvalDesyncDetected,
     retries: params.retries,
     maxRetries: MAX_POST_STOP_APPROVAL_RECOVERY,
   });

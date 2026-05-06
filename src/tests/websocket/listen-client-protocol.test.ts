@@ -4936,7 +4936,7 @@ describe("listen-client post-stop approval recovery policy", () => {
     expect(shouldRecover).toBe(true);
   });
 
-  test("retries on generic no-run error heuristic", () => {
+  test("does not retry on generic no-run errors without an approval conflict", () => {
     const shouldRecover =
       __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
         stopReason: "error",
@@ -4946,7 +4946,20 @@ describe("listen-client post-stop approval recovery policy", () => {
         latestErrorText: null,
       });
 
-    expect(shouldRecover).toBe(true);
+    expect(shouldRecover).toBe(false);
+  });
+
+  test("does not retry when approval response is already stale", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: "No tool call is currently awaiting approval",
+        latestErrorText: null,
+      });
+
+    expect(shouldRecover).toBe(false);
   });
 
   test("does not retry once retry budget is exhausted", () => {
