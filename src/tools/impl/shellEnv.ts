@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
-import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
+import {
+  getMemoryFilesystemRoot,
+  resolveScopedMemoryDir,
+} from "../../agent/memoryFilesystem";
 import { getServerUrl } from "../../backend/api/client";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
