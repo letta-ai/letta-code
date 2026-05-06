@@ -544,6 +544,114 @@ test("telegram adapter skips voice transcription unless opt-in is enabled", asyn
   );
 });
 
+test("telegram adapter replies with lifecycle errors", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "error",
+    error: "ChatGPT usage limit reached. Resets at 1:00 PM.",
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    "Turn failed:\nChatGPT usage limit reached. Resets at 1:00 PM.",
+    { reply_parameters: { message_id: 77 } },
+  );
+});
+
+test("telegram adapter does not send lifecycle replies for completed turns", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendMessage).not.toHaveBeenCalled();
+});
+
+test("telegram adapter deduplicates lifecycle error replies", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const event = {
+    type: "finished" as const,
+    batchId: "batch-1",
+    outcome: "error" as const,
+    error: "Usage limit reached.",
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct" as const,
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.(event);
+  await adapter.handleTurnLifecycleEvent?.(event);
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendMessage).toHaveBeenCalledTimes(1);
+});
+
 test("telegram adapter forwards reaction updates through onMessage", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,

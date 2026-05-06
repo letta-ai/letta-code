@@ -526,12 +526,21 @@ async function drainQueuedMessages(
       } finally {
         runtime.activeChannelTurnSources = null;
         if (channelTurnSources.length > 0) {
+          const outcome = mapTurnLifecycleOutcome(
+            runtime.lastStopReason,
+            didThrow,
+          );
+          const lifecycleError =
+            turnError ??
+            (outcome === "error"
+              ? (runtime.lastTerminalLoopErrorMessage ?? undefined)
+              : undefined);
           await dispatchChannelTurnLifecycleEvent({
             type: "finished",
             batchId: dequeuedBatch.batchId,
             sources: channelTurnSources,
-            outcome: mapTurnLifecycleOutcome(runtime.lastStopReason, didThrow),
-            ...(turnError ? { error: turnError } : {}),
+            outcome,
+            ...(lifecycleError ? { error: lifecycleError } : {}),
           });
         }
       }

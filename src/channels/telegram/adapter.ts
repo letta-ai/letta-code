@@ -10,6 +10,8 @@ import { formatChannelControlRequestPrompt } from "../interactive";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelTurnLifecycleEvent,
+  ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
   TelegramChannelAccount,
@@ -69,6 +71,10 @@ type TelegramReactionUpdate = {
   old_reaction: TelegramReactionType[];
   new_reaction: TelegramReactionType[];
 };
+
+const TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX = 3500;
+const TELEGRAM_LIFECYCLE_ERROR_DEDUPE_TTL_MS = 6 * 60 * 60 * 1000;
+const TELEGRAM_LIFECYCLE_ERROR_DEDUPE_MAX = 1000;
 
 function resolveTelegramBotConstructor(
   mod: GrammYModule,
@@ -191,6 +197,30 @@ function getTelegramChatType(chat: { type?: string }): "direct" | "channel" {
   return chat.type === "private" ? "direct" : "channel";
 }
 
+function getTelegramLifecycleErrorReplyKey(
+  source: ChannelTurnSource,
+): string | null {
+  if (source.channel !== "telegram" || !source.chatId) {
+    return null;
+  }
+  return [
+    source.chatId,
+    source.threadId ?? source.messageId ?? "",
+    source.conversationId,
+  ].join(":");
+}
+
+function formatTelegramLifecycleErrorMessage(errorText: string): string {
+  const normalized = errorText.trim() || "Unknown error";
+  const truncated =
+    normalized.length > TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX
+      ? `${normalized
+          .slice(0, TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX - 1)
+          .trimEnd()}…`
+      : normalized;
+  return `Turn failed:\n${truncated}`;
+}
+
 export function createTelegramAdapter(
   config: TelegramChannelAccount,
 ): ChannelAdapter {
@@ -198,6 +228,7 @@ export function createTelegramAdapter(
   let botModule: GrammYModule | null = null;
   let running = false;
   const bufferedMediaGroups = new Map<string, BufferedMediaGroup>();
+  const lifecycleErrorReplies = new Map<string, number>();
 
   async function ensureModule(): Promise<GrammYModule> {
     if (!botModule) {
@@ -404,6 +435,55 @@ export function createTelegramAdapter(
     return instance;
   }
 
+  function rememberLifecycleErrorReply(key: string): boolean {
+    const now = Date.now();
+    for (const [existingKey, expiresAt] of lifecycleErrorReplies) {
+      if (expiresAt <= now) {
+        lifecycleErrorReplies.delete(existingKey);
+      }
+    }
+    if (lifecycleErrorReplies.has(key)) {
+      return false;
+    }
+    if (lifecycleErrorReplies.size >= TELEGRAM_LIFECYCLE_ERROR_DEDUPE_MAX) {
+      const [oldestKey] = lifecycleErrorReplies.keys();
+      if (oldestKey) {
+        lifecycleErrorReplies.delete(oldestKey);
+      }
+    }
+    lifecycleErrorReplies.set(
+      key,
+      now + TELEGRAM_LIFECYCLE_ERROR_DEDUPE_TTL_MS,
+    );
+    return true;
+  }
+
+  async function sendLifecycleErrorReply(
+    source: ChannelTurnSource,
+    errorText: string,
+  ): Promise<void> {
+    const key = getTelegramLifecycleErrorReplyKey(source);
+    if (!key || !rememberLifecycleErrorReply(key)) {
+      return;
+    }
+
+    const telegramBot = await ensureBot();
+    const replyToMessageId = source.threadId ?? source.messageId;
+    let reply_parameters: { message_id: number } | undefined;
+    if (replyToMessageId) {
+      const numericReplyToMessageId = Number(replyToMessageId);
+      if (Number.isFinite(numericReplyToMessageId)) {
+        reply_parameters = { message_id: numericReplyToMessageId };
+      }
+    }
+
+    await telegramBot.api.sendMessage(
+      source.chatId,
+      formatTelegramLifecycleErrorMessage(errorText),
+      reply_parameters ? { reply_parameters } : {},
+    );
+  }
+
   const adapter: ChannelAdapter = {
     id: `telegram:${config.accountId}`,
     channelId: "telegram",
@@ -453,6 +533,7 @@ export function createTelegramAdapter(
         clearTimeout(entry.timer);
       }
       bufferedMediaGroups.clear();
+      lifecycleErrorReplies.clear();
 
       if (!running || !bot) return;
       await bot.stop();
@@ -462,6 +543,39 @@ export function createTelegramAdapter(
 
     isRunning(): boolean {
       return running;
+    },
+
+    async handleTurnLifecycleEvent(
+      event: ChannelTurnLifecycleEvent,
+    ): Promise<void> {
+      if (!running || event.type !== "finished") {
+        return;
+      }
+      if (event.outcome !== "error" || !event.error?.trim()) {
+        return;
+      }
+
+      const uniqueSources = new Map<string, ChannelTurnSource>();
+      for (const source of event.sources) {
+        const key = getTelegramLifecycleErrorReplyKey(source);
+        if (!key || uniqueSources.has(key)) {
+          continue;
+        }
+        uniqueSources.set(key, source);
+      }
+
+      await Promise.all(
+        Array.from(uniqueSources.values()).map(async (source) => {
+          try {
+            await sendLifecycleErrorReply(source, event.error ?? "Turn failed");
+          } catch (error) {
+            console.warn(
+              `[Telegram] Failed to send lifecycle error reply for ${source.chatId}:`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }),
+      );
     },
 
     async sendMessage(
