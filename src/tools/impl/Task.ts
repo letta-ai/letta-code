@@ -664,7 +664,6 @@ export async function task(args: TaskArgs): Promise<string> {
       const forkedConv = await forkConversation(parentConvId, {
         ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
         hidden: true,
-        useQuery: true,
       });
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
