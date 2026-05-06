@@ -44,6 +44,16 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
         expect(
           isScopedMemoryShellCommand(
+            "git config remote.origin.url https://example.com/repo.git",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env,
+            },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
             'git check-ignore -v "$MEMORY_DIR/skills/a11y-audit-automation/SKILL.md"',
             roots,
             {
@@ -78,18 +88,15 @@ describe("isReadOnlyShellCommand", () => {
             roots,
           ),
         ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand("git reset --hard HEAD", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            env,
+          }),
+        ).toBe(true);
       });
 
       test("denies unsafe variants of memory-scoped git allowlist additions", () => {
-        expect(
-          isScopedMemoryShellCommand(
-            "git config remote.origin.url https://example.com/repo.git",
-            roots,
-            {
-              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
-            },
-          ),
-        ).toBe(false);
         expect(
           isScopedMemoryShellCommand(
             "git fetch https://example.com/repo.git",
@@ -110,11 +117,6 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(false);
         expect(
           isScopedMemoryShellCommand("git restore README.md", roots, {
-            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
-          }),
-        ).toBe(false);
-        expect(
-          isScopedMemoryShellCommand("git reset --hard HEAD", roots, {
             workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
           }),
         ).toBe(false);

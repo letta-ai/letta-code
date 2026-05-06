@@ -1102,42 +1102,12 @@ function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
 
 function isSafeMemoryGitConfig(tokens: string[], startIndex: number): boolean {
   const args = tokens.slice(startIndex);
-  if (
-    args.some((arg) => {
-      const lower = arg.toLowerCase();
-      return lower === "--global" || lower === "--system";
-    })
-  ) {
-    return false;
-  }
-
-  // Permit read-only config inspection only, e.g.:
-  //   git config --get remote.origin.url
-  //   git config --local --get remote.origin.url
-  const safeKey = (key: string | undefined): boolean =>
-    !!key && /^[A-Za-z0-9_.-]+$/.test(key);
-
-  if (args[0] === "--get") {
-    return args.length === 2 && safeKey(args[1]);
-  }
-
-  const scope = args[0];
-  if (scope !== "--local" && scope !== "--worktree") {
-    return false;
-  }
-
-  if (args[1] === "--get") {
-    return args.length === 3 && safeKey(args[2]);
-  }
-
-  // Permit the local identity setup used by memory-mode commit flows, but do
-  // not allow arbitrary config writes such as changing remotes, hooks, aliases,
-  // or credential helpers.
-  return (
-    args.length === 3 &&
-    (args[1] === "user.email" || args[1] === "user.name") &&
-    !!args[2]
-  );
+  // Preserve main's behavior: memory-mode git config is allowed except for
+  // scopes that write outside the memory repo.
+  return !args.some((arg) => {
+    const lower = arg.toLowerCase();
+    return lower === "--global" || lower === "--system";
+  });
 }
 
 function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
@@ -1245,51 +1215,6 @@ function isSafeMemoryGitRestore(
 
   if (!sawStaged || paths.length === 0) {
     return false;
-  }
-
-  return paths.every((pathToken) => {
-    const resolved = normalizeScopePath(pathToken, cwd, env, shellVars);
-    return resolved ? isPathWithinRoots(resolved, allowedRoots) : false;
-  });
-}
-
-function isSafeMemoryGitReset(
-  tokens: string[],
-  startIndex: number,
-  cwd: string | null,
-  allowedRoots: string[],
-  env: NodeJS.ProcessEnv,
-  shellVars: ScopedShellVars,
-): boolean {
-  if (
-    tokens[startIndex] === "--soft" &&
-    tokens.length === startIndex + 2 &&
-    tokens[startIndex + 1] === "HEAD~1"
-  ) {
-    return true;
-  }
-
-  // Otherwise allow only index reset/unstage forms:
-  //   git reset HEAD
-  //   git reset HEAD -- path/in/memory
-  // Explicitly deny --hard/--merge/--keep and arbitrary refs.
-  if (tokens[startIndex] !== "HEAD") {
-    return false;
-  }
-
-  const paths: string[] = [];
-  for (let i = startIndex + 1; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (!token) {
-      continue;
-    }
-    if (token === "--") {
-      continue;
-    }
-    if (token.startsWith("-")) {
-      return false;
-    }
-    paths.push(token);
   }
 
   return paths.every((pathToken) => {
@@ -1468,25 +1393,6 @@ function parseScopedGitInvocation(
     if (
       subcommand === "restore" &&
       !isSafeMemoryGitRestore(
-        tokens,
-        index + 1,
-        resolvedCwd,
-        allowedRoots,
-        env,
-        shellVars,
-      )
-    ) {
-      return {
-        subcommand,
-        worktreeSubcommand,
-        resolvedCwd,
-        isSafe: false,
-      };
-    }
-
-    if (
-      subcommand === "reset" &&
-      !isSafeMemoryGitReset(
         tokens,
         index + 1,
         resolvedCwd,
