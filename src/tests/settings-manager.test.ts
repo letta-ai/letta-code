@@ -351,7 +351,8 @@ describe("Settings Manager - Project Settings", () => {
     const projectSettings =
       await settingsManager.loadProjectSettings(testProjectDir);
 
-    expect(projectSettings.localSharedBlockIds).toEqual({});
+    expect(projectSettings.hooks).toBeUndefined();
+    expect(projectSettings.statusLine).toBeUndefined();
   });
 
   test("Get project settings returns cached value", async () => {
@@ -369,19 +370,13 @@ describe("Settings Manager - Project Settings", () => {
 
     settingsManager.updateProjectSettings(
       {
-        localSharedBlockIds: {
-          style: "block-style-1",
-          project: "block-project-1",
-        },
+        statusLine: { command: "echo test" },
       },
       testProjectDir,
     );
 
     const settings = settingsManager.getProjectSettings(testProjectDir);
-    expect(settings.localSharedBlockIds).toEqual({
-      style: "block-style-1",
-      project: "block-project-1",
-    });
+    expect(settings.statusLine?.command).toBe("echo test");
   });
 
   test("Project settings persist to disk", async () => {
@@ -389,9 +384,7 @@ describe("Settings Manager - Project Settings", () => {
 
     settingsManager.updateProjectSettings(
       {
-        localSharedBlockIds: {
-          test: "block-test-1",
-        },
+        statusLine: { command: "echo persist-test" },
       },
       testProjectDir,
     );
@@ -404,9 +397,7 @@ describe("Settings Manager - Project Settings", () => {
     await settingsManager.initialize();
     const reloaded = await settingsManager.loadProjectSettings(testProjectDir);
 
-    expect(reloaded.localSharedBlockIds).toEqual({
-      test: "block-test-1",
-    });
+    expect(reloaded.statusLine?.command).toBe("echo persist-test");
   });
 
   test("Throw error if accessing project settings before loading", async () => {
@@ -426,7 +417,7 @@ describe("Settings Manager - Project Settings", () => {
 
     const projectSettings =
       await settingsManager.loadProjectSettings(testHomeDir);
-    expect(projectSettings.localSharedBlockIds).toEqual({});
+    expect(projectSettings.hooks).toBeUndefined();
     expect(projectSettings.statusLine).toBeUndefined();
   });
 
@@ -628,19 +619,19 @@ describe("Settings Manager - Multiple Projects", () => {
     await settingsManager.loadProjectSettings(testProjectDir2);
 
     settingsManager.updateProjectSettings(
-      { localSharedBlockIds: { test: "block-1" } },
+      { statusLine: { command: "echo project-1" } },
       testProjectDir,
     );
     settingsManager.updateProjectSettings(
-      { localSharedBlockIds: { test: "block-2" } },
+      { statusLine: { command: "echo project-2" } },
       testProjectDir2,
     );
 
     const settings1 = settingsManager.getProjectSettings(testProjectDir);
     const settings2 = settingsManager.getProjectSettings(testProjectDir2);
 
-    expect(settings1.localSharedBlockIds.test).toBe("block-1");
-    expect(settings2.localSharedBlockIds.test).toBe("block-2");
+    expect(settings1.statusLine?.command).toBe("echo project-1");
+    expect(settings2.statusLine?.command).toBe("echo project-2");
   });
 });
 
