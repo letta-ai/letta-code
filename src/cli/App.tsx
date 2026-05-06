@@ -2039,13 +2039,42 @@ export default function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
+  const firstUserQueryRef = useRef<string | null>(null);
   const setConversationAutoTitleEligibility = useCallback(
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
+      firstUserQueryRef.current = null;
     },
     [],
   );
+  const deriveAutoConversationTitle = useCallback(() => {
+    const normalizeConversationTitle = (value: string): string | null => {
+      const normalized = value.replace(/\s+/g, " ").trim();
+      if (!normalized || normalized.startsWith("/")) {
+        return null;
+      }
+      return normalized.slice(0, 100);
+    };
+
+    if (firstUserQueryRef.current) {
+      return firstUserQueryRef.current;
+    }
+
+    for (const lineId of buffersRef.current.order) {
+      const line = buffersRef.current.byId.get(lineId);
+      if (!line || line.kind !== "user") {
+        continue;
+      }
+
+      const title = normalizeConversationTitle(line.text);
+      if (title) {
+        return title;
+      }
+    }
+
+    return null;
+  }, []);
   const resetBootstrapReminderState = useCallback(() => {
     resetSharedReminderState(sharedReminderStateRef.current);
   }, []);
@@ -5144,38 +5173,38 @@ export default function App({
               setNeedsEagerApprovalCheck(false);
             }
 
-            // Generate an auto title once the first assistant turn completes.
+            // Derive an auto title client-side once the first assistant turn completes.
             if (
               shouldAutoGenerateConversationTitleRef.current &&
               !isAutoConversationTitleInFlightRef.current &&
               conversationIdRef.current !== "default"
             ) {
               isAutoConversationTitleInFlightRef.current = true;
-              const client = await getClient();
-              client
-                .post(
-                  `/v1/conversations/${encodeURIComponent(conversationIdRef.current)}/generate-summary`,
-                  {
-                    body: {
-                      source: "auto_first_turn",
-                    },
-                  },
-                )
-                .then(() => {
-                  shouldAutoGenerateConversationTitleRef.current = false;
-                })
-                .catch((err) => {
-                  // Silently ignore - not critical.
-                  if (isDebugEnabled()) {
-                    console.error(
-                      "[DEBUG] Failed to generate conversation title:",
-                      err,
-                    );
-                  }
-                })
-                .finally(() => {
-                  isAutoConversationTitleInFlightRef.current = false;
-                });
+              const conversationTitle = deriveAutoConversationTitle();
+              if (!conversationTitle) {
+                isAutoConversationTitleInFlightRef.current = false;
+              } else {
+                const client = await getClient();
+                void client.conversations
+                  .update(conversationIdRef.current, {
+                    summary: conversationTitle,
+                  })
+                  .then(() => {
+                    shouldAutoGenerateConversationTitleRef.current = false;
+                  })
+                  .catch((err) => {
+                    // Silently ignore - not critical.
+                    if (isDebugEnabled()) {
+                      console.error(
+                        "[DEBUG] Failed to update conversation title:",
+                        err,
+                      );
+                    }
+                  })
+                  .finally(() => {
+                    isAutoConversationTitleInFlightRef.current = false;
+                  });
+              }
             }
 
             const trajectorySnapshot = sessionStatsRef.current.endTrajectory();
@@ -7836,6 +7865,19 @@ export default function App({
         );
       }
 
+      if (
+        shouldAutoGenerateConversationTitleRef.current &&
+        firstUserQueryRef.current === null &&
+        !isSystemOnly &&
+        userTextForInput.length > 0 &&
+        !userTextForInput.startsWith("/")
+      ) {
+        firstUserQueryRef.current = userTextForInput
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 100);
+      }
+
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen
       if (pendingApprovals.length > 0) {
@@ -9390,8 +9432,8 @@ export default function App({
               "Rename the current agent or conversation.",
               "",
               "USAGE",
-              "  /rename agent <name>      — rename the agent",
-              "  /rename convo [title]     — set a title, or auto-generate when omitted",
+              "  /rename agent [name]      — rename the agent",
+              "  /rename convo [name]      — rename the convo, or auto-generate when omitted",
               "  /rename help              — show this help",
             ].join("\n");
             cmd.finish(output, true);
@@ -9402,7 +9444,7 @@ export default function App({
             !subcommand ||
             (subcommand !== "agent" && subcommand !== "convo")
           ) {
-            cmd.fail("Usage: /rename agent <name> or /rename convo [title]");
+            cmd.fail("Usage: /rename agent [name] or /rename convo [name]");
             return { submitted: true };
           }
 
@@ -9413,9 +9455,7 @@ export default function App({
           }
 
           if (subcommand === "convo") {
-            const shouldAutoGenerate =
-              newValue.trim().length === 0 ||
-              newValue.trim().toLowerCase() === "auto";
+            const shouldAutoGenerate = newValue.trim().length === 0;
             cmd.update({
               output: shouldAutoGenerate
                 ? "Generating conversation title..."
@@ -9428,26 +9468,21 @@ export default function App({
             try {
               const client = await getClient();
               if (shouldAutoGenerate) {
-                const conversation = (await client.post(
-                  `/v1/conversations/${encodeURIComponent(conversationId)}/generate-summary`,
-                  {
-                    body: {
-                      source: "user_requested_auto",
-                      regenerate: true,
-                    },
-                  },
-                )) as { title?: string | null; summary?: string | null };
-                setConversationAutoTitleEligibility(false);
-                const conversationTitle =
-                  conversation.title ?? conversation.summary;
-                if (conversationTitle) {
-                  cmd.finish(
-                    `Conversation title set to "${conversationTitle}"`,
-                    true,
+                const conversationTitle = deriveAutoConversationTitle();
+                if (!conversationTitle) {
+                  cmd.fail(
+                    "No user message available to derive a conversation title",
                   );
-                } else {
-                  cmd.finish("No conversation title generated", true);
+                  return { submitted: true };
                 }
+                await client.conversations.update(conversationId, {
+                  summary: conversationTitle,
+                });
+                setConversationAutoTitleEligibility(false);
+                cmd.finish(
+                  `Conversation title set to "${conversationTitle}"`,
+                  true,
+                );
               } else {
                 await client.conversations.update(conversationId, {
                   summary: newValue,
