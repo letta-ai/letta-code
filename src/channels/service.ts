@@ -70,6 +70,7 @@ import {
   isDiscordChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
+  isWhatsAppChannelAccount,
 } from "./types";
 
 export interface ChannelSummary {
@@ -100,6 +101,13 @@ export interface ChannelConfigSnapshot {
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[];
+  selfChatMode?: boolean;
+  groupMode?: "disabled" | "mention" | "open";
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
+  transcribeVoice?: boolean;
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
 }
 
 export interface PendingPairingSnapshot {
@@ -164,6 +172,12 @@ export interface ChannelAccountSnapshot {
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[];
+  selfChatMode?: boolean;
+  groupMode?: "disabled" | "mention" | "open";
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -367,6 +381,10 @@ function isAccountConfigured(account: ChannelAccount): boolean {
     return account.token.trim().length > 0;
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    return true;
+  }
+
   if (!isSlackChannelAccount(account)) {
     return Object.keys(account.config).length > 0;
   }
@@ -438,6 +456,30 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
+  if (isWhatsAppChannelAccount(account)) {
+    return {
+      channelId: "whatsapp",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelAccountProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -523,6 +565,27 @@ function createAccountFromPatch(
     };
   }
 
+  if (channelId === "whatsapp") {
+    return {
+      channel: "whatsapp",
+      accountId,
+      displayName: normalizeDisplayName(normalizedPatch.displayName),
+      enabled: normalizedPatch.enabled ?? false,
+      agentId: normalizedPatch.agentId ?? null,
+      dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      allowedUsers: normalizedPatch.allowedUsers ?? [],
+      selfChatMode: normalizedPatch.selfChatMode ?? true,
+      groupMode: normalizedPatch.groupMode ?? "disabled",
+      allowedGroups: normalizedPatch.allowedGroups ?? [],
+      mentionPatterns: normalizedPatch.mentionPatterns ?? [],
+      transcribeVoice: normalizedPatch.transcribeVoice === true,
+      downloadMedia: normalizedPatch.downloadMedia === true,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   if (channelId !== "slack") {
     return {
       channel: channelId,
@@ -595,6 +658,31 @@ function mergeAccountPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       allowedChannels:
         normalizedPatch.allowedChannels ?? existing.allowedChannels,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
+  if (isWhatsAppChannelAccount(existing)) {
+    return {
+      ...existing,
+      displayName:
+        normalizedPatch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPatch.displayName)
+          : existing.displayName,
+      enabled: normalizedPatch.enabled ?? existing.enabled,
+      agentId: normalizedPatch.agentId ?? existing.agentId,
+      dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
+      groupMode: normalizedPatch.groupMode ?? existing.groupMode,
+      allowedGroups: normalizedPatch.allowedGroups ?? existing.allowedGroups,
+      mentionPatterns:
+        normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
+      transcribeVoice:
+        normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      downloadMedia:
+        normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -724,6 +812,26 @@ export function getChannelConfigSnapshot(
     };
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    return {
+      channelId: "whatsapp",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelConfigSnapshotProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+    };
+  }
+
   if (!isSlackChannelAccount(account)) {
     return {
       channelId: account.channel,
@@ -773,6 +881,14 @@ export async function setChannelConfigLive(
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
+      agentId: normalizedPatch.agentId,
+      selfChatMode: normalizedPatch.selfChatMode,
+      groupMode: normalizedPatch.groupMode,
+      allowedGroups: normalizedPatch.allowedGroups,
+      mentionPatterns: normalizedPatch.mentionPatterns,
+      transcribeVoice: normalizedPatch.transcribeVoice,
+      downloadMedia: normalizedPatch.downloadMedia,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes,
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -793,7 +909,14 @@ export async function setChannelConfigLive(
         dmPolicy: normalizedPatch.dmPolicy,
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
+        agentId: normalizedPatch.agentId,
+        selfChatMode: normalizedPatch.selfChatMode,
+        groupMode: normalizedPatch.groupMode,
+        allowedGroups: normalizedPatch.allowedGroups,
+        mentionPatterns: normalizedPatch.mentionPatterns,
         transcribeVoice: normalizedPatch.transcribeVoice,
+        downloadMedia: normalizedPatch.downloadMedia,
+        mediaMaxBytes: normalizedPatch.mediaMaxBytes,
         config: normalizedPatch.config,
       },
       accountId ? { accountId } : undefined,
@@ -1074,9 +1197,10 @@ export function bindChannelAccountLive(
     });
   } else if (
     isSlackChannelAccount(existing) ||
-    isDiscordChannelAccount(existing)
+    isDiscordChannelAccount(existing) ||
+    isWhatsAppChannelAccount(existing)
   ) {
-    // Slack and Discord both use a top-level agentId
+    // Slack, Discord, and WhatsApp use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId,
@@ -1113,9 +1237,10 @@ export function unbindChannelAccountLive(
     });
   } else if (
     isSlackChannelAccount(existing) ||
-    isDiscordChannelAccount(existing)
+    isDiscordChannelAccount(existing) ||
+    isWhatsAppChannelAccount(existing)
   ) {
-    // Slack and Discord both use a top-level agentId
+    // Slack, Discord, and WhatsApp use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId: null,

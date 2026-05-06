@@ -150,7 +150,13 @@ export interface ChannelPluginAccountPatch {
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[];
+  selfChatMode?: boolean;
+  groupMode?: "disabled" | "mention" | "open";
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
   transcribeVoice?: boolean;
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

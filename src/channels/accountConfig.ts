@@ -16,6 +16,7 @@ import { slackAccountConfigAdapter } from "./slack/accountConfig";
 import { telegramAccountConfigAdapter } from "./telegram/accountConfig";
 import type { ChannelAccount } from "./types";
 import { isCustomChannelAccount, isFirstPartyChannelId } from "./types";
+import { whatsappAccountConfigAdapter } from "./whatsapp/accountConfig";
 
 const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
   string,
@@ -29,6 +30,8 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
     discordAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
   custom:
     customAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
+  whatsapp:
+    whatsappAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
 };
 
 /**

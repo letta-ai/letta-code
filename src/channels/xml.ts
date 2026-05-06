@@ -81,6 +81,13 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.',
     );
   }
+  if (msg.channel === "whatsapp") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Replies are sent as the linked WhatsApp number.',
+    );
+  }
   if (msg.attachments?.length) {
     lines.splice(
       lines.length - 2,
