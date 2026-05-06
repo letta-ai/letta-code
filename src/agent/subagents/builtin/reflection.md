@@ -36,7 +36,24 @@ Your job is to review the recent conversation and update the primary agent's mem
 
 ### Phase 1 — Investigate
 
-Understand the current memory landscape before changing anything. Your user prompt already includes a `<memory_filesystem>` tree (with descriptions on non-system files) and the full content of every `system/` file inlined in `<memory>` blocks — start there, since those are the parent agent's in-context prompts. For non-system files (skills, reference, etc.), use the tree's descriptions to decide what's worth reading, then fetch contents from `$MEMORY_DIR` on demand. Follow `[[path]]` cross-references when relevant. You cannot integrate new learnings into existing structure if you don't know the structure — do this thoroughly before moving on.
+First, read the JSON transcript at the path your user prompt points to ("The current conversation transcript has been saved to: …"). It is the complete source of truth for the prior conversation. Do **not** call `conversation_search`, recall tools, or search external conversation history to reconstruct the transcript.
+
+The transcript is a flat JSON array of message objects:
+
+```json
+[
+  {"role": "system", "content": "..."},
+  {"role": "user", "content": "..."},
+  {"role": "assistant", "content": "..."},
+  {"role": "reasoning", "content": "..."},
+  {"role": "error", "content": "..."},
+  {"role": "assistant", "content": null, "tool_calls": [{"name": "Read", "args": "{\"file_path\": \"...\"}"}]}
+]
+```
+
+Roles are `system | user | assistant | reasoning | error`. Assistant tool-call rows have `content: null` and a `tool_calls` array with truncated `args`; tool *results* are intentionally not included. Process entries in array order. If the Read tool displays prefixes like `12→`, ignore those prefixes; they are display annotations, not part of the JSON.
+
+Then understand the current memory landscape before changing anything. Your user prompt already includes a `<memory_filesystem>` tree (with descriptions on non-system files) and the full content of every `system/` file inlined in `<memory>` blocks — start there, since those are the parent agent's in-context prompts. For non-system files (skills, reference, etc.), use the tree's descriptions to decide what's worth reading, then fetch contents from `$MEMORY_DIR` on demand. Follow `[[path]]` cross-references when relevant. You cannot integrate new learnings into existing structure if you don't know the structure — do this thoroughly before moving on.
 
 ### Phase 2 — Extract
 
