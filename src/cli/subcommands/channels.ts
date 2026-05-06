@@ -10,6 +10,7 @@
  *   letta channels route remove --channel telegram --chat-id <id>
  *   letta channels pair --channel telegram --code <code> --agent <id> --conversation <id>
  *   letta channels bind --channel slack --agent <id>
+ *   letta channels operator set --agent <id> --channel telegram --chat-id <id>
  */
 
 import { parseArgs } from "node:util";
@@ -18,6 +19,11 @@ import {
   listChannelAccounts,
   upsertChannelAccount,
 } from "../../channels/accounts";
+import {
+  removeOperatorDestination,
+  resolveOperatorDestination,
+  upsertOperatorDestination,
+} from "../../channels/operator";
 import {
   getApprovedUsers,
   getPendingPairings,
@@ -62,6 +68,9 @@ Usage:
   letta channels route remove [options]       Remove a route
   letta channels bind [options]               Bind a Slack app to an agent
   letta channels pair [options]               Approve pairing + bind to agent
+  letta channels operator get [options]       Show an agent's operator channel
+  letta channels operator set [options]       Set an agent's operator channel
+  letta channels operator clear [options]     Clear an agent's operator channel
 
 Bind options (Slack only):
   --channel slack        Required
@@ -81,6 +90,14 @@ Pair options:
   --code <code>          Pairing code from the bot
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID)
+
+Operator options:
+  --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
+  --conversation <id>    Optional conversation-specific override
+  --channel <name>       Channel name
+  --account-id <id>      Channel account ID (required when multiple accounts exist)
+  --chat-id <id>         Operator chat/conversation ID on the platform
+  --thread-id <id>       Optional thread ID for threaded destinations
 
 Note: "configure" and "status" are standalone-safe. "route add/remove" and
 "pair" modify files but do NOT update a running listener — use the /channels
@@ -114,6 +131,7 @@ const CHANNELS_OPTIONS = {
   channel: { type: "string" },
   "account-id": { type: "string" },
   "chat-id": { type: "string" },
+  "thread-id": { type: "string" },
   agent: { type: "string" },
   conversation: { type: "string" },
   code: { type: "string" },
@@ -371,6 +389,98 @@ function handleRouteAdd(
   return 0;
 }
 
+function handleOperatorGet(
+  values: ReturnType<typeof parseChannelsArgs>["values"],
+): number {
+  const agentId = getAgentId(values.agent);
+  if (!agentId) {
+    console.error(
+      "Error: --agent is required (or set LETTA_AGENT_ID env var).",
+    );
+    return 1;
+  }
+  const destination = resolveOperatorDestination({
+    agentId,
+    conversationId: values.conversation,
+  });
+  console.log(JSON.stringify({ success: true, destination }, null, 2));
+  return 0;
+}
+
+function handleOperatorSet(
+  values: ReturnType<typeof parseChannelsArgs>["values"],
+): number {
+  const channelId = values.channel;
+  const accountId = values["account-id"];
+  const chatId = values["chat-id"];
+  const agentId = getAgentId(values.agent);
+  if (!channelId) {
+    console.error("Error: --channel is required.");
+    return 1;
+  }
+  if (!isSupportedChannelId(channelId)) {
+    console.error(
+      `Unknown channel: "${channelId}". Supported: ${getSupportedChannelIds().join(", ")}`,
+    );
+    return 1;
+  }
+  if (!chatId) {
+    console.error("Error: --chat-id is required.");
+    return 1;
+  }
+  if (!agentId) {
+    console.error(
+      "Error: --agent is required (or set LETTA_AGENT_ID env var).",
+    );
+    return 1;
+  }
+
+  let resolvedAccountId: string;
+  try {
+    resolvedAccountId = resolveSelectedAccountId(channelId, accountId);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+
+  const existing = resolveOperatorDestination({
+    agentId,
+    conversationId: values.conversation,
+  });
+  const destination = upsertOperatorDestination({
+    id: existing?.id,
+    agentId,
+    conversationId: values.conversation ?? null,
+    channel: channelId,
+    accountId: resolvedAccountId,
+    chatId,
+    threadId: values["thread-id"] ?? null,
+  });
+  console.log(JSON.stringify({ success: true, destination }, null, 2));
+  return 0;
+}
+
+function handleOperatorClear(
+  values: ReturnType<typeof parseChannelsArgs>["values"],
+): number {
+  const agentId = getAgentId(values.agent);
+  if (!agentId) {
+    console.error(
+      "Error: --agent is required (or set LETTA_AGENT_ID env var).",
+    );
+    return 1;
+  }
+  const destination = resolveOperatorDestination({
+    agentId,
+    conversationId: values.conversation,
+  });
+  const deleted = destination
+    ? removeOperatorDestination(destination.id)
+    : false;
+  console.log(JSON.stringify({ success: true, deleted }, null, 2));
+  return 0;
+}
+
 function handleRouteRemove(
   values: ReturnType<typeof parseChannelsArgs>["values"],
 ): number {
@@ -601,6 +711,22 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
           return 1;
       }
     }
+    case "operator": {
+      const operatorAction = rest[0];
+      switch (operatorAction) {
+        case "get":
+          return handleOperatorGet(values);
+        case "set":
+          return handleOperatorSet(values);
+        case "clear":
+          return handleOperatorClear(values);
+        default:
+          console.error(
+            `Unknown operator action: "${operatorAction}". Use: get, set, clear`,
+          );
+          return 1;
+      }
+    }
     case "bind":
       return handleBind(values);
     case "pair":
@@ -611,7 +737,7 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
         return 0;
       }
       console.error(
-        `Unknown channels action: "${action}". Use: install, configure, status, route, bind, pair`,
+        `Unknown channels action: "${action}". Use: install, configure, status, route, operator, bind, pair`,
       );
       return 1;
   }

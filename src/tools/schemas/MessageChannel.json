@@ -7,7 +7,7 @@
     },
     "channel": {
       "type": "string",
-      "description": "The channel to send the message to (e.g., 'telegram')"
+      "description": "The channel to send the message to (e.g., 'telegram'). Omit channel, chat_id, and target to send to the configured operator channel for this agent."
     },
     "chat_id": {
       "type": "string",
@@ -58,6 +58,6 @@
       "description": "Optional uploaded title override for media attachments"
     }
   },
-  "required": ["action", "channel"],
+  "required": ["action"],
   "additionalProperties": false
 }

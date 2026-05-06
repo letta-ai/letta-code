@@ -3,6 +3,12 @@ import {
   channelPluginConfigShouldRefreshDisplayName,
   getChannelPluginConfig,
 } from "../../../channels/accountConfig";
+import {
+  type OperatorDestination,
+  removeOperatorDestination,
+  resolveOperatorDestination,
+  upsertOperatorDestination,
+} from "../../../channels/operator";
 import type { ChannelRegistryEvent } from "../../../channels/registry";
 import type { DequeuedBatch } from "../../../queue/queueRuntime";
 import type {
@@ -27,6 +33,9 @@ import type {
   ChannelsListCommand,
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
+  OperatorDestinationDeleteCommand,
+  OperatorDestinationGetCommand,
+  OperatorDestinationSetCommand,
   ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
   ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
 } from "../../../types/protocol_v2";
@@ -55,6 +64,9 @@ import {
   isChannelsListCommand,
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
+  isOperatorDestinationDeleteCommand,
+  isOperatorDestinationGetCommand,
+  isOperatorDestinationSetCommand,
 } from "../protocol-inbound";
 import type { ListenerTransport } from "../transport";
 import type {
@@ -115,7 +127,10 @@ export type ChannelsCommand =
   | ChannelTargetsListCommand
   | ChannelTargetBindCommand
   | ChannelRouteUpdateCommand
-  | ChannelRouteRemoveCommand;
+  | ChannelRouteRemoveCommand
+  | OperatorDestinationGetCommand
+  | OperatorDestinationSetCommand
+  | OperatorDestinationDeleteCommand;
 
 export function isDetachedChannelsCommand(
   parsed: unknown,
@@ -140,7 +155,10 @@ export function isDetachedChannelsCommand(
     isChannelTargetsListCommand(parsed) ||
     isChannelTargetBindCommand(parsed) ||
     isChannelRouteUpdateCommand(parsed) ||
-    isChannelRouteRemoveCommand(parsed)
+    isChannelRouteRemoveCommand(parsed) ||
+    isOperatorDestinationGetCommand(parsed) ||
+    isOperatorDestinationSetCommand(parsed) ||
+    isOperatorDestinationDeleteCommand(parsed)
   );
 }
 
@@ -403,6 +421,144 @@ export async function handleChannelsProtocolCommand(
     last_seen_at: target.lastSeenAt,
     ...(target.lastMessageId ? { last_message_id: target.lastMessageId } : {}),
   });
+
+  const mapOperatorDestination = (destination: OperatorDestination) => ({
+    id: destination.id,
+    agent_id: destination.agentId,
+    conversation_id: destination.conversationId ?? null,
+    label: destination.label,
+    enabled: destination.enabled,
+    channel_id: destination.channel,
+    account_id: destination.accountId,
+    chat_id: destination.chatId,
+    thread_id: destination.threadId ?? null,
+    notify_on_errors: destination.notifyOnErrors,
+    notify_on_retries: destination.notifyOnRetries,
+    use_as_message_channel_default: destination.useAsMessageChannelDefault,
+    created_at: destination.createdAt,
+    updated_at: destination.updatedAt,
+  });
+
+  if (parsed.type === "operator_destination_get") {
+    try {
+      const destination = resolveOperatorDestination({
+        agentId: parsed.agent_id,
+        conversationId: parsed.conversation_id,
+      });
+      safeSocketSend(
+        socket,
+        {
+          type: "operator_destination_get_response",
+          request_id: parsed.request_id,
+          success: true,
+          destination: destination ? mapOperatorDestination(destination) : null,
+        },
+        "listener_operator_destination_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "operator_destination_get_response",
+          request_id: parsed.request_id,
+          success: false,
+          destination: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to get operator destination",
+        },
+        "listener_operator_destination_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "operator_destination_set") {
+    try {
+      const destination = upsertOperatorDestination({
+        id: parsed.destination.id,
+        agentId: parsed.destination.agent_id,
+        conversationId: parsed.destination.conversation_id,
+        label: parsed.destination.label,
+        enabled: parsed.destination.enabled,
+        channel: parsed.destination.channel_id,
+        accountId: parsed.destination.account_id,
+        chatId: parsed.destination.chat_id,
+        threadId: parsed.destination.thread_id,
+        notifyOnErrors: parsed.destination.notify_on_errors,
+        notifyOnRetries: parsed.destination.notify_on_retries,
+        useAsMessageChannelDefault:
+          parsed.destination.use_as_message_channel_default,
+      });
+      safeSocketSend(
+        socket,
+        {
+          type: "operator_destination_set_response",
+          request_id: parsed.request_id,
+          success: true,
+          destination: mapOperatorDestination(destination),
+        },
+        "listener_operator_destination_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "operator_destination_set_response",
+          request_id: parsed.request_id,
+          success: false,
+          destination: null,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to set operator destination",
+        },
+        "listener_operator_destination_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "operator_destination_delete") {
+    try {
+      const deleted = removeOperatorDestination(parsed.id);
+      safeSocketSend(
+        socket,
+        {
+          type: "operator_destination_delete_response",
+          request_id: parsed.request_id,
+          success: true,
+          id: parsed.id,
+          deleted,
+        },
+        "listener_operator_destination_send_failed",
+        "listener_channels_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "operator_destination_delete_response",
+          request_id: parsed.request_id,
+          success: false,
+          id: parsed.id,
+          deleted: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to delete operator destination",
+        },
+        "listener_operator_destination_send_failed",
+        "listener_channels_command",
+      );
+    }
+    return true;
+  }
 
   if (parsed.type === "channels_list") {
     try {

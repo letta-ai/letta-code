@@ -7,6 +7,7 @@ When you receive a `<channel-notification>`, use this tool to reply directly to 
 There are two supported send modes:
 - Reply mode: use `channel` + `chat_id` from the notification to respond in the current routed chat.
 - Proactive mode: use `channel` + `target` on supported channels to send to an explicit outbound destination.
+- Operator mode: omit `channel`, `chat_id`, and `target` to send to the configured operator channel for this agent.
 
 Preferred reply pattern:
 - `action="send"` to send a normal reply
@@ -30,6 +31,7 @@ Parameters:
 
 Rules:
 - Always pass `action` explicitly, even for a normal reply.
-- Pass exactly one of `chat_id` or `target`.
+- For explicit sends, pass `channel` and exactly one of `chat_id` or `target`.
+- For operator sends, omit `channel`, `chat_id`, and `target`.
 - `react` should be its own call.
 - `upload-file` can include both `media` and `message` so the uploaded file has a caption/comment when the channel supports it.

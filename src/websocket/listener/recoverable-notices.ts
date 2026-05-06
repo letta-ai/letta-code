@@ -2,6 +2,7 @@ import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { RunErrorInfo } from "../../agent/approval-recovery";
 import { extractConflictDetail } from "../../agent/turn-recovery-policy";
+import { sendOperatorMessage } from "../../channels/operator";
 import {
   checkCloudflareEdgeError,
   formatErrorDetails,
@@ -21,6 +22,80 @@ export type RecoverableStatusNoticeKind = "stale_approval_conflict_recovery";
 export type RecoverableRetryNoticeKind = "transient_provider_retry";
 
 type LifecycleNoticeVisibility = "debug_only" | "transcript";
+
+function notifyOperatorOfError(params: {
+  agentId?: string | null;
+  conversationId?: string | null;
+  stopReason: string;
+  message: string;
+  isTerminal: boolean;
+}): void {
+  if (!params.isTerminal || !params.agentId) return;
+
+  const body = [
+    "Letta Code error",
+    `Agent: ${params.agentId}`,
+    `Conversation: ${params.conversationId ?? "default"}`,
+    `Reason: ${params.stopReason}`,
+    `Message: ${params.message}`,
+  ].join("\n");
+
+  const normalizedMessage = params.message.replace(/\s+/g, " ").trim();
+  void sendOperatorMessage({
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    message: body,
+    dedupeKey: [
+      "error",
+      params.agentId,
+      params.conversationId ?? "default",
+      params.stopReason,
+      normalizedMessage,
+    ].join(":"),
+  }).then((result) => {
+    if (!result.delivered) {
+      debugLog(
+        "recovery",
+        `Operator error notification skipped: ${result.reason ?? "unknown"}`,
+      );
+    }
+  });
+}
+
+function notifyOperatorOfRetry(
+  params: Parameters<typeof emitRetryDelta>[2],
+): void {
+  if (!params.agentId) return;
+
+  const body = [
+    "Letta Code retry notice",
+    `Agent: ${params.agentId}`,
+    `Conversation: ${params.conversationId ?? "default"}`,
+    `Attempt: ${params.attempt}/${params.maxAttempts}`,
+    `Message: ${params.message}`,
+  ].join("\n");
+
+  void sendOperatorMessage({
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    message: body,
+    retryNotice: true,
+    dedupeKey: [
+      "retry",
+      params.agentId,
+      params.conversationId ?? "default",
+      params.reason,
+      params.message.replace(/\s+/g, " ").trim(),
+    ].join(":"),
+  }).then((result) => {
+    if (!result.delivered) {
+      debugLog(
+        "recovery",
+        `Operator retry notification skipped: ${result.reason ?? "unknown"}`,
+      );
+    }
+  });
+}
 
 type StructuredLoopErrorInfo =
   | ErrorInfo
@@ -281,6 +356,13 @@ export function emitLoopErrorNotice(
     conversationId: params.conversationId,
     apiError: decision.apiError,
   });
+  notifyOperatorOfError({
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    stopReason: params.stopReason,
+    message: decision.message,
+    isTerminal: params.isTerminal,
+  });
 }
 
 export function emitRecoverableStatusNotice(
@@ -346,4 +428,5 @@ export function emitRecoverableRetryNotice(
     agentId: params.agentId,
     conversationId: params.conversationId,
   });
+  notifyOperatorOfRetry(params);
 }

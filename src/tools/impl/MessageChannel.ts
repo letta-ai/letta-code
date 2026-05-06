@@ -10,6 +10,7 @@
  * plugin.messageActions, following the OpenClaw-style architecture.
  */
 
+import { resolveOperatorDestination } from "../../channels/operator";
 import {
   isSupportedChannelId,
   loadChannelPlugin,
@@ -468,7 +469,7 @@ export function formatOutboundChannelMessage(
 }
 
 interface MessageChannelArgs {
-  channel: string;
+  channel?: string;
   action: string;
   chat_id?: string;
   target?: string;
@@ -487,8 +488,9 @@ interface MessageChannelArgs {
 }
 
 interface NormalizedMessageChannelInput {
-  channel: SupportedChannelId;
+  channel?: SupportedChannelId;
   action: ChannelMessageActionName;
+  useOperatorDefault?: boolean;
   chatId?: string;
   target?: string;
   accountId?: string;
@@ -561,10 +563,7 @@ function normalizeMessageChannelInput(
   args: MessageChannelArgs,
 ): NormalizedMessageChannelInput | string {
   const channel = firstNonEmptyString(args.channel)?.toLowerCase();
-  if (!channel) {
-    return "Error: MessageChannel requires channel.";
-  }
-  if (!isSupportedChannelId(channel)) {
+  if (channel && !isSupportedChannelId(channel)) {
     return `Error: Unsupported channel "${channel}".`;
   }
 
@@ -580,16 +579,20 @@ function normalizeMessageChannelInput(
 
   const rawChatId = firstNonEmptyString(args.chat_id);
   const rawTarget = firstNonEmptyString(args.target);
-  if (!rawChatId && !rawTarget) {
-    return "Error: MessageChannel requires exactly one of chat_id or target.";
+  if (!channel && (rawChatId || rawTarget)) {
+    return "Error: MessageChannel requires channel when chat_id or target is provided.";
   }
   if (rawChatId && rawTarget) {
     return "Error: MessageChannel requires exactly one of chat_id or target.";
   }
+  if (channel && !rawChatId && !rawTarget) {
+    return "Error: MessageChannel requires exactly one of chat_id or target when channel is provided.";
+  }
 
   return {
     action,
-    channel,
+    ...(channel ? { channel } : {}),
+    useOperatorDefault: !channel && !rawChatId && !rawTarget,
     ...(rawChatId ? { chatId: normalizeChatTarget(rawChatId) } : {}),
     ...(rawTarget ? { target: rawTarget } : {}),
     accountId: firstNonEmptyString(args.accountId),
@@ -609,10 +612,15 @@ function buildMessageChannelRequest(
   input: NormalizedMessageChannelInput,
   chatId: string,
   threadId?: string | null,
+  channelOverride?: SupportedChannelId,
 ): ChannelMessageActionRequest {
+  const channel = channelOverride ?? input.channel;
+  if (!channel) {
+    throw new Error("MessageChannel request is missing channel.");
+  }
   return {
     action: input.action,
-    channel: input.channel,
+    channel,
     chatId,
     message: input.message,
     replyToMessageId: input.replyToMessageId,
@@ -651,6 +659,9 @@ async function resolveExplicitMessageChannelContext(params: {
   input: NormalizedMessageChannelInput;
   scope: { agentId: string; conversationId: string };
 }): Promise<ResolvedMessageChannelExecutionContext | string> {
+  if (!params.input.channel) {
+    return "Error: MessageChannel requires channel for explicit targets.";
+  }
   if (params.input.channel !== "slack") {
     return `Error: Explicit MessageChannel targets are not supported on ${params.input.channel}.`;
   }
@@ -693,6 +704,50 @@ async function resolveExplicitMessageChannelContext(params: {
   };
 }
 
+async function resolveOperatorMessageChannelContext(params: {
+  input: NormalizedMessageChannelInput;
+  scope: { agentId: string; conversationId: string };
+  registry: NonNullable<ReturnType<typeof getChannelRegistry>>;
+}): Promise<ResolvedMessageChannelExecutionContext | string> {
+  const destination = resolveOperatorDestination({
+    agentId: params.scope.agentId,
+    conversationId: params.scope.conversationId,
+    requireMessageChannelDefault: true,
+  });
+  if (!destination) {
+    return "Error: No operator channel is configured for this agent.";
+  }
+
+  const adapter = params.registry.getAdapter(
+    destination.channel,
+    destination.accountId,
+  );
+  if (!adapter) {
+    return `Error: Operator channel "${destination.channel}" is not configured or not running.`;
+  }
+  if (!adapter.isRunning()) {
+    return `Error: Operator channel "${destination.channel}" is not currently running.`;
+  }
+
+  const plugin = await loadChannelPlugin(destination.channel);
+  return {
+    request: buildMessageChannelRequest(
+      params.input,
+      destination.chatId,
+      destination.threadId,
+      destination.channel,
+    ),
+    route: buildSyntheticChannelRoute({
+      scope: params.scope,
+      accountId: destination.accountId,
+      chatId: destination.chatId,
+      threadId: destination.threadId,
+    }),
+    adapter,
+    plugin,
+  };
+}
+
 export async function message_channel(
   args: MessageChannelArgs,
 ): Promise<string> {
@@ -716,7 +771,13 @@ export async function message_channel(
 
   try {
     let executionContext: ResolvedMessageChannelExecutionContext | string;
-    if (input.chatId) {
+    if (input.useOperatorDefault) {
+      executionContext = await resolveOperatorMessageChannelContext({
+        input,
+        scope,
+        registry,
+      });
+    } else if (input.chatId && input.channel) {
       const route: ChannelRoute | null = registry.getRouteForScope(
         input.channel,
         input.chatId,
@@ -747,11 +808,13 @@ export async function message_channel(
         adapter,
         plugin,
       };
-    } else {
+    } else if (input.target && input.channel) {
       executionContext = await resolveExplicitMessageChannelContext({
         input,
         scope,
       });
+    } else {
+      return "Error: MessageChannel requires channel + chat_id, channel + target, or a configured operator channel.";
     }
 
     if (typeof executionContext === "string") {
@@ -782,6 +845,6 @@ export async function message_channel(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
-    return `Error sending message to ${input.channel}: ${msg}`;
+    return `Error sending message to ${input.channel ?? "operator"}: ${msg}`;
   }
 }

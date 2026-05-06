@@ -3,6 +3,7 @@ import { resolveModel } from "../agent/model";
 import { getBackend } from "../backend";
 import { getClient } from "../backend/api/client";
 import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
+import { resolveOperatorDestination } from "../channels/operator";
 import { getSupportedChannelIds } from "../channels/pluginRegistry";
 import { getChannelRegistry } from "../channels/registry";
 import { getRoutesForChannel, loadRoutes } from "../channels/routing";
@@ -250,6 +251,27 @@ export function resolveConversationChannelToolScope(
       });
     }
   }
+
+  const operatorDestination = resolveOperatorDestination({
+    agentId,
+    conversationId,
+    requireMessageChannelDefault: true,
+  });
+  if (operatorDestination) {
+    const adapter = registry.getAdapter(
+      operatorDestination.channel,
+      operatorDestination.accountId,
+    );
+    const key = `${operatorDestination.channel}:${operatorDestination.accountId}`;
+    if (adapter?.isRunning() && !seen.has(key)) {
+      seen.add(key);
+      channels.push({
+        channelId: operatorDestination.channel,
+        accountId: operatorDestination.accountId,
+      });
+    }
+  }
+
   return { channels };
 }
 

@@ -46,6 +46,9 @@ import type {
   MemoryCommitDiffCommand,
   MemoryFileAtRefCommand,
   MemoryHistoryCommand,
+  OperatorDestinationDeleteCommand,
+  OperatorDestinationGetCommand,
+  OperatorDestinationSetCommand,
   ReadFileCommand,
   ReadMemoryFileCommand,
   RuntimeScope,
@@ -961,12 +964,91 @@ const CHANNEL_SET_CONFIG_FIELDS = new Set([
   "plugin_config",
 ]);
 
+function isNullableString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function isBooleanOrUndefined(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isValidOperatorDestinationPayload(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const destination = value as Record<string, unknown>;
+  const allowedFields = new Set([
+    "id",
+    "agent_id",
+    "conversation_id",
+    "label",
+    "enabled",
+    "channel_id",
+    "account_id",
+    "chat_id",
+    "thread_id",
+    "notify_on_errors",
+    "notify_on_retries",
+    "use_as_message_channel_default",
+  ]);
+  return (
+    hasOnlyFields(destination, allowedFields) &&
+    (destination.id === undefined || typeof destination.id === "string") &&
+    typeof destination.agent_id === "string" &&
+    isNullableString(destination.conversation_id) &&
+    isNullableString(destination.label) &&
+    isBooleanOrUndefined(destination.enabled) &&
+    isChannelId(destination.channel_id) &&
+    typeof destination.account_id === "string" &&
+    typeof destination.chat_id === "string" &&
+    isNullableString(destination.thread_id) &&
+    isBooleanOrUndefined(destination.notify_on_errors) &&
+    isBooleanOrUndefined(destination.notify_on_retries) &&
+    isBooleanOrUndefined(destination.use_as_message_channel_default)
+  );
+}
+
 export function isChannelsListCommand(
   value: unknown,
 ): value is ChannelsListCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as { type?: unknown; request_id?: unknown };
   return c.type === "channels_list" && typeof c.request_id === "string";
+}
+
+export function isOperatorDestinationGetCommand(
+  value: unknown,
+): value is OperatorDestinationGetCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Record<string, unknown>;
+  return (
+    c.type === "operator_destination_get" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    isNullableString(c.conversation_id)
+  );
+}
+
+export function isOperatorDestinationSetCommand(
+  value: unknown,
+): value is OperatorDestinationSetCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Record<string, unknown>;
+  return (
+    c.type === "operator_destination_set" &&
+    typeof c.request_id === "string" &&
+    isValidOperatorDestinationPayload(c.destination)
+  );
+}
+
+export function isOperatorDestinationDeleteCommand(
+  value: unknown,
+): value is OperatorDestinationDeleteCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Record<string, unknown>;
+  return (
+    c.type === "operator_destination_delete" &&
+    typeof c.request_id === "string" &&
+    typeof c.id === "string"
+  );
 }
 
 export function isChannelAccountsListCommand(
@@ -1550,6 +1632,9 @@ export function parseServerMessage(
       isChannelTargetBindCommand(parsed) ||
       isChannelRouteUpdateCommand(parsed) ||
       isChannelRouteRemoveCommand(parsed) ||
+      isOperatorDestinationGetCommand(parsed) ||
+      isOperatorDestinationSetCommand(parsed) ||
+      isOperatorDestinationDeleteCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
       isCheckoutBranchCommand(parsed) ||

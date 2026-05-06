@@ -215,6 +215,23 @@ export interface ChannelTargetSnapshot {
   last_message_id?: string;
 }
 
+export interface OperatorDestinationSnapshot {
+  id: string;
+  agent_id: string;
+  conversation_id?: string | null;
+  label?: string;
+  enabled: boolean;
+  channel_id: ChannelId;
+  account_id: string;
+  chat_id: string;
+  thread_id?: string | null;
+  notify_on_errors: boolean;
+  notify_on_retries: boolean;
+  use_as_message_channel_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 /**
  * Git repository state for the current working directory.
  * Null when the CWD is not inside a git repository.
@@ -1151,6 +1168,63 @@ export interface ChannelRouteUpdateCommand {
   runtime: RuntimeScope;
 }
 
+export interface OperatorDestinationGetCommand {
+  type: "operator_destination_get";
+  request_id: string;
+  agent_id: string;
+  conversation_id?: string | null;
+}
+
+export interface OperatorDestinationSetCommand {
+  type: "operator_destination_set";
+  request_id: string;
+  destination: {
+    id?: string;
+    agent_id: string;
+    conversation_id?: string | null;
+    label?: string;
+    enabled?: boolean;
+    channel_id: ChannelId;
+    account_id: string;
+    chat_id: string;
+    thread_id?: string | null;
+    notify_on_errors?: boolean;
+    notify_on_retries?: boolean;
+    use_as_message_channel_default?: boolean;
+  };
+}
+
+export interface OperatorDestinationDeleteCommand {
+  type: "operator_destination_delete";
+  request_id: string;
+  id: string;
+}
+
+export interface OperatorDestinationGetResponseMessage {
+  type: "operator_destination_get_response";
+  request_id: string;
+  success: boolean;
+  destination: OperatorDestinationSnapshot | null;
+  error?: string;
+}
+
+export interface OperatorDestinationSetResponseMessage {
+  type: "operator_destination_set_response";
+  request_id: string;
+  success: boolean;
+  destination: OperatorDestinationSnapshot | null;
+  error?: string;
+}
+
+export interface OperatorDestinationDeleteResponseMessage {
+  type: "operator_destination_delete_response";
+  request_id: string;
+  success: boolean;
+  id: string;
+  deleted: boolean;
+  error?: string;
+}
+
 export interface CronListResponseMessage {
   type: "cron_list_response";
   request_id: string;
@@ -1648,6 +1722,9 @@ export type WsProtocolCommand =
   | ChannelTargetBindCommand
   | ChannelRouteRemoveCommand
   | ChannelRouteUpdateCommand
+  | OperatorDestinationGetCommand
+  | OperatorDestinationSetCommand
+  | OperatorDestinationDeleteCommand
   | ExecuteCommandCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
@@ -1685,6 +1762,9 @@ export type WsProtocolMessage =
   | ChannelTargetBindResponseMessage
   | ChannelRouteRemoveResponseMessage
   | ChannelRouteUpdateResponseMessage
+  | OperatorDestinationGetResponseMessage
+  | OperatorDestinationSetResponseMessage
+  | OperatorDestinationDeleteResponseMessage
   | ChannelsUpdatedMessage
   | ChannelAccountsUpdatedMessage
   | ChannelPairingsUpdatedMessage

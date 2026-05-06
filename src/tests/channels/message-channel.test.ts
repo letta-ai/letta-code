@@ -6,6 +6,11 @@ import {
   clearChannelAccountStores,
   upsertChannelAccount,
 } from "../../channels/accounts";
+import {
+  __testClearOperatorDestinationStore,
+  __testOverrideOperatorDestinationStore,
+  upsertOperatorDestination,
+} from "../../channels/operator";
 import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
 import { clearAllRoutes, setRouteInMemory } from "../../channels/routing";
 import {
@@ -26,6 +31,8 @@ describe("MessageChannel", () => {
     clearAllRoutes();
     clearChannelAccountStores();
     clearTargetStores();
+    __testClearOperatorDestinationStore();
+    __testOverrideOperatorDestinationStore(null);
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
     __testOverrideLoadTargetStore(null);
@@ -38,6 +45,78 @@ describe("MessageChannel", () => {
     __testOverrideLoadTargetStore(() => {});
     __testOverrideSaveTargetStore(() => {});
   }
+
+  test("defaults to the configured operator channel when no target is provided", async () => {
+    const registry = new ChannelRegistry();
+    __testOverrideOperatorDestinationStore(
+      () => [],
+      () => {},
+    );
+
+    const sendMessage = mock(async () => ({ messageId: "operator-msg-1" }));
+    const adapter: ChannelAdapter = {
+      id: "slack:operator-account",
+      channelId: "slack",
+      accountId: "operator-account",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+    registry.registerAdapter(adapter);
+
+    upsertOperatorDestination({
+      agentId: "agent-1",
+      conversationId: null,
+      channel: "slack",
+      accountId: "operator-account",
+      chatId: "COPS",
+      threadId: "1712800000.000200",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      message: "operator ping",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to slack");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "slack",
+      accountId: "operator-account",
+      chatId: "COPS",
+      text: "operator ping",
+      replyToMessageId: undefined,
+      threadId: "1712800000.000200",
+      parseMode: undefined,
+    });
+  });
+
+  test("returns a clear error when operator target is omitted and unconfigured", async () => {
+    new ChannelRegistry();
+    __testOverrideOperatorDestinationStore(
+      () => [],
+      () => {},
+    );
+
+    const result = await message_channel({
+      action: "send",
+      message: "operator ping",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toBe(
+      "Error: No operator channel is configured for this agent.",
+    );
+  });
 
   test("uses the routed account adapter for multi-account channels", async () => {
     const registry = new ChannelRegistry();
