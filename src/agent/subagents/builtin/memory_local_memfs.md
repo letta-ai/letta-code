@@ -1,7 +1,7 @@
 ---
 name: memory
 description: Decompose and reorganize memory files into focused, single-purpose files using `/` naming
-tools: Read, Edit, Write, Glob, Grep, Bash, TaskOutput
+tools: Read, Edit, Write, Bash, TaskOutput
 model: auto
 memoryBlocks: none
 permissionMode: memory

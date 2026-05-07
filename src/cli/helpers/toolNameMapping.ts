@@ -24,6 +24,10 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "glob" || rawName === "Glob") return "Glob";
   if (rawName === "ls") return "LS";
   if (rawName === "todo_write" || rawName === "TodoWrite") return "TODO";
+  if (rawName === "TaskCreate") return "Task Create";
+  if (rawName === "TaskGet") return "Task Get";
+  if (rawName === "TaskList") return "Task List";
+  if (rawName === "TaskUpdate") return "Task Update";
   if (rawName === "EnterPlanMode" || rawName === "ExitPlanMode")
     return "Planning";
   if (rawName === "AskUserQuestion") return "Question";
@@ -96,6 +100,19 @@ export function isTodoTool(rawName: string, displayName?: string): boolean {
     rawName === "write_todos" ||
     rawName === "WriteTodos" ||
     displayName === "TODO"
+  );
+}
+
+/**
+ * Checks if a tool name is part of the Task* CRUD family
+ * (TaskCreate / TaskGet / TaskList / TaskUpdate).
+ */
+export function isTaskCrudTool(rawName: string): boolean {
+  return (
+    rawName === "TaskCreate" ||
+    rawName === "TaskGet" ||
+    rawName === "TaskList" ||
+    rawName === "TaskUpdate"
   );
 }
 

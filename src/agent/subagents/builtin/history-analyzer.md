@@ -1,7 +1,7 @@
 ---
 name: history-analyzer
 description: Analyze Claude Code or Codex conversation history and directly update agent memory files with insights
-tools: Read, Write, Bash, Glob, Grep
+tools: Read, Write, Bash
 skills:
 model: auto
 memoryBlocks: none

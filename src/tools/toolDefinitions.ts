@@ -30,8 +30,12 @@ import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import SkillDescription from "./descriptions/Skill.md";
 import TaskDescription from "./descriptions/Task.md";
+import TaskCreateDescription from "./descriptions/TaskCreate.md";
+import TaskGetDescription from "./descriptions/TaskGet.md";
+import TaskListDescription from "./descriptions/TaskList.md";
 import TaskOutputDescription from "./descriptions/TaskOutput.md";
 import TaskStopDescription from "./descriptions/TaskStop.md";
+import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
@@ -70,8 +74,12 @@ import { shell } from "./impl/Shell";
 import { shell_command } from "./impl/ShellCommand";
 import { skill } from "./impl/Skill";
 import { task } from "./impl/Task";
+import { task_create } from "./impl/TaskCreate";
+import { task_get } from "./impl/TaskGet";
+import { task_list } from "./impl/TaskList";
 import { task_output } from "./impl/TaskOutput";
 import { task_stop } from "./impl/TaskStop";
+import { task_update } from "./impl/TaskUpdate";
 import { todo_write } from "./impl/TodoWrite";
 import { update_plan } from "./impl/UpdatePlan";
 import { view_image } from "./impl/ViewImage";
@@ -110,8 +118,12 @@ import ShellSchema from "./schemas/Shell.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
 import SkillSchema from "./schemas/Skill.json";
 import TaskSchema from "./schemas/Task.json";
+import TaskCreateSchema from "./schemas/TaskCreate.json";
+import TaskGetSchema from "./schemas/TaskGet.json";
+import TaskListSchema from "./schemas/TaskList.json";
 import TaskOutputSchema from "./schemas/TaskOutput.json";
 import TaskStopSchema from "./schemas/TaskStop.json";
+import TaskUpdateSchema from "./schemas/TaskUpdate.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
@@ -238,6 +250,26 @@ const toolDefinitions = {
     schema: TaskSchema,
     description: TaskDescription.trim(),
     impl: task as unknown as ToolImplementation,
+  },
+  TaskCreate: {
+    schema: TaskCreateSchema,
+    description: TaskCreateDescription.trim(),
+    impl: task_create as unknown as ToolImplementation,
+  },
+  TaskGet: {
+    schema: TaskGetSchema,
+    description: TaskGetDescription.trim(),
+    impl: task_get as unknown as ToolImplementation,
+  },
+  TaskList: {
+    schema: TaskListSchema,
+    description: TaskListDescription.trim(),
+    impl: task_list as unknown as ToolImplementation,
+  },
+  TaskUpdate: {
+    schema: TaskUpdateSchema,
+    description: TaskUpdateDescription.trim(),
+    impl: task_update as unknown as ToolImplementation,
   },
   TodoWrite: {
     schema: TodoWriteSchema,

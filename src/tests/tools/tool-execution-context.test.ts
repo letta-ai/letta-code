@@ -173,14 +173,14 @@ describe("tool execution context snapshot", () => {
   test("filters model-derived client tools by request-scoped allowlist", async () => {
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
-      { clientToolAllowlist: ["Read", "Grep", "Glob"] },
+      { clientToolAllowlist: ["Read", "Skill", "TaskOutput"] },
     );
 
-    expect(prepared.loadedToolNames).toEqual(["Glob", "Grep", "Read"]);
+    expect(prepared.loadedToolNames).toEqual(["TaskOutput", "Read", "Skill"]);
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
-      "Glob",
-      "Grep",
+      "TaskOutput",
       "Read",
+      "Skill",
     ]);
     expect(prepared.loadedToolNames).not.toContain("Bash");
 

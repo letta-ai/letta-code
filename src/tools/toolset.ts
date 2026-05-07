@@ -349,14 +349,17 @@ export async function ensureCorrectMemoryTool(
 ): Promise<void> {
   void resolveModel(modelIdentifier);
   void useMemoryPatch;
-  if (!getBackend().capabilities.serverSideToolManagement) {
+  const backend = getBackend();
+  if (!backend.capabilities.serverSideToolManagement) {
     return;
   }
-  const client = await getClient();
+  if (settingsManager.isMemfsEnabled(agentId)) {
+    return;
+  }
 
   try {
     // Need full agent state for tool_rules, so use retrieve with include
-    const agentWithTools = await client.agents.retrieve(agentId, {
+    const agentWithTools = await backend.retrieveAgent(agentId, {
       include: ["agent.tools"],
     });
     const currentTools = agentWithTools.tools || [];
@@ -379,6 +382,7 @@ export async function ensureCorrectMemoryTool(
     // Ensure desired memory tool attached
     let desiredId = mapByName.get(desiredMemoryTool);
     if (!desiredId) {
+      const client = await getClient();
       const resp = await client.tools.list({ name: desiredMemoryTool });
       desiredId = resp.items[0]?.id;
     }
@@ -408,7 +412,7 @@ export async function ensureCorrectMemoryTool(
         : r,
     );
 
-    await client.agents.update(agentId, {
+    await backend.updateAgent(agentId, {
       tool_ids: Array.from(newIds),
       tool_rules: updatedRules,
     });
