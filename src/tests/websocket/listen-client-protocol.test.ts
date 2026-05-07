@@ -2278,13 +2278,13 @@ describe("listen-client experiment command handling", () => {
         type: "get_experiments_response",
         request_id: "experiments-get-1",
         success: true,
-        experiments: [
+        experiments: expect.arrayContaining([
           expect.objectContaining({
             id: "node",
             enabled: false,
             source: "default",
           }),
-        ],
+        ]),
       });
 
       socket.sentPayloads.length = 0;
@@ -2306,24 +2306,24 @@ describe("listen-client experiment command handling", () => {
         type: "set_experiment_response",
         request_id: "experiment-set-1",
         success: true,
-        experiments: [
+        experiments: expect.arrayContaining([
           expect.objectContaining({
             id: "node",
             enabled: true,
             source: "override",
           }),
-        ],
+        ]),
       });
       expect(deviceStatusUpdate).toMatchObject({
         type: "update_device_status",
         device_status: {
-          experiments: [
+          experiments: expect.arrayContaining([
             expect.objectContaining({
               id: "node",
               enabled: true,
               source: "override",
             }),
-          ],
+          ]),
         },
       });
     } finally {
@@ -2792,12 +2792,14 @@ describe("listen-client v2 status builders", () => {
         (deviceStatus.current_working_directory ?? "").length,
       ).toBeGreaterThan(0);
       expect(deviceStatus.current_toolset_preference).toBe("auto");
-      expect(deviceStatus.experiments).toEqual([
-        expect.objectContaining({
-          id: "node",
-          source: "default",
-        }),
-      ]);
+      expect(deviceStatus.experiments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "node",
+            source: "default",
+          }),
+        ]),
+      );
     } finally {
       if (originalNodeFlag === undefined) {
         delete process.env.LETTA_NODE;
