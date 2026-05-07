@@ -2297,6 +2297,44 @@ export default function App({
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
 
+  // Track how long the user spends on each approval for UX analytics
+  const [approvalTimerMs, setApprovalTimerMs] = useState(0);
+  const approvalTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const approvalTimerActive = approvalTimerMs > 0;
+
+  // Format approval timer as human-readable label
+  const approvalTimerLabel = useMemo(() => {
+    if (approvalTimerMs <= 0) return null;
+    const secs = Math.floor(approvalTimerMs / 1000);
+    return secs < 60
+      ? `⏱ ${secs}s`
+      : `⏱ ${Math.floor(secs / 60)}m ${secs % 60}s`;
+  }, [approvalTimerMs]);
+
+  // Start timer when a new approval appears, clear when resolved
+  useEffect(() => {
+    if (
+      pendingApprovals.length > 0 &&
+      approvalResults.length < pendingApprovals.length
+    ) {
+      setApprovalTimerMs(0);
+      approvalTimerRef.current = setInterval(() => {
+        setApprovalTimerMs((prev) => prev + 1000);
+      }, 1000);
+    } else {
+      if (approvalTimerRef.current) {
+        clearInterval(approvalTimerRef.current);
+        approvalTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (approvalTimerRef.current) {
+        clearInterval(approvalTimerRef.current);
+        approvalTimerRef.current = null;
+      }
+    };
+  }, [pendingApprovals.length, approvalResults.length]);
+
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
@@ -14437,51 +14475,60 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     return (
                       <Box key={ln.id} flexDirection="column" marginTop={1}>
                         {matchesCurrentApproval ? (
-                          <ApprovalSwitch
-                            approval={currentApproval}
-                            onApprove={handleApproveCurrent}
-                            onApproveAlways={handleApproveAlways}
-                            onDeny={handleDenyCurrent}
-                            onCancel={handleCancelApprovals}
-                            onPlanApprove={handlePlanApprove}
-                            onPlanKeepPlanning={handlePlanKeepPlanning}
-                            onQuestionSubmit={handleQuestionSubmit}
-                            onEnterPlanModeApprove={handleEnterPlanModeApprove}
-                            onEnterPlanModeReject={handleEnterPlanModeReject}
-                            precomputedDiff={
-                              ln.toolCallId
-                                ? precomputedDiffsRef.current.get(ln.toolCallId)
-                                : undefined
-                            }
-                            allDiffs={precomputedDiffsRef.current}
-                            isFocused={true}
-                            approveAlwaysText={
-                              currentApprovalContext?.approveAlwaysText
-                            }
-                            allowPersistence={
-                              currentApprovalContext?.allowPersistence ?? true
-                            }
-                            defaultScope={
-                              currentApprovalContext?.defaultScope === "user"
-                                ? "session"
-                                : (currentApprovalContext?.defaultScope ??
-                                  "project")
-                            }
-                            showPreview={showApprovalPreview}
-                            planContent={
-                              currentApproval.toolName === "ExitPlanMode"
-                                ? _readPlanFile(lastPlanFilePathRef.current)
-                                : undefined
-                            }
-                            planFilePath={
-                              currentApproval.toolName === "ExitPlanMode"
-                                ? (permissionMode.getPlanFilePath() ??
-                                  lastPlanFilePathRef.current ??
-                                  undefined)
-                                : undefined
-                            }
-                            agentName={agentName ?? undefined}
-                          />
+                          <>
+                            <ApprovalSwitch
+                              approval={currentApproval}
+                              onApprove={handleApproveCurrent}
+                              onApproveAlways={handleApproveAlways}
+                              onDeny={handleDenyCurrent}
+                              onCancel={handleCancelApprovals}
+                              onPlanApprove={handlePlanApprove}
+                              onPlanKeepPlanning={handlePlanKeepPlanning}
+                              onQuestionSubmit={handleQuestionSubmit}
+                              onEnterPlanModeApprove={
+                                handleEnterPlanModeApprove
+                              }
+                              onEnterPlanModeReject={handleEnterPlanModeReject}
+                              precomputedDiff={
+                                ln.toolCallId
+                                  ? precomputedDiffsRef.current.get(
+                                      ln.toolCallId,
+                                    )
+                                  : undefined
+                              }
+                              allDiffs={precomputedDiffsRef.current}
+                              isFocused={true}
+                              approveAlwaysText={
+                                currentApprovalContext?.approveAlwaysText
+                              }
+                              allowPersistence={
+                                currentApprovalContext?.allowPersistence ?? true
+                              }
+                              defaultScope={
+                                currentApprovalContext?.defaultScope === "user"
+                                  ? "session"
+                                  : (currentApprovalContext?.defaultScope ??
+                                    "project")
+                              }
+                              showPreview={showApprovalPreview}
+                              planContent={
+                                currentApproval.toolName === "ExitPlanMode"
+                                  ? _readPlanFile(lastPlanFilePathRef.current)
+                                  : undefined
+                              }
+                              planFilePath={
+                                currentApproval.toolName === "ExitPlanMode"
+                                  ? (permissionMode.getPlanFilePath() ??
+                                    lastPlanFilePathRef.current ??
+                                    undefined)
+                                  : undefined
+                              }
+                              agentName={agentName ?? undefined}
+                            />
+                            {approvalTimerActive && approvalTimerLabel && (
+                              <Text dimColor>{approvalTimerLabel}</Text>
+                            )}
+                          </>
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
                         ) : ln.kind === "reasoning" ? (
@@ -14579,6 +14626,9 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     }
                     agentName={agentName ?? undefined}
                   />
+                  {approvalTimerActive && approvalTimerLabel && (
+                    <Text dimColor>{approvalTimerLabel}</Text>
+                  )}
                 </Box>
               )}
 
