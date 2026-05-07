@@ -73,8 +73,6 @@ describe("Settings Manager - Initialization", () => {
     const settings = settingsManager.getSettings();
     expect(settings).toBeDefined();
     expect(typeof settings.tokenStreaming).toBe("boolean");
-    expect(settings.globalSharedBlockIds).toBeDefined();
-    expect(typeof settings.globalSharedBlockIds).toBe("object");
   });
 
   test("Initialize loads existing settings from disk", async () => {
@@ -213,21 +211,6 @@ describe("Settings Manager - Global Settings", () => {
     expect(settings.tokenStreaming).toBe(true);
     expect(settings.lastAgent).toBe("agent-456");
     expect(settings.enableSleeptime).toBe(true);
-  });
-
-  test("Update global shared block IDs", () => {
-    settingsManager.updateSettings({
-      globalSharedBlockIds: {
-        persona: "block-1",
-        human: "block-2",
-      },
-    });
-
-    const settings = settingsManager.getSettings();
-    expect(settings.globalSharedBlockIds).toEqual({
-      persona: "block-1",
-      human: "block-2",
-    });
   });
 
   test("Update env variables", () => {
@@ -920,17 +903,17 @@ describe("Settings Manager - Edge Cases", () => {
     await settingsManager.initialize();
     settingsManager.updateSettings({
       lastAgent: "agent-123",
-      globalSharedBlockIds: {},
+      tokenStreaming: true,
     });
 
     const settings = settingsManager.getSettings();
     settings.lastAgent = "modified-agent";
-    settings.globalSharedBlockIds = { modified: "block" };
+    settings.tokenStreaming = false;
 
     // Internal state should be unchanged
     const actualSettings = settingsManager.getSettings();
     expect(actualSettings.lastAgent).toBe("agent-123");
-    expect(actualSettings.globalSharedBlockIds).toEqual({});
+    expect(actualSettings.tokenStreaming).toBe(true);
   });
 
   test("Partial updates preserve existing values", async () => {
