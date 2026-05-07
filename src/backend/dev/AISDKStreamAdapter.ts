@@ -3,6 +3,7 @@ import {
   convertToModelMessages,
   jsonSchema,
   type LanguageModel,
+  type LanguageModelUsage,
   type ModelMessage,
   streamText,
   type TextStreamPart,
@@ -11,14 +12,20 @@ import {
   validateUIMessages,
 } from "ai";
 import type { ClientTool } from "../../tools/manager";
+import type { LocalCompactionStats } from "../local/compaction";
 import type { LocalMessage } from "../local/LocalMessage";
 import { createAISDKModelFactoryFromAgent } from "./AISDKModelFactory";
+import { isContextWindowOverflowError } from "./contextWindowOverflow";
 import type {
   ProviderStreamAdapter,
   ProviderStreamEvent,
   ProviderTurnInput,
 } from "./ProviderTurnExecutor";
-import { providerStreamPart, providerUIMessage } from "./ProviderTurnExecutor";
+import {
+  providerLettaChunk,
+  providerStreamPart,
+  providerUIMessage,
+} from "./ProviderTurnExecutor";
 
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
 type AISDKProviderKind = "anthropic" | "openai" | "unknown";
@@ -53,6 +60,22 @@ export interface AISDKStreamAdapterOptions {
   createModel?: () => LanguageModel;
   abortSignal?: AbortSignal;
   streamText?: AISDKStreamTextFunction;
+  onContextWindowOverflow?: (
+    input: ProviderTurnInput,
+    error: unknown,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>;
+  onContextUsage?: (
+    input: ProviderTurnInput,
+    usage: LanguageModelUsage,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -325,14 +348,40 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
   private readonly createModel?: () => LanguageModel;
   private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
+  private readonly onContextWindowOverflow?: AISDKStreamAdapterOptions["onContextWindowOverflow"];
+  private readonly onContextUsage?: AISDKStreamAdapterOptions["onContextUsage"];
 
   constructor(options: AISDKStreamAdapterOptions) {
     this.createModel = options.createModel;
     this.runStreamText = options.streamText ?? defaultStreamText;
     this.abortSignal = options.abortSignal;
+    this.onContextWindowOverflow = options.onContextWindowOverflow;
+    this.onContextUsage = options.onContextUsage;
   }
 
-  async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
+  private async *emitCompactionChunks(
+    compaction: {
+      summary: string;
+      stats?: LocalCompactionStats;
+    },
+    fallbackTrigger: string,
+  ): AsyncIterable<ProviderStreamEvent> {
+    const trigger = compaction.stats?.trigger ?? fallbackTrigger;
+    yield providerLettaChunk({
+      message_type: "event_message",
+      event_type: "compaction",
+      event_data: { trigger },
+    } as never);
+    yield providerLettaChunk({
+      message_type: "summary_message",
+      summary: compaction.summary,
+      ...(compaction.stats ? { compaction_stats: compaction.stats } : {}),
+    } as never);
+  }
+
+  private async *streamOnce(
+    input: ProviderTurnInput,
+  ): AsyncIterable<ProviderStreamEvent> {
     const tools = toToolSet(input.clientTools);
     const provider = aiSDKProviderKind(
       input.agent.model,
@@ -367,14 +416,71 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       },
     );
 
+    let streamError: unknown;
+    let lastUsage: LanguageModelUsage | undefined;
+    let sawToolCall = false;
+    let finishReason: string | undefined;
     for await (const part of result.fullStream) {
+      if (part.type === "error" && isContextWindowOverflowError(part.error)) {
+        streamError = part.error;
+        break;
+      }
+      if (part.type === "tool-call") {
+        sawToolCall = true;
+      }
+      if (part.type === "finish-step") {
+        lastUsage = part.usage;
+      }
+      if (part.type === "finish") {
+        finishReason = part.finishReason;
+        lastUsage ??= part.totalUsage;
+      }
       yield providerStreamPart(part);
+    }
+
+    if (streamError) {
+      await finalUIMessage.catch(() => undefined);
+      throw streamError;
     }
 
     const message = await finalUIMessage;
     if (uiMessageError) throw uiMessageError;
     if (message) {
       yield providerUIMessage(message);
+    }
+    if (
+      lastUsage &&
+      !sawToolCall &&
+      finishReason !== "tool-calls" &&
+      this.onContextUsage
+    ) {
+      const compaction = await this.onContextUsage(input, lastUsage);
+      if (compaction) {
+        yield* this.emitCompactionChunks(compaction, "context_window_limit");
+      }
+    }
+  }
+
+  async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
+    try {
+      yield* this.streamOnce(input);
+    } catch (error) {
+      if (
+        !isContextWindowOverflowError(error) ||
+        !this.onContextWindowOverflow
+      ) {
+        throw error;
+      }
+
+      const compaction = await this.onContextWindowOverflow(input, error);
+      if (!compaction) throw error;
+
+      yield* this.emitCompactionChunks(compaction, "context_window_overflow");
+
+      yield* this.streamOnce({
+        ...input,
+        uiMessages: compaction.uiMessages,
+      });
     }
   }
 }

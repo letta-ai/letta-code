@@ -201,6 +201,12 @@ export class HeadlessBackend implements Backend {
     ) as never;
   }
 
+  async compactConversationMessages(
+    ..._args: Parameters<Backend["compactConversationMessages"]>
+  ): ReturnType<Backend["compactConversationMessages"]> {
+    throw new Error("Compaction is not supported by this backend yet");
+  }
+
   async listAgentMessages(
     ...args: Parameters<Backend["listAgentMessages"]>
   ): ReturnType<Backend["listAgentMessages"]> {

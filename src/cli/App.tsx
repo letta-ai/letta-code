@@ -9300,8 +9300,6 @@ export default function App({
               return { submitted: true };
             }
 
-            const client = await getClient();
-
             // Build compaction settings if mode was specified
             // On server side, if mode changed, summarize function will use corresponding default prompt for new mode
             const compactParams = modeArg
@@ -9323,7 +9321,7 @@ export default function App({
                     ...(compactParams ?? {}),
                   }
                 : compactParams;
-            const result = await client.conversations.messages.compact(
+            const result = await getBackend().compactConversationMessages(
               compactConversationId,
               compactBody,
             );
