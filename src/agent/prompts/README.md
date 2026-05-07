@@ -20,9 +20,9 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 #### source_claude.md
 
 - **Source:** Claude Code (Anthropic)
-- **Version:** ~v2.1.50 (Feb 2026) — assembled from modular prompt files
+- **Version:** ~v2.1.132 (May 2026) — assembled from modular prompt files
 - **Reference:** https://github.com/Piebald-AI/claude-code-system-prompts
-- **Notes:** Since v2.1.20 the prompt is composed from ~110 atomic files at runtime. This is the rendered assembly for a default session (no custom output style, standard tools, TodoWrite present, Task subagents available).
+- **Notes:** Since v2.1.20 the prompt is composed from ~110 atomic files at runtime. This is the rendered assembly for a default session (no custom output style, standard tools, TodoWrite present, Task subagents available). v2.1.132 changes from prior snapshots: new modular `# Harness` block replaces the legacy preamble; `# Text output` (formerly `# Tone and style`) tightened with explicit "no narration" / "one-or-two-sentence summary" rules; "Doing tasks" split into focused sub-rules (no unnecessary error handling, no compatibility hacks, security, ambitious tasks); `# Executing actions with care` added; legacy `# Professional objectivity`, `# No time estimates`, `# Task Management` (TodoWrite examples), and `# Code References` (with example) sections removed.
 
 #### source_codex.md
 
