@@ -77,10 +77,12 @@ export function shouldAttemptPostStopApprovalRecovery(params: {
   retries: number;
   runErrorDetail: string | null;
   latestErrorText: string | null;
+  fallbackError?: string | null;
 }): boolean {
   const approvalDesyncDetected =
     isApprovalToolCallDesyncError(params.runErrorDetail) ||
-    isApprovalToolCallDesyncError(params.latestErrorText);
+    isApprovalToolCallDesyncError(params.latestErrorText) ||
+    isApprovalToolCallDesyncError(params.fallbackError);
 
   return shouldAttemptApprovalRecovery({
     approvalPendingDetected: approvalDesyncDetected,

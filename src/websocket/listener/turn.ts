@@ -725,6 +725,7 @@ export async function handleIncomingMessage(
 
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
+      const fallbackError = result.fallbackError ?? null;
       lastApprovalContinuationAccepted = false;
 
       if (stopReason === "end_turn" && runtime.cancelRequested) {
@@ -789,6 +790,7 @@ export async function handleIncomingMessage(
           latestErrorText ||
           runErrorInfo?.detail ||
           runErrorInfo?.message ||
+          fallbackError ||
           null;
 
         if (
@@ -798,6 +800,7 @@ export async function handleIncomingMessage(
             retries: postStopApprovalRecoveryRetries,
             runErrorDetail: errorDetail,
             latestErrorText,
+            fallbackError,
           })
         ) {
           postStopApprovalRecoveryRetries += 1;

@@ -4949,6 +4949,21 @@ describe("listen-client post-stop approval recovery policy", () => {
     expect(shouldRecover).toBe(false);
   });
 
+  test("retries on explicit approval conflicts captured as fallback errors", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 0,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: null,
+        fallbackError:
+          "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.",
+      });
+
+    expect(shouldRecover).toBe(true);
+  });
+
   test("does not retry when approval response is already stale", () => {
     const shouldRecover =
       __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
