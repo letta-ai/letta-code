@@ -61,6 +61,8 @@ async function withLocalModelEnv<T>(
   const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
   const originalZaiKey = process.env.ZAI_API_KEY;
   const originalZhipuKey = process.env.ZHIPU_API_KEY;
+  const originalMinimaxKey = process.env.MINIMAX_API_KEY;
+  const originalMoonshotKey = process.env.MOONSHOT_API_KEY;
   try {
     if (env.openAIKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = env.openAIKey;
@@ -72,6 +74,8 @@ async function withLocalModelEnv<T>(
     else process.env.ZAI_API_KEY = env.zaiKey;
     if (env.zhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
     else process.env.ZHIPU_API_KEY = env.zhipuKey;
+    delete process.env.MINIMAX_API_KEY;
+    delete process.env.MOONSHOT_API_KEY;
     return await fn();
   } finally {
     if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -86,6 +90,10 @@ async function withLocalModelEnv<T>(
     else process.env.ZAI_API_KEY = originalZaiKey;
     if (originalZhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
     else process.env.ZHIPU_API_KEY = originalZhipuKey;
+    if (originalMinimaxKey === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = originalMinimaxKey;
+    if (originalMoonshotKey === undefined) delete process.env.MOONSHOT_API_KEY;
+    else process.env.MOONSHOT_API_KEY = originalMoonshotKey;
   }
 }
 
@@ -315,6 +323,18 @@ describe("LocalBackend", () => {
           providerName: "lc-zai",
           apiKey: "test-zai-key",
         });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "minimax",
+          providerName: "lc-minimax",
+          apiKey: "test-minimax-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "moonshot",
+          providerName: "lc-moonshot",
+          apiKey: "test-moonshot-key",
+        });
         setLocalChatGPTOAuth(
           {
             type: "oauth",
@@ -334,6 +354,8 @@ describe("LocalBackend", () => {
         );
         expect(handles).toContain("openrouter/deepseek/deepseek-v4-pro");
         expect(handles).toContain("zai/glm-5.1");
+        expect(handles).toContain("minimax/MiniMax-M2.7");
+        expect(handles).toContain("moonshot/kimi-k2.5");
         expect(handles).toContain("chatgpt-plus-pro/gpt-5.5");
         expect(handles).not.toContain("anthropic/claude-opus-4-7");
 

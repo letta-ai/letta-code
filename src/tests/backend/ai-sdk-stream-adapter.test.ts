@@ -368,6 +368,20 @@ describe("AISDKStreamAdapter", () => {
         reasoning: { reasoning_effort: "high" },
       }),
     ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("moonshot/kimi-k2.5", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("minimax/MiniMax-M2.7", {
+        provider_type: "anthropic",
+        effort: "high",
+      }),
+    ).toBeUndefined();
   });
 
   test("maps Claude 4.7 thinking to adaptive summarized output", () => {

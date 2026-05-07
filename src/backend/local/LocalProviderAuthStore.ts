@@ -52,6 +52,9 @@ export const LOCAL_ANTHROPIC_PROVIDER_NAME = "lc-anthropic";
 export const LOCAL_OPENROUTER_PROVIDER_NAME = "lc-openrouter";
 export const LOCAL_ZAI_PROVIDER_NAME = "lc-zai";
 export const LOCAL_ZAI_CODING_PROVIDER_NAME = "lc-zai-coding";
+export const LOCAL_MINIMAX_PROVIDER_NAME = "lc-minimax";
+export const LOCAL_MOONSHOT_PROVIDER_NAME = "lc-moonshot";
+export const LOCAL_KIMI_CODE_PROVIDER_NAME = "lc-kimi-code";
 
 const SUPPORTED_LOCAL_PROVIDER_TYPES = new Set([
   "openai",
@@ -59,6 +62,9 @@ const SUPPORTED_LOCAL_PROVIDER_TYPES = new Set([
   "openrouter",
   "zai",
   "zai_coding",
+  "minimax",
+  "moonshot",
+  "moonshot_coding",
   "chatgpt_oauth",
 ]);
 

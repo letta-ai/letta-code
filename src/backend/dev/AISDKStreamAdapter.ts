@@ -202,7 +202,13 @@ function aiSDKProviderKind(
   ) {
     return "openai";
   }
-  if (modelHandle.startsWith("openrouter/") || modelHandle.startsWith("zai/")) {
+  if (
+    modelHandle.startsWith("openrouter/") ||
+    modelHandle.startsWith("zai/") ||
+    modelHandle.startsWith("moonshot/") ||
+    modelHandle.startsWith("moonshot_coding/") ||
+    modelHandle.startsWith("minimax/")
+  ) {
     return "unknown";
   }
 

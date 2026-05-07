@@ -5,6 +5,9 @@ import { DEFAULT_OPENAI_RESPONSES_MODEL } from "../dev/OpenAIResponsesModel";
 import {
   LOCAL_ANTHROPIC_PROVIDER_NAME,
   LOCAL_CHATGPT_PROVIDER_NAME,
+  LOCAL_KIMI_CODE_PROVIDER_NAME,
+  LOCAL_MINIMAX_PROVIDER_NAME,
+  LOCAL_MOONSHOT_PROVIDER_NAME,
   LOCAL_OPENAI_PROVIDER_NAME,
   LOCAL_OPENROUTER_PROVIDER_NAME,
   LOCAL_ZAI_CODING_PROVIDER_NAME,
@@ -54,6 +57,13 @@ function inferLocalProviderFromStandardKeys(
     providers.has(LOCAL_ZAI_PROVIDER_NAME) ||
     providers.has(LOCAL_ZAI_CODING_PROVIDER_NAME);
   const hasChatGPT = providers.has(LOCAL_CHATGPT_PROVIDER_NAME);
+  const hasMinimax =
+    hasEnvValue(process.env.MINIMAX_API_KEY) ||
+    providers.has(LOCAL_MINIMAX_PROVIDER_NAME);
+  const hasMoonshot =
+    hasEnvValue(process.env.MOONSHOT_API_KEY) ||
+    providers.has(LOCAL_MOONSHOT_PROVIDER_NAME) ||
+    providers.has(LOCAL_KIMI_CODE_PROVIDER_NAME);
 
   if (!hasOpenAIKey && hasAnthropicKey) return "anthropic";
   if (!hasOpenAIKey && !hasAnthropicKey && hasOpenRouterKey) {
@@ -67,6 +77,27 @@ function inferLocalProviderFromStandardKeys(
     !hasAnthropicKey &&
     !hasOpenRouterKey &&
     !hasZaiKey &&
+    hasMinimax
+  ) {
+    return "minimax";
+  }
+  if (
+    !hasOpenAIKey &&
+    !hasAnthropicKey &&
+    !hasOpenRouterKey &&
+    !hasZaiKey &&
+    !hasMinimax &&
+    hasMoonshot
+  ) {
+    return "moonshot";
+  }
+  if (
+    !hasOpenAIKey &&
+    !hasAnthropicKey &&
+    !hasOpenRouterKey &&
+    !hasZaiKey &&
+    !hasMinimax &&
+    !hasMoonshot &&
     hasChatGPT
   ) {
     return "chatgpt-oauth";
@@ -82,6 +113,8 @@ export function resolveLocalModel(provider = resolveLocalProvider()): string {
   if (provider === "anthropic") return DEFAULT_ANTHROPIC_MODEL;
   if (provider === "openrouter") return "openrouter/deepseek/deepseek-v4-pro";
   if (provider === "zai") return "zai/glm-5.1";
+  if (provider === "minimax") return "minimax/MiniMax-M2.7";
+  if (provider === "moonshot") return "moonshot/kimi-k2.5";
   if (provider === "chatgpt-oauth") {
     return `chatgpt-plus-pro/${DEFAULT_OPENAI_RESPONSES_MODEL}`;
   }
@@ -96,6 +129,8 @@ export function localModelHandle(
   if (provider === "anthropic") return `anthropic/${model}`;
   if (provider === "openrouter") return `openrouter/${model}`;
   if (provider === "zai") return `zai/${model}`;
+  if (provider === "minimax") return `minimax/${model}`;
+  if (provider === "moonshot") return `moonshot/${model}`;
   if (provider === "chatgpt-oauth") return `chatgpt-plus-pro/${model}`;
   return `openai/${model}`;
 }
@@ -104,6 +139,8 @@ export function localProviderType(provider: AISDKProvider): string {
   if (provider === "anthropic") return "anthropic";
   if (provider === "openrouter") return "openrouter";
   if (provider === "zai") return "zai";
+  if (provider === "minimax") return "minimax";
+  if (provider === "moonshot") return "moonshot";
   if (provider === "chatgpt-oauth") return "chatgpt_oauth";
   return "openai";
 }
@@ -151,6 +188,13 @@ export function listLocalModels(storageDir?: string) {
     providers.has(LOCAL_ZAI_PROVIDER_NAME) ||
     providers.has(LOCAL_ZAI_CODING_PROVIDER_NAME);
   const hasChatGPT = providers.has(LOCAL_CHATGPT_PROVIDER_NAME);
+  const hasMinimax =
+    hasEnvValue(process.env.MINIMAX_API_KEY) ||
+    providers.has(LOCAL_MINIMAX_PROVIDER_NAME);
+  const hasMoonshot =
+    hasEnvValue(process.env.MOONSHOT_API_KEY) ||
+    providers.has(LOCAL_MOONSHOT_PROVIDER_NAME) ||
+    providers.has(LOCAL_KIMI_CODE_PROVIDER_NAME);
 
   if (hasOpenAI) {
     addModel("openai-responses", openAIModel);
@@ -181,6 +225,30 @@ export function listLocalModels(storageDir?: string) {
         addModel("zai", model.handle);
       }
     }
+  }
+  if (hasMinimax) {
+    for (const model of modelsData.models) {
+      if (model.handle.startsWith("minimax/")) {
+        addModel("minimax", model.handle);
+      }
+    }
+  }
+  if (hasMoonshot) {
+    const addMoonshotModel = (model: string) => addModel("moonshot", model);
+    for (const model of modelsData.models) {
+      if (
+        model.handle.startsWith("moonshot/") ||
+        model.handle.startsWith("moonshot_coding/")
+      ) {
+        addMoonshotModel(model.handle);
+      }
+    }
+    addMoonshotModel("moonshot/kimi-k2-thinking-turbo");
+    addMoonshotModel("moonshot/kimi-k2-turbo-preview");
+    addMoonshotModel("moonshot/kimi-k2.5");
+    addMoonshotModel("moonshot/kimi-k2-0711-preview");
+    addMoonshotModel("moonshot/kimi-k2-thinking");
+    addMoonshotModel("moonshot/kimi-k2-0905-preview");
   }
   if (hasChatGPT) {
     for (const model of modelsData.models) {

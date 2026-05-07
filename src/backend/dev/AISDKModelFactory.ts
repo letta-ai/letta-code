@@ -2,6 +2,9 @@ import type { LanguageModel } from "ai";
 import {
   getLocalProviderApiKeyByName,
   LOCAL_ANTHROPIC_PROVIDER_NAME,
+  LOCAL_KIMI_CODE_PROVIDER_NAME,
+  LOCAL_MINIMAX_PROVIDER_NAME,
+  LOCAL_MOONSHOT_PROVIDER_NAME,
   LOCAL_OPENAI_PROVIDER_NAME,
   LOCAL_OPENROUTER_PROVIDER_NAME,
   LOCAL_ZAI_CODING_PROVIDER_NAME,
@@ -19,6 +22,8 @@ export type AISDKProvider =
   | "anthropic"
   | "openrouter"
   | "zai"
+  | "minimax"
+  | "moonshot"
   | "chatgpt-oauth";
 
 export interface AISDKModelFactoryOptions {
@@ -58,12 +63,14 @@ export function resolveAISDKProvider(
     provider === "anthropic" ||
     provider === "openrouter" ||
     provider === "zai" ||
+    provider === "minimax" ||
+    provider === "moonshot" ||
     provider === "chatgpt-oauth"
   ) {
     return provider;
   }
   throw new Error(
-    `Unknown AI SDK provider "${provider}". Expected "openai-responses", "anthropic", "openrouter", "zai", or "chatgpt-oauth".`,
+    `Unknown AI SDK provider "${provider}". Expected "openai-responses", "anthropic", "openrouter", "zai", "minimax", "moonshot", or "chatgpt-oauth".`,
   );
 }
 
@@ -74,6 +81,10 @@ export function resolveAISDKProviderFromAgent(
   if (model?.startsWith("chatgpt-plus-pro/")) return "chatgpt-oauth";
   if (model?.startsWith("openrouter/")) return "openrouter";
   if (model?.startsWith("zai/")) return "zai";
+  if (model?.startsWith("minimax/")) return "minimax";
+  if (model?.startsWith("moonshot/") || model?.startsWith("moonshot_coding/")) {
+    return "moonshot";
+  }
   if (model?.startsWith("anthropic/")) return "anthropic";
   if (model?.startsWith("openai/") || model?.startsWith("openai-responses/")) {
     return "openai-responses";
@@ -83,6 +94,10 @@ export function resolveAISDKProviderFromAgent(
   if (providerType === "anthropic") return "anthropic";
   if (providerType === "openrouter") return "openrouter";
   if (providerType === "zai" || providerType === "zai_coding") return "zai";
+  if (providerType === "minimax") return "minimax";
+  if (providerType === "moonshot" || providerType === "moonshot_coding") {
+    return "moonshot";
+  }
   if (providerType === "chatgpt_oauth") return "chatgpt-oauth";
   if (providerType === "openai" || providerType === "openai-responses") {
     return "openai-responses";
@@ -112,6 +127,15 @@ export function resolveAISDKModelFromAgent(
   }
   if (provider === "zai" && model.startsWith("zai/")) {
     return model.slice("zai/".length);
+  }
+  if (provider === "minimax" && model.startsWith("minimax/")) {
+    return model.slice("minimax/".length);
+  }
+  if (provider === "moonshot" && model.startsWith("moonshot/")) {
+    return model.slice("moonshot/".length);
+  }
+  if (provider === "moonshot" && model.startsWith("moonshot_coding/")) {
+    return model.slice("moonshot_coding/".length);
   }
   if (provider === "chatgpt-oauth" && model.startsWith("chatgpt-plus-pro/")) {
     return model.slice("chatgpt-plus-pro/".length);
@@ -241,6 +265,36 @@ export function createAISDKModelFactory(
         createModel: options.createOpenAICompatibleModel,
       });
     }
+    case "minimax":
+      return createAnthropicModelFactory({
+        model,
+        providerName: "minimax",
+        baseURL:
+          process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io/anthropic/v1",
+        apiKey: localProviderApiKey(
+          LOCAL_MINIMAX_PROVIDER_NAME,
+          process.env.MINIMAX_API_KEY,
+          storageDir,
+        ),
+        createModel: options.createAnthropicModel,
+      });
+    case "moonshot":
+      return createOpenAICompatibleModelFactory({
+        model,
+        providerName: "moonshot",
+        baseURL: process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1",
+        apiKey:
+          getLocalProviderApiKeyByName(
+            LOCAL_KIMI_CODE_PROVIDER_NAME,
+            storageDir,
+          ) ??
+          getLocalProviderApiKeyByName(
+            LOCAL_MOONSHOT_PROVIDER_NAME,
+            storageDir,
+          ) ??
+          process.env.MOONSHOT_API_KEY,
+        createModel: options.createOpenAICompatibleModel,
+      });
     case "chatgpt-oauth":
       return createChatGPTOAuthModelFactory({
         model,
