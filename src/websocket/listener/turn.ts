@@ -91,6 +91,7 @@ import {
   emitRecoverableStatusNotice,
 } from "./recoverable-notices";
 import {
+  getApprovalToolCallDesyncErrorText,
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
@@ -684,18 +685,32 @@ export async function handleIncomingMessage(
           }
 
           if (errorInfo) {
-            latestErrorText = errorInfo.message || latestErrorText;
-            emitLoopErrorNotice(socket, runtime, {
-              message: errorInfo.message || "Stream error",
-              stopReason: (errorInfo.error_type as StopReasonType) || "error",
-              isTerminal: false,
-              runId: runId || errorInfo.run_id,
-              agentId,
-              conversationId,
-              errorInfo,
-              cancelRequested: runtime.cancelRequested,
-              abortSignal: turnAbortSignal,
-            });
+            const recoverableApprovalErrorText =
+              getApprovalToolCallDesyncErrorText(errorInfo);
+            latestErrorText =
+              recoverableApprovalErrorText ||
+              errorInfo.detail ||
+              errorInfo.message ||
+              latestErrorText;
+            if (!recoverableApprovalErrorText) {
+              emitLoopErrorNotice(socket, runtime, {
+                message: errorInfo.message || "Stream error",
+                stopReason: (errorInfo.error_type as StopReasonType) || "error",
+                isTerminal: false,
+                runId: runId || errorInfo.run_id,
+                agentId,
+                conversationId,
+                errorInfo,
+                cancelRequested: runtime.cancelRequested,
+                abortSignal: turnAbortSignal,
+              });
+            } else {
+              debugLog(
+                "recovery",
+                "Suppressing streamed approval conflict while post-stop recovery runs: %s",
+                recoverableApprovalErrorText,
+              );
+            }
           }
 
           if (shouldOutput) {

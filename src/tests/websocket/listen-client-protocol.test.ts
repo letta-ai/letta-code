@@ -4936,6 +4936,29 @@ describe("listen-client post-stop approval recovery policy", () => {
     expect(shouldRecover).toBe(true);
   });
 
+  test("extracts streamed approval conflict details from generic error messages", () => {
+    const conflictDetail =
+      "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
+
+    expect(
+      __listenClientTestUtils.getApprovalToolCallDesyncErrorText({
+        message: "An unknown error occurred with the LLM streaming request.",
+        detail: conflictDetail,
+      }),
+    ).toBe(conflictDetail);
+
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: conflictDetail,
+      });
+
+    expect(shouldRecover).toBe(true);
+  });
+
   test("does not retry on generic no-run errors without an approval conflict", () => {
     const shouldRecover =
       __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
