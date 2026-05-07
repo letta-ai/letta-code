@@ -69,8 +69,8 @@ jobs:
             1. Read your review-knowledge.md memory file — it has the codebase footguns, bug patterns, and provider-specific traps you've accumulated
             2. Run `gh pr diff $PR_NUMBER` to read the full diff
             3. Assess whether the PR introduces real risk (bugs, logic errors, security issues, race conditions, missing error handling, breaking changes, performance problems)
-            4. If nothing to flag, stop — no comment, no response needed
-            5. If something to flag, leave inline review comments on specific lines
+            4. If nothing to flag, respond with exactly: `LGTM`
+            5. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
 
             **Default posture: signal-only.** Most PRs are fine. Only speak when there's something worth saying.
 
