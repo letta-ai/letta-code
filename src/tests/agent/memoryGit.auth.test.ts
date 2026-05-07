@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,10 +15,14 @@ import {
   buildMemfsGitProxyArgs,
   buildNonInteractiveGitEnv,
   formatGitCredentialHelperPath,
+  getAgentRootDir,
   getGitRemoteUrl,
+  getMemoryRepoDir,
   isMemfsRemoteUrlForAgent,
+  isRepairableMemfsRemoteUrl,
   maybeUpdateMemoryRemoteOrigin,
   normalizeCredentialBaseUrl,
+  pullMemory,
   shouldConfigurePersistentMemfsCredentialHelper,
 } from "../../agent/memoryGit";
 import {
@@ -240,6 +250,27 @@ describe("normalizeCredentialBaseUrl", () => {
         false,
       );
     });
+
+    test("recognizes malformed but repairable memfs remotes", () => {
+      expect(
+        isRepairableMemfsRemoteUrl(
+          "http://localhost:57294/v1/git",
+          "agent-123",
+        ),
+      ).toBe(true);
+      expect(
+        isRepairableMemfsRemoteUrl(
+          "http://localhost:57294/v1/git/agent-123",
+          "agent-123",
+        ),
+      ).toBe(true);
+      expect(
+        isRepairableMemfsRemoteUrl(
+          "http://localhost:57294/v1/git/agent-999/state.git",
+          "agent-123",
+        ),
+      ).toBe(false);
+    });
   });
 
   test("strips trailing slashes", () => {
@@ -314,7 +345,9 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      expectedOrigin,
+    );
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
@@ -332,7 +365,37 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      "https://api.letta.com/v1/git/agent-123/state.git",
+    );
+  });
+
+  test("repairs malformed memfs origin missing agent and repo path", async () => {
+    const repo = makeGitRepo();
+    const agentId = "agent-123";
+
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:54085";
+    delete process.env.LETTA_MEMFS_BASE_URL;
+    git(repo, "remote add origin http://localhost:54085/v1/git");
+
+    await maybeUpdateMemoryRemoteOrigin(repo, agentId);
+
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      "https://api.letta.com/v1/git/agent-123/state.git",
+    );
+  });
+
+  test("repairs legacy memfs origin missing state.git suffix", async () => {
+    const repo = makeGitRepo();
+    const agentId = "agent-123";
+
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    git(repo, "remote add origin https://api.letta.com/v1/git/agent-123");
+
+    await maybeUpdateMemoryRemoteOrigin(repo, agentId);
+
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
       "https://api.letta.com/v1/git/agent-123/state.git",
     );
   });
@@ -349,7 +412,9 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      expectedOrigin,
+    );
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
@@ -369,7 +434,9 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      expectedOrigin,
+    );
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
@@ -387,7 +454,7 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(origin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(origin);
     expect(
       git(repo, "config --local --get-all remote.origin.pushurl").trim(),
     ).toBe(pushUrl);
@@ -409,10 +476,46 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      expectedOrigin,
+    );
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
+  });
+});
+
+describe("pullMemory recovery", () => {
+  test("recovers clean unrelated local memory history by resetting to origin/main", async () => {
+    const remote = makeBareGitRepo();
+    const source = cloneRepo(remote);
+    commitFile(source, "remote.md", "remote memory");
+    git(source, "push -u origin main");
+
+    const agentId = `agent-test-${Date.now()}`;
+    const agentRoot = getAgentRootDir(agentId);
+    tempDirs.push(agentRoot);
+    const memoryDir = getMemoryRepoDir(agentId);
+    mkdirSync(memoryDir, { recursive: true });
+    execSync("git init -b main", { cwd: memoryDir, stdio: "ignore" });
+    git(memoryDir, "config user.name Test");
+    git(memoryDir, "config user.email test@example.com");
+    git(memoryDir, `remote add origin ${remote}`);
+    commitFile(memoryDir, "local.md", "local placeholder");
+    git(memoryDir, "fetch origin main");
+    git(memoryDir, "branch --set-upstream-to origin/main main");
+
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await pullMemory(agentId);
+
+    expect(result.updated).toBe(true);
+    expect(result.summary).toContain("Recovered memory repo by resetting");
+    expect(existsSync(join(memoryDir, "remote.md"))).toBe(true);
+    expect(existsSync(join(memoryDir, "local.md"))).toBe(false);
   });
 });
 

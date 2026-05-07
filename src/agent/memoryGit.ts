@@ -51,6 +51,12 @@ const MISSING_CWD_GIT_ERROR_RE =
 const NON_FAST_FORWARD_PUSH_ERROR_RE =
   /(non-fast-forward|fetch first|failed to push some refs|updates were rejected|remote contains work that you do not have locally|tip of your current branch is behind)/i;
 
+const UNRELATED_HISTORY_PULL_ERROR_RE =
+  /(no common commits|refusing to merge unrelated histories)/i;
+
+const NO_UPSTREAM_PULL_ERROR_RE =
+  /(there is no tracking information for the current branch|no upstream configured|no tracking branch)/i;
+
 const AGENT_DISPLAY_NAME_TIMEOUT_MS = 3_000;
 
 export interface MemoryCommitAuthor {
@@ -152,6 +158,38 @@ export function isMemfsRemoteUrlForAgent(
   ).test(normalized);
 }
 
+/**
+ * Returns true when an origin URL is clearly intended to be a Letta MemFS
+ * remote for this agent, including older/broken forms we can safely repair.
+ */
+export function isRepairableMemfsRemoteUrl(
+  remoteUrl: string,
+  agentId: string,
+): boolean {
+  const normalized = normalizeRemoteUrl(remoteUrl);
+  const escapedAgentId = escapeRegex(agentId);
+
+  if (isMemfsRemoteUrlForAgent(normalized, agentId)) {
+    return true;
+  }
+
+  // Legacy remote shape: /v1/git/{agent_id}. Git appends /info/refs to this,
+  // which server-side compatibility now handles, but the persisted origin
+  // should still be repaired to the canonical /state.git URL.
+  if (
+    new RegExp(`^https?://[^\\s]+/v1/git/${escapedAgentId}$`, "i").test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+
+  // Broken Desktop/local proxy shape observed in the wild: origin is just the
+  // git proxy prefix (/v1/git) with no agent or repo suffix. The CLI knows the
+  // active agent, so repair this before trying to sync.
+  return /^https?:\/\/[^\s]+\/v1\/git$/i.test(normalized);
+}
+
 /** Git remote URL for the agent's state repo */
 export function getGitRemoteUrl(agentId: string, baseUrl?: string): string {
   const resolvedBaseUrl = (baseUrl ?? getMemfsServerUrl())
@@ -183,7 +221,7 @@ export async function maybeUpdateMemoryRemoteOrigin(
     return;
   }
 
-  if (!isMemfsRemoteUrlForAgent(currentOrigin, agentId)) {
+  if (!isRepairableMemfsRemoteUrl(currentOrigin, agentId)) {
     return;
   }
 
@@ -1015,6 +1053,14 @@ function isNonFastForwardPushError(error: unknown): boolean {
   return NON_FAST_FORWARD_PUSH_ERROR_RE.test(message);
 }
 
+function isRecoverableMemoryPullHistoryError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    UNRELATED_HISTORY_PULL_ERROR_RE.test(message) ||
+    NO_UPSTREAM_PULL_ERROR_RE.test(message)
+  );
+}
+
 async function prepareMemoryRepoForGitOps(
   memoryDir: string,
   agentId: string,
@@ -1025,6 +1071,73 @@ async function prepareMemoryRepoForGitOps(
   installPreCommitHook(memoryDir);
   installPostCommitHook(memoryDir);
   await ensureLocalMemfsGitConfig(memoryDir, agentId);
+}
+
+async function recoverMemoryPullByResettingToRemote(
+  memoryDir: string,
+  token: string,
+): Promise<string> {
+  const { stdout: status } = await runGit(memoryDir, ["status", "--porcelain"]);
+  if (status.trim()) {
+    throw new Error(
+      "Local memory repo has uncommitted changes; refusing to auto-reset unrelated history.",
+    );
+  }
+
+  await runGitWithRetry(memoryDir, ["fetch", "origin", "main"], token, {
+    operation: "fetch memory repo for reset",
+  });
+
+  const { stdout: remoteShaOut } = await runGit(memoryDir, [
+    "rev-parse",
+    "--verify",
+    "refs/remotes/origin/main",
+  ]);
+  const remoteSha = remoteShaOut.trim();
+  if (!remoteSha) {
+    throw new Error("Remote memory repo did not advertise origin/main.");
+  }
+
+  let backupRef: string | null = null;
+  try {
+    const { stdout: localShaOut } = await runGit(memoryDir, [
+      "rev-parse",
+      "--verify",
+      "HEAD",
+    ]);
+    const localSha = localShaOut.trim();
+    if (localSha && localSha !== remoteSha) {
+      backupRef = `refs/letta-backup/pre-sync-${Date.now()}`;
+      await runGit(memoryDir, ["update-ref", backupRef, localSha]);
+    }
+  } catch {
+    // No local HEAD to preserve.
+  }
+
+  await runGit(memoryDir, ["reset", "--hard", "refs/remotes/origin/main"]);
+  try {
+    await runGit(memoryDir, [
+      "branch",
+      "--set-upstream-to",
+      "origin/main",
+      "main",
+    ]);
+  } catch {
+    // Non-fatal; future explicit git commands can still name origin/main.
+  }
+
+  return backupRef
+    ? `Recovered memory repo by resetting to origin/main (${remoteSha.slice(0, 7)}). Previous local HEAD was preserved at ${backupRef}.`
+    : `Recovered memory repo by resetting to origin/main (${remoteSha.slice(0, 7)}).`;
+}
+
+async function hasMergeBaseWithUpstream(memoryDir: string): Promise<boolean> {
+  try {
+    await runGit(memoryDir, ["merge-base", "HEAD", "@{u}"]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function prepareLocalOnlyMemoryRepoForGitOps(
@@ -1584,6 +1697,22 @@ export async function pullMemory(
       summary: updated ? output.trim() : "Already up to date",
     };
   } catch {
+    if (!(await hasMergeBaseWithUpstream(dir))) {
+      try {
+        return {
+          updated: true,
+          summary: await recoverMemoryPullByResettingToRemote(dir, token),
+        };
+      } catch (recoverErr) {
+        const recoverMsg =
+          recoverErr instanceof Error ? recoverErr.message : String(recoverErr);
+        debugWarn(
+          "memfs-git",
+          `Automatic memory repo reset failed: ${recoverMsg}`,
+        );
+      }
+    }
+
     // If ff-only fails (diverged), try rebase
     debugWarn("memfs-git", "Fast-forward pull failed, trying rebase");
     try {
@@ -1595,6 +1724,24 @@ export async function pullMemory(
       );
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
+      if (isRecoverableMemoryPullHistoryError(rebaseErr)) {
+        try {
+          return {
+            updated: true,
+            summary: await recoverMemoryPullByResettingToRemote(dir, token),
+          };
+        } catch (recoverErr) {
+          const recoverMsg =
+            recoverErr instanceof Error
+              ? recoverErr.message
+              : String(recoverErr);
+          debugWarn(
+            "memfs-git",
+            `Automatic memory repo reset failed: ${recoverMsg}`,
+          );
+        }
+      }
+
       const msg =
         rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
       debugWarn("memfs-git", `Pull failed: ${msg}`);
