@@ -257,6 +257,10 @@ import {
   resetContextHistory,
 } from "./helpers/contextTracker";
 import {
+  generateConversationTitleFromFork,
+  normalizeConversationTitle,
+} from "./helpers/conversationTitle";
+import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
   parsePatchToAdvancedDiff,
@@ -2049,14 +2053,6 @@ export default function App({
     [],
   );
   const deriveAutoConversationTitle = useCallback(() => {
-    const normalizeConversationTitle = (value: string): string | null => {
-      const normalized = value.replace(/\s+/g, " ").trim();
-      if (!normalized || normalized.startsWith("/")) {
-        return null;
-      }
-      return normalized.slice(0, 100);
-    };
-
     if (firstUserQueryRef.current) {
       return firstUserQueryRef.current;
     }
@@ -2075,6 +2071,36 @@ export default function App({
 
     return null;
   }, []);
+  const generateConversationTitle = useCallback(async () => {
+    const fallback = deriveAutoConversationTitle();
+
+    // Heuristic-only when the experiment is off, on local backends, or for
+    // the agent-direct "default" conversation (which can't be forked safely).
+    if (!experimentManager.isEnabled("conversation_titles")) {
+      return fallback;
+    }
+    if (getBackend().capabilities.localModelCatalog) {
+      return fallback;
+    }
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || conversationId === "default") {
+      return fallback;
+    }
+
+    try {
+      const client = await getClient();
+      const aiTitle = await generateConversationTitleFromFork(
+        client,
+        conversationId,
+      );
+      return aiTitle ?? fallback;
+    } catch (err) {
+      if (isDebugEnabled()) {
+        console.error("[DEBUG] generateConversationTitle failed:", err);
+      }
+      return fallback;
+    }
+  }, [deriveAutoConversationTitle]);
   const resetBootstrapReminderState = useCallback(() => {
     resetSharedReminderState(sharedReminderStateRef.current);
   }, []);
@@ -5180,7 +5206,7 @@ export default function App({
               conversationIdRef.current !== "default"
             ) {
               isAutoConversationTitleInFlightRef.current = true;
-              const conversationTitle = deriveAutoConversationTitle();
+              const conversationTitle = await generateConversationTitle();
               if (!conversationTitle) {
                 isAutoConversationTitleInFlightRef.current = false;
               } else {
@@ -9468,10 +9494,10 @@ export default function App({
             try {
               const client = await getClient();
               if (shouldAutoGenerate) {
-                const conversationTitle = deriveAutoConversationTitle();
+                const conversationTitle = await generateConversationTitle();
                 if (!conversationTitle) {
                   cmd.fail(
-                    "No user message available to derive a conversation title",
+                    "No conversation content available to generate a title",
                   );
                   return { submitted: true };
                 }

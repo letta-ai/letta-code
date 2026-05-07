@@ -9,6 +9,12 @@ const ENABLED_TOGGLE_VALUES = new Set(["1", "true", "yes"]);
 
 const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
   {
+    id: "conversation_titles",
+    label: "conversation titles",
+    description:
+      "Generate conversation titles from the transcript with letta/auto (uses your credits).",
+  },
+  {
     id: "node",
     label: "node",
     description: "Route API requests through the Letta Node / TS core path.",
