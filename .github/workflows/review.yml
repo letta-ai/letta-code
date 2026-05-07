@@ -58,7 +58,7 @@ jobs:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
-          track_progress: ${{ github.event_name == 'pull_request' && 'true' || '' }}
+          track_progress: ""
           tracking_comment: "false"
           model: auto
           prompt: |
