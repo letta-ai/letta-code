@@ -53,7 +53,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: letta-ai/letta-code-action@v0
+      - uses: letta-ai/letta-code-action@f501f5f72b49d102125fdc90f280f9cdae6a0258
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
