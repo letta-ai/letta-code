@@ -113,7 +113,6 @@ export interface Settings {
 }
 
 export interface ProjectSettings {
-  localSharedBlockIds: Record<string, string>;
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   statusLine?: StatusLineConfig; // Project-specific status line command
 }
@@ -157,9 +156,7 @@ const DEFAULT_SETTINGS: Settings = {
   globalSharedBlockIds: {},
 };
 
-const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
-  localSharedBlockIds: {},
-};
+const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {};
 
 const DEFAULT_LOCAL_PROJECT_SETTINGS: LocalProjectSettings = {
   lastAgent: null,
@@ -707,8 +704,6 @@ class SettingsManager {
       const rawSettings = JSON.parse(content) as Record<string, unknown>;
 
       const projectSettings: ProjectSettings = {
-        localSharedBlockIds:
-          (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
         hooks: rawSettings.hooks as HooksConfig | undefined,
         statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
       };
