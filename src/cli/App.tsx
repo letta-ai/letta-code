@@ -703,7 +703,7 @@ const APPROVAL_PREVIEW_BUFFER = 4;
 const MIN_WRAP_WIDTH = 10;
 const TEXT_WRAP_GUTTER = 6;
 const DIFF_WRAP_GUTTER = 12;
-const SHELL_PREVIEW_MAX_LINES = 3;
+const SHELL_PREVIEW_MAX_LINES = 12;
 
 function countWrappedLines(text: string, width: number): number {
   if (!text) return 0;

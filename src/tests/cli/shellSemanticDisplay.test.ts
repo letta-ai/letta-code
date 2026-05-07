@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { summarizeShellDisplay } from "../../cli/helpers/shellSemanticDisplay";
 
+const LONG_HEREDOC_COMMAND = [
+  "node - <<'NODE'",
+  "const lines = Array.from({ length: 12 }, (_, index) => `line-${" +
+    "index}`);",
+  'console.log(lines.join("\\n"));',
+  "NODE",
+].join("\n");
+
 describe("summarizeShellDisplay", () => {
   test("classifies rg search commands", () => {
     expect(summarizeShellDisplay('rg -n "TODO" src')).toMatchObject({
@@ -207,6 +215,15 @@ NODE`;
       kind: "run",
       label: "Run",
       rawCommand: command,
+    });
+  });
+
+  test("preserves long heredoc commands verbatim for preview rendering", () => {
+    expect(summarizeShellDisplay(LONG_HEREDOC_COMMAND)).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: LONG_HEREDOC_COMMAND,
+      summary: LONG_HEREDOC_COMMAND,
     });
   });
 });

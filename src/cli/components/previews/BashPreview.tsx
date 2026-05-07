@@ -6,7 +6,7 @@ import { SyntaxHighlightedCommand } from "../SyntaxHighlightedCommand";
 import { Text } from "../Text";
 
 const SOLID_LINE = "─";
-const BASH_PREVIEW_MAX_LINES = 3;
+const BASH_PREVIEW_MAX_LINES = 12;
 
 type Props = {
   command: string;

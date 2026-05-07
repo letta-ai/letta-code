@@ -102,7 +102,7 @@ import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
 import { SyntaxHighlightedCommand } from "./SyntaxHighlightedCommand";
 import { TodoRenderer } from "./TodoRenderer.js";
 
-const LIVE_SHELL_ARGS_MAX_LINES = 2;
+const LIVE_SHELL_ARGS_MAX_LINES = 8;
 
 type ToolCallLine = {
   kind: "tool_call";

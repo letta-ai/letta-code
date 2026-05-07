@@ -28,7 +28,7 @@ type Props = {
 
 // Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
-const BASH_PREVIEW_MAX_LINES = 3;
+const BASH_PREVIEW_MAX_LINES = 12;
 
 /**
  * InlineBashApproval - Renders bash/shell approval UI inline (Claude Code style)
