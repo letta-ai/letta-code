@@ -60,6 +60,7 @@ export interface AISDKStreamAdapterOptions {
   createModel?: () => LanguageModel;
   abortSignal?: AbortSignal;
   streamText?: AISDKStreamTextFunction;
+  localProviderAuthStorageDir?: string;
   onContextWindowOverflow?: (
     input: ProviderTurnInput,
     error: unknown,
@@ -193,6 +194,18 @@ function aiSDKProviderKind(
   modelHandle: string,
   modelSettings: Record<string, unknown>,
 ): AISDKProviderKind {
+  if (modelHandle.startsWith("anthropic/")) return "anthropic";
+  if (
+    modelHandle.startsWith("openai/") ||
+    modelHandle.startsWith("openai-codex/") ||
+    modelHandle.startsWith("chatgpt-plus-pro/")
+  ) {
+    return "openai";
+  }
+  if (modelHandle.startsWith("openrouter/") || modelHandle.startsWith("zai/")) {
+    return "unknown";
+  }
+
   const providerType = stringValue(modelSettings.provider_type);
   if (
     providerType === "openai" ||
@@ -348,6 +361,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
   private readonly createModel?: () => LanguageModel;
   private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
+  private readonly localProviderAuthStorageDir?: string;
   private readonly onContextWindowOverflow?: AISDKStreamAdapterOptions["onContextWindowOverflow"];
   private readonly onContextUsage?: AISDKStreamAdapterOptions["onContextUsage"];
 
@@ -355,6 +369,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     this.createModel = options.createModel;
     this.runStreamText = options.streamText ?? defaultStreamText;
     this.abortSignal = options.abortSignal;
+    this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
     this.onContextUsage = options.onContextUsage;
   }
@@ -397,6 +412,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
         createAISDKModelFactoryFromAgent(
           input.agent.model,
           input.agent.model_settings,
+          { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
         )(),
       system: input.systemPrompt ?? input.agent.system,
       messages: await convertToModelMessages(uiMessages, { tools }),

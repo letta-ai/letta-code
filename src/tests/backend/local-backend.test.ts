@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,11 +28,15 @@ import type {
   ConversationMessageListBody,
   RunMessageStreamBody,
 } from "../../backend";
+import { createAISDKModelFactoryFromAgent } from "../../backend/dev/AISDKModelFactory";
 import {
+  createOrUpdateLocalProvider,
+  getLocalProviderAuthPath,
   LOCAL_ALL_COMPACTION_PROMPT,
   LocalBackend,
   listLocalModels,
   resolveLocalModelConfig,
+  setLocalChatGPTOAuth,
 } from "../../backend/local";
 import type { LocalMessage } from "../../backend/local/LocalMessage";
 import { projectLocalMessagesToStoredMessages } from "../../backend/local/LocalMessageProjection";
@@ -42,16 +47,28 @@ async function withLocalModelEnv<T>(
   env: {
     openAIKey?: string;
     anthropicKey?: string;
+    openRouterKey?: string;
+    zaiKey?: string;
+    zhipuKey?: string;
   },
   fn: () => T | Promise<T>,
 ): Promise<T> {
   const originalOpenAIKey = process.env.OPENAI_API_KEY;
   const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
+  const originalZaiKey = process.env.ZAI_API_KEY;
+  const originalZhipuKey = process.env.ZHIPU_API_KEY;
   try {
     if (env.openAIKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = env.openAIKey;
     if (env.anthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = env.anthropicKey;
+    if (env.openRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = env.openRouterKey;
+    if (env.zaiKey === undefined) delete process.env.ZAI_API_KEY;
+    else process.env.ZAI_API_KEY = env.zaiKey;
+    if (env.zhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = env.zhipuKey;
     return await fn();
   } finally {
     if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -59,6 +76,13 @@ async function withLocalModelEnv<T>(
     if (originalAnthropicKey === undefined)
       delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+    if (originalOpenRouterKey === undefined)
+      delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalOpenRouterKey;
+    if (originalZaiKey === undefined) delete process.env.ZAI_API_KEY;
+    else process.env.ZAI_API_KEY = originalZaiKey;
+    if (originalZhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = originalZhipuKey;
   }
 }
 
@@ -270,6 +294,97 @@ describe("LocalBackend", () => {
       expect(handles).toContain("openai/gpt-5.3-codex");
       expect(handles).not.toContain("anthropic/claude-opus-4-7");
     });
+  });
+
+  test("lists models for locally connected providers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-auth-"));
+    try {
+      await withLocalModelEnv({}, async () => {
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "openrouter",
+          providerName: "lc-openrouter",
+          apiKey: "test-openrouter-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "zai",
+          providerName: "lc-zai",
+          apiKey: "test-zai-key",
+        });
+        setLocalChatGPTOAuth(
+          {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account",
+          },
+          storageDir,
+        );
+
+        const authFile = await stat(getLocalProviderAuthPath(storageDir));
+        expect(authFile.mode & 0o777).toBe(0o600);
+
+        const handles = listLocalModels(storageDir).map(
+          (model) => model.handle,
+        );
+        expect(handles).toContain("openrouter/deepseek/deepseek-v4-pro");
+        expect(handles).toContain("zai/glm-5.1");
+        expect(handles).toContain("chatgpt-plus-pro/gpt-5.5");
+        expect(handles).not.toContain("anthropic/claude-opus-4-7");
+
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        const backendModels = (await backend.listModels()) as Array<{
+          handle: string;
+          model_endpoint_type: string;
+        }>;
+        expect(backendModels.map((model) => model.handle)).toContain(
+          "openrouter/deepseek/deepseek-v4-pro",
+        );
+        expect(backendModels).toContainEqual(
+          expect.objectContaining({
+            handle: "zai/glm-5.1",
+            model_endpoint_type: "zai",
+          }),
+        );
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves local AI SDK providers from model prefixes before generic settings", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-factory-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openrouter",
+        providerName: "lc-openrouter",
+        apiKey: "test-openrouter-key",
+      });
+
+      let capturedModel: string | undefined;
+      const factory = createAISDKModelFactoryFromAgent(
+        "openrouter/deepseek/deepseek-v4-pro",
+        { provider_type: "openai" },
+        {
+          localProviderAuthStorageDir: storageDir,
+          createOpenAICompatibleModel: (model) => {
+            capturedModel = model;
+            return {} as LanguageModel;
+          },
+        },
+      );
+
+      factory();
+      expect(capturedModel).toBe("deepseek/deepseek-v4-pro");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("uses strict local flatfile semantics behind the real local entrypoint", async () => {

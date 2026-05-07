@@ -5,6 +5,7 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
   getProviderByName,
+  providerStorageTargetLabel,
   removeProviderByName,
 } from "../../providers/byok-providers";
 import {
@@ -267,7 +268,7 @@ async function handleConnectChatGPT(
       cmdId,
       msg,
       `✓ Successfully connected to ChatGPT!\n\n` +
-        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' created/updated in Letta.\n` +
+        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' saved in ${providerStorageTargetLabel()}.\n` +
         "Your ChatGPT Plus/Pro subscription is now linked.",
       true,
       "finished",
@@ -333,7 +334,7 @@ async function handleConnectApiKeyProvider(
       cmdId,
       msg,
       `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
-        `Provider '${provider.byokProvider.providerName}' created/updated in Letta.`,
+        `Provider '${provider.byokProvider.providerName}' saved in ${providerStorageTargetLabel()}.`,
       true,
       "finished",
     );
@@ -452,7 +453,7 @@ async function handleConnectBedrock(
       cmdId,
       msg,
       `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
-        `Provider '${provider.byokProvider.providerName}' created/updated in Letta.`,
+        `Provider '${provider.byokProvider.providerName}' saved in ${providerStorageTargetLabel()}.`,
       true,
       "finished",
     );
@@ -586,7 +587,7 @@ async function handleDisconnectChatGPT(
       cmdId,
       msg,
       `✓ Disconnected from ChatGPT OAuth.\n\n` +
-        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' removed from Letta.`,
+        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' removed from ${providerStorageTargetLabel()}.`,
       true,
       "finished",
     );
@@ -640,7 +641,7 @@ async function handleDisconnectByokProvider(
       cmdId,
       msg,
       `✓ Disconnected from ${provider.byokProvider.displayName}.\n\n` +
-        `Provider '${provider.byokProvider.providerName}' removed from Letta.`,
+        `Provider '${provider.byokProvider.providerName}' removed from ${providerStorageTargetLabel()}.`,
       true,
       "finished",
     );

@@ -60,6 +60,7 @@ export interface LocalAllCompactionInput {
   prompt?: string | null;
   clipChars?: number | null;
   abortSignal?: AbortSignal;
+  localProviderAuthStorageDir?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -157,6 +158,7 @@ async function runGenerateText(
       createAISDKModelFactoryFromAgent(
         input.agent.model,
         input.agent.model_settings,
+        { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
       )(),
     system: input.prompt ?? LOCAL_ALL_COMPACTION_PROMPT,
     prompt: transcript,

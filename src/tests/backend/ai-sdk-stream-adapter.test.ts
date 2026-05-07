@@ -353,6 +353,23 @@ describe("AISDKStreamAdapter", () => {
     });
   });
 
+  test("does not apply OpenAI provider options to OpenAI-compatible local providers", () => {
+    expect(
+      buildAISDKProviderOptions("openrouter/deepseek/deepseek-v4-pro", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+        verbosity: "medium",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("zai/glm-5.1", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+  });
+
   test("maps Claude 4.7 thinking to adaptive summarized output", () => {
     expect(
       buildAISDKProviderOptions("anthropic/claude-opus-4-7", {

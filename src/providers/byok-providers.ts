@@ -14,6 +14,16 @@ import {
   removeProviderByName as removeProviderByNameRequest,
   updateProvider as updateProviderRequest,
 } from "../backend/api/providers";
+import { getBackend } from "../backend/backend";
+import {
+  createOrUpdateLocalProvider,
+  deleteLocalProvider,
+  getLocalProviderByName,
+  isLocalProviderTypeSupported,
+  listLocalProviders,
+  removeLocalProviderByName,
+  updateLocalProvider,
+} from "../backend/local/LocalProviderAuthStore";
 
 export type { ProviderResponse } from "../backend/api/providers";
 
@@ -143,6 +153,22 @@ export const BYOK_PROVIDERS = [
 export type ByokProviderId = (typeof BYOK_PROVIDERS)[number]["id"];
 export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 
+export function isLocalProviderStoreEnabled(): boolean {
+  return getBackend().capabilities.localModelCatalog;
+}
+
+export function providerStorageTargetLabel(): string {
+  return isLocalProviderStoreEnabled() ? "local storage" : "Letta";
+}
+
+function assertLocalProviderSupported(providerType: string): void {
+  if (!isLocalProviderTypeSupported(providerType)) {
+    throw new Error(
+      `${providerType} provider connections are not supported in local mode yet.`,
+    );
+  }
+}
+
 // ── BYOK handle classification helpers ──────────────────────────────────────
 // These are used by both the TUI ModelSelector and the WS list_models handler
 // to categorize model handles as BYOK vs Letta API.
@@ -229,6 +255,9 @@ export function isByokHandleForSelector(
  * List all BYOK providers for the current user
  */
 export async function listProviders(): Promise<ProviderResponse[]> {
+  if (isLocalProviderStoreEnabled()) {
+    return listLocalProviders();
+  }
   return listApiProviders();
 }
 
@@ -262,6 +291,9 @@ export async function isProviderConnected(
 export async function getProviderByName(
   providerName: string,
 ): Promise<ProviderResponse | null> {
+  if (isLocalProviderStoreEnabled()) {
+    return getLocalProviderByName(providerName);
+  }
   return getProviderByNameRequest(providerName);
 }
 
@@ -276,6 +308,10 @@ export async function checkProviderApiKey(
   region?: string,
   profile?: string,
 ): Promise<void> {
+  if (isLocalProviderStoreEnabled()) {
+    assertLocalProviderSupported(providerType);
+    return;
+  }
   await checkProviderApiKeyRequest(
     providerType,
     apiKey,
@@ -296,6 +332,16 @@ export async function createProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
+  if (isLocalProviderStoreEnabled()) {
+    return createOrUpdateLocalProvider({
+      providerType,
+      providerName,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+    });
+  }
   return createProviderRequest(
     providerType,
     providerName,
@@ -316,6 +362,9 @@ export async function updateProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
+  if (isLocalProviderStoreEnabled()) {
+    return updateLocalProvider(providerId, apiKey, accessKey, region, profile);
+  }
   return updateProviderRequest(providerId, apiKey, accessKey, region, profile);
 }
 
@@ -323,6 +372,10 @@ export async function updateProvider(
  * Delete a provider by ID
  */
 export async function deleteProvider(providerId: string): Promise<void> {
+  if (isLocalProviderStoreEnabled()) {
+    await deleteLocalProvider(providerId);
+    return;
+  }
   await deleteProviderRequest(providerId);
 }
 
@@ -338,6 +391,16 @@ export async function createOrUpdateProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
+  if (isLocalProviderStoreEnabled()) {
+    return createOrUpdateLocalProvider({
+      providerType,
+      providerName,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+    });
+  }
   return createOrUpdateProviderRequest(
     providerType,
     providerName,
@@ -354,6 +417,10 @@ export async function createOrUpdateProvider(
 export async function removeProviderByName(
   providerName: string,
 ): Promise<void> {
+  if (isLocalProviderStoreEnabled()) {
+    await removeLocalProviderByName(providerName);
+    return;
+  }
   await removeProviderByNameRequest(providerName);
 }
 
