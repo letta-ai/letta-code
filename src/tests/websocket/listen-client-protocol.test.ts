@@ -4938,7 +4938,30 @@ describe("listen-client post-stop approval recovery policy", () => {
     expect(shouldRecover).toBe(true);
   });
 
-  test("retries on generic no-run error heuristic", () => {
+  test("extracts streamed approval conflict details from generic error messages", () => {
+    const conflictDetail =
+      "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
+
+    expect(
+      __listenClientTestUtils.getApprovalToolCallDesyncErrorText({
+        message: "An unknown error occurred with the LLM streaming request.",
+        detail: conflictDetail,
+      }),
+    ).toBe(conflictDetail);
+
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: conflictDetail,
+      });
+
+    expect(shouldRecover).toBe(true);
+  });
+
+  test("does not retry on generic no-run errors without an approval conflict", () => {
     const shouldRecover =
       __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
         stopReason: "error",
@@ -4948,7 +4971,35 @@ describe("listen-client post-stop approval recovery policy", () => {
         latestErrorText: null,
       });
 
+    expect(shouldRecover).toBe(false);
+  });
+
+  test("retries on explicit approval conflicts captured as fallback errors", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 0,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: null,
+        fallbackError:
+          "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.",
+      });
+
     expect(shouldRecover).toBe(true);
+  });
+
+  test("does not retry when approval response is already stale", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: "No tool call is currently awaiting approval",
+        latestErrorText: null,
+      });
+
+    expect(shouldRecover).toBe(false);
   });
 
   test("does not retry once retry budget is exhausted", () => {
