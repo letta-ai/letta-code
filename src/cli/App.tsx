@@ -257,6 +257,10 @@ import {
   resetContextHistory,
 } from "./helpers/contextTracker";
 import {
+  generateConversationTitleFromFork,
+  normalizeConversationTitle,
+} from "./helpers/conversationTitle";
+import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
   parsePatchToAdvancedDiff,
@@ -2034,11 +2038,69 @@ export default function App({
     new Set<string>(),
   );
 
-  // Track if we've set the conversation summary for this new conversation
-  // Initialized to true for resumed conversations (they already have context)
-  const hasSetConversationSummaryRef = useRef(resumedExistingConversation);
-  // Store first user query for conversation summary
+  // Only brand-new conversations without an explicit title should auto-generate one.
+  const shouldAutoGenerateConversationTitleRef = useRef(
+    !resumedExistingConversation,
+  );
+  const isAutoConversationTitleInFlightRef = useRef(false);
   const firstUserQueryRef = useRef<string | null>(null);
+  const setConversationAutoTitleEligibility = useCallback(
+    (enabled: boolean) => {
+      shouldAutoGenerateConversationTitleRef.current = enabled;
+      isAutoConversationTitleInFlightRef.current = false;
+      firstUserQueryRef.current = null;
+    },
+    [],
+  );
+  const deriveAutoConversationTitle = useCallback(() => {
+    if (firstUserQueryRef.current) {
+      return firstUserQueryRef.current;
+    }
+
+    for (const lineId of buffersRef.current.order) {
+      const line = buffersRef.current.byId.get(lineId);
+      if (!line || line.kind !== "user") {
+        continue;
+      }
+
+      const title = normalizeConversationTitle(line.text);
+      if (title) {
+        return title;
+      }
+    }
+
+    return null;
+  }, []);
+  const generateConversationTitle = useCallback(async () => {
+    const fallback = deriveAutoConversationTitle();
+
+    // Heuristic-only when the experiment is off, on local backends, or for
+    // the agent-direct "default" conversation (which can't be forked safely).
+    if (!experimentManager.isEnabled("conversation_titles")) {
+      return fallback;
+    }
+    if (getBackend().capabilities.localModelCatalog) {
+      return fallback;
+    }
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || conversationId === "default") {
+      return fallback;
+    }
+
+    try {
+      const client = await getClient();
+      const aiTitle = await generateConversationTitleFromFork(
+        client,
+        conversationId,
+      );
+      return aiTitle ?? fallback;
+    } catch (err) {
+      if (isDebugEnabled()) {
+        console.error("[DEBUG] generateConversationTitle failed:", err);
+      }
+      return fallback;
+    }
+  }, [deriveAutoConversationTitle]);
   const resetBootstrapReminderState = useCallback(() => {
     resetSharedReminderState(sharedReminderStateRef.current);
   }, []);
@@ -5137,27 +5199,38 @@ export default function App({
               setNeedsEagerApprovalCheck(false);
             }
 
-            // Set conversation summary from first user query for new conversations
+            // Derive an auto title client-side once the first assistant turn completes.
             if (
-              !hasSetConversationSummaryRef.current &&
-              firstUserQueryRef.current &&
+              shouldAutoGenerateConversationTitleRef.current &&
+              !isAutoConversationTitleInFlightRef.current &&
               conversationIdRef.current !== "default"
             ) {
-              hasSetConversationSummaryRef.current = true;
-              const client = await getClient();
-              client.conversations
-                .update(conversationIdRef.current, {
-                  summary: firstUserQueryRef.current,
-                })
-                .catch((err) => {
-                  // Silently ignore - not critical
-                  if (isDebugEnabled()) {
-                    console.error(
-                      "[DEBUG] Failed to set conversation summary:",
-                      err,
-                    );
-                  }
-                });
+              isAutoConversationTitleInFlightRef.current = true;
+              const conversationTitle = await generateConversationTitle();
+              if (!conversationTitle) {
+                isAutoConversationTitleInFlightRef.current = false;
+              } else {
+                const client = await getClient();
+                void client.conversations
+                  .update(conversationIdRef.current, {
+                    summary: conversationTitle,
+                  })
+                  .then(() => {
+                    shouldAutoGenerateConversationTitleRef.current = false;
+                  })
+                  .catch((err) => {
+                    // Silently ignore - not critical.
+                    if (isDebugEnabled()) {
+                      console.error(
+                        "[DEBUG] Failed to update conversation title:",
+                        err,
+                      );
+                    }
+                  })
+                  .finally(() => {
+                    isAutoConversationTitleInFlightRef.current = false;
+                  });
+              }
             }
 
             const trajectorySnapshot = sessionStatsRef.current.endTrajectory();
@@ -7057,6 +7130,7 @@ export default function App({
 
         await maybeCarryOverActiveConversationModel(conversationId);
         setConversationIdAndRef(conversationId);
+        setConversationAutoTitleEligibility(false);
 
         pendingConversationSwitchRef.current = {
           origin: "fork",
@@ -7143,6 +7217,7 @@ export default function App({
       runEndHooks,
       maybeCarryOverActiveConversationModel,
       resetBootstrapReminderState,
+      setConversationAutoTitleEligibility,
       setConversationIdAndRef,
       setCommandRunning,
       setStreaming,
@@ -7242,6 +7317,7 @@ export default function App({
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
         setConversationIdAndRef(targetConversationId);
+        setConversationAutoTitleEligibility(false);
 
         // Ensure bootstrap reminders are re-injected on the first user turn
         // after switching to a different conversation/agent context.
@@ -7313,6 +7389,7 @@ export default function App({
       resetTrajectoryBases,
       resetBootstrapReminderState,
       resetPendingReasoningCycle,
+      setConversationAutoTitleEligibility,
       setConversationIdAndRef,
     ],
   );
@@ -7419,6 +7496,7 @@ export default function App({
         const agentModelHandle = getPreferredAgentModelHandle(agent);
         setCurrentModelHandle(agentModelHandle);
         setConversationIdAndRef(targetConversationId);
+        setConversationAutoTitleEligibility(false);
 
         // Set conversation switch context for new agent switch
         pendingConversationSwitchRef.current = {
@@ -7467,6 +7545,7 @@ export default function App({
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       resetBootstrapReminderState,
+      setConversationAutoTitleEligibility,
       setConversationIdAndRef,
     ],
   );
@@ -7812,16 +7891,17 @@ export default function App({
         );
       }
 
-      // Capture first user query for conversation summary (before any async work)
-      // Only for new conversations, non-commands, and if we haven't captured yet
       if (
-        !hasSetConversationSummaryRef.current &&
+        shouldAutoGenerateConversationTitleRef.current &&
         firstUserQueryRef.current === null &&
         !isSystemOnly &&
         userTextForInput.length > 0 &&
         !userTextForInput.startsWith("/")
       ) {
-        firstUserQueryRef.current = userTextForInput.slice(0, 100);
+        firstUserQueryRef.current = userTextForInput
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 100);
       }
 
       // Block submission if waiting for explicit user action (approvals)
@@ -8993,11 +9073,7 @@ export default function App({
               ...(conversationName && { summary: conversationName }),
             });
 
-            // If we created the conversation with an explicit summary, mark it as set
-            // to prevent auto-summary from first user message overwriting it
-            if (conversationName) {
-              hasSetConversationSummaryRef.current = true;
-            }
+            setConversationAutoTitleEligibility(!conversationName);
             await maybeCarryOverActiveConversationModel(conversation.id);
 
             // Update conversationId state and ref together so the next turn
@@ -9079,8 +9155,8 @@ export default function App({
               await client.conversations.update(forked.id, {
                 summary: conversationSummary,
               });
-              hasSetConversationSummaryRef.current = true;
             }
+            setConversationAutoTitleEligibility(false);
 
             await maybeCarryOverActiveConversationModel(forked.id);
 
@@ -9177,6 +9253,7 @@ export default function App({
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
 
+            setConversationAutoTitleEligibility(true);
             await maybeCarryOverActiveConversationModel(conversation.id);
             setConversationIdAndRef(conversation.id);
 
@@ -9378,8 +9455,8 @@ export default function App({
               "Rename the current agent or conversation.",
               "",
               "USAGE",
-              "  /rename agent <name>      — rename the agent",
-              "  /rename convo <summary>   — rename the conversation",
+              "  /rename agent [name]      — rename the agent",
+              "  /rename convo [name]      — rename the convo, or auto-generate when omitted",
               "  /rename help              — show this help",
             ].join("\n");
             cmd.finish(output, true);
@@ -9390,23 +9467,22 @@ export default function App({
             !subcommand ||
             (subcommand !== "agent" && subcommand !== "convo")
           ) {
-            cmd.fail("Usage: /rename agent <name> or /rename convo <summary>");
+            cmd.fail("Usage: /rename agent [name] or /rename convo [name]");
             return { submitted: true };
           }
 
           const newValue = parts.slice(2).join(" ");
-          if (!newValue) {
-            cmd.fail(
-              subcommand === "convo"
-                ? "Please provide a summary: /rename convo <summary>"
-                : "Please provide a name: /rename agent <name>",
-            );
+          if (subcommand === "agent" && !newValue) {
+            cmd.fail("Please provide a name: /rename agent <name>");
             return { submitted: true };
           }
 
           if (subcommand === "convo") {
+            const shouldAutoGenerate = newValue.trim().length === 0;
             cmd.update({
-              output: `Renaming conversation to "${newValue}"...`,
+              output: shouldAutoGenerate
+                ? "Generating conversation title..."
+                : `Renaming conversation to "${newValue}"...`,
               phase: "running",
             });
 
@@ -9414,11 +9490,29 @@ export default function App({
 
             try {
               const client = await getClient();
-              await client.conversations.update(conversationId, {
-                summary: newValue,
-              });
-
-              cmd.finish(`Conversation renamed to "${newValue}"`, true);
+              if (shouldAutoGenerate) {
+                const conversationTitle = await generateConversationTitle();
+                if (!conversationTitle) {
+                  cmd.fail(
+                    "No conversation content available to generate a title",
+                  );
+                  return { submitted: true };
+                }
+                await client.conversations.update(conversationId, {
+                  summary: conversationTitle,
+                });
+                setConversationAutoTitleEligibility(false);
+                cmd.finish(
+                  `Conversation title set to "${conversationTitle}"`,
+                  true,
+                );
+              } else {
+                await client.conversations.update(conversationId, {
+                  summary: newValue,
+                });
+                setConversationAutoTitleEligibility(false);
+                cmd.finish(`Conversation renamed to "${newValue}"`, true);
+              }
             } catch (error) {
               const errorDetails = formatErrorDetails(error, agentId);
               cmd.fail(`Failed: ${errorDetails}`);
@@ -9574,6 +9668,7 @@ export default function App({
 
                 // Only update state after validation succeeds
                 setConversationIdAndRef(targetConvId);
+                setConversationAutoTitleEligibility(false);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-direct",
@@ -11269,6 +11364,7 @@ ${SYSTEM_REMINDER_CLOSE}
       systemInfoReminderEnabled,
       appendTaskNotificationEvents,
       maybeCarryOverActiveConversationModel,
+      setConversationAutoTitleEligibility,
       setConversationIdAndRef,
     ],
   );
@@ -13006,6 +13102,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 );
 
                 setConversationIdAndRef(action.conversationId);
+                setConversationAutoTitleEligibility(false);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-selector",
@@ -13081,6 +13178,7 @@ ${SYSTEM_REMINDER_CLOSE}
     commandRunner.start,
     recoverRestoredPendingApprovals,
     resetBootstrapReminderState,
+    setConversationAutoTitleEligibility,
     setConversationIdAndRef,
   ]);
 
@@ -14918,6 +15016,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                       // Only update state after validation succeeds
                       setConversationIdAndRef(convId);
+                      setConversationAutoTitleEligibility(false);
 
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
@@ -14929,11 +15028,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                         summary: selectorContext?.summary,
                         messageHistory: resumeData.messageHistory,
                       };
-
-                      // If the conversation already has a summary, prevent auto-summary from overwriting it
-                      if (selectorContext?.summary) {
-                        hasSetConversationSummaryRef.current = true;
-                      }
 
                       settingsManager.persistSession(agentId, convId);
 
@@ -15069,6 +15163,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       conversation.id,
                     );
                     setConversationIdAndRef(conversation.id);
+                    setConversationAutoTitleEligibility(true);
                     settingsManager.persistSession(agentId, conversation.id);
 
                     // Build success command with agent + conversation info
@@ -15196,6 +15291,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                       );
 
                       setConversationIdAndRef(actualTargetConv);
+                      setConversationAutoTitleEligibility(false);
 
                       pendingConversationSwitchRef.current = {
                         origin: "search",
