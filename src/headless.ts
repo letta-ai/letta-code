@@ -1181,17 +1181,19 @@ export async function handleHeadlessCommand(
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  const startupMemfsFlag = autoEnableMemfsForFreshAgent ? true : memfsFlag;
+  let startupMemfsFlag: boolean | undefined = autoEnableMemfsForFreshAgent
+    ? true
+    : memfsFlag;
 
   if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
-    const { hydrateMemfsSettingFromAgent } = await import(
+    const { hydrateMemfsSettingFromAgent, isLettaCloud } = await import(
       "./agent/memoryFilesystem"
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
-    if (!memfsEnabled) {
-      console.warn(
-        "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
-      );
+    if (!memfsEnabled && !noMemfsFlag && (await isLettaCloud())) {
+      // Auto-enable memfs for existing agents that don't have it yet.
+      // Matches interactive mode behavior where memfs defaults to enabled.
+      startupMemfsFlag = true;
     }
   }
 
