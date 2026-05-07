@@ -53,7 +53,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: letta-ai/letta-code-action@caren/tracking-comment
+      - uses: letta-ai/letta-code-action@main
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
