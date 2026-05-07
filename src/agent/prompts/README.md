@@ -26,10 +26,10 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 
 #### source_codex.md
 
-- **Source:** OpenAI Codex CLI (gpt-5.3-codex model)
+- **Source:** OpenAI Codex CLI (gpt-5.5 model)
 - **Version:** Extracted from `codex-rs/models-manager/models.json` @ openai/codex `main` (May 2026)
 - **Reference:** https://github.com/openai/codex
-- **Notes:** gpt-5.3-codex now uses `model_messages.instructions_template` with a `{{ personality }}` placeholder; this snapshot renders the template substituted with `personality_pragmatic` (the default). Drift from the prior snapshot is minor: clarified File References rules (markdown links for clickable files, inline code for directories), normalized whitespace under "Final answer instructions". Note: gpt-5.3-codex is no longer the flagship — `gpt-5.4` is the new default in models.json — but it remains the canonical *coding* model for benchmarking.
+- **Notes:** gpt-5.5 uses `model_messages.instructions_template` with a `{{ personality }}` placeholder; this snapshot renders the template substituted with `personality_pragmatic` (the default). Major drift from the prior gpt-5.3-codex snapshot: new senior-engineer framing, expanded engineering judgment guidance, substantially expanded frontend guidance, softer dirty-worktree handling, updated autonomy/compaction instructions, revised formatting/file-link rules, and new anti-creature-language guidance.
 
 #### source_gemini.md
 
