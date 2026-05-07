@@ -976,7 +976,9 @@ export async function handleHeadlessCommand(
       const conversation = await backend.retrieveConversation(
         specifiedConversationId,
       );
-      agent = await backend.retrieveAgent(conversation.agent_id);
+      agent = await backend.retrieveAgent(conversation.agent_id, {
+        include: ["agent.secrets", "agent.tools", "agent.tags"],
+      });
     } catch (error) {
       trackHeadlessBoundaryError(
         "headless_conversation_lookup_failed",
@@ -1353,7 +1355,9 @@ export async function handleHeadlessCommand(
         const expected = rebuildPrompt(storedPreset, memoryMode);
         if (agent.system !== expected) {
           await backend.updateAgent(agent.id, { system: expected });
-          agent = await backend.retrieveAgent(agent.id);
+          agent = await backend.retrieveAgent(agent.id, {
+            include: ["agent.secrets", "agent.tools", "agent.tags"],
+          });
         }
       } else {
         settingsManager.clearSystemPromptPreset(agent.id);

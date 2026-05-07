@@ -252,7 +252,9 @@ export async function updateAgentLLMConfig(
     }),
   });
 
-  const finalAgent = await backend.retrieveAgent(agentId);
+  const finalAgent = await backend.retrieveAgent(agentId, {
+    include: ["agent.secrets", "agent.tools", "agent.tags"],
+  });
   return finalAgent;
 }
 
@@ -439,8 +441,11 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state
-    const agent = await backend.retrieveAgent(agentId);
+    // Re-fetch agent to get updated state (include relationships so
+    // callers that rely on agent.tags/tools/secrets aren't broken).
+    const agent = await backend.retrieveAgent(agentId, {
+      include: ["agent.secrets", "agent.tools", "agent.tags"],
+    });
 
     return {
       success: true,
