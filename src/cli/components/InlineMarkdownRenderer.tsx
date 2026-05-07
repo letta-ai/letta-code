@@ -1,4 +1,5 @@
 import type React from "react";
+import Link from "ink-link";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
 
@@ -108,17 +109,15 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
     ) {
       // Link [text](url)
       const linkMatch = fullMatch.match(/\[(.*?)\]\((.*?)\)/);
-      if (linkMatch) {
+      if (linkMatch?.[1] && linkMatch[2]) {
         const linkText = linkMatch[1];
         const url = linkMatch[2];
         nodes.push(
-          <Text key={key} backgroundColor={backgroundColor}>
-            {linkText}
+          <Link key={key} url={url} fallback={false}>
             <Text color={colors.link.url} backgroundColor={backgroundColor}>
-              {" "}
-              ({url})
+              {linkText}
             </Text>
-          </Text>,
+          </Link>,
         );
       } else {
         // Fallback if link parsing fails
@@ -141,5 +140,76 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
   return <>{nodes}</>;
 };
 
+type InlineMarkdownToken =
+  | { type: "text"; value: string }
+  | { type: "bold"; value: string }
+  | { type: "italic"; value: string }
+  | { type: "strikethrough"; value: string }
+  | { type: "code"; value: string }
+  | { type: "link"; text: string; url: string };
+
 // Test helper: expose the tokenizer logic for simple unit validation without rendering.
 // This mirrors the logic above; keep it in sync with InlineMarkdown for tests.
+export function tokenizeInlineMarkdown(text: string): InlineMarkdownToken[] {
+  if (!/[*~`[]/.test(text)) {
+    return [{ type: "text", value: text }];
+  }
+
+  const tokens: InlineMarkdownToken[] = [];
+  let lastIndex = 0;
+  const inlineRegex =
+    /(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+  let match: RegExpExecArray | null = inlineRegex.exec(text);
+
+  while (match !== null) {
+    if (match.index > lastIndex) {
+      tokens.push({ type: "text", value: text.slice(lastIndex, match.index) });
+    }
+
+    const fullMatch = match[0];
+
+    if (
+      fullMatch.startsWith("**") &&
+      fullMatch.endsWith("**") &&
+      fullMatch.length > 4
+    ) {
+      tokens.push({ type: "bold", value: fullMatch.slice(2, -2) });
+    } else if (
+      fullMatch.length > 2 &&
+      fullMatch.startsWith("*") &&
+      fullMatch.endsWith("*")
+    ) {
+      tokens.push({ type: "italic", value: fullMatch.slice(1, -1) });
+    } else if (
+      fullMatch.startsWith("~~") &&
+      fullMatch.endsWith("~~") &&
+      fullMatch.length > 4
+    ) {
+      tokens.push({ type: "strikethrough", value: fullMatch.slice(2, -2) });
+    } else if (fullMatch.startsWith("`") && fullMatch.endsWith("`")) {
+      tokens.push({ type: "code", value: fullMatch.slice(1, -1) });
+    } else if (
+      fullMatch.startsWith("[") &&
+      fullMatch.includes("](") &&
+      fullMatch.endsWith(")")
+    ) {
+      const linkMatch = fullMatch.match(/\[(.*?)\]\((.*?)\)/);
+      if (linkMatch?.[1] && linkMatch[2]) {
+        tokens.push({ type: "link", text: linkMatch[1], url: linkMatch[2] });
+      } else {
+        tokens.push({ type: "text", value: fullMatch });
+      }
+    } else {
+      tokens.push({ type: "text", value: fullMatch });
+    }
+
+    lastIndex = inlineRegex.lastIndex;
+    match = inlineRegex.exec(text);
+  }
+
+  if (lastIndex < text.length) {
+    tokens.push({ type: "text", value: text.slice(lastIndex) });
+  }
+
+  return tokens;
+}
