@@ -21,19 +21,47 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      checks: read
     env:
       PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      # Wait for CI lint to pass before running review
+      - name: Wait for CI lint
+        if: github.event_name == 'pull_request'
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/commits/${{ github.event.pull_request.head.sha }}/check-runs" \
+            --jq '.check_runs[] | select(.name == "Lint & Type Check") | .status + " " + .conclusion' \
+            | head -1
+          # Poll until the lint check completes
+          for i in $(seq 1 30); do
+            STATUS=$(gh api "repos/$GITHUB_REPOSITORY/commits/${{ github.event.pull_request.head.sha }}/check-runs" \
+              --jq '.check_runs[] | select(.name == "Lint & Type Check") | .status')
+            if [ "$STATUS" = "completed" ]; then
+              CONCLUSION=$(gh api "repos/$GITHUB_REPOSITORY/commits/${{ github.event.pull_request.head.sha }}/check-runs" \
+                --jq '.check_runs[] | select(.name == "Lint & Type Check") | .conclusion')
+              echo "Lint check completed: $CONCLUSION"
+              if [ "$CONCLUSION" != "success" ]; then
+                echo "Lint check failed or was cancelled ($CONCLUSION), skipping review"
+                exit 0
+              fi
+              break
+            fi
+            echo "Waiting for lint check... (attempt $i/30)"
+            sleep 10
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: letta-ai/letta-code-action@v0
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
-          track_progress: "true"
-          show_full_output: "true"
+          track_progress: ${{ github.event_name == 'pull_request' && 'true' || '' }}
           model: auto
           prompt: |
             You are reviewing PR #${{ env.PR_NUMBER }} in ${{ github.repository }}.
@@ -86,8 +114,13 @@ jobs:
               -f body="" \
               -f 'comments[][path]=<file>' \
               -f 'comments[][line]=<line-number>' \
-              -f 'comments[][body]=<your comment — 1-2 sentences, state the risk concretely>'
+              -f 'comments[][body]=<your comment>'
             ```
+
+            **CRITICAL: Comments must be 1-2 short sentences max.** State the concrete risk, nothing else. No explanations, no context, no suggestions unless asked. Examples:
+            - ✅ `track_progress` will crash on `workflow_dispatch` — the action rejects it for non-PR events.
+            - ✅ `show_full_output: "true"` leaks tool output (potentially secrets) into CI logs.
+            - ❌ The `track_progress` option is set to "true" in this workflow, but the letta-code-action's `validateTrackProgressEvent` function explicitly rejects the `workflow_dispatch` event type when track_progress is enabled. This means every manual dispatch will throw an error. You should either remove track_progress and handle tracking yourself in the prompt, or split into two jobs — one for pull_request (with track_progress) and one for workflow_dispatch (without it).
 
             ## Steps
 
@@ -95,4 +128,4 @@ jobs:
             2. Run `gh pr diff $PR_NUMBER` to read the full diff
             3. Assess risk using your knowledge + the criteria above
             4. If nothing notable → exit silently (no comment, no output)
-            5. If something is risky → leave targeted inline review comments
+            5. If something is risky → leave targeted inline review comments (1-2 sentences each)
