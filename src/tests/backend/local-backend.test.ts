@@ -63,6 +63,11 @@ async function withLocalModelEnv<T>(
   const originalZhipuKey = process.env.ZHIPU_API_KEY;
   const originalMinimaxKey = process.env.MINIMAX_API_KEY;
   const originalMoonshotKey = process.env.MOONSHOT_API_KEY;
+  const originalGoogleKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  const originalAwsAccessKey = process.env.AWS_ACCESS_KEY_ID;
+  const originalAwsSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const originalAwsRegion = process.env.AWS_REGION;
   try {
     if (env.openAIKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = env.openAIKey;
@@ -76,6 +81,11 @@ async function withLocalModelEnv<T>(
     else process.env.ZHIPU_API_KEY = env.zhipuKey;
     delete process.env.MINIMAX_API_KEY;
     delete process.env.MOONSHOT_API_KEY;
+    delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.AWS_ACCESS_KEY_ID;
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    delete process.env.AWS_REGION;
     return await fn();
   } finally {
     if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -94,6 +104,19 @@ async function withLocalModelEnv<T>(
     else process.env.MINIMAX_API_KEY = originalMinimaxKey;
     if (originalMoonshotKey === undefined) delete process.env.MOONSHOT_API_KEY;
     else process.env.MOONSHOT_API_KEY = originalMoonshotKey;
+    if (originalGoogleKey === undefined)
+      delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    else process.env.GOOGLE_GENERATIVE_AI_API_KEY = originalGoogleKey;
+    if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalGeminiKey;
+    if (originalAwsAccessKey === undefined)
+      delete process.env.AWS_ACCESS_KEY_ID;
+    else process.env.AWS_ACCESS_KEY_ID = originalAwsAccessKey;
+    if (originalAwsSecretKey === undefined)
+      delete process.env.AWS_SECRET_ACCESS_KEY;
+    else process.env.AWS_SECRET_ACCESS_KEY = originalAwsSecretKey;
+    if (originalAwsRegion === undefined) delete process.env.AWS_REGION;
+    else process.env.AWS_REGION = originalAwsRegion;
   }
 }
 
@@ -335,6 +358,20 @@ describe("LocalBackend", () => {
           providerName: "lc-moonshot",
           apiKey: "test-moonshot-key",
         });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "google_ai",
+          providerName: "lc-gemini",
+          apiKey: "test-gemini-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "bedrock",
+          providerName: "lc-bedrock",
+          apiKey: "test-aws-secret-key",
+          accessKey: "test-aws-access-key",
+          region: "us-east-1",
+        });
         setLocalChatGPTOAuth(
           {
             type: "oauth",
@@ -356,6 +393,8 @@ describe("LocalBackend", () => {
         expect(handles).toContain("zai/glm-5.1");
         expect(handles).toContain("minimax/MiniMax-M2.7");
         expect(handles).toContain("moonshot/kimi-k2.5");
+        expect(handles).toContain("google_ai/gemini-3.1-pro-preview");
+        expect(handles).toContain("bedrock/us.anthropic.claude-sonnet-4-6");
         expect(handles).toContain("chatgpt-plus-pro/gpt-5.5");
         expect(handles).not.toContain("anthropic/claude-opus-4-7");
 

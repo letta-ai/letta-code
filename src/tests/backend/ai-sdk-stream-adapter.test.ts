@@ -382,6 +382,20 @@ describe("AISDKStreamAdapter", () => {
         effort: "high",
       }),
     ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("google_ai/gemini-3.1-pro-preview", {
+        provider_type: "google_ai",
+        thinking_config: { thinking_budget: 1024 },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("bedrock/us.anthropic.claude-sonnet-4-6", {
+        provider_type: "bedrock",
+        effort: "high",
+      }),
+    ).toBeUndefined();
   });
 
   test("maps Claude 4.7 thinking to adaptive summarized output", () => {

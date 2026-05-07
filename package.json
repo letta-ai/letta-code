@@ -47,7 +47,9 @@
     "@vscode/ripgrep": "^1.17.0"
   },
   "devDependencies": {
+    "@ai-sdk/amazon-bedrock": "^4.0.103",
     "@ai-sdk/anthropic": "^3.0.73",
+    "@ai-sdk/google": "^3.0.70",
     "@ai-sdk/openai": "^3.0.55",
     "@slack/bolt": "^4.7.0",
     "@types/bun": "^1.3.7",

@@ -4,7 +4,9 @@ import { DEFAULT_ANTHROPIC_MODEL } from "../dev/AnthropicModel";
 import { DEFAULT_OPENAI_RESPONSES_MODEL } from "../dev/OpenAIResponsesModel";
 import {
   LOCAL_ANTHROPIC_PROVIDER_NAME,
+  LOCAL_BEDROCK_PROVIDER_NAME,
   LOCAL_CHATGPT_PROVIDER_NAME,
+  LOCAL_GOOGLE_AI_PROVIDER_NAME,
   LOCAL_KIMI_CODE_PROVIDER_NAME,
   LOCAL_MINIMAX_PROVIDER_NAME,
   LOCAL_MOONSHOT_PROVIDER_NAME,
@@ -64,6 +66,14 @@ function inferLocalProviderFromStandardKeys(
     hasEnvValue(process.env.MOONSHOT_API_KEY) ||
     providers.has(LOCAL_MOONSHOT_PROVIDER_NAME) ||
     providers.has(LOCAL_KIMI_CODE_PROVIDER_NAME);
+  const hasGoogleAI =
+    hasEnvValue(process.env.GOOGLE_GENERATIVE_AI_API_KEY) ||
+    hasEnvValue(process.env.GEMINI_API_KEY) ||
+    providers.has(LOCAL_GOOGLE_AI_PROVIDER_NAME);
+  const hasBedrock =
+    (hasEnvValue(process.env.AWS_ACCESS_KEY_ID) &&
+      hasEnvValue(process.env.AWS_SECRET_ACCESS_KEY)) ||
+    providers.has(LOCAL_BEDROCK_PROVIDER_NAME);
 
   if (!hasOpenAIKey && hasAnthropicKey) return "anthropic";
   if (!hasOpenAIKey && !hasAnthropicKey && hasOpenRouterKey) {
@@ -98,6 +108,31 @@ function inferLocalProviderFromStandardKeys(
     !hasZaiKey &&
     !hasMinimax &&
     !hasMoonshot &&
+    hasGoogleAI
+  ) {
+    return "google-ai";
+  }
+  if (
+    !hasOpenAIKey &&
+    !hasAnthropicKey &&
+    !hasOpenRouterKey &&
+    !hasZaiKey &&
+    !hasMinimax &&
+    !hasMoonshot &&
+    !hasGoogleAI &&
+    hasBedrock
+  ) {
+    return "bedrock";
+  }
+  if (
+    !hasOpenAIKey &&
+    !hasAnthropicKey &&
+    !hasOpenRouterKey &&
+    !hasZaiKey &&
+    !hasMinimax &&
+    !hasMoonshot &&
+    !hasGoogleAI &&
+    !hasBedrock &&
     hasChatGPT
   ) {
     return "chatgpt-oauth";
@@ -115,6 +150,8 @@ export function resolveLocalModel(provider = resolveLocalProvider()): string {
   if (provider === "zai") return "zai/glm-5.1";
   if (provider === "minimax") return "minimax/MiniMax-M2.7";
   if (provider === "moonshot") return "moonshot/kimi-k2.5";
+  if (provider === "google-ai") return "google_ai/gemini-3.1-pro-preview";
+  if (provider === "bedrock") return "bedrock/us.anthropic.claude-sonnet-4-6";
   if (provider === "chatgpt-oauth") {
     return `chatgpt-plus-pro/${DEFAULT_OPENAI_RESPONSES_MODEL}`;
   }
@@ -131,6 +168,8 @@ export function localModelHandle(
   if (provider === "zai") return `zai/${model}`;
   if (provider === "minimax") return `minimax/${model}`;
   if (provider === "moonshot") return `moonshot/${model}`;
+  if (provider === "google-ai") return `google_ai/${model}`;
+  if (provider === "bedrock") return `bedrock/${model}`;
   if (provider === "chatgpt-oauth") return `chatgpt-plus-pro/${model}`;
   return `openai/${model}`;
 }
@@ -141,6 +180,8 @@ export function localProviderType(provider: AISDKProvider): string {
   if (provider === "zai") return "zai";
   if (provider === "minimax") return "minimax";
   if (provider === "moonshot") return "moonshot";
+  if (provider === "google-ai") return "google_ai";
+  if (provider === "bedrock") return "bedrock";
   if (provider === "chatgpt-oauth") return "chatgpt_oauth";
   return "openai";
 }
@@ -195,6 +236,14 @@ export function listLocalModels(storageDir?: string) {
     hasEnvValue(process.env.MOONSHOT_API_KEY) ||
     providers.has(LOCAL_MOONSHOT_PROVIDER_NAME) ||
     providers.has(LOCAL_KIMI_CODE_PROVIDER_NAME);
+  const hasGoogleAI =
+    hasEnvValue(process.env.GOOGLE_GENERATIVE_AI_API_KEY) ||
+    hasEnvValue(process.env.GEMINI_API_KEY) ||
+    providers.has(LOCAL_GOOGLE_AI_PROVIDER_NAME);
+  const hasBedrock =
+    (hasEnvValue(process.env.AWS_ACCESS_KEY_ID) &&
+      hasEnvValue(process.env.AWS_SECRET_ACCESS_KEY)) ||
+    providers.has(LOCAL_BEDROCK_PROVIDER_NAME);
 
   if (hasOpenAI) {
     addModel("openai-responses", openAIModel);
@@ -249,6 +298,20 @@ export function listLocalModels(storageDir?: string) {
     addMoonshotModel("moonshot/kimi-k2-0711-preview");
     addMoonshotModel("moonshot/kimi-k2-thinking");
     addMoonshotModel("moonshot/kimi-k2-0905-preview");
+  }
+  if (hasGoogleAI) {
+    for (const model of modelsData.models) {
+      if (model.handle.startsWith("google_ai/")) {
+        addModel("google-ai", model.handle);
+      }
+    }
+  }
+  if (hasBedrock) {
+    for (const model of modelsData.models) {
+      if (model.handle.startsWith("bedrock/")) {
+        addModel("bedrock", model.handle);
+      }
+    }
   }
   if (hasChatGPT) {
     for (const model of modelsData.models) {

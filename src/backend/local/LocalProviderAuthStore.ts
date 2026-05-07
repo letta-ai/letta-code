@@ -55,6 +55,8 @@ export const LOCAL_ZAI_CODING_PROVIDER_NAME = "lc-zai-coding";
 export const LOCAL_MINIMAX_PROVIDER_NAME = "lc-minimax";
 export const LOCAL_MOONSHOT_PROVIDER_NAME = "lc-moonshot";
 export const LOCAL_KIMI_CODE_PROVIDER_NAME = "lc-kimi-code";
+export const LOCAL_GOOGLE_AI_PROVIDER_NAME = "lc-gemini";
+export const LOCAL_BEDROCK_PROVIDER_NAME = "lc-bedrock";
 
 const SUPPORTED_LOCAL_PROVIDER_TYPES = new Set([
   "openai",
@@ -65,6 +67,8 @@ const SUPPORTED_LOCAL_PROVIDER_TYPES = new Set([
   "minimax",
   "moonshot",
   "moonshot_coding",
+  "google_ai",
+  "bedrock",
   "chatgpt_oauth",
 ]);
 

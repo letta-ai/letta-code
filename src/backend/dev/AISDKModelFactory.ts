@@ -2,6 +2,8 @@ import type { LanguageModel } from "ai";
 import {
   getLocalProviderApiKeyByName,
   LOCAL_ANTHROPIC_PROVIDER_NAME,
+  LOCAL_BEDROCK_PROVIDER_NAME,
+  LOCAL_GOOGLE_AI_PROVIDER_NAME,
   LOCAL_KIMI_CODE_PROVIDER_NAME,
   LOCAL_MINIMAX_PROVIDER_NAME,
   LOCAL_MOONSHOT_PROVIDER_NAME,
@@ -11,7 +13,9 @@ import {
   LOCAL_ZAI_PROVIDER_NAME,
 } from "../local/LocalProviderAuthStore";
 import { createAnthropicModelFactory } from "./AnthropicModel";
+import { createBedrockModelFactory } from "./BedrockModel";
 import { createChatGPTOAuthModelFactory } from "./ChatGPTOAuthModel";
+import { createGoogleModelFactory } from "./GoogleModel";
 import { createOpenAICompatibleModelFactory } from "./OpenAICompatibleModel";
 import { createOpenAIResponsesModelFactory } from "./OpenAIResponsesModel";
 
@@ -24,6 +28,8 @@ export type AISDKProvider =
   | "zai"
   | "minimax"
   | "moonshot"
+  | "google-ai"
+  | "bedrock"
   | "chatgpt-oauth";
 
 export interface AISDKModelFactoryOptions {
@@ -33,6 +39,8 @@ export interface AISDKModelFactoryOptions {
   createAnthropicModel?: (model: string) => LanguageModel;
   createOpenAICompatibleModel?: (model: string) => LanguageModel;
   createChatGPTOAuthModel?: (model: string) => LanguageModel;
+  createGoogleModel?: (model: string) => LanguageModel;
+  createBedrockModel?: (model: string) => LanguageModel;
   localProviderAuthStorageDir?: string;
   zaiProviderType?: "zai" | "zai_coding";
 }
@@ -65,12 +73,14 @@ export function resolveAISDKProvider(
     provider === "zai" ||
     provider === "minimax" ||
     provider === "moonshot" ||
+    provider === "google-ai" ||
+    provider === "bedrock" ||
     provider === "chatgpt-oauth"
   ) {
     return provider;
   }
   throw new Error(
-    `Unknown AI SDK provider "${provider}". Expected "openai-responses", "anthropic", "openrouter", "zai", "minimax", "moonshot", or "chatgpt-oauth".`,
+    `Unknown AI SDK provider "${provider}". Expected "openai-responses", "anthropic", "openrouter", "zai", "minimax", "moonshot", "google-ai", "bedrock", or "chatgpt-oauth".`,
   );
 }
 
@@ -85,6 +95,8 @@ export function resolveAISDKProviderFromAgent(
   if (model?.startsWith("moonshot/") || model?.startsWith("moonshot_coding/")) {
     return "moonshot";
   }
+  if (model?.startsWith("google_ai/")) return "google-ai";
+  if (model?.startsWith("bedrock/")) return "bedrock";
   if (model?.startsWith("anthropic/")) return "anthropic";
   if (model?.startsWith("openai/") || model?.startsWith("openai-responses/")) {
     return "openai-responses";
@@ -98,6 +110,8 @@ export function resolveAISDKProviderFromAgent(
   if (providerType === "moonshot" || providerType === "moonshot_coding") {
     return "moonshot";
   }
+  if (providerType === "google_ai") return "google-ai";
+  if (providerType === "bedrock") return "bedrock";
   if (providerType === "chatgpt_oauth") return "chatgpt-oauth";
   if (providerType === "openai" || providerType === "openai-responses") {
     return "openai-responses";
@@ -136,6 +150,12 @@ export function resolveAISDKModelFromAgent(
   }
   if (provider === "moonshot" && model.startsWith("moonshot_coding/")) {
     return model.slice("moonshot_coding/".length);
+  }
+  if (provider === "google-ai" && model.startsWith("google_ai/")) {
+    return model.slice("google_ai/".length);
+  }
+  if (provider === "bedrock" && model.startsWith("bedrock/")) {
+    return model.slice("bedrock/".length);
   }
   if (provider === "chatgpt-oauth" && model.startsWith("chatgpt-plus-pro/")) {
     return model.slice("chatgpt-plus-pro/".length);
@@ -294,6 +314,25 @@ export function createAISDKModelFactory(
           ) ??
           process.env.MOONSHOT_API_KEY,
         createModel: options.createOpenAICompatibleModel,
+      });
+    case "google-ai":
+      return createGoogleModelFactory({
+        model,
+        apiKey: localProviderApiKey(
+          LOCAL_GOOGLE_AI_PROVIDER_NAME,
+          process.env.GOOGLE_GENERATIVE_AI_API_KEY ??
+            process.env.GEMINI_API_KEY,
+          storageDir,
+        ),
+        baseURL: process.env.GOOGLE_GENERATIVE_AI_BASE_URL,
+        createModel: options.createGoogleModel,
+      });
+    case "bedrock":
+      return createBedrockModelFactory({
+        model,
+        storageDir,
+        providerName: LOCAL_BEDROCK_PROVIDER_NAME,
+        createModel: options.createBedrockModel,
       });
     case "chatgpt-oauth":
       return createChatGPTOAuthModelFactory({

@@ -207,7 +207,9 @@ function aiSDKProviderKind(
     modelHandle.startsWith("zai/") ||
     modelHandle.startsWith("moonshot/") ||
     modelHandle.startsWith("moonshot_coding/") ||
-    modelHandle.startsWith("minimax/")
+    modelHandle.startsWith("minimax/") ||
+    modelHandle.startsWith("google_ai/") ||
+    modelHandle.startsWith("bedrock/")
   ) {
     return "unknown";
   }
