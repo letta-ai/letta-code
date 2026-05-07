@@ -13125,7 +13125,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 }
 
                 cmd.finish(
-                  `Switched to conversation (${resumeData.messageHistory.length} messages)`,
+                  `Switched to conversation (${resumeData.messageHistory.length} previous messages)`,
                   true,
                 );
               }
