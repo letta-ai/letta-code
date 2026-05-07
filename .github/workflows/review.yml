@@ -72,7 +72,10 @@ jobs:
 
             Then read the diff carefully. Assess whether this PR introduces bugs, logic errors, security issues, race conditions, missing error handling, breaking changes, or performance problems.
 
-            **Default posture: silence.** Most PRs are fine. If you have nothing notable to flag, exit without commenting. No "LGTM", no summary, no praise — just exit. Silence means approval.
+            **Default posture: signal-only.** Most PRs are fine. Your final response must be one of these exact phrases — nothing else:
+            - No issues found → respond with exactly: `LGTM`
+            - Previous feedback all addressed → respond with exactly: `All feedback addressed`
+            - You flagged issues → leave inline review comments, then respond with exactly: `Left comments`
 
             ## Voice
 
@@ -124,5 +127,4 @@ jobs:
             1. Read your review-knowledge.md memory file (codebase footguns reference)
             2. Run `gh pr diff $PR_NUMBER` to read the full diff
             3. Assess risk using your knowledge + the criteria above
-            4. If nothing notable → exit silently (no comment, no output)
-            5. If something is risky → leave targeted inline review comments (1-2 sentences each)
+            4. Respond with the appropriate stock phrase (`LGTM`, `All feedback addressed`, or `Left comments`)
