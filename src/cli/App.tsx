@@ -9072,7 +9072,6 @@ export default function App({
             const isDefault = conversationIdRef.current === "default";
             const forked = await forkConversation(conversationIdRef.current, {
               ...(isDefault ? { agentId } : {}),
-              useQuery: true,
             });
 
             // If we forked with an explicit summary, update it
