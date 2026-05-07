@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type { LanguageModelUsage } from "ai";
 import type { LocalMessage } from "../local/LocalMessage";
 import type { LocalAgentRecord, StoredMessage } from "../local/LocalStore";
 import {
@@ -105,6 +106,46 @@ function createLocalUIMessageChunk(
   ) as unknown as LettaStreamingResponse;
 }
 
+function createUsageStatisticsChunk(
+  usage: LanguageModelUsage | undefined,
+): LettaStreamingResponse | undefined {
+  if (!usage) return undefined;
+  const promptTokens = usage.inputTokens;
+  const completionTokens = usage.outputTokens;
+  const totalTokens = usage.totalTokens;
+  const cachedInputTokens = usage.inputTokenDetails.cacheReadTokens;
+  const cacheWriteTokens = usage.inputTokenDetails.cacheWriteTokens;
+  const reasoningTokens = usage.outputTokenDetails.reasoningTokens;
+  if (
+    promptTokens === undefined &&
+    completionTokens === undefined &&
+    totalTokens === undefined &&
+    cachedInputTokens === undefined &&
+    cacheWriteTokens === undefined &&
+    reasoningTokens === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    message_type: "usage_statistics",
+    ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
+    ...(completionTokens !== undefined
+      ? { completion_tokens: completionTokens }
+      : {}),
+    ...(totalTokens !== undefined ? { total_tokens: totalTokens } : {}),
+    ...(cachedInputTokens !== undefined
+      ? { cached_input_tokens: cachedInputTokens }
+      : {}),
+    ...(cacheWriteTokens !== undefined
+      ? { cache_write_tokens: cacheWriteTokens }
+      : {}),
+    ...(reasoningTokens !== undefined
+      ? { reasoning_tokens: reasoningTokens }
+      : {}),
+    ...(promptTokens !== undefined ? { context_tokens: promptTokens } : {}),
+  } as unknown as LettaStreamingResponse;
+}
+
 function createProviderLettaStream(
   events: AsyncIterable<ProviderStreamEvent>,
 ): Stream<LettaStreamingResponse> {
@@ -114,6 +155,7 @@ function createProviderLettaStream(
     async *[Symbol.asyncIterator]() {
       let sawToolCall = false;
       let pendingStopReason: LettaStreamingResponse | undefined;
+      let sawUsageStatistics = false;
       const assistantOtid = `provider-assistant-${randomUUID()}`;
       const reasoningOtid = `provider-reasoning-${randomUUID()}`;
       try {
@@ -141,6 +183,15 @@ function createProviderLettaStream(
           }
 
           const { part } = event;
+          if (part.type === "finish-step") {
+            const usageChunk = createUsageStatisticsChunk(part.usage);
+            if (usageChunk) {
+              sawUsageStatistics = true;
+              yield usageChunk;
+            }
+            continue;
+          }
+
           if (part.type === "text-delta") {
             yield {
               message_type: "assistant_message",
@@ -173,6 +224,13 @@ function createProviderLettaStream(
           }
 
           if (part.type === "finish") {
+            if (!sawUsageStatistics) {
+              const usageChunk = createUsageStatisticsChunk(part.totalUsage);
+              if (usageChunk) {
+                sawUsageStatistics = true;
+                yield usageChunk;
+              }
+            }
             pendingStopReason = {
               message_type: "stop_reason",
               stop_reason:

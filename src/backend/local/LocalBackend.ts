@@ -1,4 +1,4 @@
-import type { LanguageModel } from "ai";
+import type { LanguageModel, LanguageModelUsage } from "ai";
 import {
   getMemoryHeadRevision,
   type InitializeLocalMemoryRepoFile,
@@ -136,6 +136,14 @@ function createLocalExecutor(
     summary: string;
     stats?: LocalCompactionStats;
   } | null>,
+  onContextUsage?: (
+    input: ProviderTurnInput,
+    usage: LanguageModelUsage,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>,
 ): HeadlessTurnExecutor {
   if (options.executor) return options.executor;
   if (options.executionMode === "deterministic") {
@@ -146,6 +154,7 @@ function createLocalExecutor(
       createModel: options.createModel,
       streamText: options.streamText,
       onContextWindowOverflow,
+      onContextUsage,
     }),
   );
 }
@@ -188,6 +197,9 @@ export class LocalBackend extends HeadlessBackend {
         options,
         (input, error) =>
           localBackendRef.current?.compactAfterContextOverflow(input, error) ??
+          Promise.resolve(null),
+        (input, usage) =>
+          localBackendRef.current?.compactAfterContextUsage(input, usage) ??
           Promise.resolve(null),
       ),
       storeOptions,
@@ -343,6 +355,73 @@ export class LocalBackend extends HeadlessBackend {
     };
   }
 
+  private async compactAfterContextUsage(
+    input: ProviderTurnInput,
+    usage: LanguageModelUsage,
+  ): Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null> {
+    const contextTokens = usage.inputTokens;
+    const contextWindow = this.effectiveContextWindow(
+      input.conversationId,
+      input.agentId,
+    );
+    if (
+      contextTokens === undefined ||
+      contextWindow === undefined ||
+      contextTokens <= contextWindow
+    ) {
+      return null;
+    }
+
+    const result = await this.compactLocalConversationAll(
+      input.conversationId,
+      input.agentId,
+      "context_window_limit",
+      {
+        compaction_settings: { mode: "all" },
+      } as ConversationMessageCompactBody,
+    );
+    return {
+      uiMessages: this.store.listLocalMessages(
+        input.conversationId,
+        input.agentId,
+      ),
+      summary: result.summary,
+      stats: result.stats,
+    };
+  }
+
+  private effectiveContextWindow(
+    conversationId: string,
+    agentId: string,
+  ): number | undefined {
+    const conversation = this.store.retrieveConversation(
+      conversationId,
+      agentId,
+    ) as { context_window_limit?: unknown; model_settings?: unknown };
+    if (typeof conversation.context_window_limit === "number") {
+      return conversation.context_window_limit;
+    }
+    const conversationModelSettings = conversation.model_settings;
+    if (
+      conversationModelSettings &&
+      typeof conversationModelSettings === "object" &&
+      !Array.isArray(conversationModelSettings) &&
+      typeof (conversationModelSettings as { context_window_limit?: unknown })
+        .context_window_limit === "number"
+    ) {
+      return (conversationModelSettings as { context_window_limit: number })
+        .context_window_limit;
+    }
+    const agent = this.store.retrieveAgentRecord(agentId);
+    return typeof agent.model_settings.context_window_limit === "number"
+      ? agent.model_settings.context_window_limit
+      : undefined;
+  }
+
   private async compactLocalConversationAll(
     conversationId: string,
     agentId: string,
@@ -384,10 +463,7 @@ export class LocalBackend extends HeadlessBackend {
       trigger,
       context_tokens_before: contextTokensBefore,
       context_tokens_after: Math.ceil(summary.length / 4),
-      context_window:
-        typeof agent.model_settings.context_window_limit === "number"
-          ? agent.model_settings.context_window_limit
-          : undefined,
+      context_window: this.effectiveContextWindow(conversationId, agentId),
       messages_count_before: messages.length,
       messages_count_after: 1,
     };

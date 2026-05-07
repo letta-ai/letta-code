@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   LanguageModel,
+  LanguageModelUsage,
   ModelMessage,
   TextStreamPart,
   ToolSet,
@@ -176,6 +177,26 @@ function uiMessageStream(
       controller.close();
     },
   });
+}
+
+function modelUsage(
+  inputTokens: number,
+  outputTokens: number,
+): LanguageModelUsage {
+  return {
+    inputTokens,
+    inputTokenDetails: {
+      noCacheTokens: inputTokens,
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+    },
+    outputTokens,
+    outputTokenDetails: {
+      textTokens: outputTokens,
+      reasoningTokens: undefined,
+    },
+    totalTokens: inputTokens + outputTokens,
+  };
 }
 
 type MockUIMessageStreamOptions = {
@@ -576,6 +597,96 @@ describe("LocalBackend", () => {
       expect(
         page.getPaginatedItems().map((message) => message.message_type),
       ).toEqual(["summary_message", "assistant_message"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts after local AI SDK usage exceeds the configured context window", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-compact-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage = modelUsage(150, 12);
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "usage-triggered local summary" } as never;
+        }) as never,
+        streamText: () => {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "usage-text",
+                text: "limit response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-usage-limit",
+              role: "assistant",
+              parts: [{ type: "text", text: "limit response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 100,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("limit trigger request", agent.id),
+        ),
+      );
+
+      const usageChunk = chunks.find(
+        (chunk) => chunk.message_type === "usage_statistics",
+      ) as { context_tokens?: number; prompt_tokens?: number } | undefined;
+      expect(usageChunk?.context_tokens).toBe(150);
+      expect(usageChunk?.prompt_tokens).toBe(150);
+      expect(summaryPrompt).toContain("limit trigger request");
+      expect(summaryPrompt).toContain("limit response");
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("usage-triggered local summary");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain(
+        "usage-triggered local summary",
+      );
+      expect(JSON.stringify(messages[0])).toContain('"context_window":100');
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

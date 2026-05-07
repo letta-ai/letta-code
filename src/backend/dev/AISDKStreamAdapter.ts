@@ -3,6 +3,7 @@ import {
   convertToModelMessages,
   jsonSchema,
   type LanguageModel,
+  type LanguageModelUsage,
   type ModelMessage,
   streamText,
   type TextStreamPart,
@@ -62,6 +63,14 @@ export interface AISDKStreamAdapterOptions {
   onContextWindowOverflow?: (
     input: ProviderTurnInput,
     error: unknown,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>;
+  onContextUsage?: (
+    input: ProviderTurnInput,
+    usage: LanguageModelUsage,
   ) => Promise<{
     uiMessages: LocalMessage[];
     summary: string;
@@ -340,12 +349,34 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
   private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
   private readonly onContextWindowOverflow?: AISDKStreamAdapterOptions["onContextWindowOverflow"];
+  private readonly onContextUsage?: AISDKStreamAdapterOptions["onContextUsage"];
 
   constructor(options: AISDKStreamAdapterOptions) {
     this.createModel = options.createModel;
     this.runStreamText = options.streamText ?? defaultStreamText;
     this.abortSignal = options.abortSignal;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
+    this.onContextUsage = options.onContextUsage;
+  }
+
+  private async *emitCompactionChunks(
+    compaction: {
+      summary: string;
+      stats?: LocalCompactionStats;
+    },
+    fallbackTrigger: string,
+  ): AsyncIterable<ProviderStreamEvent> {
+    const trigger = compaction.stats?.trigger ?? fallbackTrigger;
+    yield providerLettaChunk({
+      message_type: "event_message",
+      event_type: "compaction",
+      event_data: { trigger },
+    } as never);
+    yield providerLettaChunk({
+      message_type: "summary_message",
+      summary: compaction.summary,
+      ...(compaction.stats ? { compaction_stats: compaction.stats } : {}),
+    } as never);
   }
 
   private async *streamOnce(
@@ -386,10 +417,23 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     );
 
     let streamError: unknown;
+    let lastUsage: LanguageModelUsage | undefined;
+    let sawToolCall = false;
+    let finishReason: string | undefined;
     for await (const part of result.fullStream) {
       if (part.type === "error" && isContextWindowOverflowError(part.error)) {
         streamError = part.error;
         break;
+      }
+      if (part.type === "tool-call") {
+        sawToolCall = true;
+      }
+      if (part.type === "finish-step") {
+        lastUsage = part.usage;
+      }
+      if (part.type === "finish") {
+        finishReason = part.finishReason;
+        lastUsage ??= part.totalUsage;
       }
       yield providerStreamPart(part);
     }
@@ -403,6 +447,17 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     if (uiMessageError) throw uiMessageError;
     if (message) {
       yield providerUIMessage(message);
+    }
+    if (
+      lastUsage &&
+      !sawToolCall &&
+      finishReason !== "tool-calls" &&
+      this.onContextUsage
+    ) {
+      const compaction = await this.onContextUsage(input, lastUsage);
+      if (compaction) {
+        yield* this.emitCompactionChunks(compaction, "context_window_limit");
+      }
     }
   }
 
@@ -420,16 +475,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       const compaction = await this.onContextWindowOverflow(input, error);
       if (!compaction) throw error;
 
-      yield providerLettaChunk({
-        message_type: "event_message",
-        event_type: "compaction",
-        event_data: { trigger: "context_window_overflow" },
-      } as never);
-      yield providerLettaChunk({
-        message_type: "summary_message",
-        summary: compaction.summary,
-        ...(compaction.stats ? { compaction_stats: compaction.stats } : {}),
-      } as never);
+      yield* this.emitCompactionChunks(compaction, "context_window_overflow");
 
       yield* this.streamOnce({
         ...input,
