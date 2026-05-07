@@ -33,9 +33,6 @@ jobs:
       - name: Wait for CI lint
         if: github.event_name == 'pull_request'
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/commits/${{ github.event.pull_request.head.sha }}/check-runs" \
-            --jq '.check_runs[] | select(.name == "Lint & Type Check") | .status + " " + .conclusion' \
-            | head -1
           # Poll until the lint check completes
           for i in $(seq 1 30); do
             STATUS=$(gh api "repos/$GITHUB_REPOSITORY/commits/${{ github.event.pull_request.head.sha }}/check-runs" \
