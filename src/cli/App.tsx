@@ -81,6 +81,11 @@ import {
 import { reconcileExistingAgentState } from "../agent/reconcileExistingAgentState";
 import { recordSessionEnd } from "../agent/sessionHistory";
 import { SessionStats } from "../agent/stats";
+import {
+  buildRepeatedToolCallReminder,
+  createToolRepeatTracker,
+  type RepeatToolCall,
+} from "../agent/tool-repeat-reminder";
 import { type ConversationMessageStreamBody, getBackend } from "../backend";
 import { getAgentContextOverview } from "../backend/api/agents";
 import { getClient, getServerUrl } from "../backend/api/client";
@@ -2870,6 +2875,24 @@ export default function App({
 
   // Canonical buffers stored in a ref (mutated by onChunk), PERSISTED for session
   const buffersRef = useRef(createBuffers());
+  const toolRepeatTrackerRef = useRef(createToolRepeatTracker());
+
+  const buildToolRepeatReminderMessage = useCallback(
+    (calls: RepeatToolCall[]): MessageCreate | null => {
+      const reminder = buildRepeatedToolCallReminder(
+        toolRepeatTrackerRef.current,
+        calls,
+      );
+      if (!reminder) return null;
+      return {
+        type: "message",
+        role: "system",
+        content: reminder,
+        otid: createClientOtid(),
+      };
+    },
+    [],
+  );
 
   // Context-window token tracking, decoupled from streaming buffers
   const contextTrackerRef = useRef(createContextTracker());
@@ -5084,6 +5107,7 @@ export default function App({
 
           // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
+            toolRepeatTrackerRef.current.clear();
             clearApprovalToolContext();
             setStreaming(false);
             const liveElapsedMs = (() => {
@@ -5678,6 +5702,12 @@ export default function App({
                 if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
                   const queuedContentParts =
                     buildQueuedContentParts(queuedItemsToAppend);
+                  const repeatReminderMessage = buildToolRepeatReminderMessage(
+                    autoAllowed.map((ac) => ({
+                      toolName: ac.approval.toolName,
+                      toolArgs: ac.approval.toolArgs || "{}",
+                    })),
+                  );
                   setThinkingMessage(getRandomThinkingVerb());
                   refreshDerived();
                   toolResultsInFlightRef.current = true;
@@ -5688,6 +5718,7 @@ export default function App({
                         approvals: allResults,
                         otid: createClientOtid(),
                       },
+                      ...(repeatReminderMessage ? [repeatReminderMessage] : []),
                       {
                         type: "message",
                         role: "user",
@@ -5732,6 +5763,13 @@ export default function App({
                 setThinkingMessage(getRandomThinkingVerb());
                 refreshDerived();
 
+                const repeatReminderMessage = buildToolRepeatReminderMessage(
+                  autoAllowed.map((ac) => ({
+                    toolName: ac.approval.toolName,
+                    toolArgs: ac.approval.toolArgs || "{}",
+                  })),
+                );
+
                 toolResultsInFlightRef.current = true;
                 await processConversation(
                   [
@@ -5740,6 +5778,7 @@ export default function App({
                       approvals: allResults,
                       otid: randomUUID(),
                     },
+                    ...(repeatReminderMessage ? [repeatReminderMessage] : []),
                   ],
                   { allowReentry: true },
                 );
@@ -11680,6 +11719,15 @@ ${SYSTEM_REMINDER_CLOSE}
               otid: createClientOtid(),
             },
           ];
+          const repeatReminderMessage = buildToolRepeatReminderMessage(
+            allDecisions.map((decision) => ({
+              toolName: decision.approval.toolName,
+              toolArgs: decision.approval.toolArgs || "{}",
+            })),
+          );
+          if (repeatReminderMessage) {
+            input.push(repeatReminderMessage);
+          }
           if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
             const queuedUserText = buildQueuedUserText(queuedItemsToAppend);
             const queuedUserOtid = createClientOtid();
@@ -11744,6 +11792,7 @@ ${SYSTEM_REMINDER_CLOSE}
       openTrajectorySegment,
       commitEligibleLines,
       prepareScopedToolExecutionContext,
+      buildToolRepeatReminderMessage,
     ],
   );
 

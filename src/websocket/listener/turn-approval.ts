@@ -9,6 +9,7 @@ import {
   type ApprovalResult,
   executeApprovalBatch,
 } from "../../agent/approval-execution";
+import { buildRepeatedToolCallReminder } from "../../agent/tool-repeat-reminder";
 import { getChannelRegistry } from "../../channels/registry";
 import type { ChannelTurnSource } from "../../channels/types";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
@@ -557,6 +558,21 @@ export async function handleApprovalStop(params: {
       otid: crypto.randomUUID(),
     },
   ];
+  const repeatReminder = buildRepeatedToolCallReminder(
+    runtime.toolRepeatTracker,
+    decisions.map((decision) => ({
+      toolName: decision.approval.toolName,
+      toolArgs: decision.approval.toolArgs || "{}",
+    })),
+  );
+  if (repeatReminder) {
+    nextInput.push({
+      type: "message",
+      role: "system",
+      content: repeatReminder,
+      otid: crypto.randomUUID(),
+    });
+  }
   let continuationBatchId = dequeuedBatchId;
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
