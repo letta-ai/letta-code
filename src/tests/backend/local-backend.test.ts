@@ -28,7 +28,10 @@ import type {
   ConversationMessageListBody,
   RunMessageStreamBody,
 } from "../../backend";
-import { createAISDKModelFactoryFromAgent } from "../../backend/dev/AISDKModelFactory";
+import {
+  createAISDKModelFactoryFromAgent,
+  resolveZaiConnection,
+} from "../../backend/dev/AISDKModelFactory";
 import {
   createOrUpdateLocalProvider,
   getLocalProviderAuthPath,
@@ -382,6 +385,33 @@ describe("LocalBackend", () => {
 
       factory();
       expect(capturedModel).toBe("deepseek/deepseek-v4-pro");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses Z.AI coding endpoint when only a coding-plan key is connected", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-zai-coding-"));
+    try {
+      await withLocalModelEnv({}, async () => {
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "zai_coding",
+          providerName: "lc-zai-coding",
+          apiKey: "test-zai-coding-key",
+        });
+
+        expect(
+          resolveZaiConnection({
+            storageDir,
+            preferredProviderType: "zai_coding",
+          }),
+        ).toMatchObject({
+          apiKey: "test-zai-coding-key",
+          providerName: "zai-coding",
+          baseURL: "https://api.z.ai/api/coding/paas/v4",
+        });
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

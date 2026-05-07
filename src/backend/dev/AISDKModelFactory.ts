@@ -29,6 +29,7 @@ export interface AISDKModelFactoryOptions {
   createOpenAICompatibleModel?: (model: string) => LanguageModel;
   createChatGPTOAuthModel?: (model: string) => LanguageModel;
   localProviderAuthStorageDir?: string;
+  zaiProviderType?: "zai" | "zai_coding";
 }
 
 export interface AISDKModelSettings {
@@ -126,16 +127,62 @@ function localProviderApiKey(
   return getLocalProviderApiKeyByName(providerName, storageDir) ?? envValue;
 }
 
+export interface ZaiConnection {
+  apiKey?: string;
+  baseURL: string;
+  providerName: "zai" | "zai-coding";
+}
+
+export function resolveZaiConnection(options: {
+  storageDir?: string;
+  preferredProviderType?: "zai" | "zai_coding";
+}): ZaiConnection {
+  const regularKey =
+    getLocalProviderApiKeyByName(LOCAL_ZAI_PROVIDER_NAME, options.storageDir) ??
+    process.env.ZAI_API_KEY ??
+    process.env.ZHIPU_API_KEY;
+  const codingKey =
+    getLocalProviderApiKeyByName(
+      LOCAL_ZAI_CODING_PROVIDER_NAME,
+      options.storageDir,
+    ) ?? process.env.ZAI_CODING_API_KEY;
+  const regularConnection: ZaiConnection = {
+    providerName: "zai",
+    baseURL: process.env.ZAI_BASE_URL ?? "https://api.z.ai/api/paas/v4",
+    apiKey: regularKey,
+  };
+  const codingConnection: ZaiConnection = {
+    providerName: "zai-coding",
+    baseURL:
+      process.env.ZAI_CODING_BASE_URL ?? "https://api.z.ai/api/coding/paas/v4",
+    apiKey: codingKey,
+  };
+
+  if (options.preferredProviderType === "zai_coding" && codingKey) {
+    return codingConnection;
+  }
+  if (options.preferredProviderType === "zai" && regularKey) {
+    return regularConnection;
+  }
+  if (regularKey) return regularConnection;
+  if (codingKey) return codingConnection;
+  return regularConnection;
+}
+
 export function createAISDKModelFactoryFromAgent(
   model: string | undefined,
   modelSettings: AISDKModelSettings = {},
   options: Omit<AISDKModelFactoryOptions, "provider" | "model"> = {},
 ): () => LanguageModel {
   const provider = resolveAISDKProviderFromAgent(model, modelSettings);
+  const providerType = modelSettings.provider_type;
   return createAISDKModelFactory({
     ...options,
     provider,
     model: resolveAISDKModelFromAgent(model, provider),
+    ...((providerType === "zai" || providerType === "zai_coding") && {
+      zaiProviderType: providerType,
+    }),
   });
 }
 
@@ -181,21 +228,19 @@ export function createAISDKModelFactory(
         headers: { "X-Title": "Letta Code" },
         createModel: options.createOpenAICompatibleModel,
       });
-    case "zai":
+    case "zai": {
+      const zaiConnection = resolveZaiConnection({
+        storageDir,
+        preferredProviderType: options.zaiProviderType,
+      });
       return createOpenAICompatibleModelFactory({
         model,
-        providerName: "zai",
-        baseURL: process.env.ZAI_BASE_URL ?? "https://api.z.ai/api/paas/v4",
-        apiKey:
-          getLocalProviderApiKeyByName(LOCAL_ZAI_PROVIDER_NAME, storageDir) ??
-          getLocalProviderApiKeyByName(
-            LOCAL_ZAI_CODING_PROVIDER_NAME,
-            storageDir,
-          ) ??
-          process.env.ZAI_API_KEY ??
-          process.env.ZHIPU_API_KEY,
+        providerName: zaiConnection.providerName,
+        baseURL: zaiConnection.baseURL,
+        apiKey: zaiConnection.apiKey,
         createModel: options.createOpenAICompatibleModel,
       });
+    }
     case "chatgpt-oauth":
       return createChatGPTOAuthModelFactory({
         model,
