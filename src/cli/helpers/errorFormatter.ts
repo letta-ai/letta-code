@@ -25,6 +25,7 @@ const CLOUDFLARE_EDGE_5XX_MARKER_PATTERN =
   /(^|\s)(502|52[0-6])\s*<!doctype html|error code\s*(502|52[0-6])/i;
 const CLOUDFLARE_EDGE_5XX_TITLE_PATTERN = /\|\s*(502|52[0-6])\s*:/i;
 const CLOUDFLARE_EDGE_5XX_FORMATTED_PATTERN = /\bCloudflare\s+(502|52[0-6])\b/i;
+const CLOUDFLARE_JSON_5XX_PATTERN = /"cloudflare_error"\s*:\s*true/s;
 
 export function isCloudflareEdge52xHtmlError(text: string): boolean {
   const normalized = text.toLowerCase();
@@ -43,6 +44,7 @@ export function isCloudflareEdge52xHtmlError(text: string): boolean {
 export function isCloudflareEdge52xErrorText(text: string): boolean {
   return (
     CLOUDFLARE_EDGE_5XX_FORMATTED_PATTERN.test(text) ||
+    CLOUDFLARE_JSON_5XX_PATTERN.test(text) ||
     isCloudflareEdge52xHtmlError(text)
   );
 }
@@ -50,6 +52,21 @@ export function isCloudflareEdge52xErrorText(text: string): boolean {
 function parseCloudflareEdgeError(
   text: string,
 ): CloudflareEdgeErrorInfo | undefined {
+  // Try JSON-formatted Cloudflare error first (from Letta API proxy)
+  if (CLOUDFLARE_JSON_5XX_PATTERN.test(text)) {
+    try {
+      const obj = JSON.parse(text);
+      return {
+        code: String(obj.status),
+        statusText: obj.error_name || obj.title || undefined,
+        host: obj.zone || undefined,
+        rayId: obj.ray_id || undefined,
+      };
+    } catch {
+      // Not valid JSON, fall through to HTML parsing
+    }
+  }
+
   if (!isCloudflareEdge52xHtmlError(text)) return undefined;
 
   const code =
@@ -710,8 +727,9 @@ export function getRetryStatusMessage(
 ): string | null {
   if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
 
-  // Cloudflare edge errors are transient and retried silently — no status line
-  if (isCloudflareEdge52xErrorText(errorDetail)) return null;
+  // Cloudflare edge errors are transient — show a specific message
+  if (isCloudflareEdge52xErrorText(errorDetail))
+    return "Cloudflare transient error, retrying...";
 
   if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
 

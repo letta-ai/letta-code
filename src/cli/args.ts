@@ -103,6 +103,15 @@ export const CLI_FLAG_CATALOG = {
     },
   },
   "system-custom": { parser: { type: "string" }, mode: "both" },
+  personality: {
+    parser: { type: "string" },
+    mode: "both",
+    help: {
+      argLabel: "<name>",
+      description:
+        'Personality preset for --new-agent: "letta-code", "linus", "kawaii", "claude", or "codex"',
+    },
+  },
   "memory-blocks": { parser: { type: "string" }, mode: "both" },
   "block-value": {
     parser: { type: "string", multiple: true },

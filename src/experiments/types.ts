@@ -1,4 +1,4 @@
-export type ExperimentId = "node";
+export type ExperimentId = "conversation_titles" | "node";
 
 export type ExperimentSource = "override" | "env" | "default";
 

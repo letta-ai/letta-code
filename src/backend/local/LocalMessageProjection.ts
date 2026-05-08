@@ -197,6 +197,22 @@ export function projectLocalMessageToStoredMessages(
   );
   const date = fallbackDate;
 
+  if (message.metadata?.compaction) {
+    return [
+      {
+        id: message.id,
+        date,
+        agent_id: agentId,
+        conversation_id: conversationId,
+        message_type: "summary_message",
+        summary: message.metadata.compaction.summary,
+        ...(message.metadata.compaction.stats
+          ? { compaction_stats: message.metadata.compaction.stats }
+          : {}),
+      } as StoredMessage,
+    ];
+  }
+
   if (message.role === "user" || message.role === "system") {
     return [
       {

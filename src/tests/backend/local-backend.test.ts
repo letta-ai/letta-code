@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -12,11 +13,13 @@ import { dirname, join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   LanguageModel,
+  LanguageModelUsage,
   ModelMessage,
   TextStreamPart,
   ToolSet,
   UIMessageChunk,
 } from "ai";
+import { APICallError } from "ai";
 import type {
   AgentCreateBody,
   ConversationCreateBody,
@@ -25,6 +28,7 @@ import type {
   RunMessageStreamBody,
 } from "../../backend";
 import {
+  LOCAL_ALL_COMPACTION_PROMPT,
   LocalBackend,
   listLocalModels,
   resolveLocalModelConfig,
@@ -32,6 +36,7 @@ import {
 import type { LocalMessage } from "../../backend/local/LocalMessage";
 import { projectLocalMessagesToStoredMessages } from "../../backend/local/LocalMessageProjection";
 import { LocalStore } from "../../backend/local/LocalStore";
+import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
 
 async function withLocalModelEnv<T>(
   env: {
@@ -128,6 +133,23 @@ async function writeMemoryFile(
   );
 }
 
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+}
+
+function initAndCommitMemory(memoryDir: string, message = "initial memory") {
+  git(memoryDir, ["init"]);
+  git(memoryDir, ["config", "user.email", "agent-local-test@letta.com"]);
+  git(memoryDir, ["config", "user.name", "Local Test"]);
+  git(memoryDir, ["add", "."]);
+  git(memoryDir, ["commit", "-m", message]);
+  return git(memoryDir, ["rev-parse", "HEAD"]);
+}
+
 function createBody(
   text: string,
   agentId: string,
@@ -155,6 +177,26 @@ function uiMessageStream(
       controller.close();
     },
   });
+}
+
+function modelUsage(
+  inputTokens: number,
+  outputTokens: number,
+): LanguageModelUsage {
+  return {
+    inputTokens,
+    inputTokenDetails: {
+      noCacheTokens: inputTokens,
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+    },
+    outputTokens,
+    outputTokenDetails: {
+      textTokens: outputTokens,
+      reasoningTokens: undefined,
+    },
+    totalTokens: inputTokens + outputTokens,
+  };
 }
 
 type MockUIMessageStreamOptions = {
@@ -374,6 +416,282 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("compacts local conversation history with the backend all-compaction prompt", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-compact-"));
+    try {
+      let capturedSystem: string | undefined;
+      let capturedPrompt: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: {
+          system?: string;
+          prompt?: string;
+        }) => {
+          capturedSystem = options.system;
+          capturedPrompt = options.prompt;
+          return { text: "manual local summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Compact Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+        {
+          compaction_settings: { mode: "all" },
+        } as never,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 4,
+        num_messages_after: 1,
+        summary: "manual local summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+      expect(capturedPrompt).toContain("first request");
+      expect(capturedPrompt).toContain("second request");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain("manual local summary");
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      expect(persistedMessages).toHaveLength(1);
+      expect(JSON.stringify(persistedMessages[0])).toContain("system_alert");
+      expect(JSON.stringify(persistedMessages[0])).toContain(
+        "manual local summary",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("auto-compacts and retries local AI SDK turns on context overflow", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-auto-compact-"),
+    );
+    try {
+      let streamCalls = 0;
+      let summaryPrompt: string | undefined;
+      const modelMessagesByCall: ModelMessage[][] = [];
+      const overflow = new APICallError({
+        message: "context_length_exceeded: maximum context length exceeded",
+        url: "https://example.invalid/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: "maximum context length exceeded",
+        isRetryable: false,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "overflow local summary" } as never;
+        }) as never,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+
+          if (streamCalls === 2) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Auto Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(3);
+      expect(summaryPrompt).toContain("first request");
+      expect(summaryPrompt).toContain("overflowing request");
+      const chunkTypes = chunks.map((chunk) => chunk.message_type as string);
+      expect(chunkTypes).toContain("event_message");
+      expect(chunkTypes).toContain("summary_message");
+      expect(JSON.stringify(chunks)).toContain("after compaction");
+      expect(JSON.stringify(modelMessagesByCall[2])).toContain(
+        "overflow local summary",
+      );
+      expect(JSON.stringify(modelMessagesByCall[2])).not.toContain(
+        "first request",
+      );
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      expect(
+        page.getPaginatedItems().map((message) => message.message_type),
+      ).toEqual(["summary_message", "assistant_message"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts after local AI SDK usage exceeds the configured context window", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-compact-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage = modelUsage(150, 12);
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "usage-triggered local summary" } as never;
+        }) as never,
+        streamText: () => {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "usage-text",
+                text: "limit response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-usage-limit",
+              role: "assistant",
+              parts: [{ type: "text", text: "limit response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 100,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("limit trigger request", agent.id),
+        ),
+      );
+
+      const usageChunk = chunks.find(
+        (chunk) => chunk.message_type === "usage_statistics",
+      ) as { context_tokens?: number; prompt_tokens?: number } | undefined;
+      expect(usageChunk?.context_tokens).toBe(150);
+      expect(usageChunk?.prompt_tokens).toBe(150);
+      expect(summaryPrompt).toContain("limit trigger request");
+      expect(summaryPrompt).toContain("limit response");
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("usage-triggered local summary");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain(
+        "usage-triggered local summary",
+      );
+      expect(JSON.stringify(messages[0])).toContain('"context_window":100');
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("persists compiled system prompt snapshots and reuses them for turns", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-prompt-"));
     const memoryDir = await mkdtemp(join(tmpdir(), "local-backend-memory-"));
@@ -384,6 +702,7 @@ describe("LocalBackend", () => {
         "Project memory",
         "Use local compiled memory.",
       );
+      initAndCommitMemory(memoryDir);
       let capturedSystem: string | undefined;
       const backend = new LocalBackend({
         storageDir,
@@ -430,6 +749,98 @@ describe("LocalBackend", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
       await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
+  test("initializes local MemFS from memory blocks with an initial commit", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-memfs-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      const agent = await backend.createAgent({
+        name: "MemFS Agent",
+        system: "base {CORE_MEMORY}",
+        memory_blocks: [
+          {
+            label: "persona",
+            value: "Committed persona.",
+            description: "Persona description",
+          },
+          {
+            label: "human",
+            value: "Committed human.",
+            description: "Human description",
+          },
+          {
+            label: "project/gotchas",
+            value: "Committed project gotcha.",
+            description: "Project gotchas",
+          },
+          {
+            label: "style",
+            value: "Committed style preference.",
+            description: "Style preferences",
+          },
+        ],
+      } as AgentCreateBody);
+      const memoryDir = getLocalBackendMemoryFilesystemRoot(
+        agent.id,
+        storageDir,
+      );
+
+      expect(git(memoryDir, ["rev-parse", "--verify", "HEAD"])).toHaveLength(
+        40,
+      );
+      expect(
+        await readFile(join(memoryDir, "system", "persona.md"), "utf8"),
+      ).toContain("Committed persona.");
+      expect(
+        await readFile(join(memoryDir, "system", "human.md"), "utf8"),
+      ).toContain("Committed human.");
+      expect(
+        await readFile(
+          join(memoryDir, "system", "project", "gotchas.md"),
+          "utf8",
+        ),
+      ).toContain("Committed project gotcha.");
+      expect(
+        await readFile(join(memoryDir, "system", "style.md"), "utf8"),
+      ).toContain("Committed style preference.");
+      expect(git(memoryDir, ["status", "--porcelain"])).toBe("");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("initializes local MemFS with an empty commit when no blocks are provided", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-empty-memfs-"),
+    );
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      const agent = await backend.createAgent({
+        name: "Empty MemFS Agent",
+        system: "base {CORE_MEMORY}",
+      } as AgentCreateBody);
+      const memoryDir = getLocalBackendMemoryFilesystemRoot(
+        agent.id,
+        storageDir,
+      );
+
+      expect(git(memoryDir, ["rev-parse", "--verify", "HEAD"])).toHaveLength(
+        40,
+      );
+      expect(git(memoryDir, ["log", "-1", "--pretty=%s"])).toBe(
+        "chore: initialize empty local memory",
+      );
+      expect(git(memoryDir, ["status", "--porcelain"])).toBe("");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
     }
   });
 
@@ -480,6 +891,77 @@ describe("LocalBackend", () => {
       expect(JSON.stringify(persistedPrompts)).not.toContain(
         "<available_skills>",
       );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("recompiles local system prompt when committed MemFS revision changes", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-memfs-revision-"),
+    );
+    try {
+      let capturedSystem = "";
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: (options) => {
+          capturedSystem = options.system ?? "";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+          };
+        },
+      });
+      const agent = await backend.createAgent({
+        name: "Revision Agent",
+        system: "base {CORE_MEMORY}",
+        model: "openai/gpt-test",
+        memory_blocks: [
+          {
+            label: "persona",
+            value: "First committed memory.",
+            description: "Persona",
+          },
+        ],
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first", agent.id),
+        ),
+      );
+      expect(capturedSystem).toContain("First committed memory.");
+
+      const memoryDir = getLocalBackendMemoryFilesystemRoot(
+        agent.id,
+        storageDir,
+      );
+      await writeMemoryFile(
+        memoryDir,
+        "system/persona.md",
+        "Persona",
+        "Second committed memory.",
+      );
+      git(memoryDir, ["add", "system/persona.md"]);
+      git(memoryDir, ["commit", "-m", "update memory"]);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second", agent.id),
+        ),
+      );
+      expect(capturedSystem).toContain("Second committed memory.");
+      expect(capturedSystem).not.toContain("First committed memory.");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

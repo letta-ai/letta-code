@@ -338,12 +338,11 @@ describe("reflectionTranscript helper", () => {
     const prompt = buildReflectionSubagentPrompt({
       transcriptPath: "/tmp/transcript.json",
       memoryDir: "/tmp/memory",
-      cwd: "/tmp/work",
       parentMemory: "<parent_memory>snapshot</parent_memory>",
     });
 
     expect(prompt).toContain("Review the conversation transcript");
-    expect(prompt).toContain("Your current working directory is: /tmp/work");
+    expect(prompt).not.toContain("Your current working directory is:");
     expect(prompt).toContain(
       "The current conversation transcript has been saved",
     );

@@ -1,3 +1,9 @@
+export { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
+export {
+  formatLocalMessagesForSummary,
+  LOCAL_ALL_COMPACTION_PROMPT,
+  type LocalCompactionStats,
+} from "./compaction";
 export { LocalBackend, type LocalBackendOptions } from "./LocalBackend";
 export type {
   LocalMessage,
@@ -22,3 +28,8 @@ export {
   type StoredTurnInput,
 } from "./LocalStore";
 export type { ProviderStreamPart } from "./LocalStreamChunks";
+export {
+  getLocalBackendMemoryFilesystemRoot,
+  getLocalBackendStorageDir,
+  isLocalBackendEnvEnabled,
+} from "./paths";

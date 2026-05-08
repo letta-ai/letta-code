@@ -252,7 +252,9 @@ export async function updateAgentLLMConfig(
     }),
   });
 
-  const finalAgent = await backend.retrieveAgent(agentId);
+  const finalAgent = await backend.retrieveAgent(agentId, {
+    include: ["agent.secrets", "agent.tools", "agent.tags"],
+  });
   return finalAgent;
 }
 
@@ -405,8 +407,9 @@ export async function updateAgentSystemPrompt(
     const { settingsManager } = await import("../settings-manager");
 
     const backend = getBackend();
-    const memoryMode =
-      settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
+    const memoryMode = backend.capabilities.localMemfs
+      ? "local-memfs"
+      : settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
         ? "memfs"
         : "standard";
 
@@ -438,8 +441,11 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state
-    const agent = await backend.retrieveAgent(agentId);
+    // Re-fetch agent to get updated state (include relationships so
+    // callers that rely on agent.tags/tools/secrets aren't broken).
+    const agent = await backend.retrieveAgent(agentId, {
+      include: ["agent.secrets", "agent.tools", "agent.tags"],
+    });
 
     return {
       success: true,

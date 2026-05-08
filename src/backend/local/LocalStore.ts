@@ -26,6 +26,7 @@ import type {
   ConversationMessageStreamBody,
   ConversationUpdateBody,
 } from "../backend";
+import type { LocalCompactionStats } from "./compaction";
 import type { LocalMessage } from "./LocalMessage";
 import {
   cloneLocalMessage,
@@ -409,6 +410,12 @@ function toStoredOutputFields(chunk: Record<string, unknown>) {
 export interface StoredTurnInput {
   agentId: string;
   conversationId: string;
+}
+
+export interface LocalCompactionStoreResult {
+  numMessagesBefore: number;
+  numMessagesAfter: number;
+  summaryMessage: LocalMessage;
 }
 
 export interface LocalStoreOptions {
@@ -1052,6 +1059,50 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Message", messageId);
     }
     return [...messages];
+  }
+
+  compactConversationAll(input: {
+    conversationId: string;
+    agentId: string;
+    summary: string;
+    packedSummary: string;
+    stats?: LocalCompactionStats;
+  }): LocalCompactionStoreResult {
+    const conversation = this.ensureConversation(
+      input.conversationId,
+      input.agentId,
+    );
+    const key = this.conversationKey(conversation.id, input.agentId);
+    const previousMessages = this.localMessagesByConversationKey.get(key) ?? [];
+    const id = this.nextLocalMessageId();
+    const date = this.currentLocalMessageDate();
+    const summaryMessage: LocalMessage = {
+      id,
+      role: "user",
+      metadata: {
+        created_at: date,
+        updated_at: date,
+        agent_id: input.agentId,
+        conversation_id: conversation.id,
+        compaction: {
+          summary: input.summary,
+          ...(input.stats ? { stats: input.stats } : {}),
+        },
+      },
+      parts: [{ type: "text", text: input.packedSummary } as LocalMessagePart],
+    };
+    this.localMessagesByConversationKey.set(key, [summaryMessage]);
+    conversation.in_context_message_ids = [summaryMessage.id];
+    conversation.last_message_at = date;
+    conversation.updated_at = date;
+    this.conversations.set(key, conversation);
+    this.persistConversationState(conversation.id, input.agentId);
+    this.rebuildMessageIndex();
+    return {
+      numMessagesBefore: previousMessages.length,
+      numMessagesAfter: 1,
+      summaryMessage: cloneLocalMessage(summaryMessage),
+    };
   }
 
   private appendUserLocalMessage(
