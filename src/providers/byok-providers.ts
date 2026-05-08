@@ -15,6 +15,7 @@ import {
   updateProvider as updateProviderRequest,
 } from "../backend/api/providers";
 import { getBackend } from "../backend/backend";
+import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "../backend/dev/AISDKProviderRegistry";
 import {
   createOrUpdateLocalProvider,
   deleteLocalProvider,
@@ -201,28 +202,7 @@ function assertLocalProviderSupported(providerType: string): void {
 /** Prefixes that always indicate a BYOK handle (ChatGPT OAuth + lc-* providers) */
 export const STATIC_BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
 
-/**
- * Maps provider_type → base provider string used in model handles.
- * Used to translate BYOK provider names back to their canonical handle prefix
- * (e.g., "lc-anthropic/claude-sonnet-4" → "anthropic/claude-sonnet-4").
- */
-export const PROVIDER_TYPE_TO_BASE_PROVIDER: Record<string, string> = {
-  chatgpt_oauth: "chatgpt-plus-pro",
-  anthropic: "anthropic",
-  openai: "openai",
-  zai: "zai",
-  zai_coding: "zai",
-  google_ai: "google_ai",
-  google_vertex: "google_vertex",
-  minimax: "minimax",
-  moonshot: "moonshot",
-  moonshot_coding: "moonshot_coding",
-  openrouter: "openrouter",
-  ollama: "ollama",
-  ollama_cloud: "ollama-cloud",
-  lmstudio: "lmstudio",
-  bedrock: "bedrock",
-};
+export { PROVIDER_TYPE_TO_BASE_PROVIDER };
 
 /**
  * Build a mapping of BYOK provider names → base provider strings.
