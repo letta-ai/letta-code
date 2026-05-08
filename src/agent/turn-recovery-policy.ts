@@ -25,6 +25,7 @@ const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "ChatGPT API error",
   "ChatGPT server error",
   "Connection error during Anthropic streaming",
+  "Connection error during OpenRouter streaming",
   "Connection error during streaming",
   "upstream connect error",
   "connection termination",
