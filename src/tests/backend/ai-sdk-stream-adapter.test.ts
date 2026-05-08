@@ -9,7 +9,6 @@ import {
   AISDKStreamAdapter,
   type AISDKStreamTextFunction,
   buildAISDKProviderOptions,
-  CHATGPT_OAUTH_CODEX_INSTRUCTIONS,
 } from "../../backend/dev/AISDKStreamAdapter";
 import type { LocalAgentRecord } from "../../backend/dev/FakeHeadlessStore";
 import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
@@ -285,6 +284,57 @@ describe("AISDKStreamAdapter", () => {
     expect(capturedSystem).toBe("agent system prompt");
   });
 
+  test("sends ChatGPT OAuth system prompt as instructions, not system input", async () => {
+    const model = {} as LanguageModel;
+    let capturedSystem: string | undefined;
+    let capturedProviderOptions: unknown;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedSystem = options.system;
+      capturedProviderOptions = options.providerOptions;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => model,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "compiled Letta system prompt",
+            tags: [],
+            model: "chatgpt-plus-pro/gpt-5.5",
+            model_settings: { provider_type: "chatgpt_oauth" },
+          },
+        ),
+      ),
+    );
+
+    expect(capturedSystem).toBeUndefined();
+    expect(capturedProviderOptions).toEqual({
+      openai: {
+        instructions: "compiled Letta system prompt",
+        store: false,
+        systemMessageMode: "remove",
+      },
+    });
+  });
+
   test("passes provider reasoning options from local model settings", async () => {
     const model = {} as LanguageModel;
     let capturedProviderOptions: unknown;
@@ -413,17 +463,22 @@ describe("AISDKStreamAdapter", () => {
     ).toBeUndefined();
   });
 
-  test("sets Codex instructions for ChatGPT OAuth models", () => {
+  test("moves the local system prompt to instructions for ChatGPT OAuth models", () => {
     expect(
-      buildAISDKProviderOptions("chatgpt-plus-pro/gpt-5.5", {
-        provider_type: "chatgpt_oauth",
-        reasoning_effort: "high",
-        verbosity: "low",
-      }),
+      buildAISDKProviderOptions(
+        "chatgpt-plus-pro/gpt-5.5",
+        {
+          provider_type: "chatgpt_oauth",
+          reasoning_effort: "high",
+          verbosity: "low",
+        },
+        { systemPrompt: "compiled Letta system prompt" },
+      ),
     ).toEqual({
       openai: {
-        instructions: CHATGPT_OAUTH_CODEX_INSTRUCTIONS,
+        instructions: "compiled Letta system prompt",
         store: false,
+        systemMessageMode: "remove",
         reasoningEffort: "high",
         textVerbosity: "low",
       },

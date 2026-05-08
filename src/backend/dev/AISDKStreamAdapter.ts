@@ -40,11 +40,6 @@ type AISDKUIMessageStreamFinish = {
   finishReason?: unknown;
 };
 
-export const CHATGPT_OAUTH_CODEX_INSTRUCTIONS = [
-  "You are Letta Code, an interactive CLI tool that helps users with software engineering tasks.",
-  "Use the instructions below and the tools available to you to assist the user.",
-].join("\n\n");
-
 export type AISDKStreamTextFunction = (options: {
   model: LanguageModel;
   system?: string;
@@ -275,6 +270,7 @@ function sanitizeUIMessagesForProvider(
 export function buildAISDKProviderOptions(
   modelHandle: string,
   modelSettings: Record<string, unknown>,
+  options: { systemPrompt?: string } = {},
 ): AISDKProviderOptions | undefined {
   const provider = aiSDKProviderKind(modelHandle, modelSettings);
 
@@ -290,7 +286,11 @@ export function buildAISDKProviderOptions(
     const parallelToolCalls = boolValue(modelSettings.parallel_tool_calls);
     const openai = {
       ...(chatgptOAuth
-        ? { instructions: CHATGPT_OAUTH_CODEX_INSTRUCTIONS, store: false }
+        ? {
+            instructions: options.systemPrompt,
+            store: false,
+            systemMessageMode: "remove" as const,
+          }
         : {}),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       ...(textVerbosity !== undefined ? { textVerbosity } : {}),
@@ -412,12 +412,17 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
           input.agent.model_settings,
           { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
         )(),
-      system: input.systemPrompt ?? input.agent.system,
+      system:
+        provider === "openai" &&
+        isChatGPTOAuthModel(input.agent.model, input.agent.model_settings)
+          ? undefined
+          : (input.systemPrompt ?? input.agent.system),
       messages: await convertToModelMessages(uiMessages, { tools }),
       tools,
       providerOptions: buildAISDKProviderOptions(
         input.agent.model,
         input.agent.model_settings,
+        { systemPrompt: input.systemPrompt ?? input.agent.system },
       ),
       maxRetries: 0,
       abortSignal: this.abortSignal,
