@@ -771,7 +771,7 @@ export async function message_channel(
       if (!route) {
         return resolvedAccountId
           ? `Error: No route for chat_id "${input.chatId}" on "${input.channel}" account "${resolvedAccountId}" for this agent/conversation.`
-          : `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation. If multiple channel accounts can receive this chat, pass accountId from the channel notification.`;
+          : `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation. If multiple channel accounts can receive this chat, pass accountId (from the channel notification's account_id) to disambiguate.`;
       }
 
       const adapter = registry.getAdapter(input.channel, route.accountId);

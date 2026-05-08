@@ -893,3 +893,105 @@ test("telegram adapter ignores lifecycle events for non-telegram sources", async
 
   await adapter.stop();
 });
+
+test("telegram adapter clears typing after sending a reaction", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  const turnSource = {
+    channel: "telegram",
+    accountId: "telegram-test-account",
+    chatId: "555",
+    chatType: "direct" as const,
+    messageId: "42",
+    threadId: null,
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [turnSource],
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(1);
+
+  await adapter.sendMessage({
+    channel: "telegram",
+    chatId: "555",
+    text: "",
+    reaction: "👍",
+    targetMessageId: "42",
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-2",
+    sources: [turnSource],
+  });
+
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+
+  await adapter.stop();
+});
+
+test("telegram adapter clears typing after sending control request prompt", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  const turnSource = {
+    channel: "telegram",
+    accountId: "telegram-test-account",
+    chatId: "555",
+    chatType: "direct" as const,
+    messageId: "42",
+    threadId: null,
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [turnSource],
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(1);
+
+  await adapter.handleControlRequestEvent?.({
+    requestId: "req-1",
+    kind: "generic_tool_approval",
+    source: turnSource,
+    toolName: "Shell",
+    input: { command: "echo test" },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-2",
+    sources: [turnSource],
+  });
+
+  expect(bot?.api.sendChatAction).toHaveBeenCalledTimes(2);
+
+  await adapter.stop();
+});

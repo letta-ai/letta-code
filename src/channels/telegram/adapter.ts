@@ -601,6 +601,7 @@ export function createTelegramAdapter(
           );
         }
 
+        clearTypingForChat(msg.chatId);
         return { messageId: targetMessageId };
       }
 
@@ -733,6 +734,7 @@ export function createTelegramAdapter(
         formatChannelControlRequestPrompt(event),
         reply_parameters ? { reply_parameters } : {},
       );
+      clearTypingForChat(event.source.chatId);
     },
 
     onMessage: undefined,
