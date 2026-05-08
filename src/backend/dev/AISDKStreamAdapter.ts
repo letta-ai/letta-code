@@ -15,6 +15,10 @@ import type { ClientTool } from "../../tools/manager";
 import type { LocalCompactionStats } from "../local/compaction";
 import type { LocalMessage } from "../local/LocalMessage";
 import { createAISDKModelFactoryFromAgent } from "./AISDKModelFactory";
+import {
+  type AISDKProviderKind,
+  aiSDKProviderKindFromModel,
+} from "./AISDKProviderRegistry";
 import { isContextWindowOverflowError } from "./contextWindowOverflow";
 import type {
   ProviderStreamAdapter,
@@ -28,7 +32,6 @@ import {
 } from "./ProviderTurnExecutor";
 
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
-type AISDKProviderKind = "anthropic" | "openai" | "unknown";
 type AISDKUIMessageStreamFinish = {
   messages: LocalMessage[];
   responseMessage: LocalMessage;
@@ -194,42 +197,7 @@ function aiSDKProviderKind(
   modelHandle: string,
   modelSettings: Record<string, unknown>,
 ): AISDKProviderKind {
-  if (modelHandle.startsWith("anthropic/")) return "anthropic";
-  if (
-    modelHandle.startsWith("openai/") ||
-    modelHandle.startsWith("openai-codex/") ||
-    modelHandle.startsWith("chatgpt-plus-pro/")
-  ) {
-    return "openai";
-  }
-  if (
-    modelHandle.startsWith("openrouter/") ||
-    modelHandle.startsWith("zai/") ||
-    modelHandle.startsWith("moonshot/") ||
-    modelHandle.startsWith("moonshot_coding/") ||
-    modelHandle.startsWith("minimax/") ||
-    modelHandle.startsWith("google_ai/") ||
-    modelHandle.startsWith("ollama/") ||
-    modelHandle.startsWith("ollama-cloud/") ||
-    modelHandle.startsWith("lmstudio/") ||
-    modelHandle.startsWith("bedrock/")
-  ) {
-    return "unknown";
-  }
-
-  const providerType = stringValue(modelSettings.provider_type);
-  if (
-    providerType === "openai" ||
-    providerType === "openai-responses" ||
-    modelHandle.startsWith("openai/") ||
-    modelHandle.startsWith("openai-codex/")
-  ) {
-    return "openai";
-  }
-  if (providerType === "anthropic" || modelHandle.startsWith("anthropic/")) {
-    return "anthropic";
-  }
-  return "unknown";
+  return aiSDKProviderKindFromModel(modelHandle, modelSettings);
 }
 
 function partProviderMetadata(

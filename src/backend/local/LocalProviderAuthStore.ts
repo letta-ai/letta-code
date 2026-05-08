@@ -7,7 +7,28 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ProviderResponse } from "../api/providers";
+import {
+  LOCAL_CHATGPT_PROVIDER_NAME,
+  SUPPORTED_LOCAL_PROVIDER_TYPES,
+} from "../dev/AISDKProviderRegistry";
 import { getLocalBackendStorageDir } from "./paths";
+
+export {
+  LOCAL_ANTHROPIC_PROVIDER_NAME,
+  LOCAL_BEDROCK_PROVIDER_NAME,
+  LOCAL_CHATGPT_PROVIDER_NAME,
+  LOCAL_GOOGLE_AI_PROVIDER_NAME,
+  LOCAL_KIMI_CODE_PROVIDER_NAME,
+  LOCAL_LMSTUDIO_PROVIDER_NAME,
+  LOCAL_MINIMAX_PROVIDER_NAME,
+  LOCAL_MOONSHOT_PROVIDER_NAME,
+  LOCAL_OLLAMA_CLOUD_PROVIDER_NAME,
+  LOCAL_OLLAMA_PROVIDER_NAME,
+  LOCAL_OPENAI_PROVIDER_NAME,
+  LOCAL_OPENROUTER_PROVIDER_NAME,
+  LOCAL_ZAI_CODING_PROVIDER_NAME,
+  LOCAL_ZAI_PROVIDER_NAME,
+} from "../dev/AISDKProviderRegistry";
 
 export type LocalProviderAuthType = "api" | "oauth";
 
@@ -45,38 +66,6 @@ interface LocalProviderAuthFile {
   version: 1;
   providers: Record<string, LocalProviderRecord>;
 }
-
-export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
-export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
-export const LOCAL_ANTHROPIC_PROVIDER_NAME = "lc-anthropic";
-export const LOCAL_OPENROUTER_PROVIDER_NAME = "lc-openrouter";
-export const LOCAL_OLLAMA_PROVIDER_NAME = "lc-ollama";
-export const LOCAL_OLLAMA_CLOUD_PROVIDER_NAME = "lc-ollama-cloud";
-export const LOCAL_LMSTUDIO_PROVIDER_NAME = "lc-lmstudio";
-export const LOCAL_ZAI_PROVIDER_NAME = "lc-zai";
-export const LOCAL_ZAI_CODING_PROVIDER_NAME = "lc-zai-coding";
-export const LOCAL_MINIMAX_PROVIDER_NAME = "lc-minimax";
-export const LOCAL_MOONSHOT_PROVIDER_NAME = "lc-moonshot";
-export const LOCAL_KIMI_CODE_PROVIDER_NAME = "lc-kimi-code";
-export const LOCAL_GOOGLE_AI_PROVIDER_NAME = "lc-gemini";
-export const LOCAL_BEDROCK_PROVIDER_NAME = "lc-bedrock";
-
-const SUPPORTED_LOCAL_PROVIDER_TYPES = new Set([
-  "openai",
-  "anthropic",
-  "openrouter",
-  "ollama",
-  "ollama_cloud",
-  "lmstudio",
-  "zai",
-  "zai_coding",
-  "minimax",
-  "moonshot",
-  "moonshot_coding",
-  "google_ai",
-  "bedrock",
-  "chatgpt_oauth",
-]);
 
 export function isLocalProviderTypeSupported(providerType: string): boolean {
   return SUPPORTED_LOCAL_PROVIDER_TYPES.has(providerType);
