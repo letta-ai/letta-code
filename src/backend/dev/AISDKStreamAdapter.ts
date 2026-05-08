@@ -200,6 +200,16 @@ function aiSDKProviderKind(
   return aiSDKProviderKindFromModel(modelHandle, modelSettings);
 }
 
+function isChatGPTOAuthModel(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+): boolean {
+  return (
+    modelHandle.startsWith("chatgpt-plus-pro/") ||
+    stringValue(modelSettings.provider_type) === "chatgpt_oauth"
+  );
+}
+
 function partProviderMetadata(
   part: unknown,
 ): Record<string, unknown> | undefined {
@@ -260,10 +270,12 @@ function sanitizeUIMessagesForProvider(
 export function buildAISDKProviderOptions(
   modelHandle: string,
   modelSettings: Record<string, unknown>,
+  options: { systemPrompt?: string } = {},
 ): AISDKProviderOptions | undefined {
   const provider = aiSDKProviderKind(modelHandle, modelSettings);
 
   if (provider === "openai") {
+    const chatgptOAuth = isChatGPTOAuthModel(modelHandle, modelSettings);
     const reasoning = isRecord(modelSettings.reasoning)
       ? modelSettings.reasoning
       : undefined;
@@ -273,6 +285,13 @@ export function buildAISDKProviderOptions(
     const textVerbosity = openAITextVerbosity(modelSettings.verbosity);
     const parallelToolCalls = boolValue(modelSettings.parallel_tool_calls);
     const openai = {
+      ...(chatgptOAuth
+        ? {
+            instructions: options.systemPrompt,
+            store: false,
+            systemMessageMode: "remove" as const,
+          }
+        : {}),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       ...(textVerbosity !== undefined ? { textVerbosity } : {}),
       ...(parallelToolCalls !== undefined ? { parallelToolCalls } : {}),
@@ -393,12 +412,17 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
           input.agent.model_settings,
           { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
         )(),
-      system: input.systemPrompt ?? input.agent.system,
+      system:
+        provider === "openai" &&
+        isChatGPTOAuthModel(input.agent.model, input.agent.model_settings)
+          ? undefined
+          : (input.systemPrompt ?? input.agent.system),
       messages: await convertToModelMessages(uiMessages, { tools }),
       tools,
       providerOptions: buildAISDKProviderOptions(
         input.agent.model,
         input.agent.model_settings,
+        { systemPrompt: input.systemPrompt ?? input.agent.system },
       ),
       maxRetries: 0,
       abortSignal: this.abortSignal,

@@ -111,6 +111,8 @@ function createChatGPTFetch(options: {
 
     next.headers.delete("authorization");
     next.headers.set("authorization", `Bearer ${auth.access}`);
+    next.headers.set("OpenAI-Beta", "responses=v1");
+    next.headers.set("OpenAI-Originator", "codex");
     if (auth.accountId) {
       next.headers.set("ChatGPT-Account-Id", auth.accountId);
     }
