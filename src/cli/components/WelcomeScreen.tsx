@@ -4,6 +4,7 @@ import { Box } from "ink";
 import { useEffect, useState } from "react";
 import type { AgentProvenance } from "../../agent/create";
 import { getModelDisplayName } from "../../agent/model";
+import { isLocalBackendEnabled } from "../../backend";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -26,7 +27,8 @@ function toTildePath(absolutePath: string): string {
  * Synchronously determine auth method from env vars (for initial render).
  * Returns null if we need to check keychain/settings asynchronously.
  */
-function getInitialAuthMethod(): "url" | "api-key" | null {
+function getInitialAuthMethod(): "local" | "url" | "api-key" | null {
+  if (isLocalBackendEnabled()) return "local";
   if (process.env.LETTA_BASE_URL) return "url";
   if (process.env.LETTA_API_KEY) return "api-key";
   return null; // Need async check for keychain/settings
@@ -35,7 +37,8 @@ function getInitialAuthMethod(): "url" | "api-key" | null {
 /**
  * Determine the auth method used (async for keychain access)
  */
-async function getAuthMethod(): Promise<"url" | "api-key" | "oauth"> {
+async function getAuthMethod(): Promise<"local" | "url" | "api-key" | "oauth"> {
+  if (isLocalBackendEnabled()) return "local";
   // Check if custom URL is being used
   if (process.env.LETTA_BASE_URL) {
     return "url";
@@ -96,9 +99,9 @@ export function WelcomeScreen({
 
   // Get auth method - use sync check for env vars, async only for keychain
   const initialAuth = getInitialAuthMethod();
-  const [authMethod, setAuthMethod] = useState<"url" | "api-key" | "oauth">(
-    initialAuth ?? "oauth",
-  );
+  const [authMethod, setAuthMethod] = useState<
+    "local" | "url" | "api-key" | "oauth"
+  >(initialAuth ?? "oauth");
 
   useEffect(() => {
     // Only run async check if env vars didn't determine auth method
@@ -107,11 +110,13 @@ export function WelcomeScreen({
     }
   }, [initialAuth]);
   const authDisplay =
-    authMethod === "url"
-      ? process.env.LETTA_BASE_URL || "Custom URL"
-      : authMethod === "api-key"
-        ? "API key auth"
-        : "OAuth";
+    authMethod === "local"
+      ? "Local"
+      : authMethod === "url"
+        ? process.env.LETTA_BASE_URL || "Custom URL"
+        : authMethod === "api-key"
+          ? "API key auth"
+          : "OAuth";
 
   // Check if memfs (context repositories) is enabled for this agent
   const memfsEnabled = agentState?.id

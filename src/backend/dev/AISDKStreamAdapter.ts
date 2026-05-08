@@ -40,6 +40,11 @@ type AISDKUIMessageStreamFinish = {
   finishReason?: unknown;
 };
 
+export const CHATGPT_OAUTH_CODEX_INSTRUCTIONS = [
+  "You are Letta Code, an interactive CLI tool that helps users with software engineering tasks.",
+  "Use the instructions below and the tools available to you to assist the user.",
+].join("\n\n");
+
 export type AISDKStreamTextFunction = (options: {
   model: LanguageModel;
   system?: string;
@@ -200,6 +205,16 @@ function aiSDKProviderKind(
   return aiSDKProviderKindFromModel(modelHandle, modelSettings);
 }
 
+function isChatGPTOAuthModel(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+): boolean {
+  return (
+    modelHandle.startsWith("chatgpt-plus-pro/") ||
+    stringValue(modelSettings.provider_type) === "chatgpt_oauth"
+  );
+}
+
 function partProviderMetadata(
   part: unknown,
 ): Record<string, unknown> | undefined {
@@ -264,6 +279,7 @@ export function buildAISDKProviderOptions(
   const provider = aiSDKProviderKind(modelHandle, modelSettings);
 
   if (provider === "openai") {
+    const chatgptOAuth = isChatGPTOAuthModel(modelHandle, modelSettings);
     const reasoning = isRecord(modelSettings.reasoning)
       ? modelSettings.reasoning
       : undefined;
@@ -273,6 +289,9 @@ export function buildAISDKProviderOptions(
     const textVerbosity = openAITextVerbosity(modelSettings.verbosity);
     const parallelToolCalls = boolValue(modelSettings.parallel_tool_calls);
     const openai = {
+      ...(chatgptOAuth
+        ? { instructions: CHATGPT_OAUTH_CODEX_INSTRUCTIONS, store: false }
+        : {}),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       ...(textVerbosity !== undefined ? { textVerbosity } : {}),
       ...(parallelToolCalls !== undefined ? { parallelToolCalls } : {}),

@@ -9,6 +9,7 @@ import {
   AISDKStreamAdapter,
   type AISDKStreamTextFunction,
   buildAISDKProviderOptions,
+  CHATGPT_OAUTH_CODEX_INSTRUCTIONS,
 } from "../../backend/dev/AISDKStreamAdapter";
 import type { LocalAgentRecord } from "../../backend/dev/FakeHeadlessStore";
 import type { HeadlessTurnBody } from "../../backend/dev/HeadlessTurnExecutor";
@@ -410,6 +411,23 @@ describe("AISDKStreamAdapter", () => {
         verbosity: "medium",
       }),
     ).toBeUndefined();
+  });
+
+  test("sets Codex instructions for ChatGPT OAuth models", () => {
+    expect(
+      buildAISDKProviderOptions("chatgpt-plus-pro/gpt-5.5", {
+        provider_type: "chatgpt_oauth",
+        reasoning_effort: "high",
+        verbosity: "low",
+      }),
+    ).toEqual({
+      openai: {
+        instructions: CHATGPT_OAUTH_CODEX_INSTRUCTIONS,
+        store: false,
+        reasoningEffort: "high",
+        textVerbosity: "low",
+      },
+    });
   });
 
   test("maps Claude 4.7 thinking to adaptive summarized output", () => {
