@@ -410,7 +410,9 @@ describe("LocalBackend", () => {
         );
 
         const authFile = await stat(getLocalProviderAuthPath(storageDir));
-        expect(authFile.mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32") {
+          expect(authFile.mode & 0o777).toBe(0o600);
+        }
 
         const handles = listLocalModels(storageDir).map(
           (model) => model.handle,
