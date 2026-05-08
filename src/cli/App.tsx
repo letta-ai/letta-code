@@ -7048,14 +7048,90 @@ export default function App({
           forkedConversationId: forked.id,
         }));
 
-        // Send the question to the forked conversation
-        const stream = await getBackend().createConversationMessageStream(
-          forked.id,
+        let currentInput: Array<MessageCreate | ApprovalCreate> = [
           {
-            messages: [{ role: "user", content: question }],
-            stream_tokens: true,
+            role: "user",
+            content: question,
+            otid: randomUUID(),
           },
-        );
+        ];
+        let approvalRecoveryRetries = 0;
+        let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+
+        while (true) {
+          try {
+            const preparedToolContext = await prepareScopedToolExecutionContext(
+              tempModelOverrideRef.current ?? undefined,
+            );
+            stream = await sendMessageStream(forked.id, currentInput, {
+              overrideModel: tempModelOverrideRef.current ?? undefined,
+              preparedToolContext: preparedToolContext.preparedToolContext,
+            });
+            break;
+          } catch (preStreamError) {
+            debugLog(
+              "btw",
+              "Pre-stream error: %s (status=%s)",
+              preStreamError instanceof Error
+                ? preStreamError.message
+                : String(preStreamError),
+              preStreamError instanceof APIError
+                ? preStreamError.status
+                : "none",
+            );
+
+            const errorDetail = extractConflictDetail(preStreamError);
+            const preStreamAction = getPreStreamErrorAction(errorDetail, 0, 0, {
+              status:
+                preStreamError instanceof APIError
+                  ? preStreamError.status
+                  : undefined,
+              transientRetries: approvalRecoveryRetries,
+              maxTransientRetries: 0,
+            });
+
+            if (
+              shouldAttemptApprovalRecovery({
+                approvalPendingDetected:
+                  preStreamAction === "resolve_approval_pending",
+                retries: approvalRecoveryRetries,
+                maxRetries: LLM_API_ERROR_MAX_RETRIES,
+              })
+            ) {
+              approvalRecoveryRetries += 1;
+              try {
+                const client = await getClient();
+                const currentAgentId = agentIdRef.current ?? agentId;
+                if (!currentAgentId) {
+                  currentInput = rebuildInputWithFreshDenials(
+                    currentInput,
+                    [],
+                    "",
+                  );
+                  continue;
+                }
+
+                const agent = await client.agents.retrieve(currentAgentId);
+                const { pendingApprovals: existingApprovals } =
+                  await getResumeData(client, agent, forked.id);
+                currentInput = rebuildInputWithFreshDenials(
+                  currentInput,
+                  existingApprovals ?? [],
+                  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+                );
+              } catch {
+                currentInput = rebuildInputWithFreshDenials(
+                  currentInput,
+                  [],
+                  "",
+                );
+              }
+              continue;
+            }
+
+            throw preStreamError;
+          }
+        }
 
         let responseText = "";
         for await (const chunk of stream) {
@@ -7085,7 +7161,7 @@ export default function App({
         }));
       }
     },
-    [agentId],
+    [agentId, prepareScopedToolExecutionContext],
   );
 
   const handleBtwJump = useCallback(
