@@ -117,10 +117,16 @@ const getClientMock = mock(async () => ({
   },
 }));
 
-import { APIBackend } from "../../backend";
+import {
+  APIBackend,
+  configureBackendMode,
+  getBackend,
+  isLocalBackendEnabled,
+} from "../../backend";
 
 describe("APIBackend", () => {
   beforeEach(() => {
+    configureBackendMode("api");
     getClientMock.mockClear();
     createAgentMock.mockClear();
     retrieveAgentMock.mockClear();
@@ -139,6 +145,18 @@ describe("APIBackend", () => {
     retrieveRunMock.mockClear();
     streamRunMessagesMock.mockClear();
     forkConversationMock.mockClear();
+  });
+
+  test("configures the active backend mode explicitly", () => {
+    configureBackendMode("local");
+    expect(isLocalBackendEnabled()).toBe(true);
+    expect(getBackend().capabilities.localMemfs).toBe(true);
+    expect(getBackend().capabilities.localModelCatalog).toBe(true);
+
+    configureBackendMode("api");
+    expect(isLocalBackendEnabled()).toBe(false);
+    expect(getBackend().capabilities.localMemfs).toBe(false);
+    expect(getBackend().capabilities.remoteMemfs).toBe(true);
   });
 
   test("delegates core conversation and run operations to the Letta API", async () => {
