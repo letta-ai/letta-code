@@ -471,6 +471,15 @@ export const commands: Record<string, Command> = {
       return "Opening GitHub App installer...";
     },
   },
+  "/palette": {
+    desc: "Open the command palette to search and run any command",
+    order: 39,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open command palette overlay
+      return "Opening command palette...";
+    },
+  },
 
   // === Session management (order 40-49) ===
   "/plan": {

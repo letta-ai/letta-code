@@ -188,6 +188,7 @@ import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { BtwPane, type BtwState } from "./components/BtwPane";
 import { CommandMessage } from "./components/CommandMessage";
+import { CommandPalette } from "./components/CommandPalette";
 import { CompactionSelector } from "./components/CompactionSelector";
 import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
@@ -1623,6 +1624,7 @@ export default function App({
     | "hooks"
     | "connect"
     | "skills"
+    | "palette"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const pendingOverlayCommandRef = useRef<{
@@ -8424,6 +8426,18 @@ export default function App({
             "Help dialog dismissed",
           );
           setActiveOverlay("help");
+          return { submitted: true };
+        }
+
+        // Special handling for /palette command - opens command palette overlay
+        if (trimmed === "/palette") {
+          startOverlayCommand(
+            "palette",
+            "/palette",
+            "Opening command palette...",
+            "Command palette dismissed",
+          );
+          setActiveOverlay("palette");
           return { submitted: true };
         }
 
@@ -15464,6 +15478,24 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* Command Palette - searchable list of all commands */}
+            {activeOverlay === "palette" && (
+              <CommandPalette
+                onClose={closeOverlay}
+                onSelect={(commandName) => {
+                  // Consume the pending overlay command so it doesn't show
+                  // a "dismissed" message when we close.
+                  consumeOverlayCommand("palette");
+                  closeOverlay();
+                  // Defer to next tick so the overlay teardown completes
+                  // before the selected command runs through onSubmit.
+                  setImmediate(() => {
+                    void onSubmit(commandName);
+                  });
+                }}
+              />
+            )}
 
             {/* Skills Dialog - browse available skills */}
             {activeOverlay === "skills" && (
