@@ -11,6 +11,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { isCloudflareEdge52xErrorText } from "../cli/helpers/errorFormatter";
 import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
+import type { StopReasonType } from "../types/protocol_v2";
 
 // ── Error fragment constants ────────────────────────────────────────
 
@@ -161,6 +162,20 @@ export function shouldRetryRunMetadataError(
   if (nonRetryableDetail && !retryable429Detail) return false;
   if (explicitLlmError) return true;
   return retryable429Detail || retryableDetail;
+}
+
+export function normalizeStreamErrorTypeToStopReason(
+  errorType: unknown,
+): StopReasonType {
+  if (errorType === "llm_error" || errorType === "llm_api_error") {
+    return "llm_api_error";
+  }
+
+  if (errorType === "internal_error" || errorType === "stream_incomplete") {
+    return "error";
+  }
+
+  return "error";
 }
 
 /**
