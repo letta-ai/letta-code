@@ -16,6 +16,7 @@ import {
   type MessageChannelToolDiscoveryScope,
 } from "../channels/messageTool";
 import { getActiveChannelIds } from "../channels/registry";
+import type { ChannelTurnSource } from "../channels/types";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
@@ -1638,6 +1639,7 @@ export async function executeTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
+    channelTurnSources?: ChannelTurnSource[];
     /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
@@ -1775,8 +1777,16 @@ export async function executeTool(
       }
 
       // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
-      if (internalName === "MessageChannel" && options?.parentScope) {
-        enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+      if (internalName === "MessageChannel") {
+        if (options?.parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+        }
+        if (options?.channelTurnSources?.length) {
+          enhancedArgs = {
+            ...enhancedArgs,
+            channelTurnSources: options.channelTurnSources,
+          };
+        }
       }
 
       // Inject the execution context id for plan-mode tools so they can update
