@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  defaultConnectApiKey,
   isConnectApiKeyProvider,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
@@ -53,5 +54,16 @@ describe("connect provider normalization", () => {
 
   test("help list contains chatgpt alias", () => {
     expect(listConnectProvidersForHelp()).toContain("chatgpt (alias: codex)");
+  });
+
+  test("supports API-key optional local providers", () => {
+    const ollama = resolveConnectProvider("ollama");
+    const lmstudio = resolveConnectProvider("lmstudio");
+    if (!ollama || !lmstudio) {
+      throw new Error("Expected local providers to resolve");
+    }
+
+    expect(defaultConnectApiKey(ollama)).toBe("not-needed");
+    expect(defaultConnectApiKey(lmstudio)).toBe("not-needed");
   });
 });

@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,10 +29,17 @@ import type {
   RunMessageStreamBody,
 } from "../../backend";
 import {
+  createAISDKModelFactoryFromAgent,
+  resolveZaiConnection,
+} from "../../backend/dev/AISDKModelFactory";
+import {
+  createOrUpdateLocalProvider,
+  getLocalProviderAuthPath,
   LOCAL_ALL_COMPACTION_PROMPT,
   LocalBackend,
   listLocalModels,
   resolveLocalModelConfig,
+  setLocalChatGPTOAuth,
 } from "../../backend/local";
 import type { LocalMessage } from "../../backend/local/LocalMessage";
 import { projectLocalMessagesToStoredMessages } from "../../backend/local/LocalMessageProjection";
@@ -42,16 +50,46 @@ async function withLocalModelEnv<T>(
   env: {
     openAIKey?: string;
     anthropicKey?: string;
+    openRouterKey?: string;
+    zaiKey?: string;
+    zhipuKey?: string;
   },
   fn: () => T | Promise<T>,
 ): Promise<T> {
   const originalOpenAIKey = process.env.OPENAI_API_KEY;
   const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
+  const originalZaiKey = process.env.ZAI_API_KEY;
+  const originalZhipuKey = process.env.ZHIPU_API_KEY;
+  const originalMinimaxKey = process.env.MINIMAX_API_KEY;
+  const originalMoonshotKey = process.env.MOONSHOT_API_KEY;
+  const originalGoogleKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  const originalAwsAccessKey = process.env.AWS_ACCESS_KEY_ID;
+  const originalAwsSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const originalAwsRegion = process.env.AWS_REGION;
+  const originalOllamaKey = process.env.OLLAMA_API_KEY;
+  const originalLmstudioKey = process.env.LMSTUDIO_API_KEY;
   try {
     if (env.openAIKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = env.openAIKey;
     if (env.anthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = env.anthropicKey;
+    if (env.openRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = env.openRouterKey;
+    if (env.zaiKey === undefined) delete process.env.ZAI_API_KEY;
+    else process.env.ZAI_API_KEY = env.zaiKey;
+    if (env.zhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = env.zhipuKey;
+    delete process.env.MINIMAX_API_KEY;
+    delete process.env.MOONSHOT_API_KEY;
+    delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.AWS_ACCESS_KEY_ID;
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    delete process.env.AWS_REGION;
+    delete process.env.OLLAMA_API_KEY;
+    delete process.env.LMSTUDIO_API_KEY;
     return await fn();
   } finally {
     if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -59,6 +97,34 @@ async function withLocalModelEnv<T>(
     if (originalAnthropicKey === undefined)
       delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+    if (originalOpenRouterKey === undefined)
+      delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalOpenRouterKey;
+    if (originalZaiKey === undefined) delete process.env.ZAI_API_KEY;
+    else process.env.ZAI_API_KEY = originalZaiKey;
+    if (originalZhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = originalZhipuKey;
+    if (originalMinimaxKey === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = originalMinimaxKey;
+    if (originalMoonshotKey === undefined) delete process.env.MOONSHOT_API_KEY;
+    else process.env.MOONSHOT_API_KEY = originalMoonshotKey;
+    if (originalGoogleKey === undefined)
+      delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    else process.env.GOOGLE_GENERATIVE_AI_API_KEY = originalGoogleKey;
+    if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalGeminiKey;
+    if (originalAwsAccessKey === undefined)
+      delete process.env.AWS_ACCESS_KEY_ID;
+    else process.env.AWS_ACCESS_KEY_ID = originalAwsAccessKey;
+    if (originalAwsSecretKey === undefined)
+      delete process.env.AWS_SECRET_ACCESS_KEY;
+    else process.env.AWS_SECRET_ACCESS_KEY = originalAwsSecretKey;
+    if (originalAwsRegion === undefined) delete process.env.AWS_REGION;
+    else process.env.AWS_REGION = originalAwsRegion;
+    if (originalOllamaKey === undefined) delete process.env.OLLAMA_API_KEY;
+    else process.env.OLLAMA_API_KEY = originalOllamaKey;
+    if (originalLmstudioKey === undefined) delete process.env.LMSTUDIO_API_KEY;
+    else process.env.LMSTUDIO_API_KEY = originalLmstudioKey;
   }
 }
 
@@ -270,6 +336,177 @@ describe("LocalBackend", () => {
       expect(handles).toContain("openai/gpt-5.3-codex");
       expect(handles).not.toContain("anthropic/claude-opus-4-7");
     });
+  });
+
+  test("lists models for locally connected providers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-auth-"));
+    try {
+      await withLocalModelEnv({}, async () => {
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "openrouter",
+          providerName: "lc-openrouter",
+          apiKey: "test-openrouter-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "zai",
+          providerName: "lc-zai",
+          apiKey: "test-zai-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "minimax",
+          providerName: "lc-minimax",
+          apiKey: "test-minimax-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "moonshot",
+          providerName: "lc-moonshot",
+          apiKey: "test-moonshot-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "google_ai",
+          providerName: "lc-gemini",
+          apiKey: "test-gemini-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "bedrock",
+          providerName: "lc-bedrock",
+          apiKey: "test-aws-secret-key",
+          accessKey: "test-aws-access-key",
+          region: "us-east-1",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "ollama",
+          providerName: "lc-ollama",
+          apiKey: "not-needed",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "ollama_cloud",
+          providerName: "lc-ollama-cloud",
+          apiKey: "test-ollama-cloud-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "lmstudio",
+          providerName: "lc-lmstudio",
+          apiKey: "not-needed",
+        });
+        setLocalChatGPTOAuth(
+          {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account",
+          },
+          storageDir,
+        );
+
+        const authFile = await stat(getLocalProviderAuthPath(storageDir));
+        if (process.platform !== "win32") {
+          expect(authFile.mode & 0o777).toBe(0o600);
+        }
+
+        const handles = listLocalModels(storageDir).map(
+          (model) => model.handle,
+        );
+        expect(handles).toContain("openrouter/deepseek/deepseek-v4-pro");
+        expect(handles).toContain("zai/glm-5.1");
+        expect(handles).toContain("minimax/MiniMax-M2.7");
+        expect(handles).toContain("moonshot/kimi-k2.5");
+        expect(handles).toContain("google_ai/gemini-3.1-pro-preview");
+        expect(handles).toContain("bedrock/us.anthropic.claude-sonnet-4-6");
+        expect(handles).toContain("ollama/llama2");
+        expect(handles).toContain("ollama-cloud/gpt-oss:20b");
+        expect(handles).toContain("lmstudio/google/gemma-3n-e4b");
+        expect(handles).toContain("chatgpt-plus-pro/gpt-5.5");
+        expect(handles).not.toContain("anthropic/claude-opus-4-7");
+
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        const backendModels = (await backend.listModels()) as Array<{
+          handle: string;
+          model_endpoint_type: string;
+        }>;
+        expect(backendModels.map((model) => model.handle)).toContain(
+          "openrouter/deepseek/deepseek-v4-pro",
+        );
+        expect(backendModels).toContainEqual(
+          expect.objectContaining({
+            handle: "zai/glm-5.1",
+            model_endpoint_type: "zai",
+          }),
+        );
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves local AI SDK providers from model prefixes before generic settings", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-factory-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openrouter",
+        providerName: "lc-openrouter",
+        apiKey: "test-openrouter-key",
+      });
+
+      let capturedModel: string | undefined;
+      const factory = createAISDKModelFactoryFromAgent(
+        "openrouter/deepseek/deepseek-v4-pro",
+        { provider_type: "openai" },
+        {
+          localProviderAuthStorageDir: storageDir,
+          createOpenAICompatibleModel: (model) => {
+            capturedModel = model;
+            return {} as LanguageModel;
+          },
+        },
+      );
+
+      factory();
+      expect(capturedModel).toBe("deepseek/deepseek-v4-pro");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses Z.AI coding endpoint when only a coding-plan key is connected", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-zai-coding-"));
+    try {
+      await withLocalModelEnv({}, async () => {
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "zai_coding",
+          providerName: "lc-zai-coding",
+          apiKey: "test-zai-coding-key",
+        });
+
+        expect(
+          resolveZaiConnection({
+            storageDir,
+            preferredProviderType: "zai_coding",
+          }),
+        ).toMatchObject({
+          apiKey: "test-zai-coding-key",
+          providerName: "zai-coding",
+          baseURL: "https://api.z.ai/api/coding/paas/v4",
+        });
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("uses strict local flatfile semantics behind the real local entrypoint", async () => {

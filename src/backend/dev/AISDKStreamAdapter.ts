@@ -15,6 +15,10 @@ import type { ClientTool } from "../../tools/manager";
 import type { LocalCompactionStats } from "../local/compaction";
 import type { LocalMessage } from "../local/LocalMessage";
 import { createAISDKModelFactoryFromAgent } from "./AISDKModelFactory";
+import {
+  type AISDKProviderKind,
+  aiSDKProviderKindFromModel,
+} from "./AISDKProviderRegistry";
 import { isContextWindowOverflowError } from "./contextWindowOverflow";
 import type {
   ProviderStreamAdapter,
@@ -28,7 +32,6 @@ import {
 } from "./ProviderTurnExecutor";
 
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
-type AISDKProviderKind = "anthropic" | "openai" | "unknown";
 type AISDKUIMessageStreamFinish = {
   messages: LocalMessage[];
   responseMessage: LocalMessage;
@@ -60,6 +63,7 @@ export interface AISDKStreamAdapterOptions {
   createModel?: () => LanguageModel;
   abortSignal?: AbortSignal;
   streamText?: AISDKStreamTextFunction;
+  localProviderAuthStorageDir?: string;
   onContextWindowOverflow?: (
     input: ProviderTurnInput,
     error: unknown,
@@ -193,19 +197,7 @@ function aiSDKProviderKind(
   modelHandle: string,
   modelSettings: Record<string, unknown>,
 ): AISDKProviderKind {
-  const providerType = stringValue(modelSettings.provider_type);
-  if (
-    providerType === "openai" ||
-    providerType === "openai-responses" ||
-    modelHandle.startsWith("openai/") ||
-    modelHandle.startsWith("openai-codex/")
-  ) {
-    return "openai";
-  }
-  if (providerType === "anthropic" || modelHandle.startsWith("anthropic/")) {
-    return "anthropic";
-  }
-  return "unknown";
+  return aiSDKProviderKindFromModel(modelHandle, modelSettings);
 }
 
 function partProviderMetadata(
@@ -348,6 +340,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
   private readonly createModel?: () => LanguageModel;
   private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
+  private readonly localProviderAuthStorageDir?: string;
   private readonly onContextWindowOverflow?: AISDKStreamAdapterOptions["onContextWindowOverflow"];
   private readonly onContextUsage?: AISDKStreamAdapterOptions["onContextUsage"];
 
@@ -355,6 +348,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     this.createModel = options.createModel;
     this.runStreamText = options.streamText ?? defaultStreamText;
     this.abortSignal = options.abortSignal;
+    this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
     this.onContextUsage = options.onContextUsage;
   }
@@ -397,6 +391,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
         createAISDKModelFactoryFromAgent(
           input.agent.model,
           input.agent.model_settings,
+          { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
         )(),
       system: input.systemPrompt ?? input.agent.system,
       messages: await convertToModelMessages(uiMessages, { tools }),

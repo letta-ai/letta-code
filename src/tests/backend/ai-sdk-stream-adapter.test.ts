@@ -353,6 +353,65 @@ describe("AISDKStreamAdapter", () => {
     });
   });
 
+  test("does not apply OpenAI provider options to OpenAI-compatible local providers", () => {
+    expect(
+      buildAISDKProviderOptions("openrouter/deepseek/deepseek-v4-pro", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+        verbosity: "medium",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("zai/glm-5.1", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("moonshot/kimi-k2.5", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("minimax/MiniMax-M2.7", {
+        provider_type: "anthropic",
+        effort: "high",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("google_ai/gemini-3.1-pro-preview", {
+        provider_type: "google_ai",
+        thinking_config: { thinking_budget: 1024 },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("bedrock/us.anthropic.claude-sonnet-4-6", {
+        provider_type: "bedrock",
+        effort: "high",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("ollama/llama2", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("lmstudio/google/gemma-3n-e4b", {
+        provider_type: "openai",
+        verbosity: "medium",
+      }),
+    ).toBeUndefined();
+  });
+
   test("maps Claude 4.7 thinking to adaptive summarized output", () => {
     expect(
       buildAISDKProviderOptions("anthropic/claude-opus-4-7", {

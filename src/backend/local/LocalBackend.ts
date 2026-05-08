@@ -153,6 +153,7 @@ function createLocalExecutor(
     new AISDKStreamAdapter({
       createModel: options.createModel,
       streamText: options.streamText,
+      localProviderAuthStorageDir: options.storageDir,
       onContextWindowOverflow,
       onContextUsage,
     }),
@@ -178,7 +179,7 @@ export class LocalBackend extends HeadlessBackend {
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
-    const modelConfig = resolveLocalModelConfig();
+    const modelConfig = resolveLocalModelConfig(options.storageDir);
     const storeOptions: LocalStoreOptions = {
       storageDir: options.storageDir,
       seedDefaultAgent: false,
@@ -217,7 +218,7 @@ export class LocalBackend extends HeadlessBackend {
   }
 
   override async listModels() {
-    return listLocalModels() as never;
+    return listLocalModels(this.storageDir) as never;
   }
 
   override async createAgent(
@@ -458,6 +459,7 @@ export class LocalBackend extends HeadlessBackend {
       generateText: this.generateText,
       prompt,
       clipChars,
+      localProviderAuthStorageDir: this.storageDir,
     });
     const stats: LocalCompactionStats = {
       trigger,

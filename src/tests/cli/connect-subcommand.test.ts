@@ -82,6 +82,24 @@ describe("connect subcommand", () => {
     );
   });
 
+  test("connects API-key optional local providers without prompting", async () => {
+    const { deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(["ollama"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(deps.promptSecret).not.toHaveBeenCalled();
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "ollama",
+      "not-needed",
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "ollama",
+      "lc-ollama",
+      "not-needed",
+    );
+  });
+
   test("validates bedrock iam required flags", async () => {
     const { stderr, deps } = createIoDeps();
 
