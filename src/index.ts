@@ -26,9 +26,14 @@ import {
 import type { MemoryPromptMode } from "./agent/promptAssets";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
-import { getBackend, isExperimentalLocalBackendEnabled } from "./backend";
+import {
+  configureBackendMode,
+  getBackend,
+  isExperimentalLocalBackendEnabled,
+} from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
 import {
+  extractBackendFlag,
   type ParsedCliArgs,
   parseCliArgs,
   preprocessCliArgs,
@@ -365,10 +370,30 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
+  const rawCliArgs = process.argv.slice(2);
+  let subcommandArgs = rawCliArgs;
+  try {
+    const backendSelection = extractBackendFlag(rawCliArgs);
+    subcommandArgs = backendSelection.args;
+    if (backendSelection.backend) {
+      configureBackendMode(backendSelection.backend);
+    }
+  } catch (error) {
+    trackCliBoundaryError(
+      "cli_backend_flag_parse_failed",
+      error,
+      "startup_backend_flag_parse",
+    );
+    console.error(
+      error instanceof Error ? `Error: ${error.message}` : String(error),
+    );
+    process.exit(1);
+  }
+
   // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
-  const subcommandResult = await runSubcommand(process.argv.slice(2));
+  const subcommandResult = await runSubcommand(subcommandArgs);
   if (subcommandResult !== null) {
     process.exit(subcommandResult);
   }
