@@ -12,11 +12,10 @@ on:
 
 jobs:
   review:
-    # Only run on Caren's PRs (auto-trigger) or manual dispatch
+    # Only run on non-draft PRs or manual dispatch
     if: >
       (github.event_name == 'workflow_dispatch') ||
-      (github.event.pull_request.draft == false &&
-       github.event.pull_request.user.login == 'carenthomas')
+      (github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -67,10 +66,11 @@ jobs:
             ## Your job
 
             1. Read your review-knowledge.md memory file — it has the detailed codebase footguns, bug patterns, and provider-specific traps
-            2. Run `gh pr diff $PR_NUMBER` to read the full diff
-            3. Assess whether the PR introduces real risk
-            4. If nothing to flag, respond with exactly: `LGTM`
-            5. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
+            2. Run `gh pr view $PR_NUMBER --json title,body,comments` to get the PR title, description, and comments
+            3. Run `gh pr diff $PR_NUMBER` to read the full diff
+            4. Assess whether the PR introduces real risk
+            5. If nothing to flag, respond with exactly: `LGTM`
+            6. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
 
             **Default posture: signal-only.** Most PRs are fine. Only speak when there's something worth saying.
 
