@@ -50,6 +50,9 @@ export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
 export const LOCAL_ANTHROPIC_PROVIDER_NAME = "lc-anthropic";
 export const LOCAL_OPENROUTER_PROVIDER_NAME = "lc-openrouter";
+export const LOCAL_OLLAMA_PROVIDER_NAME = "lc-ollama";
+export const LOCAL_OLLAMA_CLOUD_PROVIDER_NAME = "lc-ollama-cloud";
+export const LOCAL_LMSTUDIO_PROVIDER_NAME = "lc-lmstudio";
 export const LOCAL_ZAI_PROVIDER_NAME = "lc-zai";
 export const LOCAL_ZAI_CODING_PROVIDER_NAME = "lc-zai-coding";
 export const LOCAL_MINIMAX_PROVIDER_NAME = "lc-minimax";
@@ -62,6 +65,9 @@ const SUPPORTED_LOCAL_PROVIDER_TYPES = new Set([
   "openai",
   "anthropic",
   "openrouter",
+  "ollama",
+  "ollama_cloud",
+  "lmstudio",
   "zai",
   "zai_coding",
   "minimax",

@@ -117,6 +117,31 @@ export const BYOK_PROVIDERS = [
     providerName: "lc-openrouter",
   },
   {
+    id: "ollama",
+    displayName: "Ollama (local)",
+    description: "Connect local Ollama at http://localhost:11434/v1",
+    providerType: "ollama",
+    providerName: "lc-ollama",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
+  },
+  {
+    id: "ollama-cloud",
+    displayName: "Ollama Cloud",
+    description: "Connect an Ollama Cloud API key",
+    providerType: "ollama_cloud",
+    providerName: "lc-ollama-cloud",
+  },
+  {
+    id: "lmstudio",
+    displayName: "LM Studio (local)",
+    description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
+    providerType: "lmstudio",
+    providerName: "lc-lmstudio",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
+  },
+  {
     id: "bedrock",
     displayName: "AWS Bedrock",
     description: "Connect to Claude on Amazon Bedrock",
@@ -193,6 +218,9 @@ export const PROVIDER_TYPE_TO_BASE_PROVIDER: Record<string, string> = {
   moonshot: "moonshot",
   moonshot_coding: "moonshot_coding",
   openrouter: "openrouter",
+  ollama: "ollama",
+  ollama_cloud: "ollama-cloud",
+  lmstudio: "lmstudio",
   bedrock: "bedrock",
 };
 

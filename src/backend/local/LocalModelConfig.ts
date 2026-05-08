@@ -8,8 +8,11 @@ import {
   LOCAL_CHATGPT_PROVIDER_NAME,
   LOCAL_GOOGLE_AI_PROVIDER_NAME,
   LOCAL_KIMI_CODE_PROVIDER_NAME,
+  LOCAL_LMSTUDIO_PROVIDER_NAME,
   LOCAL_MINIMAX_PROVIDER_NAME,
   LOCAL_MOONSHOT_PROVIDER_NAME,
+  LOCAL_OLLAMA_CLOUD_PROVIDER_NAME,
+  LOCAL_OLLAMA_PROVIDER_NAME,
   LOCAL_OPENAI_PROVIDER_NAME,
   LOCAL_OPENROUTER_PROVIDER_NAME,
   LOCAL_ZAI_CODING_PROVIDER_NAME,
@@ -33,6 +36,30 @@ interface LocalModelListEntry {
 function hasEnvValue(value: string | undefined): boolean {
   return typeof value === "string" && value.length > 0;
 }
+
+const OLLAMA_LOCAL_MODELS = [
+  "ollama/llama2",
+  "ollama/llama3.1:8b",
+  "ollama/qwen3-coder:30b",
+  "ollama/gpt-oss:20b",
+];
+
+const OLLAMA_CLOUD_MODELS = [
+  "ollama-cloud/glm-4.7",
+  "ollama-cloud/qwen3-coder:480b",
+  "ollama-cloud/gpt-oss:20b",
+  "ollama-cloud/gpt-oss:120b",
+  "ollama-cloud/kimi-k2.5",
+  "ollama-cloud/minimax-m2.1",
+  "ollama-cloud/deepseek-v3.2",
+];
+
+const LMSTUDIO_LOCAL_MODELS = [
+  "lmstudio/google/gemma-3n-e4b",
+  "lmstudio/openai/gpt-oss-20b",
+  "lmstudio/qwen/qwen3-30b-a3b-2507",
+  "lmstudio/qwen/qwen3-coder-30b",
+];
 
 function localProviderNames(storageDir?: string): Set<string> {
   return new Set(
@@ -74,6 +101,13 @@ function inferLocalProviderFromStandardKeys(
     (hasEnvValue(process.env.AWS_ACCESS_KEY_ID) &&
       hasEnvValue(process.env.AWS_SECRET_ACCESS_KEY)) ||
     providers.has(LOCAL_BEDROCK_PROVIDER_NAME);
+  const hasOllama = providers.has(LOCAL_OLLAMA_PROVIDER_NAME);
+  const hasOllamaCloud =
+    hasEnvValue(process.env.OLLAMA_API_KEY) ||
+    providers.has(LOCAL_OLLAMA_CLOUD_PROVIDER_NAME);
+  const hasLMStudio =
+    hasEnvValue(process.env.LMSTUDIO_API_KEY) ||
+    providers.has(LOCAL_LMSTUDIO_PROVIDER_NAME);
 
   if (!hasOpenAIKey && hasAnthropicKey) return "anthropic";
   if (!hasOpenAIKey && !hasAnthropicKey && hasOpenRouterKey) {
@@ -133,6 +167,51 @@ function inferLocalProviderFromStandardKeys(
     !hasMoonshot &&
     !hasGoogleAI &&
     !hasBedrock &&
+    hasOllama
+  ) {
+    return "ollama";
+  }
+  if (
+    !hasOpenAIKey &&
+    !hasAnthropicKey &&
+    !hasOpenRouterKey &&
+    !hasZaiKey &&
+    !hasMinimax &&
+    !hasMoonshot &&
+    !hasGoogleAI &&
+    !hasBedrock &&
+    !hasOllama &&
+    hasOllamaCloud
+  ) {
+    return "ollama-cloud";
+  }
+  if (
+    !hasOpenAIKey &&
+    !hasAnthropicKey &&
+    !hasOpenRouterKey &&
+    !hasZaiKey &&
+    !hasMinimax &&
+    !hasMoonshot &&
+    !hasGoogleAI &&
+    !hasBedrock &&
+    !hasOllama &&
+    !hasOllamaCloud &&
+    hasLMStudio
+  ) {
+    return "lmstudio";
+  }
+  if (
+    !hasOpenAIKey &&
+    !hasAnthropicKey &&
+    !hasOpenRouterKey &&
+    !hasZaiKey &&
+    !hasMinimax &&
+    !hasMoonshot &&
+    !hasGoogleAI &&
+    !hasBedrock &&
+    !hasOllama &&
+    !hasOllamaCloud &&
+    !hasLMStudio &&
     hasChatGPT
   ) {
     return "chatgpt-oauth";
@@ -151,6 +230,9 @@ export function resolveLocalModel(provider = resolveLocalProvider()): string {
   if (provider === "minimax") return "minimax/MiniMax-M2.7";
   if (provider === "moonshot") return "moonshot/kimi-k2.5";
   if (provider === "google-ai") return "google_ai/gemini-3.1-pro-preview";
+  if (provider === "ollama") return "ollama/llama2";
+  if (provider === "ollama-cloud") return "ollama-cloud/gpt-oss:20b";
+  if (provider === "lmstudio") return "lmstudio/google/gemma-3n-e4b";
   if (provider === "bedrock") return "bedrock/us.anthropic.claude-sonnet-4-6";
   if (provider === "chatgpt-oauth") {
     return `chatgpt-plus-pro/${DEFAULT_OPENAI_RESPONSES_MODEL}`;
@@ -169,6 +251,9 @@ export function localModelHandle(
   if (provider === "minimax") return `minimax/${model}`;
   if (provider === "moonshot") return `moonshot/${model}`;
   if (provider === "google-ai") return `google_ai/${model}`;
+  if (provider === "ollama") return `ollama/${model}`;
+  if (provider === "ollama-cloud") return `ollama-cloud/${model}`;
+  if (provider === "lmstudio") return `lmstudio/${model}`;
   if (provider === "bedrock") return `bedrock/${model}`;
   if (provider === "chatgpt-oauth") return `chatgpt-plus-pro/${model}`;
   return `openai/${model}`;
@@ -181,6 +266,9 @@ export function localProviderType(provider: AISDKProvider): string {
   if (provider === "minimax") return "minimax";
   if (provider === "moonshot") return "moonshot";
   if (provider === "google-ai") return "google_ai";
+  if (provider === "ollama") return "ollama";
+  if (provider === "ollama-cloud") return "ollama_cloud";
+  if (provider === "lmstudio") return "lmstudio";
   if (provider === "bedrock") return "bedrock";
   if (provider === "chatgpt-oauth") return "chatgpt_oauth";
   return "openai";
@@ -244,6 +332,13 @@ export function listLocalModels(storageDir?: string) {
     (hasEnvValue(process.env.AWS_ACCESS_KEY_ID) &&
       hasEnvValue(process.env.AWS_SECRET_ACCESS_KEY)) ||
     providers.has(LOCAL_BEDROCK_PROVIDER_NAME);
+  const hasOllama = providers.has(LOCAL_OLLAMA_PROVIDER_NAME);
+  const hasOllamaCloud =
+    hasEnvValue(process.env.OLLAMA_API_KEY) ||
+    providers.has(LOCAL_OLLAMA_CLOUD_PROVIDER_NAME);
+  const hasLMStudio =
+    hasEnvValue(process.env.LMSTUDIO_API_KEY) ||
+    providers.has(LOCAL_LMSTUDIO_PROVIDER_NAME);
 
   if (hasOpenAI) {
     addModel("openai-responses", openAIModel);
@@ -311,6 +406,21 @@ export function listLocalModels(storageDir?: string) {
       if (model.handle.startsWith("bedrock/")) {
         addModel("bedrock", model.handle);
       }
+    }
+  }
+  if (hasOllama) {
+    for (const model of OLLAMA_LOCAL_MODELS) {
+      addModel("ollama", model);
+    }
+  }
+  if (hasOllamaCloud) {
+    for (const model of OLLAMA_CLOUD_MODELS) {
+      addModel("ollama-cloud", model);
+    }
+  }
+  if (hasLMStudio) {
+    for (const model of LMSTUDIO_LOCAL_MODELS) {
+      addModel("lmstudio", model);
     }
   }
   if (hasChatGPT) {

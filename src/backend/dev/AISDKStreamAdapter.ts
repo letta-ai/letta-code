@@ -209,6 +209,9 @@ function aiSDKProviderKind(
     modelHandle.startsWith("moonshot_coding/") ||
     modelHandle.startsWith("minimax/") ||
     modelHandle.startsWith("google_ai/") ||
+    modelHandle.startsWith("ollama/") ||
+    modelHandle.startsWith("ollama-cloud/") ||
+    modelHandle.startsWith("lmstudio/") ||
     modelHandle.startsWith("bedrock/")
   ) {
     return "unknown";

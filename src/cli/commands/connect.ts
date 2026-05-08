@@ -18,6 +18,7 @@ import {
 import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
 import {
+  defaultConnectApiKey,
   isConnectApiKeyProvider,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
@@ -203,6 +204,13 @@ function formatBedrockUsage(): string {
 }
 
 function formatApiKeyUsage(provider: ResolvedConnectProvider): string {
+  if (defaultConnectApiKey(provider)) {
+    return [
+      `Usage: /connect ${provider.canonical} [api_key]`,
+      "",
+      `Connect to ${provider.byokProvider.displayName}. API key is optional for this local provider.`,
+    ].join("\n");
+  }
   return [
     `Usage: /connect ${provider.canonical} <api_key>`,
     "",
@@ -513,7 +521,7 @@ export async function handleConnect(
   }
 
   if (isConnectApiKeyProvider(provider)) {
-    const apiKey = parts.slice(2).join("");
+    const apiKey = parts.slice(2).join("") || defaultConnectApiKey(provider);
     if (!apiKey) {
       if (isConnectZaiBaseProvider(provider)) {
         addCommandResult(

@@ -396,6 +396,20 @@ describe("AISDKStreamAdapter", () => {
         effort: "high",
       }),
     ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("ollama/llama2", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("lmstudio/google/gemma-3n-e4b", {
+        provider_type: "openai",
+        verbosity: "medium",
+      }),
+    ).toBeUndefined();
   });
 
   test("maps Claude 4.7 thinking to adaptive summarized output", () => {

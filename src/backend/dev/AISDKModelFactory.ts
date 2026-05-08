@@ -5,8 +5,11 @@ import {
   LOCAL_BEDROCK_PROVIDER_NAME,
   LOCAL_GOOGLE_AI_PROVIDER_NAME,
   LOCAL_KIMI_CODE_PROVIDER_NAME,
+  LOCAL_LMSTUDIO_PROVIDER_NAME,
   LOCAL_MINIMAX_PROVIDER_NAME,
   LOCAL_MOONSHOT_PROVIDER_NAME,
+  LOCAL_OLLAMA_CLOUD_PROVIDER_NAME,
+  LOCAL_OLLAMA_PROVIDER_NAME,
   LOCAL_OPENAI_PROVIDER_NAME,
   LOCAL_OPENROUTER_PROVIDER_NAME,
   LOCAL_ZAI_CODING_PROVIDER_NAME,
@@ -29,6 +32,9 @@ export type AISDKProvider =
   | "minimax"
   | "moonshot"
   | "google-ai"
+  | "ollama"
+  | "ollama-cloud"
+  | "lmstudio"
   | "bedrock"
   | "chatgpt-oauth";
 
@@ -74,13 +80,16 @@ export function resolveAISDKProvider(
     provider === "minimax" ||
     provider === "moonshot" ||
     provider === "google-ai" ||
+    provider === "ollama" ||
+    provider === "ollama-cloud" ||
+    provider === "lmstudio" ||
     provider === "bedrock" ||
     provider === "chatgpt-oauth"
   ) {
     return provider;
   }
   throw new Error(
-    `Unknown AI SDK provider "${provider}". Expected "openai-responses", "anthropic", "openrouter", "zai", "minimax", "moonshot", "google-ai", "bedrock", or "chatgpt-oauth".`,
+    `Unknown AI SDK provider "${provider}". Expected "openai-responses", "anthropic", "openrouter", "zai", "minimax", "moonshot", "google-ai", "ollama", "ollama-cloud", "lmstudio", "bedrock", or "chatgpt-oauth".`,
   );
 }
 
@@ -96,6 +105,9 @@ export function resolveAISDKProviderFromAgent(
     return "moonshot";
   }
   if (model?.startsWith("google_ai/")) return "google-ai";
+  if (model?.startsWith("ollama/")) return "ollama";
+  if (model?.startsWith("ollama-cloud/")) return "ollama-cloud";
+  if (model?.startsWith("lmstudio/")) return "lmstudio";
   if (model?.startsWith("bedrock/")) return "bedrock";
   if (model?.startsWith("anthropic/")) return "anthropic";
   if (model?.startsWith("openai/") || model?.startsWith("openai-responses/")) {
@@ -111,6 +123,9 @@ export function resolveAISDKProviderFromAgent(
     return "moonshot";
   }
   if (providerType === "google_ai") return "google-ai";
+  if (providerType === "ollama") return "ollama";
+  if (providerType === "ollama_cloud") return "ollama-cloud";
+  if (providerType === "lmstudio") return "lmstudio";
   if (providerType === "bedrock") return "bedrock";
   if (providerType === "chatgpt_oauth") return "chatgpt-oauth";
   if (providerType === "openai" || providerType === "openai-responses") {
@@ -153,6 +168,15 @@ export function resolveAISDKModelFromAgent(
   }
   if (provider === "google-ai" && model.startsWith("google_ai/")) {
     return model.slice("google_ai/".length);
+  }
+  if (provider === "ollama" && model.startsWith("ollama/")) {
+    return model.slice("ollama/".length);
+  }
+  if (provider === "ollama-cloud" && model.startsWith("ollama-cloud/")) {
+    return model.slice("ollama-cloud/".length);
+  }
+  if (provider === "lmstudio" && model.startsWith("lmstudio/")) {
+    return model.slice("lmstudio/".length);
   }
   if (provider === "bedrock" && model.startsWith("bedrock/")) {
     return model.slice("bedrock/".length);
@@ -326,6 +350,42 @@ export function createAISDKModelFactory(
         ),
         baseURL: process.env.GOOGLE_GENERATIVE_AI_BASE_URL,
         createModel: options.createGoogleModel,
+      });
+    case "ollama":
+      return createOpenAICompatibleModelFactory({
+        model,
+        providerName: "ollama",
+        baseURL: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434/v1",
+        apiKey: localProviderApiKey(
+          LOCAL_OLLAMA_PROVIDER_NAME,
+          process.env.OLLAMA_LOCAL_API_KEY ?? "not-needed",
+          storageDir,
+        ),
+        createModel: options.createOpenAICompatibleModel,
+      });
+    case "ollama-cloud":
+      return createOpenAICompatibleModelFactory({
+        model,
+        providerName: "ollama-cloud",
+        baseURL: process.env.OLLAMA_CLOUD_BASE_URL ?? "https://ollama.com/v1",
+        apiKey: localProviderApiKey(
+          LOCAL_OLLAMA_CLOUD_PROVIDER_NAME,
+          process.env.OLLAMA_API_KEY,
+          storageDir,
+        ),
+        createModel: options.createOpenAICompatibleModel,
+      });
+    case "lmstudio":
+      return createOpenAICompatibleModelFactory({
+        model,
+        providerName: "lmstudio",
+        baseURL: process.env.LMSTUDIO_BASE_URL ?? "http://127.0.0.1:1234/v1",
+        apiKey: localProviderApiKey(
+          LOCAL_LMSTUDIO_PROVIDER_NAME,
+          process.env.LMSTUDIO_API_KEY ?? "not-needed",
+          storageDir,
+        ),
+        createModel: options.createOpenAICompatibleModel,
       });
     case "bedrock":
       return createBedrockModelFactory({

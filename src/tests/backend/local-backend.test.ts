@@ -68,6 +68,8 @@ async function withLocalModelEnv<T>(
   const originalAwsAccessKey = process.env.AWS_ACCESS_KEY_ID;
   const originalAwsSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
   const originalAwsRegion = process.env.AWS_REGION;
+  const originalOllamaKey = process.env.OLLAMA_API_KEY;
+  const originalLmstudioKey = process.env.LMSTUDIO_API_KEY;
   try {
     if (env.openAIKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = env.openAIKey;
@@ -86,6 +88,8 @@ async function withLocalModelEnv<T>(
     delete process.env.AWS_ACCESS_KEY_ID;
     delete process.env.AWS_SECRET_ACCESS_KEY;
     delete process.env.AWS_REGION;
+    delete process.env.OLLAMA_API_KEY;
+    delete process.env.LMSTUDIO_API_KEY;
     return await fn();
   } finally {
     if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -117,6 +121,10 @@ async function withLocalModelEnv<T>(
     else process.env.AWS_SECRET_ACCESS_KEY = originalAwsSecretKey;
     if (originalAwsRegion === undefined) delete process.env.AWS_REGION;
     else process.env.AWS_REGION = originalAwsRegion;
+    if (originalOllamaKey === undefined) delete process.env.OLLAMA_API_KEY;
+    else process.env.OLLAMA_API_KEY = originalOllamaKey;
+    if (originalLmstudioKey === undefined) delete process.env.LMSTUDIO_API_KEY;
+    else process.env.LMSTUDIO_API_KEY = originalLmstudioKey;
   }
 }
 
@@ -372,6 +380,24 @@ describe("LocalBackend", () => {
           accessKey: "test-aws-access-key",
           region: "us-east-1",
         });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "ollama",
+          providerName: "lc-ollama",
+          apiKey: "not-needed",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "ollama_cloud",
+          providerName: "lc-ollama-cloud",
+          apiKey: "test-ollama-cloud-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "lmstudio",
+          providerName: "lc-lmstudio",
+          apiKey: "not-needed",
+        });
         setLocalChatGPTOAuth(
           {
             type: "oauth",
@@ -395,6 +421,9 @@ describe("LocalBackend", () => {
         expect(handles).toContain("moonshot/kimi-k2.5");
         expect(handles).toContain("google_ai/gemini-3.1-pro-preview");
         expect(handles).toContain("bedrock/us.anthropic.claude-sonnet-4-6");
+        expect(handles).toContain("ollama/llama2");
+        expect(handles).toContain("ollama-cloud/gpt-oss:20b");
+        expect(handles).toContain("lmstudio/google/gemma-3n-e4b");
         expect(handles).toContain("chatgpt-plus-pro/gpt-5.5");
         expect(handles).not.toContain("anthropic/claude-opus-4-7");
 
