@@ -241,6 +241,8 @@ interface APIBackendDeps {
   forkConversation?: ForkConversation;
 }
 
+export type BackendMode = "api" | "local";
+
 export class APIBackend implements Backend {
   readonly capabilities: BackendCapabilities = {
     remoteMemfs: true,
@@ -428,7 +430,7 @@ function isTruthyEnv(value: string | undefined): boolean {
 }
 
 export function isExperimentalLocalBackendEnabled(): boolean {
-  return isTruthyEnv(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL);
+  return resolveBackendMode() === "local";
 }
 
 export function getLocalBackendStorageDir(homeDir = homedir()): string {
@@ -445,16 +447,36 @@ function createExperimentalLocalBackend(): Backend {
   });
 }
 
+let configuredBackendMode: BackendMode | null = null;
+
+function resolveBackendMode(): BackendMode {
+  if (configuredBackendMode) return configuredBackendMode;
+  return isTruthyEnv(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL)
+    ? "local"
+    : "api";
+}
+
+function createBackendForMode(mode: BackendMode): Backend {
+  return mode === "local" ? createExperimentalLocalBackend() : new APIBackend();
+}
+
 function createInitialBackend(): Backend {
-  return isExperimentalLocalBackendEnabled()
-    ? createExperimentalLocalBackend()
-    : new APIBackend();
+  return createBackendForMode(resolveBackendMode());
 }
 
 let backend: Backend = createInitialBackend();
 
 export function getBackend(): Backend {
   return backend;
+}
+
+export function configureBackendMode(mode: BackendMode): void {
+  configuredBackendMode = mode;
+  backend = createBackendForMode(mode);
+}
+
+export function isLocalBackendEnabled(): boolean {
+  return resolveBackendMode() === "local";
 }
 
 function devBackendStoreOptions() {
