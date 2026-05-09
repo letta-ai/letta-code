@@ -1,12 +1,14 @@
 export { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
 export {
   formatLocalMessagesForSummary,
+  isLocalSlidingWindowCompactionPlanningError,
   LOCAL_ALL_COMPACTION_PROMPT,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
   LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
   type LocalCompactionMode,
   type LocalCompactionStats,
+  LocalSlidingWindowCompactionPlanningError,
   planLocalSlidingWindowCompaction,
 } from "./compaction";
 export { LocalBackend, type LocalBackendOptions } from "./LocalBackend";

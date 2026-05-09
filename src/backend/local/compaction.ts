@@ -15,6 +15,19 @@ export const LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE = 0.3;
 
 export type LocalCompactionMode = "all" | "sliding_window";
 
+export class LocalSlidingWindowCompactionPlanningError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalSlidingWindowCompactionPlanningError";
+  }
+}
+
+export function isLocalSlidingWindowCompactionPlanningError(
+  error: unknown,
+): error is LocalSlidingWindowCompactionPlanningError {
+  return error instanceof LocalSlidingWindowCompactionPlanningError;
+}
+
 export const LOCAL_ALL_COMPACTION_PROMPT = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
 This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context. Your summary should include the following sections:
 
@@ -279,7 +292,9 @@ export function planLocalSlidingWindowCompaction(
   options: { slidingWindowPercentage?: number; contextWindow?: number } = {},
 ): LocalSlidingWindowCompactionPlan {
   if (messages.length < 4) {
-    throw new Error("Not enough messages for sliding window compaction.");
+    throw new LocalSlidingWindowCompactionPlanningError(
+      "Not enough messages for sliding window compaction.",
+    );
   }
 
   const percentage = normalizedSlidingWindowPercentage(
@@ -327,7 +342,9 @@ export function planLocalSlidingWindowCompaction(
     };
   }
 
-  throw new Error("No assistant message found for sliding window compaction.");
+  throw new LocalSlidingWindowCompactionPlanningError(
+    "No assistant message found for sliding window compaction.",
+  );
 }
 
 export async function summarizeLocalMessagesSlidingWindow(

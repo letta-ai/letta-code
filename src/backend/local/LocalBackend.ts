@@ -19,7 +19,6 @@ import {
   AISDKStreamAdapter,
   type AISDKStreamTextFunction,
 } from "../dev/AISDKStreamAdapter";
-import { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
 import { HeadlessBackend } from "../dev/HeadlessBackend";
 import {
   DeterministicPongExecutor,
@@ -29,6 +28,7 @@ import type { ProviderTurnInput } from "../dev/ProviderTurnExecutor";
 import { ProviderTurnExecutor } from "../dev/ProviderTurnExecutor";
 import {
   estimateLocalMessageTokens,
+  isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
   type LocalCompactionMode,
@@ -178,6 +178,21 @@ function validateLocalCompactionSettingsRecord(
   }
 }
 
+function localCompactionSettingsForStorage(
+  settings: LocalCompactionSettingsRecord | null | undefined,
+): LocalCompactionSettingsRecord | null | undefined {
+  if (settings === undefined || settings === null) return settings;
+
+  const hasLocalSetting =
+    hasOwn(settings, "mode") ||
+    hasOwn(settings, "prompt") ||
+    hasOwn(settings, "clip_chars") ||
+    hasOwn(settings, "sliding_window_percentage");
+  if (!hasLocalSetting) return undefined;
+
+  return { ...settings };
+}
+
 function createLocalExecutor(
   options: LocalBackendOptions,
   onContextWindowOverflow?: (
@@ -288,11 +303,14 @@ export class LocalBackend extends HeadlessBackend {
     ) {
       validateLocalCompactionSettingsRecord(requestedCompactionSettings);
     }
+    const compactionSettingsForStorage = localCompactionSettingsForStorage(
+      requestedCompactionSettings,
+    );
     let agent = await super.createAgent(...args);
-    if (requestedCompactionSettings !== undefined) {
+    if (compactionSettingsForStorage !== undefined) {
       agent = this.store.setAgentCompactionSettings(
         agent.id,
-        requestedCompactionSettings,
+        compactionSettingsForStorage,
       );
     }
     if (this.isLocalMemfsEnabled()) {
@@ -319,10 +337,15 @@ export class LocalBackend extends HeadlessBackend {
     if (settings !== undefined && settings !== null) {
       validateLocalCompactionSettingsRecord(settings);
     }
+    const compactionSettingsForStorage =
+      localCompactionSettingsForStorage(settings);
     let agent = await super.updateAgent(...args);
     if (hasOwn(bodyRecord, "compaction_settings")) {
-      if (settings !== undefined) {
-        agent = this.store.setAgentCompactionSettings(agentId, settings);
+      if (compactionSettingsForStorage !== undefined) {
+        agent = this.store.setAgentCompactionSettings(
+          agentId,
+          compactionSettingsForStorage,
+        );
       }
     }
     return agent;
@@ -592,7 +615,7 @@ export class LocalBackend extends HeadlessBackend {
           settings,
         );
       } catch (error) {
-        if (isContextWindowOverflowError(error)) throw error;
+        if (!isLocalSlidingWindowCompactionPlanningError(error)) throw error;
       }
     }
     return this.compactLocalConversationAll(
