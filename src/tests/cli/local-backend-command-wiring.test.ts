@@ -140,4 +140,55 @@ describe("local backend command wiring", () => {
     expect(tagSegment).toContain("backend.updateAgent(agentId");
     expect(tagSegment).not.toContain("getClient");
   });
+
+  test("message search and subcommands avoid unguarded API-only paths in local mode", () => {
+    const source = appSource();
+
+    const searchSegment = segmentBetween(
+      source,
+      "// Special handling for /search command",
+      "// Special handling for /profile command",
+    );
+    expect(searchSegment).not.toContain("getClient");
+
+    const installGithubAppSegment = segmentBetween(
+      source,
+      "// Special handling for /install-github-app command",
+      "// Special handling for /sleeptime command",
+    );
+    expect(installGithubAppSegment).toContain(
+      "getBackend().capabilities.localModelCatalog",
+    );
+
+    const messageSearchPath = fileURLToPath(
+      new URL("../../cli/components/MessageSearch.tsx", import.meta.url),
+    );
+    const messageSearchSource = readFileSync(messageSearchPath, "utf-8");
+    expect(messageSearchSource).toContain("searchMessagesForBackend");
+    expect(messageSearchSource).not.toContain("../../backend/api/search");
+
+    const messagesSubcommandPath = fileURLToPath(
+      new URL("../../cli/subcommands/messages.ts", import.meta.url),
+    );
+    const messagesSubcommandSource = readFileSync(
+      messagesSubcommandPath,
+      "utf-8",
+    );
+    expect(messagesSubcommandSource).toContain("getBackend");
+    expect(messagesSubcommandSource).toContain("searchMessagesForBackend");
+    expect(messagesSubcommandSource).not.toContain("getClient");
+
+    const agentsSubcommandPath = fileURLToPath(
+      new URL("../../cli/subcommands/agents.ts", import.meta.url),
+    );
+    const agentsSubcommandSource = readFileSync(agentsSubcommandPath, "utf-8");
+    expect(agentsSubcommandSource).toContain("getBackend");
+    expect(agentsSubcommandSource).not.toContain("getClient");
+
+    const blocksSubcommandPath = fileURLToPath(
+      new URL("../../cli/subcommands/blocks.ts", import.meta.url),
+    );
+    const blocksSubcommandSource = readFileSync(blocksSubcommandPath, "utf-8");
+    expect(blocksSubcommandSource).toContain("capabilities.localMemfs");
+  });
 });

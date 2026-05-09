@@ -8096,6 +8096,16 @@ export default function App({
 
         // Special handling for /install-github-app command - interactive setup wizard
         if (trimmed === "/install-github-app") {
+          if (getBackend().capabilities.localModelCatalog) {
+            const cmd = commandRunner.start(
+              trimmed,
+              "Checking GitHub App installer support...",
+            );
+            cmd.fail(
+              "GitHub App installation is not supported by the local backend.",
+            );
+            return { submitted: true };
+          }
           startOverlayCommand(
             "install-github-app",
             "/install-github-app",
