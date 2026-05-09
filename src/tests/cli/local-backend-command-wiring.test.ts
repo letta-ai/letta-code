@@ -185,10 +185,11 @@ describe("local backend command wiring", () => {
     expect(agentsSubcommandSource).toContain("getBackend");
     expect(agentsSubcommandSource).not.toContain("getClient");
 
-    const blocksSubcommandPath = fileURLToPath(
-      new URL("../../cli/subcommands/blocks.ts", import.meta.url),
+    const routerPath = fileURLToPath(
+      new URL("../../cli/subcommands/router.ts", import.meta.url),
     );
-    const blocksSubcommandSource = readFileSync(blocksSubcommandPath, "utf-8");
-    expect(blocksSubcommandSource).toContain("capabilities.localMemfs");
+    const routerSource = readFileSync(routerPath, "utf-8");
+    expect(routerSource).not.toContain("runBlocksSubcommand");
+    expect(routerSource).not.toContain('case "blocks"');
   });
 });

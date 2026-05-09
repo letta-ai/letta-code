@@ -107,7 +107,6 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
-  letta blocks ...      Blocks subcommands (JSON-only)
   letta connect ...     Connect providers from terminal
 
 OPTIONS
@@ -127,9 +126,6 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
-  letta blocks list --agent <id>
-  letta blocks copy --block-id <id> [--label <label>] [--agent <id>] [--override]
-  letta blocks attach --block-id <id> [--agent <id>] [--read-only] [--override]
   letta connect <provider> [options]
 
 BEHAVIOR

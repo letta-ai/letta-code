@@ -1,5 +1,4 @@
 import { runAgentsSubcommand } from "./agents";
-import { runBlocksSubcommand } from "./blocks";
 import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
@@ -22,8 +21,6 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runAgentsSubcommand(rest);
     case "messages":
       return runMessagesSubcommand(rest);
-    case "blocks":
-      return runBlocksSubcommand(rest);
     case "server":
     case "remote": // alias
       return runListenSubcommand(rest);
