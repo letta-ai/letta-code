@@ -75,6 +75,78 @@ describe("buildClientSkillsPayload", () => {
     expect(result.errors).toEqual([]);
   });
 
+  test("discovers manual-only skills for user slash invocation", async () => {
+    const { discoverClientSideSkills } = await import(
+      "../../agent/clientSkills"
+    );
+
+    const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
+      skills: [
+        {
+          ...baseSkill,
+          id: "manual-only",
+          description: "manual",
+          path: "/tmp/manual/SKILL.md",
+          source: "project",
+          disableModelInvocation: true,
+        },
+      ],
+      errors: [],
+    });
+
+    const result = await discoverClientSideSkills({
+      skillsDirectory: "/tmp/.skills",
+      skillSources: ["project"],
+      discoverSkillsFn,
+    });
+
+    expect(result.skills.map((skill) => skill.id)).toEqual(["manual-only"]);
+  });
+
+  test("excludes skills marked disable-model-invocation from client_skills", async () => {
+    const { buildClientSkillsPayload } = await import(
+      "../../agent/clientSkills"
+    );
+
+    const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
+      skills: [
+        {
+          ...baseSkill,
+          id: "manual-only",
+          description: "manual",
+          path: "/tmp/manual/SKILL.md",
+          source: "project",
+          disableModelInvocation: true,
+        },
+        {
+          ...baseSkill,
+          id: "auto-ok",
+          description: "auto",
+          path: "/tmp/auto/SKILL.md",
+          source: "project",
+        },
+      ],
+      errors: [],
+    });
+
+    const result = await buildClientSkillsPayload({
+      skillsDirectory: "/tmp/.skills",
+      skillSources: ["project"],
+      discoverSkillsFn,
+    });
+
+    expect(result.clientSkills).toEqual([
+      {
+        name: "auto-ok",
+        description: "auto",
+        location: "/tmp/auto/SKILL.md",
+      },
+    ]);
+    expect(result.skillPathById).toEqual({
+      "auto-ok": "/tmp/auto/SKILL.md",
+    });
+  });
+
   test("treats .agents/skills as primary and .skills as legacy fallback", async () => {
     const { buildClientSkillsPayload } = await import(
       "../../agent/clientSkills"
