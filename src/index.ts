@@ -512,14 +512,6 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Handle update command
-  if (command === "update") {
-    const { manualUpdate } = await import("./updater/auto-update");
-    const result = await manualUpdate();
-    console.log(result.message);
-    process.exit(result.success ? 0 : 1);
-  }
-
   // --resume: Open agent selector UI after loading
   const shouldResume = values.resume ?? false;
   let specifiedConversationId = values.conversation ?? null; // Specific conversation to resume
