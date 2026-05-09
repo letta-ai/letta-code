@@ -167,6 +167,33 @@ describe("local system prompt compilation", () => {
     expect(compiled.content).toContain("<memory_metadata>");
   });
 
+  test("can compile without projecting local MemFS", async () => {
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-no-memfs-"));
+    try {
+      await writeMemoryFile(
+        memoryDir,
+        "system/persona.md",
+        "Who the agent is",
+        "This should not be projected.",
+      );
+      initAndCommitMemory(memoryDir);
+
+      const compiled = compileLocalSystemPrompt({
+        agent: agent("plain {CORE_MEMORY}"),
+        conversationId: "local-conv-test",
+        memoryDir,
+        includeMemfs: false,
+      });
+
+      expect(compiled.memfsRevision).toBeUndefined();
+      expect(compiled.content).toContain("plain <memory_metadata>");
+      expect(compiled.content).not.toContain("This should not be projected.");
+      expect(compiled.content).not.toContain("$MEMORY_DIR");
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
   test("renders available skills as request-scoped prompt content", () => {
     const skillsBlock = compileAvailableSkillsBlock([
       {

@@ -1,7 +1,15 @@
-import modelsData from "../../models.json";
-import type { AISDKProvider } from "../dev/AISDKModelFactory";
-import { DEFAULT_ANTHROPIC_MODEL } from "../dev/AnthropicModel";
-import { DEFAULT_OPENAI_RESPONSES_MODEL } from "../dev/OpenAIResponsesModel";
+import {
+  type AISDKProvider,
+  DEFAULT_AI_SDK_PROVIDER,
+} from "../dev/AISDKModelFactory";
+import {
+  listCatalogModelsForProvider,
+  listConfiguredAISDKProviders,
+  localModelHandle,
+  localProviderType,
+  resolveLocalModel,
+} from "../dev/AISDKProviderRegistry";
+import { listLocalProviderRecords } from "./LocalProviderAuthStore";
 
 export interface LocalModelConfig {
   provider: AISDKProvider;
@@ -16,42 +24,23 @@ interface LocalModelListEntry {
   model_endpoint_type: string;
 }
 
-function hasEnvValue(value: string | undefined): boolean {
-  return typeof value === "string" && value.length > 0;
+function localProviderNames(storageDir?: string): Set<string> {
+  return new Set(
+    listLocalProviderRecords(storageDir).map((record) => record.name),
+  );
 }
 
-function inferLocalProviderFromStandardKeys(): AISDKProvider {
-  const hasOpenAIKey = hasEnvValue(process.env.OPENAI_API_KEY);
-  const hasAnthropicKey = hasEnvValue(process.env.ANTHROPIC_API_KEY);
-
-  if (!hasOpenAIKey && hasAnthropicKey) return "anthropic";
-  return "openai-responses";
+export function resolveLocalProvider(storageDir?: string): AISDKProvider {
+  return (
+    listConfiguredAISDKProviders(localProviderNames(storageDir))[0] ??
+    DEFAULT_AI_SDK_PROVIDER
+  );
 }
 
-export function resolveLocalProvider(): AISDKProvider {
-  return inferLocalProviderFromStandardKeys();
-}
+export { localModelHandle, localProviderType, resolveLocalModel };
 
-export function resolveLocalModel(provider = resolveLocalProvider()): string {
-  return provider === "anthropic"
-    ? DEFAULT_ANTHROPIC_MODEL
-    : DEFAULT_OPENAI_RESPONSES_MODEL;
-}
-
-export function localModelHandle(
-  provider: AISDKProvider,
-  model: string,
-): string {
-  if (model.includes("/")) return model;
-  return provider === "anthropic" ? `anthropic/${model}` : `openai/${model}`;
-}
-
-export function localProviderType(provider: AISDKProvider): string {
-  return provider === "anthropic" ? "anthropic" : "openai";
-}
-
-export function resolveLocalModelConfig(): LocalModelConfig {
-  const provider = resolveLocalProvider();
+export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
+  const provider = resolveLocalProvider(storageDir);
   const model = resolveLocalModel(provider);
   return {
     provider,
@@ -61,10 +50,8 @@ export function resolveLocalModelConfig(): LocalModelConfig {
   };
 }
 
-export function listLocalModels() {
-  const configured = resolveLocalModelConfig();
-  const openAIModel = DEFAULT_OPENAI_RESPONSES_MODEL;
-  const anthropicModel = DEFAULT_ANTHROPIC_MODEL;
+export function listLocalModels(storageDir?: string) {
+  const configured = resolveLocalModelConfig(storageDir);
   const models: LocalModelListEntry[] = [];
   const addModel = (provider: AISDKProvider, model: string) => {
     const handle = localModelHandle(provider, model);
@@ -77,20 +64,11 @@ export function listLocalModels() {
   };
 
   addModel(configured.provider, configured.model);
-  if (hasEnvValue(process.env.OPENAI_API_KEY)) {
-    addModel("openai-responses", openAIModel);
-    for (const model of modelsData.models) {
-      if (model.handle.startsWith("openai/")) {
-        addModel("openai-responses", model.handle);
-      }
-    }
-  }
-  if (hasEnvValue(process.env.ANTHROPIC_API_KEY)) {
-    addModel("anthropic", anthropicModel);
-    for (const model of modelsData.models) {
-      if (model.handle.startsWith("anthropic/")) {
-        addModel("anthropic", model.handle);
-      }
+  for (const provider of listConfiguredAISDKProviders(
+    localProviderNames(storageDir),
+  )) {
+    for (const model of listCatalogModelsForProvider(provider)) {
+      addModel(provider, model);
     }
   }
   return models;

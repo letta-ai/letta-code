@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import { trackBoundaryError } from "../../../telemetry/errorReporting";
 import type { ListMemoryCommand } from "../../../types/protocol_v2";
 import {
+  isDeleteMemoryFileCommand,
   isEnableMemfsCommand,
   isListMemoryCommand,
   isMemoryCommitDiffCommand,
@@ -781,6 +782,183 @@ export function handleMemoryProtocolCommand(
         );
         sendFailure(
           err instanceof Error ? err.message : "Failed to write memory file",
+        );
+      }
+    });
+    return true;
+  }
+
+  // ── Delete a file from MemFS (durable agent memory delete + commit + push) ─
+  if (isDeleteMemoryFileCommand(parsed)) {
+    runDetachedListenerTask("delete_memory_file", async () => {
+      const sendFailure = (error: string): void => {
+        safeSocketSend(
+          socket,
+          {
+            type: "delete_memory_file_response",
+            request_id: parsed.request_id,
+            agent_id: parsed.agent_id,
+            path: parsed.path,
+            success: false,
+            error,
+          },
+          "listener_delete_memory_file_send_failed",
+          "listener_delete_memory_file",
+        );
+      };
+
+      try {
+        const {
+          getMemoryFilesystemRoot,
+          ensureLocalMemfsCheckout,
+          isMemfsEnabledOnServer,
+        } = await import("../../../agent/memoryFilesystem");
+        const { commitAndSyncMemoryWrite } = await import(
+          "../../../agent/memoryGit"
+        );
+        const { unlink } = await import("node:fs/promises");
+        const { existsSync } = await import("node:fs");
+        const { isAbsolute, join, normalize, relative, sep } = await import(
+          "node:path"
+        );
+
+        // ── Validate relative path ─────────────────────────────────────
+        if (isAbsolute(parsed.path) || parsed.path.length === 0) {
+          sendFailure(
+            "delete_memory_file: path must be a non-empty relative path",
+          );
+          return;
+        }
+        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const absolutePath = normalize(join(memoryRoot, parsed.path));
+        const rel = relative(memoryRoot, absolutePath);
+        if (
+          rel.startsWith("..") ||
+          rel === "" ||
+          isAbsolute(rel) ||
+          rel.split(sep).includes("..")
+        ) {
+          sendFailure(
+            "delete_memory_file: path must resolve inside the memory root",
+          );
+          return;
+        }
+
+        // ── Ensure MemFS is enabled and checked out ───────────────────
+        if (!existsSync(join(memoryRoot, ".git"))) {
+          const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
+          if (!enabled) {
+            sendFailure(
+              "delete_memory_file: memfs is not enabled for this agent",
+            );
+            return;
+          }
+          await ensureLocalMemfsCheckout(parsed.agent_id);
+          if (!existsSync(join(memoryRoot, ".git"))) {
+            sendFailure(
+              "delete_memory_file: failed to initialize local memory checkout",
+            );
+            return;
+          }
+        }
+
+        const pathspec = rel.split(sep).join("/");
+
+        // ── Idempotent delete: missing file is a no-op success ─────────
+        const removeIfPresent = async (): Promise<boolean> => {
+          if (!existsSync(absolutePath)) return false;
+          await unlink(absolutePath);
+          return true;
+        };
+        const removed = await removeIfPresent();
+        if (!removed) {
+          safeSocketSend(
+            socket,
+            {
+              type: "delete_memory_file_response",
+              request_id: parsed.request_id,
+              agent_id: parsed.agent_id,
+              path: pathspec,
+              success: true,
+              committed: false,
+            },
+            "listener_delete_memory_file_send_failed",
+            "listener_delete_memory_file",
+          );
+          return;
+        }
+
+        // ── Resolve agent identity for the commit author ───────────────
+        let agentName = parsed.agent_id;
+        try {
+          const { getClient } = await import("../../../backend/api/client");
+          const client = await getClient();
+          const agent = await client.agents.retrieve(parsed.agent_id);
+          if (agent.name && agent.name.trim().length > 0) {
+            agentName = agent.name.trim();
+          }
+        } catch {
+          // Best-effort — fall back to agent id as the author name.
+        }
+
+        // ── Commit + push (replay re-deletes after rebase) ─────────────
+        const reason =
+          parsed.commit_message?.trim() || `Delete memory file ${pathspec}`;
+        const commitResult = await commitAndSyncMemoryWrite({
+          memoryDir: memoryRoot,
+          pathspecs: [pathspec],
+          reason,
+          author: {
+            agentId: parsed.agent_id,
+            authorName: agentName,
+            authorEmail: `${parsed.agent_id}@letta.com`,
+          },
+          replay: async () => {
+            // Re-delete on top of the latest remote state in case the
+            // remote restored the file between our commit and push.
+            await removeIfPresent();
+            return [pathspec];
+          },
+        });
+
+        if (commitResult.committed) {
+          safeSocketSend(
+            socket,
+            {
+              type: "memory_updated",
+              affected_paths: [pathspec],
+              timestamp: Date.now(),
+            },
+            "listener_delete_memory_file_send_failed",
+            "listener_delete_memory_file",
+          );
+        }
+
+        safeSocketSend(
+          socket,
+          {
+            type: "delete_memory_file_response",
+            request_id: parsed.request_id,
+            agent_id: parsed.agent_id,
+            path: pathspec,
+            success: true,
+            committed: commitResult.committed,
+            ...(commitResult.sha ? { commit_sha: commitResult.sha } : {}),
+          },
+          "listener_delete_memory_file_send_failed",
+          "listener_delete_memory_file",
+        );
+      } catch (err) {
+        trackListenerError(
+          "listener_delete_memory_file_failed",
+          err,
+          "listener_memory_delete",
+        );
+        console.error(
+          `[Listen] delete_memory_file error: ${err instanceof Error ? err.message : "Unknown error"}`,
+        );
+        sendFailure(
+          err instanceof Error ? err.message : "Failed to delete memory file",
         );
       }
     });

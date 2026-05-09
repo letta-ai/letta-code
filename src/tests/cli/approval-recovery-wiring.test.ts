@@ -145,4 +145,33 @@ describe("approval recovery wiring", () => {
       expect(segment).not.toContain("await processConversation([");
     }
   });
+
+  test("/btw side-question flow routes pre-stream approval conflicts through shared recovery helpers", () => {
+    const appPath = fileURLToPath(
+      new URL("../../cli/App.tsx", import.meta.url),
+    );
+    const source = readFileSync(appPath, "utf-8");
+
+    const start = source.indexOf("const handleBtwCommand = useCallback(");
+    const end = source.indexOf("const handleBtwJump = useCallback(", start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+
+    expect(segment).toContain(
+      "await sendMessageStream(forked.id, currentInput",
+    );
+    expect(segment).not.toContain(
+      "getBackend().createConversationMessageStream(",
+    );
+    expect(segment).toContain("extractConflictDetail(preStreamError)");
+    expect(segment).toContain("getPreStreamErrorAction(");
+    expect(segment).toContain("shouldAttemptApprovalRecovery(");
+    expect(segment).toContain("rebuildInputWithFreshDenials(");
+    expect(segment).toContain(
+      "await getResumeDataFromBackend(agent, forked.id)",
+    );
+  });
 });

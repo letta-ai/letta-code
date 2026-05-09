@@ -31,6 +31,7 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  DeleteMemoryFileCommand,
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
@@ -72,6 +73,10 @@ import type {
 } from "../../types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
+
+export type ServerLifecycleMessage = {
+  type: "pong";
+};
 
 function isStringArray(value: unknown): value is string[] {
   return (
@@ -585,6 +590,26 @@ export function isWriteMemoryFileCommand(
     (c.encoding === undefined ||
       c.encoding === "utf8" ||
       c.encoding === "base64") &&
+    (c.commit_message === undefined || typeof c.commit_message === "string")
+  );
+}
+
+export function isDeleteMemoryFileCommand(
+  value: unknown,
+): value is DeleteMemoryFileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    path?: unknown;
+    commit_message?: unknown;
+  };
+  return (
+    c.type === "delete_memory_file" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    typeof c.path === "string" &&
     (c.commit_message === undefined || typeof c.commit_message === "string")
   );
 }
@@ -1483,6 +1508,25 @@ export function isExecuteCommandCommand(
   );
 }
 
+export function parseServerLifecycleMessage(
+  data: WebSocket.RawData,
+): ServerLifecycleMessage | null {
+  try {
+    const raw = typeof data === "string" ? data : data.toString();
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      (parsed as { type?: unknown }).type === "pong"
+    ) {
+      return { type: "pong" };
+    }
+  } catch {
+    // Non-JSON frames are handled by the regular unparseable-frame path.
+  }
+  return null;
+}
+
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -1514,6 +1558,7 @@ export function parseServerMessage(
       isMemoryCommitDiffCommand(parsed) ||
       isReadMemoryFileCommand(parsed) ||
       isWriteMemoryFileCommand(parsed) ||
+      isDeleteMemoryFileCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||

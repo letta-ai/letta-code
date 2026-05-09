@@ -14,6 +14,7 @@ import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  normalizeStreamErrorTypeToStopReason,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
@@ -34,10 +35,7 @@ import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
-import {
-  MAX_POST_STOP_APPROVAL_RECOVERY,
-  NO_AWAITING_APPROVAL_DETAIL_FRAGMENT,
-} from "./constants";
+import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   createToolExecutionOutputEmitter,
@@ -71,13 +69,22 @@ import type {
 } from "./types";
 
 export function isApprovalToolCallDesyncError(detail: unknown): boolean {
-  if (isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail)) {
-    return true;
+  return isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail);
+}
+
+export function getApprovalToolCallDesyncErrorText(errorInfo: {
+  detail?: unknown;
+  message?: unknown;
+}): string | null {
+  const detail = errorInfo.detail;
+  if (typeof detail === "string" && isApprovalToolCallDesyncError(detail)) {
+    return detail;
   }
-  return (
-    typeof detail === "string" &&
-    detail.toLowerCase().includes(NO_AWAITING_APPROVAL_DETAIL_FRAGMENT)
-  );
+  const message = errorInfo.message;
+  if (typeof message === "string" && isApprovalToolCallDesyncError(message)) {
+    return message;
+  }
+  return null;
 }
 
 export function shouldAttemptPostStopApprovalRecovery(params: {
@@ -86,16 +93,15 @@ export function shouldAttemptPostStopApprovalRecovery(params: {
   retries: number;
   runErrorDetail: string | null;
   latestErrorText: string | null;
+  fallbackError?: string | null;
 }): boolean {
   const approvalDesyncDetected =
     isApprovalToolCallDesyncError(params.runErrorDetail) ||
-    isApprovalToolCallDesyncError(params.latestErrorText);
-
-  const genericNoRunError =
-    params.stopReason === "error" && params.runIdsSeen === 0;
+    isApprovalToolCallDesyncError(params.latestErrorText) ||
+    isApprovalToolCallDesyncError(params.fallbackError);
 
   return shouldAttemptApprovalRecovery({
-    approvalPendingDetected: approvalDesyncDetected || genericNoRunError,
+    approvalPendingDetected: approvalDesyncDetected,
     retries: params.retries,
     maxRetries: MAX_POST_STOP_APPROVAL_RECOVERY,
   });
@@ -182,7 +188,9 @@ export async function drainRecoveryStreamWithEmission(
       if (errorInfo) {
         emitLoopErrorNotice(socket, runtime, {
           message: errorInfo.message || "Stream error",
-          stopReason: (errorInfo.error_type as StopReasonType) || "error",
+          stopReason: normalizeStreamErrorTypeToStopReason(
+            errorInfo.error_type,
+          ),
           isTerminal: false,
           runId: runtime.activeRunId || errorInfo.run_id,
           agentId: params.agentId ?? undefined,
@@ -657,6 +665,7 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
+        channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
       });
     } finally {
       emitToolExecutionOutput.flush();

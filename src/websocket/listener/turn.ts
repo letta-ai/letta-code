@@ -24,6 +24,7 @@ import {
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
+  normalizeStreamErrorTypeToStopReason,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
 } from "../../agent/turn-recovery-policy";
@@ -91,6 +92,7 @@ import {
   emitRecoverableStatusNotice,
 } from "./recoverable-notices";
 import {
+  getApprovalToolCallDesyncErrorText,
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
@@ -686,18 +688,34 @@ export async function handleIncomingMessage(
           }
 
           if (errorInfo) {
-            latestErrorText = errorInfo.message || latestErrorText;
-            emitLoopErrorNotice(socket, runtime, {
-              message: errorInfo.message || "Stream error",
-              stopReason: (errorInfo.error_type as StopReasonType) || "error",
-              isTerminal: false,
-              runId: runId || errorInfo.run_id,
-              agentId,
-              conversationId,
-              errorInfo,
-              cancelRequested: runtime.cancelRequested,
-              abortSignal: turnAbortSignal,
-            });
+            const recoverableApprovalErrorText =
+              getApprovalToolCallDesyncErrorText(errorInfo);
+            latestErrorText =
+              recoverableApprovalErrorText ||
+              errorInfo.detail ||
+              errorInfo.message ||
+              latestErrorText;
+            if (!recoverableApprovalErrorText) {
+              emitLoopErrorNotice(socket, runtime, {
+                message: errorInfo.message || "Stream error",
+                stopReason: normalizeStreamErrorTypeToStopReason(
+                  errorInfo.error_type,
+                ),
+                isTerminal: false,
+                runId: runId || errorInfo.run_id,
+                agentId,
+                conversationId,
+                errorInfo,
+                cancelRequested: runtime.cancelRequested,
+                abortSignal: turnAbortSignal,
+              });
+            } else {
+              debugLog(
+                "recovery",
+                "Suppressing streamed approval conflict while post-stop recovery runs: %s",
+                recoverableApprovalErrorText,
+              );
+            }
           }
 
           if (shouldOutput) {
@@ -727,6 +745,7 @@ export async function handleIncomingMessage(
 
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
+      const fallbackError = result.fallbackError ?? null;
       lastApprovalContinuationAccepted = false;
 
       if (stopReason === "end_turn" && runtime.cancelRequested) {
@@ -791,6 +810,7 @@ export async function handleIncomingMessage(
           latestErrorText ||
           runErrorInfo?.detail ||
           runErrorInfo?.message ||
+          fallbackError ||
           null;
 
         if (
@@ -800,6 +820,7 @@ export async function handleIncomingMessage(
             retries: postStopApprovalRecoveryRetries,
             runErrorDetail: errorDetail,
             latestErrorText,
+            fallbackError,
           })
         ) {
           postStopApprovalRecoveryRetries += 1;

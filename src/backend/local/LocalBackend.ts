@@ -1,4 +1,4 @@
-import type { LanguageModel } from "ai";
+import type { LanguageModel, LanguageModelUsage } from "ai";
 import {
   getMemoryHeadRevision,
   type InitializeLocalMemoryRepoFile,
@@ -6,8 +6,10 @@ import {
 } from "../../agent/memoryGit";
 import type {
   AgentCreateBody,
+  Backend,
   BackendCapabilities,
   ConversationCreateBody,
+  ConversationMessageCompactBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
   ConversationMessageStreamBody,
@@ -22,7 +24,15 @@ import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "../dev/HeadlessTurnExecutor";
+import type { ProviderTurnInput } from "../dev/ProviderTurnExecutor";
 import { ProviderTurnExecutor } from "../dev/ProviderTurnExecutor";
+import {
+  estimateLocalMessageTokens,
+  type LocalCompactionStats,
+  type LocalGenerateTextFunction,
+  packageLocalSummaryMessage,
+  summarizeLocalMessagesAll,
+} from "./compaction";
 import type { LocalMessage } from "./LocalMessage";
 import { listLocalModels, resolveLocalModelConfig } from "./LocalModelConfig";
 import type {
@@ -30,7 +40,10 @@ import type {
   LocalStoreOptions,
   StoredMessage,
 } from "./LocalStore";
-import { getLocalBackendMemoryFilesystemRoot } from "./paths";
+import {
+  getLocalBackendMemoryFilesystemRoot,
+  isLocalBackendNoMemfsEnvEnabled,
+} from "./paths";
 import {
   appendAvailableSkillsBlock,
   compileLocalSystemPrompt,
@@ -47,7 +60,9 @@ export interface LocalBackendOptions {
   executor?: HeadlessTurnExecutor;
   createModel?: () => LanguageModel;
   streamText?: AISDKStreamTextFunction;
+  generateText?: LocalGenerateTextFunction;
   memoryDir?: string;
+  memfsEnabled?: boolean;
 }
 
 function sanitizeFrontmatterValue(value: string): string {
@@ -117,6 +132,22 @@ function initialMemoryFilesFromCreateBody(
 
 function createLocalExecutor(
   options: LocalBackendOptions,
+  onContextWindowOverflow?: (
+    input: ProviderTurnInput,
+    error: unknown,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>,
+  onContextUsage?: (
+    input: ProviderTurnInput,
+    usage: LanguageModelUsage,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>,
 ): HeadlessTurnExecutor {
   if (options.executor) return options.executor;
   if (options.executionMode === "deterministic") {
@@ -126,6 +157,9 @@ function createLocalExecutor(
     new AISDKStreamAdapter({
       createModel: options.createModel,
       streamText: options.streamText,
+      localProviderAuthStorageDir: options.storageDir,
+      onContextWindowOverflow,
+      onContextUsage,
     }),
   );
 }
@@ -144,9 +178,13 @@ export class LocalBackend extends HeadlessBackend {
 
   private readonly memoryDir?: string;
   private readonly storageDir: string;
+  private readonly createModel?: () => LanguageModel;
+  private readonly generateText?: LocalGenerateTextFunction;
+  private readonly memfsEnabledOverride?: boolean;
 
   constructor(options: LocalBackendOptions) {
-    const modelConfig = resolveLocalModelConfig();
+    const localBackendRef: { current?: LocalBackend } = {};
+    const modelConfig = resolveLocalModelConfig(options.storageDir);
     const storeOptions: LocalStoreOptions = {
       storageDir: options.storageDir,
       seedDefaultAgent: false,
@@ -161,7 +199,15 @@ export class LocalBackend extends HeadlessBackend {
     };
     super(
       options.defaultAgentId ?? "agent-local-default",
-      createLocalExecutor(options),
+      createLocalExecutor(
+        options,
+        (input, error) =>
+          localBackendRef.current?.compactAfterContextOverflow(input, error) ??
+          Promise.resolve(null),
+        (input, usage) =>
+          localBackendRef.current?.compactAfterContextUsage(input, usage) ??
+          Promise.resolve(null),
+      ),
       storeOptions,
       {
         modelHandle: modelConfig.handle,
@@ -169,12 +215,16 @@ export class LocalBackend extends HeadlessBackend {
         runMetadataBackend: "local",
       },
     );
+    localBackendRef.current = this;
     this.storageDir = options.storageDir;
     this.memoryDir = options.memoryDir;
+    this.createModel = options.createModel;
+    this.generateText = options.generateText;
+    this.memfsEnabledOverride = options.memfsEnabled;
   }
 
   override async listModels() {
-    return listLocalModels() as never;
+    return listLocalModels(this.storageDir) as never;
   }
 
   override async createAgent(
@@ -182,11 +232,13 @@ export class LocalBackend extends HeadlessBackend {
   ) {
     const [body] = args;
     const agent = await super.createAgent(...args);
-    await this.ensureLocalMemoryRepo(
-      agent.id,
-      initialMemoryFilesFromCreateBody(body),
-      agent.name ?? undefined,
-    );
+    if (this.isLocalMemfsEnabled()) {
+      await this.ensureLocalMemoryRepo(
+        agent.id,
+        initialMemoryFilesFromCreateBody(body),
+        agent.name ?? undefined,
+      );
+    }
     await this.compileAndMaybePersistSystemPrompt("default", agent.id, {
       dryRun: false,
     });
@@ -222,6 +274,28 @@ export class LocalBackend extends HeadlessBackend {
     return compiled.content;
   }
 
+  override async compactConversationMessages(
+    conversationId: string,
+    body?: ConversationMessageCompactBody,
+  ): ReturnType<Backend["compactConversationMessages"]> {
+    const bodyRecord = (body ?? {}) as Record<string, unknown>;
+    const agentId =
+      typeof bodyRecord.agent_id === "string" && bodyRecord.agent_id.length > 0
+        ? bodyRecord.agent_id
+        : this.store.resolveAgentIdForConversation(conversationId);
+    const result = await this.compactLocalConversationAll(
+      conversationId,
+      agentId,
+      "manual",
+      body,
+    );
+    return {
+      num_messages_before: result.numMessagesBefore,
+      num_messages_after: result.numMessagesAfter,
+      summary: result.summary,
+    } as Awaited<ReturnType<Backend["compactConversationMessages"]>>;
+  }
+
   protected override async resolveSystemPromptForTurn(input: {
     conversationId: string;
     agentId: string;
@@ -251,6 +325,10 @@ export class LocalBackend extends HeadlessBackend {
     );
   }
 
+  private isLocalMemfsEnabled(): boolean {
+    return this.memfsEnabledOverride ?? !isLocalBackendNoMemfsEnvEnabled();
+  }
+
   private async ensureLocalMemoryRepo(
     agentId: string,
     files: InitializeLocalMemoryRepoFile[] = [],
@@ -264,6 +342,160 @@ export class LocalBackend extends HeadlessBackend {
     });
   }
 
+  private async compactAfterContextOverflow(
+    input: ProviderTurnInput,
+    _error: unknown,
+  ): Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null> {
+    const result = await this.compactLocalConversationAll(
+      input.conversationId,
+      input.agentId,
+      "context_window_overflow",
+      {
+        compaction_settings: { mode: "all" },
+      } as ConversationMessageCompactBody,
+    );
+    return {
+      uiMessages: this.store.listLocalMessages(
+        input.conversationId,
+        input.agentId,
+      ),
+      summary: result.summary,
+      stats: result.stats,
+    };
+  }
+
+  private async compactAfterContextUsage(
+    input: ProviderTurnInput,
+    usage: LanguageModelUsage,
+  ): Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null> {
+    const contextTokens = usage.inputTokens;
+    const contextWindow = this.effectiveContextWindow(
+      input.conversationId,
+      input.agentId,
+    );
+    if (
+      contextTokens === undefined ||
+      contextWindow === undefined ||
+      contextTokens <= contextWindow
+    ) {
+      return null;
+    }
+
+    const result = await this.compactLocalConversationAll(
+      input.conversationId,
+      input.agentId,
+      "context_window_limit",
+      {
+        compaction_settings: { mode: "all" },
+      } as ConversationMessageCompactBody,
+    );
+    return {
+      uiMessages: this.store.listLocalMessages(
+        input.conversationId,
+        input.agentId,
+      ),
+      summary: result.summary,
+      stats: result.stats,
+    };
+  }
+
+  private effectiveContextWindow(
+    conversationId: string,
+    agentId: string,
+  ): number | undefined {
+    const conversation = this.store.retrieveConversation(
+      conversationId,
+      agentId,
+    ) as { context_window_limit?: unknown; model_settings?: unknown };
+    if (typeof conversation.context_window_limit === "number") {
+      return conversation.context_window_limit;
+    }
+    const conversationModelSettings = conversation.model_settings;
+    if (
+      conversationModelSettings &&
+      typeof conversationModelSettings === "object" &&
+      !Array.isArray(conversationModelSettings) &&
+      typeof (conversationModelSettings as { context_window_limit?: unknown })
+        .context_window_limit === "number"
+    ) {
+      return (conversationModelSettings as { context_window_limit: number })
+        .context_window_limit;
+    }
+    const agent = this.store.retrieveAgentRecord(agentId);
+    return typeof agent.model_settings.context_window_limit === "number"
+      ? agent.model_settings.context_window_limit
+      : undefined;
+  }
+
+  private async compactLocalConversationAll(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+    body?: ConversationMessageCompactBody,
+  ): Promise<{
+    numMessagesBefore: number;
+    numMessagesAfter: number;
+    summary: string;
+    stats: LocalCompactionStats;
+  }> {
+    const settings = ((body ?? {}) as Record<string, unknown>)
+      .compaction_settings as Record<string, unknown> | null | undefined;
+    const mode = typeof settings?.mode === "string" ? settings.mode : "all";
+    if (mode !== "all") {
+      throw new Error(
+        `Local backend compaction currently supports only mode "all" (received "${mode}").`,
+      );
+    }
+
+    const agent = this.store.retrieveAgentRecord(agentId);
+    const messages = this.store.listLocalMessages(conversationId, agentId);
+    const contextTokensBefore = estimateLocalMessageTokens(messages);
+    const prompt =
+      typeof settings?.prompt === "string" ? settings.prompt : null;
+    const clipChars =
+      typeof settings?.clip_chars === "number" || settings?.clip_chars === null
+        ? settings.clip_chars
+        : undefined;
+    const summary = await summarizeLocalMessagesAll({
+      agent,
+      messages,
+      createModel: this.createModel,
+      generateText: this.generateText,
+      prompt,
+      clipChars,
+      localProviderAuthStorageDir: this.storageDir,
+    });
+    const stats: LocalCompactionStats = {
+      trigger,
+      context_tokens_before: contextTokensBefore,
+      context_tokens_after: Math.ceil(summary.length / 4),
+      context_window: this.effectiveContextWindow(conversationId, agentId),
+      messages_count_before: messages.length,
+      messages_count_after: 1,
+    };
+    const storeResult = this.store.compactConversationAll({
+      conversationId,
+      agentId,
+      summary,
+      packedSummary: packageLocalSummaryMessage(summary, stats),
+      stats,
+    });
+    return {
+      numMessagesBefore: storeResult.numMessagesBefore,
+      numMessagesAfter: storeResult.numMessagesAfter,
+      summary,
+      stats,
+    };
+  }
+
   private async getOrCompileSystemPrompt(
     conversationId: string,
     agentId: string,
@@ -274,13 +506,15 @@ export class LocalBackend extends HeadlessBackend {
       conversationId,
       agentId,
     );
-    const memfsRevision = await getMemoryHeadRevision(
-      this.memoryDirForAgent(agentId),
-    );
+    const memfsEnabled = this.isLocalMemfsEnabled();
+    const memfsRevision = memfsEnabled
+      ? await getMemoryHeadRevision(this.memoryDirForAgent(agentId))
+      : undefined;
     if (
       existing?.rawSystemHash === hashRawSystemPrompt(agent.system) &&
-      memfsRevision !== null &&
-      existing.memfsRevision === memfsRevision
+      (memfsEnabled
+        ? memfsRevision !== null && existing.memfsRevision === memfsRevision
+        : existing.memfsRevision === undefined)
     ) {
       return existing;
     }
@@ -296,7 +530,10 @@ export class LocalBackend extends HeadlessBackend {
     options: { dryRun: boolean; previousMessageCount?: number },
   ): Promise<LocalCompiledSystemPrompt> {
     const agent = this.store.retrieveAgentRecord(agentId);
-    await this.ensureLocalMemoryRepo(agentId, [], agent.name);
+    const memfsEnabled = this.isLocalMemfsEnabled();
+    if (memfsEnabled) {
+      await this.ensureLocalMemoryRepo(agentId, [], agent.name);
+    }
     const previousMessageCount =
       options.previousMessageCount ??
       this.store.listConversationMessages(conversationId, {
@@ -307,7 +544,8 @@ export class LocalBackend extends HeadlessBackend {
       agent,
       conversationId,
       previousMessageCount,
-      memoryDir: this.memoryDirForAgent(agentId),
+      memoryDir: memfsEnabled ? this.memoryDirForAgent(agentId) : undefined,
+      includeMemfs: memfsEnabled,
     });
     if (!options.dryRun) {
       this.store.setCompiledSystemPrompt(conversationId, agentId, compiled);

@@ -345,8 +345,12 @@ function checkPermissionForEngine(
     effectivePlanFilePath,
   );
   if (modeOverride) {
-    let reason = `Permission mode: ${effectiveMode}`;
-    if (effectiveMode === "plan" && modeOverride === "deny") {
+    let reason = modeOverride.reason ?? `Permission mode: ${effectiveMode}`;
+    if (
+      effectiveMode === "plan" &&
+      modeOverride.decision === "deny" &&
+      !modeOverride.reason
+    ) {
       const applyPatchRelativePath = effectivePlanFilePath
         ? relative(workingDirectory, effectivePlanFilePath).replace(/\\/g, "/")
         : null;
@@ -361,7 +365,7 @@ function checkPermissionForEngine(
     traceEvent(trace, "mode-override", reason);
     return {
       result: {
-        decision: modeOverride,
+        decision: modeOverride.decision,
         matchedRule: `${effectiveMode} mode`,
         reason,
       },

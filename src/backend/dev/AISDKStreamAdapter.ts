@@ -3,6 +3,7 @@ import {
   convertToModelMessages,
   jsonSchema,
   type LanguageModel,
+  type LanguageModelUsage,
   type ModelMessage,
   streamText,
   type TextStreamPart,
@@ -11,17 +12,27 @@ import {
   validateUIMessages,
 } from "ai";
 import type { ClientTool } from "../../tools/manager";
+import type { LocalCompactionStats } from "../local/compaction";
 import type { LocalMessage } from "../local/LocalMessage";
 import { createAISDKModelFactoryFromAgent } from "./AISDKModelFactory";
+import {
+  type AISDKProviderKind,
+  aiSDKProviderKindFromModel,
+} from "./AISDKProviderRegistry";
+import { isContextWindowOverflowError } from "./contextWindowOverflow";
 import type {
   ProviderStreamAdapter,
   ProviderStreamEvent,
   ProviderTurnInput,
 } from "./ProviderTurnExecutor";
-import { providerStreamPart, providerUIMessage } from "./ProviderTurnExecutor";
+import {
+  providerLettaChunk,
+  providerStreamPart,
+  providerUIMessage,
+} from "./ProviderTurnExecutor";
 
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
-type AISDKProviderKind = "anthropic" | "openai" | "unknown";
+type InputModality = "text" | "image" | "audio" | "video" | "pdf";
 type AISDKUIMessageStreamFinish = {
   messages: LocalMessage[];
   responseMessage: LocalMessage;
@@ -53,6 +64,23 @@ export interface AISDKStreamAdapterOptions {
   createModel?: () => LanguageModel;
   abortSignal?: AbortSignal;
   streamText?: AISDKStreamTextFunction;
+  localProviderAuthStorageDir?: string;
+  onContextWindowOverflow?: (
+    input: ProviderTurnInput,
+    error: unknown,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>;
+  onContextUsage?: (
+    input: ProviderTurnInput,
+    usage: LanguageModelUsage,
+  ) => Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -170,19 +198,17 @@ function aiSDKProviderKind(
   modelHandle: string,
   modelSettings: Record<string, unknown>,
 ): AISDKProviderKind {
-  const providerType = stringValue(modelSettings.provider_type);
-  if (
-    providerType === "openai" ||
-    providerType === "openai-responses" ||
-    modelHandle.startsWith("openai/") ||
-    modelHandle.startsWith("openai-codex/")
-  ) {
-    return "openai";
-  }
-  if (providerType === "anthropic" || modelHandle.startsWith("anthropic/")) {
-    return "anthropic";
-  }
-  return "unknown";
+  return aiSDKProviderKindFromModel(modelHandle, modelSettings);
+}
+
+function isChatGPTOAuthModel(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+): boolean {
+  return (
+    modelHandle.startsWith("chatgpt-plus-pro/") ||
+    stringValue(modelSettings.provider_type) === "chatgpt_oauth"
+  );
 }
 
 function partProviderMetadata(
@@ -223,12 +249,201 @@ function shouldKeepReasoningPart(
   return true;
 }
 
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) &&
+    value.every((entry) => typeof entry === "string")
+    ? value
+    : undefined;
+}
+
+function mimeToModality(mime: string): InputModality | undefined {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime.startsWith("video/")) return "video";
+  if (mime === "application/pdf") return "pdf";
+  return undefined;
+}
+
+function modalitiesFromModelSettings(
+  modelSettings: Record<string, unknown>,
+): Set<InputModality> | undefined {
+  const modalities = isRecord(modelSettings.modalities)
+    ? modelSettings.modalities
+    : undefined;
+  const input = stringArray(modalities?.input);
+  if (!input) return undefined;
+
+  return new Set(
+    input.filter((entry): entry is InputModality =>
+      ["text", "image", "audio", "video", "pdf"].includes(entry),
+    ),
+  );
+}
+
+function capabilitiesFromModelSettings(
+  modelSettings: Record<string, unknown>,
+): Set<InputModality> | undefined {
+  const capabilities = isRecord(modelSettings.capabilities)
+    ? modelSettings.capabilities
+    : undefined;
+  const input = isRecord(capabilities?.input) ? capabilities.input : undefined;
+  if (!input) return undefined;
+
+  const supported = new Set<InputModality>(["text"]);
+  for (const modality of ["image", "audio", "video", "pdf"] as const) {
+    if (input[modality] === true) supported.add(modality);
+  }
+  return supported;
+}
+
+function knownModelInputModalities(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+): Set<InputModality> {
+  const explicitModalities = modalitiesFromModelSettings(modelSettings);
+  if (explicitModalities) return explicitModalities;
+
+  const explicitCapabilities = capabilitiesFromModelSettings(modelSettings);
+  if (explicitCapabilities) return explicitCapabilities;
+
+  const handle = modelHandle.toLowerCase();
+  const supported = new Set<InputModality>(["text"]);
+
+  // Built-in local defaults. Custom/OpenAI-compatible models can opt in via
+  // model_settings.modalities.input, matching OpenCode's configuration shape.
+  if (
+    handle.startsWith("anthropic/") ||
+    handle.startsWith("claude-pro-max/") ||
+    handle.startsWith("bedrock/") ||
+    handle.startsWith("google_ai/") ||
+    handle.startsWith("google_vertex/") ||
+    handle.includes("gemini") ||
+    handle.includes("claude") ||
+    handle.includes("gpt-4o") ||
+    handle.includes("gpt-4.1") ||
+    handle.includes("gpt-5") ||
+    handle.includes("o3") ||
+    handle.includes("o4") ||
+    handle.includes("vision") ||
+    handle.includes("qwen-vl") ||
+    handle.includes("qwen2-vl") ||
+    handle.includes("qwen2.5-vl") ||
+    handle.includes("qwen3-vl") ||
+    handle.includes("llava") ||
+    handle.includes("bakllava") ||
+    handle.includes("moondream")
+  ) {
+    supported.add("image");
+  }
+
+  return supported;
+}
+
+function modelSupportsInputModality(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+  modality: InputModality,
+): boolean {
+  if (modality === "text") return true;
+  return knownModelInputModalities(modelHandle, modelSettings).has(modality);
+}
+
+function isEmptyBase64DataUrl(data: unknown): boolean {
+  if (typeof data !== "string" || !data.startsWith("data:")) return false;
+  const match = data.match(/^data:([^;]+);base64,(.*)$/);
+  return Boolean(match && (!match[2] || match[2].length === 0));
+}
+
+function filePartMediaType(part: Record<string, unknown>): string | undefined {
+  if (typeof part.mediaType === "string") return part.mediaType;
+  if (typeof part.mime === "string") return part.mime;
+  return undefined;
+}
+
+function imagePartMediaType(part: Record<string, unknown>): string | undefined {
+  if (typeof part.image === "string" && part.image.startsWith("data:")) {
+    return part.image.split(";")[0]?.replace("data:", "");
+  }
+  if (isRecord(part.source) && typeof part.source.media_type === "string") {
+    return part.source.media_type;
+  }
+  return undefined;
+}
+
+function partFilename(part: Record<string, unknown>): string | undefined {
+  return stringValue(part.filename) ?? stringValue(part.name);
+}
+
+function replaceUnsupportedInputPart(
+  part: LocalMessage["parts"][number],
+  agent: ProviderTurnInput["agent"],
+): LocalMessage["parts"][number] {
+  if (!isRecord(part)) return part;
+  const record = part as Record<string, unknown>;
+  const partType = typeof record.type === "string" ? record.type : undefined;
+  if (partType !== "file" && partType !== "image") {
+    return part;
+  }
+
+  if (partType === "image" && isEmptyBase64DataUrl(record.image)) {
+    return {
+      type: "text",
+      text: "ERROR: Image file is empty or corrupted. Please provide a valid image.",
+    } as LocalMessage["parts"][number];
+  }
+
+  const mime =
+    partType === "image"
+      ? imagePartMediaType(record)
+      : filePartMediaType(record);
+  if (!mime) return part;
+
+  const modality = mimeToModality(mime);
+  if (!modality) return part;
+
+  if (modelSupportsInputModality(agent.model, agent.model_settings, modality)) {
+    return part;
+  }
+
+  const name = partFilename(record);
+  return {
+    type: "text",
+    text: `ERROR: Cannot read ${name ? `"${name}"` : modality} (this model does not support ${modality} input). Inform the user.`,
+  } as LocalMessage["parts"][number];
+}
+
+function replaceUnsupportedInputParts(
+  messages: LocalMessage[],
+  agent: ProviderTurnInput["agent"],
+): LocalMessage[] {
+  let didChange = false;
+  const transformed = messages.map((message) => {
+    if (message.role !== "user") return message;
+    let messageDidChange = false;
+    const parts = message.parts.map((part) => {
+      const replacement = replaceUnsupportedInputPart(part, agent);
+      if (replacement !== part) {
+        didChange = true;
+        messageDidChange = true;
+      }
+      return replacement;
+    });
+    return messageDidChange ? { ...message, parts } : message;
+  });
+  return didChange ? transformed : messages;
+}
+
 function sanitizeUIMessagesForProvider(
   messages: LocalMessage[],
   provider: AISDKProviderKind,
+  agent: ProviderTurnInput["agent"],
 ): LocalMessage[] {
-  if (provider === "unknown") return messages;
-  return messages
+  const capabilitySanitizedMessages = replaceUnsupportedInputParts(
+    messages,
+    agent,
+  );
+  if (provider === "unknown") return capabilitySanitizedMessages;
+  return capabilitySanitizedMessages
     .map((message) => {
       const parts = message.parts.filter((part) =>
         shouldKeepReasoningPart(part, provider),
@@ -245,10 +460,12 @@ function sanitizeUIMessagesForProvider(
 export function buildAISDKProviderOptions(
   modelHandle: string,
   modelSettings: Record<string, unknown>,
+  options: { systemPrompt?: string } = {},
 ): AISDKProviderOptions | undefined {
   const provider = aiSDKProviderKind(modelHandle, modelSettings);
 
   if (provider === "openai") {
+    const chatgptOAuth = isChatGPTOAuthModel(modelHandle, modelSettings);
     const reasoning = isRecord(modelSettings.reasoning)
       ? modelSettings.reasoning
       : undefined;
@@ -258,6 +475,13 @@ export function buildAISDKProviderOptions(
     const textVerbosity = openAITextVerbosity(modelSettings.verbosity);
     const parallelToolCalls = boolValue(modelSettings.parallel_tool_calls);
     const openai = {
+      ...(chatgptOAuth
+        ? {
+            instructions: options.systemPrompt,
+            store: false,
+            systemMessageMode: "remove" as const,
+          }
+        : {}),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       ...(textVerbosity !== undefined ? { textVerbosity } : {}),
       ...(parallelToolCalls !== undefined ? { parallelToolCalls } : {}),
@@ -325,21 +549,53 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
   private readonly createModel?: () => LanguageModel;
   private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
+  private readonly localProviderAuthStorageDir?: string;
+  private readonly onContextWindowOverflow?: AISDKStreamAdapterOptions["onContextWindowOverflow"];
+  private readonly onContextUsage?: AISDKStreamAdapterOptions["onContextUsage"];
 
   constructor(options: AISDKStreamAdapterOptions) {
     this.createModel = options.createModel;
     this.runStreamText = options.streamText ?? defaultStreamText;
     this.abortSignal = options.abortSignal;
+    this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
+    this.onContextWindowOverflow = options.onContextWindowOverflow;
+    this.onContextUsage = options.onContextUsage;
   }
 
-  async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
+  private async *emitCompactionChunks(
+    compaction: {
+      summary: string;
+      stats?: LocalCompactionStats;
+    },
+    fallbackTrigger: string,
+  ): AsyncIterable<ProviderStreamEvent> {
+    const trigger = compaction.stats?.trigger ?? fallbackTrigger;
+    yield providerLettaChunk({
+      message_type: "event_message",
+      event_type: "compaction",
+      event_data: { trigger },
+    } as never);
+    yield providerLettaChunk({
+      message_type: "summary_message",
+      summary: compaction.summary,
+      ...(compaction.stats ? { compaction_stats: compaction.stats } : {}),
+    } as never);
+  }
+
+  private async *streamOnce(
+    input: ProviderTurnInput,
+  ): AsyncIterable<ProviderStreamEvent> {
     const tools = toToolSet(input.clientTools);
     const provider = aiSDKProviderKind(
       input.agent.model,
       input.agent.model_settings,
     );
     const uiMessages = await validateUIMessages<LocalMessage>({
-      messages: sanitizeUIMessagesForProvider(input.uiMessages, provider),
+      messages: sanitizeUIMessagesForProvider(
+        input.uiMessages,
+        provider,
+        input.agent,
+      ),
       tools: tools as never,
     });
     const result = this.runStreamText({
@@ -348,13 +604,19 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
         createAISDKModelFactoryFromAgent(
           input.agent.model,
           input.agent.model_settings,
+          { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
         )(),
-      system: input.systemPrompt ?? input.agent.system,
+      system:
+        provider === "openai" &&
+        isChatGPTOAuthModel(input.agent.model, input.agent.model_settings)
+          ? undefined
+          : (input.systemPrompt ?? input.agent.system),
       messages: await convertToModelMessages(uiMessages, { tools }),
       tools,
       providerOptions: buildAISDKProviderOptions(
         input.agent.model,
         input.agent.model_settings,
+        { systemPrompt: input.systemPrompt ?? input.agent.system },
       ),
       maxRetries: 0,
       abortSignal: this.abortSignal,
@@ -367,14 +629,71 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       },
     );
 
+    let streamError: unknown;
+    let lastUsage: LanguageModelUsage | undefined;
+    let sawToolCall = false;
+    let finishReason: string | undefined;
     for await (const part of result.fullStream) {
+      if (part.type === "error" && isContextWindowOverflowError(part.error)) {
+        streamError = part.error;
+        break;
+      }
+      if (part.type === "tool-call") {
+        sawToolCall = true;
+      }
+      if (part.type === "finish-step") {
+        lastUsage = part.usage;
+      }
+      if (part.type === "finish") {
+        finishReason = part.finishReason;
+        lastUsage ??= part.totalUsage;
+      }
       yield providerStreamPart(part);
+    }
+
+    if (streamError) {
+      await finalUIMessage.catch(() => undefined);
+      throw streamError;
     }
 
     const message = await finalUIMessage;
     if (uiMessageError) throw uiMessageError;
     if (message) {
       yield providerUIMessage(message);
+    }
+    if (
+      lastUsage &&
+      !sawToolCall &&
+      finishReason !== "tool-calls" &&
+      this.onContextUsage
+    ) {
+      const compaction = await this.onContextUsage(input, lastUsage);
+      if (compaction) {
+        yield* this.emitCompactionChunks(compaction, "context_window_limit");
+      }
+    }
+  }
+
+  async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
+    try {
+      yield* this.streamOnce(input);
+    } catch (error) {
+      if (
+        !isContextWindowOverflowError(error) ||
+        !this.onContextWindowOverflow
+      ) {
+        throw error;
+      }
+
+      const compaction = await this.onContextWindowOverflow(input, error);
+      if (!compaction) throw error;
+
+      yield* this.emitCompactionChunks(compaction, "context_window_overflow");
+
+      yield* this.streamOnce({
+        ...input,
+        uiMessages: compaction.uiMessages,
+      });
     }
   }
 }

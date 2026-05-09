@@ -82,7 +82,6 @@ export interface Settings {
     }
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
-  globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
@@ -113,7 +112,6 @@ export interface Settings {
 }
 
 export interface ProjectSettings {
-  localSharedBlockIds: Record<string, string>;
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   statusLine?: StatusLineConfig; // Project-specific status line command
 }
@@ -154,12 +152,9 @@ const DEFAULT_SETTINGS: Settings = {
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
-  globalSharedBlockIds: {},
 };
 
-const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
-  localSharedBlockIds: {},
-};
+const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {};
 
 const DEFAULT_LOCAL_PROJECT_SETTINGS: LocalProjectSettings = {
   lastAgent: null,
@@ -707,8 +702,6 @@ class SettingsManager {
       const rawSettings = JSON.parse(content) as Record<string, unknown>;
 
       const projectSettings: ProjectSettings = {
-        localSharedBlockIds:
-          (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
         hooks: rawSettings.hooks as HooksConfig | undefined,
         statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
       };

@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,42 +14,86 @@ import { dirname, join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   LanguageModel,
+  LanguageModelUsage,
   ModelMessage,
   TextStreamPart,
   ToolSet,
   UIMessageChunk,
 } from "ai";
+import { APICallError } from "ai";
 import type {
   AgentCreateBody,
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
+  ConversationRecompileBody,
   RunMessageStreamBody,
 } from "../../backend";
 import {
+  createAISDKModelFactoryFromAgent,
+  resolveZaiConnection,
+} from "../../backend/dev/AISDKModelFactory";
+import {
+  createOrUpdateLocalProvider,
+  getLocalProviderAuthPath,
+  LOCAL_ALL_COMPACTION_PROMPT,
   LocalBackend,
   listLocalModels,
   resolveLocalModelConfig,
+  setLocalChatGPTOAuth,
 } from "../../backend/local";
 import type { LocalMessage } from "../../backend/local/LocalMessage";
 import { projectLocalMessagesToStoredMessages } from "../../backend/local/LocalMessageProjection";
 import { LocalStore } from "../../backend/local/LocalStore";
 import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
 
+const TEST_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+
 async function withLocalModelEnv<T>(
   env: {
     openAIKey?: string;
     anthropicKey?: string;
+    openRouterKey?: string;
+    zaiKey?: string;
+    zhipuKey?: string;
   },
   fn: () => T | Promise<T>,
 ): Promise<T> {
   const originalOpenAIKey = process.env.OPENAI_API_KEY;
   const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
+  const originalZaiKey = process.env.ZAI_API_KEY;
+  const originalZhipuKey = process.env.ZHIPU_API_KEY;
+  const originalMinimaxKey = process.env.MINIMAX_API_KEY;
+  const originalMoonshotKey = process.env.MOONSHOT_API_KEY;
+  const originalGoogleKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  const originalAwsAccessKey = process.env.AWS_ACCESS_KEY_ID;
+  const originalAwsSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const originalAwsRegion = process.env.AWS_REGION;
+  const originalOllamaKey = process.env.OLLAMA_API_KEY;
+  const originalLmstudioKey = process.env.LMSTUDIO_API_KEY;
   try {
     if (env.openAIKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = env.openAIKey;
     if (env.anthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = env.anthropicKey;
+    if (env.openRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = env.openRouterKey;
+    if (env.zaiKey === undefined) delete process.env.ZAI_API_KEY;
+    else process.env.ZAI_API_KEY = env.zaiKey;
+    if (env.zhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = env.zhipuKey;
+    delete process.env.MINIMAX_API_KEY;
+    delete process.env.MOONSHOT_API_KEY;
+    delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.AWS_ACCESS_KEY_ID;
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    delete process.env.AWS_REGION;
+    delete process.env.OLLAMA_API_KEY;
+    delete process.env.LMSTUDIO_API_KEY;
     return await fn();
   } finally {
     if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -56,6 +101,34 @@ async function withLocalModelEnv<T>(
     if (originalAnthropicKey === undefined)
       delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+    if (originalOpenRouterKey === undefined)
+      delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalOpenRouterKey;
+    if (originalZaiKey === undefined) delete process.env.ZAI_API_KEY;
+    else process.env.ZAI_API_KEY = originalZaiKey;
+    if (originalZhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = originalZhipuKey;
+    if (originalMinimaxKey === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = originalMinimaxKey;
+    if (originalMoonshotKey === undefined) delete process.env.MOONSHOT_API_KEY;
+    else process.env.MOONSHOT_API_KEY = originalMoonshotKey;
+    if (originalGoogleKey === undefined)
+      delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    else process.env.GOOGLE_GENERATIVE_AI_API_KEY = originalGoogleKey;
+    if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalGeminiKey;
+    if (originalAwsAccessKey === undefined)
+      delete process.env.AWS_ACCESS_KEY_ID;
+    else process.env.AWS_ACCESS_KEY_ID = originalAwsAccessKey;
+    if (originalAwsSecretKey === undefined)
+      delete process.env.AWS_SECRET_ACCESS_KEY;
+    else process.env.AWS_SECRET_ACCESS_KEY = originalAwsSecretKey;
+    if (originalAwsRegion === undefined) delete process.env.AWS_REGION;
+    else process.env.AWS_REGION = originalAwsRegion;
+    if (originalOllamaKey === undefined) delete process.env.OLLAMA_API_KEY;
+    else process.env.OLLAMA_API_KEY = originalOllamaKey;
+    if (originalLmstudioKey === undefined) delete process.env.LMSTUDIO_API_KEY;
+    else process.env.LMSTUDIO_API_KEY = originalLmstudioKey;
   }
 }
 
@@ -176,6 +249,26 @@ function uiMessageStream(
   });
 }
 
+function modelUsage(
+  inputTokens: number,
+  outputTokens: number,
+): LanguageModelUsage {
+  return {
+    inputTokens,
+    inputTokenDetails: {
+      noCacheTokens: inputTokens,
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+    },
+    outputTokens,
+    outputTokenDetails: {
+      textTokens: outputTokens,
+      reasoningTokens: undefined,
+    },
+    totalTokens: inputTokens + outputTokens,
+  };
+}
+
 type MockUIMessageStreamOptions = {
   originalMessages?: LocalMessage[];
   onFinish?: (options: {
@@ -247,6 +340,177 @@ describe("LocalBackend", () => {
       expect(handles).toContain("openai/gpt-5.3-codex");
       expect(handles).not.toContain("anthropic/claude-opus-4-7");
     });
+  });
+
+  test("lists models for locally connected providers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-auth-"));
+    try {
+      await withLocalModelEnv({}, async () => {
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "openrouter",
+          providerName: "lc-openrouter",
+          apiKey: "test-openrouter-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "zai",
+          providerName: "lc-zai",
+          apiKey: "test-zai-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "minimax",
+          providerName: "lc-minimax",
+          apiKey: "test-minimax-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "moonshot",
+          providerName: "lc-moonshot",
+          apiKey: "test-moonshot-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "google_ai",
+          providerName: "lc-gemini",
+          apiKey: "test-gemini-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "bedrock",
+          providerName: "lc-bedrock",
+          apiKey: "test-aws-secret-key",
+          accessKey: "test-aws-access-key",
+          region: "us-east-1",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "ollama",
+          providerName: "lc-ollama",
+          apiKey: "not-needed",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "ollama_cloud",
+          providerName: "lc-ollama-cloud",
+          apiKey: "test-ollama-cloud-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "lmstudio",
+          providerName: "lc-lmstudio",
+          apiKey: "not-needed",
+        });
+        setLocalChatGPTOAuth(
+          {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account",
+          },
+          storageDir,
+        );
+
+        const authFile = await stat(getLocalProviderAuthPath(storageDir));
+        if (process.platform !== "win32") {
+          expect(authFile.mode & 0o777).toBe(0o600);
+        }
+
+        const handles = listLocalModels(storageDir).map(
+          (model) => model.handle,
+        );
+        expect(handles).toContain("openrouter/deepseek/deepseek-v4-pro");
+        expect(handles).toContain("zai/glm-5.1");
+        expect(handles).toContain("minimax/MiniMax-M2.7");
+        expect(handles).toContain("moonshot/kimi-k2.5");
+        expect(handles).toContain("google_ai/gemini-3.1-pro-preview");
+        expect(handles).toContain("bedrock/us.anthropic.claude-sonnet-4-6");
+        expect(handles).toContain("ollama/llama2");
+        expect(handles).toContain("ollama-cloud/gpt-oss:20b");
+        expect(handles).toContain("lmstudio/google/gemma-3n-e4b");
+        expect(handles).toContain("chatgpt-plus-pro/gpt-5.5");
+        expect(handles).not.toContain("anthropic/claude-opus-4-7");
+
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        const backendModels = (await backend.listModels()) as Array<{
+          handle: string;
+          model_endpoint_type: string;
+        }>;
+        expect(backendModels.map((model) => model.handle)).toContain(
+          "openrouter/deepseek/deepseek-v4-pro",
+        );
+        expect(backendModels).toContainEqual(
+          expect.objectContaining({
+            handle: "zai/glm-5.1",
+            model_endpoint_type: "zai",
+          }),
+        );
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves local AI SDK providers from model prefixes before generic settings", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-factory-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openrouter",
+        providerName: "lc-openrouter",
+        apiKey: "test-openrouter-key",
+      });
+
+      let capturedModel: string | undefined;
+      const factory = createAISDKModelFactoryFromAgent(
+        "openrouter/deepseek/deepseek-v4-pro",
+        { provider_type: "openai" },
+        {
+          localProviderAuthStorageDir: storageDir,
+          createOpenAICompatibleModel: (model) => {
+            capturedModel = model;
+            return {} as LanguageModel;
+          },
+        },
+      );
+
+      factory();
+      expect(capturedModel).toBe("deepseek/deepseek-v4-pro");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses Z.AI coding endpoint when only a coding-plan key is connected", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-zai-coding-"));
+    try {
+      await withLocalModelEnv({}, async () => {
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "zai_coding",
+          providerName: "lc-zai-coding",
+          apiKey: "test-zai-coding-key",
+        });
+
+        expect(
+          resolveZaiConnection({
+            storageDir,
+            preferredProviderType: "zai_coding",
+          }),
+        ).toMatchObject({
+          apiKey: "test-zai-coding-key",
+          providerName: "zai-coding",
+          baseURL: "https://api.z.ai/api/coding/paas/v4",
+        });
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("uses strict local flatfile semantics behind the real local entrypoint", async () => {
@@ -321,6 +585,44 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("can run local turns without creating a local MemFS repo", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-no-memfs-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+
+      const agent = await backend.createAgent({
+        name: "No MemFS Local Agent",
+        system: "Plain local system prompt.",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("ping", agent.id),
+        ),
+      );
+
+      await expect(
+        stat(getLocalBackendMemoryFilesystemRoot(agent.id, storageDir)),
+      ).rejects.toThrow();
+      await expect(
+        backend.recompileConversation(conversation.id, {
+          agent_id: agent.id,
+          dry_run: true,
+        } as ConversationRecompileBody),
+      ).resolves.toContain("Plain local system prompt.");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("defaults to the AI SDK executor for local turns", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-ai-sdk-"));
     try {
@@ -388,6 +690,282 @@ describe("LocalBackend", () => {
       expect(replayed.map((chunk) => chunk.message_type)).toEqual(
         (chunks as LettaStreamingResponse[]).map((chunk) => chunk.message_type),
       );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts local conversation history with the backend all-compaction prompt", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-compact-"));
+    try {
+      let capturedSystem: string | undefined;
+      let capturedPrompt: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: {
+          system?: string;
+          prompt?: string;
+        }) => {
+          capturedSystem = options.system;
+          capturedPrompt = options.prompt;
+          return { text: "manual local summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Compact Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+        {
+          compaction_settings: { mode: "all" },
+        } as never,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 4,
+        num_messages_after: 1,
+        summary: "manual local summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+      expect(capturedPrompt).toContain("first request");
+      expect(capturedPrompt).toContain("second request");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain("manual local summary");
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      expect(persistedMessages).toHaveLength(1);
+      expect(JSON.stringify(persistedMessages[0])).toContain("system_alert");
+      expect(JSON.stringify(persistedMessages[0])).toContain(
+        "manual local summary",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("auto-compacts and retries local AI SDK turns on context overflow", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-auto-compact-"),
+    );
+    try {
+      let streamCalls = 0;
+      let summaryPrompt: string | undefined;
+      const modelMessagesByCall: ModelMessage[][] = [];
+      const overflow = new APICallError({
+        message: "context_length_exceeded: maximum context length exceeded",
+        url: "https://example.invalid/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: "maximum context length exceeded",
+        isRetryable: false,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "overflow local summary" } as never;
+        }) as never,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+
+          if (streamCalls === 2) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Auto Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(3);
+      expect(summaryPrompt).toContain("first request");
+      expect(summaryPrompt).toContain("overflowing request");
+      const chunkTypes = chunks.map((chunk) => chunk.message_type as string);
+      expect(chunkTypes).toContain("event_message");
+      expect(chunkTypes).toContain("summary_message");
+      expect(JSON.stringify(chunks)).toContain("after compaction");
+      expect(JSON.stringify(modelMessagesByCall[2])).toContain(
+        "overflow local summary",
+      );
+      expect(JSON.stringify(modelMessagesByCall[2])).not.toContain(
+        "first request",
+      );
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      expect(
+        page.getPaginatedItems().map((message) => message.message_type),
+      ).toEqual(["summary_message", "assistant_message"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts after local AI SDK usage exceeds the configured context window", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-compact-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage = modelUsage(150, 12);
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "usage-triggered local summary" } as never;
+        }) as never,
+        streamText: () => {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "usage-text",
+                text: "limit response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-usage-limit",
+              role: "assistant",
+              parts: [{ type: "text", text: "limit response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 100,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("limit trigger request", agent.id),
+        ),
+      );
+
+      const usageChunk = chunks.find(
+        (chunk) => chunk.message_type === "usage_statistics",
+      ) as { context_tokens?: number; prompt_tokens?: number } | undefined;
+      expect(usageChunk?.context_tokens).toBe(150);
+      expect(usageChunk?.prompt_tokens).toBe(150);
+      expect(summaryPrompt).toContain("limit trigger request");
+      expect(summaryPrompt).toContain("limit response");
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("usage-triggered local summary");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain(
+        "usage-triggered local summary",
+      );
+      expect(JSON.stringify(messages[0])).toContain('"context_window":100');
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -1353,6 +1931,111 @@ describe("LocalBackend", () => {
         "tool_return_message",
         "assistant_message",
       ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("converts pasted Letta image parts to AI SDK file UI parts for local history", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-image-"));
+    try {
+      const modelMessagesByCall: ModelMessage[][] = [];
+      let streamCalls = 0;
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text: `image response ${streamCalls}`,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-image-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text: `image response ${streamCalls}` }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Image Agent",
+        model: "openai/gpt-4.1",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(conversation.id, {
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "please inspect this" },
+                {
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: "image/png",
+                    data: TEST_PNG_BASE64,
+                  },
+                },
+              ],
+            },
+          ],
+          streaming: true,
+          stream_tokens: true,
+          include_pings: true,
+          background: true,
+          client_tools: [],
+          client_skills: [],
+          agent_id: agent.id,
+        } as unknown as ConversationMessageCreateBody),
+      );
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("and now a text-only follow-up", agent.id),
+        ),
+      );
+
+      expect(modelMessagesByCall).toHaveLength(2);
+      expect(JSON.stringify(modelMessagesByCall[0])).toContain('"type":"file"');
+      expect(JSON.stringify(modelMessagesByCall[1])).toContain('"type":"file"');
+      expect(JSON.stringify(modelMessagesByCall[1])).not.toContain(
+        '"type":"image"',
+      );
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      const persistedUserWithFile = persistedMessages.find(
+        (message) =>
+          message.role === "user" &&
+          message.parts?.some(
+            (part) =>
+              typeof part === "object" &&
+              part !== null &&
+              (part as { type?: unknown }).type === "file",
+          ),
+      );
+      expect(persistedUserWithFile).toBeDefined();
+      expect(JSON.stringify(persistedUserWithFile)).toContain(
+        "data:image/png;base64,",
+      );
+      expect(JSON.stringify(persistedUserWithFile)).not.toContain(
+        '"type":"image"',
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

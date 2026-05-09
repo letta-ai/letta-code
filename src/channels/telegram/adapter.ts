@@ -221,6 +221,15 @@ function formatTelegramLifecycleErrorMessage(errorText: string): string {
   return `Turn failed:\n${truncated}`;
 }
 
+const TELEGRAM_TYPING_REFRESH_MS = 4_000;
+const TELEGRAM_TYPING_MAX_MS = 5 * 60 * 1000;
+
+type TelegramTypingEntry = {
+  sourceKeys: Set<string>;
+  timer: ReturnType<typeof setInterval>;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
 export function createTelegramAdapter(
   config: TelegramChannelAccount,
 ): ChannelAdapter {
@@ -229,6 +238,99 @@ export function createTelegramAdapter(
   let running = false;
   const bufferedMediaGroups = new Map<string, BufferedMediaGroup>();
   const lifecycleErrorReplies = new Map<string, number>();
+  const typingByChatId = new Map<string, TelegramTypingEntry>();
+
+  async function sendTypingAction(chatId: string): Promise<void> {
+    if (!running) return;
+    try {
+      const telegramBot = await ensureBot();
+      await telegramBot.api.sendChatAction(chatId, "typing");
+    } catch (error) {
+      console.warn(
+        `[Telegram] Failed to send typing action for chat ${chatId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  function getTypingSourceKey(source: ChannelTurnSource): string | null {
+    const chatId = getTypingChatId(source);
+    if (!chatId) return null;
+    return [
+      source.accountId ?? "",
+      chatId,
+      source.threadId ?? "",
+      source.messageId ?? "",
+      source.agentId,
+      source.conversationId,
+    ].join(":");
+  }
+
+  function startTypingForSource(source: ChannelTurnSource): void {
+    const chatId = getTypingChatId(source);
+    const sourceKey = getTypingSourceKey(source);
+    if (!chatId || !sourceKey) return;
+
+    const existing = typingByChatId.get(chatId);
+    if (existing) {
+      existing.sourceKeys.add(sourceKey);
+      return;
+    }
+    void sendTypingAction(chatId);
+    const timer = setInterval(() => {
+      void sendTypingAction(chatId);
+    }, TELEGRAM_TYPING_REFRESH_MS);
+    const timeout = setTimeout(() => {
+      clearTypingForChat(chatId);
+    }, TELEGRAM_TYPING_MAX_MS);
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref?: () => void }).unref?.();
+    }
+    if (typeof (timeout as { unref?: () => void }).unref === "function") {
+      (timeout as { unref?: () => void }).unref?.();
+    }
+    typingByChatId.set(chatId, {
+      sourceKeys: new Set([sourceKey]),
+      timer,
+      timeout,
+    });
+  }
+
+  function stopTypingForSource(source: ChannelTurnSource): void {
+    const chatId = getTypingChatId(source);
+    const sourceKey = getTypingSourceKey(source);
+    if (!chatId || !sourceKey) return;
+
+    const entry = typingByChatId.get(chatId);
+    if (!entry) return;
+    entry.sourceKeys.delete(sourceKey);
+    if (entry.sourceKeys.size === 0) {
+      clearTypingForChat(chatId);
+    }
+  }
+
+  function clearTypingForChat(chatId: string): void {
+    const entry = typingByChatId.get(chatId);
+    if (!entry) return;
+    clearInterval(entry.timer);
+    clearTimeout(entry.timeout);
+    typingByChatId.delete(chatId);
+  }
+
+  function clearAllTyping(): void {
+    for (const entry of typingByChatId.values()) {
+      clearInterval(entry.timer);
+      clearTimeout(entry.timeout);
+    }
+    typingByChatId.clear();
+  }
+
+  function getTypingChatId(source: ChannelTurnSource): string | null {
+    if (source.channel !== "telegram") return null;
+    const chatId = source.chatId;
+    if (typeof chatId !== "string" || chatId.length === 0) return null;
+    return chatId;
+  }
 
   async function ensureModule(): Promise<GrammYModule> {
     if (!botModule) {
@@ -534,6 +636,7 @@ export function createTelegramAdapter(
       }
       bufferedMediaGroups.clear();
       lifecycleErrorReplies.clear();
+      clearAllTyping();
 
       if (!running || !bot) return;
       await bot.stop();
@@ -543,39 +646,6 @@ export function createTelegramAdapter(
 
     isRunning(): boolean {
       return running;
-    },
-
-    async handleTurnLifecycleEvent(
-      event: ChannelTurnLifecycleEvent,
-    ): Promise<void> {
-      if (!running || event.type !== "finished") {
-        return;
-      }
-      if (event.outcome !== "error" || !event.error?.trim()) {
-        return;
-      }
-
-      const uniqueSources = new Map<string, ChannelTurnSource>();
-      for (const source of event.sources) {
-        const key = getTelegramLifecycleErrorReplyKey(source);
-        if (!key || uniqueSources.has(key)) {
-          continue;
-        }
-        uniqueSources.set(key, source);
-      }
-
-      await Promise.all(
-        Array.from(uniqueSources.values()).map(async (source) => {
-          try {
-            await sendLifecycleErrorReply(source, event.error ?? "Turn failed");
-          } catch (error) {
-            console.warn(
-              `[Telegram] Failed to send lifecycle error reply for ${source.chatId}:`,
-              error instanceof Error ? error.message : error,
-            );
-          }
-        }),
-      );
     },
 
     async sendMessage(
@@ -610,6 +680,7 @@ export function createTelegramAdapter(
           );
         }
 
+        clearTypingForChat(msg.chatId);
         return { messageId: targetMessageId };
       }
 
@@ -663,6 +734,7 @@ export function createTelegramAdapter(
           }
         })();
 
+        clearTypingForChat(msg.chatId);
         return { messageId: String(result.message_id) };
       }
 
@@ -681,6 +753,7 @@ export function createTelegramAdapter(
         msg.text,
         opts,
       );
+      clearTypingForChat(msg.chatId);
       return { messageId: String(result.message_id) };
     },
 
@@ -702,6 +775,53 @@ export function createTelegramAdapter(
       );
     },
 
+    async handleTurnLifecycleEvent(
+      event: ChannelTurnLifecycleEvent,
+    ): Promise<void> {
+      if (!running) return;
+
+      if (event.type === "queued") {
+        return;
+      }
+
+      if (event.type === "processing") {
+        for (const source of event.sources) {
+          startTypingForSource(source);
+        }
+        return;
+      }
+
+      for (const source of event.sources) {
+        stopTypingForSource(source);
+      }
+
+      if (event.outcome !== "error" || !event.error?.trim()) {
+        return;
+      }
+
+      const uniqueSources = new Map<string, ChannelTurnSource>();
+      for (const source of event.sources) {
+        const key = getTelegramLifecycleErrorReplyKey(source);
+        if (!key || uniqueSources.has(key)) {
+          continue;
+        }
+        uniqueSources.set(key, source);
+      }
+
+      await Promise.all(
+        Array.from(uniqueSources.values()).map(async (source) => {
+          try {
+            await sendLifecycleErrorReply(source, event.error ?? "Turn failed");
+          } catch (error) {
+            console.warn(
+              `[Telegram] Failed to send lifecycle error reply for ${source.chatId}:`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }),
+      );
+    },
+
     async handleControlRequestEvent(
       event: ChannelControlRequestEvent,
     ): Promise<void> {
@@ -719,6 +839,7 @@ export function createTelegramAdapter(
         formatChannelControlRequestPrompt(event),
         reply_parameters ? { reply_parameters } : {},
       );
+      clearTypingForChat(event.source.chatId);
     },
 
     onMessage: undefined,

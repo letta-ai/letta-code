@@ -26,6 +26,7 @@ import type {
   ConversationMessageStreamBody,
   ConversationUpdateBody,
 } from "../backend";
+import type { LocalCompactionStats } from "./compaction";
 import type { LocalMessage } from "./LocalMessage";
 import {
   cloneLocalMessage,
@@ -350,6 +351,47 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function localFilePartFromLegacyImage(
+  part: Record<string, unknown>,
+): LocalMessagePart | null {
+  if (part.type !== "image" || !isRecord(part.source)) {
+    return null;
+  }
+
+  const source = part.source;
+  if (source.type !== "base64") {
+    return null;
+  }
+
+  const mediaType = source.media_type;
+  const data = source.data;
+  if (typeof mediaType !== "string" || typeof data !== "string") {
+    return null;
+  }
+
+  return {
+    type: "file",
+    mediaType,
+    url: `data:${mediaType};base64,${data}`,
+  } as LocalMessagePart;
+}
+
+function normalizeLocalMessageForAISDK(message: LocalMessage): LocalMessage {
+  let didChange = false;
+  const parts = message.parts.map((part) => {
+    if (isRecord(part)) {
+      const filePart = localFilePartFromLegacyImage(part);
+      if (filePart) {
+        didChange = true;
+        return filePart;
+      }
+    }
+    return part;
+  });
+
+  return didChange ? { ...message, parts } : message;
+}
+
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -409,6 +451,12 @@ function toStoredOutputFields(chunk: Record<string, unknown>) {
 export interface StoredTurnInput {
   agentId: string;
   conversationId: string;
+}
+
+export interface LocalCompactionStoreResult {
+  numMessagesBefore: number;
+  numMessagesAfter: number;
+  summaryMessage: LocalMessage;
 }
 
 export interface LocalStoreOptions {
@@ -1054,6 +1102,50 @@ export class LocalStore {
     return [...messages];
   }
 
+  compactConversationAll(input: {
+    conversationId: string;
+    agentId: string;
+    summary: string;
+    packedSummary: string;
+    stats?: LocalCompactionStats;
+  }): LocalCompactionStoreResult {
+    const conversation = this.ensureConversation(
+      input.conversationId,
+      input.agentId,
+    );
+    const key = this.conversationKey(conversation.id, input.agentId);
+    const previousMessages = this.localMessagesByConversationKey.get(key) ?? [];
+    const id = this.nextLocalMessageId();
+    const date = this.currentLocalMessageDate();
+    const summaryMessage: LocalMessage = {
+      id,
+      role: "user",
+      metadata: {
+        created_at: date,
+        updated_at: date,
+        agent_id: input.agentId,
+        conversation_id: conversation.id,
+        compaction: {
+          summary: input.summary,
+          ...(input.stats ? { stats: input.stats } : {}),
+        },
+      },
+      parts: [{ type: "text", text: input.packedSummary } as LocalMessagePart],
+    };
+    this.localMessagesByConversationKey.set(key, [summaryMessage]);
+    conversation.in_context_message_ids = [summaryMessage.id];
+    conversation.last_message_at = date;
+    conversation.updated_at = date;
+    this.conversations.set(key, conversation);
+    this.persistConversationState(conversation.id, input.agentId);
+    this.rebuildMessageIndex();
+    return {
+      numMessagesBefore: previousMessages.length,
+      numMessagesAfter: 1,
+      summaryMessage: cloneLocalMessage(summaryMessage),
+    };
+  }
+
   private appendUserLocalMessage(
     conversationId: string,
     agentId: string,
@@ -1584,6 +1676,11 @@ export class LocalStore {
         parts.push({ type: "text", text: part.text } as LocalMessagePart);
         continue;
       }
+      const filePart = localFilePartFromLegacyImage(part);
+      if (filePart) {
+        parts.push(filePart);
+        continue;
+      }
       parts.push(part as LocalMessagePart);
     }
     return parts.length > 0 ? parts : textContent(textFromContent(content));
@@ -1634,7 +1731,7 @@ export class LocalStore {
         );
         const localMessages = readJsonlFile<LocalMessage>(
           join(conversationDir, "messages.jsonl"),
-        );
+        ).map(normalizeLocalMessageForAISDK);
         const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
           join(conversationDir, "system-prompt.json"),
         );

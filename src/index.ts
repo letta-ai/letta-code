@@ -26,9 +26,18 @@ import {
 import type { MemoryPromptMode } from "./agent/promptAssets";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
-import { getBackend, isExperimentalLocalBackendEnabled } from "./backend";
+import {
+  configureBackendMode,
+  getBackend,
+  isExperimentalLocalBackendEnabled,
+} from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
 import {
+  isLocalBackendNoMemfsEnvEnabled,
+  LOCAL_BACKEND_NO_MEMFS_ENV,
+} from "./backend/local/paths";
+import {
+  extractBackendFlag,
   type ParsedCliArgs,
   parseCliArgs,
   preprocessCliArgs,
@@ -102,7 +111,6 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
-  letta blocks ...      Blocks subcommands (JSON-only)
   letta connect ...     Connect providers from terminal
 
 OPTIONS
@@ -122,9 +130,6 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
-  letta blocks list --agent <id>
-  letta blocks copy --block-id <id> [--label <label>] [--agent <id>] [--override]
-  letta blocks attach --block-id <id> [--agent <id>] [--read-only] [--override]
   letta connect <provider> [options]
 
 BEHAVIOR
@@ -365,10 +370,30 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
+  const rawCliArgs = process.argv.slice(2);
+  let subcommandArgs = rawCliArgs;
+  try {
+    const backendSelection = extractBackendFlag(rawCliArgs);
+    subcommandArgs = backendSelection.args;
+    if (backendSelection.backend) {
+      configureBackendMode(backendSelection.backend);
+    }
+  } catch (error) {
+    trackCliBoundaryError(
+      "cli_backend_flag_parse_failed",
+      error,
+      "startup_backend_flag_parse",
+    );
+    console.error(
+      error instanceof Error ? `Error: ${error.message}` : String(error),
+    );
+    process.exit(1);
+  }
+
   // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
-  const subcommandResult = await runSubcommand(process.argv.slice(2));
+  const subcommandResult = await runSubcommand(subcommandArgs);
   if (subcommandResult !== null) {
     process.exit(subcommandResult);
   }
@@ -535,12 +560,21 @@ async function main(): Promise<void> {
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
   const noMemfsFlag = values["no-memfs"];
+  const startupBackend = getBackend();
+  const localNoMemfsRequested = Boolean(
+    startupBackend.capabilities.localMemfs &&
+      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
+  );
+  if (localNoMemfsRequested) {
+    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
+  }
   const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
     ? "memfs"
-    : noMemfsFlag
+    : noMemfsFlag || localNoMemfsRequested
       ? "standard"
       : undefined;
-  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
+  const shouldAutoEnableMemfsForNewAgent =
+    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
   const noSkillsFlag = values["no-skills"];
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
@@ -1729,7 +1763,9 @@ async function main(): Promise<void> {
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
           const effectiveMemoryMode: MemoryPromptMode | undefined = backend
             .capabilities.localMemfs
-            ? "local-memfs"
+            ? localNoMemfsRequested
+              ? "standard"
+              : "local-memfs"
             : (requestedMemoryPromptMode ??
               (willAutoEnableMemfs ? "memfs" : undefined));
 
@@ -1836,20 +1872,20 @@ async function main(): Promise<void> {
             )
           : Promise.resolve().then(() => {
               if (backend.capabilities.localMemfs) {
-                if (noMemfsFlag) {
-                  throw new Error(
-                    "Disabling MemFS is not supported by the local backend.",
-                  );
-                }
-                settingsManager.setMemfsEnabled(agentId, true);
-                return { action: "enabled" };
+                settingsManager.setMemfsEnabled(
+                  agentId,
+                  !localNoMemfsRequested,
+                );
+                return {
+                  action: localNoMemfsRequested ? "disabled" : "enabled",
+                };
               }
               if (memfsFlag) {
                 throw new Error(
                   "MemFS is not supported by the active backend.",
                 );
               }
-              if (noMemfsFlag) {
+              if (noMemfsFlag || localNoMemfsRequested) {
                 settingsManager.setMemfsEnabled(agentId, false);
               }
               return null;

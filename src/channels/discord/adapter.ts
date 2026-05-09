@@ -245,10 +245,20 @@ function resolveDiscordReactionEmoji(value: string): string {
   return nameMap[normalized] ?? normalized;
 }
 
-function buildDiscordReplyOptions(
+export function buildDiscordIngressMessageKey(
+  accountId: string | undefined,
+  messageId: string | undefined,
+): string | null {
+  if (!isNonEmptyString(accountId) || !isNonEmptyString(messageId)) {
+    return null;
+  }
+  return `${accountId}:${messageId}`;
+}
+
+export function buildDiscordReplyOptions(
   replyToMessageId: string | undefined,
   channelId: string,
-): { reply: { messageReference: string } } | undefined {
+): { reply: { messageReference: string; failIfNotExists: false } } | undefined {
   const trimmed = replyToMessageId?.trim();
   if (!trimmed || trimmed === channelId) {
     return undefined;
@@ -256,6 +266,7 @@ function buildDiscordReplyOptions(
   return {
     reply: {
       messageReference: trimmed,
+      failIfNotExists: false,
     },
   };
 }
@@ -330,16 +341,6 @@ export function createDiscordAdapter(
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
   const lifecycleErrorReplyKeys = new Map<string, number>();
 
-  function buildIngressMessageKey(
-    channelId: string | undefined,
-    messageId: string | undefined,
-  ): string | null {
-    if (!isNonEmptyString(channelId) || !isNonEmptyString(messageId)) {
-      return null;
-    }
-    return `${channelId}:${messageId}`;
-  }
-
   function pruneSeenIngressMessageKeys(now: number = Date.now()): void {
     for (const [key, expiresAt] of seenIngressMessageKeys) {
       if (expiresAt <= now) {
@@ -361,11 +362,8 @@ export function createDiscordAdapter(
     }
   }
 
-  function markIngressMessageSeen(
-    channelId: string | undefined,
-    messageId: string | undefined,
-  ): boolean {
-    const key = buildIngressMessageKey(channelId, messageId);
+  function markIngressMessageSeen(messageId: string | undefined): boolean {
+    const key = buildDiscordIngressMessageKey(config.accountId, messageId);
     if (!key) return false;
     const now = Date.now();
     pruneSeenIngressMessageKeys(now);
@@ -667,7 +665,7 @@ export function createDiscordAdapter(
 
         // ── DM handling ──────────────────────────────────────────
         if (chatType === "direct") {
-          if (markIngressMessageSeen(message.channelId, message.id)) return;
+          if (markIngressMessageSeen(message.id)) return;
 
           const attachments = await collectAttachments(
             message.attachments,
@@ -720,7 +718,7 @@ export function createDiscordAdapter(
         )
           return;
 
-        if (markIngressMessageSeen(message.channelId, message.id)) return;
+        if (markIngressMessageSeen(message.id)) return;
 
         let effectiveChatId = message.channelId;
         let effectiveThreadId: string | null = isThread

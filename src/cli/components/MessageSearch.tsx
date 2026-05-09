@@ -1,7 +1,10 @@
 import type { MessageSearchResponse } from "@letta-ai/letta-client/resources/messages";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { searchMessages, warmSearchCache } from "../../backend/api/search";
+import {
+  searchMessagesForBackend,
+  warmMessageSearchCacheForBackend,
+} from "../../backend/messageSearch";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -55,7 +58,7 @@ export async function warmMessageSearchCache() {
     scope: {},
   };
 
-  return warmSearchCache<SearchCacheWarmResponse>(body);
+  return warmMessageSearchCacheForBackend<SearchCacheWarmResponse>(body);
 }
 
 function isSearchRangeAvailable(
@@ -267,7 +270,7 @@ export function MessageSearch({
         body.conversation_id = conversationId;
       }
 
-      return searchMessages<MessageSearchResponse>(body);
+      return searchMessagesForBackend<MessageSearchResponse>(body);
     },
     [agentId, conversationId],
   );
