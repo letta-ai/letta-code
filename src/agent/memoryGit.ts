@@ -297,6 +297,12 @@ function getMemoryRemoteUrl(agentId: string): string {
  * (env var → settings → OAuth refresh).
  */
 async function getAuthToken(): Promise<string> {
+  const { getBackend } = await import("../backend");
+  const backend = getBackend();
+  if (backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs) {
+    return "";
+  }
+
   const client = await getClient();
   // The client constructor resolves the token; extract it
   // biome-ignore lint/suspicious/noExplicitAny: accessing internal client options
@@ -807,9 +813,9 @@ async function unsetLocalGitConfig(dir: string, key: string): Promise<void> {
 async function fetchAgentDisplayName(agentId: string): Promise<string | null> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const client = await getClient();
+    const { getBackend } = await import("../backend");
     const agent = await Promise.race([
-      client.agents.retrieve(agentId),
+      getBackend().retrieveAgent(agentId),
       new Promise<null>((resolve) => {
         timeout = setTimeout(
           () => resolve(null),
@@ -1830,12 +1836,13 @@ export async function addGitMemoryTag(
   agentId: string,
   prefetchedAgent?: { tags?: string[] | null },
 ): Promise<void> {
-  const client = await getClient();
   try {
-    const agent = prefetchedAgent ?? (await client.agents.retrieve(agentId));
+    const { getBackend } = await import("../backend");
+    const backend = getBackend();
+    const agent = prefetchedAgent ?? (await backend.retrieveAgent(agentId));
     const tags = agent.tags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
-      await client.agents.update(agentId, {
+      await backend.updateAgent(agentId, {
         tags: [...tags, GIT_MEMORY_ENABLED_TAG],
       });
       debugLog("memfs-git", `Added ${GIT_MEMORY_ENABLED_TAG} tag`);
@@ -1852,12 +1859,13 @@ export async function addGitMemoryTag(
  * Remove the git-memory-enabled tag from an agent.
  */
 export async function removeGitMemoryTag(agentId: string): Promise<void> {
-  const client = await getClient();
   try {
-    const agent = await client.agents.retrieve(agentId);
+    const { getBackend } = await import("../backend");
+    const backend = getBackend();
+    const agent = await backend.retrieveAgent(agentId);
     const tags = agent.tags || [];
     if (tags.includes(GIT_MEMORY_ENABLED_TAG)) {
-      await client.agents.update(agentId, {
+      await backend.updateAgent(agentId, {
         tags: tags.filter((t) => t !== GIT_MEMORY_ENABLED_TAG),
       });
       debugLog("memfs-git", `Removed ${GIT_MEMORY_ENABLED_TAG} tag`);

@@ -8,7 +8,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { getClient } from "../../backend/api/client";
+import { getBackend } from "../../backend";
 import { getBillingTier } from "../../backend/api/metadata";
 import { buildChatUrl } from "../../cli/helpers/appUrls";
 import {
@@ -103,8 +103,7 @@ async function getPrimaryAgentModelHandle(): Promise<{
 }> {
   try {
     const agentId = getCurrentAgentId();
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await getBackend().retrieveAgent(agentId);
     return { handle: getModelHandleFromAgent(agent), agent };
   } catch {
     return { handle: null, agent: null };
@@ -1257,7 +1256,7 @@ export async function spawnSubagent(
     try {
       const cachedParent =
         parentAgent ??
-        (await (await getClient()).agents.retrieve(resolvedParentAgentId));
+        (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
         const systemReminder = buildForkSystemReminder(type);
         finalPrompt = systemReminder + prompt;

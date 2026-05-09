@@ -6,7 +6,6 @@
 
 import { getCurrentAgentId } from "../agent/context";
 import { getBackend } from "../backend";
-import { getClient } from "../backend/api/client";
 
 /** In-memory cache of secrets (populated on startup from server).
  *  Stored on globalThis via Symbol.for() to survive Bun bundle duplication. */
@@ -65,9 +64,7 @@ export async function initSecretsFromServer(
   }
   const agent =
     cachedAgent ??
-    (await (
-      await getClient()
-    ).agents.retrieve(agentId, {
+    (await getBackend().retrieveAgent(agentId, {
       include: ["agent.secrets"],
     }));
 
@@ -134,6 +131,10 @@ export async function applySecretBatch(
   },
   agentIdArg?: string,
 ): Promise<string[]> {
+  if (!getBackend().capabilities.serverSecrets) {
+    throw new Error("Agent secrets are not supported by this backend yet");
+  }
+
   const agentId = resolveSecretsAgentId(agentIdArg);
   if (!agentId) {
     throw new Error("No agent context set. Agent ID is required.");
@@ -147,8 +148,7 @@ export async function applySecretBatch(
     delete next[rawKey.toUpperCase()];
   }
 
-  const client = await getClient();
-  await client.agents.update(agentId, { secrets: next });
+  await getBackend().updateAgent(agentId, { secrets: next });
   setCache(agentId, next);
 
   return Object.keys(next).sort();
@@ -166,7 +166,6 @@ export async function setSecretOnServer(
   if (!getBackend().capabilities.serverSecrets) {
     throw new Error("Agent secrets are not supported by this backend yet");
   }
-  const client = await getClient();
   const agentId = resolveSecretsAgentId(agentIdArg);
   if (!agentId) {
     throw new Error("No agent context set. Agent ID is required.");
@@ -177,7 +176,7 @@ export async function setSecretOnServer(
   secrets[key] = value;
 
   // PATCH replaces entire map
-  await client.agents.update(agentId, { secrets });
+  await getBackend().updateAgent(agentId, { secrets });
 
   setCache(agentId, secrets);
 }
@@ -206,9 +205,7 @@ export async function deleteSecretOnServer(
 
   delete secrets[key];
 
-  const client = await getClient();
-
-  await client.agents.update(agentId, { secrets });
+  await getBackend().updateAgent(agentId, { secrets });
 
   setCache(agentId, secrets);
   return true;
