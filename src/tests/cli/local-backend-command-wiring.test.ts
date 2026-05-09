@@ -192,4 +192,19 @@ describe("local backend command wiring", () => {
     expect(routerSource).not.toContain("runBlocksSubcommand");
     expect(routerSource).not.toContain('case "blocks"');
   });
+
+  test("remote listener startup is allowed for local backends", () => {
+    const source = appSource();
+    const serverSegment = segmentBetween(
+      source,
+      "// Special handling for /server command (alias: /remote)",
+      "// Special handling for /help command",
+    );
+
+    expect(serverSegment).toContain("await handleListen(");
+    expect(serverSegment).not.toContain(
+      "Remote listener mode is not supported by the local backend.",
+    );
+    expect(serverSegment).not.toContain("capabilities.remoteMemfs");
+  });
 });

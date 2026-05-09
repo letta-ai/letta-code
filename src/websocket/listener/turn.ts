@@ -9,7 +9,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
-import { getResumeData } from "../../agent/check-approval";
+import { getResumeDataFromBackend } from "../../agent/check-approval";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -28,7 +28,7 @@ import {
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
 } from "../../agent/turn-recovery-policy";
-import { getClient } from "../../backend/api/client";
+import { getBackend } from "../../backend";
 import { createBuffers, toLines } from "../../cli/helpers/accumulator";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import {
@@ -199,8 +199,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       let systemPrompt: string | undefined = cachedAgent?.system ?? undefined;
       if (!systemPrompt) {
         try {
-          const client = await getClient();
-          const agent = await client.agents.retrieve(agentId);
+          const agent = await getBackend().retrieveAgent(agentId);
           systemPrompt = agent.system ?? undefined;
         } catch {
           // Non-fatal — the reflection payload will just omit the system prompt.
@@ -513,8 +512,9 @@ export async function handleIncomingMessage(
         );
         if (agentId) {
           try {
-            const client = await getClient();
-            cachedAgent = (await client.agents.retrieve(agentId)) as AgentState;
+            cachedAgent = (await getBackend().retrieveAgent(
+              agentId,
+            )) as AgentState;
           } catch {
             // Best-effort only. If the fetch fails, reminder and tool prep
             // will fall back to the existing null/placeholder behavior.
@@ -833,13 +833,9 @@ export async function handleIncomingMessage(
           });
 
           try {
-            const client = await getClient();
-            const agent = await client.agents.retrieve(agentId || "");
-            const { pendingApprovals: existingApprovals } = await getResumeData(
-              client,
-              agent,
-              requestedConversationId,
-            );
+            const agent = await getBackend().retrieveAgent(agentId || "");
+            const { pendingApprovals: existingApprovals } =
+              await getResumeDataFromBackend(agent, requestedConversationId);
             currentInput = rebuildInputWithFreshDenials(
               currentInput,
               existingApprovals ?? [],

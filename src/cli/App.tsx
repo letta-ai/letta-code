@@ -8489,13 +8489,6 @@ export default function App({
           }
 
           const cmd = commandRunner.start(msg, "Starting listener...");
-          if (!getBackend().capabilities.remoteMemfs) {
-            cmd.fail(
-              "Remote listener mode is not supported by the local backend.",
-            );
-            return { submitted: true };
-          }
-
           const { handleListen, setActiveCommandId: setActiveListenCommandId } =
             await import("./commands/listen");
           setActiveListenCommandId(cmd.id);

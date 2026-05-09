@@ -6,7 +6,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
-import { getResumeData } from "../../agent/check-approval";
+import { getResumeDataFromBackend } from "../../agent/check-approval";
 import { sendMessageStream } from "../../agent/message";
 import {
   buildFreshDenialApprovals,
@@ -17,7 +17,6 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "../../agent/turn-recovery-policy";
 import { type ConversationMessageStreamBody, getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import { createStreamAbortRelay } from "../../utils/streamAbortRelay";
@@ -67,6 +66,13 @@ export function markAwaitingAcceptedApprovalContinuationRunId(
   }
 }
 
+function isBackendNotFoundError(err: unknown): boolean {
+  return (
+    (err instanceof APIError && (err.status === 404 || err.status === 422)) ||
+    (err instanceof Error && err.name === "LocalBackendNotFoundError")
+  );
+}
+
 /**
  * Attempt to resolve stale pending approvals by fetching them from the backend
  * and auto-denying. This is the Phase 3 bounded recovery mechanism — it does NOT
@@ -77,19 +83,19 @@ export async function resolveStaleApprovals(
   socket: ListenerTransport,
   abortSignal: AbortSignal,
   deps: {
-    getResumeData?: typeof getResumeData;
+    getResumeData?: typeof getResumeDataFromBackend;
   } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId) return null;
 
-  const getResumeDataImpl = deps.getResumeData ?? getResumeData;
+  const getResumeDataImpl = deps.getResumeData ?? getResumeDataFromBackend;
 
-  const client = await getClient();
-  let agent: Awaited<ReturnType<typeof client.agents.retrieve>>;
+  const backend = getBackend();
+  let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
   try {
-    agent = await client.agents.retrieve(runtime.agentId);
+    agent = await backend.retrieveAgent(runtime.agentId);
   } catch (err) {
-    if (err instanceof APIError && (err.status === 404 || err.status === 422)) {
+    if (isBackendNotFoundError(err)) {
       return null;
     }
     throw err;
@@ -97,18 +103,13 @@ export async function resolveStaleApprovals(
   const requestedConversationId =
     runtime.conversationId !== "default" ? runtime.conversationId : undefined;
 
-  let resumeData: Awaited<ReturnType<typeof getResumeData>>;
+  let resumeData: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
   try {
-    resumeData = await getResumeDataImpl(
-      client,
-      agent,
-      requestedConversationId,
-      {
-        includeMessageHistory: false,
-      },
-    );
+    resumeData = await getResumeDataImpl(agent, requestedConversationId, {
+      includeMessageHistory: false,
+    });
   } catch (err) {
-    if (err instanceof APIError && (err.status === 404 || err.status === 422)) {
+    if (isBackendNotFoundError(err)) {
       return null;
     }
     throw err;
