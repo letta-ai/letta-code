@@ -694,6 +694,153 @@ describe("AISDKStreamAdapter", () => {
     expect(serialized).not.toContain("openai reasoning");
   });
 
+  test("replaces unsupported image file parts with explicit text before AI SDK conversion", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [
+                { type: "text", text: "what is in this screenshot?" },
+                {
+                  type: "file",
+                  mediaType: "image/png",
+                  url: "data:image/png;base64,aGVsbG8=",
+                  filename: "screenshot.png",
+                },
+              ],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "agent system prompt",
+            tags: [],
+            model: "ollama/llama2",
+            model_settings: { provider_type: "ollama" },
+          },
+        ),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).toContain(
+      'ERROR: Cannot read \\"screenshot.png\\" (this model does not support image input). Inform the user.',
+    );
+    expect(serialized).not.toContain('"type":"file"');
+    expect(serialized).not.toContain("data:image/png");
+  });
+
+  test("preserves image file parts when model modalities include image input", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [
+                { type: "text", text: "what is in this screenshot?" },
+                {
+                  type: "file",
+                  mediaType: "image/png",
+                  url: "data:image/png;base64,aGVsbG8=",
+                  filename: "screenshot.png",
+                },
+              ],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "agent system prompt",
+            tags: [],
+            model: "ollama/llama2",
+            model_settings: {
+              provider_type: "ollama",
+              modalities: { input: ["text", "image"], output: ["text"] },
+            },
+          },
+        ),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).toContain('"type":"file"');
+    expect(serialized).toContain("data:image/png;base64,aGVsbG8=");
+    expect(serialized).not.toContain("this model does not support image input");
+  });
+
+  test("turns empty legacy image data URLs into an explicit user-visible error", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [
+              {
+                type: "image",
+                image: "data:image/png;base64,",
+              } as unknown as LocalMessage["parts"][number],
+            ],
+          },
+        ]),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).toContain(
+      "ERROR: Image file is empty or corrupted. Please provide a valid image.",
+    );
+  });
+
   test("projects UI tool outputs without AI SDK approval protocol parts", async () => {
     let capturedMessages: unknown[] | undefined;
     const streamText: AISDKStreamTextFunction = (options) => {

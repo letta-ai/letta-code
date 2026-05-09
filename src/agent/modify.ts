@@ -23,6 +23,10 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return modelHandle.includes("claude-opus-4-7");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
@@ -201,6 +205,16 @@ function buildModelSettings(
   ) {
     (settings as Record<string, unknown>).max_output_tokens =
       updateArgs.max_output_tokens;
+  }
+
+  // Preserve OpenCode-style modality metadata when present so local-model
+  // transforms can decide whether file/image parts are safe to send.
+  if (isRecord(updateArgs?.modalities)) {
+    (settings as Record<string, unknown>).modalities = updateArgs.modalities;
+  }
+  if (isRecord(updateArgs?.capabilities)) {
+    (settings as Record<string, unknown>).capabilities =
+      updateArgs.capabilities;
   }
 
   return settings;

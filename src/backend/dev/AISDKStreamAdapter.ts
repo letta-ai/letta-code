@@ -32,6 +32,7 @@ import {
 } from "./ProviderTurnExecutor";
 
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
+type InputModality = "text" | "image" | "audio" | "video" | "pdf";
 type AISDKUIMessageStreamFinish = {
   messages: LocalMessage[];
   responseMessage: LocalMessage;
@@ -248,12 +249,201 @@ function shouldKeepReasoningPart(
   return true;
 }
 
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) &&
+    value.every((entry) => typeof entry === "string")
+    ? value
+    : undefined;
+}
+
+function mimeToModality(mime: string): InputModality | undefined {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime.startsWith("video/")) return "video";
+  if (mime === "application/pdf") return "pdf";
+  return undefined;
+}
+
+function modalitiesFromModelSettings(
+  modelSettings: Record<string, unknown>,
+): Set<InputModality> | undefined {
+  const modalities = isRecord(modelSettings.modalities)
+    ? modelSettings.modalities
+    : undefined;
+  const input = stringArray(modalities?.input);
+  if (!input) return undefined;
+
+  return new Set(
+    input.filter((entry): entry is InputModality =>
+      ["text", "image", "audio", "video", "pdf"].includes(entry),
+    ),
+  );
+}
+
+function capabilitiesFromModelSettings(
+  modelSettings: Record<string, unknown>,
+): Set<InputModality> | undefined {
+  const capabilities = isRecord(modelSettings.capabilities)
+    ? modelSettings.capabilities
+    : undefined;
+  const input = isRecord(capabilities?.input) ? capabilities.input : undefined;
+  if (!input) return undefined;
+
+  const supported = new Set<InputModality>(["text"]);
+  for (const modality of ["image", "audio", "video", "pdf"] as const) {
+    if (input[modality] === true) supported.add(modality);
+  }
+  return supported;
+}
+
+function knownModelInputModalities(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+): Set<InputModality> {
+  const explicitModalities = modalitiesFromModelSettings(modelSettings);
+  if (explicitModalities) return explicitModalities;
+
+  const explicitCapabilities = capabilitiesFromModelSettings(modelSettings);
+  if (explicitCapabilities) return explicitCapabilities;
+
+  const handle = modelHandle.toLowerCase();
+  const supported = new Set<InputModality>(["text"]);
+
+  // Built-in local defaults. Custom/OpenAI-compatible models can opt in via
+  // model_settings.modalities.input, matching OpenCode's configuration shape.
+  if (
+    handle.startsWith("anthropic/") ||
+    handle.startsWith("claude-pro-max/") ||
+    handle.startsWith("bedrock/") ||
+    handle.startsWith("google_ai/") ||
+    handle.startsWith("google_vertex/") ||
+    handle.includes("gemini") ||
+    handle.includes("claude") ||
+    handle.includes("gpt-4o") ||
+    handle.includes("gpt-4.1") ||
+    handle.includes("gpt-5") ||
+    handle.includes("o3") ||
+    handle.includes("o4") ||
+    handle.includes("vision") ||
+    handle.includes("qwen-vl") ||
+    handle.includes("qwen2-vl") ||
+    handle.includes("qwen2.5-vl") ||
+    handle.includes("qwen3-vl") ||
+    handle.includes("llava") ||
+    handle.includes("bakllava") ||
+    handle.includes("moondream")
+  ) {
+    supported.add("image");
+  }
+
+  return supported;
+}
+
+function modelSupportsInputModality(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+  modality: InputModality,
+): boolean {
+  if (modality === "text") return true;
+  return knownModelInputModalities(modelHandle, modelSettings).has(modality);
+}
+
+function isEmptyBase64DataUrl(data: unknown): boolean {
+  if (typeof data !== "string" || !data.startsWith("data:")) return false;
+  const match = data.match(/^data:([^;]+);base64,(.*)$/);
+  return Boolean(match && (!match[2] || match[2].length === 0));
+}
+
+function filePartMediaType(part: Record<string, unknown>): string | undefined {
+  if (typeof part.mediaType === "string") return part.mediaType;
+  if (typeof part.mime === "string") return part.mime;
+  return undefined;
+}
+
+function imagePartMediaType(part: Record<string, unknown>): string | undefined {
+  if (typeof part.image === "string" && part.image.startsWith("data:")) {
+    return part.image.split(";")[0]?.replace("data:", "");
+  }
+  if (isRecord(part.source) && typeof part.source.media_type === "string") {
+    return part.source.media_type;
+  }
+  return undefined;
+}
+
+function partFilename(part: Record<string, unknown>): string | undefined {
+  return stringValue(part.filename) ?? stringValue(part.name);
+}
+
+function replaceUnsupportedInputPart(
+  part: LocalMessage["parts"][number],
+  agent: ProviderTurnInput["agent"],
+): LocalMessage["parts"][number] {
+  if (!isRecord(part)) return part;
+  const record = part as Record<string, unknown>;
+  const partType = typeof record.type === "string" ? record.type : undefined;
+  if (partType !== "file" && partType !== "image") {
+    return part;
+  }
+
+  if (partType === "image" && isEmptyBase64DataUrl(record.image)) {
+    return {
+      type: "text",
+      text: "ERROR: Image file is empty or corrupted. Please provide a valid image.",
+    } as LocalMessage["parts"][number];
+  }
+
+  const mime =
+    partType === "image"
+      ? imagePartMediaType(record)
+      : filePartMediaType(record);
+  if (!mime) return part;
+
+  const modality = mimeToModality(mime);
+  if (!modality) return part;
+
+  if (modelSupportsInputModality(agent.model, agent.model_settings, modality)) {
+    return part;
+  }
+
+  const name = partFilename(record);
+  return {
+    type: "text",
+    text: `ERROR: Cannot read ${name ? `"${name}"` : modality} (this model does not support ${modality} input). Inform the user.`,
+  } as LocalMessage["parts"][number];
+}
+
+function replaceUnsupportedInputParts(
+  messages: LocalMessage[],
+  agent: ProviderTurnInput["agent"],
+): LocalMessage[] {
+  let didChange = false;
+  const transformed = messages.map((message) => {
+    if (message.role !== "user") return message;
+    let messageDidChange = false;
+    const parts = message.parts.map((part) => {
+      const replacement = replaceUnsupportedInputPart(part, agent);
+      if (replacement !== part) {
+        didChange = true;
+        messageDidChange = true;
+      }
+      return replacement;
+    });
+    return messageDidChange ? { ...message, parts } : message;
+  });
+  return didChange ? transformed : messages;
+}
+
 function sanitizeUIMessagesForProvider(
   messages: LocalMessage[],
   provider: AISDKProviderKind,
+  agent: ProviderTurnInput["agent"],
 ): LocalMessage[] {
-  if (provider === "unknown") return messages;
-  return messages
+  const capabilitySanitizedMessages = replaceUnsupportedInputParts(
+    messages,
+    agent,
+  );
+  if (provider === "unknown") return capabilitySanitizedMessages;
+  return capabilitySanitizedMessages
     .map((message) => {
       const parts = message.parts.filter((part) =>
         shouldKeepReasoningPart(part, provider),
@@ -401,7 +591,11 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       input.agent.model_settings,
     );
     const uiMessages = await validateUIMessages<LocalMessage>({
-      messages: sanitizeUIMessagesForProvider(input.uiMessages, provider),
+      messages: sanitizeUIMessagesForProvider(
+        input.uiMessages,
+        provider,
+        input.agent,
+      ),
       tools: tools as never,
     });
     const result = this.runStreamText({
