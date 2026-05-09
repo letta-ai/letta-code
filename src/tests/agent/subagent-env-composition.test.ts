@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import {
   composeSubagentChildEnv,
@@ -251,7 +252,7 @@ describe("resolveSubagentInheritedPrimaryRoot", () => {
         inheritedPrimaryRoot: "/Users/someone/.letta/agents/stale/memory",
         localBackendStorageDir: "/tmp/lc-local-backend",
       }),
-    ).toBe(`/tmp/lc-local-backend/memfs/${PARENT_ID}/memory`);
+    ).toBe(join("/tmp/lc-local-backend", "memfs", PARENT_ID, "memory"));
   });
 
   test("keeps the resolved remote MemFS root for API backend agents", () => {
