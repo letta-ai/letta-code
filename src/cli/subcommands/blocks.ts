@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { getBackend } from "../../backend";
 import { getClient } from "../../backend/api/client";
 import { settingsManager } from "../../settings-manager";
 
@@ -292,6 +293,12 @@ export async function runBlocksSubcommand(argv: string[]): Promise<number> {
 
   try {
     await settingsManager.initialize();
+    if (getBackend().capabilities.localMemfs) {
+      console.error(
+        "The blocks subcommand manages server memory blocks and is not supported with --backend local. Use the local MemFS files instead.",
+      );
+      return 1;
+    }
     const client = await getClient();
 
     if (action === "list") {
