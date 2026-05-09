@@ -17,6 +17,8 @@ file first.
 - `useQueuedApprovalSubmit.ts`: stale approval recovery helpers used before
   slash-command sends.
 - `useFeedbackHandler.ts`: `/feedback` submission and diagnostics payload.
+- `useInterruptHandler.ts`: ESC interrupt, cancellation, and recovery cleanup.
+- `useReasoningCycle.ts`: reasoning-tier tab cycling and debounced persistence.
 - `useConfigurationHandlers.ts`: model/system/personality/toolset/experiment
   selectors and their queued overlay actions.
 - `constants.ts`: timing, retry, provider fallback, and layout constants.

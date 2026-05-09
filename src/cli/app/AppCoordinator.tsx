@@ -35,7 +35,6 @@ import { SessionStats } from "../../agent/stats";
 import { getBackend } from "../../backend";
 import { getClient } from "../../backend/api/client";
 import { getBillingTier } from "../../backend/api/metadata";
-import { INTERRUPTED_BY_USER } from "../../constants";
 import { experimentManager } from "../../experiments/manager";
 import type { ExperimentId } from "../../experiments/types";
 import { runSessionEndHooks, runSessionStartHooks } from "../../hooks";
@@ -127,7 +126,6 @@ import {
   type Buffers,
   createBuffers,
   type Line,
-  markIncompleteToolsAsCancelled,
   toLines,
 } from "../helpers/accumulator";
 import { backfillBuffers } from "../helpers/backfill";
@@ -142,7 +140,6 @@ import {
 } from "../helpers/conversationTitle";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
 import { setErrorContext } from "../helpers/errorContext";
-import { formatErrorDetails } from "../helpers/errorFormatter";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
 import {
   getReflectionSettings,
@@ -169,7 +166,6 @@ import {
   getActiveBackgroundAgents,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
-  interruptActiveSubagents,
   subscribe as subscribeToSubagents,
 } from "../helpers/subagentState";
 import { buildStartupSystemPromptWarning } from "../helpers/systemPromptWarning.ts";
@@ -194,8 +190,6 @@ import {
   APPROVAL_PREVIEW_BUFFER,
   CLEAR_SCREEN_AND_HOME,
   DIFF_WRAP_GUTTER,
-  EAGER_CANCEL,
-  INTERRUPT_MESSAGE,
   MIN_CLEAR_INTERVAL_MS,
   MIN_RESIZE_DELTA,
   MIN_WRAP_WIDTH,
@@ -206,7 +200,6 @@ import {
   TOOL_CALL_COMMIT_DEFER_MS,
 } from "./constants";
 import { ExitStats } from "./ExitStats";
-import { extractErrorMeta } from "./errors";
 import { uid } from "./ids";
 import {
   countWrappedLines,
@@ -230,7 +223,9 @@ import { useConfigurationHandlers } from "./useConfigurationHandlers";
 import { useConversationLoop } from "./useConversationLoop";
 import { useConversationSwitching } from "./useConversationSwitching";
 import { useFeedbackHandler } from "./useFeedbackHandler";
+import { useInterruptHandler } from "./useInterruptHandler";
 import { useQueuedApprovalSubmit } from "./useQueuedApprovalSubmit";
+import { useReasoningCycle } from "./useReasoningCycle";
 import { useSubmitHandler } from "./useSubmitHandler";
 
 export default function App({
@@ -3381,275 +3376,42 @@ export default function App({
     [refreshDerived],
   );
 
-  const handleInterrupt = useCallback(async () => {
-    // If we're executing client-side tools, abort them AND the main stream
-    const hasTrackedTools =
-      executingToolCallIdsRef.current.length > 0 ||
-      autoAllowedExecutionRef.current?.results;
-    if (
-      isExecutingTool &&
-      toolAbortControllerRef.current &&
-      hasTrackedTools &&
-      !toolResultsInFlightRef.current
-    ) {
-      toolAbortControllerRef.current.abort();
-
-      // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
-      // Increment before tagging queued results so they are tied to the post-interrupt state.
-      conversationGenerationRef.current += 1;
-      processingConversationRef.current = 0;
-
-      const autoAllowedResults = autoAllowedExecutionRef.current?.results;
-      const autoAllowedMetadata = autoAllowedExecutionRef.current
-        ? {
-            conversationId: autoAllowedExecutionRef.current.conversationId,
-            generation: conversationGenerationRef.current,
-          }
-        : undefined;
-      if (autoAllowedResults && autoAllowedResults.length > 0) {
-        queueApprovalResults(autoAllowedResults, autoAllowedMetadata);
-        interruptQueuedRef.current = true;
-      } else if (executingToolCallIdsRef.current.length > 0) {
-        const interruptedResults = executingToolCallIdsRef.current.map(
-          (toolCallId) => ({
-            type: "tool" as const,
-            tool_call_id: toolCallId,
-            tool_return: INTERRUPTED_BY_USER,
-            status: "error" as const,
-          }),
-        );
-        queueApprovalResults(interruptedResults);
-        interruptQueuedRef.current = true;
-      }
-      executingToolCallIdsRef.current = [];
-      autoAllowedExecutionRef.current = null;
-
-      // ALSO abort the main stream - don't leave it running
-      buffersRef.current.abortGeneration =
-        (buffersRef.current.abortGeneration || 0) + 1;
-      const toolsCancelled = markIncompleteToolsAsCancelled(
-        buffersRef.current,
-        true,
-        "user_interrupt",
-      );
-
-      // Mark any running subagents as interrupted
-      interruptActiveSubagents(INTERRUPTED_BY_USER);
-
-      // Show interrupt feedback (yellow message if no tools were cancelled)
-      if (!toolsCancelled) {
-        appendError(INTERRUPT_MESSAGE, true);
-      }
-
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-
-      pendingInterruptRecoveryConversationIdRef.current =
-        conversationIdRef.current;
-      userCancelledRef.current = true; // Prevent dequeue
-      setStreaming(false);
-      resetTrajectoryBases();
-      setIsExecutingTool(false);
-      toolResultsInFlightRef.current = false;
-      refreshDerived();
-
-      // Send cancel request to backend (fire-and-forget).
-      // Without this, the backend stays in requires_approval state after tool interrupt,
-      // causing CONFLICT on the next user message.
-      Promise.resolve()
-        .then(() => {
-          const cancelConversationId =
-            conversationIdRef.current === "default"
-              ? agentIdRef.current
-              : conversationIdRef.current;
-          if (!cancelConversationId || cancelConversationId === "loading") {
-            return;
-          }
-          return getBackend().cancelConversation(cancelConversationId);
-        })
-        .catch(() => {
-          // Silently ignore - cancellation already happened client-side
-        });
-
-      // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
-      // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
-      // batched state updates have been fully processed before we allow the dequeue effect.
-      setTimeout(() => {
-        userCancelledRef.current = false;
-      }, 50);
-
-      return;
-    }
-
-    if (!streaming || interruptRequested) {
-      return;
-    }
-
-    // If we're in the middle of queue cancel, set flag to restore instead of auto-send
-    if (waitingForQueueCancelRef.current) {
-      setRestoreQueueOnCancel(true);
-      // Don't reset flags - let the cancel complete naturally
-    }
-
-    // If EAGER_CANCEL is enabled, immediately stop everything client-side first
-    if (EAGER_CANCEL) {
-      // Prevent multiple handleInterrupt calls while state updates are pending
-      setInterruptRequested(true);
-
-      // Set interrupted flag FIRST, before abort() triggers any async work.
-      // This ensures onChunk and other guards see interrupted=true immediately.
-      buffersRef.current.abortGeneration =
-        (buffersRef.current.abortGeneration || 0) + 1;
-      const toolsCancelled = markIncompleteToolsAsCancelled(
-        buffersRef.current,
-        true,
-        "user_interrupt",
-      );
-
-      // Mark any running subagents as interrupted
-      interruptActiveSubagents(INTERRUPTED_BY_USER);
-
-      // NOW abort the stream - interrupted flag is already set
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
-      }
-
-      // Set cancellation flag to prevent processConversation from starting
-      pendingInterruptRecoveryConversationIdRef.current =
-        conversationIdRef.current;
-      userCancelledRef.current = true;
-
-      // Increment generation to mark any in-flight processConversation as stale.
-      // The stale processConversation will check this and exit quietly without
-      // decrementing the ref (since we reset it here).
-      conversationGenerationRef.current += 1;
-
-      // Reset the processing guard so the next message can start a new conversation.
-      processingConversationRef.current = 0;
-
-      // Stop streaming and show error message (unless tool calls were cancelled,
-      // since the tool result will show "Interrupted by user")
-      setStreaming(false);
-      resetTrajectoryBases();
-      toolResultsInFlightRef.current = false;
-      setIsExecutingTool(false);
-      if (!toolsCancelled) {
-        appendError(INTERRUPT_MESSAGE, true);
-      }
-      refreshDerived();
-
-      // Cache pending approvals, plus any auto-handled results, for the next message.
-      const denialResults = pendingApprovals.map((approval) => ({
-        type: "approval" as const,
-        tool_call_id: approval.toolCallId,
-        approve: false,
-        reason: "User interrupted the stream",
-      }));
-      const autoHandledSnapshot = [...autoHandledResults];
-      const autoDeniedSnapshot = [...autoDeniedApprovals];
-      const queuedResults = [
-        ...autoHandledSnapshot.map((ar) => ({
-          type: "tool" as const,
-          tool_call_id: ar.toolCallId,
-          tool_return: ar.result.toolReturn,
-          status: ar.result.status,
-          stdout: ar.result.stdout,
-          stderr: ar.result.stderr,
-        })),
-        ...autoDeniedSnapshot.map((ad) => ({
-          type: "approval" as const,
-          tool_call_id: ad.approval.toolCallId,
-          approve: false,
-          reason: ad.reason,
-        })),
-        ...denialResults,
-      ];
-      if (queuedResults.length > 0) {
-        queueApprovalResults(queuedResults);
-      }
-
-      // Clear local approval state
-      setPendingApprovals([]);
-      setApprovalContexts([]);
-      setApprovalResults([]);
-      setAutoHandledResults([]);
-      setAutoDeniedApprovals([]);
-
-      // Send cancel request to backend asynchronously (fire-and-forget)
-      // Don't wait for it or show errors since user already got feedback
-      Promise.resolve()
-        .then(() => {
-          const cancelConversationId =
-            conversationIdRef.current === "default"
-              ? agentIdRef.current
-              : conversationIdRef.current;
-          if (!cancelConversationId || cancelConversationId === "loading") {
-            return;
-          }
-          return getBackend().cancelConversation(cancelConversationId);
-        })
-        .catch(() => {
-          // Silently ignore - cancellation already happened client-side
-        });
-
-      // Reset cancellation flags after cleanup is complete.
-      // Use setTimeout(50) instead of setTimeout(0) to ensure React has fully processed
-      // the streaming=false state before we allow the dequeue effect to start a new conversation.
-      // This prevents the "Maximum update depth exceeded" infinite render loop.
-      setTimeout(() => {
-        userCancelledRef.current = false;
-        setInterruptRequested(false);
-      }, 50);
-
-      return;
-    } else {
-      setInterruptRequested(true);
-      try {
-        const cancelConversationId =
-          conversationIdRef.current === "default"
-            ? agentIdRef.current
-            : conversationIdRef.current;
-        if (!cancelConversationId || cancelConversationId === "loading") {
-          return;
-        }
-        await getBackend().cancelConversation(cancelConversationId);
-
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
-        setIsExecutingTool(false);
-        toolResultsInFlightRef.current = false;
-        pendingInterruptRecoveryConversationIdRef.current =
-          conversationIdRef.current;
-      } catch (e) {
-        const errorDetails = formatErrorDetails(e, agentId);
-        appendError(`Failed to interrupt stream: ${errorDetails}`, {
-          ...extractErrorMeta(e),
-          context: "stream_interrupt",
-        });
-        setInterruptRequested(false);
-        setIsExecutingTool(false);
-        toolResultsInFlightRef.current = false;
-      }
-    }
-  }, [
+  const { handleInterrupt } = useInterruptHandler({
+    abortControllerRef,
     agentId,
-    streaming,
-    interruptRequested,
+    agentIdRef,
     appendError,
-    isExecutingTool,
-    refreshDerived,
-    setStreaming,
-    pendingApprovals,
-    autoHandledResults,
+    autoAllowedExecutionRef,
     autoDeniedApprovals,
+    autoHandledResults,
+    buffersRef,
+    conversationGenerationRef,
+    conversationIdRef,
+    executingToolCallIdsRef,
+    interruptQueuedRef,
+    interruptRequested,
+    isExecutingTool,
+    pendingApprovals,
+    pendingInterruptRecoveryConversationIdRef,
+    processingConversationRef,
     queueApprovalResults,
+    refreshDerived,
     resetTrajectoryBases,
-  ]);
+    setApprovalContexts,
+    setApprovalResults,
+    setAutoDeniedApprovals,
+    setAutoHandledResults,
+    setInterruptRequested,
+    setIsExecutingTool,
+    setPendingApprovals,
+    setRestoreQueueOnCancel,
+    setStreaming,
+    streaming,
+    toolAbortControllerRef,
+    toolResultsInFlightRef,
+    userCancelledRef,
+    waitingForQueueCancelRef,
+  });
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
   const processConversationRef = useRef(processConversation);
@@ -4208,331 +3970,32 @@ export default function App({
     [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
   );
 
-  // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
-  //
-  // We update the footer immediately (optimistic local state) and debounce the
-  // actual server update so users can rapidly cycle tiers.
-
-  const flushPendingReasoningEffort = useCallback(async () => {
-    const desired = reasoningCycleDesiredRef.current;
-    if (!desired) return;
-
-    if (reasoningCycleInFlightRef.current) return;
-    if (!agentId) return;
-
-    // Don't change model settings mid-run.
-    // If a flush is requested while busy, ensure we still apply once the run completes.
-    if (isAgentBusy()) {
-      if (reasoningCycleTimerRef.current) {
-        clearTimeout(reasoningCycleTimerRef.current);
-      }
-      reasoningCycleTimerRef.current = setTimeout(() => {
-        reasoningCycleTimerRef.current = null;
-        void flushPendingReasoningEffort();
-      }, reasoningCycleDebounceMs);
-      return;
-    }
-
-    // Clear any pending timer; we're flushing now.
-    if (reasoningCycleTimerRef.current) {
-      clearTimeout(reasoningCycleTimerRef.current);
-      reasoningCycleTimerRef.current = null;
-    }
-
-    reasoningCycleInFlightRef.current = true;
-    try {
-      await withCommandLock(async () => {
-        const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
-
-        try {
-          // "default" is a virtual sentinel for the agent's primary history. When
-          // active, reasoning tier changes must update the agent itself so the next
-          // agent sync doesn't snap back.
-          const isDefaultConversation = conversationIdRef.current === "default";
-          let conversationModelSettings:
-            | AgentState["model_settings"]
-            | null
-            | undefined;
-          let conversationContextWindowLimit: number | null | undefined;
-          let updatedAgent: AgentState | null = null;
-          if (isDefaultConversation) {
-            const { updateAgentLLMConfig } = await import("../../agent/modify");
-            updatedAgent = await updateAgentLLMConfig(
-              agentIdRef.current,
-              desired.modelHandle,
-              {
-                reasoning_effort: desired.effort,
-              },
-            );
-          } else {
-            const { updateConversationLLMConfig } = await import(
-              "../../agent/modify"
-            );
-            const updatedConversation = await updateConversationLLMConfig(
-              conversationIdRef.current,
-              desired.modelHandle,
-              {
-                reasoning_effort: desired.effort,
-              },
-              { preserveContextWindow: true },
-            );
-            conversationModelSettings = (
-              updatedConversation as {
-                model_settings?: AgentState["model_settings"] | null;
-              }
-            ).model_settings;
-            conversationContextWindowLimit = (
-              updatedConversation as {
-                context_window_limit?: number | null;
-              }
-            ).context_window_limit;
-          }
-          const resolvedReasoningEffort =
-            deriveReasoningEffort(
-              isDefaultConversation
-                ? (updatedAgent?.model_settings ?? null)
-                : conversationModelSettings,
-              llmConfigRef.current,
-            ) ?? desired.effort;
-          const resolvedConversationContextWindowLimit =
-            conversationContextWindowLimit === undefined
-              ? typeof llmConfigRef.current?.context_window === "number"
-                ? llmConfigRef.current.context_window
-                : null
-              : conversationContextWindowLimit;
-
-          if (isDefaultConversation) {
-            setHasConversationModelOverride(false);
-            setConversationOverrideModelSettings(null);
-            setConversationOverrideContextWindowLimit(null);
-            if (updatedAgent) {
-              setAgentState(updatedAgent);
-            }
-          } else {
-            setHasConversationModelOverride(true);
-            setConversationOverrideModelSettings(
-              conversationModelSettings ?? null,
-            );
-            setConversationOverrideContextWindowLimit(
-              resolvedConversationContextWindowLimit,
-            );
-          }
-
-          // The API may not echo reasoning_effort back; preserve explicit desired effort.
-          setLlmConfig({
-            ...(updatedAgent?.llm_config ??
-              llmConfigRef.current ??
-              ({} as LlmConfig)),
-            ...mapHandleToLlmConfigPatch(desired.modelHandle),
-            reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
-            ...(typeof resolvedConversationContextWindowLimit === "number"
-              ? { context_window: resolvedConversationContextWindowLimit }
-              : {}),
-          } as LlmConfig);
-          setCurrentModelId(desired.modelId);
-          setCurrentModelHandle(desired.modelHandle);
-
-          // Clear pending state.
-          reasoningCycleDesiredRef.current = null;
-          reasoningCycleLastConfirmedRef.current = null;
-          reasoningCycleLastConfirmedAgentStateRef.current = null;
-          reasoningCyclePatchedAgentStateRef.current = false;
-
-          const display =
-            desired.effort === "medium"
-              ? "med"
-              : desired.effort === "minimal"
-                ? "low"
-                : desired.effort;
-          cmd.finish(`Reasoning set to ${display}`, true);
-        } catch (error) {
-          const errorDetails = formatErrorDetails(error, agentId);
-          cmd.fail(`Failed to set reasoning: ${errorDetails}`);
-
-          // Revert optimistic UI if we have a confirmed config snapshot.
-          if (reasoningCycleLastConfirmedRef.current) {
-            const prev = reasoningCycleLastConfirmedRef.current;
-            reasoningCycleDesiredRef.current = null;
-            reasoningCycleLastConfirmedRef.current = null;
-            setLlmConfig(prev);
-            // Also revert the agentState optimistic patch
-            if (
-              reasoningCyclePatchedAgentStateRef.current &&
-              reasoningCycleLastConfirmedAgentStateRef.current
-            ) {
-              setAgentState(reasoningCycleLastConfirmedAgentStateRef.current);
-              reasoningCycleLastConfirmedAgentStateRef.current = null;
-            }
-            reasoningCyclePatchedAgentStateRef.current = false;
-
-            const { getModelInfo } = await import("../../agent/model");
-            const modelHandle =
-              prev.model_endpoint_type && prev.model
-                ? `${
-                    prev.model_endpoint_type === "chatgpt_oauth"
-                      ? OPENAI_CODEX_PROVIDER_NAME
-                      : prev.model_endpoint_type
-                  }/${prev.model}`
-                : prev.model;
-            const modelInfo = modelHandle ? getModelInfo(modelHandle) : null;
-            setCurrentModelId(modelInfo?.id ?? null);
-          }
-        }
-      });
-    } finally {
-      reasoningCycleInFlightRef.current = false;
-    }
-  }, [
-    agentId,
-    commandRunner,
-    isAgentBusy,
-    withCommandLock,
-    setHasConversationModelOverride,
-  ]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
-  const handleCycleReasoningEffort = useCallback(() => {
-    void (async () => {
-      if (!agentId) return;
-      if (reasoningCycleInFlightRef.current) return;
-
-      const current = llmConfigRef.current;
-      // For ChatGPT OAuth sessions, llm_config may report model_endpoint_type as
-      // "chatgpt_oauth" while our code/model registry uses the provider name
-      // "chatgpt-plus-pro" in handles.
-      const modelHandle =
-        current?.model_endpoint_type && current?.model
-          ? `${
-              current.model_endpoint_type === "chatgpt_oauth"
-                ? OPENAI_CODEX_PROVIDER_NAME
-                : current.model_endpoint_type
-            }/${current.model}`
-          : current?.model;
-      if (!modelHandle) return;
-
-      // Derive current effort from effective model settings (conversation override aware)
-      const modelSettingsForEffort = hasConversationModelOverrideRef.current
-        ? undefined
-        : agentStateRef.current?.model_settings;
-      const currentEffort =
-        deriveReasoningEffort(modelSettingsForEffort, current) ?? "none";
-
-      const { models } = await import("../../agent/model");
-      const tiers = models
-        .filter((m) => m.handle === modelHandle)
-        .map((m) => {
-          const effort = (
-            m.updateArgs as { reasoning_effort?: unknown } | undefined
-          )?.reasoning_effort;
-          return {
-            id: m.id,
-            effort: typeof effort === "string" ? effort : null,
-          };
-        })
-        .filter((m): m is { id: string; effort: string } => Boolean(m.effort));
-
-      // Only enable cycling when there are multiple tiers for the same handle.
-      if (tiers.length < 2) return;
-
-      const anthropicXHighEffort = modelHandle.includes("claude-opus-4-7")
-        ? "xhigh"
-        : "max";
-
-      const order = [
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-      ];
-      const rank = (effort: string): number => {
-        const idx = order.indexOf(effort);
-        return idx >= 0 ? idx : 999;
-      };
-
-      const sorted = [...tiers].sort((a, b) => rank(a.effort) - rank(b.effort));
-      const curIndex = sorted.findIndex((t) => t.effort === currentEffort);
-      const nextIndex = (curIndex + 1) % sorted.length;
-      const next = sorted[nextIndex];
-      if (!next) return;
-
-      // Snapshot the last confirmed config once per burst so we can revert on failure.
-      if (!reasoningCycleLastConfirmedRef.current) {
-        reasoningCycleLastConfirmedRef.current = current ?? null;
-        reasoningCycleLastConfirmedAgentStateRef.current =
-          hasConversationModelOverrideRef.current
-            ? null
-            : (agentStateRef.current ?? null);
-      }
-
-      // Optimistic UI update (footer changes immediately).
-      setLlmConfig((prev) =>
-        prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
-      );
-      // Patch agentState.model_settings only when operating on agent defaults.
-      if (!hasConversationModelOverrideRef.current) {
-        reasoningCyclePatchedAgentStateRef.current = true;
-        setAgentState((prev) => {
-          if (!prev) return prev ?? null;
-          const ms = prev.model_settings;
-          if (!ms || !("provider_type" in ms)) return prev;
-          if (ms.provider_type === "openai") {
-            return {
-              ...prev,
-              model_settings: {
-                ...ms,
-                reasoning: {
-                  ...(ms as { reasoning?: Record<string, unknown> }).reasoning,
-                  reasoning_effort: next.effort as
-                    | "none"
-                    | "minimal"
-                    | "low"
-                    | "medium"
-                    | "high"
-                    | "xhigh",
-                },
-              },
-            } as AgentState;
-          }
-          if (
-            ms.provider_type === "anthropic" ||
-            ms.provider_type === "bedrock"
-          ) {
-            // "xhigh" is only distinct on Opus 4.7; older Anthropic models map it to backend "max".
-            return {
-              ...prev,
-              model_settings: {
-                ...ms,
-                effort: (next.effort === "xhigh"
-                  ? anthropicXHighEffort
-                  : next.effort) as "low" | "medium" | "high" | "xhigh" | "max",
-              },
-            } as AgentState;
-          }
-          return prev;
-        });
-      } else {
-        reasoningCyclePatchedAgentStateRef.current = false;
-      }
-      setCurrentModelId(next.id);
-
-      // Debounce the server update.
-      reasoningCycleDesiredRef.current = {
-        modelHandle,
-        effort: next.effort,
-        modelId: next.id,
-      };
-      if (reasoningCycleTimerRef.current) {
-        clearTimeout(reasoningCycleTimerRef.current);
-      }
-      reasoningCycleTimerRef.current = setTimeout(() => {
-        reasoningCycleTimerRef.current = null;
-        void flushPendingReasoningEffort();
-      }, reasoningCycleDebounceMs);
-    })();
-  }, [agentId, flushPendingReasoningEffort]);
+  const { flushPendingReasoningEffort, handleCycleReasoningEffort } =
+    useReasoningCycle({
+      agentId,
+      agentIdRef,
+      agentStateRef,
+      commandRunner,
+      conversationIdRef,
+      hasConversationModelOverrideRef,
+      isAgentBusy,
+      llmConfigRef,
+      reasoningCycleDebounceMs,
+      reasoningCycleDesiredRef,
+      reasoningCycleInFlightRef,
+      reasoningCycleLastConfirmedAgentStateRef,
+      reasoningCycleLastConfirmedRef,
+      reasoningCyclePatchedAgentStateRef,
+      reasoningCycleTimerRef,
+      setAgentState,
+      setConversationOverrideContextWindowLimit,
+      setConversationOverrideModelSettings,
+      setCurrentModelHandle,
+      setCurrentModelId,
+      setHasConversationModelOverride,
+      setLlmConfig,
+      withCommandLock,
+    });
 
   // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
