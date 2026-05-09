@@ -386,6 +386,44 @@ describe("AISDKStreamAdapter", () => {
     ]);
   });
 
+  test("does not retry quota-limited provider 429 errors", async () => {
+    let calls = 0;
+    const quotaLimit = apiError({
+      message: "Rate limit exceeded",
+      statusCode: 429,
+      responseBody: '{"error":"Rate limited","reasons":["exceeded-quota"]}',
+      isRetryable: false,
+    });
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          yield* (async function* () {})();
+          throw quotaLimit;
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await expect(
+      collect(
+        adapter.stream(
+          providerInput([
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+          ]),
+        ),
+      ),
+    ).rejects.toThrow("Rate limit exceeded");
+    expect(calls).toBe(1);
+  });
+
   test("does not retry non-transient provider 4xx errors", async () => {
     let calls = 0;
     const authError = apiError({
@@ -462,6 +500,44 @@ describe("AISDKStreamAdapter", () => {
       ),
     ).rejects.toThrow("upstream connect error");
     expect(calls).toBe(1);
+  });
+
+  test("retries OpenCode-style JSON overload shapes before yielding output", async () => {
+    let calls = 0;
+    const retryableJson = new Error('{"code":"RESOURCE_EXHAUSTED"}');
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          if (calls === 1) throw retryableJson;
+          yield streamPart({ type: "text-delta", id: "text-1", text: "ok" });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    const events = await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(calls).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      "letta-chunk",
+      "ai-sdk-part",
+      "ai-sdk-part",
+    ]);
   });
 
   test("retries after non-output stream parts", async () => {

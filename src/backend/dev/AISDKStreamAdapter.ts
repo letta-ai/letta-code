@@ -170,6 +170,56 @@ function retryErrorDetail(error: unknown): string {
   return parts.filter(Boolean).join("\n");
 }
 
+function parseRetryableJSONRecord(
+  value: string,
+): Record<string, unknown> | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const candidates = [trimmed];
+  const jsonStart = trimmed.indexOf("{");
+  if (jsonStart > 0) {
+    candidates.push(trimmed.slice(jsonStart));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (isRecord(parsed)) return parsed;
+    } catch {
+      // Continue to next candidate.
+    }
+  }
+  return null;
+}
+
+function isRetryableRateLimitJSONDetail(detail: string): boolean {
+  const candidates = [detail, ...detail.split("\n")];
+  for (const candidate of candidates) {
+    const parsed = parseRetryableJSONRecord(candidate);
+    if (!parsed) continue;
+
+    const type = stringValueForRetry(parsed.type)?.toLowerCase();
+    const topLevelCode = stringValueForRetry(parsed.code)?.toLowerCase();
+    const nestedError = isRecord(parsed.error) ? parsed.error : undefined;
+    const nestedType = stringValueForRetry(nestedError?.type)?.toLowerCase();
+    const nestedCode = stringValueForRetry(nestedError?.code)?.toLowerCase();
+
+    if (type === "error" && nestedType === "too_many_requests") return true;
+    if (
+      typeof topLevelCode === "string" &&
+      (topLevelCode.includes("exhausted") ||
+        topLevelCode.includes("unavailable"))
+    ) {
+      return true;
+    }
+    if (typeof nestedCode === "string" && nestedCode.includes("rate_limit")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function isRetryableLocalProviderError(error: unknown): boolean {
   if (isContextWindowOverflowError(error)) return false;
 
@@ -179,9 +229,13 @@ function isRetryableLocalProviderError(error: unknown): boolean {
     if (error.isRetryable === true) return true;
     const status = error.statusCode;
     if (status !== undefined && status >= 500) return true;
+    if (status === undefined && isRetryableRateLimitJSONDetail(detail)) {
+      return true;
+    }
     return shouldRetryPreStreamTransientError({ status, detail });
   }
 
+  if (isRetryableRateLimitJSONDetail(detail)) return true;
   return shouldRetryPreStreamTransientError({
     status: undefined,
     detail,
