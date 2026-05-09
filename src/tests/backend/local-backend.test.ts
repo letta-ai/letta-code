@@ -1931,7 +1931,7 @@ describe("LocalBackend", () => {
 
       const agent = await backend.createAgent({
         name: "Image Agent",
-        model: "openai/gpt-test",
+        model: "openai/gpt-4.1",
       } as AgentCreateBody);
       const conversation = await backend.createConversation({
         agent_id: agent.id,
