@@ -1,8 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { NotificationBuffer } from "../../cli/helpers/taskNotifications";
 import { appendTaskNotificationEventsToBuffer } from "../../cli/helpers/taskNotifications";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 // ---------------------------------------------------------------------------
 // Helper-level behavioral tests
@@ -97,11 +96,7 @@ describe("appendTaskNotificationEventsToBuffer", () => {
 // ---------------------------------------------------------------------------
 
 describe("background onComplete → flush wiring in App.tsx", () => {
-  const readSource = () =>
-    readFileSync(
-      fileURLToPath(new URL("../../cli/App.tsx", import.meta.url)),
-      "utf-8",
-    );
+  const readSource = readInteractiveAppSource;
 
   test("appendTaskNotificationEvents delegates to appendTaskNotificationEventsToBuffer with a flush arg", () => {
     const source = readSource();

@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 function readAppSource(): string {
-  const appPath = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-  return readFileSync(appPath, "utf-8");
+  return readInteractiveAppSource();
 }
 
 describe("permission mode retry wiring", () => {
