@@ -2306,6 +2306,7 @@ export default function App({
       if (desiredModel) {
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
+          conversationId: conversationIdRef.current,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -2313,6 +2314,7 @@ export default function App({
 
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
+        conversationId: conversationIdRef.current,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -9552,9 +9554,13 @@ Type your task to begin the loop.`,
             return { submitted: true };
           }
 
-          if (lowerGoalArg === "clear") {
+          if (lowerGoalArg === "clear" || lowerGoalArg === "disable") {
             const cleared = settingsManager.clearConversationGoal(
               currentConversationId,
+            );
+            settingsManager.setConversationGoalToolsEnabled(
+              currentConversationId,
+              false,
             );
             if (ralphMode.getState().mode === "goal") {
               ralphMode.deactivate();
@@ -9563,8 +9569,10 @@ Type your task to begin the loop.`,
               setUiPermissionMode("default");
             }
             cmd.finish(
-              cleared
-                ? "Goal cleared"
+              cleared || lowerGoalArg === "disable"
+                ? lowerGoalArg === "disable"
+                  ? "Goal disabled; goal tools removed for this conversation."
+                  : "Goal cleared"
                 : "No goal to clear. This conversation does not currently have a goal.",
               true,
             );
@@ -9595,6 +9603,10 @@ Type your task to begin the loop.`,
                 setUiPermissionMode("default");
               }
             } else if (lowerGoalArg === "resume") {
+              settingsManager.setConversationGoalToolsEnabled(
+                currentConversationId,
+                true,
+              );
               ralphMode.activateGoal(goal.objective, 0, true);
               setUiRalphActive(true);
               permissionMode.setMode("bypassPermissions");
@@ -9641,6 +9653,10 @@ Type your task to begin the loop.`,
             );
             return { submitted: true };
           }
+          settingsManager.setConversationGoalToolsEnabled(
+            currentConversationId,
+            true,
+          );
           const goal = settingsManager.setConversationGoal(
             currentConversationId,
             parsedGoal.objective,

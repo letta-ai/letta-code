@@ -2,8 +2,10 @@ import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import type { ConversationGoal } from "../../settings-manager";
 import { formatCompact } from "./format";
 
-export const GOAL_USAGE = "Usage: /goal <objective>";
-export const GOAL_USAGE_HINT = "Example: /goal improve benchmark coverage";
+export const GOAL_USAGE =
+  "Usage: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]";
+export const GOAL_USAGE_HINT =
+  "Example: /goal --token-budget 50000 improve benchmark coverage";
 
 const MAX_GOAL_OBJECTIVE_CHARS = 4000;
 

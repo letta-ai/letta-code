@@ -282,9 +282,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   // "MultiEdit",
   // "LS",
   "memory",
-  "GetGoal",
-  "CreateGoal",
-  "UpdateGoal",
   "Read",
   "Skill",
   "Task",
@@ -299,9 +296,6 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "apply_patch",
   "memory_apply_patch",
   "update_plan",
-  "get_goal",
-  "create_goal",
-  "update_goal",
   "view_image",
 ];
 
@@ -336,9 +330,6 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "ViewImage",
   "ApplyPatch",
   "UpdatePlan",
-  "GetGoal",
-  "CreateGoal",
-  "UpdateGoal",
 ];
 
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
@@ -1033,6 +1024,7 @@ export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
@@ -1247,6 +1239,7 @@ async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
@@ -1272,6 +1265,16 @@ async function resolveBaseToolNamesForModel(
     baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
   }
 
+  if (options?.include && options.include.length > 0) {
+    const seen = new Set(baseToolNames);
+    for (const name of options.include) {
+      if (!seen.has(name)) {
+        baseToolNames.push(name);
+        seen.add(name);
+      }
+    }
+  }
+
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
     baseToolNames,
@@ -1290,6 +1293,7 @@ async function buildRegistryForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },

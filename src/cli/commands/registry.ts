@@ -61,8 +61,8 @@ export const commands: Record<string, Command> = {
     },
   },
   "/goal": {
-    desc: "Manage goal: /goal [status|pause|resume|complete|clear|--replace|--token-budget N <objective>]",
-    args: "[status|pause|resume|complete|clear|--replace|--token-budget N <objective>]",
+    desc: "Manage goal: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
+    args: "[status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
     order: 14,
     handler: () => {
       // Handled specially in App.tsx

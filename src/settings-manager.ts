@@ -150,6 +150,7 @@ export interface LocalProjectSettings {
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
   conversationGoalsByServer?: Record<string, Record<string, ConversationGoal>>;
+  conversationGoalToolsByServer?: Record<string, Record<string, boolean>>;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -1246,6 +1247,47 @@ class SettingsManager {
     const session: SessionRef = { agentId, conversationId };
     this.setLocalLastSession(session, workingDirectory);
     this.setGlobalLastSession(session);
+  }
+
+  areConversationGoalToolsEnabled(
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): boolean {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    return (
+      localSettings.conversationGoalToolsByServer?.[serverKey]?.[
+        conversationId
+      ] === true
+    );
+  }
+
+  setConversationGoalToolsEnabled(
+    conversationId: string,
+    enabled: boolean,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const serverGoalTools = {
+      ...(localSettings.conversationGoalToolsByServer?.[serverKey] ?? {}),
+    };
+    if (enabled) {
+      serverGoalTools[conversationId] = true;
+    } else {
+      delete serverGoalTools[conversationId];
+    }
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalToolsByServer: {
+          ...localSettings.conversationGoalToolsByServer,
+          [serverKey]: serverGoalTools,
+        },
+      },
+      workingDirectory,
+    );
   }
 
   getConversationGoal(
