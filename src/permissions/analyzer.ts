@@ -515,7 +515,7 @@ function detectSkillScript(
   }
 
   const agentRegex = new RegExp(
-    `^${escapeRegex(normalizedHomeDir)}/\\.letta/agents/[^/]+/memory/skills/(.+?)/scripts/`,
+    `^${escapeRegex(normalizedHomeDir)}/\\.letta/agents/[^/]+/(?:memory/)?skills/(.+?)/scripts/`,
   );
   const agentSkill = detect("agent-scoped", agentRegex);
   if (agentSkill) {
