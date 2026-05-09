@@ -5,7 +5,11 @@
  * No colors should be hardcoded in components - all should reference this file.
  */
 
-import { getTerminalTheme } from "../helpers/terminalTheme";
+import {
+  getTerminalBackgroundColor,
+  getTerminalTheme,
+  type TerminalRgb,
+} from "../helpers/terminalTheme";
 
 /**
  * Parse a hex color (#RRGGBB) to RGB components.
@@ -17,6 +21,39 @@ function parseHex(hex: string): { r: number; g: number; b: number } {
     g: parseInt(h.slice(2, 4), 16),
     b: parseInt(h.slice(4, 6), 16),
   };
+}
+
+function rgbToHex({ r, g, b }: TerminalRgb): string {
+  const toHex = (value: number) => value.toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function isLightRgb({ r, g, b }: TerminalRgb): boolean {
+  return 0.299 * r + 0.587 * g + 0.114 * b > 128;
+}
+
+function blendRgb(
+  fg: TerminalRgb,
+  bg: TerminalRgb,
+  alpha: number,
+): TerminalRgb {
+  return {
+    r: Math.floor(fg.r * alpha + bg.r * (1 - alpha)),
+    g: Math.floor(fg.g * alpha + bg.g * (1 - alpha)),
+    b: Math.floor(fg.b * alpha + bg.b * (1 - alpha)),
+  };
+}
+
+function getCodexUserMessageBackground(): string {
+  const theme = getTerminalTheme();
+  const terminalBg =
+    getTerminalBackgroundColor() ??
+    (theme === "light" ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 });
+  const overlay = isLightRgb(terminalBg)
+    ? { color: { r: 0, g: 0, b: 0 }, alpha: 0.04 }
+    : { color: { r: 255, g: 255, b: 255 }, alpha: 0.12 };
+
+  return rgbToHex(blendRgb(overlay.color, terminalBg, overlay.alpha));
 }
 
 /**
@@ -267,9 +304,8 @@ export const colors = {
   // User messages (past prompts) - theme-aware background
   // Uses getter to read theme at render time (after async init)
   get userMessage() {
-    const theme = getTerminalTheme();
     return {
-      background: theme === "light" ? "#dcddf2" : "#2d2d2d", // light purple for light, subtle gray for dark
+      background: getCodexUserMessageBackground(),
       text: undefined, // use default terminal text color
     };
   },
