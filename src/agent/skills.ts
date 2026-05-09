@@ -46,8 +46,18 @@ export interface Skill {
   id: string;
   /** Human-readable name of the skill */
   name: string;
-  /** Description of what the skill does */
+  /** Description of what the skill does and when to use it */
   description: string;
+  /** Optional additional trigger guidance from `when_to_use` frontmatter */
+  whenToUse?: string;
+  /** Hint shown in slash-command autocomplete */
+  argumentHint?: string;
+  /** Named positional arguments for skill content substitution */
+  arguments?: string[];
+  /** If true, hide from model auto-invocation / Skill tool listings */
+  disableModelInvocation?: boolean;
+  /** If false, hide from slash-command user invocation */
+  userInvocable?: boolean;
   /** Optional category for organizing skills */
   category?: string;
   /** Optional tags for filtering/searching skills */
@@ -91,6 +101,60 @@ export function compareSkills(a: Skill, b: Skill): number {
     a.source.localeCompare(b.source) ||
     a.path.localeCompare(b.path)
   );
+}
+
+function stripSurroundingQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+export function getFrontmatterString(
+  frontmatter: Record<string, string | string[]>,
+  key: string,
+): string | undefined {
+  const value = frontmatter[key];
+  return typeof value === "string" ? stripSurroundingQuotes(value) : undefined;
+}
+
+export function getFrontmatterStringList(
+  frontmatter: Record<string, string | string[]>,
+  key: string,
+): string[] | undefined {
+  const value = frontmatter[key];
+  if (Array.isArray(value)) {
+    return value.map(stripSurroundingQuotes).filter((item) => item.length > 0);
+  }
+  if (typeof value === "string") {
+    return stripSurroundingQuotes(value)
+      .split(/\s+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  return undefined;
+}
+
+export function getFrontmatterBoolean(
+  frontmatter: Record<string, string | string[]>,
+  key: string,
+): boolean | undefined {
+  const value = getFrontmatterString(frontmatter, key)?.toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
+export function isModelInvocableSkill(skill: Skill): boolean {
+  return skill.disableModelInvocation !== true;
+}
+
+export function isUserInvocableSkill(skill: Skill): boolean {
+  return skill.userInvocable !== false;
 }
 
 /**
@@ -362,41 +426,33 @@ async function parseSkillFile(
       .replace(/\b\w/g, (l) => l.toUpperCase());
 
   // Description is required - either from frontmatter or first paragraph of content
-  let description =
-    typeof frontmatter.description === "string"
-      ? frontmatter.description
-      : null;
+  let description = getFrontmatterString(frontmatter, "description") ?? null;
   if (!description) {
     // Extract first paragraph from content as description
     const firstParagraph = body.trim().split("\n\n")[0];
     description = firstParagraph || "No description available";
   }
-
-  // Strip surrounding quotes from description if present
   description = description.trim();
-  if (
-    (description.startsWith('"') && description.endsWith('"')) ||
-    (description.startsWith("'") && description.endsWith("'"))
-  ) {
-    description = description.slice(1, -1);
-  }
+
+  const whenToUse = getFrontmatterString(frontmatter, "when_to_use")?.trim();
+  const modelDescription = whenToUse
+    ? `${description}\n\nWhen to use: ${whenToUse}`
+    : description;
 
   // Extract tags (handle both string and array)
-  let tags: string[] | undefined;
-  if (Array.isArray(frontmatter.tags)) {
-    tags = frontmatter.tags;
-  } else if (typeof frontmatter.tags === "string") {
-    tags = [frontmatter.tags];
-  }
+  const tags = getFrontmatterStringList(frontmatter, "tags");
 
   return {
     id,
     name,
-    description,
-    category:
-      typeof frontmatter.category === "string"
-        ? frontmatter.category
-        : undefined,
+    description: modelDescription,
+    whenToUse,
+    argumentHint: getFrontmatterString(frontmatter, "argument-hint"),
+    arguments: getFrontmatterStringList(frontmatter, "arguments"),
+    disableModelInvocation:
+      getFrontmatterBoolean(frontmatter, "disable-model-invocation") ?? false,
+    userInvocable: getFrontmatterBoolean(frontmatter, "user-invocable") ?? true,
+    category: getFrontmatterString(frontmatter, "category"),
     tags,
     path: filePath,
     source,
@@ -410,13 +466,14 @@ async function parseSkillFile(
  * Format: `- name (source): description` for each skill.
  */
 export function formatSkillsAsSystemReminder(skills: Skill[]): string {
-  if (skills.length === 0) {
-    return "";
-  }
-
-  const lines = [...skills]
+  const lines = skills
+    .filter(isModelInvocableSkill)
     .sort(compareSkills)
     .map((s) => `- ${s.id} (${s.source}): ${s.description}`);
+
+  if (lines.length === 0) {
+    return "";
+  }
 
   return `<system-reminder>
 The following skills are available for use with the Skill tool:

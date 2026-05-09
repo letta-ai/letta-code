@@ -11050,10 +11050,73 @@ export default function App({
           : null;
         const result = await executeCommand(aliasedMsg);
 
-        // If command not found, fall through to send as regular message to agent
+        // If command not found, try user-invocable skills before falling through.
         if (result.notFound) {
           if (registryCmd) {
             registryCmd.fail(`Unknown command: ${registryCommandName}`);
+          }
+
+          const skillCommandName = registryCommandName.slice(1);
+          const { discoverClientSideSkills } = await import(
+            "../agent/clientSkills"
+          );
+          const { getSkillSources } = await import("../agent/context");
+          const { isUserInvocableSkill } = await import("../agent/skills");
+          const skillDiscovery = await discoverClientSideSkills({
+            agentId,
+            skillSources: getSkillSources(),
+          });
+          const matchedSkill = skillDiscovery.skills.find(
+            (skill) =>
+              skill.id === skillCommandName && isUserInvocableSkill(skill),
+          );
+
+          if (matchedSkill) {
+            const cmd = commandRunner.start(
+              trimmed,
+              `Running /${matchedSkill.id}...`,
+            );
+
+            const approvalCheck = await checkPendingApprovalsForSlashCommand();
+            if (approvalCheck.blocked) {
+              cmd.fail(
+                `Pending approval(s). Resolve approvals before running /${matchedSkill.id}.`,
+              );
+              return { submitted: false };
+            }
+
+            const args = trimmed.slice(`/${matchedSkill.id}`.length).trim();
+            setCommandRunning(true);
+            try {
+              const { loadRenderedSkillContent, wrapSkillContent } =
+                await import("../tools/impl/Skill");
+              const skillContent = await loadRenderedSkillContent(
+                matchedSkill.id,
+                {
+                  agentId,
+                  args,
+                  allowDisabledModelInvocation: true,
+                },
+              );
+              cmd.finish("Running skill...", true);
+              await processConversationWithQueuedApprovals([
+                {
+                  type: "message",
+                  role: "user",
+                  content: buildTextParts(
+                    wrapSkillContent(matchedSkill.id, skillContent),
+                  ),
+                  otid: randomUUID(),
+                },
+              ]);
+            } catch (error) {
+              const errorDetails = formatErrorDetails(error, agentId);
+              cmd.fail(`Failed to run skill: ${errorDetails}`);
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
           }
           // Don't treat as command - continue to regular message handling below
         } else {
