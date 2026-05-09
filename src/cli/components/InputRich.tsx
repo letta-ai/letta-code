@@ -246,6 +246,8 @@ const InputFooter = memo(function InputFooter({
   statusLineRight,
   statusLinePadding,
   footerNotification,
+  usedContextTokens,
+  sessionCost,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -266,6 +268,8 @@ const InputFooter = memo(function InputFooter({
   statusLineRight?: string;
   statusLinePadding?: number;
   footerNotification?: string | null;
+  usedContextTokens?: number | null;
+  sessionCost?: string | null;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -374,6 +378,22 @@ const InputFooter = memo(function InputFooter({
       parts.push(chalk.yellow("▲"));
     }
     parts.push(chalk.dim("]"));
+
+    // Append context usage and session cost if available
+    const extras: string[] = [];
+    if (usedContextTokens != null && usedContextTokens > 0) {
+      const ctxK = usedContextTokens >= 1000
+        ? `${Math.round(usedContextTokens / 1000)}k`
+        : `${usedContextTokens}`;
+      extras.push(`ctx:${ctxK}`);
+    }
+    if (sessionCost) {
+      extras.push(sessionCost);
+    }
+    if (extras.length > 0) {
+      parts.push(chalk.dim(` ${extras.join(" ")}`));
+    }
+
     return parts.join("");
   }, [
     displayAgentName,
@@ -381,6 +401,8 @@ const InputFooter = memo(function InputFooter({
     isByokProvider,
     isOpenAICodexProvider,
     hasTemporaryModelOverride,
+    usedContextTokens,
+    sessionCost,
   ]);
 
   const rightLabel = useMemo(
@@ -778,6 +800,8 @@ export function Input({
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
+  usedContextTokens,
+  sessionCost,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -823,6 +847,8 @@ export function Input({
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
+  usedContextTokens?: number | null;
+  sessionCost?: string | null;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -1670,6 +1696,8 @@ export function Input({
                 statusLineRight={statusLineRight}
                 statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
+                usedContextTokens={usedContextTokens}
+                sessionCost={sessionCost}
               />
             )}
           </Box>

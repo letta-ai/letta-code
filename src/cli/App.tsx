@@ -212,7 +212,7 @@ import { PersonalitySelector } from "./components/PersonalitySelector";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
-import { formatDuration, formatUsageStats } from "./components/SessionStats";
+import { formatDuration, formatUsageStats, loadPricingForModel, calculateSessionCost } from "./components/SessionStats";
 import { SkillsDialog } from "./components/SkillsDialog";
 import { SleeptimeSelector } from "./components/SleeptimeSelector";
 // InlinePlanApproval kept for easy rollback if needed
@@ -8770,9 +8770,13 @@ export default function App({
                 // Silently skip balance info if endpoint not available
               }
 
+              const modelHandle =
+                llmConfigRef.current?.handle ??
+                buildModelHandleFromLlmConfig(llmConfigRef.current);
               const output = formatUsageStats({
                 stats,
                 balance,
+                modelHandle,
               });
 
               cmd.finish(output, true, true);
@@ -14886,6 +14890,16 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                 statusLinePadding={statusLine.padding || 0}
                 statusLinePrompt={statusLine.prompt}
                 footerNotification={footerUpdateText}
+                usedContextTokens={sessionStatsSnapshot.usage.contextTokens ?? undefined}
+                sessionCost={
+                  (() => {
+                    const handle = llmConfigRef.current?.handle ?? buildModelHandleFromLlmConfig(llmConfigRef.current);
+                    const pricing = loadPricingForModel(handle);
+                    if (!pricing) return undefined;
+                    const { total } = calculateSessionCost(sessionStatsSnapshot.usage, pricing);
+                    return total >= 0.001 ? `$${total.toFixed(3)}` : undefined;
+                  })()
+                }
               />
             </Box>
 
