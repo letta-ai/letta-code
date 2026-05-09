@@ -1,7 +1,8 @@
 // src/cli/helpers/agentInfo.ts
 // Generates agent info system reminder (agent identity, memory dir)
 
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { isLocalBackendEnvEnabled } from "../../backend/local/paths";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 
@@ -65,13 +66,16 @@ export function buildAgentInfo(options: AgentInfoOptions): string {
 
     const showMemoryDir = (() => {
       try {
-        return settingsManager.isMemfsEnabled(agentInfo.id);
+        return (
+          isLocalBackendEnvEnabled() ||
+          settingsManager.isMemfsEnabled(agentInfo.id)
+        );
       } catch {
         return false;
       }
     })();
     const memoryDirLine = showMemoryDir
-      ? `\n- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getMemoryFilesystemRoot(agentInfo.id)}\``
+      ? `\n- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getScopedMemoryFilesystemRoot(agentInfo.id)}\``
       : "";
 
     const convLine = conversationId

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
-import { composeSubagentChildEnv } from "../../agent/subagents/manager";
+import {
+  composeSubagentChildEnv,
+  resolveSubagentInheritedPrimaryRoot,
+} from "../../agent/subagents/manager";
 import { cliPermissions } from "../../permissions/cli";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
@@ -135,6 +139,23 @@ describe("composeSubagentChildEnv", () => {
     expect(env.LETTA_BASE_URL).toBe("https://api.example.com");
   });
 
+  test("local backend mode is forwarded explicitly to child process env", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {
+        HOME: "/home/user",
+        LETTA_LOCAL_BACKEND_EXPERIMENTAL: "0",
+      },
+      backendMode: "local",
+      localBackendStorageDir: "/tmp/lc-local-backend",
+      parentAgentId: PARENT_ID,
+      permissionMode: "memory",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+
+    expect(env.LETTA_LOCAL_BACKEND_EXPERIMENTAL).toBe("1");
+    expect(env.LETTA_LOCAL_BACKEND_DIR).toBe("/tmp/lc-local-backend");
+  });
+
   test("missing API key + base URL preserves parent env values", () => {
     // When auth resolution returns null/undefined, we shouldn't clobber
     // whatever the parent had (could be legitimately set by user).
@@ -219,5 +240,28 @@ describe("composeSubagentChildEnv", () => {
     expect(env.HOME).toBe("/home/user");
     expect(env.PATH).toBe("/usr/bin:/bin");
     expect(env.CUSTOM_VAR).toBe("preserved");
+  });
+});
+
+describe("resolveSubagentInheritedPrimaryRoot", () => {
+  test("uses the local backend MemFS root for local backend parent agents", () => {
+    expect(
+      resolveSubagentInheritedPrimaryRoot({
+        backendMode: "local",
+        parentAgentId: PARENT_ID,
+        inheritedPrimaryRoot: "/Users/someone/.letta/agents/stale/memory",
+        localBackendStorageDir: "/tmp/lc-local-backend",
+      }),
+    ).toBe(join("/tmp/lc-local-backend", "memfs", PARENT_ID, "memory"));
+  });
+
+  test("keeps the resolved remote MemFS root for API backend agents", () => {
+    expect(
+      resolveSubagentInheritedPrimaryRoot({
+        backendMode: "api",
+        parentAgentId: PARENT_ID,
+        inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+      }),
+    ).toBe(PARENT_MEMORY_DIR);
   });
 });

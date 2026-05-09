@@ -7,6 +7,7 @@ import {
 } from "../../agent/subagents/contextBudget";
 import {
   buildSubagentArgs,
+  getModelHandleFromAgent,
   resolveSubagentLauncher,
   resolveSubagentModel,
   resolveSubagentWorkingDirectory,
@@ -241,6 +242,23 @@ describe("buildSubagentArgs", () => {
     expect(args).toContain("--no-memfs");
   });
 
+  test("passes --backend local and --no-memfs for local backend subagents", () => {
+    const args = buildSubagentArgs(
+      "test-subagent",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { backendMode: "local" },
+    );
+
+    expect(args).toContain("--backend");
+    expect(args).toContain("local");
+    expect(args).toContain("--no-memfs");
+  });
+
   test("does not force --no-memfs when deploying an existing subagent agent", () => {
     const args = buildSubagentArgs(
       "test-subagent",
@@ -341,6 +359,31 @@ describe("buildSubagentArgs", () => {
 
     expect(args).not.toContain("--no-system-info-reminder");
     expect(args).not.toContain("--no-skills");
+  });
+});
+
+describe("getModelHandleFromAgent", () => {
+  test("prefers top-level provider-qualified model handles for local backend agents", () => {
+    expect(
+      getModelHandleFromAgent({
+        model: "ollama/llama3.1:8b",
+        llm_config: {
+          model_endpoint_type: "openai",
+          model: "ollama/llama3.1:8b",
+        },
+      }),
+    ).toBe("ollama/llama3.1:8b");
+  });
+
+  test("falls back to llm_config endpoint and model for server agents", () => {
+    expect(
+      getModelHandleFromAgent({
+        llm_config: {
+          model_endpoint_type: "anthropic",
+          model: "claude-sonnet-4-6",
+        },
+      }),
+    ).toBe("anthropic/claude-sonnet-4-6");
   });
 });
 

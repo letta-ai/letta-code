@@ -32,6 +32,7 @@ import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import {
   isExecuteCommandCommand,
+  parseServerLifecycleMessage,
   parseServerMessage,
 } from "./protocol-inbound";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
@@ -184,6 +185,12 @@ export function createListenerMessageHandler(
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
+      const lifecycleMessage = parseServerLifecycleMessage(data);
+      if (lifecycleMessage) {
+        safeEmitWsEvent("recv", "lifecycle", lifecycleMessage);
+        return;
+      }
+
       const parsed = parseServerMessage(data);
       parsedScope = getParsedRuntimeScope(parsed);
       if (parsed) {

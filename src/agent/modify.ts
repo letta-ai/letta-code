@@ -23,6 +23,10 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return modelHandle.includes("claude-opus-4-7");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
@@ -203,6 +207,16 @@ function buildModelSettings(
       updateArgs.max_output_tokens;
   }
 
+  // Preserve OpenCode-style modality metadata when present so local-model
+  // transforms can decide whether file/image parts are safe to send.
+  if (isRecord(updateArgs?.modalities)) {
+    (settings as Record<string, unknown>).modalities = updateArgs.modalities;
+  }
+  if (isRecord(updateArgs?.capabilities)) {
+    (settings as Record<string, unknown>).capabilities =
+      updateArgs.capabilities;
+  }
+
   return settings;
 }
 
@@ -252,7 +266,9 @@ export async function updateAgentLLMConfig(
     }),
   });
 
-  const finalAgent = await backend.retrieveAgent(agentId);
+  const finalAgent = await backend.retrieveAgent(agentId, {
+    include: ["agent.secrets", "agent.tools", "agent.tags"],
+  });
   return finalAgent;
 }
 
@@ -439,8 +455,11 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state
-    const agent = await backend.retrieveAgent(agentId);
+    // Re-fetch agent to get updated state (include relationships so
+    // callers that rely on agent.tags/tools/secrets aren't broken).
+    const agent = await backend.retrieveAgent(agentId, {
+      include: ["agent.secrets", "agent.tools", "agent.tags"],
+    });
 
     return {
       success: true,

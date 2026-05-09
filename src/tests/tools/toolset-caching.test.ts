@@ -23,7 +23,9 @@ describe("listener tool prep metadata reuse", () => {
     const source = readSource("../../websocket/listener/turn.ts");
 
     expect(source).toContain("cachedAgent: AgentState | null = null;");
-    expect(source).toContain("cachedAgent = (await client.agents.retrieve");
+    expect(source).toContain(
+      "cachedAgent = (await getBackend().retrieveAgent(",
+    );
     expect(source).toContain("buildMaybeLaunchReflectionSubagent({");
     expect(source).toContain("cachedAgent,");
     expect(source).toContain("prepareToolExecutionContextForScope({");

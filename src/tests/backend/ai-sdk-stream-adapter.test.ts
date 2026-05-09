@@ -284,6 +284,57 @@ describe("AISDKStreamAdapter", () => {
     expect(capturedSystem).toBe("agent system prompt");
   });
 
+  test("sends ChatGPT OAuth system prompt as instructions, not system input", async () => {
+    const model = {} as LanguageModel;
+    let capturedSystem: string | undefined;
+    let capturedProviderOptions: unknown;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedSystem = options.system;
+      capturedProviderOptions = options.providerOptions;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => model,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "compiled Letta system prompt",
+            tags: [],
+            model: "chatgpt-plus-pro/gpt-5.5",
+            model_settings: { provider_type: "chatgpt_oauth" },
+          },
+        ),
+      ),
+    );
+
+    expect(capturedSystem).toBeUndefined();
+    expect(capturedProviderOptions).toEqual({
+      openai: {
+        instructions: "compiled Letta system prompt",
+        store: false,
+        systemMessageMode: "remove",
+      },
+    });
+  });
+
   test("passes provider reasoning options from local model settings", async () => {
     const model = {} as LanguageModel;
     let capturedProviderOptions: unknown;
@@ -349,6 +400,87 @@ describe("AISDKStreamAdapter", () => {
       anthropic: {
         effort: "max",
         thinking: { type: "adaptive" },
+      },
+    });
+  });
+
+  test("does not apply OpenAI provider options to OpenAI-compatible local providers", () => {
+    expect(
+      buildAISDKProviderOptions("openrouter/deepseek/deepseek-v4-pro", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+        verbosity: "medium",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("zai/glm-5.1", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("moonshot/kimi-k2.5", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("minimax/MiniMax-M2.7", {
+        provider_type: "anthropic",
+        effort: "high",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("google_ai/gemini-3.1-pro-preview", {
+        provider_type: "google_ai",
+        thinking_config: { thinking_budget: 1024 },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("bedrock/us.anthropic.claude-sonnet-4-6", {
+        provider_type: "bedrock",
+        effort: "high",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("ollama/llama2", {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "high" },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      buildAISDKProviderOptions("lmstudio/google/gemma-3n-e4b", {
+        provider_type: "openai",
+        verbosity: "medium",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("moves the local system prompt to instructions for ChatGPT OAuth models", () => {
+    expect(
+      buildAISDKProviderOptions(
+        "chatgpt-plus-pro/gpt-5.5",
+        {
+          provider_type: "chatgpt_oauth",
+          reasoning_effort: "high",
+          verbosity: "low",
+        },
+        { systemPrompt: "compiled Letta system prompt" },
+      ),
+    ).toEqual({
+      openai: {
+        instructions: "compiled Letta system prompt",
+        store: false,
+        systemMessageMode: "remove",
+        reasoningEffort: "high",
+        textVerbosity: "low",
       },
     });
   });
@@ -560,6 +692,153 @@ describe("AISDKStreamAdapter", () => {
     const serialized = JSON.stringify(capturedMessages);
     expect(serialized).toContain("anthropic reasoning");
     expect(serialized).not.toContain("openai reasoning");
+  });
+
+  test("replaces unsupported image file parts with explicit text before AI SDK conversion", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [
+                { type: "text", text: "what is in this screenshot?" },
+                {
+                  type: "file",
+                  mediaType: "image/png",
+                  url: "data:image/png;base64,aGVsbG8=",
+                  filename: "screenshot.png",
+                },
+              ],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "agent system prompt",
+            tags: [],
+            model: "ollama/llama2",
+            model_settings: { provider_type: "ollama" },
+          },
+        ),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).toContain(
+      'ERROR: Cannot read \\"screenshot.png\\" (this model does not support image input). Inform the user.',
+    );
+    expect(serialized).not.toContain('"type":"file"');
+    expect(serialized).not.toContain("data:image/png");
+  });
+
+  test("preserves image file parts when model modalities include image input", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput(
+          [
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [
+                { type: "text", text: "what is in this screenshot?" },
+                {
+                  type: "file",
+                  mediaType: "image/png",
+                  url: "data:image/png;base64,aGVsbG8=",
+                  filename: "screenshot.png",
+                },
+              ],
+            },
+          ],
+          {
+            id: "agent-test",
+            name: "Test Agent",
+            description: null,
+            system: "agent system prompt",
+            tags: [],
+            model: "ollama/llama2",
+            model_settings: {
+              provider_type: "ollama",
+              modalities: { input: ["text", "image"], output: ["text"] },
+            },
+          },
+        ),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).toContain('"type":"file"');
+    expect(serialized).toContain("data:image/png;base64,aGVsbG8=");
+    expect(serialized).not.toContain("this model does not support image input");
+  });
+
+  test("turns empty legacy image data URLs into an explicit user-visible error", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [
+              {
+                type: "image",
+                image: "data:image/png;base64,",
+              } as unknown as LocalMessage["parts"][number],
+            ],
+          },
+        ]),
+      ),
+    );
+
+    const serialized = JSON.stringify(capturedMessages);
+    expect(serialized).toContain(
+      "ERROR: Image file is empty or corrupted. Please provide a valid image.",
+    );
   });
 
   test("projects UI tool outputs without AI SDK approval protocol parts", async () => {

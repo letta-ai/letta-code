@@ -7,7 +7,8 @@ import { Text } from "./Text";
 
 const lowlight = createLowlight(common);
 const BASH_LANGUAGE = "bash";
-const FIRST_LINE_PREFIX = "$ ";
+const FIRST_LINE_PROMPT = "$";
+const PROMPT_COLUMN_WIDTH = 2;
 
 type Props = {
   command: string;
@@ -398,9 +399,11 @@ export const SyntaxHighlightedCommand = memo(
           return (
             <Box key={`${lineIdx}:${lineKey}`}>
               {showPrompt ? (
-                <Text color={palette.prompt}>
-                  {lineIdx === 0 ? FIRST_LINE_PREFIX : "  "}
-                </Text>
+                <Box width={PROMPT_COLUMN_WIDTH} flexShrink={0}>
+                  {lineIdx === 0 ? (
+                    <Text color={palette.prompt}>{FIRST_LINE_PROMPT}</Text>
+                  ) : null}
+                </Box>
               ) : null}
               <Text color={palette.text}>
                 {lineIdx === 0 && prefix ? prefix : null}

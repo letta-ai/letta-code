@@ -2,6 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { configureBackendMode } from "../../backend";
+import {
+  getLocalBackendMemoryFilesystemRoot,
+  LOCAL_BACKEND_NO_MEMFS_ENV,
+} from "../../backend/local/paths";
 import { runWithRuntimeContext } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import {
@@ -410,6 +415,67 @@ test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
       ).isMemfsEnabled = original;
     }
   });
+});
+
+test("getShellEnv injects local backend MemFS path for --backend local", () => {
+  const agentId = `agent-local-shell-env-${Date.now()}`;
+  configureBackendMode("local");
+  try {
+    withTemporaryAgentEnv(agentId, () => {
+      const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+      (
+        settingsManager as unknown as {
+          isMemfsEnabled: (id: string) => boolean;
+        }
+      ).isMemfsEnabled = () => false;
+
+      try {
+        const env = getShellEnv();
+        const expectedMemoryDir = getLocalBackendMemoryFilesystemRoot(agentId);
+        expect(env.LETTA_MEMORY_DIR).toBe(expectedMemoryDir);
+        expect(env.MEMORY_DIR).toBe(expectedMemoryDir);
+      } finally {
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = original;
+      }
+    });
+  } finally {
+    configureBackendMode("api");
+  }
+});
+
+test("getShellEnv does not inject local backend MemFS path when local --no-memfs is active", () => {
+  const agentId = `agent-local-no-memfs-shell-env-${Date.now()}`;
+  configureBackendMode("local");
+  try {
+    withTemporaryEnv({ [LOCAL_BACKEND_NO_MEMFS_ENV]: "1" }, () => {
+      withTemporaryAgentEnv(agentId, () => {
+        const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => true;
+
+        try {
+          const env = getShellEnv();
+          expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+          expect(env.MEMORY_DIR).toBeUndefined();
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = original;
+        }
+      });
+    });
+  } finally {
+    configureBackendMode("api");
+  }
 });
 
 test("getShellEnv injects transient MemFS git proxy config for Desktop Bash commands", () => {

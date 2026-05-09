@@ -25,6 +25,7 @@ describe("listen subcommand auth resolution", () => {
   const originalConsoleWarn = console.warn;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
+  const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_DEBUG_PANEL;
 
   beforeEach(() => {
     refreshAccessTokenMock.mockReset();
@@ -39,6 +40,7 @@ describe("listen subcommand auth resolution", () => {
 
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
+    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
 
     settingsManager.getSettingsWithSecureTokens = mock(async () => ({
       env: {},
@@ -73,6 +75,11 @@ describe("listen subcommand auth resolution", () => {
       delete process.env.LETTA_BASE_URL;
     } else {
       process.env.LETTA_BASE_URL = originalBaseUrl;
+    }
+    if (originalDesktopDebugPanel === undefined) {
+      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    } else {
+      process.env.LETTA_DESKTOP_DEBUG_PANEL = originalDesktopDebugPanel;
     }
     __listenSubcommandTestUtils.setOAuthDepsForTests(null);
   });

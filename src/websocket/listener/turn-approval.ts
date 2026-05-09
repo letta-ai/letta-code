@@ -510,6 +510,7 @@ export async function handleApprovalStop(params: {
       workingDirectory: turnWorkingDirectory,
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
+      channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
       onFileWrite,
     });
   } finally {

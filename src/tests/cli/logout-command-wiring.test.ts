@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 function readAppSource(): string {
-  const appPath = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-  return readFileSync(appPath, "utf-8");
+  return readInteractiveAppSource();
 }
 
 describe("logout command wiring", () => {
@@ -12,7 +10,7 @@ describe("logout command wiring", () => {
     const source = readAppSource();
 
     expect(source).toContain(
-      'import { buildLogoutSuccessMessage } from "./helpers/logoutMessage";',
+      'import { buildLogoutSuccessMessage } from "../helpers/logoutMessage";',
     );
     expect(source).toContain(
       "buildLogoutSuccessMessage(Boolean(process.env.LETTA_API_KEY))",

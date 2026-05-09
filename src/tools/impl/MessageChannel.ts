@@ -24,6 +24,7 @@ import { resolveEligibleProactiveSlackAccount } from "../../channels/slack/proac
 import type {
   ChannelAdapter,
   ChannelRoute,
+  ChannelTurnSource,
   OutboundChannelMessage,
   SupportedChannelId,
 } from "../../channels/types";
@@ -485,6 +486,8 @@ interface MessageChannelArgs {
   title?: string;
   /** Injected by executeTool() — NOT read from global context. */
   parentScope?: { agentId: string; conversationId: string };
+  /** Injected by executeTool() for channel-originated turns. */
+  channelTurnSources?: ChannelTurnSource[];
 }
 
 interface NormalizedMessageChannelInput {
@@ -655,6 +658,40 @@ function buildSyntheticChannelRoute(params: {
   };
 }
 
+function inferAccountIdFromChannelTurnSources(params: {
+  input: NormalizedMessageChannelInput;
+  scope: { agentId: string; conversationId: string };
+  channelTurnSources?: ChannelTurnSource[];
+}): string | undefined {
+  const chatId = params.input.chatId;
+  if (!chatId) {
+    return undefined;
+  }
+
+  const accountIds = new Set<string>();
+  for (const source of params.channelTurnSources ?? []) {
+    if (
+      source.channel !== params.input.channel ||
+      source.chatId !== chatId ||
+      source.agentId !== params.scope.agentId ||
+      source.conversationId !== params.scope.conversationId
+    ) {
+      continue;
+    }
+    if (
+      params.input.threadId !== undefined &&
+      (source.threadId ?? null) !== (params.input.threadId ?? null)
+    ) {
+      continue;
+    }
+    if (source.accountId?.trim()) {
+      accountIds.add(source.accountId.trim());
+    }
+  }
+
+  return accountIds.size === 1 ? [...accountIds][0] : undefined;
+}
+
 async function resolveExplicitMessageChannelContext(params: {
   input: NormalizedMessageChannelInput;
   scope: { agentId: string; conversationId: string };
@@ -778,14 +815,24 @@ export async function message_channel(
         registry,
       });
     } else if (input.chatId && input.channel) {
+      const resolvedAccountId =
+        input.accountId ??
+        inferAccountIdFromChannelTurnSources({
+          input,
+          scope,
+          channelTurnSources: args.channelTurnSources,
+        });
       const route: ChannelRoute | null = registry.getRouteForScope(
         input.channel,
         input.chatId,
         scope.agentId,
         scope.conversationId,
+        resolvedAccountId,
       );
       if (!route) {
-        return `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation.`;
+        return resolvedAccountId
+          ? `Error: No route for chat_id "${input.chatId}" on "${input.channel}" account "${resolvedAccountId}" for this agent/conversation.`
+          : `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation. If multiple channel accounts can receive this chat, pass accountId (from the channel notification's account_id) to disambiguate.`;
       }
 
       const adapter = registry.getAdapter(input.channel, route.accountId);

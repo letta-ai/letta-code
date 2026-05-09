@@ -27,6 +27,7 @@ export interface CompileLocalSystemPromptOptions {
   agent: LocalAgentRecord;
   conversationId: string;
   memoryDir?: string;
+  includeMemfs?: boolean;
   now?: Date;
   previousMessageCount?: number;
 }
@@ -430,7 +431,10 @@ export function compileLocalSystemPrompt(
   const compiledAt = options.now ?? new Date();
   const memoryDir =
     options.memoryDir ?? getMemoryFilesystemRoot(options.agent.id);
-  const memfs = renderMemfsProjection(memoryDir);
+  const memfs =
+    options.includeMemfs === false
+      ? { content: "", revision: undefined }
+      : renderMemfsProjection(memoryDir);
   const metadata = compileMemoryMetadata({
     agentId: options.agent.id,
     conversationId: options.conversationId,

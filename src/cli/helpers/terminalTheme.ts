@@ -1,7 +1,25 @@
 export type TerminalTheme = "light" | "dark";
+export type TerminalRgb = { r: number; g: number; b: number };
 
-// Cache for the detected theme
-let cachedTheme: TerminalTheme | null = null;
+type TerminalThemeState = {
+  cachedTheme: TerminalTheme | null;
+  cachedBackground: TerminalRgb | null;
+};
+
+const TERMINAL_THEME_STATE_KEY = Symbol.for("letta.terminalThemeState");
+
+function getTerminalThemeState(): TerminalThemeState {
+  const globalObject = globalThis as typeof globalThis & {
+    [TERMINAL_THEME_STATE_KEY]?: TerminalThemeState;
+  };
+
+  globalObject[TERMINAL_THEME_STATE_KEY] ??= {
+    cachedTheme: null,
+    cachedBackground: null,
+  };
+
+  return globalObject[TERMINAL_THEME_STATE_KEY];
+}
 
 /**
  * Normalize a hex color component of any length to 8-bit (0-255).
@@ -24,7 +42,7 @@ export function parseHexComponent(hex: string): number {
  */
 async function queryTerminalBackground(
   timeoutMs = 100,
-): Promise<{ r: number; g: number; b: number } | null> {
+): Promise<TerminalRgb | null> {
   // Skip if not a TTY
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return null;
@@ -124,6 +142,7 @@ export async function detectTerminalThemeAsync(): Promise<TerminalTheme> {
   // Try OSC 11 query first
   const bg = await queryTerminalBackground(100);
   if (bg) {
+    getTerminalThemeState().cachedBackground = bg;
     const luminance = calculateLuminance(bg.r, bg.g, bg.b);
     // Threshold: 0.5 is mid-gray, but use 0.4 to be more conservative
     // (most "light" themes have luminance > 0.7)
@@ -161,9 +180,18 @@ export function detectTerminalThemeSync(): TerminalTheme {
  * Call initTerminalTheme() early in app startup for async detection.
  */
 export function getTerminalTheme(): TerminalTheme {
-  if (cachedTheme) return cachedTheme;
-  cachedTheme = detectTerminalThemeSync();
-  return cachedTheme;
+  const state = getTerminalThemeState();
+  if (state.cachedTheme) return state.cachedTheme;
+  state.cachedTheme = detectTerminalThemeSync();
+  return state.cachedTheme;
+}
+
+/**
+ * Get the cached terminal background color from the OSC 11 query, if available.
+ * Returns null when the terminal did not respond or async detection has not run.
+ */
+export function getTerminalBackgroundColor(): TerminalRgb | null {
+  return getTerminalThemeState().cachedBackground;
 }
 
 /**
@@ -171,6 +199,7 @@ export function getTerminalTheme(): TerminalTheme {
  * Should be called early in app startup before UI renders.
  */
 export async function initTerminalTheme(): Promise<TerminalTheme> {
-  cachedTheme = await detectTerminalThemeAsync();
-  return cachedTheme;
+  const state = getTerminalThemeState();
+  state.cachedTheme = await detectTerminalThemeAsync();
+  return state.cachedTheme;
 }

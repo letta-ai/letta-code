@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("reasoning tier cycle wiring", () => {
   test("resets pending reasoning-cycle state across context/model switches", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     expect(source).toContain(
       "const resetPendingReasoningCycle = useCallback(() => {",
@@ -33,10 +31,7 @@ describe("reasoning tier cycle wiring", () => {
   });
 
   test("timer callbacks clear timer ref before re-flushing", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const callbackBlocks =
       source.match(
@@ -47,10 +42,7 @@ describe("reasoning tier cycle wiring", () => {
   });
 
   test("flush uses conversation-scoped reasoning updates (default updates agent)", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const start = source.indexOf(
       "const flushPendingReasoningEffort = useCallback(",
@@ -71,15 +63,12 @@ describe("reasoning tier cycle wiring", () => {
   });
 
   test("tab-based reasoning cycling is opt-in only", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
     const indexPath = fileURLToPath(new URL("../../index.ts", import.meta.url));
     const settingsPath = fileURLToPath(
       new URL("../../settings-manager.ts", import.meta.url),
     );
 
-    const appSource = readFileSync(appPath, "utf-8");
+    const appSource = readInteractiveAppSource();
     const indexSource = readFileSync(indexPath, "utf-8");
     const settingsSource = readFileSync(settingsPath, "utf-8");
 

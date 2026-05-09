@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.25.0",
+  "version": "0.25.5",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "bin": {
@@ -35,7 +35,6 @@
   "dependencies": {
     "@letta-ai/letta-client": "^1.10.2",
     "glob": "^13.0.0",
-    "highlight.js": "^11.11.1",
     "ink-link": "^5.0.0",
     "lowlight": "^3.3.0",
     "node-pty": "^1.1.0",
@@ -48,7 +47,9 @@
     "@vscode/ripgrep": "^1.17.0"
   },
   "devDependencies": {
+    "@ai-sdk/amazon-bedrock": "^4.0.103",
     "@ai-sdk/anthropic": "^3.0.73",
+    "@ai-sdk/google": "^3.0.70",
     "@ai-sdk/openai": "^3.0.55",
     "@slack/bolt": "^4.7.0",
     "@types/bun": "^1.3.7",

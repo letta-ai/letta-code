@@ -6,7 +6,7 @@ import {
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { REMEMBER_PROMPT } from "../../agent/promptAssets";
-import { getClient } from "../../backend/api/client";
+import { getBackend } from "../../backend";
 import {
   buildDoctorMessage,
   buildInitMessage,
@@ -201,22 +201,28 @@ async function handleClearCommand(
     connectionId?: string;
   },
 ): Promise<string> {
-  const client = await getClient();
+  const backend = getBackend();
   const agentId = conversationRuntime.agentId;
 
   if (!agentId) {
     throw new Error("No agent ID available for /clear command");
   }
 
-  // Reset all messages on the agent only when in the default conversation.
-  if (conversationRuntime.conversationId === "default") {
+  // Reset all messages on the agent only when in the default API conversation.
+  // Local/headless backends model /clear by switching to a fresh conversation.
+  if (
+    conversationRuntime.conversationId === "default" &&
+    !backend.capabilities.localModelCatalog
+  ) {
+    const { getClient } = await import("../../backend/api/client");
+    const client = await getClient();
     await client.agents.messages.reset(agentId, {
       add_default_initial_messages: false,
     });
   }
 
   // Create a new conversation
-  const conversation = await client.conversations.create({
+  const conversation = await backend.createConversation({
     agent_id: agentId,
     isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
   });

@@ -53,40 +53,11 @@ This is the recommended flow:
 
 This gives you full control over what you bring across and keeps everything consistent with memfs.
 
-## Legacy Fallback (only if memfs is disabled)
+## If MemFS Is Disabled
 
-If memfs is **not enabled**, you can use block-level commands:
-- `letta blocks list`
-- `letta blocks copy`
-- `letta blocks attach`
+The legacy block-level CLI commands have been removed. Enable MemFS first, then use the export → copy → sync workflow above.
 
-⚠️ **Do not use these if memfs is enabled** — they can diverge from file-based edits.
-
-## Handling Duplicate Label Errors
-
-**You cannot have two blocks with the same label.** If you try to copy/attach a block and you already have one with that label, you'll get a `duplicate key value violates unique constraint` error.
-
-**Solutions:**
-
-1. **Use `--label` (copy only):** Rename the block when copying:
-   ```bash
-   letta blocks copy --block-id <id> --label project-imported
-   ```
-
-2. **Use `--override` (copy or attach):** Automatically detach your existing block first:
-   ```bash
-   letta blocks copy --block-id <id> --override
-   letta blocks attach --block-id <id> --override
-   ```
-   If the operation fails, the original block is automatically reattached.
-
-3. **Manual detach first:** Use the `memory` tool to detach your existing block:
-   ```
-   memory(agent_state, "delete", path="/memories/<label>")
-   ```
-   Then run the copy/attach script.
-
-**Note:** `letta blocks attach` does NOT support `--label` because attached blocks keep their original label (they're shared, not copied).
+If you run into duplicate filenames while copying memory files, rename the incoming file or merge its contents manually before committing.
 
 ## Workflow
 

@@ -1010,6 +1010,49 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
+  test("runs remote clear execute_command against local backend", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-clear-local-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "WS Clear Local Agent",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "clear",
+          request_id: "clear-local-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "default" },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      expect(runtime.conversationId).toStartWith("local-conv-");
+      await expect(
+        backend.retrieveConversation(runtime.conversationId),
+      ).resolves.toMatchObject({ agent_id: agent.id });
+      expect(socket.sentPayloads.join("\n")).toContain(
+        "Agent's in-context messages cleared",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
     const legacyCancel = parseServerMessage(
       Buffer.from(
@@ -2278,13 +2321,13 @@ describe("listen-client experiment command handling", () => {
         type: "get_experiments_response",
         request_id: "experiments-get-1",
         success: true,
-        experiments: [
+        experiments: expect.arrayContaining([
           expect.objectContaining({
             id: "node",
             enabled: false,
             source: "default",
           }),
-        ],
+        ]),
       });
 
       socket.sentPayloads.length = 0;
@@ -2306,24 +2349,24 @@ describe("listen-client experiment command handling", () => {
         type: "set_experiment_response",
         request_id: "experiment-set-1",
         success: true,
-        experiments: [
+        experiments: expect.arrayContaining([
           expect.objectContaining({
             id: "node",
             enabled: true,
             source: "override",
           }),
-        ],
+        ]),
       });
       expect(deviceStatusUpdate).toMatchObject({
         type: "update_device_status",
         device_status: {
-          experiments: [
+          experiments: expect.arrayContaining([
             expect.objectContaining({
               id: "node",
               enabled: true,
               source: "override",
             }),
-          ],
+          ]),
         },
       });
     } finally {
@@ -2792,12 +2835,14 @@ describe("listen-client v2 status builders", () => {
         (deviceStatus.current_working_directory ?? "").length,
       ).toBeGreaterThan(0);
       expect(deviceStatus.current_toolset_preference).toBe("auto");
-      expect(deviceStatus.experiments).toEqual([
-        expect.objectContaining({
-          id: "node",
-          source: "default",
-        }),
-      ]);
+      expect(deviceStatus.experiments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "node",
+            source: "default",
+          }),
+        ]),
+      );
     } finally {
       if (originalNodeFlag === undefined) {
         delete process.env.LETTA_NODE;
@@ -4936,7 +4981,30 @@ describe("listen-client post-stop approval recovery policy", () => {
     expect(shouldRecover).toBe(true);
   });
 
-  test("retries on generic no-run error heuristic", () => {
+  test("extracts streamed approval conflict details from generic error messages", () => {
+    const conflictDetail =
+      "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
+
+    expect(
+      __listenClientTestUtils.getApprovalToolCallDesyncErrorText({
+        message: "An unknown error occurred with the LLM streaming request.",
+        detail: conflictDetail,
+      }),
+    ).toBe(conflictDetail);
+
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: conflictDetail,
+      });
+
+    expect(shouldRecover).toBe(true);
+  });
+
+  test("does not retry on generic no-run errors without an approval conflict", () => {
     const shouldRecover =
       __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
         stopReason: "error",
@@ -4946,7 +5014,35 @@ describe("listen-client post-stop approval recovery policy", () => {
         latestErrorText: null,
       });
 
+    expect(shouldRecover).toBe(false);
+  });
+
+  test("retries on explicit approval conflicts captured as fallback errors", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 0,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: null,
+        fallbackError:
+          "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.",
+      });
+
     expect(shouldRecover).toBe(true);
+  });
+
+  test("does not retry when approval response is already stale", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: "No tool call is currently awaiting approval",
+        latestErrorText: null,
+      });
+
+    expect(shouldRecover).toBe(false);
   });
 
   test("does not retry once retry budget is exhausted", () => {

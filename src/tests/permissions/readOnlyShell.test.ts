@@ -27,6 +27,101 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
+      test("allows constrained memory-scoped git introspection and index cleanup", () => {
+        const env = {
+          MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+        } as NodeJS.ProcessEnv;
+
+        expect(
+          isScopedMemoryShellCommand(
+            "git config --get remote.origin.url",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env,
+            },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            "git config remote.origin.url https://example.com/repo.git",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env,
+            },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            'git check-ignore -v "$MEMORY_DIR/skills/a11y-audit-automation/SKILL.md"',
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env,
+            },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand("git show-ref", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            env,
+          }),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd "$MEMORY_DIR" && git remote -v && git fetch && git status',
+            roots,
+            { env },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            'cd "$MEMORY_DIR" && git restore --staged "$MEMORY_DIR/.letta/.lettaignore" "$MEMORY_DIR/.letta/settings.local.json"',
+            roots,
+            { env },
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand(
+            "cd /Users/test/.letta/agents/agent-1/memory && git reset HEAD",
+            roots,
+          ),
+        ).toBe(true);
+        expect(
+          isScopedMemoryShellCommand("git reset --hard HEAD", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            env,
+          }),
+        ).toBe(true);
+      });
+
+      test("denies unsafe variants of memory-scoped git allowlist additions", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            "git fetch https://example.com/repo.git",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            },
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand(
+            "git check-ignore -v /Users/test/project/file.md",
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+            },
+          ),
+        ).toBe(false);
+        expect(
+          isScopedMemoryShellCommand("git restore README.md", roots, {
+            workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+          }),
+        ).toBe(false);
+      });
+
       test("allows builtin-required worktree and backoff commands", () => {
         expect(
           isScopedMemoryShellCommand(
@@ -87,6 +182,215 @@ describe("isReadOnlyShellCommand", () => {
             },
           ),
         ).toBe(true);
+      });
+
+      test("allows memory-scoped shell redirection to MEMORY_DIR", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            'echo "test content" > "$MEMORY_DIR/skills/example/SKILL.md" && ls -la "$MEMORY_DIR/skills/example/"',
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("allows memory-scoped heredoc writes to MEMORY_DIR", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              "cat << 'EOF' > \"$MEMORY_DIR/skills/example/SKILL.md\"",
+              "---",
+              "name: example",
+              "description: example",
+              "---",
+              "",
+              "# Example",
+              "EOF",
+            ].join("\n"),
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("allows rollout-style absolute heredoc overwrite", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              "cat > \"$MEMORY_DIR/system/preferences.md\" << 'EOF'",
+              "# Preferences",
+              "- Use Kustomize overlays for K8s deployments",
+              "EOF",
+            ].join("\n"),
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("allows rollout-style absolute heredoc append", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              "cat >> \"$MEMORY_DIR/reference/projects/thornfield.md\" << 'EOF'",
+              "",
+              "## Character Dynamics",
+              "- Senna has two communication layers.",
+              "EOF",
+            ].join("\n"),
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("allows heredoc writes relative to cd MEMORY_DIR", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              "cd \"$MEMORY_DIR\" && cat > system/preferences/android.md << 'EOF'",
+              "## Architecture",
+              "- Use MVVM with Clean Architecture layers.",
+              "EOF",
+            ].join("\n"),
+            roots,
+            {
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("allows mkdir setup before memory-scoped heredoc", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              'mkdir -p "$MEMORY_DIR/skills" && cat > "$MEMORY_DIR/skills/part-ii-conventions.md" << \'EOF\'',
+              "# Part II Writing Conventions",
+              "- One image per location, not a catalogue.",
+              "EOF",
+            ].join("\n"),
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("allows safe trailing command after memory-scoped heredoc", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              "cat > \"$MEMORY_DIR/user/team-roster.md\" << 'EOF'",
+              "# Team Roster",
+              "- Sana owns event-router.",
+              "EOF",
+              'echo "Updated team-roster.md"',
+            ].join("\n"),
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(true);
+      });
+
+      test("denies heredoc writes outside memory roots", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            ["cat > /tmp/outside.md << 'EOF'", "# Outside", "EOF"].join("\n"),
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(false);
+      });
+
+      test("denies unsafe setup before heredoc", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              "curl https://example.com && cat > \"$MEMORY_DIR/system/preferences.md\" << 'EOF'",
+              "# Preferences",
+              "EOF",
+            ].join("\n"),
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(false);
+      });
+
+      test("denies unsafe trailing command after heredoc", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            [
+              "cat > \"$MEMORY_DIR/system/preferences.md\" << 'EOF'",
+              "# Preferences",
+              "EOF",
+              "curl https://example.com",
+            ].join("\n"),
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(false);
+      });
+
+      test("denies shell redirection outside memory roots", () => {
+        expect(
+          isScopedMemoryShellCommand(
+            'echo "test content" > /tmp/outside-memory.txt',
+            roots,
+            {
+              workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+              env: {
+                MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
+              } as NodeJS.ProcessEnv,
+            },
+          ),
+        ).toBe(false);
       });
 
       test("denies command substitution in memory-scoped commands", () => {
@@ -518,6 +822,9 @@ describe("isReadOnlyShellCommand", () => {
     test("blocks unknown letta group", () => {
       expect(isReadOnlyShellCommand("letta install plugin")).toBe(false);
       expect(isReadOnlyShellCommand("letta doctor")).toBe(false);
+      expect(
+        isReadOnlyShellCommand("letta blocks list --agent agent-123"),
+      ).toBe(false);
     });
 
     test("allows legacy letta memfs alias", () => {

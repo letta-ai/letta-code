@@ -5,7 +5,10 @@ import type {
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
 import { LocalBackend } from "./local/LocalBackend";
-import { getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths } from "./local/paths";
+import {
+  getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
+  LOCAL_BACKEND_EXPERIMENTAL_ENV,
+} from "./local/paths";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
 type GetAPIClient = typeof getClient;
@@ -81,6 +84,14 @@ export type ConversationMessageListParams = Parameters<
 >;
 export type ConversationMessageListBody = ConversationMessageListParams[1];
 export type ConversationMessageListOptions = ConversationMessageListParams[2];
+
+export type ConversationMessageCompactParams = Parameters<
+  APIClient["conversations"]["messages"]["compact"]
+>;
+export type ConversationMessageCompactBody =
+  ConversationMessageCompactParams[1];
+export type ConversationMessageCompactOptions =
+  ConversationMessageCompactParams[2];
 
 export type AgentMessageListParams = Parameters<
   APIClient["agents"]["messages"]["list"]
@@ -169,6 +180,14 @@ export interface Backend {
     Awaited<ReturnType<APIClient["conversations"]["messages"]["list"]>>
   >;
 
+  compactConversationMessages(
+    conversationId: string,
+    body?: ConversationMessageCompactBody,
+    options?: ConversationMessageCompactOptions,
+  ): Promise<
+    Awaited<ReturnType<APIClient["conversations"]["messages"]["compact"]>>
+  >;
+
   listAgentMessages(
     agentId: string,
     body?: AgentMessageListBody,
@@ -224,6 +243,8 @@ interface APIBackendDeps {
   getClient?: GetAPIClient;
   forkConversation?: ForkConversation;
 }
+
+export type BackendMode = "api" | "local";
 
 export class APIBackend implements Backend {
   readonly capabilities: BackendCapabilities = {
@@ -330,6 +351,15 @@ export class APIBackend implements Backend {
     return client.conversations.messages.list(conversationId, body, options);
   }
 
+  async compactConversationMessages(
+    conversationId: string,
+    body?: ConversationMessageCompactBody,
+    options?: ConversationMessageCompactOptions,
+  ) {
+    const client = await this.getClient();
+    return client.conversations.messages.compact(conversationId, body, options);
+  }
+
   async listAgentMessages(
     agentId: string,
     body?: AgentMessageListBody,
@@ -403,7 +433,7 @@ function isTruthyEnv(value: string | undefined): boolean {
 }
 
 export function isExperimentalLocalBackendEnabled(): boolean {
-  return isTruthyEnv(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL);
+  return resolveBackendMode() === "local";
 }
 
 export function getLocalBackendStorageDir(homeDir = homedir()): string {
@@ -420,16 +450,37 @@ function createExperimentalLocalBackend(): Backend {
   });
 }
 
+let configuredBackendMode: BackendMode | null = null;
+
+function resolveBackendMode(): BackendMode {
+  if (configuredBackendMode) return configuredBackendMode;
+  return isTruthyEnv(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL)
+    ? "local"
+    : "api";
+}
+
+function createBackendForMode(mode: BackendMode): Backend {
+  return mode === "local" ? createExperimentalLocalBackend() : new APIBackend();
+}
+
 function createInitialBackend(): Backend {
-  return isExperimentalLocalBackendEnabled()
-    ? createExperimentalLocalBackend()
-    : new APIBackend();
+  return createBackendForMode(resolveBackendMode());
 }
 
 let backend: Backend = createInitialBackend();
 
 export function getBackend(): Backend {
   return backend;
+}
+
+export function configureBackendMode(mode: BackendMode): void {
+  configuredBackendMode = mode;
+  process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = mode === "local" ? "1" : "0";
+  backend = createBackendForMode(mode);
+}
+
+export function isLocalBackendEnabled(): boolean {
+  return resolveBackendMode() === "local";
 }
 
 function devBackendStoreOptions() {

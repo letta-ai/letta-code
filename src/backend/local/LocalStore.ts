@@ -26,6 +26,7 @@ import type {
   ConversationMessageStreamBody,
   ConversationUpdateBody,
 } from "../backend";
+import type { LocalCompactionStats } from "./compaction";
 import type { LocalMessage } from "./LocalMessage";
 import {
   cloneLocalMessage,
@@ -64,6 +65,7 @@ export interface LocalAgentRecord {
   tags: string[];
   model: string;
   model_settings: Record<string, unknown>;
+  compaction_settings?: Record<string, unknown> | null;
 }
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
@@ -265,6 +267,7 @@ function normalizeAgentRecord(
     modelSettings.max_tokens = legacyLlmConfig.max_tokens;
   }
 
+  const compactionSettings = optionalRecordOrNull(value.compaction_settings);
   return {
     id: value.id,
     name: optionalString(value.name) ?? "Letta Code",
@@ -276,6 +279,9 @@ function normalizeAgentRecord(
       optionalString(legacyLlmConfig.model) ??
       defaultAgentModel,
     model_settings: modelSettings,
+    ...(compactionSettings !== undefined
+      ? { compaction_settings: compactionSettings }
+      : {}),
   };
 }
 
@@ -312,6 +318,9 @@ function projectAgentState(
     tags: record.tags,
     model: record.model,
     model_settings: record.model_settings,
+    ...(record.compaction_settings !== undefined
+      ? { compaction_settings: record.compaction_settings }
+      : {}),
     message_ids: messageIds,
     in_context_message_ids: inContextMessageIds,
     ...(lastRunCompletion ? { last_run_completion: lastRunCompletion } : {}),
@@ -348,6 +357,47 @@ function normalizeContent(content: unknown): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function localFilePartFromLegacyImage(
+  part: Record<string, unknown>,
+): LocalMessagePart | null {
+  if (part.type !== "image" || !isRecord(part.source)) {
+    return null;
+  }
+
+  const source = part.source;
+  if (source.type !== "base64") {
+    return null;
+  }
+
+  const mediaType = source.media_type;
+  const data = source.data;
+  if (typeof mediaType !== "string" || typeof data !== "string") {
+    return null;
+  }
+
+  return {
+    type: "file",
+    mediaType,
+    url: `data:${mediaType};base64,${data}`,
+  } as LocalMessagePart;
+}
+
+function normalizeLocalMessageForAISDK(message: LocalMessage): LocalMessage {
+  let didChange = false;
+  const parts = message.parts.map((part) => {
+    if (isRecord(part)) {
+      const filePart = localFilePartFromLegacyImage(part);
+      if (filePart) {
+        didChange = true;
+        return filePart;
+      }
+    }
+    return part;
+  });
+
+  return didChange ? { ...message, parts } : message;
 }
 
 function textFromContent(content: unknown): string {
@@ -409,6 +459,12 @@ function toStoredOutputFields(chunk: Record<string, unknown>) {
 export interface StoredTurnInput {
   agentId: string;
   conversationId: string;
+}
+
+export interface LocalCompactionStoreResult {
+  numMessagesBefore: number;
+  numMessagesAfter: number;
+  summaryMessage: LocalMessage;
 }
 
 export interface LocalStoreOptions {
@@ -699,6 +755,23 @@ export class LocalStore {
     if (systemChanged) {
       this.clearCompiledSystemPromptsForAgent(agentId);
     }
+    return this.projectAgent(updated);
+  }
+
+  setAgentCompactionSettings(
+    agentId: string,
+    settings: Record<string, unknown> | null,
+  ): AgentState {
+    const existing = this.agents.get(agentId);
+    if (!existing) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
+    const updated: LocalAgentRecord = {
+      ...existing,
+      compaction_settings: settings === null ? null : { ...settings },
+    };
+    this.agents.set(agentId, updated);
+    this.persistAgent(agentId);
     return this.projectAgent(updated);
   }
 
@@ -1052,6 +1125,57 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Message", messageId);
     }
     return [...messages];
+  }
+
+  compactConversationAll(input: {
+    conversationId: string;
+    agentId: string;
+    summary: string;
+    packedSummary: string;
+    stats?: LocalCompactionStats;
+    remainingMessages?: LocalMessage[];
+  }): LocalCompactionStoreResult {
+    const conversation = this.ensureConversation(
+      input.conversationId,
+      input.agentId,
+    );
+    const key = this.conversationKey(conversation.id, input.agentId);
+    const previousMessages = this.localMessagesByConversationKey.get(key) ?? [];
+    const id = this.nextLocalMessageId();
+    const date = this.currentLocalMessageDate();
+    const summaryMessage: LocalMessage = {
+      id,
+      role: "user",
+      metadata: {
+        created_at: date,
+        updated_at: date,
+        agent_id: input.agentId,
+        conversation_id: conversation.id,
+        compaction: {
+          summary: input.summary,
+          ...(input.stats ? { stats: input.stats } : {}),
+        },
+      },
+      parts: [{ type: "text", text: input.packedSummary } as LocalMessagePart],
+    };
+    const compactedMessages = [
+      summaryMessage,
+      ...(input.remainingMessages ?? []).map(cloneLocalMessage),
+    ];
+    this.localMessagesByConversationKey.set(key, compactedMessages);
+    conversation.in_context_message_ids = compactedMessages.map(
+      (message) => message.id,
+    );
+    conversation.last_message_at = date;
+    conversation.updated_at = date;
+    this.conversations.set(key, conversation);
+    this.persistConversationState(conversation.id, input.agentId);
+    this.rebuildMessageIndex();
+    return {
+      numMessagesBefore: previousMessages.length,
+      numMessagesAfter: compactedMessages.length,
+      summaryMessage: cloneLocalMessage(summaryMessage),
+    };
   }
 
   private appendUserLocalMessage(
@@ -1584,6 +1708,11 @@ export class LocalStore {
         parts.push({ type: "text", text: part.text } as LocalMessagePart);
         continue;
       }
+      const filePart = localFilePartFromLegacyImage(part);
+      if (filePart) {
+        parts.push(filePart);
+        continue;
+      }
       parts.push(part as LocalMessagePart);
     }
     return parts.length > 0 ? parts : textContent(textFromContent(content));
@@ -1634,7 +1763,7 @@ export class LocalStore {
         );
         const localMessages = readJsonlFile<LocalMessage>(
           join(conversationDir, "messages.jsonl"),
-        );
+        ).map(normalizeLocalMessageForAISDK);
         const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
           join(conversationDir, "system-prompt.json"),
         );

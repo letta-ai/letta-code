@@ -804,6 +804,23 @@ export interface WriteMemoryFileCommand {
   commit_message?: string;
 }
 
+/**
+ * Delete a single file from the agent's MemFS working tree and commit
+ * the deletion. Idempotent: if the file is already absent, the handler
+ * returns success without producing a commit.
+ */
+export interface DeleteMemoryFileCommand {
+  type: "delete_memory_file";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to delete from. */
+  agent_id: string;
+  /** Relative path within the memory directory. */
+  path: string;
+  /** Optional commit message; defaults to a sensible fallback. */
+  commit_message?: string;
+}
+
 export interface MemoryCommitDiffCommand {
   type: "memory_commit_diff";
   /** Echoed back in the response for request correlation. */
@@ -1686,6 +1703,7 @@ export type WsProtocolCommand =
   | MemoryCommitDiffCommand
   | ReadMemoryFileCommand
   | WriteMemoryFileCommand
+  | DeleteMemoryFileCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand

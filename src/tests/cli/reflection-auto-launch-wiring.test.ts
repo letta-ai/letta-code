@@ -1,16 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("reflection auto-launch wiring", () => {
   test("routes step-count and compaction-event auto-launch through shared reminder engine", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
     const enginePath = fileURLToPath(
       new URL("../../reminders/engine.ts", import.meta.url),
     );
-    const appSource = readFileSync(appPath, "utf-8");
+    const appSource = readInteractiveAppSource();
     const engineSource = readFileSync(enginePath, "utf-8");
 
     expect(appSource).toContain("const maybeLaunchReflectionSubagent = async");
@@ -38,10 +36,7 @@ describe("reflection auto-launch wiring", () => {
   });
 
   test("/remember sends REMEMBER_PROMPT to primary agent via processConversation", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const appSource = readFileSync(appPath, "utf-8");
+    const appSource = readInteractiveAppSource();
 
     // /remember uses the primary agent path (no subagent)
     expect(appSource).toContain("REMEMBER_PROMPT");

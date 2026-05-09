@@ -5,6 +5,7 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
   getProviderByName,
+  providerStorageTargetLabel,
   removeProviderByName,
 } from "../../providers/byok-providers";
 import {
@@ -17,6 +18,7 @@ import {
 import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
 import {
+  defaultConnectApiKey,
   isConnectApiKeyProvider,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
@@ -202,6 +204,13 @@ function formatBedrockUsage(): string {
 }
 
 function formatApiKeyUsage(provider: ResolvedConnectProvider): string {
+  if (defaultConnectApiKey(provider)) {
+    return [
+      `Usage: /connect ${provider.canonical} [api_key]`,
+      "",
+      `Connect to ${provider.byokProvider.displayName}. API key is optional for this local provider.`,
+    ].join("\n");
+  }
   return [
     `Usage: /connect ${provider.canonical} <api_key>`,
     "",
@@ -267,7 +276,7 @@ async function handleConnectChatGPT(
       cmdId,
       msg,
       `✓ Successfully connected to ChatGPT!\n\n` +
-        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' created/updated in Letta.\n` +
+        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' saved in ${providerStorageTargetLabel()}.\n` +
         "Your ChatGPT Plus/Pro subscription is now linked.",
       true,
       "finished",
@@ -333,7 +342,7 @@ async function handleConnectApiKeyProvider(
       cmdId,
       msg,
       `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
-        `Provider '${provider.byokProvider.providerName}' created/updated in Letta.`,
+        `Provider '${provider.byokProvider.providerName}' saved in ${providerStorageTargetLabel()}.`,
       true,
       "finished",
     );
@@ -452,7 +461,7 @@ async function handleConnectBedrock(
       cmdId,
       msg,
       `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
-        `Provider '${provider.byokProvider.providerName}' created/updated in Letta.`,
+        `Provider '${provider.byokProvider.providerName}' saved in ${providerStorageTargetLabel()}.`,
       true,
       "finished",
     );
@@ -512,7 +521,7 @@ export async function handleConnect(
   }
 
   if (isConnectApiKeyProvider(provider)) {
-    const apiKey = parts.slice(2).join("");
+    const apiKey = parts.slice(2).join("") || defaultConnectApiKey(provider);
     if (!apiKey) {
       if (isConnectZaiBaseProvider(provider)) {
         addCommandResult(
@@ -586,7 +595,7 @@ async function handleDisconnectChatGPT(
       cmdId,
       msg,
       `✓ Disconnected from ChatGPT OAuth.\n\n` +
-        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' removed from Letta.`,
+        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' removed from ${providerStorageTargetLabel()}.`,
       true,
       "finished",
     );
@@ -640,7 +649,7 @@ async function handleDisconnectByokProvider(
       cmdId,
       msg,
       `✓ Disconnected from ${provider.byokProvider.displayName}.\n\n` +
-        `Provider '${provider.byokProvider.providerName}' removed from Letta.`,
+        `Provider '${provider.byokProvider.providerName}' removed from ${providerStorageTargetLabel()}.`,
       true,
       "finished",
     );
