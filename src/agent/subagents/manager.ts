@@ -830,11 +830,7 @@ export function buildSubagentArgs(
     args.push("--tags", `type:${type}`);
     // Default all newly spawned subagents to non-memfs mode.
     // This avoids memfs startup overhead unless explicitly enabled elsewhere.
-    // Local backend agents always use local MemFS, so passing --no-memfs would
-    // make the child process exit during startup.
-    if (options.backendMode !== "local") {
-      args.push("--no-memfs");
-    }
+    args.push("--no-memfs");
     if (model) {
       args.push("--model", model);
     }

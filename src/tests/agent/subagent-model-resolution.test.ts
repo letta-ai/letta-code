@@ -242,7 +242,7 @@ describe("buildSubagentArgs", () => {
     expect(args).toContain("--no-memfs");
   });
 
-  test("passes --backend local and keeps MemFS enabled for local backend subagents", () => {
+  test("passes --backend local and --no-memfs for local backend subagents", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       baseConfig,
@@ -256,7 +256,7 @@ describe("buildSubagentArgs", () => {
 
     expect(args).toContain("--backend");
     expect(args).toContain("local");
-    expect(args).not.toContain("--no-memfs");
+    expect(args).toContain("--no-memfs");
   });
 
   test("does not force --no-memfs when deploying an existing subagent agent", () => {

@@ -209,7 +209,7 @@ describe("local backend command wiring", () => {
     expect(managerSource).toContain(
       'args.push("--backend", options.backendMode);',
     );
-    expect(managerSource).toContain('options.backendMode !== "local"');
+    expect(managerSource).toContain('args.push("--no-memfs");');
     expect(managerSource).toContain(
       'childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";',
     );
