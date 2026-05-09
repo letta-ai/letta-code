@@ -9636,11 +9636,10 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const agent = await getBackend().updateAgent(agentId, {
+            await getBackend().updateAgent(agentId, {
               name: newValue,
             });
             updateAgentName(newValue);
-            setAgentState(agent);
 
             cmd.agentHint = `Your name is now "${newValue}" — acknowledge this and save your new name to memory.`;
             cmd.finish(`Agent renamed to "${newValue}"`, true);
@@ -9686,11 +9685,13 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const agent = await getBackend().updateAgent(agentId, {
+            await getBackend().updateAgent(agentId, {
               description: newDescription,
             });
-            setAgentState(agent);
-            setAgentDescription(agent.description ?? null);
+            setAgentState((prev) =>
+              prev ? { ...prev, description: newDescription } : prev,
+            );
+            setAgentDescription(newDescription);
 
             cmd.finish(`Description updated to "${newDescription}"`, true);
           } catch (error) {
@@ -12943,19 +12944,24 @@ ${SYSTEM_REMINDER_CLOSE}
           // letta/auto so compaction uses a consistent summarization model.
           const existing = agentState?.compaction_settings;
           const existingModel = existing?.model?.trim();
+          const nextCompactionSettings = {
+            ...existing,
+            model: existingModel || DEFAULT_SUMMARIZATION_MODEL,
+            mode: mode as
+              | "all"
+              | "sliding_window"
+              | "self_compact_all"
+              | "self_compact_sliding_window",
+          };
 
-          const agent = await getBackend().updateAgent(agentId, {
-            compaction_settings: {
-              ...existing,
-              model: existingModel || DEFAULT_SUMMARIZATION_MODEL,
-              mode: mode as
-                | "all"
-                | "sliding_window"
-                | "self_compact_all"
-                | "self_compact_sliding_window",
-            },
+          await getBackend().updateAgent(agentId, {
+            compaction_settings: nextCompactionSettings,
           });
-          setAgentState(agent);
+          setAgentState((prev) =>
+            prev
+              ? { ...prev, compaction_settings: nextCompactionSettings }
+              : prev,
+          );
 
           cmd.finish(`Updated compaction mode to: ${mode}`, true);
         } catch (error) {
@@ -15604,11 +15610,10 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                   try {
                     // Rename if new name provided
                     if (newName && newName !== agentName) {
-                      const agent = await getBackend().updateAgent(agentId, {
+                      await getBackend().updateAgent(agentId, {
                         name: newName,
                       });
                       updateAgentName(newName);
-                      setAgentState(agent);
                     }
 
                     // Pin the agent
