@@ -39,7 +39,7 @@ import {
   type Line,
   toLines,
 } from "../helpers/accumulator";
-import { buildChatUrl } from "../helpers/appUrls";
+import { buildAgentReference } from "../helpers/appUrls";
 import { backfillBuffers } from "../helpers/backfill";
 import {
   type ContextTracker,
@@ -706,7 +706,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         settingsManager.persistSession(agent.id, targetConversationId);
 
         // Build success message with hints
-        const agentUrl = buildChatUrl(agent.id);
+        const agentUrl = buildAgentReference(agent.id);
         const memfsTip =
           "Tip: use /init to initialize your agent's memory system!";
         const successOutput = [

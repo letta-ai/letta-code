@@ -63,7 +63,7 @@ import { debugLog, debugWarn } from "../../utils/debug";
 import type { CommandHandle } from "../commands/runner";
 import { validateAgentName } from "../components/PinDialog";
 import { type Buffers, type Line, toLines } from "../helpers/accumulator";
-import { buildChatUrl } from "../helpers/appUrls";
+import { buildChatUrl, isLocalAgentId } from "../helpers/appUrls";
 import type { ContextTracker } from "../helpers/contextTracker";
 import { resetContextHistory } from "../helpers/contextTracker";
 import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
@@ -701,11 +701,19 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
+          const cmd = commandRunner.start("/ade", "Opening ADE...");
+
+          if (isLocalAgentId(agentId)) {
+            cmd.finish(
+              `ADE is not available for local backend agents.\n→ ${agentId}`,
+              true,
+            );
+            return { submitted: true };
+          }
+
           const adeUrl = buildChatUrl(agentId, {
             conversationId: conversationIdRef.current,
           });
-
-          const cmd = commandRunner.start("/ade", "Opening ADE...");
 
           // Fire-and-forget browser open
           import("open")

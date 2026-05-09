@@ -4,7 +4,7 @@ import Link from "ink-link";
 import { useEffect, useState } from "react";
 import { getBackend } from "../../backend";
 import { debugLog } from "../../utils/debug";
-import { buildChatUrl } from "../helpers/appUrls";
+import { buildChatUrl, isLocalAgentId } from "../helpers/appUrls";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
@@ -41,7 +41,10 @@ export function MemoryTabViewer({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const isTmux = Boolean(process.env.TMUX);
-  const adeUrl = buildChatUrl(agentId, { view: "memory", conversationId });
+  const isLocalAgent = isLocalAgentId(agentId);
+  const adeUrl = isLocalAgent
+    ? null
+    : buildChatUrl(agentId, { view: "memory", conversationId });
 
   const [selectedTabIndex, setSelectedTabIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -259,12 +262,13 @@ export function MemoryTabViewer({
         </Text>
         <Box>
           <Text dimColor>{"  "}←→/Tab switch · ↑↓ scroll · </Text>
-          {!isTmux && (
+          {adeUrl && !isTmux && (
             <Link url={adeUrl}>
               <Text dimColor>Edit in ADE</Text>
             </Link>
           )}
-          {isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
+          {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
+          {!adeUrl && <Text dimColor>Local agent: {agentId}</Text>}
           <Text dimColor> · Esc cancel</Text>
         </Box>
       </Box>

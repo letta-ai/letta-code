@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createMinimalAgent } from "../../backend/api/agents";
-import { buildChatUrl } from "../helpers/appUrls";
+import { buildAgentReference } from "../helpers/appUrls";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/letta.yml";
 const ALTERNATE_WORKFLOW_PATH = ".github/workflows/letta-code.yml";
@@ -499,7 +499,7 @@ export async function installGithubApp(
         committed: false,
         secretAction: "set",
         agentId: resolvedAgentId,
-        agentUrl: resolvedAgentId ? buildChatUrl(resolvedAgentId) : null,
+        agentUrl: resolvedAgentId ? buildAgentReference(resolvedAgentId) : null,
       };
     }
 
@@ -525,7 +525,7 @@ export async function installGithubApp(
       committed: true,
       secretAction: "set",
       agentId: resolvedAgentId,
-      agentUrl: resolvedAgentId ? buildChatUrl(resolvedAgentId) : null,
+      agentUrl: resolvedAgentId ? buildAgentReference(resolvedAgentId) : null,
     };
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
