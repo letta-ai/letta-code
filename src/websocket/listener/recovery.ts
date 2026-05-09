@@ -668,6 +668,7 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
+        channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
       });
     } finally {
       emitToolExecutionOutput.flush();
