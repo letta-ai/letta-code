@@ -76,6 +76,20 @@ import { markMilestone } from "./utils/timing";
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
 
+function normalizeUpdateCommandAliases(args: string[]): string[] {
+  const [command, ...rest] = args;
+
+  if (
+    command === "upgrade" ||
+    command === "--update" ||
+    command === "--upgrade"
+  ) {
+    return ["update", ...rest];
+  }
+
+  return args;
+}
+
 function trackCliBoundaryError(
   errorType: string,
   error: unknown,
@@ -108,6 +122,9 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
+  letta upgrade         Alias for \`letta update\`
+  letta --update        Alias for \`letta update\`
+  letta --upgrade       Alias for \`letta update\`
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
@@ -374,7 +391,7 @@ async function main(): Promise<void> {
   let subcommandArgs = rawCliArgs;
   try {
     const backendSelection = extractBackendFlag(rawCliArgs);
-    subcommandArgs = backendSelection.args;
+    subcommandArgs = normalizeUpdateCommandAliases(backendSelection.args);
     if (backendSelection.backend) {
       configureBackendMode(backendSelection.backend);
     }
@@ -431,7 +448,11 @@ async function main(): Promise<void> {
 
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
   // Preprocess args to support --conv as an alias for --conversation.
-  const processedArgs = preprocessCliArgs(process.argv);
+  const processedArgs = preprocessCliArgs([
+    process.argv[0] ?? "node",
+    process.argv[1] ?? "letta",
+    ...subcommandArgs,
+  ]);
 
   let values: ParsedCliArgs["values"];
   let positionals: ParsedCliArgs["positionals"];
