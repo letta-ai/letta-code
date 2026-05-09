@@ -1,6 +1,7 @@
 // src/cli/app/useFeedbackHandler.ts
 
-import { useCallback } from "react";
+import { type MutableRefObject, useCallback } from "react";
+import type { SessionStats } from "../../agent/stats";
 import { submitFeedbackMetadata } from "../../backend/api/metadata";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
@@ -10,9 +11,20 @@ import { chunkLog } from "../helpers/chunkLog";
 import { formatErrorDetails } from "../helpers/errorFormatter";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";
 import { getDeviceType, getLocalTime } from "../helpers/sessionContext";
+import type { CommandStarter, OverlayCommandConsumer } from "./types";
 
-// biome-ignore lint/suspicious/noExplicitAny: feedback submit is split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type FeedbackHandlerContext = Record<string, any>;
+type FeedbackHandlerContext = {
+  agentDescription: string | null;
+  agentId: string;
+  agentName: string | null;
+  billingTier: string | null;
+  closeOverlay: () => void;
+  commandRunner: CommandStarter;
+  consumeOverlayCommand: OverlayCommandConsumer;
+  currentModelId: string | null;
+  sessionStatsRef: MutableRefObject<SessionStats>;
+  withCommandLock: (fn: () => Promise<void>) => Promise<void>;
+};
 
 export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
   const {

@@ -2,7 +2,12 @@
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { useCallback } from "react";
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useCallback,
+} from "react";
 import type { ModelReasoningEffort } from "../../agent/model";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
 import { formatErrorDetails } from "../helpers/errorFormatter";
@@ -11,9 +16,45 @@ import {
   deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
 } from "./modelConfig";
+import type { CommandStarter } from "./types";
 
-// biome-ignore lint/suspicious/noExplicitAny: split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type ReasoningCycleContext = Record<string, any>;
+type ReasoningCycleDesired = {
+  modelHandle: string;
+  effort: string;
+  modelId: string;
+};
+
+type ReasoningCycleContext = {
+  agentId: string;
+  agentIdRef: MutableRefObject<string>;
+  agentStateRef: MutableRefObject<AgentState | null | undefined>;
+  commandRunner: CommandStarter;
+  conversationIdRef: MutableRefObject<string>;
+  hasConversationModelOverrideRef: MutableRefObject<boolean>;
+  isAgentBusy: () => boolean;
+  llmConfigRef: MutableRefObject<LlmConfig | null>;
+  reasoningCycleDebounceMs: number;
+  reasoningCycleDesiredRef: MutableRefObject<ReasoningCycleDesired | null>;
+  reasoningCycleInFlightRef: MutableRefObject<boolean>;
+  reasoningCycleLastConfirmedAgentStateRef: MutableRefObject<AgentState | null>;
+  reasoningCycleLastConfirmedRef: MutableRefObject<LlmConfig | null>;
+  reasoningCyclePatchedAgentStateRef: MutableRefObject<boolean>;
+  reasoningCycleTimerRef: MutableRefObject<ReturnType<
+    typeof setTimeout
+  > | null>;
+  setAgentState: Dispatch<SetStateAction<AgentState | null | undefined>>;
+  setConversationOverrideContextWindowLimit: Dispatch<
+    SetStateAction<number | null>
+  >;
+  setConversationOverrideModelSettings: Dispatch<
+    SetStateAction<AgentState["model_settings"] | null>
+  >;
+  setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
+  setCurrentModelId: Dispatch<SetStateAction<string | null>>;
+  setHasConversationModelOverride: (value: boolean) => void;
+  setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
+  withCommandLock: (fn: () => Promise<void>) => Promise<void>;
+};
 
 export function useReasoningCycle(ctx: ReasoningCycleContext) {
   const {
@@ -318,7 +359,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       }
 
       // Optimistic UI update (footer changes immediately).
-      setLlmConfig((prev: LlmConfig | null | undefined) =>
+      setLlmConfig((prev: LlmConfig | null) =>
         prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
       );
       // Patch agentState.model_settings only when operating on agent defaults.

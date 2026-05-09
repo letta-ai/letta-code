@@ -1,8 +1,24 @@
-import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  AgentState,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  ApprovalCreate,
+  Message,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  ApprovalDecision,
+  ApprovalResult,
+} from "../../agent/approval-execution";
 import type { AgentProvenance } from "../../agent/create";
+import type { PersonalityId } from "../../agent/personality";
+import type { ExperimentId } from "../../experiments/types";
+import type { ToolExecutionResult } from "../../tools/manager";
+import type { ToolsetPreference } from "../../tools/toolset";
+import type { CommandHandle, createCommandRunner } from "../commands/runner";
 import type { Line } from "../helpers/accumulator";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
+import type { ReflectionSettings } from "../helpers/memoryReminder";
 import type { ApprovalRequest } from "../helpers/stream";
 
 export type AppLoadingState =
@@ -30,6 +46,140 @@ export type AppProps = {
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;
 };
+
+export type ActiveOverlay =
+  | "model"
+  | "experiment"
+  | "sleeptime"
+  | "compaction"
+  | "toolset"
+  | "system"
+  | "personality"
+  | "agent"
+  | "resume"
+  | "conversations"
+  | "search"
+  | "subagent"
+  | "feedback"
+  | "memory"
+  | "memfs-sync"
+  | "pin"
+  | "new"
+  | "mcp"
+  | "mcp-connect"
+  | "install-github-app"
+  | "help"
+  | "hooks"
+  | "connect"
+  | "skills"
+  | null;
+
+export type QueuedOverlayAction =
+  | { type: "switch_agent"; agentId: string; commandId?: string }
+  | { type: "switch_model"; modelId: string; commandId?: string }
+  | {
+      type: "set_experiment";
+      experimentId: ExperimentId;
+      enabled: boolean;
+      commandId?: string;
+    }
+  | {
+      type: "set_sleeptime";
+      settings: ReflectionSettings;
+      commandId?: string;
+    }
+  | {
+      type: "set_compaction";
+      mode: string;
+      commandId?: string;
+    }
+  | {
+      type: "switch_conversation";
+      conversationId: string;
+      commandId?: string;
+    }
+  | {
+      type: "switch_toolset";
+      toolsetId: ToolsetPreference;
+      commandId?: string;
+    }
+  | { type: "switch_system"; promptId: string; commandId?: string }
+  | {
+      type: "switch_personality";
+      personalityId: PersonalityId;
+      commandId?: string;
+    }
+  | null;
+
+export type AppCommandRunner = Pick<
+  ReturnType<typeof createCommandRunner>,
+  "start" | "getHandle"
+>;
+
+export type CommandStarter = Pick<
+  ReturnType<typeof createCommandRunner>,
+  "start"
+>;
+
+export type QueuedApprovalMetadata = {
+  conversationId: string;
+  generation: number;
+};
+
+export type QueueApprovalResults = (
+  results: ApprovalResult[] | null,
+  metadata?: QueuedApprovalMetadata,
+) => void;
+
+export type ProcessConversationOptions = {
+  allowReentry?: boolean;
+  submissionGeneration?: number;
+  transcriptStartLineIndex?: number | null;
+};
+
+export type ProcessConversation = (
+  input: Array<MessageCreate | ApprovalCreate>,
+  options?: ProcessConversationOptions,
+) => Promise<void>;
+
+export type AutoHandledToolResult = {
+  toolCallId: string;
+  result: ToolExecutionResult;
+};
+
+export type AutoDeniedApproval = {
+  approval: ApprovalRequest;
+  reason: string;
+};
+
+export type AutoAllowedExecution = {
+  toolCallIds: string[];
+  results: ApprovalResult[] | null;
+  conversationId: string;
+  generation: number;
+};
+
+export type AppendErrorOptions =
+  | boolean
+  | {
+      skip?: boolean;
+      errorType?: string;
+      errorMessage?: string;
+      context?: string;
+      httpStatus?: number;
+      runId?: string;
+    };
+
+export type AppendError = (
+  message: string,
+  options?: AppendErrorOptions,
+) => void;
+
+export type OverlayCommandConsumer = (
+  overlay: ActiveOverlay,
+) => CommandHandle | null;
+
+export type { ApprovalDecision };
 
 // Items that have finished rendering and no longer change
 export type StaticItem =

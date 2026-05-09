@@ -33,7 +33,6 @@ import { getBackend } from "../../backend";
 import { getClient } from "../../backend/api/client";
 import { getBillingTier } from "../../backend/api/metadata";
 import { experimentManager } from "../../experiments/manager";
-import type { ExperimentId } from "../../experiments/types";
 import { runSessionEndHooks, runSessionStartHooks } from "../../hooks";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../../permissions/mode";
@@ -96,10 +95,7 @@ import {
 import type { AdvancedDiffSuccess } from "../helpers/diff";
 import { setErrorContext } from "../helpers/errorContext";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import {
-  getReflectionSettings,
-  type ReflectionSettings,
-} from "../helpers/memoryReminder";
+import { getReflectionSettings } from "../helpers/memoryReminder";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
@@ -168,7 +164,12 @@ import {
   mapHandleToLlmConfigPatch,
 } from "./modelConfig";
 import { saveLastSessionBeforeExit } from "./session";
-import type { AppProps, StaticItem } from "./types";
+import type {
+  ActiveOverlay,
+  AppProps,
+  QueuedOverlayAction,
+  StaticItem,
+} from "./types";
 import { useApprovalFlow } from "./useApprovalFlow";
 import { useBashHandlers } from "./useBashHandlers";
 import { useConfigurationHandlers } from "./useConfigurationHandlers";
@@ -598,32 +599,6 @@ export default function App({
   }, [pendingApprovals, approvalResults, activeApprovalId]);
 
   // Overlay/selector state - only one can be open at a time
-  type ActiveOverlay =
-    | "model"
-    | "experiment"
-    | "sleeptime"
-    | "compaction"
-    | "toolset"
-    | "system"
-    | "personality"
-    | "agent"
-    | "resume"
-    | "conversations"
-    | "search"
-    | "subagent"
-    | "feedback"
-    | "memory"
-    | "memfs-sync"
-    | "pin"
-    | "new"
-    | "mcp"
-    | "mcp-connect"
-    | "install-github-app"
-    | "help"
-    | "hooks"
-    | "connect"
-    | "skills"
-    | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const pendingOverlayCommandRef = useRef<{
     overlay: ActiveOverlay;
@@ -666,42 +641,6 @@ export default function App({
 
   // Queued overlay action - executed after end_turn when user makes a selection
   // while agent is busy (streaming/executing tools)
-  type QueuedOverlayAction =
-    | { type: "switch_agent"; agentId: string; commandId?: string }
-    | { type: "switch_model"; modelId: string; commandId?: string }
-    | {
-        type: "set_experiment";
-        experimentId: ExperimentId;
-        enabled: boolean;
-        commandId?: string;
-      }
-    | {
-        type: "set_sleeptime";
-        settings: ReflectionSettings;
-        commandId?: string;
-      }
-    | {
-        type: "set_compaction";
-        mode: string;
-        commandId?: string;
-      }
-    | {
-        type: "switch_conversation";
-        conversationId: string;
-        commandId?: string;
-      }
-    | {
-        type: "switch_toolset";
-        toolsetId: ToolsetPreference;
-        commandId?: string;
-      }
-    | { type: "switch_system"; promptId: string; commandId?: string }
-    | {
-        type: "switch_personality";
-        personalityId: PersonalityId;
-        commandId?: string;
-      }
-    | null;
   const [queuedOverlayAction, setQueuedOverlayAction] =
     useState<QueuedOverlayAction>(null);
 

@@ -7,7 +7,13 @@ import type {
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { useCallback } from "react";
+import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useCallback,
+} from "react";
 import { executeAutoAllowedTools } from "../../agent/approval-execution";
 import {
   extractConflictDetail,
@@ -27,12 +33,15 @@ import { getResumeDataFromBackend } from "../../agent/check-approval";
 import { getStreamToolContextId, sendMessageStream } from "../../agent/message";
 import { getModelInfo, getModelInfoForLlmConfig } from "../../agent/model";
 import { INTERRUPT_RECOVERY_ALERT } from "../../agent/promptAssets";
+import type { SessionStats } from "../../agent/stats";
 import { type ConversationMessageStreamBody, getBackend } from "../../backend";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { runStopHooks } from "../../hooks";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { formatPermissionDenial } from "../../permissions/formatDenial";
+import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
+import type { QueueRuntime } from "../../queue/queueRuntime";
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
@@ -40,8 +49,10 @@ import {
   analyzeToolApproval,
   type ToolExecutionResult,
 } from "../../tools/manager";
+import type { PreparedScopeToolContext } from "../../tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
 import {
+  type Buffers,
   type Line,
   markIncompleteToolsAsCancelled,
   onChunk,
@@ -49,7 +60,12 @@ import {
   toLines,
 } from "../helpers/accumulator";
 import { classifyApprovals } from "../helpers/approvalClassification";
-import { computeAdvancedDiff, parsePatchToAdvancedDiff } from "../helpers/diff";
+import type { ContextTracker } from "../helpers/contextTracker";
+import {
+  type AdvancedDiffSuccess,
+  computeAdvancedDiff,
+  parsePatchToAdvancedDiff,
+} from "../helpers/diff";
 import {
   formatErrorDetails,
   formatTelemetryErrorMessage,
@@ -57,6 +73,7 @@ import {
   isEncryptedContentError,
 } from "../helpers/errorFormatter";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
+import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
@@ -106,9 +123,107 @@ import { sendDesktopNotification } from "./notifications";
 import { buildRalphContinuationReminder } from "./ralph";
 import { isRetriableError } from "./retry";
 import { stripSystemReminders } from "./systemReminders";
+import type {
+  AppendError,
+  ApprovalDecision,
+  AutoAllowedExecution,
+  AutoDeniedApproval,
+  AutoHandledToolResult,
+  QueueApprovalResults,
+} from "./types";
 
-// biome-ignore lint/suspicious/noExplicitAny: the streaming turn loop is split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type ConversationLoopContext = Record<string, any>;
+type NetworkPhase = "error" | "upload" | "download" | null;
+
+type ConversationLoopContext = {
+  abortControllerRef: MutableRefObject<AbortController | null>;
+  agentIdRef: MutableRefObject<string>;
+  appendError: AppendError;
+  appendTaskNotificationEvents: (summaries: string[]) => boolean;
+  approvalToolContextIdRef: MutableRefObject<string | null>;
+  autoAllowedExecutionRef: MutableRefObject<AutoAllowedExecution | null>;
+  buffersRef: MutableRefObject<Buffers>;
+  clearApprovalToolContext: () => void;
+  closeTrajectorySegment: () => void;
+  consumeQueuedMessages: () => QueuedMessage[] | null;
+  contextTrackerRef: MutableRefObject<ContextTracker>;
+  conversationBusyRetriesRef: MutableRefObject<number>;
+  conversationGenerationRef: MutableRefObject<number>;
+  conversationIdRef: MutableRefObject<string>;
+  currentModelId: string | null;
+  emptyResponseRetriesRef: MutableRefObject<number>;
+  executingToolCallIdsRef: MutableRefObject<string[]>;
+  generateConversationTitle: () => Promise<string | null>;
+  hasConversationModelOverrideRef: MutableRefObject<boolean>;
+  interruptQueuedRef: MutableRefObject<boolean>;
+  isAutoConversationTitleInFlightRef: MutableRefObject<boolean>;
+  lastDequeuedMessageRef: MutableRefObject<string | null>;
+  lastRunIdRef: MutableRefObject<string | null>;
+  lastSentInputRef: MutableRefObject<Array<
+    MessageCreate | ApprovalCreate
+  > | null>;
+  llmApiErrorRetriesRef: MutableRefObject<number>;
+  llmConfigRef: MutableRefObject<LlmConfig | null>;
+  needsEagerApprovalCheck: boolean;
+  openTrajectorySegment: () => void;
+  pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
+  pendingTranscriptStartLineIndexRef: MutableRefObject<number | null>;
+  precomputedDiffsRef: MutableRefObject<Map<string, AdvancedDiffSuccess>>;
+  prepareScopedToolExecutionContext: (
+    overrideModel?: string | null,
+  ) => Promise<PreparedScopeToolContext>;
+  processingConversationRef: MutableRefObject<number>;
+  providerFallbackAttemptedRef: MutableRefObject<boolean>;
+  queueApprovalResults: QueueApprovalResults;
+  queueSnapshotRef: MutableRefObject<QueuedMessage[]>;
+  quotaAutoSwapAttemptedRef: MutableRefObject<boolean>;
+  refreshDerived: () => void;
+  refreshDerivedThrottled: () => void;
+  resetTrajectoryBases: () => void;
+  restoreQueueOnCancelRef: MutableRefObject<boolean>;
+  sessionStatsRef: MutableRefObject<SessionStats>;
+  setAgentDescription: Dispatch<SetStateAction<string | null>>;
+  setAgentLastRunAt: Dispatch<SetStateAction<string | null>>;
+  setAgentState: Dispatch<SetStateAction<AgentState | null | undefined>>;
+  setApprovalContexts: Dispatch<SetStateAction<ApprovalContext[]>>;
+  setApprovalResults: Dispatch<SetStateAction<ApprovalDecision[]>>;
+  setAutoDeniedApprovals: Dispatch<SetStateAction<AutoDeniedApproval[]>>;
+  setAutoHandledResults: Dispatch<SetStateAction<AutoHandledToolResult[]>>;
+  setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
+  setCurrentModelId: Dispatch<SetStateAction<string | null>>;
+  setDequeueEpoch: Dispatch<SetStateAction<number>>;
+  setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
+  setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
+  setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
+  setNetworkPhase: Dispatch<SetStateAction<NetworkPhase>>;
+  setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
+  setRestoreQueueOnCancel: Dispatch<SetStateAction<boolean>>;
+  setRestoredInput: Dispatch<SetStateAction<string | null>>;
+  setStreaming: (value: boolean) => void;
+  setTempModelOverride: (next: string | null) => void;
+  setThinkingMessage: Dispatch<SetStateAction<string>>;
+  setTrajectoryElapsedBaseMs: Dispatch<SetStateAction<number>>;
+  setTrajectoryTokenBase: Dispatch<SetStateAction<number>>;
+  setUiPermissionMode: (mode: PermissionMode) => void;
+  setUiRalphActive: Dispatch<SetStateAction<boolean>>;
+  shouldAutoGenerateConversationTitleRef: MutableRefObject<boolean>;
+  syncTrajectoryElapsedBase: () => void;
+  syncTrajectoryTokenBase: () => void;
+  tempModelOverrideRef: MutableRefObject<string | null>;
+  toolAbortControllerRef: MutableRefObject<AbortController | null>;
+  toolResultsInFlightRef: MutableRefObject<boolean>;
+  trajectoryRunTokenStartRef: MutableRefObject<number>;
+  trajectorySegmentStartRef: MutableRefObject<number | null>;
+  trajectoryTokenDisplayRef: MutableRefObject<number>;
+  tuiQueueRef: MutableRefObject<QueueRuntime | null>;
+  uiPermissionModeRef: MutableRefObject<PermissionMode>;
+  updateStreamingOutput: (
+    toolCallId: string,
+    chunk: string,
+    isStderr?: boolean,
+  ) => void;
+  userCancelledRef: MutableRefObject<boolean>;
+  waitingForQueueCancelRef: MutableRefObject<boolean>;
+};
 
 export function useConversationLoop(ctx: ConversationLoopContext) {
   const {

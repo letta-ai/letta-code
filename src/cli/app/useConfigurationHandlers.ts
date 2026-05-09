@@ -2,7 +2,12 @@
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { useCallback } from "react";
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useCallback,
+} from "react";
 import type { ModelReasoningEffort } from "../../agent/model";
 import {
   applyPersonalityToMemory,
@@ -17,9 +22,12 @@ import { experimentManager } from "../../experiments/manager";
 import type { ExperimentId } from "../../experiments/types";
 import { settingsManager } from "../../settings-manager";
 import { getToolNames } from "../../tools/manager";
-import type { ToolsetPreference } from "../../tools/toolset";
+import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
 import { formatToolsetName } from "../../tools/toolset-labels";
-import { resetContextHistory } from "../helpers/contextTracker";
+import {
+  type ContextTracker,
+  resetContextHistory,
+} from "../helpers/contextTracker";
 import { formatErrorDetails } from "../helpers/errorFormatter";
 import {
   persistReflectionSettingsForAgent,
@@ -31,9 +39,68 @@ import {
   mapHandleToLlmConfigPatch,
 } from "./modelConfig";
 import { formatReflectionSettings } from "./reflection";
+import type {
+  ActiveOverlay,
+  AppCommandRunner,
+  OverlayCommandConsumer,
+  QueuedOverlayAction,
+} from "./types";
 
-// biome-ignore lint/suspicious/noExplicitAny: selector handlers are split mechanically from the coordinator and keep legacy closure types until follow-up narrowing.
-type ConfigurationHandlersContext = Record<string, any>;
+type ModelReasoningPrompt = {
+  modelLabel: string;
+  initialModelId: string;
+  options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+};
+
+type ToolsetChangeReminderParams = {
+  source: string;
+  previousToolset: string | null;
+  newToolset: string | null;
+  previousTools: string[];
+  newTools: string[];
+};
+
+type ConfigurationHandlersContext = {
+  activeOverlay: ActiveOverlay;
+  agentId: string;
+  agentIdRef: MutableRefObject<string>;
+  agentState: AgentState | null | undefined;
+  commandRunner: AppCommandRunner;
+  consumeOverlayCommand: OverlayCommandConsumer;
+  contextTrackerRef: MutableRefObject<ContextTracker>;
+  conversationIdRef: MutableRefObject<string>;
+  currentModelHandle: string | null;
+  currentToolset: ToolsetName | null;
+  isAgentBusy: () => boolean;
+  llmConfig: LlmConfig | null;
+  llmConfigRef: MutableRefObject<LlmConfig | null>;
+  maybeRecordToolsetChangeReminder: (
+    params: ToolsetChangeReminderParams,
+  ) => void;
+  resetPendingReasoningCycle: () => void;
+  setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
+  setAgentState: Dispatch<SetStateAction<AgentState | null | undefined>>;
+  setConversationOverrideContextWindowLimit: Dispatch<
+    SetStateAction<number | null>
+  >;
+  setConversationOverrideModelSettings: Dispatch<
+    SetStateAction<AgentState["model_settings"] | null>
+  >;
+  setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
+  setCurrentModelId: Dispatch<SetStateAction<string | null>>;
+  setCurrentPersonalityId: Dispatch<SetStateAction<PersonalityId | null>>;
+  setCurrentSystemPromptId: Dispatch<SetStateAction<string | null>>;
+  setCurrentToolset: Dispatch<SetStateAction<ToolsetName | null>>;
+  setCurrentToolsetPreference: Dispatch<SetStateAction<ToolsetPreference>>;
+  setHasConversationModelOverride: (value: boolean) => void;
+  setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
+  setModelReasoningPrompt: Dispatch<
+    SetStateAction<ModelReasoningPrompt | null>
+  >;
+  setQueuedOverlayAction: Dispatch<SetStateAction<QueuedOverlayAction>>;
+  setTempModelOverride: (next: string | null) => void;
+  withCommandLock: (asyncFn: () => Promise<void>) => Promise<void>;
+};
 
 export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
   const {

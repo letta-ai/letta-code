@@ -1,18 +1,28 @@
 // src/cli/app/AppView.tsx
 
 import { APIError } from "@letta-ai/letta-client/core/error";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box } from "ink";
+import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "../../agent/check-approval";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
+import type { ModelReasoningEffort } from "../../agent/model";
+import type { PersonalityId } from "../../agent/personality";
+import type { SessionStats } from "../../agent/stats";
 import { getBackend } from "../../backend";
 import { experimentManager } from "../../experiments/manager";
+import type { ExperimentId } from "../../experiments/types";
+import type { ApprovalContext } from "../../permissions/analyzer";
+import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { settingsManager } from "../../settings-manager";
+import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
+import type { CommandHandle } from "../commands/runner";
 import { AgentSelector } from "../components/AgentSelector";
 import { ApprovalSwitch } from "../components/ApprovalSwitch";
 import { AssistantMessage } from "../components/AssistantMessageRich";
 import { BashCommandMessage } from "../components/BashCommandMessage";
-import { BtwPane } from "../components/BtwPane";
+import { BtwPane, type BtwState } from "../components/BtwPane";
 import { CommandMessage } from "../components/CommandMessage";
 import { CompactionSelector } from "../components/CompactionSelector";
 import { ConversationSelector } from "../components/ConversationSelector";
@@ -51,29 +61,236 @@ import { ToolsetSelector } from "../components/ToolsetSelector";
 import { UserMessage } from "../components/UserMessageRich";
 import { WelcomeScreen } from "../components/WelcomeScreen";
 import { AnimationProvider } from "../contexts/AnimationContext";
-import { type Line, toLines } from "../helpers/accumulator";
+import { type Buffers, type Line, toLines } from "../helpers/accumulator";
 import { backfillBuffers } from "../helpers/backfill";
-import { resetContextHistory } from "../helpers/contextTracker";
-import { getReflectionSettings } from "../helpers/memoryReminder";
+import {
+  type ContextTracker,
+  resetContextHistory,
+} from "../helpers/contextTracker";
+import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
+import type { AdvancedDiffSuccess } from "../helpers/diff";
+import {
+  getReflectionSettings,
+  type ReflectionSettings,
+} from "../helpers/memoryReminder";
+import type { QueuedMessage } from "../helpers/messageQueueBridge";
+import type { ApprovalRequest } from "../helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
 } from "../helpers/toolNameMapping";
 import { isTaskTool } from "../helpers/toolNameMapping.js";
-
+import type { StatusLineState } from "../hooks/useConfigurableStatusLine";
 import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
 import { _readPlanFile } from "./planFile";
 import { StaticTranscript } from "./StaticTranscript";
-import type { StaticItem } from "./types";
+import type {
+  ActiveOverlay,
+  AppCommandRunner,
+  AppLoadingState,
+  QueuedOverlayAction,
+  StaticItem,
+} from "./types";
 
-type StateSetter<T> = (value: T | ((prev: T) => T)) => void;
+type ModelSelectorOptions = {
+  filterProvider?: string;
+  forceRefresh?: boolean;
+};
 
-// biome-ignore lint/suspicious/noExplicitAny: render props are split mechanically from the coordinator; follow-up can narrow this surface by component cluster.
-type AppViewProps = Record<string, any> & {
+type ModelReasoningPrompt = {
+  modelLabel: string;
+  initialModelId: string;
+  options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+};
+
+type PendingRalphConfig = {
+  completionPromise: string | null | undefined;
+  maxIterations: number;
+  isYolo: boolean;
+};
+
+type QueuedApprovalDecision = {
+  type: "approve" | "deny";
+  reason?: string;
+};
+
+type AppViewProps = {
+  activeOverlay: ActiveOverlay;
+  agentId: string;
+  agentName: string | null;
+  agentState: AgentState | null | undefined;
+  anySelectorOpen: boolean;
+  approvalMap: Map<string, ApprovalRequest>;
+  bashRunning: boolean;
+  billingTier: string | null;
+  btwState: BtwState;
+  buffersRef: RefObject<Buffers>;
+  chromeColumns: number;
+  closeOverlay: () => void;
+  columns: number;
+  commandRunner: AppCommandRunner;
+  consumeOverlayCommand: (overlay: ActiveOverlay) => CommandHandle | null;
+  contextTrackerRef: RefObject<ContextTracker>;
+  continueSession: boolean;
+  conversationId: string;
+  currentApproval: ApprovalRequest | undefined;
+  currentApprovalContext: ApprovalContext | undefined;
+  currentModelDisplay: string | null;
+  currentModelId: string | null;
+  currentModelProvider: string | null;
+  currentPersonalityId: PersonalityId | null;
+  currentReasoningEffort: ModelReasoningEffort | null;
+  currentSystemPromptId: string | null;
+  currentToolset: ToolsetName | null;
+  currentToolsetPreference: ToolsetPreference;
+  emittedIdsRef: RefObject<Set<string>>;
+  feedbackPrefill: string;
+  footerUpdateText: string | null;
+  handleAgentSelect: (
+    targetAgentId: string,
+    opts?: {
+      profileName?: string;
+      conversationId?: string;
+      commandId?: string;
+    },
+  ) => Promise<void>;
+  handleApproveAlways: (
+    scope?: "project" | "session",
+    diffs?: Map<string, AdvancedDiffSuccess>,
+  ) => Promise<void>;
+  handleApproveCurrent: (
+    diffs?: Map<string, AdvancedDiffSuccess>,
+  ) => Promise<void>;
+  handleBashInterrupt: () => void;
+  handleBashSubmit: (command: string) => Promise<void>;
+  handleBtwJump: (conversationId: string) => Promise<void>;
+  handleCancelApprovals: () => void;
+  handleCompactionModeSelect: (
+    mode: string,
+    commandId?: string | null,
+  ) => Promise<void>;
+  handleCreateNewAgent: (name: string) => Promise<void>;
+  handleCycleReasoningEffort: () => void;
+  handleDenyCurrent: (reason: string) => Promise<void>;
+  handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
+  handleEnterPlanModeReject: () => Promise<void>;
+  handleEnterQueueEditMode: () => void;
+  handleExit: () => Promise<void>;
+  handleExperimentSelect: (
+    selection: { experimentId: ExperimentId; enabled: boolean },
+    commandId?: string | null,
+  ) => Promise<void>;
+  handleFeedbackSubmit: (message: string) => Promise<void>;
+  handleInterrupt: () => Promise<void>;
+  handleModelSelect: (
+    modelId: string,
+    commandId?: string | null,
+    opts?: { skipReasoningPrompt?: boolean },
+  ) => Promise<void>;
+  handlePasteError: (message: string) => void;
+  handlePermissionModeChange: (mode: PermissionMode) => void;
+  handlePersonalitySelect: (
+    personalityId: PersonalityId,
+    commandId?: string | null,
+  ) => Promise<void>;
+  handlePlanApprove: (acceptEdits?: boolean) => Promise<void>;
+  handlePlanKeepPlanning: (reason: string) => Promise<void>;
+  handleProfileEscapeCancel: () => void;
+  handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
+  handleRalphExit: () => void;
+  handleSleeptimeModeSelect: (
+    reflectionSettings: ReflectionSettings,
+    commandId?: string | null,
+  ) => Promise<void>;
+  handleSystemPromptSelect: (
+    promptId: string,
+    commandId?: string | null,
+  ) => Promise<void>;
+  handleToolsetSelect: (
+    toolsetId: ToolsetPreference,
+    commandId?: string | null,
+  ) => Promise<void>;
+  hasBackfilledRef: RefObject<boolean>;
+  hasTemporaryModelOverride: boolean;
+  includeSystemPromptUpgradeTip: boolean;
+  inputEnabled: boolean;
+  inputVisible: boolean;
+  interruptRequested: boolean;
+  isAgentBusy: () => boolean;
+  lastPlanFilePathRef: RefObject<string | null>;
   liveItems: Line[];
-  setStaticRenderEpoch: StateSetter<number>;
+  liveTrajectoryElapsedBaseMs: number;
+  loadingState: AppLoadingState;
+  maybeCarryOverActiveConversationModel: (
+    targetConversationId: string,
+  ) => Promise<void>;
+  modelReasoningPrompt: ModelReasoningPrompt | null;
+  modelSelectorOptions: ModelSelectorOptions;
+  networkPhase: "error" | "upload" | "download" | null;
+  onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
+  pendingApprovals: ApprovalRequest[];
+  pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
+  pendingIds: Set<string>;
+  pendingRalphConfig: PendingRalphConfig | null;
+  pinDialogLocal: boolean;
+  precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
+  profileConfirmPending: {
+    name: string;
+    agentId: string;
+    cmdId: string;
+  } | null;
+  queueDisplay: QueuedMessage[];
+  queuedDecisions: Map<string, QueuedApprovalDecision>;
+  queuedIds: Set<string>;
+  reasoningTabCycleEnabled: boolean;
+  recoverRestoredPendingApprovals: (
+    approvals: ApprovalRequest[],
+    options?: { notifyOnManualApproval?: boolean },
+  ) => Promise<void>;
+  refreshDerived: () => void;
+  resetBootstrapReminderState: () => void;
+  resetDeferredToolCallCommits: () => void;
+  resetTrajectoryBases: () => void;
+  restoredInput: string | null;
+  resumeKey: number;
+  searchQuery: string;
+  sessionStatsRef: RefObject<SessionStats>;
+  setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
+  setBtwState: Dispatch<SetStateAction<BtwState>>;
+  setCommandRunning: (value: boolean) => void;
+  setConversationAutoTitleEligibility: (enabled: boolean) => void;
+  setConversationIdAndRef: (nextConversationId: string) => void;
+  setLines: Dispatch<SetStateAction<Line[]>>;
+  setModelReasoningPrompt: Dispatch<
+    SetStateAction<ModelReasoningPrompt | null>
+  >;
+  setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
+  setQueuedOverlayAction: Dispatch<SetStateAction<QueuedOverlayAction>>;
+  setRestoredInput: Dispatch<SetStateAction<string | null>>;
+  setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
+  setStaticRenderEpoch: Dispatch<SetStateAction<number>>;
+  shouldAnimate: boolean;
+  showApprovalPreview: boolean;
+  showCompactionsEnabled: boolean;
+  showExitStats: boolean;
+  startOverlayCommand: (
+    overlay: ActiveOverlay,
+    input: string,
+    openingOutput: string,
+    dismissOutput: string,
+  ) => CommandHandle;
+  staticItems: StaticItem[];
+  staticRenderEpoch: number;
+  statusLine: StatusLineState;
+  streaming: boolean;
+  stubDescriptions: Map<string, string>;
+  thinkingMessage: string;
+  trajectoryTokenDisplay: number;
+  uiPermissionMode: PermissionMode;
+  uiRalphActive: boolean;
+  updateAgentName: (name: string) => void;
 };
 
 export function AppView(props: AppViewProps) {

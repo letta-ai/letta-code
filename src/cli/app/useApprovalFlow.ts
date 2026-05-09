@@ -5,7 +5,13 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { useCallback, useEffect } from "react";
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+} from "react";
 import {
   type ApprovalResult,
   getDisplayableToolReturn,
@@ -14,7 +20,9 @@ import {
   buildFreshDenialApprovals,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "../../agent/approval-recovery";
+import type { SessionStats } from "../../agent/stats";
 import type { ApprovalContext } from "../../permissions/analyzer";
+import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import {
   analyzeToolApproval,
@@ -23,8 +31,10 @@ import {
   savePermissionRule,
   type ToolExecutionResult,
 } from "../../tools/manager";
+import type { PreparedScopeToolContext } from "../../tools/toolset";
 import { debugLog } from "../../utils/debug";
 import {
+  type Buffers,
   markIncompleteToolsAsCancelled,
   onChunk,
   setToolCallsRunning,
@@ -32,6 +42,7 @@ import {
 import type { AdvancedDiffSuccess } from "../helpers/diff";
 import { formatErrorDetails } from "../helpers/errorFormatter";
 import { parseMemoryPreference } from "../helpers/memoryReminder";
+import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import { generatePlanFilePath } from "../helpers/planName";
 import {
   buildQueuedContentParts,
@@ -49,39 +60,91 @@ import { extractErrorMeta } from "./errors";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import { sendDesktopNotification } from "./notifications";
 import { planFileExists } from "./planFile";
+import type {
+  AppCommandRunner,
+  AppendError,
+  AppLoadingState,
+  ApprovalDecision,
+  AutoDeniedApproval,
+  AutoHandledToolResult,
+  ProcessConversation,
+  QueueApprovalResults,
+  QueuedApprovalMetadata,
+} from "./types";
 
-type ApprovalDecision =
-  | {
-      type: "approve";
-      approval: ApprovalRequest;
-      precomputedResult?: ToolExecutionResult;
-    }
-  | { type: "deny"; approval: ApprovalRequest; reason: string };
-
-type AutoHandledApproval = {
-  toolCallId: string;
-  result: ToolExecutionResult;
+type RestoredApprovalRecoveryState = {
+  batchKey: string | null;
+  generation: number;
+  status: "idle" | "running" | "completed";
 };
 
-type AutoDeniedApproval = {
-  approval: ApprovalRequest;
-  reason: string;
-};
-
-type StateSetter<T> = (value: T | ((prev: T) => T)) => void;
-
-// biome-ignore lint/suspicious/noExplicitAny: approval flow is split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type ApprovalFlowContext = Record<string, any> & {
+type ApprovalFlowContext = {
+  abortControllerRef: MutableRefObject<AbortController | null>;
+  agentId: string;
+  appendError: AppendError;
+  appendTaskNotificationEvents: (summaries: string[]) => boolean;
   approvalContexts: ApprovalContext[];
+  approvalToolContextIdRef: MutableRefObject<string | null>;
   approvalResults: ApprovalDecision[];
   autoDeniedApprovals: AutoDeniedApproval[];
-  autoHandledResults: AutoHandledApproval[];
+  autoHandledResults: AutoHandledToolResult[];
+  buffersRef: MutableRefObject<Buffers>;
+  cacheLastPlanFilePath: (planFilePath: string | null) => void;
+  clearApprovalToolContext: () => void;
+  closeTrajectorySegment: () => void;
+  commandRunner: AppCommandRunner;
+  commitEligibleLines: (
+    buffers: Buffers,
+    opts?: { deferToolCalls?: boolean },
+  ) => void;
+  consumeQueuedMessages: () => QueuedMessage[] | null;
+  conversationGenerationRef: MutableRefObject<number>;
+  conversationId: string;
+  conversationIdRef: MutableRefObject<string>;
+  executingToolCallIdsRef: MutableRefObject<string[]>;
+  interruptQueuedRef: MutableRefObject<boolean>;
+  isExecutingTool: boolean;
+  lastAutoApprovedEnterPlanToolCallIdRef: MutableRefObject<string | null>;
+  lastAutoHandledExitPlanToolCallIdRef: MutableRefObject<string | null>;
+  lastPlanFilePathRef: MutableRefObject<string | null>;
+  loadingState: AppLoadingState;
+  openTrajectorySegment: () => void;
   pendingApprovals: ApprovalRequest[];
-  setApprovalContexts: StateSetter<ApprovalContext[]>;
-  setApprovalResults: StateSetter<ApprovalDecision[]>;
-  setAutoDeniedApprovals: StateSetter<AutoDeniedApproval[]>;
-  setAutoHandledResults: StateSetter<AutoHandledApproval[]>;
-  setPendingApprovals: StateSetter<ApprovalRequest[]>;
+  precomputedDiffsRef: MutableRefObject<Map<string, AdvancedDiffSuccess>>;
+  prepareScopedToolExecutionContext: (
+    overrideModel?: string | null,
+  ) => Promise<PreparedScopeToolContext>;
+  processConversation: ProcessConversation;
+  queueApprovalResults: QueueApprovalResults;
+  queueSnapshotRef: MutableRefObject<QueuedMessage[]>;
+  queuedApprovalMetadataRef: MutableRefObject<QueuedApprovalMetadata | null>;
+  queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
+  refreshDerived: () => void;
+  restoredApprovalRecoveryRef: MutableRefObject<RestoredApprovalRecoveryState>;
+  sessionStatsRef: MutableRefObject<SessionStats>;
+  setApprovalContexts: Dispatch<SetStateAction<ApprovalContext[]>>;
+  setApprovalResults: Dispatch<SetStateAction<ApprovalDecision[]>>;
+  setAutoDeniedApprovals: Dispatch<SetStateAction<AutoDeniedApproval[]>>;
+  setAutoHandledResults: Dispatch<SetStateAction<AutoHandledToolResult[]>>;
+  setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
+  setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
+  setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
+  setStreaming: (value: boolean) => void;
+  setThinkingMessage: Dispatch<SetStateAction<string>>;
+  setUiPermissionMode: (mode: PermissionMode) => void;
+  startupApproval: ApprovalRequest | null;
+  startupApprovals: ApprovalRequest[];
+  syncTrajectoryElapsedBase: () => void;
+  tempModelOverrideRef: MutableRefObject<string | null>;
+  toolAbortControllerRef: MutableRefObject<AbortController | null>;
+  toolResultsInFlightRef: MutableRefObject<boolean>;
+  updateStreamingOutput: (
+    toolCallId: string,
+    chunk: string,
+    isStderr?: boolean,
+  ) => void;
+  userCancelledRef: MutableRefObject<boolean>;
+  waitingForQueueCancelRef: MutableRefObject<boolean>;
 };
 
 export function useApprovalFlow(ctx: ApprovalFlowContext) {

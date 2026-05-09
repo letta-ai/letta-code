@@ -2,7 +2,7 @@
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { useCallback } from "react";
+import { type Dispatch, type MutableRefObject, useCallback } from "react";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -13,9 +13,24 @@ import { getBackend } from "../../backend";
 import { debugWarn } from "../../utils/debug";
 
 import { createClientOtid } from "./ids";
+import type {
+  ProcessConversation,
+  QueueApprovalResults,
+  QueuedApprovalMetadata,
+} from "./types";
 
-// biome-ignore lint/suspicious/noExplicitAny: split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type QueuedApprovalSubmitContext = Record<string, any>;
+type QueuedApprovalSubmitContext = {
+  agentId: string;
+  conversationGenerationRef: MutableRefObject<number>;
+  conversationIdRef: MutableRefObject<string>;
+  interruptQueuedRef: MutableRefObject<boolean>;
+  needsEagerApprovalCheck: boolean;
+  processConversation: ProcessConversation;
+  queueApprovalResults: QueueApprovalResults;
+  queuedApprovalMetadataRef: MutableRefObject<QueuedApprovalMetadata | null>;
+  queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
+  setNeedsEagerApprovalCheck: Dispatch<boolean>;
+};
 
 export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
   const {

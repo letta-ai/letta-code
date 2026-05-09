@@ -1,13 +1,25 @@
 // src/cli/app/useBashHandlers.ts
 
-import { useCallback } from "react";
+import { type Dispatch, type MutableRefObject, useCallback } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
-import { appendStreamingOutput } from "../helpers/accumulator";
+import { appendStreamingOutput, type Buffers } from "../helpers/accumulator";
 
 import { uid } from "./ids";
 
-// biome-ignore lint/suspicious/noExplicitAny: split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type BashHandlersContext = Record<string, any>;
+type BashCommandCacheEntry = {
+  input: string;
+  output: string;
+};
+
+type BashHandlersContext = {
+  bashAbortControllerRef: MutableRefObject<AbortController | null>;
+  bashCommandCacheRef: MutableRefObject<BashCommandCacheEntry[]>;
+  bashRunning: boolean;
+  buffersRef: MutableRefObject<Buffers>;
+  refreshDerived: () => void;
+  refreshDerivedStreaming: () => void;
+  setBashRunning: Dispatch<boolean>;
+};
 
 export function useBashHandlers(ctx: BashHandlersContext) {
   const {

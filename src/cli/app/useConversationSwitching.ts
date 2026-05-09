@@ -2,9 +2,18 @@
 
 import { randomUUID } from "node:crypto";
 import { APIError } from "@letta-ai/letta-client/core/error";
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentState,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { useCallback } from "react";
+import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useCallback,
+} from "react";
 import {
   extractConflictDetail,
   getPreStreamErrorAction,
@@ -21,25 +30,90 @@ import { getServerUrl } from "../../backend/api/client";
 import { runSessionStartHooks } from "../../hooks";
 import { updateProjectSettings } from "../../settings";
 import { settingsManager } from "../../settings-manager";
+import type { PreparedScopeToolContext } from "../../tools/toolset";
 import { debugLog, debugWarn } from "../../utils/debug";
 import type { BtwState } from "../components/BtwPane";
-import { extractTextPart, toLines } from "../helpers/accumulator";
+import {
+  type Buffers,
+  extractTextPart,
+  type Line,
+  toLines,
+} from "../helpers/accumulator";
 import { buildChatUrl } from "../helpers/appUrls";
 import { backfillBuffers } from "../helpers/backfill";
-import { resetContextHistory } from "../helpers/contextTracker";
+import {
+  type ContextTracker,
+  resetContextHistory,
+} from "../helpers/contextTracker";
+import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
 import { formatErrorDetails } from "../helpers/errorFormatter";
+import type { ApprovalRequest } from "../helpers/stream";
 
 import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
 import { uid } from "./ids";
 import { getPreferredAgentModelHandle } from "./modelConfig";
-import type { StaticItem } from "./types";
+import type {
+  ActiveOverlay,
+  AppCommandRunner,
+  OverlayCommandConsumer,
+  QueuedOverlayAction,
+  StaticItem,
+} from "./types";
 
-type StateSetter<T> = (value: T | ((prev: T) => T)) => void;
-
-// biome-ignore lint/suspicious/noExplicitAny: conversation switching is split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type ConversationSwitchingContext = Record<string, any> & {
-  setBtwState: StateSetter<BtwState>;
-  setStaticRenderEpoch: StateSetter<number>;
+type ConversationSwitchingContext = {
+  abortControllerRef: MutableRefObject<AbortController | null>;
+  agentId: string;
+  agentIdRef: MutableRefObject<string>;
+  agentName: string | null;
+  agentState: AgentState | null | undefined;
+  buffersRef: MutableRefObject<Buffers>;
+  commandRunner: AppCommandRunner;
+  consumeOverlayCommand: OverlayCommandConsumer;
+  contextTrackerRef: MutableRefObject<ContextTracker>;
+  conversationGenerationRef: MutableRefObject<number>;
+  conversationIdRef: MutableRefObject<string>;
+  currentModelHandle: string | null;
+  currentModelId: string | null;
+  emittedIdsRef: MutableRefObject<Set<string>>;
+  hasBackfilledRef: MutableRefObject<boolean>;
+  isAgentBusy: () => boolean;
+  maybeCarryOverActiveConversationModel: (
+    targetConversationId: string,
+  ) => Promise<void>;
+  pendingConversationSwitchRef: MutableRefObject<ConversationSwitchContext | null>;
+  prepareScopedToolExecutionContext: (
+    overrideModel?: string | null,
+  ) => Promise<PreparedScopeToolContext>;
+  recoverRestoredPendingApprovals: (
+    approvals: ApprovalRequest[],
+    options?: { notifyOnManualApproval?: boolean },
+  ) => Promise<void>;
+  resetBootstrapReminderState: () => void;
+  resetDeferredToolCallCommits: () => void;
+  resetPendingReasoningCycle: () => void;
+  resetTrajectoryBases: () => void;
+  runEndHooks: () => Promise<void>;
+  sessionHooksRanRef: MutableRefObject<boolean>;
+  sessionStartFeedbackRef: MutableRefObject<string[]>;
+  setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
+  setAgentId: Dispatch<SetStateAction<string>>;
+  setAgentState: Dispatch<SetStateAction<AgentState | null | undefined>>;
+  setBtwState: Dispatch<SetStateAction<BtwState>>;
+  setCommandRunning: (value: boolean) => void;
+  setConversationAutoTitleEligibility: (enabled: boolean) => void;
+  setConversationIdAndRef: (nextConversationId: string) => void;
+  setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
+  setInterruptRequested: Dispatch<SetStateAction<boolean>>;
+  setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
+  setLines: Dispatch<SetStateAction<Line[]>>;
+  setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
+  setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
+  setQueuedOverlayAction: Dispatch<SetStateAction<QueuedOverlayAction>>;
+  setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
+  setStaticRenderEpoch: Dispatch<SetStateAction<number>>;
+  setStreaming: (value: boolean) => void;
+  tempModelOverrideRef: MutableRefObject<string | null>;
+  userCancelledRef: MutableRefObject<boolean>;
 };
 
 export function useConversationSwitching(ctx: ConversationSwitchingContext) {

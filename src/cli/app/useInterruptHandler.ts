@@ -1,17 +1,68 @@
 // src/cli/app/useInterruptHandler.ts
 
-import { useCallback } from "react";
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useCallback,
+} from "react";
+import type { ApprovalResult } from "../../agent/approval-execution";
 import { getBackend } from "../../backend";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import type { ApprovalContext } from "../../permissions/analyzer";
+import type { Buffers } from "../helpers/accumulator";
 import { markIncompleteToolsAsCancelled } from "../helpers/accumulator";
 import { formatErrorDetails } from "../helpers/errorFormatter";
+import type { ApprovalRequest } from "../helpers/stream";
 import { interruptActiveSubagents } from "../helpers/subagentState";
 
 import { EAGER_CANCEL, INTERRUPT_MESSAGE } from "./constants";
 import { extractErrorMeta } from "./errors";
+import type {
+  AppendError,
+  ApprovalDecision,
+  AutoAllowedExecution,
+  AutoDeniedApproval,
+  AutoHandledToolResult,
+  QueueApprovalResults,
+} from "./types";
 
-// biome-ignore lint/suspicious/noExplicitAny: split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type InterruptHandlerContext = Record<string, any>;
+type InterruptHandlerContext = {
+  abortControllerRef: MutableRefObject<AbortController | null>;
+  agentId: string;
+  agentIdRef: MutableRefObject<string>;
+  appendError: AppendError;
+  autoAllowedExecutionRef: MutableRefObject<AutoAllowedExecution | null>;
+  autoDeniedApprovals: AutoDeniedApproval[];
+  autoHandledResults: AutoHandledToolResult[];
+  buffersRef: MutableRefObject<Buffers>;
+  conversationGenerationRef: MutableRefObject<number>;
+  conversationIdRef: MutableRefObject<string>;
+  executingToolCallIdsRef: MutableRefObject<string[]>;
+  interruptQueuedRef: MutableRefObject<boolean>;
+  interruptRequested: boolean;
+  isExecutingTool: boolean;
+  pendingApprovals: ApprovalRequest[];
+  pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
+  processingConversationRef: MutableRefObject<number>;
+  queueApprovalResults: QueueApprovalResults;
+  refreshDerived: () => void;
+  resetTrajectoryBases: () => void;
+  setApprovalContexts: Dispatch<SetStateAction<ApprovalContext[]>>;
+  setApprovalResults: Dispatch<SetStateAction<ApprovalDecision[]>>;
+  setAutoDeniedApprovals: Dispatch<SetStateAction<AutoDeniedApproval[]>>;
+  setAutoHandledResults: Dispatch<SetStateAction<AutoHandledToolResult[]>>;
+  setInterruptRequested: Dispatch<SetStateAction<boolean>>;
+  setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
+  setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
+  setRestoreQueueOnCancel: Dispatch<SetStateAction<boolean>>;
+  setStreaming: (value: boolean) => void;
+  streaming: boolean;
+  toolAbortControllerRef: MutableRefObject<AbortController | null>;
+  toolResultsInFlightRef: MutableRefObject<boolean>;
+  userCancelledRef: MutableRefObject<boolean>;
+  waitingForQueueCancelRef: MutableRefObject<boolean>;
+};
 
 export function useInterruptHandler(ctx: InterruptHandlerContext) {
   const {
@@ -80,14 +131,13 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         queueApprovalResults(autoAllowedResults, autoAllowedMetadata);
         interruptQueuedRef.current = true;
       } else if (executingToolCallIdsRef.current.length > 0) {
-        const interruptedResults = executingToolCallIdsRef.current.map(
-          (toolCallId: string) => ({
+        const interruptedResults: ApprovalResult[] =
+          executingToolCallIdsRef.current.map((toolCallId) => ({
             type: "tool" as const,
             tool_call_id: toolCallId,
             tool_return: INTERRUPTED_BY_USER,
             status: "error" as const,
-          }),
-        );
+          }));
         queueApprovalResults(interruptedResults);
         interruptQueuedRef.current = true;
       }
@@ -212,8 +262,8 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       refreshDerived();
 
       // Cache pending approvals, plus any auto-handled results, for the next message.
-      const denialResults = pendingApprovals.map(
-        (approval: { toolCallId: string }) => ({
+      const denialResults: ApprovalResult[] = pendingApprovals.map(
+        (approval) => ({
           type: "approval" as const,
           tool_call_id: approval.toolCallId,
           approve: false,
@@ -222,7 +272,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       );
       const autoHandledSnapshot = [...autoHandledResults];
       const autoDeniedSnapshot = [...autoDeniedApprovals];
-      const queuedResults = [
+      const queuedResults: ApprovalResult[] = [
         ...autoHandledSnapshot.map((ar) => ({
           type: "tool" as const,
           tool_call_id: ar.toolCallId,

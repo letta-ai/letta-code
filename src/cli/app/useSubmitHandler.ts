@@ -11,7 +11,12 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { useCallback } from "react";
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useCallback,
+} from "react";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -27,8 +32,13 @@ import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
 } from "../../agent/memoryFilesystem";
-import { detectPersonalityFromPersonaFile } from "../../agent/personality";
+import type { ModelReasoningEffort } from "../../agent/model";
+import {
+  detectPersonalityFromPersonaFile,
+  type PersonalityId,
+} from "../../agent/personality";
 import { recordSessionEnd } from "../../agent/sessionHistory";
+import type { SessionStats } from "../../agent/stats";
 import { getBackend } from "../../backend";
 import { getAgentContextOverview } from "../../backend/api/agents";
 import { getClient } from "../../backend/api/client";
@@ -43,13 +53,19 @@ import {
   runSessionStartHooks,
   runUserPromptSubmitHooks,
 } from "../../hooks";
+import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
+import type { QueueRuntime } from "../../queue/queueRuntime";
 import { DEFAULT_COMPLETION_PROMISE, ralphMode } from "../../ralph/mode";
 import { buildSharedReminderParts } from "../../reminders/engine";
 import { getPlanModeReminder } from "../../reminders/planModeReminder";
-import { syncReminderStateFromContextTracker } from "../../reminders/state";
+import {
+  type SharedReminderState,
+  syncReminderStateFromContextTracker,
+} from "../../reminders/state";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
+import type { ToolsetName } from "../../tools/toolset";
 import { debugLog, debugWarn } from "../../utils/debug";
 import {
   handleMcpAdd,
@@ -67,16 +83,19 @@ import {
   setActiveCommandId as setActiveProfileCommandId,
   validateProfileLoad,
 } from "../commands/profile";
+import type { CommandHandle } from "../commands/runner";
 import { validateAgentName } from "../components/PinDialog";
 import { formatUsageStats } from "../components/SessionStats";
-import { toLines } from "../helpers/accumulator";
+import { type Buffers, type Line, toLines } from "../helpers/accumulator";
 import { buildChatUrl } from "../helpers/appUrls";
 import { backfillBuffers } from "../helpers/backfill";
 import {
   type ContextWindowOverview,
   renderContextUsage,
 } from "../helpers/contextChart";
+import type { ContextTracker } from "../helpers/contextTracker";
 import { resetContextHistory } from "../helpers/contextTracker";
+import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
 import { formatErrorDetails } from "../helpers/errorFormatter";
 import {
   buildDoctorMessage,
@@ -105,6 +124,7 @@ import {
 import { formatStatusLineHelp } from "../helpers/statusLineHelp";
 import { buildStatusLinePayload } from "../helpers/statusLinePayload";
 import { executeStatusLineCommand } from "../helpers/statusLineRuntime";
+import type { ApprovalRequest } from "../helpers/stream";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
@@ -123,10 +143,190 @@ import {
 } from "./ralph";
 import { hasActiveReflectionSubagent } from "./reflection";
 import { saveLastSessionBeforeExit } from "./session";
-import type { StaticItem } from "./types";
+import type {
+  ActiveOverlay,
+  AppCommandRunner,
+  ProcessConversation,
+  StaticItem,
+} from "./types";
 
-// biome-ignore lint/suspicious/noExplicitAny: the submit router is split mechanically from the coordinator and keeps legacy closure types until follow-up narrowing.
-type SubmitHandlerContext = Record<string, any>;
+type BashCommandCacheEntry = {
+  input: string;
+  output: string;
+};
+
+type PendingGitReminder = {
+  dirty: boolean;
+  aheadOfRemote: boolean;
+  summary: string;
+};
+
+type PendingRalphConfig = {
+  completionPromise: string | null | undefined;
+  maxIterations: number;
+  isYolo: boolean;
+};
+
+type ProfileConfirmPending = {
+  name: string;
+  agentId: string;
+  cmdId: string;
+};
+
+type ModelSelectorOptions = {
+  filterProvider?: string;
+  forceRefresh?: boolean;
+};
+
+type SubmitHandlerContext = {
+  abortControllerRef: MutableRefObject<AbortController | null>;
+  agentDescription: string | null;
+  agentId: string;
+  agentIdRef: MutableRefObject<string>;
+  agentLastRunAt: string | null;
+  agentName: string | null;
+  agentState: AgentState | null | undefined;
+  agentStateRef: MutableRefObject<AgentState | null | undefined>;
+  appendTaskNotificationEvents: (summaries: string[]) => boolean;
+  bashCommandCacheRef: MutableRefObject<BashCommandCacheEntry[]>;
+  buffersRef: MutableRefObject<Buffers>;
+  cacheLastPlanFilePath: (planFilePath: string | null) => void;
+  checkPendingApprovalsForSlashCommand: () => Promise<
+    { blocked: true } | { blocked: false }
+  >;
+  chromeColumns: number;
+  commandRunner: AppCommandRunner;
+  commandRunning: boolean;
+  consumeQueuedApprovalInputForCurrentConversation: (
+    otid?: string,
+  ) => ApprovalCreate | null;
+  contextTrackerRef: MutableRefObject<ContextTracker>;
+  conversationGenerationRef: MutableRefObject<number>;
+  conversationId: string;
+  conversationIdRef: MutableRefObject<string>;
+  currentModelDisplay: string | null;
+  currentModelHandle: string | null;
+  currentModelId: string | null;
+  currentModelLabel: string | null;
+  currentModelProvider: string | null;
+  currentReasoningEffort: ModelReasoningEffort | null;
+  currentSystemPromptId: string | null;
+  currentToolset: ToolsetName | null;
+  effectiveContextWindowSize: number | undefined;
+  emittedIdsRef: MutableRefObject<Set<string>>;
+  firstUserQueryRef: MutableRefObject<string | null>;
+  flushPendingReasoningEffort: () => Promise<void>;
+  generateConversationTitle: () => Promise<string | null>;
+  handleAgentSelect: (
+    targetAgentId: string,
+    opts?: {
+      profileName?: string;
+      conversationId?: string;
+      commandId?: string;
+    },
+  ) => Promise<void>;
+  handleBtwCommand: (question: string) => Promise<void>;
+  handleExit: () => Promise<void>;
+  hasBackfilledRef: MutableRefObject<boolean>;
+  isAgentBusy: () => boolean;
+  isExecutingTool: boolean;
+  lastRunIdRef: MutableRefObject<string | null>;
+  llmConfigRef: MutableRefObject<LlmConfig | null>;
+  maybeCarryOverActiveConversationModel: (
+    targetConversationId: string,
+  ) => Promise<void>;
+  needsEagerApprovalCheck: boolean;
+  networkPhase: "error" | "upload" | "download" | null;
+  openTrajectorySegment: () => void;
+  overrideContentPartsRef: MutableRefObject<MessageCreate["content"] | null>;
+  pendingApprovals: ApprovalRequest[];
+  pendingConversationSwitchRef: MutableRefObject<ConversationSwitchContext | null>;
+  pendingGitReminderRef: MutableRefObject<PendingGitReminder | null>;
+  pendingRalphConfig: PendingRalphConfig | null;
+  processConversation: ProcessConversation;
+  processConversationWithQueuedApprovals: ProcessConversation;
+  profileConfirmPending: ProfileConfirmPending | null;
+  projectDirectory: string;
+  queuedApprovalResults: ApprovalResult[] | null;
+  queuedSystemPromptRecompileByConversationRef: MutableRefObject<Set<string>>;
+  reasoningTabCycleEnabled: boolean;
+  recoverRestoredPendingApprovals: (
+    approvals: ApprovalRequest[],
+    options?: { notifyOnManualApproval?: boolean },
+  ) => Promise<void>;
+  refreshDerived: () => void;
+  resetBootstrapReminderState: () => void;
+  resetDeferredToolCallCommits: () => void;
+  resetPendingReasoningCycle: () => void;
+  resetTrajectoryBases: () => void;
+  runEndHooks: () => Promise<void>;
+  sessionHooksRanRef: MutableRefObject<boolean>;
+  sessionStartFeedbackRef: MutableRefObject<string[]>;
+  sessionStatsRef: MutableRefObject<SessionStats>;
+  setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
+  setAgentDescription: Dispatch<SetStateAction<string | null>>;
+  setAgentState: Dispatch<SetStateAction<AgentState | null | undefined>>;
+  setCommandRunning: (value: boolean) => void;
+  setConversationAutoTitleEligibility: (enabled: boolean) => void;
+  setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationOverrideContextWindowLimit: Dispatch<
+    SetStateAction<number | null>
+  >;
+  setConversationOverrideModelSettings: Dispatch<
+    SetStateAction<AgentState["model_settings"] | null>
+  >;
+  setCurrentPersonalityId: Dispatch<SetStateAction<PersonalityId | null>>;
+  setDequeueEpoch: Dispatch<SetStateAction<number>>;
+  setFeedbackPrefill: Dispatch<SetStateAction<string>>;
+  setHasConversationModelOverride: (value: boolean) => void;
+  setLines: Dispatch<SetStateAction<Line[]>>;
+  setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
+  setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
+  setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
+  setPendingRalphConfig: Dispatch<SetStateAction<PendingRalphConfig | null>>;
+  setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
+  setProfileConfirmPending: Dispatch<
+    SetStateAction<ProfileConfirmPending | null>
+  >;
+  setReasoningTabCycleEnabled: Dispatch<SetStateAction<boolean>>;
+  setSearchQuery: Dispatch<SetStateAction<string>>;
+  setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
+  setStaticRenderEpoch: Dispatch<SetStateAction<number>>;
+  setStreaming: (value: boolean) => void;
+  setThinkingMessage: Dispatch<SetStateAction<string>>;
+  setTokenStreamingEnabled: Dispatch<SetStateAction<boolean>>;
+  setTrajectoryTokenBase: Dispatch<SetStateAction<number>>;
+  setUiPermissionMode: (mode: PermissionMode) => void;
+  setUiRalphActive: Dispatch<SetStateAction<boolean>>;
+  sharedReminderStateRef: MutableRefObject<SharedReminderState>;
+  shouldAutoGenerateConversationTitleRef: MutableRefObject<boolean>;
+  startOverlayCommand: (
+    overlay: ActiveOverlay,
+    input: string,
+    openingOutput: string,
+    dismissOutput: string,
+  ) => CommandHandle;
+  streaming: boolean;
+  systemInfoReminderEnabled: boolean;
+  systemPromptRecompileByConversationRef: MutableRefObject<
+    Map<string, Promise<void>>
+  >;
+  tokenStreamingEnabled: boolean;
+  trajectoryRunTokenStartRef: MutableRefObject<number>;
+  trajectoryTokenDisplayRef: MutableRefObject<number>;
+  triggerStatusLineRefresh: () => void;
+  tuiQueueRef: MutableRefObject<QueueRuntime | null>;
+  uiPermissionMode: PermissionMode;
+  updateAgentName: (name: string) => void;
+  updateMemorySyncCommand: (
+    commandId: string,
+    output: string,
+    success: boolean,
+    input?: string,
+    keepRunning?: boolean,
+  ) => void;
+  userCancelledRef: MutableRefObject<boolean>;
+};
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
   const {
