@@ -12,7 +12,7 @@ import {
   registerWithCloudRetry,
 } from "../../websocket/listen-register";
 import type { Buffers, Line } from "../helpers/accumulator";
-import { buildChatUrl } from "../helpers/appUrls";
+import { buildAgentReference } from "../helpers/appUrls";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -183,7 +183,7 @@ export async function handleListen(
   const buildConnectionUrl = (connId: string): string => {
     if (!ctx.agentId) return "";
 
-    return buildChatUrl(ctx.agentId, {
+    return buildAgentReference(ctx.agentId, {
       deviceId: connId,
       conversationId: ctx.conversationId ?? undefined,
     });

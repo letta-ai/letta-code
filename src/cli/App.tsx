@@ -244,7 +244,11 @@ import {
   type ClassifiedApproval,
   classifyApprovals,
 } from "./helpers/approvalClassification";
-import { buildChatUrl } from "./helpers/appUrls";
+import {
+  buildAgentReference,
+  buildChatUrl,
+  isLocalAgentId,
+} from "./helpers/appUrls";
 import { backfillBuffers } from "./helpers/backfill";
 import { chunkLog } from "./helpers/chunkLog";
 import {
@@ -7538,7 +7542,7 @@ export default function App({
         settingsManager.persistSession(agent.id, targetConversationId);
 
         // Build success message with hints
-        const agentUrl = buildChatUrl(agent.id);
+        const agentUrl = buildAgentReference(agent.id);
         const memfsTip =
           "Tip: use /init to initialize your agent's memory system!";
         const successOutput = [
@@ -8165,11 +8169,19 @@ export default function App({
 
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
+          const cmd = commandRunner.start("/ade", "Opening ADE...");
+
+          if (isLocalAgentId(agentId)) {
+            cmd.finish(
+              `ADE is not available for local backend agents.\n→ ${agentId}`,
+              true,
+            );
+            return { submitted: true };
+          }
+
           const adeUrl = buildChatUrl(agentId, {
             conversationId: conversationIdRef.current,
           });
-
-          const cmd = commandRunner.start("/ade", "Opening ADE...");
 
           // Fire-and-forget browser open
           import("open")
