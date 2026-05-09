@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import stripAnsi from "strip-ansi";
 import {
   renderBlock,
   splitSystemReminderBlocks,
@@ -34,31 +33,22 @@ describe("splitSystemReminderBlocks", () => {
 });
 
 describe("renderBlock", () => {
-  test("wraps highlighted user content in erase-to-line-end padding rows", () => {
-    const colorAnsi = "\x1b[48;2;45;45;45m";
-    const eraseToEndOfLine = "\x1b[K";
-    const lines = renderBlock("hello world", 22, true, colorAnsi, "> ", "  ");
+  test("wraps highlighted user content in full-width padding rows", () => {
+    const columns = 24;
+    const lines = renderBlock("hello world", 22, columns, true, "> ", "  ");
 
     expect(lines).toHaveLength(3);
-    expect(lines.every((line) => line.startsWith(colorAnsi))).toBe(true);
-    expect(lines[0]).toBe(`${colorAnsi}${eraseToEndOfLine}\x1b[0m`);
-    expect(stripAnsi(lines[1] ?? "")).toBe("> hello world");
-    expect(lines[1]?.endsWith(`${colorAnsi}${eraseToEndOfLine}\x1b[0m`)).toBe(
-      true,
+    expect(lines.every((line) => line.highlighted)).toBe(true);
+    expect(lines[0]?.text).toBe(" ".repeat(columns));
+    expect(lines[1]?.text).toBe(
+      `> hello world${" ".repeat(columns - "> hello world".length)}`,
     );
-    expect(lines[2]).toBe(`${colorAnsi}${eraseToEndOfLine}\x1b[0m`);
+    expect(lines[2]?.text).toBe(" ".repeat(columns));
   });
 
   test("keeps unhighlighted blocks compact", () => {
-    const lines = renderBlock(
-      "system context",
-      22,
-      false,
-      "\x1b[48;2;45;45;45m",
-      "> ",
-      "  ",
-    );
+    const lines = renderBlock("system context", 22, 24, false, "> ", "  ");
 
-    expect(lines).toEqual(["> system context"]);
+    expect(lines).toEqual([{ text: "> system context", highlighted: false }]);
   });
 });

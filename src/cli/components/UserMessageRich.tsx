@@ -1,3 +1,4 @@
+import { Box } from "ink";
 import { memo } from "react";
 import stringWidth from "string-width";
 import {
@@ -8,13 +9,18 @@ import {
 } from "../../constants";
 import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { colors, hexToBgAnsi, hexToFgAnsi } from "./colors";
+import { colors } from "./colors";
 import { Text } from "./Text";
 
 type UserLine = {
   kind: "user";
   id: string;
   text: string;
+};
+
+type RenderedBlockLine = {
+  text: string;
+  highlighted: boolean;
 };
 
 /**
@@ -108,10 +114,9 @@ export function splitSystemReminderBlocks(
   return blocks;
 }
 
-const ERASE_TO_END_OF_LINE = "\x1b[K";
-
-function renderHighlightedBlankLine(colorAnsi: string): string {
-  return `${colorAnsi}${ERASE_TO_END_OF_LINE}\x1b[0m`;
+function padToColumns(text: string, columns: number): string {
+  const pad = Math.max(0, columns - stringWidth(text));
+  return `${text}${" ".repeat(pad)}`;
 }
 
 /**
@@ -122,11 +127,11 @@ function renderHighlightedBlankLine(colorAnsi: string): string {
 export function renderBlock(
   text: string,
   contentWidth: number,
+  columns: number,
   highlighted: boolean,
-  colorAnsi: string, // combined bg + fg ANSI codes
   promptPrefix: string,
   continuationPrefix: string,
-): string[] {
+): RenderedBlockLine[] {
   const inputLines = text.split("\n");
   const outputLines: string[] = [];
 
@@ -145,29 +150,23 @@ export function renderBlock(
 
   const renderedLines = outputLines.map((ol, i) => {
     const prefix = i === 0 ? promptPrefix : continuationPrefix;
+    const content = `${prefix}${ol}`;
 
     if (!highlighted) {
-      return prefix + ol;
+      return { text: content, highlighted: false };
     }
 
-    // Re-apply colorAnsi after the prompt character on the first line because
-    // the prompt string may contain an ANSI reset (\x1b[0m) that clears
-    // the background highlight. Insert before the trailing space so it's
-    // also highlighted.
-    const content =
-      i === 0
-        ? `${promptPrefix.slice(0, -1)}${colorAnsi} ${ol}`
-        : `${prefix}${ol}`;
-    // Fill to the terminal edge without printing trailing spaces. Padding with
-    // spaces can leave the final cell unpainted after Ink/terminal wrapping.
-    return `${colorAnsi}${content}${colorAnsi}${ERASE_TO_END_OF_LINE}\x1b[0m`;
+    return { text: padToColumns(content, columns), highlighted: true };
   });
 
   if (!highlighted) {
     return renderedLines;
   }
 
-  const blankLine = renderHighlightedBlankLine(colorAnsi);
+  const blankLine = {
+    text: " ".repeat(Math.max(0, columns)),
+    highlighted: true,
+  };
   return [blankLine, ...renderedLines, blankLine];
 }
 
@@ -196,34 +195,43 @@ export const UserMessage = memo(
       return null;
     }
 
-    // Build combined ANSI code for background + optional foreground
     const { background, text: textColor } = colors.userMessage;
-    const bgAnsi = hexToBgAnsi(background);
-    const fgAnsi = textColor ? hexToFgAnsi(textColor) : "";
-    const colorAnsi = bgAnsi + fgAnsi;
 
     // Split into system-reminder blocks and user content blocks
     const blocks = splitSystemReminderBlocks(displayText);
 
-    const allLines: string[] = [];
+    const allLines: RenderedBlockLine[] = [];
 
     for (const block of blocks) {
       if (!block.text.trim()) continue;
       if (allLines.length > 0) {
-        allLines.push("");
+        allLines.push({ text: "", highlighted: false });
       }
       const blockLines = renderBlock(
         block.text,
         contentWidth,
+        columns,
         !block.isSystemReminder,
-        colorAnsi,
         promptPrefix,
         continuationPrefix,
       );
       allLines.push(...blockLines);
     }
 
-    return <Text>{allLines.join("\n")}</Text>;
+    return (
+      <Box flexDirection="column">
+        {allLines.map((line, index) => (
+          <Text
+            // biome-ignore lint/suspicious/noArrayIndexKey: rendered rows are static
+            key={index}
+            backgroundColor={line.highlighted ? background : undefined}
+            color={line.highlighted ? textColor : undefined}
+          >
+            {line.text}
+          </Text>
+        ))}
+      </Box>
+    );
   },
 );
 
