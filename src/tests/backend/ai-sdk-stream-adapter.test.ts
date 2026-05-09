@@ -5,6 +5,7 @@ import type {
   ToolSet,
   UIMessageChunk,
 } from "ai";
+import { APICallError } from "ai";
 import {
   AISDKStreamAdapter,
   type AISDKStreamTextFunction,
@@ -17,6 +18,25 @@ import type { LocalMessage } from "../../backend/local/LocalMessage";
 
 function streamPart(part: Record<string, unknown>): TextStreamPart<ToolSet> {
   return part as unknown as TextStreamPart<ToolSet>;
+}
+
+function apiError(options: {
+  message: string;
+  statusCode?: number;
+  isRetryable?: boolean;
+  responseBody?: string;
+  cause?: unknown;
+}): APICallError {
+  return new APICallError({
+    message: options.message,
+    url: "https://example.invalid/v1/responses",
+    requestBodyValues: {},
+    statusCode: options.statusCode,
+    responseHeaders: { "retry-after-ms": "0" },
+    responseBody: options.responseBody,
+    cause: options.cause,
+    isRetryable: options.isRetryable,
+  });
 }
 
 function uiMessageStream(chunks: Array<Record<string, unknown>>) {
@@ -221,6 +241,356 @@ describe("AISDKStreamAdapter", () => {
           },
         ],
       },
+    });
+  });
+
+  test("retries retryable AI SDK connection errors before yielding model output", async () => {
+    let calls = 0;
+    let capturedMaxRetries: number | undefined;
+    const retryable = apiError({
+      message:
+        "Cannot connect to API: The socket connection was closed unexpectedly.",
+      isRetryable: true,
+      cause: { code: "ECONNRESET" },
+    });
+    const streamText: AISDKStreamTextFunction = (options) => {
+      calls += 1;
+      capturedMaxRetries = options.maxRetries;
+      return {
+        fullStream: (async function* () {
+          if (calls === 1) throw retryable;
+          yield streamPart({ type: "text-delta", id: "text-1", text: "ok" });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    const events = await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(calls).toBe(2);
+    expect(capturedMaxRetries).toBe(0);
+    expect(events[0]).toMatchObject({
+      type: "letta-chunk",
+      chunk: {
+        message_type: "event_message",
+        event_type: "retry",
+        event_data: { attempt: 1, max_attempts: 3, delay_ms: 0 },
+      },
+    });
+    expect(events.map((event) => event.type)).toEqual([
+      "letta-chunk",
+      "ai-sdk-part",
+      "ai-sdk-part",
+    ]);
+  });
+
+  test("retries practical provider 5xx errors even when AI SDK does not mark them retryable", async () => {
+    let calls = 0;
+    const provider500 = apiError({
+      message: "Anthropic API error: internal server error",
+      statusCode: 500,
+      responseBody: "internal server error",
+      isRetryable: false,
+    });
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          if (calls === 1) {
+            yield streamPart({ type: "error", error: provider500 });
+            return;
+          }
+          yield streamPart({ type: "text-delta", id: "text-1", text: "ok" });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    const events = await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(calls).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      "letta-chunk",
+      "ai-sdk-part",
+      "ai-sdk-part",
+    ]);
+  });
+
+  test("retries non-quota provider rate limits", async () => {
+    let calls = 0;
+    const rateLimit = apiError({
+      message: "Rate limit exceeded, please try again",
+      statusCode: 429,
+      isRetryable: false,
+    });
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          if (calls === 1) throw rateLimit;
+          yield streamPart({ type: "text-delta", id: "text-1", text: "ok" });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    const events = await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(calls).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      "letta-chunk",
+      "ai-sdk-part",
+      "ai-sdk-part",
+    ]);
+  });
+
+  test("does not retry quota-limited provider 429 errors", async () => {
+    let calls = 0;
+    const quotaLimit = apiError({
+      message: "Rate limit exceeded",
+      statusCode: 429,
+      responseBody: '{"error":"Rate limited","reasons":["exceeded-quota"]}',
+      isRetryable: false,
+    });
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          yield* (async function* () {})();
+          throw quotaLimit;
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await expect(
+      collect(
+        adapter.stream(
+          providerInput([
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+          ]),
+        ),
+      ),
+    ).rejects.toThrow("Rate limit exceeded");
+    expect(calls).toBe(1);
+  });
+
+  test("does not retry non-transient provider 4xx errors", async () => {
+    let calls = 0;
+    const authError = apiError({
+      message: "Authentication error: invalid API key",
+      statusCode: 401,
+      isRetryable: false,
+    });
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          yield* (async function* () {})();
+          throw authError;
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await expect(
+      collect(
+        adapter.stream(
+          providerInput([
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+          ]),
+        ),
+      ),
+    ).rejects.toThrow("Authentication error");
+    expect(calls).toBe(1);
+  });
+
+  test("does not retry once model output has already been yielded", async () => {
+    let calls = 0;
+    const retryable = apiError({
+      message: "upstream connect error",
+      statusCode: 503,
+      isRetryable: true,
+    });
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({
+            type: "text-delta",
+            id: "text-1",
+            text: "partial",
+          });
+          throw retryable;
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    await expect(
+      collect(
+        adapter.stream(
+          providerInput([
+            {
+              id: "ui-user-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+          ]),
+        ),
+      ),
+    ).rejects.toThrow("upstream connect error");
+    expect(calls).toBe(1);
+  });
+
+  test("retries OpenCode-style JSON overload shapes before yielding output", async () => {
+    let calls = 0;
+    const retryableJson = new Error('{"code":"RESOURCE_EXHAUSTED"}');
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          if (calls === 1) throw retryableJson;
+          yield streamPart({ type: "text-delta", id: "text-1", text: "ok" });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    const events = await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(calls).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      "letta-chunk",
+      "ai-sdk-part",
+      "ai-sdk-part",
+    ]);
+  });
+
+  test("retries after non-output stream parts", async () => {
+    let calls = 0;
+    const retryable = apiError({
+      message: "upstream connect error",
+      statusCode: 503,
+      isRetryable: true,
+    });
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          if (calls === 1) {
+            yield streamPart({ type: "start-step", request: {}, warnings: [] });
+            throw retryable;
+          }
+          yield streamPart({ type: "text-delta", id: "text-1", text: "ok" });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    const events = await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(calls).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      "ai-sdk-part",
+      "letta-chunk",
+      "ai-sdk-part",
+      "ai-sdk-part",
+    ]);
+    expect(events[0]).toMatchObject({
+      type: "ai-sdk-part",
+      part: { type: "start-step" },
+    });
+    expect(events[1]).toMatchObject({
+      type: "letta-chunk",
+      chunk: { message_type: "event_message", event_type: "retry" },
     });
   });
 
