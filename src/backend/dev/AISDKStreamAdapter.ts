@@ -1,4 +1,5 @@
 import {
+  APICallError,
   tool as aiTool,
   convertToModelMessages,
   jsonSchema,
@@ -11,6 +12,12 @@ import {
   type UIMessageChunk,
   validateUIMessages,
 } from "ai";
+import {
+  getRetryDelayMs,
+  isQuotaLimitErrorDetail,
+  parseRetryAfterHeaderMs,
+  shouldRetryPreStreamTransientError,
+} from "../../agent/approval-recovery";
 import type { ClientTool } from "../../tools/manager";
 import type { LocalCompactionStats } from "../local/compaction";
 import type { LocalMessage } from "../local/LocalMessage";
@@ -33,6 +40,8 @@ import {
 
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
 type InputModality = "text" | "image" | "audio" | "video" | "pdf";
+const LOCAL_PROVIDER_MAX_RETRIES = 3;
+const LOCAL_PROVIDER_MAX_RETRY_DELAY_MS = 60_000;
 type AISDKUIMessageStreamFinish = {
   messages: LocalMessage[];
   responseMessage: LocalMessage;
@@ -85,6 +94,148 @@ export interface AISDKStreamAdapterOptions {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValueForRetry(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function stringifyRetryValue(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function retryHeaderValue(
+  headers: Record<string, string> | undefined,
+  headerName: string,
+): string | undefined {
+  if (!headers) return undefined;
+  const direct = headers[headerName];
+  if (direct !== undefined) return direct;
+  const lower = headerName.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lower) return value;
+  }
+  return undefined;
+}
+
+function retryAfterMsFromHeaders(
+  headers: Record<string, string> | undefined,
+): number | null {
+  const retryAfterMs = retryHeaderValue(headers, "retry-after-ms");
+  if (retryAfterMs) {
+    const parsed = Number.parseFloat(retryAfterMs);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.round(parsed);
+    }
+  }
+
+  return parseRetryAfterHeaderMs(retryHeaderValue(headers, "retry-after"));
+}
+
+function retryErrorDetail(error: unknown): string {
+  const parts: string[] = [];
+
+  if (error instanceof Error) {
+    parts.push(error.message);
+  } else {
+    const value = stringifyRetryValue(error);
+    if (value) parts.push(value);
+  }
+
+  if (APICallError.isInstance(error)) {
+    const responseBody = stringValueForRetry(error.responseBody);
+    if (responseBody) parts.push(responseBody);
+    const data = stringifyRetryValue(error.data);
+    if (data) parts.push(data);
+    const cause = error.cause;
+    if (isRecord(cause)) {
+      const code = stringValueForRetry(cause.code);
+      if (code) parts.push(code);
+      const causeMessage = stringValueForRetry(cause.message);
+      if (causeMessage) parts.push(causeMessage);
+    } else if (cause instanceof Error) {
+      parts.push(cause.message);
+    }
+  }
+
+  return parts.filter(Boolean).join("\n");
+}
+
+function isRetryableLocalProviderError(error: unknown): boolean {
+  if (isContextWindowOverflowError(error)) return false;
+
+  const detail = retryErrorDetail(error);
+  if (APICallError.isInstance(error)) {
+    if (isQuotaLimitErrorDetail(detail)) return false;
+    if (error.isRetryable === true) return true;
+    const status = error.statusCode;
+    if (status !== undefined && status >= 500) return true;
+    return shouldRetryPreStreamTransientError({ status, detail });
+  }
+
+  return shouldRetryPreStreamTransientError({
+    status: undefined,
+    detail,
+  });
+}
+
+function localProviderRetryDelayMs(error: unknown, attempt: number): number {
+  const retryAfterMs = APICallError.isInstance(error)
+    ? retryAfterMsFromHeaders(error.responseHeaders)
+    : null;
+  return Math.min(
+    getRetryDelayMs({
+      category: "transient_provider",
+      attempt,
+      detail: retryErrorDetail(error),
+      retryAfterMs,
+    }),
+    LOCAL_PROVIDER_MAX_RETRY_DELAY_MS,
+  );
+}
+
+function localProviderRetryMessage(error: unknown): string {
+  if (APICallError.isInstance(error)) {
+    const status =
+      error.statusCode !== undefined ? `HTTP ${error.statusCode}: ` : "";
+    return `${status}${error.message}`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isModelOutputEvent(event: ProviderStreamEvent): boolean {
+  return event.type === "ai-sdk-part" || event.type === "ai-sdk-ui-message";
+}
+
+async function sleepWithAbort(
+  delayMs: number,
+  abortSignal: AbortSignal | undefined,
+): Promise<void> {
+  if (delayMs <= 0) return;
+  if (abortSignal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      abortSignal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function isClientTool(value: unknown): value is ClientTool {
@@ -634,9 +785,14 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     let sawToolCall = false;
     let finishReason: string | undefined;
     for await (const part of result.fullStream) {
-      if (part.type === "error" && isContextWindowOverflowError(part.error)) {
-        streamError = part.error;
-        break;
+      if (part.type === "error") {
+        if (
+          isContextWindowOverflowError(part.error) ||
+          isRetryableLocalProviderError(part.error)
+        ) {
+          streamError = part.error;
+          break;
+        }
       }
       if (part.type === "tool-call") {
         sawToolCall = true;
@@ -675,25 +831,66 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
   }
 
   async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
-    try {
-      yield* this.streamOnce(input);
-    } catch (error) {
-      if (
-        !isContextWindowOverflowError(error) ||
-        !this.onContextWindowOverflow
-      ) {
-        throw error;
+    let activeInput = input;
+    let handledContextOverflow = false;
+    let transientRetries = 0;
+
+    while (true) {
+      let emittedModelOutput = false;
+      try {
+        for await (const event of this.streamOnce(activeInput)) {
+          if (isModelOutputEvent(event)) {
+            emittedModelOutput = true;
+          }
+          yield event;
+        }
+        return;
+      } catch (error) {
+        if (isContextWindowOverflowError(error)) {
+          if (handledContextOverflow || !this.onContextWindowOverflow) {
+            throw error;
+          }
+
+          const compaction = await this.onContextWindowOverflow(
+            activeInput,
+            error,
+          );
+          if (!compaction) throw error;
+
+          handledContextOverflow = true;
+          activeInput = {
+            ...activeInput,
+            uiMessages: compaction.uiMessages,
+          };
+          yield* this.emitCompactionChunks(
+            compaction,
+            "context_window_overflow",
+          );
+          continue;
+        }
+
+        if (
+          emittedModelOutput ||
+          transientRetries >= LOCAL_PROVIDER_MAX_RETRIES ||
+          !isRetryableLocalProviderError(error)
+        ) {
+          throw error;
+        }
+
+        transientRetries += 1;
+        const delayMs = localProviderRetryDelayMs(error, transientRetries);
+        yield providerLettaChunk({
+          message_type: "event_message",
+          event_type: "retry",
+          event_data: {
+            attempt: transientRetries,
+            max_attempts: LOCAL_PROVIDER_MAX_RETRIES,
+            delay_ms: delayMs,
+            message: localProviderRetryMessage(error),
+          },
+        } as never);
+        await sleepWithAbort(delayMs, this.abortSignal);
       }
-
-      const compaction = await this.onContextWindowOverflow(input, error);
-      if (!compaction) throw error;
-
-      yield* this.emitCompactionChunks(compaction, "context_window_overflow");
-
-      yield* this.streamOnce({
-        ...input,
-        uiMessages: compaction.uiMessages,
-      });
     }
   }
 }
