@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import {
+  buildDiscordIngressMessageKey,
+  buildDiscordReplyOptions,
+} from "../../channels/discord/adapter";
 
 // The Discord adapter's internal helpers are not exported, but we can test
 // the equivalent logic by reimplementing the pure functions here and verifying
@@ -203,5 +207,60 @@ describe("resolveDiscordChatType", () => {
 
   test("non-empty guildId is channel", () => {
     expect(resolveDiscordChatType("guild-123")).toBe("channel");
+  });
+});
+
+// ── buildDiscordIngressMessageKey ────────────────────────────────────────
+
+describe("buildDiscordIngressMessageKey", () => {
+  test("dedupes the same Discord message across parent/thread channel contexts", () => {
+    // Discord message IDs are globally unique. If the same underlying message
+    // is surfaced through both a parent channel and created thread context, the
+    // dedupe key must remain stable.
+    const parentChannelKey = buildDiscordIngressMessageKey(
+      "discord-bot",
+      "msg-1",
+    );
+    const threadChannelKey = buildDiscordIngressMessageKey(
+      "discord-bot",
+      "msg-1",
+    );
+
+    expect(parentChannelKey).toBe(threadChannelKey);
+  });
+
+  test("scopes dedupe by account so multiple bots do not collide", () => {
+    expect(buildDiscordIngressMessageKey("bot-a", "msg-1")).not.toBe(
+      buildDiscordIngressMessageKey("bot-b", "msg-1"),
+    );
+  });
+
+  test("returns null when account or message ID is missing", () => {
+    expect(buildDiscordIngressMessageKey(undefined, "msg-1")).toBeNull();
+    expect(buildDiscordIngressMessageKey("discord-bot", undefined)).toBeNull();
+    expect(buildDiscordIngressMessageKey("", "msg-1")).toBeNull();
+    expect(buildDiscordIngressMessageKey("discord-bot", "")).toBeNull();
+  });
+});
+
+// ── buildDiscordReplyOptions ─────────────────────────────────────────────
+
+describe("buildDiscordReplyOptions", () => {
+  test("omits reply options when no reply target is provided", () => {
+    expect(buildDiscordReplyOptions(undefined, "channel-1")).toBeUndefined();
+    expect(buildDiscordReplyOptions("", "channel-1")).toBeUndefined();
+  });
+
+  test("omits reply options when reply target equals target channel", () => {
+    expect(buildDiscordReplyOptions("channel-1", "channel-1")).toBeUndefined();
+  });
+
+  test("sets failIfNotExists false so stale quote targets do not fail sends", () => {
+    expect(buildDiscordReplyOptions("msg-1", "channel-1")).toEqual({
+      reply: {
+        messageReference: "msg-1",
+        failIfNotExists: false,
+      },
+    });
   });
 });
