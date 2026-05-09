@@ -36,6 +36,7 @@ import {
   createOrUpdateLocalProvider,
   getLocalProviderAuthPath,
   LOCAL_ALL_COMPACTION_PROMPT,
+  LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
   LocalBackend,
   listLocalModels,
   resolveLocalModelConfig,
@@ -729,6 +730,152 @@ describe("LocalBackend", () => {
       expect(JSON.stringify(persistedMessages[0])).toContain(
         "manual local summary",
       );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts local conversation history with sliding-window mode", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-sliding-compact-"),
+    );
+    try {
+      let capturedSystem: string | undefined;
+      let capturedPrompt: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: {
+          system?: string;
+          prompt?: string;
+        }) => {
+          capturedSystem = options.system;
+          capturedPrompt = options.prompt;
+          return { text: "sliding local summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Sliding Compact Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("third request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 6,
+        num_messages_after: 4,
+        summary: "sliding local summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT);
+      expect(capturedPrompt).toContain("first request");
+      expect(capturedPrompt).toContain("second request");
+      expect(capturedPrompt).not.toContain("third request");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+        "assistant_message",
+        "user_message",
+        "assistant_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain("sliding local summary");
+      expect(JSON.stringify(messages)).toContain("third request");
+      expect(JSON.stringify(messages)).not.toContain("first request");
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      expect(persistedMessages).toHaveLength(4);
+      expect(JSON.stringify(persistedMessages[0])).toContain(
+        "sliding local summary",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses saved local compaction settings as the default", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-saved-compact-settings-"),
+    );
+    try {
+      let capturedSystem: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: { system?: string }) => {
+          capturedSystem = options.system;
+          return { text: "saved settings summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Saved Compact Settings Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+
+      const updated = await backend.updateAgent(agent.id, {
+        compaction_settings: { mode: "all" },
+      } as never);
+      expect(updated.compaction_settings).toMatchObject({ mode: "all" });
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 4,
+        num_messages_after: 1,
+        summary: "saved settings summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
