@@ -464,6 +464,60 @@ describe("AISDKStreamAdapter", () => {
     expect(calls).toBe(1);
   });
 
+  test("retries after non-output stream parts", async () => {
+    let calls = 0;
+    const retryable = apiError({
+      message: "upstream connect error",
+      statusCode: 503,
+      isRetryable: true,
+    });
+    const streamText: AISDKStreamTextFunction = () => {
+      calls += 1;
+      return {
+        fullStream: (async function* () {
+          if (calls === 1) {
+            yield streamPart({ type: "start-step", request: {}, warnings: [] });
+            throw retryable;
+          }
+          yield streamPart({ type: "text-delta", id: "text-1", text: "ok" });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    const events = await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(calls).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      "ai-sdk-part",
+      "letta-chunk",
+      "ai-sdk-part",
+      "ai-sdk-part",
+    ]);
+    expect(events[0]).toMatchObject({
+      type: "ai-sdk-part",
+      part: { type: "start-step" },
+    });
+    expect(events[1]).toMatchObject({
+      type: "letta-chunk",
+      chunk: { message_type: "event_message", event_type: "retry" },
+    });
+  });
+
   test("derives the AI SDK model from agent model settings when no override is provided", async () => {
     const originalProvider = process.env.LETTA_CODE_DEV_AI_SDK_PROVIDER;
     const originalModel = process.env.LETTA_CODE_DEV_AI_SDK_MODEL;

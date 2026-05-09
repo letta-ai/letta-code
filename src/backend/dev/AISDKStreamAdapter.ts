@@ -213,7 +213,16 @@ function localProviderRetryMessage(error: unknown): string {
 }
 
 function isModelOutputEvent(event: ProviderStreamEvent): boolean {
-  return event.type === "ai-sdk-part" || event.type === "ai-sdk-ui-message";
+  if (event.type === "ai-sdk-ui-message") return true;
+  if (event.type !== "ai-sdk-part") return false;
+  switch (event.part.type) {
+    case "text-delta":
+    case "reasoning-delta":
+    case "tool-call":
+      return true;
+    default:
+      return false;
+  }
 }
 
 async function sleepWithAbort(
