@@ -46,6 +46,9 @@ import { projectLocalMessagesToStoredMessages } from "../../backend/local/LocalM
 import { LocalStore } from "../../backend/local/LocalStore";
 import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
 
+const TEST_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+
 async function withLocalModelEnv<T>(
   env: {
     openAIKey?: string;
@@ -1889,6 +1892,111 @@ describe("LocalBackend", () => {
         "tool_return_message",
         "assistant_message",
       ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("converts pasted Letta image parts to AI SDK file UI parts for local history", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-image-"));
+    try {
+      const modelMessagesByCall: ModelMessage[][] = [];
+      let streamCalls = 0;
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text: `image response ${streamCalls}`,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-image-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text: `image response ${streamCalls}` }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Image Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(conversation.id, {
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "please inspect this" },
+                {
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: "image/png",
+                    data: TEST_PNG_BASE64,
+                  },
+                },
+              ],
+            },
+          ],
+          streaming: true,
+          stream_tokens: true,
+          include_pings: true,
+          background: true,
+          client_tools: [],
+          client_skills: [],
+          agent_id: agent.id,
+        } as unknown as ConversationMessageCreateBody),
+      );
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("and now a text-only follow-up", agent.id),
+        ),
+      );
+
+      expect(modelMessagesByCall).toHaveLength(2);
+      expect(JSON.stringify(modelMessagesByCall[0])).toContain('"type":"file"');
+      expect(JSON.stringify(modelMessagesByCall[1])).toContain('"type":"file"');
+      expect(JSON.stringify(modelMessagesByCall[1])).not.toContain(
+        '"type":"image"',
+      );
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      const persistedUserWithFile = persistedMessages.find(
+        (message) =>
+          message.role === "user" &&
+          message.parts?.some(
+            (part) =>
+              typeof part === "object" &&
+              part !== null &&
+              (part as { type?: unknown }).type === "file",
+          ),
+      );
+      expect(persistedUserWithFile).toBeDefined();
+      expect(JSON.stringify(persistedUserWithFile)).toContain(
+        "data:image/png;base64,",
+      );
+      expect(JSON.stringify(persistedUserWithFile)).not.toContain(
+        '"type":"image"',
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
