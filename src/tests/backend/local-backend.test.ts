@@ -26,6 +26,7 @@ import type {
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
+  ConversationRecompileBody,
   RunMessageStreamBody,
 } from "../../backend";
 import {
@@ -580,6 +581,44 @@ describe("LocalBackend", () => {
       ).join("\n");
       expect(persistedMessageText).toContain('"id":"ui-msg-');
       expect(persistedMessageText).not.toContain("fake-headless");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("can run local turns without creating a local MemFS repo", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-no-memfs-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+
+      const agent = await backend.createAgent({
+        name: "No MemFS Local Agent",
+        system: "Plain local system prompt.",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("ping", agent.id),
+        ),
+      );
+
+      await expect(
+        stat(getLocalBackendMemoryFilesystemRoot(agent.id, storageDir)),
+      ).rejects.toThrow();
+      await expect(
+        backend.recompileConversation(conversation.id, {
+          agent_id: agent.id,
+          dry_run: true,
+        } as ConversationRecompileBody),
+      ).resolves.toContain("Plain local system prompt.");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

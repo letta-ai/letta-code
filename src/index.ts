@@ -33,6 +33,10 @@ import {
 } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
 import {
+  isLocalBackendNoMemfsEnvEnabled,
+  LOCAL_BACKEND_NO_MEMFS_ENV,
+} from "./backend/local/paths";
+import {
   extractBackendFlag,
   type ParsedCliArgs,
   parseCliArgs,
@@ -556,12 +560,21 @@ async function main(): Promise<void> {
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
   const noMemfsFlag = values["no-memfs"];
+  const startupBackend = getBackend();
+  const localNoMemfsRequested = Boolean(
+    startupBackend.capabilities.localMemfs &&
+      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
+  );
+  if (localNoMemfsRequested) {
+    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
+  }
   const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
     ? "memfs"
-    : noMemfsFlag
+    : noMemfsFlag || localNoMemfsRequested
       ? "standard"
       : undefined;
-  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
+  const shouldAutoEnableMemfsForNewAgent =
+    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
   const noSkillsFlag = values["no-skills"];
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
@@ -1750,7 +1763,9 @@ async function main(): Promise<void> {
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
           const effectiveMemoryMode: MemoryPromptMode | undefined = backend
             .capabilities.localMemfs
-            ? "local-memfs"
+            ? localNoMemfsRequested
+              ? "standard"
+              : "local-memfs"
             : (requestedMemoryPromptMode ??
               (willAutoEnableMemfs ? "memfs" : undefined));
 
@@ -1857,20 +1872,20 @@ async function main(): Promise<void> {
             )
           : Promise.resolve().then(() => {
               if (backend.capabilities.localMemfs) {
-                if (noMemfsFlag) {
-                  throw new Error(
-                    "Disabling MemFS is not supported by the local backend.",
-                  );
-                }
-                settingsManager.setMemfsEnabled(agentId, true);
-                return { action: "enabled" };
+                settingsManager.setMemfsEnabled(
+                  agentId,
+                  !localNoMemfsRequested,
+                );
+                return {
+                  action: localNoMemfsRequested ? "disabled" : "enabled",
+                };
               }
               if (memfsFlag) {
                 throw new Error(
                   "MemFS is not supported by the active backend.",
                 );
               }
-              if (noMemfsFlag) {
+              if (noMemfsFlag || localNoMemfsRequested) {
                 settingsManager.setMemfsEnabled(agentId, false);
               }
               return null;

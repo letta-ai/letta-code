@@ -392,7 +392,8 @@ export async function applyMemfsFlags(
 
   if (backend.capabilities.localMemfs) {
     if (noMemfsFlag) {
-      throw new Error("Disabling MemFS is not supported by the local backend.");
+      settingsManager.setMemfsEnabled(agentId, false);
+      return { action: "disabled" };
     }
     const memoryDir = getScopedMemoryFilesystemRoot(agentId);
     const { initializeLocalMemoryRepo } = await import("./memoryGit");

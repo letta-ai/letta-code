@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execFile as execFileCb, spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -558,6 +558,37 @@ describe("headless dev backend smoke", () => {
       expect(
         await readFile(join(memoryDir, "system", "human.md"), "utf8"),
       ).toContain("person");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("runs env-selected local backend with --no-memfs without creating MemFS", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lc-local-no-memfs-"));
+    try {
+      const result = await runCli(
+        [
+          "-p",
+          "ping",
+          "--new-agent",
+          "--permission-mode",
+          "plan",
+          "--no-skills",
+          "--no-memfs",
+        ],
+        {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: storageDir,
+          LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("pong");
+      expect(result.stderr).not.toContain(
+        "Disabling MemFS is not supported by the local backend",
+      );
+      await expect(stat(join(storageDir, "memfs"))).rejects.toThrow();
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

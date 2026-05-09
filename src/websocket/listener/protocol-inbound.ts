@@ -74,6 +74,10 @@ import type {
 import { isValidApprovalResponseBody } from "./approval";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
+export type ServerLifecycleMessage = {
+  type: "pong";
+};
+
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
@@ -1502,6 +1506,25 @@ export function isExecuteCommandCommand(
     isRuntimeScope(c.runtime) &&
     hasValidArgs
   );
+}
+
+export function parseServerLifecycleMessage(
+  data: WebSocket.RawData,
+): ServerLifecycleMessage | null {
+  try {
+    const raw = typeof data === "string" ? data : data.toString();
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      (parsed as { type?: unknown }).type === "pong"
+    ) {
+      return { type: "pong" };
+    }
+  } catch {
+    // Non-JSON frames are handled by the regular unparseable-frame path.
+  }
+  return null;
 }
 
 export function parseServerMessage(
