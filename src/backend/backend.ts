@@ -5,7 +5,10 @@ import type {
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
 import { LocalBackend } from "./local/LocalBackend";
-import { getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths } from "./local/paths";
+import {
+  getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
+  LOCAL_BACKEND_EXPERIMENTAL_ENV,
+} from "./local/paths";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
 type GetAPIClient = typeof getClient;
@@ -472,6 +475,7 @@ export function getBackend(): Backend {
 
 export function configureBackendMode(mode: BackendMode): void {
   configuredBackendMode = mode;
+  process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = mode === "local" ? "1" : "0";
   backend = createBackendForMode(mode);
 }
 
