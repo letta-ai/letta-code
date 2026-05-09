@@ -150,11 +150,13 @@ describe("APIBackend", () => {
   test("configures the active backend mode explicitly", () => {
     configureBackendMode("local");
     expect(isLocalBackendEnabled()).toBe(true);
+    expect(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL).toBe("1");
     expect(getBackend().capabilities.localMemfs).toBe(true);
     expect(getBackend().capabilities.localModelCatalog).toBe(true);
 
     configureBackendMode("api");
     expect(isLocalBackendEnabled()).toBe(false);
+    expect(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL).toBe("0");
     expect(getBackend().capabilities.localMemfs).toBe(false);
     expect(getBackend().capabilities.remoteMemfs).toBe(true);
   });

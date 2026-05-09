@@ -351,6 +351,47 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function localFilePartFromLegacyImage(
+  part: Record<string, unknown>,
+): LocalMessagePart | null {
+  if (part.type !== "image" || !isRecord(part.source)) {
+    return null;
+  }
+
+  const source = part.source;
+  if (source.type !== "base64") {
+    return null;
+  }
+
+  const mediaType = source.media_type;
+  const data = source.data;
+  if (typeof mediaType !== "string" || typeof data !== "string") {
+    return null;
+  }
+
+  return {
+    type: "file",
+    mediaType,
+    url: `data:${mediaType};base64,${data}`,
+  } as LocalMessagePart;
+}
+
+function normalizeLocalMessageForAISDK(message: LocalMessage): LocalMessage {
+  let didChange = false;
+  const parts = message.parts.map((part) => {
+    if (isRecord(part)) {
+      const filePart = localFilePartFromLegacyImage(part);
+      if (filePart) {
+        didChange = true;
+        return filePart;
+      }
+    }
+    return part;
+  });
+
+  return didChange ? { ...message, parts } : message;
+}
+
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -1635,6 +1676,11 @@ export class LocalStore {
         parts.push({ type: "text", text: part.text } as LocalMessagePart);
         continue;
       }
+      const filePart = localFilePartFromLegacyImage(part);
+      if (filePart) {
+        parts.push(filePart);
+        continue;
+      }
       parts.push(part as LocalMessagePart);
     }
     return parts.length > 0 ? parts : textContent(textFromContent(content));
@@ -1685,7 +1731,7 @@ export class LocalStore {
         );
         const localMessages = readJsonlFile<LocalMessage>(
           join(conversationDir, "messages.jsonl"),
-        );
+        ).map(normalizeLocalMessageForAISDK);
         const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
           join(conversationDir, "system-prompt.json"),
         );
