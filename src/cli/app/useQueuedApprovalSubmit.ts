@@ -51,6 +51,7 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
    * Returns true if approvals need user input (caller should return { submitted: false }).
    * Returns false if no approvals or all auto-handled (caller can proceed).
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: queued approval refs are stable objects; .current is read dynamically during the check.
   const checkPendingApprovalsForSlashCommand = useCallback(async (): Promise<
     { blocked: true } | { blocked: false }
   > => {
@@ -101,13 +102,10 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
     agentId,
     needsEagerApprovalCheck,
     queueApprovalResults,
-    conversationGenerationRef.current,
-    conversationIdRef.current,
-    queuedApprovalMetadataRef.current,
-    queuedApprovalResultsRef.current,
     setNeedsEagerApprovalCheck,
   ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: queued approval refs are stable objects; .current is read dynamically when consumed.
   const consumeQueuedApprovalInputForCurrentConversation = useCallback(
     (otid: string = createClientOtid()): ApprovalCreate | null => {
       const queuedResults = queuedApprovalResultsRef.current;
@@ -138,14 +136,7 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
         otid,
       };
     },
-    [
-      queueApprovalResults,
-      conversationGenerationRef.current,
-      conversationIdRef.current,
-      interruptQueuedRef,
-      queuedApprovalMetadataRef.current,
-      queuedApprovalResultsRef.current,
-    ],
+    [queueApprovalResults, interruptQueuedRef],
   );
 
   const processConversationWithQueuedApprovals = useCallback(

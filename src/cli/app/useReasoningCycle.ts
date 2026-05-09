@@ -88,6 +88,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
   // We update the footer immediately (optimistic local state) and debounce the
   // actual server update so users can rapidly cycle tiers.
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reasoning refs are stable objects; .current is read dynamically when flushing.
   const flushPendingReasoningEffort = useCallback(async () => {
     const desired = reasoningCycleDesiredRef.current;
     if (!desired) return;
@@ -263,9 +264,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
     isAgentBusy,
     withCommandLock,
     setHasConversationModelOverride,
-    agentIdRef.current,
-    conversationIdRef.current,
-    llmConfigRef.current,
     reasoningCycleDebounceMs,
     reasoningCycleDesiredRef,
     reasoningCycleInFlightRef,

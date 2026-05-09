@@ -243,6 +243,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     [setApprovalContexts, setPendingApprovals],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically at call time.
   const recoverRestoredPendingApprovals = useCallback(
     async (
       approvals: ApprovalRequest[],
@@ -339,10 +340,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     [
       queueApprovalResults,
       restorePendingApprovalUi,
-      conversationGenerationRef.current,
-      conversationIdRef.current,
-      queuedApprovalMetadataRef.current,
-      queuedApprovalResultsRef.current,
       restoredApprovalRecoveryRef,
       setApprovalContexts,
       setApprovalResults,
@@ -353,6 +350,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     ],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the intentional reset trigger; generation ref is read dynamically.
   useEffect(() => {
     void conversationId;
     restoredApprovalRecoveryRef.current = {
@@ -360,11 +358,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       generation: conversationGenerationRef.current,
       status: "idle",
     };
-  }, [
-    conversationId,
-    conversationGenerationRef.current,
-    restoredApprovalRecoveryRef,
-  ]);
+  }, [conversationId, restoredApprovalRecoveryRef]);
 
   // Restore pending approval from startup when ready.
   useEffect(() => {
@@ -386,6 +380,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
   ]);
 
   // Helper to send all approval results when done
+  // biome-ignore lint/correctness/useExhaustiveDependencies: approval refs are stable objects; .current is read dynamically during the approval send.
   const sendAllResults = useCallback(
     async (
       additionalDecision?:
@@ -661,30 +656,24 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       openTrajectorySegment,
       commitEligibleLines,
       prepareScopedToolExecutionContext,
-      abortControllerRef.current?.signal.aborted,
-      approvalToolContextIdRef.current, // Ensure interrupted flag is cleared for this execution
-      buffersRef.current,
       executingToolCallIdsRef,
       interruptQueuedRef,
       queueSnapshotRef,
-      sessionStatsRef.current.accumulateTrajectory,
-      sessionStatsRef.current.startTrajectory,
       setApprovalContexts,
       setApprovalResults,
       setAutoDeniedApprovals,
       setAutoHandledResults,
-      setIsExecutingTool, // Clear dialog state immediately so UI updates right away
-      setPendingApprovals, // Rotate to a new thinking message
+      setIsExecutingTool,
+      setPendingApprovals,
       setThinkingMessage,
-      tempModelOverrideRef.current,
       toolAbortControllerRef,
       toolResultsInFlightRef,
-      userCancelledRef.current, // Reset queue-cancel flag so dequeue effect can fire
       waitingForQueueCancelRef,
     ],
   );
 
   // Handle approval callbacks - sequential review
+  // biome-ignore lint/correctness/useExhaustiveDependencies: diff cache ref is stable; .current is read dynamically.
   const handleApproveCurrent = useCallback(
     async (diffs?: Map<string, AdvancedDiffSuccess>) => {
       if (isExecutingTool) return;
@@ -738,12 +727,12 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       appendError,
       isExecutingTool,
       setStreaming,
-      precomputedDiffsRef.current.set, // Not done yet, store decision and show next approval
       setApprovalResults,
       setIsExecutingTool,
     ],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: approval execution refs are stable; .current is read dynamically.
   const handleApproveAlways = useCallback(
     async (
       scope?: "project" | "session",
@@ -961,17 +950,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       openTrajectorySegment,
       prepareScopedToolExecutionContext,
       updateStreamingOutput,
-      approvalToolContextIdRef.current,
-      buffersRef.current,
-      precomputedDiffsRef.current.set,
       setApprovalContexts,
       setApprovalResults,
       setAutoDeniedApprovals,
       setAutoHandledResults,
-      setIsExecutingTool, // Clear dialog state immediately
+      setIsExecutingTool,
       setPendingApprovals,
       setThinkingMessage,
-      tempModelOverrideRef.current,
     ],
   );
 
@@ -1022,16 +1007,16 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       sendAllResults,
       appendError,
       isExecutingTool,
-      setStreaming, // Not done yet, store decision and show next approval
+      setStreaming,
       setApprovalResults,
-      setIsExecutingTool, // All approvals collected, execute and send to backend
-      // sendAllResults owns the lock release via its finally block
+      setIsExecutingTool,
       setThinkingMessage,
     ],
   );
 
   // Cancel all pending approvals - queue denials to send with next message
   // Similar to interrupt flow during tool execution
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
   const handleCancelApprovals = useCallback(() => {
     if (pendingApprovals.length === 0) return;
 
@@ -1058,14 +1043,14 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     pendingApprovals,
     refreshDerived,
     queueApprovalResults,
-    buffersRef.current,
     setApprovalContexts,
     setApprovalResults,
     setAutoDeniedApprovals,
-    setAutoHandledResults, // Clear all approval state
+    setAutoHandledResults,
     setPendingApprovals,
   ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: plan approval refs are stable; .current is read dynamically.
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
       const currentIndex = approvalResults.length;
@@ -1154,7 +1139,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       refreshDerived,
       setStreaming,
       setUiPermissionMode,
-      buffersRef.current,
       lastPlanFilePathRef,
       setApprovalResults,
       setIsExecutingTool,
@@ -1201,6 +1185,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
   // - If not in plan mode, allow graceful continuation when we still have a known plan file path
   // - Otherwise reject with an expiry message
   // - If in plan mode but no plan file exists, keep planning
+  // biome-ignore lint/correctness/useExhaustiveDependencies: approval refs are stable; .current is read dynamically while this effect is triggered by approval state.
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
@@ -1291,16 +1276,15 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     handlePlanKeepPlanning,
     refreshDerived,
     queueApprovalResults,
-    buffersRef.current,
     lastAutoHandledExitPlanToolCallIdRef,
-    lastPlanFilePathRef.current,
     setApprovalContexts,
     setApprovalResults,
     setAutoDeniedApprovals,
-    setAutoHandledResults, // Clear all approval state (same as handleCancelApprovals)
+    setAutoHandledResults,
     setPendingApprovals,
   ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
       const currentIndex = approvalResults.length;
@@ -1364,13 +1348,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       sendAllResults,
       refreshDerived,
       agentId,
-      buffersRef.current,
       setApprovalResults,
       setIsExecutingTool,
       setThinkingMessage,
     ],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
   const handleEnterPlanModeApprove = useCallback(
     async (preserveMode: boolean = false) => {
       const currentIndex = approvalResults.length;
@@ -1452,7 +1436,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
       refreshDerived,
       setUiPermissionMode,
       cacheLastPlanFilePath,
-      buffersRef.current,
       setApprovalResults,
       setIsExecutingTool,
       setThinkingMessage,

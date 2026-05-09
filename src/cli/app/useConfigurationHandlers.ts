@@ -137,6 +137,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     withCommandLock,
   } = ctx;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: model switch refs are stable objects; .current is read dynamically during selection.
   const handleModelSelect = useCallback(
     async (
       modelId: string,
@@ -499,10 +500,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       withCommandLock,
       setHasConversationModelOverride,
       setTempModelOverride,
-      agentIdRef.current,
-      contextTrackerRef.current,
-      conversationIdRef.current,
-      llmConfigRef.current,
       setActiveOverlay,
       setAgentState,
       setConversationOverrideContextWindowLimit,
@@ -608,6 +605,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     ],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversationIdRef is stable; .current is read dynamically during selection.
   const handlePersonalitySelect = useCallback(
     async (personalityId: PersonalityId, commandId?: string | null) => {
       const overlayCommand = commandId
@@ -794,7 +792,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       consumeOverlayCommand,
       isAgentBusy,
       withCommandLock,
-      conversationIdRef.current,
       setActiveOverlay,
       setCurrentPersonalityId,
       setQueuedOverlayAction,

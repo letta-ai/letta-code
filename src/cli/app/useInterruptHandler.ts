@@ -102,6 +102,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     waitingForQueueCancelRef,
   } = ctx;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically when interrupt fires.
   const handleInterrupt = useCallback(async () => {
     // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
@@ -372,29 +373,22 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     queueApprovalResults,
     resetTrajectoryBases,
     abortControllerRef,
-    agentIdRef.current,
     autoAllowedExecutionRef,
-    buffersRef.current, // Increment generation to mark any in-flight processConversation as stale.
-    // The stale processConversation will check this and exit quietly without
-    // decrementing the ref (since we reset it here).
     conversationGenerationRef,
-    conversationIdRef.current,
     executingToolCallIdsRef,
     interruptQueuedRef,
-    pendingInterruptRecoveryConversationIdRef, // Reset the processing guard so the next message can start a new conversation.
+    pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
     setApprovalContexts,
     setApprovalResults,
     setAutoDeniedApprovals,
     setAutoHandledResults,
     setInterruptRequested,
-    setIsExecutingTool, // Clear local approval state
+    setIsExecutingTool,
     setPendingApprovals,
     setRestoreQueueOnCancel,
-    toolAbortControllerRef.current,
     toolResultsInFlightRef,
     userCancelledRef,
-    waitingForQueueCancelRef.current,
   ]);
 
   return {

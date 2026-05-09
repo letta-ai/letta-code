@@ -166,6 +166,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     userCancelledRef,
   } = ctx;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversation refs are stable objects; .current is read dynamically during the background turn.
   const handleBtwCommand = useCallback(
     async (question: string) => {
       debugLog("btw", "question=%s", question);
@@ -307,16 +308,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         }));
       }
     },
-    [
-      agentId,
-      prepareScopedToolExecutionContext,
-      agentIdRef.current,
-      conversationIdRef.current,
-      setBtwState,
-      tempModelOverrideRef.current,
-    ],
+    [agentId, prepareScopedToolExecutionContext, setBtwState],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: switch refs are stable objects; .current is read dynamically during the jump.
   const handleBtwJump = useCallback(
     async (conversationId: string) => {
       debugLog("btw", "jump to conversationId=%s", conversationId);
@@ -452,20 +447,15 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       abortControllerRef,
-      buffersRef.current,
-      contextTrackerRef.current, // Abort the current stream if running — bumping generation makes
-      // processConversation bail out on its next iteration check.
       conversationGenerationRef,
-      emittedIdsRef.current.add,
-      emittedIdsRef.current.clear,
       hasBackfilledRef,
       pendingConversationSwitchRef,
       sessionHooksRanRef,
-      sessionStartFeedbackRef, // Clear btw state
+      sessionStartFeedbackRef,
       setBtwState,
       setInterruptRequested,
       setIsExecutingTool,
-      setLines, // Clear any pending approvals from the original conversation
+      setLines,
       setPendingApprovals,
       setStaticItems,
       setStaticRenderEpoch,
@@ -473,6 +463,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     ],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: switch refs are stable objects; .current is read dynamically during agent selection.
   const handleAgentSelect = useCallback(
     async (
       targetAgentId: string,
@@ -635,12 +626,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetBootstrapReminderState,
       resetPendingReasoningCycle,
       setConversationAutoTitleEligibility,
-      setConversationIdAndRef, // Update agent state - also update ref immediately for any code that runs before re-render
+      setConversationIdAndRef,
       agentIdRef,
-      buffersRef.current,
-      contextTrackerRef.current,
-      emittedIdsRef.current.clear,
-      pendingConversationSwitchRef, // Close selector immediately
+      pendingConversationSwitchRef,
       setActiveOverlay,
       setAgentId,
       setAgentState,
@@ -653,6 +641,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
   );
 
   // Handle creating a new agent and switching to it
+  // biome-ignore lint/correctness/useExhaustiveDependencies: switch refs are stable objects; .current is read dynamically during agent creation.
   const handleCreateNewAgent = useCallback(
     async (name: string) => {
       // Close dialog immediately
@@ -803,16 +792,13 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetTrajectoryBases,
       resetBootstrapReminderState,
       setConversationAutoTitleEligibility,
-      setConversationIdAndRef, // Update agent state
+      setConversationIdAndRef,
       agentIdRef,
-      buffersRef.current,
-      contextTrackerRef.current,
-      emittedIdsRef.current.clear, // Set conversation switch context for new agent switch
-      pendingConversationSwitchRef, // Close dialog immediately
+      pendingConversationSwitchRef,
       setActiveOverlay,
       setAgentId,
       setAgentState,
-      setCurrentModelHandle, // Sync lines display after clearing buffers
+      setCurrentModelHandle,
       setLines,
       setLlmConfig,
       setStaticItems,

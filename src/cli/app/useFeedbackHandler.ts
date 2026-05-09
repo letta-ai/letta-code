@@ -40,6 +40,7 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
     withCommandLock,
   } = ctx;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionStatsRef is stable; .current is read dynamically when feedback is submitted.
   const handleFeedbackSubmit = useCallback(
     async (message: string) => {
       // Consume command handle BEFORE closing overlay; otherwise closeOverlay()
@@ -137,7 +138,6 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
       consumeOverlayCommand,
       withCommandLock,
       closeOverlay,
-      sessionStatsRef.current?.getSnapshot,
     ],
   );
 

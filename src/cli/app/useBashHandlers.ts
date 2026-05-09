@@ -35,6 +35,7 @@ export function useBashHandlers(ctx: BashHandlersContext) {
   // Handle bash mode command submission
   // Expands aliases from shell config files, then runs with spawnCommand
   // Implements input locking and ESC cancellation (LET-7199)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: bash refs are stable objects; .current is read dynamically at command execution time.
   const handleBashSubmit = useCallback(
     async (command: string) => {
       // Input locking - prevent multiple concurrent bash commands
@@ -173,21 +174,18 @@ export function useBashHandlers(ctx: BashHandlersContext) {
       bashRunning,
       refreshDerived,
       refreshDerivedStreaming,
-      bashAbortControllerRef, // Still cache for next user message (even failures are visible to agent)
-      bashCommandCacheRef.current.push,
-      buffersRef.current.byId.get, // Add running bash_command line with streaming state
-      buffersRef.current.byId.set,
-      buffersRef.current.order.push, // Set up state for input locking and cancellation
+      bashAbortControllerRef,
       setBashRunning,
     ],
   );
 
   // Handle ESC interrupt for bash mode commands (LET-7199)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: bashAbortControllerRef is stable; .current is read dynamically when ESC is pressed.
   const handleBashInterrupt = useCallback(() => {
     if (bashAbortControllerRef.current) {
       bashAbortControllerRef.current.abort();
     }
-  }, [bashAbortControllerRef.current]);
+  }, []);
 
   return {
     handleBashSubmit,
