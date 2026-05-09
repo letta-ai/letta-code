@@ -49,6 +49,10 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
+import {
+  isLocalBackendNoMemfsEnvEnabled,
+  LOCAL_BACKEND_NO_MEMFS_ENV,
+} from "./backend/local/paths";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -602,6 +606,13 @@ export async function handleHeadlessCommand(
   const skillSourcesRaw = values["skill-sources"];
   const memfsFlag = values.memfs;
   const noMemfsFlag = values["no-memfs"];
+  const localNoMemfsRequested = Boolean(
+    backend.capabilities.localMemfs &&
+      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
+  );
+  if (localNoMemfsRequested) {
+    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
+  }
   // Startup policy for the git-backed memory pull on session init.
   // "blocking" (default): await the pull before proceeding.
   // "background": fire the pull async, emit init without waiting.
@@ -613,7 +624,7 @@ export async function handleHeadlessCommand(
       : "blocking";
   const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
     ? "memfs"
-    : noMemfsFlag
+    : noMemfsFlag || localNoMemfsRequested
       ? "standard"
       : undefined;
   if (memfsFlag && !backend.capabilities.remoteMemfs) {
@@ -625,7 +636,8 @@ export async function handleHeadlessCommand(
     console.error("Error: --memfs is not supported by this backend yet");
     process.exit(1);
   }
-  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !noMemfsFlag;
+  const shouldAutoEnableMemfsForNewAgent =
+    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
   const fromAfFile = resolveImportFlagAlias({
     importFlagValue: values.import,
     fromAfFlagValue: values["from-af"],
@@ -1054,7 +1066,9 @@ export async function handleHeadlessCommand(
       (await isLettaCloud());
     const effectiveMemoryMode: MemoryPromptMode | undefined = backend
       .capabilities.localMemfs
-      ? "local-memfs"
+      ? localNoMemfsRequested
+        ? "standard"
+        : "local-memfs"
       : (requestedMemoryPromptMode ??
         (willAutoEnableMemfs ? "memfs" : undefined));
 
@@ -1215,12 +1229,8 @@ export async function handleHeadlessCommand(
   //   "skip"                 – skip the pull this session.
   if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
-      if (noMemfsFlag) {
-        console.error("Disabling MemFS is not supported by the local backend.");
-        process.exit(1);
-      }
-      settingsManager.setMemfsEnabled(agent.id, true);
-    } else if (noMemfsFlag) {
+      settingsManager.setMemfsEnabled(agent.id, !localNoMemfsRequested);
+    } else if (noMemfsFlag || localNoMemfsRequested) {
       settingsManager.setMemfsEnabled(agent.id, false);
     }
   } else if (memfsStartupPolicy === "skip") {

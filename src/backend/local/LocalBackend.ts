@@ -40,7 +40,10 @@ import type {
   LocalStoreOptions,
   StoredMessage,
 } from "./LocalStore";
-import { getLocalBackendMemoryFilesystemRoot } from "./paths";
+import {
+  getLocalBackendMemoryFilesystemRoot,
+  isLocalBackendNoMemfsEnvEnabled,
+} from "./paths";
 import {
   appendAvailableSkillsBlock,
   compileLocalSystemPrompt,
@@ -59,6 +62,7 @@ export interface LocalBackendOptions {
   streamText?: AISDKStreamTextFunction;
   generateText?: LocalGenerateTextFunction;
   memoryDir?: string;
+  memfsEnabled?: boolean;
 }
 
 function sanitizeFrontmatterValue(value: string): string {
@@ -176,6 +180,7 @@ export class LocalBackend extends HeadlessBackend {
   private readonly storageDir: string;
   private readonly createModel?: () => LanguageModel;
   private readonly generateText?: LocalGenerateTextFunction;
+  private readonly memfsEnabledOverride?: boolean;
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
@@ -215,6 +220,7 @@ export class LocalBackend extends HeadlessBackend {
     this.memoryDir = options.memoryDir;
     this.createModel = options.createModel;
     this.generateText = options.generateText;
+    this.memfsEnabledOverride = options.memfsEnabled;
   }
 
   override async listModels() {
@@ -226,11 +232,13 @@ export class LocalBackend extends HeadlessBackend {
   ) {
     const [body] = args;
     const agent = await super.createAgent(...args);
-    await this.ensureLocalMemoryRepo(
-      agent.id,
-      initialMemoryFilesFromCreateBody(body),
-      agent.name ?? undefined,
-    );
+    if (this.isLocalMemfsEnabled()) {
+      await this.ensureLocalMemoryRepo(
+        agent.id,
+        initialMemoryFilesFromCreateBody(body),
+        agent.name ?? undefined,
+      );
+    }
     await this.compileAndMaybePersistSystemPrompt("default", agent.id, {
       dryRun: false,
     });
@@ -315,6 +323,10 @@ export class LocalBackend extends HeadlessBackend {
       this.memoryDir ??
       getLocalBackendMemoryFilesystemRoot(agentId, this.storageDir)
     );
+  }
+
+  private isLocalMemfsEnabled(): boolean {
+    return this.memfsEnabledOverride ?? !isLocalBackendNoMemfsEnvEnabled();
   }
 
   private async ensureLocalMemoryRepo(
@@ -494,13 +506,15 @@ export class LocalBackend extends HeadlessBackend {
       conversationId,
       agentId,
     );
-    const memfsRevision = await getMemoryHeadRevision(
-      this.memoryDirForAgent(agentId),
-    );
+    const memfsEnabled = this.isLocalMemfsEnabled();
+    const memfsRevision = memfsEnabled
+      ? await getMemoryHeadRevision(this.memoryDirForAgent(agentId))
+      : undefined;
     if (
       existing?.rawSystemHash === hashRawSystemPrompt(agent.system) &&
-      memfsRevision !== null &&
-      existing.memfsRevision === memfsRevision
+      (memfsEnabled
+        ? memfsRevision !== null && existing.memfsRevision === memfsRevision
+        : existing.memfsRevision === undefined)
     ) {
       return existing;
     }
@@ -516,7 +530,10 @@ export class LocalBackend extends HeadlessBackend {
     options: { dryRun: boolean; previousMessageCount?: number },
   ): Promise<LocalCompiledSystemPrompt> {
     const agent = this.store.retrieveAgentRecord(agentId);
-    await this.ensureLocalMemoryRepo(agentId, [], agent.name);
+    const memfsEnabled = this.isLocalMemfsEnabled();
+    if (memfsEnabled) {
+      await this.ensureLocalMemoryRepo(agentId, [], agent.name);
+    }
     const previousMessageCount =
       options.previousMessageCount ??
       this.store.listConversationMessages(conversationId, {
@@ -527,7 +544,8 @@ export class LocalBackend extends HeadlessBackend {
       agent,
       conversationId,
       previousMessageCount,
-      memoryDir: this.memoryDirForAgent(agentId),
+      memoryDir: memfsEnabled ? this.memoryDirForAgent(agentId) : undefined,
+      includeMemfs: memfsEnabled,
     });
     if (!options.dryRun) {
       this.store.setCompiledSystemPrompt(conversationId, agentId, compiled);
