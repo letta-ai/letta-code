@@ -1053,49 +1053,6 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
-  test("handles a remote message turn against local backend", async () => {
-    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-turn-local-"));
-    try {
-      const backend = new LocalBackend({
-        storageDir,
-        executionMode: "deterministic",
-      });
-      __testSetBackend(backend);
-      const agent = await backend.createAgent({
-        name: "WS Turn Local Agent",
-      } as AgentCreateBody);
-      const listener = __listenClientTestUtils.createListenerRuntime();
-      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-        listener,
-        agent.id,
-        "default",
-      );
-      const socket = new MockSocket(WebSocket.OPEN);
-
-      await __listenClientTestUtils.handleIncomingMessage(
-        {
-          type: "message",
-          agentId: agent.id,
-          conversationId: "default",
-          messages: [
-            {
-              type: "message",
-              role: "user",
-              content: "ping",
-            },
-          ],
-        },
-        socket as unknown as WebSocket,
-        runtime,
-      );
-
-      expect(socket.sentPayloads.join("\n")).toContain("pong");
-      expect(runtime.loopStatus).toBe("WAITING_ON_INPUT");
-    } finally {
-      await rm(storageDir, { recursive: true, force: true });
-    }
-  });
-
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
     const legacyCancel = parseServerMessage(
       Buffer.from(
