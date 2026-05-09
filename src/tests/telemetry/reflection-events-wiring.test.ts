@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("reflection telemetry wiring", () => {
   test("telemetry manager exposes reflection start/end event types and trackers", () => {
@@ -18,10 +19,7 @@ describe("reflection telemetry wiring", () => {
   });
 
   test("interactive app tracks reflection start/end for manual and auto launches", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const appSource = readFileSync(appPath, "utf-8");
+    const appSource = readInteractiveAppSource();
 
     expect(appSource).toContain('telemetry.trackReflectionStart("manual"');
     expect(appSource).toContain('telemetry.trackReflectionEnd("manual"');

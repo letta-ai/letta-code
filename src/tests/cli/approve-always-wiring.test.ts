@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 test("/approve-always re-analyzes the current tool before saving", () => {
-  const appPath = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-  const source = readFileSync(appPath, "utf-8");
+  const source = readInteractiveAppSource();
 
   const start = source.indexOf("const handleApproveAlways = useCallback(");
   const end = source.indexOf("const handleDenyCurrent = useCallback(");

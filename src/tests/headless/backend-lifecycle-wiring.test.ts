@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 function readSource(relativePath: string): string {
   return readFileSync(
@@ -71,7 +72,7 @@ describe("headless backend lifecycle wiring", () => {
   });
 
   test("interactive ready-state agent config refresh uses Backend", () => {
-    const source = readSource("../../cli/App.tsx");
+    const source = readInteractiveAppSource();
 
     const start = source.indexOf("// Fetch llmConfig when agent is ready");
     const end = source.indexOf("// Update project settings", start);

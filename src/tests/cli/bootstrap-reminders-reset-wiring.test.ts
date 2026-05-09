@@ -1,13 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("bootstrap reminder reset wiring", () => {
   test("defines helper that resets shared reminder state", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     expect(source).toContain(
       "const resetBootstrapReminderState = useCallback(() => {",
@@ -21,10 +17,7 @@ describe("bootstrap reminder reset wiring", () => {
   });
 
   test("invokes helper for all conversation/agent switch entry points", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const anchors = [
       'origin: "agent-switch"',
@@ -50,10 +43,7 @@ describe("bootstrap reminder reset wiring", () => {
   });
 
   test("new-agent creation flow resets routing to default conversation", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const anchor = 'const inputCmd = "/new";';
     const anchorIndex = source.indexOf(anchor);

@@ -260,7 +260,7 @@ export function emitLoopErrorNotice(
     cancelRequested?: boolean;
     abortSignal?: AbortSignal;
   },
-): void {
+): string | null {
   const decision = getLoopErrorNoticeDecision(params);
 
   if (decision.visibility === "debug_only") {
@@ -269,7 +269,7 @@ export function emitLoopErrorNotice(
       `Debug-only loop error (${params.stopReason}): ${params.message}`,
     );
     mirrorRecoverableNoticeToDesktopDebugPanel(params.message);
-    return;
+    return null;
   }
 
   emitLoopErrorDelta(socket, runtime, {
@@ -281,6 +281,7 @@ export function emitLoopErrorNotice(
     conversationId: params.conversationId,
     apiError: decision.apiError,
   });
+  return decision.message;
 }
 
 export function emitRecoverableStatusNotice(

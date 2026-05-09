@@ -53,6 +53,7 @@ import {
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { ensureFileIndex } from "./cli/helpers/fileIndex";
 import type { ApprovalRequest } from "./cli/helpers/stream";
+import { initTerminalTheme } from "./cli/helpers/terminalTheme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   validateConversationDefaultRequiresAgent,
@@ -417,7 +418,6 @@ async function main(): Promise<void> {
 
   // Everything below only runs for interactive TUI mode
   await settingsManager.initialize();
-  const { initTerminalTheme } = await import("./cli/helpers/terminalTheme");
   await initTerminalTheme();
 
   const settings = await settingsManager.getSettingsWithSecureTokens();
