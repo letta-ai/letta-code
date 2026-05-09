@@ -33,7 +33,7 @@ export interface ChannelMessageAttachment {
   kind: "image" | "file" | "audio" | "video";
   localPath: string;
   imageDataBase64?: string;
-  /** Best-effort speech-to-text transcription (voice memos only). */
+  /** Best-effort speech-to-text transcription for voice/audio attachments. */
   transcription?: string;
 }
 
@@ -261,6 +261,20 @@ export interface ChannelRoute {
 export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
 
+/**
+ * Discord guild-channel policy.
+ *
+ * Controls when the bot responds to messages in guild (server) channels.
+ * Does NOT affect DMs — DMs are gated separately by `dmPolicy`.
+ *
+ * - `"mention"` (default) — only respond when @-mentioned or already in a
+ *   thread bound to a route. Preserves the original Discord adapter behavior.
+ * - `"open"` — respond to every guild channel message that passes other gates
+ *   (bot-author check, `allowedChannels`, etc.). Useful for dedicated
+ *   single-purpose channels where the bot is meant to be conversational.
+ */
+export type DiscordChannelPolicy = "mention" | "open";
+
 export interface ChannelAccountBinding {
   agentId: string | null;
   conversationId: string | null;
@@ -315,6 +329,23 @@ export interface DiscordChannelConfig {
    * of listening in every guild channel the bot can see.
    */
   allowedChannels?: string[];
+  /** When true and OPENAI_API_KEY is set, audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
+  /**
+   * Controls when the bot responds in guild channels. Default `"mention"`
+   * (require @-mention or thread). Set to `"open"` for channels where the
+   * bot should respond to every message. Does not affect DMs.
+   */
+  channelPolicy?: DiscordChannelPolicy;
+  /**
+   * When the bot is @-mentioned in a guild channel and not already in a
+   * thread, controls whether a new thread is auto-created for the resulting
+   * response. Default `true` (preserves the legacy behavior of spawning a
+   * thread). Set to `false` to keep the response in the parent channel; in
+   * `"mention"` channel policy, follow-up parent-channel messages still need
+   * another @mention.
+   */
+  autoThreadOnMention?: boolean;
 }
 
 export type ChannelConfig =
@@ -359,6 +390,29 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * of listening in every guild channel the bot can see. DMs are unaffected.
    */
   allowedChannels?: string[];
+  /** When true and OPENAI_API_KEY is set, audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
+  /**
+   * Controls when the bot responds in guild channels. Default `"mention"`.
+   * Set to `"open"` for channels where the bot should respond to every
+   * message. Does not affect DMs.
+   */
+  channelPolicy?: DiscordChannelPolicy;
+  /**
+   * When `true` (default), an @-mention in a guild channel auto-creates a
+   * thread for the conversation. Set to `false` to keep the first response in
+   * the parent channel; in `"mention"` channel policy, follow-up parent-channel
+   * messages still need another @mention.
+   */
+  autoThreadOnMention?: boolean;
+  /**
+   * Optional debounce window (ms) for inbound messages. When greater than
+   * `0`, short back-to-back messages from the same sender in the same
+   * chat/thread stack into a single combined dispatch (trailing edge).
+   * Default `0` (disabled). Messages with attachments bypass the debounce.
+   * The env var `LETTA_DISCORD_INBOUND_DEBOUNCE_MS` takes precedence if set.
+   */
+  inboundDebounceMs?: number;
 }
 
 export type ChannelAccount =

@@ -3,6 +3,7 @@ import type {
   ChannelAdapter,
   ChannelChatType,
   ChannelRoute,
+  DiscordChannelPolicy,
   DmPolicy,
   OutboundChannelMessage,
   SlackChannelMode,
@@ -36,6 +37,8 @@ export interface ChannelPluginAccountPatch {
   defaultPermissionMode?: SlackDefaultPermissionMode;
   allowedChannels?: string[];
   transcribeVoice?: boolean;
+  channelPolicy?: DiscordChannelPolicy;
+  autoThreadOnMention?: boolean;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

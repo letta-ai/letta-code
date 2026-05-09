@@ -115,6 +115,59 @@ describe("discord protocol-inbound validators", () => {
     expect(isChannelSetConfigCommand(msg)).toBe(true);
   });
 
+  test("valid discord account create accepts channel_policy, auto_thread_on_mention, and transcribe_voice", () => {
+    const msg = {
+      type: "channel_account_create",
+      channel_id: "discord",
+      request_id: "r1",
+      account: {
+        config: {
+          token: "test-token",
+          channel_policy: "open",
+          auto_thread_on_mention: false,
+          transcribe_voice: true,
+        },
+      },
+    };
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
+  });
+
+  test("discord account create rejects non-boolean transcribe_voice", () => {
+    const msg = {
+      type: "channel_account_create",
+      channel_id: "discord",
+      request_id: "r1",
+      account: {
+        config: { token: "test-token", transcribe_voice: "yes" },
+      },
+    };
+    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+  });
+
+  test("discord account create rejects invalid channel_policy value", () => {
+    const msg = {
+      type: "channel_account_create",
+      channel_id: "discord",
+      request_id: "r1",
+      account: {
+        config: { token: "test-token", channel_policy: "always" },
+      },
+    };
+    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+  });
+
+  test("discord account create rejects non-boolean auto_thread_on_mention", () => {
+    const msg = {
+      type: "channel_account_create",
+      channel_id: "discord",
+      request_id: "r1",
+      account: {
+        config: { token: "test-token", auto_thread_on_mention: "yes" },
+      },
+    };
+    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+  });
+
   test("discord channel_id is accepted by isChannelAccountCreateCommand", () => {
     const msg = {
       type: "channel_account_create",

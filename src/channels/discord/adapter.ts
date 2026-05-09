@@ -1,4 +1,8 @@
 import { basename } from "node:path";
+import {
+  createInboundDebouncer,
+  type InboundDebouncer,
+} from "../inboundDebounce";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -8,6 +12,7 @@ import type {
   OutboundChannelMessage,
 } from "../types";
 import { isDiscordGuildChannelAllowed } from "./channelGating";
+import { shouldProcessGuildMessage } from "./channelPolicy";
 import { formatDiscordDeliveryError } from "./errorReply";
 import {
   resolveDiscordInboundAttachments,
@@ -242,6 +247,113 @@ function resolveDiscordReactionEmoji(value: string): string {
     x: "❌",
   };
   return nameMap[normalized] ?? normalized;
+}
+
+/**
+ * Raw fields used to compute a Discord inbound debounce key. Independent of
+ * `InboundChannelMessage` so the key can also be derived from upstream
+ * inputs in tests.
+ */
+export interface DiscordDebounceRawInput {
+  /** Channel where the message arrived (parent channel for thread messages). */
+  channelId: string;
+  /** Thread ID if the message arrived in a thread; null otherwise. */
+  threadId: string | null;
+  /** Sender user ID. */
+  senderId: string;
+}
+
+/**
+ * Build the key used to group inbound Discord messages for debounced stacking.
+ *
+ *  - DM and top-level channel posts → `(channelId, senderId)`-scoped: rapid
+ *    follow-up messages from the same sender in the same chat collapse.
+ *  - Thread replies → `(channelId, threadId, senderId)`-scoped so a thread
+ *    has its own stacking grain independent of the parent channel.
+ *
+ * Returns `null` when there is no identifiable sender or channel, which
+ * forces the debouncer to dispatch the item immediately.
+ */
+export function buildDiscordDebounceKey(
+  raw: DiscordDebounceRawInput,
+  accountId: string,
+): string | null {
+  if (!raw.senderId || !raw.channelId) return null;
+  const scope = raw.threadId
+    ? `${raw.channelId}:thread:${raw.threadId}`
+    : raw.channelId;
+  return `discord:${accountId}:${scope}:${raw.senderId}`;
+}
+
+/**
+ * Single buffered entry passed through the inbound debouncer. Exported so
+ * the merge helper can be unit-tested without instantiating the adapter.
+ */
+export interface DiscordDebounceEntry {
+  inbound: InboundChannelMessage;
+  raw: DiscordDebounceRawInput;
+  wasMentioned: boolean;
+}
+
+/**
+ * Merge a buffered burst of debounced entries into the single inbound
+ * message that should be dispatched at flush time.
+ *
+ *  - `text` is the newline-joined concatenation of non-empty entry texts
+ *    (matching the Slack precedent in `slack/adapter.ts`).
+ *  - `isMention` is OR-folded across the burst so a buried @-mention still
+ *    surfaces in the merged dispatch.
+ *  - All other fields (`messageId`, `timestamp`, `attachments`, `raw`, …)
+ *    come from the last entry — it represents the most-recent state of
+ *    the conversation.
+ */
+export function mergeDiscordDebouncedEntries(
+  entries: DiscordDebounceEntry[],
+): InboundChannelMessage | null {
+  const last = entries[entries.length - 1];
+  if (!last) return null;
+  const combinedText =
+    entries.length === 1
+      ? last.inbound.text
+      : entries
+          .map((entry) => entry.inbound.text)
+          .filter((text) => text && text.length > 0)
+          .join("\n");
+  const combinedMentioned = entries.some(
+    (entry) => entry.wasMentioned === true || entry.inbound.isMention === true,
+  );
+  return {
+    ...last.inbound,
+    text: combinedText,
+    isMention: combinedMentioned,
+  };
+}
+
+/**
+ * Resolve the inbound debounce window (ms) for a Discord account. Honors the
+ * `LETTA_DISCORD_INBOUND_DEBOUNCE_MS` env override before falling back to the
+ * account's `inboundDebounceMs` field. Returns `0` (disabled) when neither
+ * source provides a valid non-negative number.
+ */
+export function resolveDiscordInboundDebounceMs(
+  config: Pick<DiscordChannelAccount, "inboundDebounceMs">,
+): number {
+  const raw = process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const envOverride = Number(raw);
+    if (Number.isFinite(envOverride) && envOverride >= 0) {
+      return Math.trunc(envOverride);
+    }
+  }
+  const fromConfig = config.inboundDebounceMs;
+  if (
+    typeof fromConfig === "number" &&
+    Number.isFinite(fromConfig) &&
+    fromConfig >= 0
+  ) {
+    return Math.trunc(fromConfig);
+  }
+  return 0;
 }
 
 function buildDiscordReplyOptions(
@@ -542,7 +654,51 @@ export function createDiscordAdapter(
         url: a.url,
       })),
       chatId,
+      transcribeVoice: config.transcribeVoice,
     });
+  }
+
+  // ── Inbound debounce (optional) ───────────────────────────────
+  // When `inboundDebounceMs > 0`, short back-to-back messages from the same
+  // sender in the same chat/thread stack into a single combined dispatch.
+  // Messages with attachments or reactions bypass the debounce so file
+  // uploads aren't delayed; ordering is preserved per key.
+  const debounceMs = resolveDiscordInboundDebounceMs(config);
+
+  const debouncer: InboundDebouncer<DiscordDebounceEntry> =
+    createInboundDebouncer<DiscordDebounceEntry>({
+      debounceMs,
+      buildKey: ({ raw }) => buildDiscordDebounceKey(raw, config.accountId),
+      shouldDebounce: ({ inbound }) =>
+        !inbound.attachments?.length && !inbound.reaction,
+      onFlush: async (entries) => {
+        const merged = mergeDiscordDebouncedEntries(entries);
+        if (!merged || !adapter.onMessage) return;
+        try {
+          await adapter.onMessage(merged);
+        } catch (error) {
+          console.error(
+            "[Discord] Error handling debounced inbound message:",
+            error,
+          );
+          const rawMessage = merged.raw as DiscordMessageLike | undefined;
+          if (rawMessage) {
+            await notifyDiscordDeliveryError(rawMessage, error);
+          }
+        }
+      },
+      onError: (err) => {
+        console.error(
+          "[Discord] Inbound debounce flush failed:",
+          err instanceof Error ? err.message : err,
+        );
+      },
+    });
+
+  async function dispatchInboundThroughDebouncer(
+    entry: DiscordDebounceEntry,
+  ): Promise<void> {
+    await debouncer.enqueue(entry);
   }
 
   const adapter: ChannelAdapter = {
@@ -624,20 +780,34 @@ export function createDiscordAdapter(
             raw: message,
           };
 
-          try {
-            await adapter.onMessage(inbound);
-          } catch (error) {
-            console.error("[Discord] Error handling DM:", error);
-            await notifyDiscordDeliveryError(message, error);
-          }
+          await dispatchInboundThroughDebouncer({
+            inbound,
+            raw: {
+              channelId: message.channelId,
+              threadId: null,
+              senderId: userId,
+            },
+            wasMentioned: false,
+          });
           return;
         }
 
         // ── Guild handling ────────────────────────────────────────
-        // Outside a thread: only process @mentions (auto-create thread).
-        // Inside a thread: surface messages and let the registry decide whether
-        // the thread is already routed, or whether a new mention is required.
-        if (!isThread && !wasMentioned) return;
+        // The channel policy gate decides whether to surface this message:
+        //   - "mention" (default): only process threaded messages or @-mentions.
+        //     Outside a thread we auto-create one on mention; inside a thread we
+        //     let the registry decide whether the thread is already routed.
+        //   - "open": process every guild message regardless of mention/thread
+        //     state. Useful for dedicated channels where the bot is meant to be
+        //     conversational without ceremony.
+        if (
+          !shouldProcessGuildMessage({
+            isThread,
+            wasMentioned,
+            channelPolicy: config.channelPolicy,
+          })
+        )
+          return;
 
         // Channel allowlist: when configured, only process guild messages whose
         // channel ID (or parent channel ID for thread messages) is allowed.
@@ -660,8 +830,12 @@ export function createDiscordAdapter(
           ? message.channelId
           : null;
 
-        // If mentioned outside a thread, create one
-        if (!isThread && wasMentioned) {
+        // If mentioned outside a thread, optionally create one. The default
+        // (`autoThreadOnMention !== false`) preserves the legacy behavior of
+        // spawning a thread on every mention; setting `autoThreadOnMention:
+        // false` keeps the conversation in the parent channel.
+        const autoThreadOnMention = config.autoThreadOnMention !== false;
+        if (!isThread && wasMentioned && autoThreadOnMention) {
           const createdThread = await createThreadForMention(message, content);
           if (!createdThread) return;
           effectiveChatId = createdThread.id;
@@ -698,8 +872,24 @@ export function createDiscordAdapter(
           raw: message,
         };
 
+        // Pass through the debouncer. When `inboundDebounceMs > 0`, rapid
+        // follow-up messages from the same sender in the same channel/thread
+        // collapse into a single dispatch (trailing edge). Disabled by
+        // default; messages with attachments bypass the debounce.
+        const debounceRaw: DiscordDebounceRawInput = {
+          channelId: effectiveThreadId
+            ? ((message.channel as { parentId?: string | null }).parentId ??
+              message.channelId)
+            : message.channelId,
+          threadId: effectiveThreadId,
+          senderId: userId,
+        };
         try {
-          await adapter.onMessage(inbound);
+          await dispatchInboundThroughDebouncer({
+            inbound,
+            raw: debounceRaw,
+            wasMentioned,
+          });
         } catch (error) {
           console.error("[Discord] Error handling guild message:", error);
           await notifyDiscordDeliveryError(message, error);

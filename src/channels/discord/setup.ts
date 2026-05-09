@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccount } from "../accounts";
-import type { DiscordChannelAccount, DmPolicy } from "../types";
+import type {
+  DiscordChannelAccount,
+  DiscordChannelPolicy,
+  DmPolicy,
+} from "../types";
 import { ensureDiscordRuntimeInstalled } from "./runtime";
 
 function isValidBotToken(token: string): boolean {
@@ -64,6 +68,47 @@ export async function runDiscordSetup(): Promise<boolean> {
         .filter(Boolean);
     }
 
+    // Channel policy — when does the bot respond in guild channels? Does
+    // not affect DMs (those are gated by dmPolicy above).
+    console.log(
+      "\nChannel Policy — when does the bot respond in guild channels?\n",
+    );
+    console.log(
+      "  mention — Only when @-mentioned or already in a thread (recommended)",
+    );
+    console.log(
+      "  open    — Respond to every message in allowed channels (no @ required)\n",
+    );
+
+    const channelPolicyInput = await rl.question("Channel policy [mention]: ");
+    const channelPolicy = (channelPolicyInput.trim() ||
+      "mention") as DiscordChannelPolicy;
+    if (!["mention", "open"].includes(channelPolicy)) {
+      console.error(
+        `Invalid channel policy "${channelPolicy}". Setup cancelled.`,
+      );
+      return false;
+    }
+
+    // Auto-thread on mention — when @-mentioned in a guild channel, should
+    // the bot spawn a new thread for the conversation? The legacy behavior
+    // is to always create a thread. Setting this to false keeps the first
+    // response inline; in "mention" channel policy, follow-ups still need
+    // another @mention unless the channel policy is "open".
+    const autoThreadInput = await rl.question(
+      "\nAuto-create a thread when @-mentioned in a channel? [Y/n]: ",
+    );
+    const trimmedAutoThread = autoThreadInput.trim().toLowerCase();
+    const autoThreadOnMention =
+      trimmedAutoThread === "" ||
+      trimmedAutoThread === "y" ||
+      trimmedAutoThread === "yes";
+
+    const transcriptionInput = await rl.question(
+      "\nAuto-transcribe audio attachments when OPENAI_API_KEY is set? [y/N]: ",
+    );
+    const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
+
     // Agent binding — required for account-bound DMs and guild @mentions.
     // Without this, the bot won't know which agent to create conversations for.
     const envAgentId = process.env.LETTA_AGENT_ID || "";
@@ -89,6 +134,11 @@ export async function runDiscordSetup(): Promise<boolean> {
       console.log(
         "\nWarning: No agent bound. DM pairing will still work, but open/allowlist DMs and guild @mentions won't route until you bind an agent.",
       );
+      if (channelPolicy === "open") {
+        console.log(
+          "  Because channel policy is open, unmentioned guild messages will be ignored until the bot is bound. This avoids spamming visible channels.",
+        );
+      }
       console.log(
         "  You can bind later: letta channels bind --channel discord --agent <id>",
       );
@@ -106,6 +156,9 @@ export async function runDiscordSetup(): Promise<boolean> {
       agentId,
       dmPolicy: policy,
       allowedUsers,
+      channelPolicy,
+      autoThreadOnMention,
+      transcribeVoice,
       createdAt: now,
       updatedAt: now,
     };
@@ -115,9 +168,15 @@ export async function runDiscordSetup(): Promise<boolean> {
     console.log("Config written to: ~/.letta/channels/discord/accounts.json\n");
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels discord");
-    console.log(
-      "  2. DM the bot or @mention it in a Discord server to start chatting\n",
-    );
+    if (channelPolicy === "open") {
+      console.log(
+        "  2. Send a message in an allowed channel to start chatting (no @ required)\n",
+      );
+    } else {
+      console.log(
+        "  2. DM the bot or @mention it in a Discord server to start chatting\n",
+      );
+    }
 
     return true;
   } finally {

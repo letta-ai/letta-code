@@ -1096,11 +1096,17 @@ export class ChannelRegistry {
     isFirstRouteTurn: boolean;
   } | null> {
     if (!config.agentId) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "This Discord bot isn't connected to a Letta agent yet.\n\n" +
-          "Open Channels > Discord in Letta Code, choose which agent this bot should represent, and try again.",
-      );
+      // In channelPolicy "open" mode, non-mention guild traffic can be noisy:
+      // if the bot is visible in many channels and has not been bound yet,
+      // replying to every ambient message would spam the server. Only surface
+      // the unbound warning for intentional contact: DMs and explicit mentions.
+      if (msg.chatType === "direct" || msg.isMention === true) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "This Discord bot isn't connected to a Letta agent yet.\n\n" +
+            "Open Channels > Discord in Letta Code, choose which agent this bot should represent, and try again.",
+        );
+      }
       return null;
     }
 
@@ -1138,9 +1144,12 @@ export class ChannelRegistry {
       return { route, isFirstRouteTurn: false };
     }
 
-    // In guild channels, only create routes from explicit mentions.
-    // Existing routed threads continue above via the route lookup path.
-    if (msg.chatType === "channel" && !msg.isMention) {
+    // In guild channels, only create routes from explicit mentions — unless
+    // the account has channelPolicy "open", in which case every guild message
+    // that reached this point should be routed. Existing routed threads
+    // continue above via the route lookup path.
+    const isOpenPolicy = config.channelPolicy === "open";
+    if (msg.chatType === "channel" && !msg.isMention && !isOpenPolicy) {
       return null;
     }
 
