@@ -36,6 +36,7 @@ import {
 import {
   createOrUpdateLocalProvider,
   getLocalProviderAuthPath,
+  isContextWindowOverflowError,
   LOCAL_ALL_COMPACTION_PROMPT,
   LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
   LocalBackend,
@@ -920,12 +921,12 @@ describe("LocalBackend", () => {
 
       expect(result).toEqual({
         num_messages_before: 6,
-        num_messages_after: 4,
+        num_messages_after: 6,
         summary: "sliding local summary",
       });
       expect(capturedSystem).toBe(LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT);
       expect(capturedPrompt).toContain("first request");
-      expect(capturedPrompt).toContain("second request");
+      expect(capturedPrompt).not.toContain("second request");
       expect(capturedPrompt).not.toContain("third request");
 
       const page = await backend.listConversationMessages(conversation.id, {
@@ -937,13 +938,15 @@ describe("LocalBackend", () => {
         "assistant_message",
         "user_message",
         "assistant_message",
+        "user_message",
+        "assistant_message",
       ]);
       expect(JSON.stringify(messages[0])).toContain("sliding local summary");
       expect(JSON.stringify(messages)).toContain("third request");
       expect(JSON.stringify(messages)).not.toContain("first request");
 
       const persistedMessages = await readPersistedLocalMessages(storageDir);
-      expect(persistedMessages).toHaveLength(4);
+      expect(persistedMessages).toHaveLength(6);
       expect(JSON.stringify(persistedMessages[0])).toContain(
         "sliding local summary",
       );
@@ -1265,7 +1268,7 @@ describe("LocalBackend", () => {
     );
     try {
       let summaryPrompt: string | undefined;
-      const usage = modelUsage(150, 12);
+      const usage = modelUsage(90, 12);
       const backend = new LocalBackend({
         storageDir,
         createModel: () => ({}) as LanguageModel,
@@ -1326,8 +1329,8 @@ describe("LocalBackend", () => {
       const usageChunk = chunks.find(
         (chunk) => chunk.message_type === "usage_statistics",
       ) as { context_tokens?: number; prompt_tokens?: number } | undefined;
-      expect(usageChunk?.context_tokens).toBe(150);
-      expect(usageChunk?.prompt_tokens).toBe(150);
+      expect(usageChunk?.context_tokens).toBe(102);
+      expect(usageChunk?.prompt_tokens).toBe(90);
       expect(summaryPrompt).toContain("limit trigger request");
       expect(summaryPrompt).toContain("limit response");
       expect(JSON.stringify(chunks)).toContain("context_window_limit");
@@ -1347,6 +1350,177 @@ describe("LocalBackend", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("compacts after usage-limit tool-call turns", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-tool-compact-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage = modelUsage(90, 12);
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "tool-call usage summary" } as never;
+        }) as never,
+        streamText: (options) => {
+          const hasToolOutput = JSON.stringify(options.messages).includes(
+            "read result after compaction",
+          );
+          if (hasToolOutput) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "text-delta",
+                  id: "tool-result-text",
+                  text: "continued after compacted tool call",
+                } as TextStreamPart<ToolSet>;
+                yield {
+                  type: "finish",
+                  finishReason: "stop",
+                } as TextStreamPart<ToolSet>;
+              })(),
+              toUIMessageStream: uiMessageStreamWithFinish([], {
+                id: "assistant-tool-result",
+                role: "assistant",
+                parts: [
+                  { type: "text", text: "continued after compacted tool call" },
+                ],
+              } as LocalMessage),
+            };
+          }
+
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "tool-call",
+                toolCallId: "call-read",
+                toolName: "Read",
+                input: { path: "src/tools/toolDefinitions.ts" },
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "tool-calls",
+                rawFinishReason: "tool-calls",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "tool-calls",
+                rawFinishReason: "tool-calls",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish(
+              [],
+              {
+                id: "assistant-tool-call-limit",
+                role: "assistant",
+                parts: [
+                  {
+                    type: "tool-Read",
+                    toolCallId: "call-read",
+                    state: "input-available",
+                    input: { path: "src/tools/toolDefinitions.ts" },
+                  },
+                ],
+              } as LocalMessage,
+              "tool-calls",
+            ),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Tool Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 100,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("call read", agent.id),
+        ),
+      );
+
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("tool-call usage summary");
+      expect(summaryPrompt).toContain("call read");
+
+      const approvalChunk = chunks.find(
+        (chunk) => chunk.message_type === "approval_request_message",
+      ) as
+        | (LettaStreamingResponse & {
+            tool_call?: { tool_call_id?: string; name?: string };
+          })
+        | undefined;
+      expect(approvalChunk?.tool_call?.tool_call_id).toBe("call-read");
+
+      const persistedAfterCompaction =
+        await readPersistedLocalMessages(storageDir);
+      expect(persistedAfterCompaction.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+      ]);
+      expect(JSON.stringify(persistedAfterCompaction)).toContain(
+        "tool-call usage summary",
+      );
+      expect(JSON.stringify(persistedAfterCompaction)).toContain("call-read");
+
+      const continuationChunks = await collectStream(
+        await backend.createConversationMessageStream(conversation.id, {
+          ...createBody("", agent.id),
+          messages: [
+            {
+              type: "approval",
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: approvalChunk?.tool_call?.tool_call_id,
+                  tool_return: "read result after compaction",
+                  status: "success",
+                },
+              ],
+            },
+          ],
+        } as unknown as ConversationMessageCreateBody),
+      );
+      expect(JSON.stringify(continuationChunks)).toContain(
+        "continued after compacted tool call",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("detects context overflow from AI SDK API response bodies", () => {
+    const error = new APICallError({
+      message: "Bad Request",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 400,
+      responseBody: JSON.stringify({
+        error: {
+          type: "invalid_request_error",
+          code: "context_length_exceeded",
+          message: "Your input exceeds the context window of this model.",
+        },
+      }),
+      isRetryable: false,
+    });
+
+    expect(isContextWindowOverflowError(error)).toBe(true);
   });
 
   test("persists compiled system prompt snapshots and reuses them for turns", async () => {

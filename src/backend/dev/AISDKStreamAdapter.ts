@@ -845,8 +845,6 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
 
     let streamError: unknown;
     let lastUsage: LanguageModelUsage | undefined;
-    let sawToolCall = false;
-    let finishReason: string | undefined;
     for await (const part of result.fullStream) {
       if (part.type === "error") {
         if (
@@ -857,14 +855,10 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
           break;
         }
       }
-      if (part.type === "tool-call") {
-        sawToolCall = true;
-      }
       if (part.type === "finish-step") {
         lastUsage = part.usage;
       }
       if (part.type === "finish") {
-        finishReason = part.finishReason;
         lastUsage ??= part.totalUsage;
       }
       yield providerStreamPart(part);
@@ -880,12 +874,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     if (message) {
       yield providerUIMessage(message);
     }
-    if (
-      lastUsage &&
-      !sawToolCall &&
-      finishReason !== "tool-calls" &&
-      this.onContextUsage
-    ) {
+    if (lastUsage && this.onContextUsage) {
       const compaction = await this.onContextUsage(input, lastUsage);
       if (compaction) {
         yield* this.emitCompactionChunks(compaction, "context_window_limit");

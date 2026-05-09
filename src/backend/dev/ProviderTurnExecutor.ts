@@ -113,6 +113,10 @@ function createUsageStatisticsChunk(
   const promptTokens = usage.inputTokens;
   const completionTokens = usage.outputTokens;
   const totalTokens = usage.totalTokens;
+  const contextTokens =
+    promptTokens !== undefined || completionTokens !== undefined
+      ? (promptTokens ?? 0) + (completionTokens ?? 0)
+      : totalTokens;
   const cachedInputTokens = usage.inputTokenDetails.cacheReadTokens;
   const cacheWriteTokens = usage.inputTokenDetails.cacheWriteTokens;
   const reasoningTokens = usage.outputTokenDetails.reasoningTokens;
@@ -142,7 +146,7 @@ function createUsageStatisticsChunk(
     ...(reasoningTokens !== undefined
       ? { reasoning_tokens: reasoningTokens }
       : {}),
-    ...(promptTokens !== undefined ? { context_tokens: promptTokens } : {}),
+    ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
   } as unknown as LettaStreamingResponse;
 }
 

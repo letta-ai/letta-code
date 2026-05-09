@@ -106,6 +106,11 @@ export interface LocalSlidingWindowCompactionPlan {
   cutoffIndex: number;
 }
 
+export interface LocalAllCompactionPlan {
+  messagesToSummarize: LocalMessage[];
+  messagesToKeep: LocalMessage[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -283,7 +288,7 @@ function isValidSlidingWindowCutoff(
 ): boolean {
   const message = messages[index];
   return (
-    message?.role === "assistant" && index > 1 && index < maximumCutoffIndex
+    message?.role === "assistant" && index > 0 && index < maximumCutoffIndex
   );
 }
 
@@ -310,17 +315,22 @@ export function planLocalSlidingWindowCompaction(
     Number.isFinite(options.contextWindow)
       ? (1 - percentage) * options.contextWindow
       : undefined;
+  let approxTokenCount = options.contextWindow ?? Number.POSITIVE_INFINITY;
+  let cutoffIndex: number | undefined;
 
-  for (
-    let evictionPercentage = percentage;
-    evictionPercentage < 1.0;
-    evictionPercentage += 0.1
+  let evictionPercentage = percentage;
+  while (
+    (goalTokens === undefined
+      ? cutoffIndex === undefined
+      : approxTokenCount >= goalTokens) &&
+    evictionPercentage < 1.0
   ) {
+    evictionPercentage += 0.1;
     const messageCutoffIndex = Math.min(
       Math.round(evictionPercentage * messages.length),
       messages.length - 1,
     );
-    const cutoffIndex = [...Array(messageCutoffIndex + 1).keys()]
+    cutoffIndex = [...Array(messageCutoffIndex + 1).keys()]
       .reverse()
       .find((index) =>
         isValidSlidingWindowCutoff(messages, index, maximumCutoffIndex),
@@ -328,23 +338,43 @@ export function planLocalSlidingWindowCompaction(
     if (cutoffIndex === undefined) continue;
 
     const messagesToKeep = messages.slice(cutoffIndex);
-    if (
-      goalTokens !== undefined &&
-      estimateLocalMessageTokens(messagesToKeep) >= goalTokens
-    ) {
-      continue;
-    }
+    approxTokenCount = estimateLocalMessageTokens(messagesToKeep);
+  }
 
+  if (cutoffIndex === undefined || evictionPercentage >= 1.0) {
+    throw new LocalSlidingWindowCompactionPlanningError(
+      "No assistant message found for sliding window compaction.",
+    );
+  }
+
+  if (cutoffIndex >= maximumCutoffIndex) {
+    throw new LocalSlidingWindowCompactionPlanningError(
+      `Assistant message index ${cutoffIndex} is at the end of the message buffer, skipping compaction.`,
+    );
+  }
+
+  return {
+    messagesToSummarize: messages.slice(0, cutoffIndex),
+    messagesToKeep: messages.slice(cutoffIndex),
+    cutoffIndex,
+  };
+}
+
+export function planLocalAllCompaction(
+  messages: LocalMessage[],
+): LocalAllCompactionPlan {
+  const lastMessage = messages.at(-1);
+  if (lastMessage && hasPendingLocalToolPart(lastMessage)) {
     return {
-      messagesToSummarize: messages.slice(0, cutoffIndex),
-      messagesToKeep,
-      cutoffIndex,
+      messagesToSummarize: messages.slice(0, -1),
+      messagesToKeep: [lastMessage],
     };
   }
 
-  throw new LocalSlidingWindowCompactionPlanningError(
-    "No assistant message found for sliding window compaction.",
-  );
+  return {
+    messagesToSummarize: messages,
+    messagesToKeep: [],
+  };
 }
 
 export async function summarizeLocalMessagesSlidingWindow(
