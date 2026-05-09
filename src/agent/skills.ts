@@ -116,7 +116,7 @@ export function getAgentSkillsDir(agentId: string): string {
     process.env.HOME || process.env.USERPROFILE || "~",
     ".letta/agents",
     agentId,
-    "skills",
+    "memory/skills",
   );
 }
 

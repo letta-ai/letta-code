@@ -26,7 +26,7 @@ function getTabDescription(tab: SkillTab, agentId: string): string {
     case "project":
       return ".skills/";
     case "agent":
-      return `~/.letta/agents/${shortId}/skills/`;
+      return `~/.letta/agents/${shortId}/memory/skills/`;
     case "global":
       return "~/.letta/skills/";
     case "bundled":
