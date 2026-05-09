@@ -192,4 +192,26 @@ describe("local backend command wiring", () => {
     expect(routerSource).not.toContain("runBlocksSubcommand");
     expect(routerSource).not.toContain('case "blocks"');
   });
+
+  test("subagent fork and child launch wiring use the active backend", () => {
+    const taskPath = fileURLToPath(
+      new URL("../../tools/impl/Task.ts", import.meta.url),
+    );
+    const taskSource = readFileSync(taskPath, "utf-8");
+    expect(taskSource).toContain('import { getBackend } from "../../backend";');
+    expect(taskSource).toContain("await getBackend().forkConversation(");
+    expect(taskSource).not.toContain('from "../../backend/api/conversations"');
+
+    const managerPath = fileURLToPath(
+      new URL("../../agent/subagents/manager.ts", import.meta.url),
+    );
+    const managerSource = readFileSync(managerPath, "utf-8");
+    expect(managerSource).toContain(
+      'args.push("--backend", options.backendMode);',
+    );
+    expect(managerSource).toContain('args.push("--no-memfs");');
+    expect(managerSource).toContain(
+      'childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";',
+    );
+  });
 });
