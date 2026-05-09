@@ -1,4 +1,4 @@
-import { getClient } from "../../backend/api/client";
+import { getBackend } from "../../backend";
 import { debugWarn } from "../../utils/debug";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
@@ -25,8 +25,7 @@ function getAgentMetadataPromise(
 async function fetchListenerAgentMetadata(
   agentId: string,
 ): Promise<ListenerAgentMetadata> {
-  const client = await getClient();
-  const agent = await client.agents.retrieve(agentId);
+  const agent = await getBackend().retrieveAgent(agentId);
 
   return {
     name: agent.name ?? null,

@@ -9,7 +9,10 @@ import {
   type ApprovalDecision,
   executeApprovalBatch,
 } from "../../agent/approval-execution";
-import { getResumeData } from "../../agent/check-approval";
+import {
+  getResumeDataFromBackend,
+  type ResumeData,
+} from "../../agent/check-approval";
 import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
@@ -20,7 +23,6 @@ import {
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
 import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
 import { formatPermissionDenial } from "../../permissions/formatDenial";
@@ -85,6 +87,14 @@ export function getApprovalToolCallDesyncErrorText(errorInfo: {
     return message;
   }
   return null;
+}
+
+function isBackendNotFoundError(error: unknown): boolean {
+  return (
+    (error instanceof APIError &&
+      (error.status === 404 || error.status === 422)) ||
+    (error instanceof Error && error.name === "LocalBackendNotFoundError")
+  );
 }
 
 export function shouldAttemptPostStopApprovalRecovery(params: {
@@ -300,20 +310,19 @@ export async function debugLogApprovalResumeState(
   }
 
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(params.agentId);
+    const backend = getBackend();
+    const agent = await backend.retrieveAgent(params.agentId);
     const isExplicitConversation =
       params.conversationId.length > 0 && params.conversationId !== "default";
     const lastInContextId = isExplicitConversation
       ? ((
-          await client.conversations.retrieve(params.conversationId)
+          await backend.retrieveConversation(params.conversationId)
         ).in_context_message_ids?.at(-1) ?? null)
       : (agent.message_ids?.at(-1) ?? null);
     const lastInContextMessages = lastInContextId
-      ? await client.messages.retrieve(lastInContextId)
+      ? await backend.retrieveMessage(lastInContextId)
       : [];
-    const resumeData = await getResumeData(
-      client,
+    const resumeData = await getResumeDataFromBackend(
       agent,
       params.conversationId,
       {
@@ -396,31 +405,25 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  const client = await getClient();
-  let agent: Awaited<ReturnType<typeof client.agents.retrieve>>;
+  const backend = getBackend();
+  let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
   try {
-    agent = await client.agents.retrieve(scope.agent_id);
+    agent = await backend.retrieveAgent(scope.agent_id);
   } catch (error) {
-    if (
-      error instanceof APIError &&
-      (error.status === 404 || error.status === 422)
-    ) {
+    if (isBackendNotFoundError(error)) {
       clearRecoveredApprovalState(runtime);
       return;
     }
     throw error;
   }
 
-  let resumeData: Awaited<ReturnType<typeof getResumeData>>;
+  let resumeData: ResumeData;
   try {
-    resumeData = await getResumeData(client, agent, scope.conversation_id, {
+    resumeData = await getResumeDataFromBackend(agent, scope.conversation_id, {
       includeMessageHistory: false,
     });
   } catch (error) {
-    if (
-      error instanceof APIError &&
-      (error.status === 404 || error.status === 422)
-    ) {
+    if (isBackendNotFoundError(error)) {
       clearRecoveredApprovalState(runtime);
       return;
     }

@@ -707,12 +707,17 @@ export function handleMemoryProtocolCommand(
         await mkdir(dirname(absolutePath), { recursive: true });
         await writeFile(absolutePath, buffer);
 
+        const { getBackend } = await import("../../../backend");
+        const backend = getBackend();
+        const memorySyncMode =
+          backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs
+            ? "local"
+            : undefined;
+
         // ── Resolve agent identity for the commit author ───────────────
         let agentName = parsed.agent_id;
         try {
-          const { getClient } = await import("../../../backend/api/client");
-          const client = await getClient();
-          const agent = await client.agents.retrieve(parsed.agent_id);
+          const agent = await backend.retrieveAgent(parsed.agent_id);
           if (agent.name && agent.name.trim().length > 0) {
             agentName = agent.name.trim();
           }
@@ -735,6 +740,7 @@ export function handleMemoryProtocolCommand(
             authorName: agentName,
             authorEmail: `${parsed.agent_id}@letta.com`,
           },
+          ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
           replay: async () => {
             // Re-write the same bytes on top of the latest remote state.
             await mkdir(dirname(absolutePath), { recursive: true });
@@ -888,12 +894,17 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
+        const { getBackend } = await import("../../../backend");
+        const backend = getBackend();
+        const memorySyncMode =
+          backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs
+            ? "local"
+            : undefined;
+
         // ── Resolve agent identity for the commit author ───────────────
         let agentName = parsed.agent_id;
         try {
-          const { getClient } = await import("../../../backend/api/client");
-          const client = await getClient();
-          const agent = await client.agents.retrieve(parsed.agent_id);
+          const agent = await backend.retrieveAgent(parsed.agent_id);
           if (agent.name && agent.name.trim().length > 0) {
             agentName = agent.name.trim();
           }
@@ -913,6 +924,7 @@ export function handleMemoryProtocolCommand(
             authorName: agentName,
             authorEmail: `${parsed.agent_id}@letta.com`,
           },
+          ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
           replay: async () => {
             // Re-delete on top of the latest remote state in case the
             // remote restored the file between our commit and push.
