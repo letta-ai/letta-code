@@ -46,6 +46,13 @@ describe("renderBlock", () => {
     expect(lines[2]?.text).toBe(" ".repeat(columns));
   });
 
+  test("pads warning-sign rows using Ink width semantics", () => {
+    const columns = 12;
+    const lines = renderBlock("⚠ warn", 10, columns, true, "> ", "  ");
+
+    expect(lines[1]?.text).toBe(`> ⚠ warn${" ".repeat(4)}`);
+  });
+
   test("keeps unhighlighted blocks compact", () => {
     const lines = renderBlock("system context", 22, 24, false, "> ", "  ");
 

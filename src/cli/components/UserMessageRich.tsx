@@ -1,6 +1,5 @@
 import { Box } from "ink";
 import { memo } from "react";
-import stringWidth from "string-width";
 import {
   SYSTEM_ALERT_CLOSE,
   SYSTEM_ALERT_OPEN,
@@ -29,6 +28,43 @@ function getCurrentStdoutColumns(): number | null {
   return typeof columns === "number" && columns > 0 ? columns : null;
 }
 
+function isInkFullWidthCodePoint(codePoint: number): boolean {
+  // Match Ink's @alcalzone/ansi-tokenize/is-fullwidth-code-point width
+  // semantics. In particular, U+26A0 WARNING SIGN is narrow here even though
+  // string-width reports it as wide, and Ink's output buffer follows this path.
+  return (
+    codePoint >= 0x1100 &&
+    (codePoint <= 0x115f ||
+      codePoint === 0x2329 ||
+      codePoint === 0x232a ||
+      (0x2e80 <= codePoint && codePoint <= 0x3247 && codePoint !== 0x303f) ||
+      (0x3250 <= codePoint && codePoint <= 0x4dbf) ||
+      (0x4e00 <= codePoint && codePoint <= 0xa4c6) ||
+      (0xa960 <= codePoint && codePoint <= 0xa97c) ||
+      (0xac00 <= codePoint && codePoint <= 0xd7a3) ||
+      (0xf900 <= codePoint && codePoint <= 0xfaff) ||
+      (0xfe10 <= codePoint && codePoint <= 0xfe19) ||
+      (0xfe30 <= codePoint && codePoint <= 0xfe6b) ||
+      (0xff01 <= codePoint && codePoint <= 0xff60) ||
+      (0xffe0 <= codePoint && codePoint <= 0xffe6) ||
+      (0x1b000 <= codePoint && codePoint <= 0x1b001) ||
+      (0x1f200 <= codePoint && codePoint <= 0x1f251) ||
+      (0x20000 <= codePoint && codePoint <= 0x3fffd))
+  );
+}
+
+function inkStringWidth(text: string): number {
+  let width = 0;
+  for (let index = 0; index < text.length; ) {
+    const codePoint = text.codePointAt(index);
+    if (codePoint === undefined) break;
+    const character = String.fromCodePoint(codePoint);
+    width += isInkFullWidthCodePoint(codePoint) || character.length > 1 ? 2 : 1;
+    index += character.length;
+  }
+  return width;
+}
+
 /**
  * Word-wrap plain text to a given visible width.
  * Returns an array of lines, each at most `width` visible characters wide.
@@ -44,7 +80,7 @@ function wordWrap(text: string, width: number): string[] {
       current = word;
     } else {
       const candidate = `${current} ${word}`;
-      if (stringWidth(candidate) <= width) {
+      if (inkStringWidth(candidate) <= width) {
         current = candidate;
       } else {
         lines.push(current);
@@ -121,7 +157,7 @@ export function splitSystemReminderBlocks(
 }
 
 function padToColumns(text: string, columns: number): string {
-  const pad = Math.max(0, columns - stringWidth(text));
+  const pad = Math.max(0, columns - inkStringWidth(text));
   return `${text}${" ".repeat(pad)}`;
 }
 
@@ -194,7 +230,7 @@ export const UserMessage = memo(
       getCurrentStdoutColumns() ?? trackedColumns,
     );
     const promptPrefix = `${prompt || ">"} `;
-    const prefixWidth = stringWidth(promptPrefix);
+    const prefixWidth = inkStringWidth(promptPrefix);
     const continuationPrefix = " ".repeat(prefixWidth);
     const contentWidth = Math.max(1, columns - prefixWidth);
     const cleanedText = extractTaskNotificationsForDisplay(
@@ -236,6 +272,7 @@ export const UserMessage = memo(
             key={index}
             backgroundColor={line.highlighted ? background : undefined}
             color={line.highlighted ? textColor : undefined}
+            wrap={line.highlighted ? "end" : "wrap"}
           >
             {line.text}
           </Text>
