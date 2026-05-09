@@ -756,6 +756,7 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
+        runtime.toolRepeatTracker.clear();
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {

@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "../../agent/approval-execution";
+import type { ToolRepeatTracker } from "../../agent/tool-repeat-reminder";
 import type { ChannelTurnSource } from "../../channels/types";
 import type { ContextTracker } from "../../cli/helpers/contextTracker";
 import type { ApprovalRequest } from "../../cli/helpers/stream";
@@ -157,6 +158,8 @@ export type ConversationRuntime = {
   reminderState: SharedReminderState;
   /** Per-conversation tracker for compaction/reflection cadence. */
   contextTracker: ContextTracker;
+  /** Per-conversation tracker for repeated exact tool calls. */
+  toolRepeatTracker: ToolRepeatTracker;
 };
 
 export type ListenerRuntime = {

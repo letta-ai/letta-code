@@ -1,3 +1,4 @@
+import { createToolRepeatTracker } from "../../agent/tool-repeat-reminder";
 import { createContextTracker } from "../../cli/helpers/contextTracker";
 import { createSharedReminderState } from "../../reminders/state";
 import type { PendingControlRequest } from "../../types/protocol_v2";
@@ -202,6 +203,7 @@ export function createConversationRuntime(
         listener.contextTrackerByConversation.set(runtimeKey, tracker);
         return tracker;
       })(),
+    toolRepeatTracker: createToolRepeatTracker(),
   };
   listener.conversationRuntimes.set(
     conversationRuntime.key,

@@ -45,6 +45,10 @@ import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
+  buildRepeatedToolCallReminder,
+  createToolRepeatTracker,
+} from "./agent/tool-repeat-reminder";
+import {
   type ConversationCreateBody,
   type ConversationMessageStreamBody,
   getBackend,
@@ -1828,6 +1832,7 @@ ${SYSTEM_REMINDER_CLOSE}
   let conversationBusyRetries = 0;
   let providerFallbackAttempted = false;
   let overrideModelHandle: string | undefined;
+  const toolRepeatTracker = createToolRepeatTracker();
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
@@ -2257,6 +2262,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
+        toolRepeatTracker.clear();
         // Reset retry counters on success
         llmApiErrorRetries = 0;
         emptyResponseRetries = 0;
@@ -2344,7 +2350,26 @@ ${SYSTEM_REMINDER_CLOSE}
           approvals: executedResults as ApprovalResult[],
           otid: randomUUID(),
         };
-        currentInput = [approvalInputWithOtid];
+        const repeatReminder = buildRepeatedToolCallReminder(
+          toolRepeatTracker,
+          decisions.map((decision) => ({
+            toolName: decision.approval.toolName,
+            toolArgs: decision.approval.toolArgs || "{}",
+          })),
+        );
+        currentInput = [
+          approvalInputWithOtid,
+          ...(repeatReminder
+            ? [
+                {
+                  type: "message" as const,
+                  role: "system" as const,
+                  content: repeatReminder,
+                  otid: randomUUID(),
+                },
+              ]
+            : []),
+        ];
         continue;
       }
 
@@ -2914,6 +2939,7 @@ async function runBidirectionalMode(
   let currentAbortController: AbortController | null = null;
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
+  const toolRepeatTracker = createToolRepeatTracker();
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Resolve pending approvals for this conversation before retrying user input.
@@ -3938,6 +3964,7 @@ async function runBidirectionalMode(
 
           // Case 1: Turn ended normally - break out of loop
           if (stopReason === "end_turn") {
+            toolRepeatTracker.clear();
             break;
           }
 
@@ -4085,7 +4112,26 @@ async function runBidirectionalMode(
               approvals: executedResults,
               otid: randomUUID(),
             };
-            currentInput = [approvalInputWithOtid as unknown as MessageCreate];
+            const repeatReminder = buildRepeatedToolCallReminder(
+              toolRepeatTracker,
+              decisions.map((decision) => ({
+                toolName: decision.approval.toolName,
+                toolArgs: decision.approval.toolArgs || "{}",
+              })),
+            );
+            currentInput = [
+              approvalInputWithOtid as unknown as MessageCreate,
+              ...(repeatReminder
+                ? [
+                    {
+                      type: "message" as const,
+                      role: "system" as const,
+                      content: repeatReminder,
+                      otid: randomUUID(),
+                    },
+                  ]
+                : []),
+            ];
 
             // Continue the loop to process the next stream
             continue;
