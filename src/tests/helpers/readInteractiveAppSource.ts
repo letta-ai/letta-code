@@ -7,6 +7,7 @@ const INTERACTIVE_APP_SOURCE_FILES = [
   "../../cli/app/useConfigurationHandlers.ts",
   "../../cli/app/useInterruptHandler.ts",
   "../../cli/app/AppCoordinator.tsx",
+  "../../cli/app/AppView.tsx",
   "../../cli/app/useReasoningCycle.ts",
   "../../cli/app/useApprovalFlow.ts",
   "../../cli/app/useConversationSwitching.ts",

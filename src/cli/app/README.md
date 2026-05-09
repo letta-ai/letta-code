@@ -6,6 +6,7 @@ file first.
 
 - `App.tsx`: local entrypoint that re-exports the coordinator.
 - `AppCoordinator.tsx`: Ink state, effects, overlay wiring, and render tree.
+- `AppView.tsx`: render-only Ink tree for the coordinator.
 - `useSubmitHandler.ts`: slash-command and user-submit router.
 - `useConversationLoop.ts`: streaming turn loop, retry/recovery, tool execution,
   and reflection auto-launch.

@@ -1,13 +1,11 @@
 // src/cli/app/AppCoordinator.tsx
 
-import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { Box } from "ink";
 import {
   useCallback,
   useEffect,
@@ -20,7 +18,6 @@ import type { ApprovalResult } from "../../agent/approval-execution";
 import { prefetchAvailableModelHandles } from "../../agent/available-models";
 import { getResumeDataFromBackend } from "../../agent/check-approval";
 import { setCurrentAgentId } from "../../agent/context";
-import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   getModelInfoForLlmConfig,
@@ -78,49 +75,7 @@ import {
   type CommandHandle,
   createCommandRunner,
 } from "../commands/runner";
-import { AgentSelector } from "../components/AgentSelector";
-import { ApprovalSwitch } from "../components/ApprovalSwitch";
-import { AssistantMessage } from "../components/AssistantMessageRich";
-import { BashCommandMessage } from "../components/BashCommandMessage";
-import { BtwPane, type BtwState } from "../components/BtwPane";
-import { CommandMessage } from "../components/CommandMessage";
-import { CompactionSelector } from "../components/CompactionSelector";
-import { ConversationSelector } from "../components/ConversationSelector";
-// EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
-import { ErrorMessage } from "../components/ErrorMessageRich";
-import { EventMessage } from "../components/EventMessage";
-import { ExperimentSelector } from "../components/ExperimentSelector";
-import { FeedbackDialog } from "../components/FeedbackDialog";
-import { HelpDialog } from "../components/HelpDialog";
-import { HooksManager } from "../components/HooksManager";
-import { Input } from "../components/InputRich";
-import { InstallGithubAppFlow } from "../components/InstallGithubAppFlow";
-import { McpConnectFlow } from "../components/McpConnectFlow";
-import { McpSelector } from "../components/McpSelector";
-import { MemfsTreeViewer } from "../components/MemfsTreeViewer";
-import { MemoryTabViewer } from "../components/MemoryTabViewer";
-import { MessageSearch } from "../components/MessageSearch";
-import { ModelReasoningSelector } from "../components/ModelReasoningSelector";
-import { ModelSelector } from "../components/ModelSelector";
-import { NewAgentDialog } from "../components/NewAgentDialog";
-import { PendingApprovalStub } from "../components/PendingApprovalStub";
-import { PersonalitySelector } from "../components/PersonalitySelector";
-import { PinDialog } from "../components/PinDialog";
-import { ProviderSelector } from "../components/ProviderSelector";
-import { ReasoningMessage } from "../components/ReasoningMessageRich";
-import { SkillsDialog } from "../components/SkillsDialog";
-import { SleeptimeSelector } from "../components/SleeptimeSelector";
-// InlinePlanApproval kept for easy rollback if needed
-// import { InlinePlanApproval } from "../components/InlinePlanApproval";
-import { StatusMessage } from "../components/StatusMessage";
-import { SubagentGroupDisplay } from "../components/SubagentGroupDisplay";
-import { SubagentManager } from "../components/SubagentManager";
-import { SystemPromptSelector } from "../components/SystemPromptSelector";
-import { ToolCallMessage } from "../components/ToolCallMessageRich";
-import { ToolsetSelector } from "../components/ToolsetSelector";
-import { UserMessage } from "../components/UserMessageRich";
-import { WelcomeScreen } from "../components/WelcomeScreen";
-import { AnimationProvider } from "../contexts/AnimationContext";
+import type { BtwState } from "../components/BtwPane";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -183,7 +138,7 @@ import { useConfigurableStatusLine } from "../hooks/useConfigurableStatusLine";
 import { useSuspend } from "../hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "../hooks/useSyncedState";
 import { useTerminalRows, useTerminalWidth } from "../hooks/useTerminalWidth";
-
+import { AppView } from "./AppView";
 import {
   ANIMATION_RESUME_HYSTERESIS_ROWS,
   APPROVAL_OPTIONS_HEIGHT,
@@ -199,7 +154,6 @@ import {
   TEXT_WRAP_GUTTER,
   TOOL_CALL_COMMIT_DEFER_MS,
 } from "./constants";
-import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
 import {
   countWrappedLines,
@@ -213,8 +167,6 @@ import {
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
 } from "./modelConfig";
-import { _readPlanFile } from "./planFile";
-import { StaticTranscript } from "./StaticTranscript";
 import { saveLastSessionBeforeExit } from "./session";
 import type { AppProps, StaticItem } from "./types";
 import { useApprovalFlow } from "./useApprovalFlow";
@@ -4244,1139 +4196,133 @@ export default function App({
   }, [trajectoryTokenDisplay]);
 
   return (
-    <Box key={resumeKey} flexDirection="column">
-      <StaticTranscript
-        renderEpoch={staticRenderEpoch}
-        items={staticItems}
-        columns={columns}
-        statusLinePrompt={statusLine.prompt}
-        showCompactionsEnabled={showCompactionsEnabled}
-        precomputedDiffs={precomputedDiffsRef.current}
-        lastPlanFilePath={lastPlanFilePathRef.current}
-      />
-
-      <Box flexDirection="column">
-        {/* Loading screen / intro text */}
-        {loadingState !== "ready" && (
-          <WelcomeScreen
-            loadingState={loadingState}
-            continueSession={continueSession}
-            agentState={agentState}
-          />
-        )}
-
-        {loadingState === "ready" && (
-          <>
-            {/* Transcript - wrapped in AnimationProvider for overflow-based animation control */}
-            <AnimationProvider shouldAnimate={shouldAnimate}>
-              {/* Show liveItems always - all approvals now render inline */}
-              {liveItems.length > 0 && (
-                <Box flexDirection="column">
-                  {liveItems.map((ln) => {
-                    const isFileTool =
-                      ln.kind === "tool_call" &&
-                      ln.name &&
-                      (isFileEditTool(ln.name) ||
-                        isFileWriteTool(ln.name) ||
-                        isPatchTool(ln.name));
-                    const isApprovalTracked =
-                      ln.kind === "tool_call" &&
-                      ln.toolCallId &&
-                      (ln.toolCallId === currentApproval?.toolCallId ||
-                        pendingIds.has(ln.toolCallId) ||
-                        queuedIds.has(ln.toolCallId));
-                    if (isFileTool && !isApprovalTracked) {
-                      return null;
-                    }
-                    // Skip Task tools that don't have a pending approval
-                    // They render as empty Boxes (ToolCallMessage returns null for non-finished Task tools)
-                    // which causes N blank lines when N Task tools are called in parallel
-                    // Note: pendingIds doesn't include the ACTIVE approval (currentApproval),
-                    // so we must also check if this is the active approval
-                    if (
-                      ln.kind === "tool_call" &&
-                      ln.name &&
-                      isTaskTool(ln.name) &&
-                      ln.toolCallId &&
-                      !pendingIds.has(ln.toolCallId) &&
-                      ln.toolCallId !== currentApproval?.toolCallId
-                    ) {
-                      return null;
-                    }
-
-                    // Check if this tool call matches the current approval awaiting user input
-                    const matchesCurrentApproval =
-                      ln.kind === "tool_call" &&
-                      currentApproval &&
-                      ln.toolCallId === currentApproval.toolCallId;
-
-                    return (
-                      <Box key={ln.id} flexDirection="column" marginTop={1}>
-                        {matchesCurrentApproval ? (
-                          <ApprovalSwitch
-                            approval={currentApproval}
-                            onApprove={handleApproveCurrent}
-                            onApproveAlways={handleApproveAlways}
-                            onDeny={handleDenyCurrent}
-                            onCancel={handleCancelApprovals}
-                            onPlanApprove={handlePlanApprove}
-                            onPlanKeepPlanning={handlePlanKeepPlanning}
-                            onQuestionSubmit={handleQuestionSubmit}
-                            onEnterPlanModeApprove={handleEnterPlanModeApprove}
-                            onEnterPlanModeReject={handleEnterPlanModeReject}
-                            precomputedDiff={
-                              ln.toolCallId
-                                ? precomputedDiffsRef.current.get(ln.toolCallId)
-                                : undefined
-                            }
-                            allDiffs={precomputedDiffsRef.current}
-                            isFocused={true}
-                            approveAlwaysText={
-                              currentApprovalContext?.approveAlwaysText
-                            }
-                            allowPersistence={
-                              currentApprovalContext?.allowPersistence ?? true
-                            }
-                            defaultScope={
-                              currentApprovalContext?.defaultScope === "user"
-                                ? "session"
-                                : (currentApprovalContext?.defaultScope ??
-                                  "project")
-                            }
-                            showPreview={showApprovalPreview}
-                            planContent={
-                              currentApproval.toolName === "ExitPlanMode"
-                                ? _readPlanFile(lastPlanFilePathRef.current)
-                                : undefined
-                            }
-                            planFilePath={
-                              currentApproval.toolName === "ExitPlanMode"
-                                ? (permissionMode.getPlanFilePath() ??
-                                  lastPlanFilePathRef.current ??
-                                  undefined)
-                                : undefined
-                            }
-                            agentName={agentName ?? undefined}
-                          />
-                        ) : ln.kind === "user" ? (
-                          <UserMessage line={ln} prompt={statusLine.prompt} />
-                        ) : ln.kind === "reasoning" ? (
-                          <ReasoningMessage line={ln} />
-                        ) : ln.kind === "assistant" ? (
-                          <AssistantMessage line={ln} />
-                        ) : ln.kind === "tool_call" &&
-                          ln.toolCallId &&
-                          queuedIds.has(ln.toolCallId) ? (
-                          // Render stub for queued (decided but not executed) approval
-                          <PendingApprovalStub
-                            toolName={
-                              approvalMap.get(ln.toolCallId)?.toolName ||
-                              ln.name ||
-                              "Unknown"
-                            }
-                            description={stubDescriptions.get(ln.toolCallId)}
-                            decision={queuedDecisions.get(ln.toolCallId)}
-                          />
-                        ) : ln.kind === "tool_call" &&
-                          ln.toolCallId &&
-                          pendingIds.has(ln.toolCallId) ? (
-                          // Render stub for pending (undecided) approval
-                          <PendingApprovalStub
-                            toolName={
-                              approvalMap.get(ln.toolCallId)?.toolName ||
-                              ln.name ||
-                              "Unknown"
-                            }
-                            description={stubDescriptions.get(ln.toolCallId)}
-                          />
-                        ) : ln.kind === "tool_call" ? (
-                          <ToolCallMessage
-                            line={ln}
-                            precomputedDiffs={precomputedDiffsRef.current}
-                            lastPlanFilePath={lastPlanFilePathRef.current}
-                            isStreaming={streaming}
-                          />
-                        ) : ln.kind === "error" ? (
-                          <ErrorMessage line={ln} />
-                        ) : ln.kind === "status" ? (
-                          <StatusMessage line={ln} />
-                        ) : ln.kind === "event" ? (
-                          <EventMessage line={ln} />
-                        ) : ln.kind === "command" ? (
-                          <CommandMessage line={ln} />
-                        ) : ln.kind === "bash_command" ? (
-                          <BashCommandMessage line={ln} />
-                        ) : null}
-                      </Box>
-                    );
-                  })}
-                </Box>
-              )}
-
-              {/* Fallback approval UI when backfill is disabled (no liveItems) */}
-              {liveItems.length === 0 && currentApproval && (
-                <Box flexDirection="column">
-                  <ApprovalSwitch
-                    approval={currentApproval}
-                    onApprove={handleApproveCurrent}
-                    onApproveAlways={handleApproveAlways}
-                    onDeny={handleDenyCurrent}
-                    onCancel={handleCancelApprovals}
-                    onPlanApprove={handlePlanApprove}
-                    onPlanKeepPlanning={handlePlanKeepPlanning}
-                    onQuestionSubmit={handleQuestionSubmit}
-                    onEnterPlanModeApprove={handleEnterPlanModeApprove}
-                    onEnterPlanModeReject={handleEnterPlanModeReject}
-                    allDiffs={precomputedDiffsRef.current}
-                    isFocused={true}
-                    approveAlwaysText={
-                      currentApprovalContext?.approveAlwaysText
-                    }
-                    allowPersistence={
-                      currentApprovalContext?.allowPersistence ?? true
-                    }
-                    defaultScope={
-                      currentApprovalContext?.defaultScope === "user"
-                        ? "session"
-                        : (currentApprovalContext?.defaultScope ?? "project")
-                    }
-                    showPreview={showApprovalPreview}
-                    planContent={
-                      currentApproval.toolName === "ExitPlanMode"
-                        ? _readPlanFile(lastPlanFilePathRef.current)
-                        : undefined
-                    }
-                    planFilePath={
-                      currentApproval.toolName === "ExitPlanMode"
-                        ? (permissionMode.getPlanFilePath() ??
-                          lastPlanFilePathRef.current ??
-                          undefined)
-                        : undefined
-                    }
-                    agentName={agentName ?? undefined}
-                  />
-                </Box>
-              )}
-
-              {/* Subagent group display - shows running/completed subagents */}
-              <SubagentGroupDisplay />
-            </AnimationProvider>
-
-            {/* Exit stats - shown when exiting via double Ctrl+C */}
-            {showExitStats &&
-              (() => {
-                const stats = sessionStatsRef.current.getSnapshot();
-                return (
-                  <ExitStats
-                    stats={stats}
-                    agentName={agentName}
-                    agentId={agentId}
-                    conversationId={conversationId}
-                  />
-                );
-              })()}
-
-            {/* /btw ephemeral pane - shows forked conversation response */}
-            {btwState.status !== "idle" && (
-              <BtwPane
-                state={btwState}
-                onJumpToConversation={handleBtwJump}
-                onDismiss={() => setBtwState({ status: "idle" })}
-              />
-            )}
-
-            {/* Input row - always mounted to preserve state */}
-            <Box marginTop={1}>
-              <Input
-                visible={inputVisible}
-                streaming={streaming}
-                tokenCount={trajectoryTokenDisplay}
-                elapsedBaseMs={liveTrajectoryElapsedBaseMs}
-                thinkingMessage={thinkingMessage}
-                includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
-                onSubmit={onSubmit}
-                onBashSubmit={handleBashSubmit}
-                bashRunning={bashRunning}
-                onBashInterrupt={handleBashInterrupt}
-                inputEnabled={inputEnabled}
-                collapseInputWhenDisabled={
-                  pendingApprovals.length > 0 || anySelectorOpen
-                }
-                permissionMode={uiPermissionMode}
-                onPermissionModeChange={handlePermissionModeChange}
-                onCycleReasoningEffort={
-                  reasoningTabCycleEnabled
-                    ? handleCycleReasoningEffort
-                    : undefined
-                }
-                onExit={handleExit}
-                onInterrupt={handleInterrupt}
-                interruptRequested={interruptRequested}
-                agentId={agentId}
-                agentName={agentName}
-                currentModel={currentModelDisplay}
-                currentModelProvider={currentModelProvider}
-                hasTemporaryModelOverride={hasTemporaryModelOverride}
-                currentReasoningEffort={currentReasoningEffort}
-                messageQueue={queueDisplay}
-                onEnterQueueEditMode={handleEnterQueueEditMode}
-                onEscapeCancel={
-                  profileConfirmPending ? handleProfileEscapeCancel : undefined
-                }
-                inputDisabled={btwState.status === "complete"}
-                ralphActive={uiRalphActive}
-                ralphPending={pendingRalphConfig !== null}
-                ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
-                onRalphExit={handleRalphExit}
-                conversationId={conversationId}
-                onPasteError={handlePasteError}
-                restoredInput={restoredInput}
-                onRestoredInputConsumed={() => setRestoredInput(null)}
-                networkPhase={networkPhase}
-                terminalWidth={chromeColumns}
-                shouldAnimate={shouldAnimate}
-                statusLineText={statusLine.text || undefined}
-                statusLineRight={statusLine.rightText || undefined}
-                statusLinePadding={statusLine.padding || 0}
-                statusLinePrompt={statusLine.prompt}
-                footerNotification={footerUpdateText}
-              />
-            </Box>
-
-            {/* Model Selector - conditionally mounted as overlay */}
-            {activeOverlay === "model" &&
-              (modelReasoningPrompt ? (
-                <ModelReasoningSelector
-                  modelLabel={modelReasoningPrompt.modelLabel}
-                  options={modelReasoningPrompt.options}
-                  initialModelId={modelReasoningPrompt.initialModelId}
-                  onSelect={(selectedModelId) => {
-                    setModelReasoningPrompt(null);
-                    void handleModelSelect(selectedModelId, null, {
-                      skipReasoningPrompt: true,
-                    });
-                  }}
-                  onCancel={() => setModelReasoningPrompt(null)}
-                />
-              ) : (
-                <ModelSelector
-                  currentModelId={currentModelId ?? undefined}
-                  onSelect={handleModelSelect}
-                  onCancel={closeOverlay}
-                  filterProvider={modelSelectorOptions.filterProvider}
-                  forceRefresh={modelSelectorOptions.forceRefresh}
-                  billingTier={billingTier ?? undefined}
-                  isSelfHosted={(() => {
-                    const settings = settingsManager.getSettings();
-                    const baseURL =
-                      process.env.LETTA_BASE_URL ||
-                      settings.env?.LETTA_BASE_URL ||
-                      "https://api.letta.com";
-                    return !baseURL.includes("api.letta.com");
-                  })()}
-                  localModelCatalog={
-                    getBackend().capabilities.localModelCatalog
-                  }
-                />
-              ))}
-
-            {activeOverlay === "sleeptime" && (
-              <SleeptimeSelector
-                initialSettings={getReflectionSettings(agentId)}
-                memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
-                onSave={handleSleeptimeModeSelect}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {activeOverlay === "compaction" && (
-              <CompactionSelector
-                initialMode={agentState?.compaction_settings?.mode}
-                onSave={handleCompactionModeSelect}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* GitHub App Installer - setup Letta Code GitHub Action */}
-            {activeOverlay === "install-github-app" && (
-              <InstallGithubAppFlow
-                onComplete={(result) => {
-                  const overlayCommand =
-                    consumeOverlayCommand("install-github-app");
-                  closeOverlay();
-
-                  const cmd =
-                    overlayCommand ??
-                    commandRunner.start(
-                      "/install-github-app",
-                      "Setting up Letta Code GitHub Action...",
-                    );
-
-                  if (!result.committed) {
-                    cmd.finish(
-                      [
-                        `Workflow already up to date for ${result.repo}.`,
-                        result.secretAction === "reused"
-                          ? "Using existing LETTA_API_KEY secret."
-                          : "Updated LETTA_API_KEY secret.",
-                        "No pull request needed.",
-                      ].join("\n"),
-                      true,
-                    );
-                    return;
-                  }
-
-                  const lines: string[] = ["Install GitHub App", "Success", ""];
-                  lines.push("✓ GitHub Actions workflow created!");
-                  lines.push("");
-                  lines.push(
-                    result.secretAction === "reused"
-                      ? "✓ Using existing LETTA_API_KEY secret"
-                      : "✓ API key saved as LETTA_API_KEY secret",
-                  );
-                  if (result.agentId) {
-                    lines.push("");
-                    lines.push(`✓ Agent configured: ${result.agentId}`);
-                  }
-                  lines.push("");
-                  lines.push("Next steps:");
-
-                  if (result.pullRequestUrl) {
-                    lines.push(
-                      result.pullRequestCreateMode === "page-opened"
-                        ? "1. A pre-filled PR page has been created"
-                        : "1. A pull request has been created",
-                    );
-                    lines.push("2. Merge the PR to enable Letta PR assistance");
-                    lines.push(
-                      "3. Mention @letta-code in an issue or PR to test",
-                    );
-                    lines.push("");
-                    lines.push(`PR: ${result.pullRequestUrl}`);
-                    if (result.agentUrl) {
-                      lines.push(`Agent: ${result.agentUrl}`);
-                    }
-                  } else {
-                    lines.push(
-                      "1. Open a PR for the branch created by the installer",
-                    );
-                    lines.push("2. Merge the PR to enable Letta PR assistance");
-                    lines.push(
-                      "3. Mention @letta-code in an issue or PR to test",
-                    );
-                    lines.push("");
-                    lines.push(
-                      "Branch pushed but PR was not opened automatically. Run: gh pr create",
-                    );
-                  }
-                  cmd.finish(lines.join("\n"), true);
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* Provider Selector - for connecting BYOK providers */}
-            {activeOverlay === "connect" && (
-              <ProviderSelector
-                onCancel={closeOverlay}
-                onStartOAuth={async () => {
-                  const overlayCommand = consumeOverlayCommand("connect");
-                  // Close selector and start OAuth flow
-                  closeOverlay();
-                  const cmd =
-                    overlayCommand ??
-                    commandRunner.start("/connect", "Starting connection...");
-                  const {
-                    handleConnect,
-                    setActiveCommandId: setActiveConnectCommandId,
-                  } = await import("../commands/connect");
-                  setActiveConnectCommandId(cmd.id);
-                  try {
-                    await handleConnect(
-                      {
-                        buffersRef,
-                        refreshDerived,
-                        setCommandRunning,
-                        onCodexConnected: () => {
-                          setModelSelectorOptions({
-                            filterProvider: "chatgpt-plus-pro",
-                            forceRefresh: true,
-                          });
-                          startOverlayCommand(
-                            "model",
-                            "/model",
-                            "Opening model selector...",
-                            "Models dialog dismissed",
-                          );
-                          setActiveOverlay("model");
-                        },
-                      },
-                      "/connect chatgpt",
-                    );
-                  } finally {
-                    setActiveConnectCommandId(null);
-                  }
-                }}
-              />
-            )}
-
-            {/* Experiment Selector - conditionally mounted as overlay */}
-            {activeOverlay === "experiment" && (
-              <ExperimentSelector
-                experiments={experimentManager.list()}
-                onSelect={handleExperimentSelect}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* Toolset Selector - conditionally mounted as overlay */}
-            {activeOverlay === "toolset" && (
-              <ToolsetSelector
-                currentToolset={currentToolset ?? undefined}
-                currentPreference={currentToolsetPreference}
-                onSelect={handleToolsetSelect}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* System Prompt Selector - conditionally mounted as overlay */}
-            {activeOverlay === "system" && (
-              <SystemPromptSelector
-                currentPromptId={currentSystemPromptId ?? undefined}
-                onSelect={handleSystemPromptSelect}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {activeOverlay === "personality" && (
-              <PersonalitySelector
-                currentPersonalityId={currentPersonalityId ?? undefined}
-                onSelect={handlePersonalitySelect}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* Subagent Manager - for managing custom subagents */}
-            {activeOverlay === "subagent" && (
-              <SubagentManager onClose={closeOverlay} />
-            )}
-
-            {/* Agent Selector - for browsing/selecting agents */}
-            {activeOverlay === "resume" && (
-              <AgentSelector
-                currentAgentId={agentId}
-                onSelect={async (id) => {
-                  const overlayCommand = consumeOverlayCommand("resume");
-                  closeOverlay();
-                  await handleAgentSelect(id, {
-                    commandId: overlayCommand?.id,
-                  });
-                }}
-                onCancel={closeOverlay}
-                onCreateNewAgent={() => {
-                  closeOverlay();
-                  setActiveOverlay("new");
-                }}
-              />
-            )}
-
-            {/* Conversation Selector - for resuming conversations */}
-            {activeOverlay === "conversations" && (
-              <ConversationSelector
-                agentId={agentId}
-                agentName={agentName ?? undefined}
-                currentConversationId={conversationId}
-                onSelect={async (convId, selectorContext) => {
-                  const overlayCommand = consumeOverlayCommand("conversations");
-                  closeOverlay();
-
-                  // Skip if already on this conversation
-                  if (convId === conversationId) {
-                    const cmd =
-                      overlayCommand ??
-                      commandRunner.start(
-                        "/resume",
-                        "Already on this conversation",
-                      );
-                    cmd.finish("Already on this conversation", true);
-                    return;
-                  }
-
-                  // If agent is busy, queue the switch for after end_turn
-                  if (isAgentBusy()) {
-                    const cmd =
-                      overlayCommand ??
-                      commandRunner.start(
-                        "/resume",
-                        "Conversation switch queued – will switch after current task completes",
-                      );
-                    cmd.update({
-                      output:
-                        "Conversation switch queued – will switch after current task completes",
-                      phase: "running",
-                    });
-                    setQueuedOverlayAction({
-                      type: "switch_conversation",
-                      conversationId: convId,
-                      commandId: cmd.id,
-                    });
-                    return;
-                  }
-
-                  // Lock input for async operation
-                  setCommandRunning(true);
-
-                  const inputCmd = "/resume";
-                  const cmd =
-                    overlayCommand ??
-                    commandRunner.start(inputCmd, "Switching conversation...");
-                  cmd.update({
-                    output: "Switching conversation...",
-                    phase: "running",
-                  });
-
-                  try {
-                    // Validate conversation exists BEFORE updating state
-                    // (getResumeData throws 404/422 for non-existent conversations)
-                    if (agentState) {
-                      const resumeData = await getResumeDataFromBackend(
-                        agentState,
-                        convId,
-                      );
-
-                      // Only update state after validation succeeds
-                      setConversationIdAndRef(convId);
-                      setConversationAutoTitleEligibility(false);
-
-                      pendingConversationSwitchRef.current = {
-                        origin: "resume-selector",
-                        conversationId: convId,
-                        isDefault: convId === "default",
-                        messageCount:
-                          selectorContext?.messageCount ??
-                          resumeData.messageHistory.length,
-                        summary: selectorContext?.summary,
-                        messageHistory: resumeData.messageHistory,
-                      };
-
-                      settingsManager.persistSession(agentId, convId);
-
-                      // Build success command with agent + conversation info
-                      const currentAgentName =
-                        agentState.name || "Unnamed Agent";
-                      const successLines =
-                        resumeData.messageHistory.length > 0
-                          ? [
-                              `Resumed conversation with "${currentAgentName}"`,
-                              `⎿  Agent: ${agentId}`,
-                              `⎿  Conversation: ${convId}`,
-                            ]
-                          : [
-                              `Switched to conversation with "${currentAgentName}"`,
-                              `⎿  Agent: ${agentId}`,
-                              `⎿  Conversation: ${convId} (empty)`,
-                            ];
-                      const successOutput = successLines.join("\n");
-                      cmd.finish(successOutput, true);
-                      const successItem: StaticItem = {
-                        kind: "command",
-                        id: cmd.id,
-                        input: cmd.input,
-                        output: successOutput,
-                        phase: "finished",
-                        success: true,
-                      };
-
-                      // Clear current transcript and static items
-                      buffersRef.current.byId.clear();
-                      buffersRef.current.order = [];
-                      buffersRef.current.tokenCount = 0;
-                      resetContextHistory(contextTrackerRef.current);
-                      resetBootstrapReminderState();
-                      emittedIdsRef.current.clear();
-                      resetDeferredToolCallCommits();
-                      setStaticItems([]);
-                      setStaticRenderEpoch((e) => e + 1);
-                      resetTrajectoryBases();
-
-                      // Backfill message history with visual separator
-                      if (resumeData.messageHistory.length > 0) {
-                        hasBackfilledRef.current = false;
-                        backfillBuffers(
-                          buffersRef.current,
-                          resumeData.messageHistory,
-                        );
-                        // Collect backfilled items
-                        const backfilledItems: StaticItem[] = [];
-                        for (const id of buffersRef.current.order) {
-                          const ln = buffersRef.current.byId.get(id);
-                          if (!ln) continue;
-                          emittedIdsRef.current.add(id);
-                          backfilledItems.push({ ...ln } as StaticItem);
-                        }
-                        // Add separator before backfilled messages, then success at end
-                        const separator = {
-                          kind: "separator" as const,
-                          id: uid("sep"),
-                        };
-                        setStaticItems([
-                          separator,
-                          ...backfilledItems,
-                          successItem,
-                        ]);
-                        setLines(toLines(buffersRef.current));
-                        hasBackfilledRef.current = true;
-                      } else {
-                        // Add separator for visual spacing even without backfill
-                        const separator = {
-                          kind: "separator" as const,
-                          id: uid("sep"),
-                        };
-                        setStaticItems([separator, successItem]);
-                        setLines(toLines(buffersRef.current));
-                      }
-
-                      // Restore pending approvals if any (fixes #540 for ConversationSelector)
-                      if (resumeData.pendingApprovals.length > 0) {
-                        await recoverRestoredPendingApprovals(
-                          resumeData.pendingApprovals,
-                        );
-                      }
-                    }
-                  } catch (error) {
-                    // Update existing loading message instead of creating new one
-                    // Format error message to be user-friendly (avoid raw JSON/internal details)
-                    let errorMsg = "Unknown error";
-                    if (error instanceof APIError) {
-                      if (error.status === 404) {
-                        errorMsg = "Conversation not found";
-                      } else if (error.status === 422) {
-                        errorMsg = "Invalid conversation ID";
-                      } else {
-                        errorMsg = error.message;
-                      }
-                    } else if (error instanceof Error) {
-                      errorMsg = error.message;
-                    }
-                    cmd.fail(`Failed to switch conversation: ${errorMsg}`);
-                  } finally {
-                    setCommandRunning(false);
-                  }
-                }}
-                onNewConversation={async () => {
-                  const overlayCommand = consumeOverlayCommand("conversations");
-                  closeOverlay();
-
-                  // Lock input for async operation
-                  setCommandRunning(true);
-
-                  const cmd =
-                    overlayCommand ??
-                    commandRunner.start(
-                      "/resume",
-                      "Creating new conversation...",
-                    );
-                  cmd.update({
-                    output: "Creating new conversation...",
-                    phase: "running",
-                  });
-
-                  try {
-                    // Create a new conversation
-                    const conversation = await getBackend().createConversation({
-                      agent_id: agentId,
-                      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
-                    });
-
-                    await maybeCarryOverActiveConversationModel(
-                      conversation.id,
-                    );
-                    setConversationIdAndRef(conversation.id);
-                    setConversationAutoTitleEligibility(true);
-                    settingsManager.persistSession(agentId, conversation.id);
-
-                    // Build success command with agent + conversation info
-                    const currentAgentName =
-                      agentState?.name || "Unnamed Agent";
-                    const shortConvId = conversation.id.slice(0, 20);
-                    const successLines = [
-                      `Started new conversation with "${currentAgentName}"`,
-                      `⎿  Agent: ${agentId}`,
-                      `⎿  Conversation: ${shortConvId}... (new)`,
-                    ];
-                    const successOutput = successLines.join("\n");
-                    cmd.finish(successOutput, true);
-                    const successItem: StaticItem = {
-                      kind: "command",
-                      id: cmd.id,
-                      input: cmd.input,
-                      output: successOutput,
-                      phase: "finished",
-                      success: true,
-                    };
-
-                    // Clear current transcript and static items
-                    buffersRef.current.byId.clear();
-                    buffersRef.current.order = [];
-                    buffersRef.current.tokenCount = 0;
-                    resetContextHistory(contextTrackerRef.current);
-                    resetBootstrapReminderState();
-                    emittedIdsRef.current.clear();
-                    resetDeferredToolCallCommits();
-                    setStaticItems([]);
-                    setStaticRenderEpoch((e) => e + 1);
-                    resetTrajectoryBases();
-                    setStaticItems([successItem]);
-                    setLines(toLines(buffersRef.current));
-                  } catch (error) {
-                    cmd.fail(
-                      `Failed to create conversation: ${error instanceof Error ? error.message : String(error)}`,
-                    );
-                  } finally {
-                    setCommandRunning(false);
-                  }
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* Message Search - conditionally mounted as overlay */}
-            {activeOverlay === "search" && (
-              <MessageSearch
-                onClose={closeOverlay}
-                initialQuery={searchQuery || undefined}
-                agentId={agentId}
-                conversationId={conversationId}
-                onOpenConversation={async (
-                  targetAgentId,
-                  targetConvId,
-                  searchContext,
-                ) => {
-                  const overlayCommand = consumeOverlayCommand("search");
-                  closeOverlay();
-
-                  // Different agent: use handleAgentSelect (which supports optional conversationId)
-                  if (targetAgentId !== agentId) {
-                    await handleAgentSelect(targetAgentId, {
-                      conversationId: targetConvId,
-                      commandId: overlayCommand?.id,
-                    });
-                    return;
-                  }
-
-                  // Normalize undefined/null to "default"
-                  const actualTargetConv = targetConvId || "default";
-
-                  // Same agent, same conversation: nothing to do
-                  if (actualTargetConv === conversationId) {
-                    const cmd =
-                      overlayCommand ??
-                      commandRunner.start(
-                        "/search",
-                        "Already on this conversation",
-                      );
-                    cmd.finish("Already on this conversation", true);
-                    return;
-                  }
-
-                  // Same agent, different conversation: switch conversation
-                  // (Reuses ConversationSelector's onSelect logic pattern)
-                  if (isAgentBusy()) {
-                    const cmd =
-                      overlayCommand ??
-                      commandRunner.start(
-                        "/search",
-                        "Conversation switch queued – will switch after current task completes",
-                      );
-                    cmd.update({
-                      output:
-                        "Conversation switch queued – will switch after current task completes",
-                      phase: "running",
-                    });
-                    setQueuedOverlayAction({
-                      type: "switch_conversation",
-                      conversationId: actualTargetConv,
-                      commandId: cmd.id,
-                    });
-                    return;
-                  }
-
-                  setCommandRunning(true);
-                  const cmd =
-                    overlayCommand ??
-                    commandRunner.start("/search", "Switching conversation...");
-                  cmd.update({
-                    output: "Switching conversation...",
-                    phase: "running",
-                  });
-
-                  try {
-                    if (agentState) {
-                      const resumeData = await getResumeDataFromBackend(
-                        agentState,
-                        actualTargetConv,
-                      );
-
-                      setConversationIdAndRef(actualTargetConv);
-                      setConversationAutoTitleEligibility(false);
-
-                      pendingConversationSwitchRef.current = {
-                        origin: "search",
-                        conversationId: actualTargetConv,
-                        isDefault: actualTargetConv === "default",
-                        messageCount: resumeData.messageHistory.length,
-                        messageHistory: resumeData.messageHistory,
-                        searchQuery: searchContext?.query,
-                        searchMessage: searchContext?.message,
-                      };
-
-                      settingsManager.persistSession(agentId, actualTargetConv);
-
-                      const currentAgentName =
-                        agentState.name || "Unnamed Agent";
-                      const successOutput = [
-                        `Switched to conversation with "${currentAgentName}"`,
-                        `⎿  Conversation: ${actualTargetConv}`,
-                      ].join("\n");
-                      cmd.finish(successOutput, true);
-                      const successItem: StaticItem = {
-                        kind: "command",
-                        id: cmd.id,
-                        input: cmd.input,
-                        output: successOutput,
-                        phase: "finished",
-                        success: true,
-                      };
-
-                      // Clear current transcript and static items
-                      buffersRef.current.byId.clear();
-                      buffersRef.current.order = [];
-                      buffersRef.current.tokenCount = 0;
-                      resetContextHistory(contextTrackerRef.current);
-                      resetBootstrapReminderState();
-                      emittedIdsRef.current.clear();
-                      resetDeferredToolCallCommits();
-                      setStaticItems([]);
-                      setStaticRenderEpoch((e) => e + 1);
-                      resetTrajectoryBases();
-
-                      // Backfill message history
-                      if (resumeData.messageHistory.length > 0) {
-                        hasBackfilledRef.current = false;
-                        backfillBuffers(
-                          buffersRef.current,
-                          resumeData.messageHistory,
-                        );
-                        const backfilledItems: StaticItem[] = [];
-                        for (const id of buffersRef.current.order) {
-                          const ln = buffersRef.current.byId.get(id);
-                          if (!ln) continue;
-                          emittedIdsRef.current.add(id);
-                          backfilledItems.push({ ...ln } as StaticItem);
-                        }
-                        const separator = {
-                          kind: "separator" as const,
-                          id: uid("sep"),
-                        };
-                        setStaticItems([
-                          separator,
-                          ...backfilledItems,
-                          successItem,
-                        ]);
-                        setLines(toLines(buffersRef.current));
-                        hasBackfilledRef.current = true;
-                      } else {
-                        const separator = {
-                          kind: "separator" as const,
-                          id: uid("sep"),
-                        };
-                        setStaticItems([separator, successItem]);
-                        setLines(toLines(buffersRef.current));
-                      }
-
-                      // Restore pending approvals if any
-                      if (resumeData.pendingApprovals.length > 0) {
-                        await recoverRestoredPendingApprovals(
-                          resumeData.pendingApprovals,
-                        );
-                      }
-                    }
-                  } catch (error) {
-                    let errorMsg = "Unknown error";
-                    if (error instanceof APIError) {
-                      if (error.status === 404) {
-                        errorMsg = "Conversation not found";
-                      } else if (error.status === 422) {
-                        errorMsg = "Invalid conversation ID";
-                      } else {
-                        errorMsg = error.message;
-                      }
-                    } else if (error instanceof Error) {
-                      errorMsg = error.message;
-                    }
-                    cmd.fail(`Failed: ${errorMsg}`);
-                  } finally {
-                    setCommandRunning(false);
-                  }
-                }}
-              />
-            )}
-
-            {/* Feedback Dialog - conditionally mounted as overlay */}
-            {activeOverlay === "feedback" && (
-              <FeedbackDialog
-                onSubmit={handleFeedbackSubmit}
-                onCancel={closeOverlay}
-                initialValue={feedbackPrefill}
-              />
-            )}
-
-            {/* Memory Viewer - conditionally mounted as overlay */}
-            {/* Use tree view for memfs-enabled agents, tab view otherwise */}
-            {activeOverlay === "memory" &&
-              (settingsManager.isMemfsEnabled(agentId) ? (
-                <MemfsTreeViewer
-                  agentId={agentId}
-                  agentName={agentState?.name}
-                  onClose={closeOverlay}
-                  conversationId={conversationId}
-                />
-              ) : (
-                <MemoryTabViewer
-                  blocks={agentState?.memory?.blocks || []}
-                  agentId={agentId}
-                  onClose={closeOverlay}
-                  conversationId={conversationId}
-                />
-              ))}
-
-            {/* Memory sync conflict overlay removed - git-backed memory
-                uses standard git merge conflicts resolved by the agent */}
-
-            {/* MCP Server Selector - conditionally mounted as overlay */}
-            {activeOverlay === "mcp" && (
-              <McpSelector
-                agentId={agentId}
-                onAdd={() => {
-                  // Switch to the MCP connect flow
-                  setActiveOverlay("mcp-connect");
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* MCP Connect Flow - interactive TUI for OAuth connection */}
-            {activeOverlay === "mcp-connect" && (
-              <McpConnectFlow
-                onComplete={(serverName, serverId, toolCount) => {
-                  const overlayCommand = consumeOverlayCommand("mcp-connect");
-                  closeOverlay();
-                  const cmd =
-                    overlayCommand ??
-                    commandRunner.start(
-                      "/mcp connect",
-                      "Connecting MCP server...",
-                    );
-                  cmd.finish(
-                    `Successfully created MCP server "${serverName}"\n` +
-                      `ID: ${serverId}\n` +
-                      `Discovered ${toolCount} tool${toolCount === 1 ? "" : "s"}\n` +
-                      "Open /mcp to attach or detach tools for this server.",
-                    true,
-                  );
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* Help Dialog - conditionally mounted as overlay */}
-            {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
-
-            {/* Skills Dialog - browse available skills */}
-            {activeOverlay === "skills" && (
-              <SkillsDialog onClose={closeOverlay} agentId={agentId} />
-            )}
-
-            {/* Hooks Manager - for managing hooks configuration */}
-            {activeOverlay === "hooks" && (
-              <HooksManager onClose={closeOverlay} agentId={agentId} />
-            )}
-
-            {/* New Agent Dialog - for naming new agent before creation */}
-            {activeOverlay === "new" && (
-              <NewAgentDialog
-                onSubmit={handleCreateNewAgent}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* Pin Dialog - for naming agent before pinning */}
-            {activeOverlay === "pin" && (
-              <PinDialog
-                currentName={agentName || ""}
-                local={pinDialogLocal}
-                onSubmit={async (newName) => {
-                  const overlayCommand = consumeOverlayCommand("pin");
-                  closeOverlay();
-                  setCommandRunning(true);
-
-                  const cmd =
-                    overlayCommand ??
-                    commandRunner.start("/pin", "Pinning agent...");
-                  const scopeText = pinDialogLocal
-                    ? "to this project"
-                    : "globally";
-                  const displayName =
-                    newName || agentName || agentId.slice(0, 12);
-
-                  cmd.update({
-                    output: `Pinning "${displayName}" ${scopeText}...`,
-                    phase: "running",
-                  });
-
-                  try {
-                    // Rename if new name provided
-                    if (newName && newName !== agentName) {
-                      await getBackend().updateAgent(agentId, {
-                        name: newName,
-                      });
-                      updateAgentName(newName);
-                    }
-
-                    // Pin the agent
-                    if (pinDialogLocal) {
-                      settingsManager.pinLocal(agentId);
-                    } else {
-                      settingsManager.pinGlobal(agentId);
-                    }
-
-                    if (newName && newName !== agentName) {
-                      cmd.agentHint = `Your name is now "${newName}" — acknowledge this and save your new name to memory.`;
-                    }
-                    cmd.finish(
-                      `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
-                      true,
-                    );
-                  } catch (error) {
-                    cmd.fail(`Failed to pin: ${error}`);
-                  } finally {
-                    setCommandRunning(false);
-                    refreshDerived();
-                  }
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
-            {/* ExitPlanMode approval is handled by InlinePlanApproval component */}
-
-            {/* AskUserQuestion now rendered inline via InlineQuestionApproval */}
-            {/* EnterPlanMode now rendered inline in liveItems above */}
-            {/* ApprovalDialog removed - all approvals now render inline via InlineGenericApproval fallback */}
-          </>
-        )}
-      </Box>
-    </Box>
+    <AppView
+      activeOverlay={activeOverlay}
+      agentId={agentId}
+      agentName={agentName}
+      agentState={agentState}
+      anySelectorOpen={anySelectorOpen}
+      approvalMap={approvalMap}
+      bashRunning={bashRunning}
+      billingTier={billingTier}
+      btwState={btwState}
+      buffersRef={buffersRef}
+      chromeColumns={chromeColumns}
+      closeOverlay={closeOverlay}
+      columns={columns}
+      commandRunner={commandRunner}
+      consumeOverlayCommand={consumeOverlayCommand}
+      contextTrackerRef={contextTrackerRef}
+      continueSession={continueSession}
+      conversationId={conversationId}
+      currentApproval={currentApproval}
+      currentApprovalContext={currentApprovalContext}
+      currentModelDisplay={currentModelDisplay}
+      currentModelId={currentModelId}
+      currentModelProvider={currentModelProvider}
+      currentPersonalityId={currentPersonalityId}
+      currentReasoningEffort={currentReasoningEffort}
+      currentSystemPromptId={currentSystemPromptId}
+      currentToolset={currentToolset}
+      currentToolsetPreference={currentToolsetPreference}
+      emittedIdsRef={emittedIdsRef}
+      feedbackPrefill={feedbackPrefill}
+      footerUpdateText={footerUpdateText}
+      handleAgentSelect={handleAgentSelect}
+      handleApproveAlways={handleApproveAlways}
+      handleApproveCurrent={handleApproveCurrent}
+      handleBashInterrupt={handleBashInterrupt}
+      handleBashSubmit={handleBashSubmit}
+      handleBtwJump={handleBtwJump}
+      handleCancelApprovals={handleCancelApprovals}
+      handleCompactionModeSelect={handleCompactionModeSelect}
+      handleCreateNewAgent={handleCreateNewAgent}
+      handleCycleReasoningEffort={handleCycleReasoningEffort}
+      handleDenyCurrent={handleDenyCurrent}
+      handleEnterPlanModeApprove={handleEnterPlanModeApprove}
+      handleEnterPlanModeReject={handleEnterPlanModeReject}
+      handleEnterQueueEditMode={handleEnterQueueEditMode}
+      handleExit={handleExit}
+      handleExperimentSelect={handleExperimentSelect}
+      handleFeedbackSubmit={handleFeedbackSubmit}
+      handleInterrupt={handleInterrupt}
+      handleModelSelect={handleModelSelect}
+      handlePasteError={handlePasteError}
+      handlePermissionModeChange={handlePermissionModeChange}
+      handlePersonalitySelect={handlePersonalitySelect}
+      handlePlanApprove={handlePlanApprove}
+      handlePlanKeepPlanning={handlePlanKeepPlanning}
+      handleProfileEscapeCancel={handleProfileEscapeCancel}
+      handleQuestionSubmit={handleQuestionSubmit}
+      handleRalphExit={handleRalphExit}
+      handleSleeptimeModeSelect={handleSleeptimeModeSelect}
+      handleSystemPromptSelect={handleSystemPromptSelect}
+      handleToolsetSelect={handleToolsetSelect}
+      hasBackfilledRef={hasBackfilledRef}
+      hasTemporaryModelOverride={hasTemporaryModelOverride}
+      includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
+      inputEnabled={inputEnabled}
+      inputVisible={inputVisible}
+      interruptRequested={interruptRequested}
+      isAgentBusy={isAgentBusy}
+      lastPlanFilePathRef={lastPlanFilePathRef}
+      liveItems={liveItems}
+      liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
+      loadingState={loadingState}
+      maybeCarryOverActiveConversationModel={
+        maybeCarryOverActiveConversationModel
+      }
+      modelReasoningPrompt={modelReasoningPrompt}
+      modelSelectorOptions={modelSelectorOptions}
+      networkPhase={networkPhase}
+      onSubmit={onSubmit}
+      pendingApprovals={pendingApprovals}
+      pendingConversationSwitchRef={pendingConversationSwitchRef}
+      pendingIds={pendingIds}
+      pendingRalphConfig={pendingRalphConfig}
+      pinDialogLocal={pinDialogLocal}
+      precomputedDiffsRef={precomputedDiffsRef}
+      profileConfirmPending={profileConfirmPending}
+      queueDisplay={queueDisplay}
+      queuedDecisions={queuedDecisions}
+      queuedIds={queuedIds}
+      reasoningTabCycleEnabled={reasoningTabCycleEnabled}
+      recoverRestoredPendingApprovals={recoverRestoredPendingApprovals}
+      refreshDerived={refreshDerived}
+      resetBootstrapReminderState={resetBootstrapReminderState}
+      resetDeferredToolCallCommits={resetDeferredToolCallCommits}
+      resetTrajectoryBases={resetTrajectoryBases}
+      restoredInput={restoredInput}
+      resumeKey={resumeKey}
+      searchQuery={searchQuery}
+      sessionStatsRef={sessionStatsRef}
+      setActiveOverlay={setActiveOverlay}
+      setBtwState={setBtwState}
+      setCommandRunning={setCommandRunning}
+      setConversationAutoTitleEligibility={setConversationAutoTitleEligibility}
+      setConversationIdAndRef={setConversationIdAndRef}
+      setLines={setLines}
+      setModelReasoningPrompt={setModelReasoningPrompt}
+      setModelSelectorOptions={setModelSelectorOptions}
+      setQueuedOverlayAction={setQueuedOverlayAction}
+      setRestoredInput={setRestoredInput}
+      setStaticItems={setStaticItems}
+      setStaticRenderEpoch={setStaticRenderEpoch}
+      shouldAnimate={shouldAnimate}
+      showApprovalPreview={showApprovalPreview}
+      showCompactionsEnabled={showCompactionsEnabled}
+      showExitStats={showExitStats}
+      startOverlayCommand={startOverlayCommand}
+      staticItems={staticItems}
+      staticRenderEpoch={staticRenderEpoch}
+      statusLine={statusLine}
+      streaming={streaming}
+      stubDescriptions={stubDescriptions}
+      thinkingMessage={thinkingMessage}
+      trajectoryTokenDisplay={trajectoryTokenDisplay}
+      uiPermissionMode={uiPermissionMode}
+      uiRalphActive={uiRalphActive}
+      updateAgentName={updateAgentName}
+    />
   );
 }
