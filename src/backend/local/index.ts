@@ -64,4 +64,6 @@ export {
   getLocalBackendMemoryFilesystemRoot,
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
+  isLocalBackendNoMemfsEnvEnabled,
+  LOCAL_BACKEND_NO_MEMFS_ENV,
 } from "./paths";
