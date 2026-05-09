@@ -9,6 +9,14 @@ file first.
 - `useSubmitHandler.ts`: slash-command and user-submit router.
 - `useConversationLoop.ts`: streaming turn loop, retry/recovery, tool execution,
   and reflection auto-launch.
+- `useApprovalFlow.ts`: approval recovery, approve/deny batching, and plan-mode
+  approval handlers.
+- `useConversationSwitching.ts`: `/btw`, agent selection, and new-agent
+  conversation switching flows.
+- `useBashHandlers.ts`: bash-mode submit/interrupt handling.
+- `useQueuedApprovalSubmit.ts`: stale approval recovery helpers used before
+  slash-command sends.
+- `useFeedbackHandler.ts`: `/feedback` submission and diagnostics payload.
 - `useConfigurationHandlers.ts`: model/system/personality/toolset/experiment
   selectors and their queued overlay actions.
 - `constants.ts`: timing, retry, provider fallback, and layout constants.

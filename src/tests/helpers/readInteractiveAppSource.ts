@@ -6,6 +6,11 @@ const INTERACTIVE_APP_SOURCE_FILES = [
   "../../cli/app/useConversationLoop.ts",
   "../../cli/app/useConfigurationHandlers.ts",
   "../../cli/app/AppCoordinator.tsx",
+  "../../cli/app/useApprovalFlow.ts",
+  "../../cli/app/useConversationSwitching.ts",
+  "../../cli/app/useBashHandlers.ts",
+  "../../cli/app/useQueuedApprovalSubmit.ts",
+  "../../cli/app/useFeedbackHandler.ts",
 ];
 
 export function readInteractiveAppSource(): string {
