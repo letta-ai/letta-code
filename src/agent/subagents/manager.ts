@@ -10,7 +10,7 @@
 import { spawn } from "node:child_process";
 import { getBackend } from "../../backend";
 import { getBillingTier } from "../../backend/api/metadata";
-import { buildChatUrl } from "../../cli/helpers/appUrls";
+import { buildAgentReference } from "../../cli/helpers/appUrls";
 import {
   addToolCall,
   emitStreamEvent,
@@ -290,7 +290,7 @@ function handleInitEvent(
 ): void {
   if (event.agent_id) {
     state.agentId = event.agent_id;
-    const agentURL = buildChatUrl(event.agent_id, {
+    const agentURL = buildAgentReference(event.agent_id, {
       conversationId: event.conversation_id,
     });
     updateSubagent(subagentId, { agentId: event.agent_id, agentURL });
