@@ -349,49 +349,49 @@ export interface DiscoverClientSideSkillsOptions {
   discoverSkillsFn?: typeof discoverSkills;
 }
 
-/**
- * Discover all client-side skills from the same roots used for `client_skills`.
- * This intentionally returns both model-invocable and manual-only skills; callers
- * decide whether to filter for model invocation or slash-command invocation.
- */
-export async function discoverClientSideSkills(
-  options: DiscoverClientSideSkillsOptions = {},
+interface CollectClientSideSkillsOptions
+  extends DiscoverClientSideSkillsOptions {
+  legacySkillsDirectory: string;
+  primaryProjectSkillsDirectory: string;
+}
+
+async function collectClientSideSkills(
+  options: CollectClientSideSkillsOptions,
 ): Promise<SkillDiscoveryResult> {
-  const { legacySkillsDirectory, skillSources } =
-    resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
-  const primaryProjectSkillsDirectory = getPrimaryProjectSkillsDirectory();
   const skillsById = new Map<string, Skill>();
   const errors: SkillDiscoveryError[] = [];
 
-  const nonProjectSources = skillSources.filter(
-    (source): source is SkillSource => source !== "project",
-  );
+  const nonProjectSources =
+    options.skillSources?.filter(
+      (source): source is SkillSource => source !== "project",
+    ) ?? [];
 
   const discoveryRuns: Array<{ path: string; sources: SkillSource[] }> = [];
 
   if (nonProjectSources.length > 0) {
     discoveryRuns.push({
-      path: primaryProjectSkillsDirectory,
+      path: options.primaryProjectSkillsDirectory,
       sources: nonProjectSources,
     });
   }
 
-  const includeProjectSource = skillSources.includes("project");
+  const includeProjectSource =
+    options.skillSources?.includes("project") ?? false;
 
   if (
     includeProjectSource &&
-    legacySkillsDirectory !== primaryProjectSkillsDirectory
+    options.legacySkillsDirectory !== options.primaryProjectSkillsDirectory
   ) {
     discoveryRuns.push({
-      path: legacySkillsDirectory,
+      path: options.legacySkillsDirectory,
       sources: ["project"],
     });
   }
 
   if (includeProjectSource) {
     discoveryRuns.push({
-      path: primaryProjectSkillsDirectory,
+      path: options.primaryProjectSkillsDirectory,
       sources: ["project"],
     });
   }
@@ -414,7 +414,7 @@ export async function discoverClientSideSkills(
     }
   }
 
-  if (skillSources.length > 0) {
+  if ((options.skillSources?.length ?? 0) > 0) {
     const memoryDiscovery = await discoverMemorySkills(options.agentId);
     errors.push(...memoryDiscovery.errors);
     for (const skill of memoryDiscovery.skills) {
@@ -430,6 +430,24 @@ export async function discoverClientSideSkills(
     skills: [...skillsById.values()].sort(compareSkills),
     errors,
   };
+}
+
+/**
+ * Discover all client-side skills from the same roots used for `client_skills`.
+ * This intentionally returns both model-invocable and manual-only skills; callers
+ * decide whether to filter for model invocation or slash-command invocation.
+ */
+export async function discoverClientSideSkills(
+  options: DiscoverClientSideSkillsOptions = {},
+): Promise<SkillDiscoveryResult> {
+  const { legacySkillsDirectory, skillSources } =
+    resolveSkillDiscoveryContext(options);
+  return collectClientSideSkills({
+    ...options,
+    legacySkillsDirectory,
+    skillSources,
+    primaryProjectSkillsDirectory: getPrimaryProjectSkillsDirectory(),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -486,84 +504,16 @@ export async function buildClientSkillsPayload(
     }
   }
 
-  const skillsById = new Map<string, Skill>();
-  const errors: SkillDiscoveryError[] = [];
+  const discovery = await collectClientSideSkills({
+    ...options,
+    legacySkillsDirectory,
+    skillSources,
+    primaryProjectSkillsDirectory,
+    discoverSkillsFn,
+  });
+  const errors = discovery.errors;
 
-  const nonProjectSources = skillSources.filter(
-    (source): source is SkillSource => source !== "project",
-  );
-
-  const discoveryRuns: Array<{ path: string; sources: SkillSource[] }> = [];
-
-  // For bundled/global/agent sources, use the primary project root.
-  if (nonProjectSources.length > 0) {
-    discoveryRuns.push({
-      path: primaryProjectSkillsDirectory,
-      sources: nonProjectSources,
-    });
-  }
-
-  const includeProjectSource = skillSources.includes("project");
-
-  // Legacy project location (.skills): discovered first so primary path can override.
-  if (
-    includeProjectSource &&
-    legacySkillsDirectory !== primaryProjectSkillsDirectory
-  ) {
-    discoveryRuns.push({
-      path: legacySkillsDirectory,
-      sources: ["project"],
-    });
-  }
-
-  // Primary location for project-scoped client skills.
-  if (includeProjectSource) {
-    discoveryRuns.push({
-      path: primaryProjectSkillsDirectory,
-      sources: ["project"],
-    });
-  }
-
-  for (const run of discoveryRuns) {
-    try {
-      const discovery = await discoverSkillsFn(run.path, options.agentId, {
-        sources: run.sources,
-      });
-      errors.push(...discovery.errors);
-      for (const skill of discovery.skills) {
-        skillsById.set(skill.id, skill);
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : `Unknown error: ${String(error)}`;
-      errors.push({ path: run.path, message });
-    }
-  }
-
-  // MemFS skills are discovered by the Skill tool, so include them in
-  // client_skills as well. This keeps the model's available-skills list in
-  // sync with actual Skill(...) resolution in desktop/listen mode.
-  if (skillSources.length > 0) {
-    const memoryDiscovery = await discoverMemorySkills(options.agentId);
-    errors.push(...memoryDiscovery.errors);
-    for (const skill of memoryDiscovery.skills) {
-      const existing = skillsById.get(skill.id);
-
-      // Preserve higher-priority skills: project and agent-scoped.
-      // MemFS should override only global/bundled or fill missing ids.
-      if (existing?.source === "project" || existing?.source === "agent") {
-        continue;
-      }
-
-      skillsById.set(skill.id, skill);
-    }
-  }
-
-  const sortedSkills = [...skillsById.values()]
-    .filter(isModelInvocableSkill)
-    .sort(compareSkills);
+  const sortedSkills = discovery.skills.filter(isModelInvocableSkill);
 
   if (errors.length > 0) {
     const summarizedErrors = errors.map(
