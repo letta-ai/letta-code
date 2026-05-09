@@ -12,7 +12,7 @@ import {
   getAllSubagentConfigs,
 } from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagents/manager";
-import { forkConversation } from "../../backend/api/conversations";
+import { getBackend } from "../../backend";
 import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge.js";
 import {
   completeSubagent,
@@ -661,7 +661,7 @@ export async function task(args: TaskArgs): Promise<string> {
       // parent agent's conversation list in the ADE. The subagent still
       // reads/writes this conversation normally — only archive status is
       // affected.
-      const forkedConv = await forkConversation(parentConvId, {
+      const forkedConv = await getBackend().forkConversation(parentConvId, {
         ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
         hidden: true,
       });
