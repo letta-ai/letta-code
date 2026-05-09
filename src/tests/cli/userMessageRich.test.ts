@@ -34,33 +34,25 @@ describe("splitSystemReminderBlocks", () => {
 });
 
 describe("renderBlock", () => {
-  test("wraps highlighted user content in full-width padding rows", () => {
+  test("wraps highlighted user content in erase-to-line-end padding rows", () => {
     const colorAnsi = "\x1b[48;2;45;45;45m";
-    const columns = 24;
-    const lines = renderBlock(
-      "hello world",
-      22,
-      columns,
-      true,
-      colorAnsi,
-      "> ",
-      "  ",
-    );
+    const eraseToEndOfLine = "\x1b[K";
+    const lines = renderBlock("hello world", 22, true, colorAnsi, "> ", "  ");
 
     expect(lines).toHaveLength(3);
     expect(lines.every((line) => line.startsWith(colorAnsi))).toBe(true);
-    expect(stripAnsi(lines[0] ?? "")).toBe(" ".repeat(columns));
-    expect(stripAnsi(lines[1] ?? "")).toBe(
-      `> hello world${" ".repeat(columns - "> hello world".length)}`,
+    expect(lines[0]).toBe(`${colorAnsi}${eraseToEndOfLine}\x1b[0m`);
+    expect(stripAnsi(lines[1] ?? "")).toBe("> hello world");
+    expect(lines[1]?.endsWith(`${colorAnsi}${eraseToEndOfLine}\x1b[0m`)).toBe(
+      true,
     );
-    expect(stripAnsi(lines[2] ?? "")).toBe(" ".repeat(columns));
+    expect(lines[2]).toBe(`${colorAnsi}${eraseToEndOfLine}\x1b[0m`);
   });
 
   test("keeps unhighlighted blocks compact", () => {
     const lines = renderBlock(
       "system context",
       22,
-      24,
       false,
       "\x1b[48;2;45;45;45m",
       "> ",

@@ -108,11 +108,10 @@ export function splitSystemReminderBlocks(
   return blocks;
 }
 
-function renderHighlightedBlankLine(
-  columns: number,
-  colorAnsi: string,
-): string {
-  return `${colorAnsi}${" ".repeat(Math.max(0, columns))}\x1b[0m`;
+const ERASE_TO_END_OF_LINE = "\x1b[K";
+
+function renderHighlightedBlankLine(colorAnsi: string): string {
+  return `${colorAnsi}${ERASE_TO_END_OF_LINE}\x1b[0m`;
 }
 
 /**
@@ -123,7 +122,6 @@ function renderHighlightedBlankLine(
 export function renderBlock(
   text: string,
   contentWidth: number,
-  columns: number,
   highlighted: boolean,
   colorAnsi: string, // combined bg + fg ANSI codes
   promptPrefix: string,
@@ -160,16 +158,16 @@ export function renderBlock(
       i === 0
         ? `${promptPrefix.slice(0, -1)}${colorAnsi} ${ol}`
         : `${prefix}${ol}`;
-    const visWidth = stringWidth(content);
-    const pad = Math.max(0, columns - visWidth);
-    return `${colorAnsi}${content}${" ".repeat(pad)}\x1b[0m`;
+    // Fill to the terminal edge without printing trailing spaces. Padding with
+    // spaces can leave the final cell unpainted after Ink/terminal wrapping.
+    return `${colorAnsi}${content}${colorAnsi}${ERASE_TO_END_OF_LINE}\x1b[0m`;
   });
 
   if (!highlighted) {
     return renderedLines;
   }
 
-  const blankLine = renderHighlightedBlankLine(columns, colorAnsi);
+  const blankLine = renderHighlightedBlankLine(colorAnsi);
   return [blankLine, ...renderedLines, blankLine];
 }
 
@@ -217,7 +215,6 @@ export const UserMessage = memo(
       const blockLines = renderBlock(
         block.text,
         contentWidth,
-        columns,
         !block.isSystemReminder,
         colorAnsi,
         promptPrefix,
