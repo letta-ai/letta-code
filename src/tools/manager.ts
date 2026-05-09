@@ -282,6 +282,9 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   // "MultiEdit",
   // "LS",
   "memory",
+  "GetGoal",
+  "CreateGoal",
+  "UpdateGoal",
   "Read",
   "Skill",
   "Task",
@@ -296,6 +299,9 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "apply_patch",
   "memory_apply_patch",
   "update_plan",
+  "get_goal",
+  "create_goal",
+  "update_goal",
   "view_image",
 ];
 
@@ -330,6 +336,9 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "ViewImage",
   "ApplyPatch",
   "UpdatePlan",
+  "GetGoal",
+  "CreateGoal",
+  "UpdateGoal",
 ];
 
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
@@ -385,6 +394,9 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
+  get_goal: { requiresApproval: false },
+  create_goal: { requiresApproval: false },
+  update_goal: { requiresApproval: false },
   // Gemini toolset
   glob_gemini: { requiresApproval: false },
   list_directory: { requiresApproval: false },
@@ -403,6 +415,9 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   GrepFiles: { requiresApproval: false },
   ApplyPatch: { requiresApproval: true },
   UpdatePlan: { requiresApproval: false },
+  GetGoal: { requiresApproval: false },
+  CreateGoal: { requiresApproval: false },
+  UpdateGoal: { requiresApproval: false },
   // Gemini-2 toolset (PascalCase)
   RunShellCommand: { requiresApproval: true },
   ReadFileGemini: { requiresApproval: false },

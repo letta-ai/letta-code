@@ -31,6 +31,7 @@ import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { buildChatUrl } from "../helpers/appUrls.js";
 import { bytesToTokens, formatCompact } from "../helpers/format";
+import { formatGoalStatusIndicator } from "../helpers/goalCommand";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
   getActiveBackgroundAgents,
@@ -172,6 +173,9 @@ function parseOsc8Line(line: string, keyPrefix: string): ReactNode[] {
 }
 
 function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
+  if (modeGlyph === "") {
+    return modeName;
+  }
   if (modeGlyph === "⚡︎") {
     return `${modeGlyph}${modeName}`;
   }
@@ -246,6 +250,7 @@ const InputFooter = memo(function InputFooter({
   statusLineRight,
   statusLinePadding,
   footerNotification,
+  goalStatusText,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -266,6 +271,7 @@ const InputFooter = memo(function InputFooter({
   statusLineRight?: string;
   statusLinePadding?: number;
   footerNotification?: string | null;
+  goalStatusText?: string | null;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -383,10 +389,12 @@ const InputFooter = memo(function InputFooter({
     hasTemporaryModelOverride,
   ]);
 
-  const rightLabel = useMemo(
-    () => " ".repeat(rightPrefixSpaces) + rightLabelCore,
-    [rightPrefixSpaces, rightLabelCore],
-  );
+  const rightLabel = useMemo(() => {
+    if (goalStatusText) {
+      return chalk.magenta(goalStatusText);
+    }
+    return " ".repeat(rightPrefixSpaces) + rightLabelCore;
+  }, [goalStatusText, rightPrefixSpaces, rightLabelCore]);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -1504,6 +1512,7 @@ export function Input({
     name: string;
     color: string;
     glyph?: string;
+    showExitHint?: boolean;
   } | null>(() => {
     // Check ralph pending first (waiting for task input)
     if (ralphPending) {
@@ -1526,6 +1535,10 @@ export function Input({
         ralph.maxIterations > 0
           ? `${ralph.currentIteration}/${ralph.maxIterations}`
           : `${ralph.currentIteration}`;
+
+      if (ralph.mode === "goal") {
+        return null;
+      }
 
       if (ralph.isYolo) {
         return {
@@ -1559,6 +1572,30 @@ export function Input({
         return null;
     }
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
+
+  const goalStatusText = (() => {
+    if (!conversationId) return null;
+    const goal = settingsManager.getConversationGoal(conversationId);
+    if (!goal) return null;
+    return formatGoalStatusIndicator(goal);
+  })();
+
+  const goalIsActive = (() => {
+    if (!conversationId) return false;
+    return (
+      settingsManager.getConversationGoal(conversationId)?.status === "active"
+    );
+  })();
+
+  const [, setGoalFooterTick] = useState(0);
+  useEffect(() => {
+    if (!goalIsActive) return;
+    const timer = setInterval(
+      () => setGoalFooterTick((tick) => tick + 1),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [goalIsActive]);
 
   // Create a horizontal line using box-drawing characters.
   const horizontalLine = useMemo(
@@ -1652,7 +1689,9 @@ export function Input({
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
-                showExitHint={ralphActive || ralphPending}
+                showExitHint={
+                  modeInfo?.showExitHint ?? (ralphActive || ralphPending)
+                }
                 agentName={agentName}
                 currentModel={currentModel}
                 currentReasoningEffort={currentReasoningEffort}
@@ -1670,6 +1709,7 @@ export function Input({
                 statusLineRight={statusLineRight}
                 statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
+                goalStatusText={goalStatusText}
               />
             )}
           </Box>
@@ -1704,6 +1744,7 @@ export function Input({
     modeInfo?.name,
     modeInfo?.color,
     modeInfo?.glyph,
+    modeInfo?.showExitHint,
     ralphActive,
     ralphPending,
     currentModel,
@@ -1718,6 +1759,7 @@ export function Input({
     statusLineRight,
     statusLinePadding,
     footerNotification,
+    goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,
