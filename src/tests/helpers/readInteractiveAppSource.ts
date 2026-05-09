@@ -14,6 +14,10 @@ const INTERACTIVE_APP_SOURCE_FILES = [
   "../../cli/app/useBashHandlers.ts",
   "../../cli/app/useQueuedApprovalSubmit.ts",
   "../../cli/app/useFeedbackHandler.ts",
+  "../../cli/app/submitDiagnosticsCommands.ts",
+  "../../cli/app/submitConnectionCommands.ts",
+  "../../cli/app/submitNavigationCommands.ts",
+  "../../cli/app/submitProfileCommands.ts",
 ];
 
 export function readInteractiveAppSource(): string {

@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -23,10 +22,6 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "../../agent/approval-recovery";
 import { getResumeDataFromBackend } from "../../agent/check-approval";
-import {
-  applySetMaxContext,
-  formatSetMaxContextResult,
-} from "../../agent/maxContext";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import {
   ensureMemoryFilesystemDirs,
@@ -40,9 +35,7 @@ import {
 import { recordSessionEnd } from "../../agent/sessionHistory";
 import type { SessionStats } from "../../agent/stats";
 import { getBackend } from "../../backend";
-import { getAgentContextOverview } from "../../backend/api/agents";
 import { getClient } from "../../backend/api/client";
-import { getBalanceMetadata } from "../../backend/api/metadata";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
@@ -67,32 +60,10 @@ import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import type { ToolsetName } from "../../tools/toolset";
 import { debugLog, debugWarn } from "../../utils/debug";
-import {
-  handleMcpAdd,
-  type McpCommandContext,
-  setActiveCommandId as setActiveMcpCommandId,
-} from "../commands/mcp";
-import {
-  addCommandResult,
-  handlePin,
-  handleProfileDelete,
-  handleProfileSave,
-  handleProfileUsage,
-  handleUnpin,
-  type ProfileCommandContext,
-  setActiveCommandId as setActiveProfileCommandId,
-  validateProfileLoad,
-} from "../commands/profile";
 import type { CommandHandle } from "../commands/runner";
 import { validateAgentName } from "../components/PinDialog";
-import { formatUsageStats } from "../components/SessionStats";
 import { type Buffers, type Line, toLines } from "../helpers/accumulator";
 import { buildChatUrl } from "../helpers/appUrls";
-import { backfillBuffers } from "../helpers/backfill";
-import {
-  type ContextWindowOverview,
-  renderContextUsage,
-} from "../helpers/contextChart";
 import type { ContextTracker } from "../helpers/contextTracker";
 import { resetContextHistory } from "../helpers/contextTracker";
 import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
@@ -117,13 +88,6 @@ import {
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
 } from "../helpers/reflectionTranscript";
-import {
-  resolvePromptChar,
-  resolveStatusLineConfig,
-} from "../helpers/statusLineConfig";
-import { formatStatusLineHelp } from "../helpers/statusLineHelp";
-import { buildStatusLinePayload } from "../helpers/statusLinePayload";
-import { executeStatusLineCommand } from "../helpers/statusLineRuntime";
 import type { ApprovalRequest } from "../helpers/stream";
 import {
   estimateSystemTokens,
@@ -143,6 +107,10 @@ import {
 } from "./ralph";
 import { hasActiveReflectionSubagent } from "./reflection";
 import { saveLastSessionBeforeExit } from "./session";
+import { handleConnectionCommand } from "./submitConnectionCommands";
+import { handleDiagnosticsCommand } from "./submitDiagnosticsCommands";
+import { handleNavigationCommand } from "./submitNavigationCommands";
+import { handleProfileCommand } from "./submitProfileCommands";
 import type {
   ActiveOverlay,
   AppCommandRunner,
@@ -866,223 +834,23 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /mcp command - manage MCP servers
-        if (msg.trim().startsWith("/mcp")) {
-          const mcpCtx: McpCommandContext = {
-            buffersRef,
-            refreshDerived,
-            setCommandRunning,
-          };
-
-          // Check for subcommand by looking at the first word after /mcp
-          const afterMcp = msg.trim().slice(4).trim(); // Remove "/mcp" prefix
-          const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
-
-          if (
-            firstWord !== "help" &&
-            !getBackend().capabilities.serverSideToolManagement
-          ) {
-            const cmd = commandRunner.start(msg, "Checking MCP support...");
-            cmd.fail(
-              "MCP server management is not supported by the local backend yet.",
-            );
-            return { submitted: true };
-          }
-
-          // /mcp - open MCP server selector
-          if (!firstWord) {
-            startOverlayCommand(
-              "mcp",
-              "/mcp",
-              "Opening MCP server manager...",
-              "MCP dialog dismissed",
-            );
-            setActiveOverlay("mcp");
-            return { submitted: true };
-          }
-
-          // /mcp add --transport <type> <name> <url/command> [options]
-          if (firstWord === "add") {
-            // Pass the full command string after "add" to preserve quotes
-            const afterAdd = afterMcp.slice(firstWord.length).trim();
-            const cmd = commandRunner.start(msg, "Adding MCP server...");
-            setActiveMcpCommandId(cmd.id);
-            try {
-              await handleMcpAdd(mcpCtx, msg, afterAdd);
-            } finally {
-              setActiveMcpCommandId(null);
-            }
-            return { submitted: true };
-          }
-
-          // /mcp connect - interactive TUI for connecting with OAuth
-          if (firstWord === "connect") {
-            startOverlayCommand(
-              "mcp-connect",
-              "/mcp connect",
-              "Opening MCP connect flow...",
-              "MCP connect dismissed",
-            );
-            setActiveOverlay("mcp-connect");
-            return { submitted: true };
-          }
-
-          // /mcp help - show usage
-          if (firstWord === "help") {
-            const cmd = commandRunner.start(msg, "Showing MCP help...");
-            const output = [
-              "/mcp help",
-              "",
-              "Manage MCP servers.",
-              "",
-              "USAGE",
-              "  /mcp              — open MCP server manager",
-              "  /mcp add ...      — add a new server (without OAuth)",
-              "  /mcp connect      — interactive wizard with OAuth support",
-              "  /mcp help         — show this help",
-              "",
-              "EXAMPLES",
-              "  /mcp add --transport http notion https://mcp.notion.com/mcp",
-            ].join("\n");
-            cmd.finish(output, true);
-            return { submitted: true };
-          }
-
-          // Unknown subcommand
+        const connectionCommandResult = await handleConnectionCommand(
+          msg,
+          trimmed,
           {
-            const cmd = commandRunner.start(msg, "Checking MCP usage...");
-            cmd.fail(
-              `Unknown subcommand: "${firstWord}". Run /mcp help for usage.`,
-            );
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /connect command - opens provider selector
-        if (msg.trim() === "/connect") {
-          startOverlayCommand(
-            "connect",
-            "/connect",
-            "Opening provider selector...",
-            "Connect dialog dismissed",
-          );
-          setActiveOverlay("connect");
-          return { submitted: true };
-        }
-
-        // /connect <provider> - direct CLI-style provider flow
-        if (msg.trim().startsWith("/connect ")) {
-          const cmd = commandRunner.start(msg, "Starting connection...");
-          const {
-            handleConnect,
-            setActiveCommandId: setActiveConnectCommandId,
-          } = await import("../commands/connect");
-          setActiveConnectCommandId(cmd.id);
-          try {
-            await handleConnect(
-              {
-                buffersRef,
-                refreshDerived,
-                setCommandRunning,
-                onCodexConnected: () => {
-                  setModelSelectorOptions({
-                    filterProvider: "chatgpt-plus-pro",
-                    forceRefresh: true,
-                  });
-                  startOverlayCommand(
-                    "model",
-                    "/model",
-                    "Opening model selector...",
-                    "Models dialog dismissed",
-                  );
-                  setActiveOverlay("model");
-                },
-              },
-              msg,
-            );
-          } finally {
-            setActiveConnectCommandId(null);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /disconnect command - remove OAuth connection
-        if (msg.trim().startsWith("/disconnect")) {
-          const cmd = commandRunner.start(msg, "Disconnecting...");
-          const {
-            handleDisconnect,
-            setActiveCommandId: setActiveConnectCommandId,
-          } = await import("../commands/connect");
-          setActiveConnectCommandId(cmd.id);
-          try {
-            await handleDisconnect(
-              {
-                buffersRef,
-                refreshDerived,
-                setCommandRunning,
-              },
-              msg,
-            );
-          } finally {
-            setActiveConnectCommandId(null);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /server command (alias: /remote)
-        if (
-          trimmed === "/server" ||
-          trimmed.startsWith("/server ") ||
-          trimmed === "/remote" ||
-          trimmed.startsWith("/remote ")
-        ) {
-          // Tokenize with quote support: --name "my laptop"
-          const parts = Array.from(
-            trimmed.matchAll(
-              /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g,
-            ),
-            (match) => match[1] ?? match[2] ?? match[3],
-          );
-
-          let name: string | undefined;
-          let _listenAgentId: string | undefined;
-
-          for (let i = 1; i < parts.length; i++) {
-            const part = parts[i];
-            const nextPart = parts[i + 1];
-            if (part === "--env-name" && nextPart) {
-              name = nextPart;
-              i++;
-            }
-          }
-
-          const cmd = commandRunner.start(msg, "Starting listener...");
-          if (!getBackend().capabilities.remoteMemfs) {
-            cmd.fail(
-              "Remote listener mode is not supported by the local backend.",
-            );
-            return { submitted: true };
-          }
-
-          const { handleListen, setActiveCommandId: setActiveListenCommandId } =
-            await import("../commands/listen");
-          setActiveListenCommandId(cmd.id);
-          try {
-            await handleListen(
-              {
-                buffersRef,
-                refreshDerived,
-                setCommandRunning,
-                agentId,
-                conversationId: conversationIdRef.current,
-              },
-              msg,
-              { envName: name },
-            );
-          } finally {
-            setActiveListenCommandId(null);
-          }
-          return { submitted: true };
+            agentId,
+            buffersRef,
+            commandRunner,
+            conversationIdRef,
+            refreshDerived,
+            setActiveOverlay,
+            setCommandRunning,
+            setModelSelectorOptions,
+            startOverlayCommand,
+          },
+        );
+        if (connectionCommandResult) {
+          return connectionCommandResult;
         }
 
         // Special handling for /help command - opens help dialog
@@ -1109,347 +877,41 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /statusline command
-        if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
-          const rawArgs = trimmed.slice("/statusline".length).trim();
-          const spaceIdx = rawArgs.indexOf(" ");
-          const sub =
-            spaceIdx === -1 ? rawArgs || "show" : rawArgs.slice(0, spaceIdx);
-          const rest =
-            spaceIdx === -1 ? "" : rawArgs.slice(spaceIdx + 1).trim();
-          const cmd = commandRunner.start(trimmed, "Managing status line...");
-
-          (async () => {
-            try {
-              const wd = process.cwd();
-              if (sub === "help") {
-                cmd.finish(formatStatusLineHelp(), true, true);
-              } else if (sub === "show") {
-                // Display config from all levels + resolved effective
-                const lines: string[] = [];
-                try {
-                  const global = settingsManager.getSettings().statusLine;
-                  lines.push(
-                    `Global: ${global?.command ? `command="${global.command}" refreshInterval=${global.refreshIntervalMs ?? "off"} timeout=${global.timeout ?? "default"} debounce=${global.debounceMs ?? "default"} padding=${global.padding ?? 0} disabled=${global.disabled ?? false}` : "(not set)"}`,
-                  );
-                } catch {
-                  lines.push("Global: (unavailable)");
-                }
-                try {
-                  const project =
-                    settingsManager.getProjectSettings(wd)?.statusLine;
-                  lines.push(
-                    `Project: ${project?.command ? `command="${project.command}"` : "(not set)"}`,
-                  );
-                } catch {
-                  lines.push("Project: (not loaded)");
-                }
-                try {
-                  const local =
-                    settingsManager.getLocalProjectSettings(wd)?.statusLine;
-                  lines.push(
-                    `Local: ${local?.command ? `command="${local.command}"` : "(not set)"}`,
-                  );
-                } catch {
-                  lines.push("Local: (not loaded)");
-                }
-                const effective = resolveStatusLineConfig(wd);
-                lines.push(
-                  `Effective: ${effective ? `command="${effective.command}" refreshInterval=${effective.refreshIntervalMs ?? "off"} timeout=${effective.timeout}ms debounce=${effective.debounceMs}ms padding=${effective.padding}` : "(inactive)"}`,
-                );
-                const effectivePrompt = resolvePromptChar(wd);
-                lines.push(`Prompt: "${effectivePrompt}"`);
-                cmd.finish(lines.join("\n"), true);
-              } else if (sub === "set") {
-                if (!rest) {
-                  cmd.finish("Usage: /statusline set <command> [-l|-p]", false);
-                  return;
-                }
-                const scopeMatch = rest.match(/\s+-(l|p)$/);
-                const command = scopeMatch
-                  ? rest.slice(0, scopeMatch.index)
-                  : rest;
-                const isLocal = scopeMatch?.[1] === "l";
-                const isProject = scopeMatch?.[1] === "p";
-                const config = { command };
-                if (isLocal) {
-                  settingsManager.updateLocalProjectSettings(
-                    { statusLine: config },
-                    wd,
-                  );
-                  cmd.finish(`Status line set (local): ${command}`, true);
-                } else if (isProject) {
-                  await settingsManager.loadProjectSettings(wd);
-                  settingsManager.updateProjectSettings(
-                    { statusLine: config },
-                    wd,
-                  );
-                  cmd.finish(`Status line set (project): ${command}`, true);
-                } else {
-                  settingsManager.updateSettings({ statusLine: config });
-                  cmd.finish(`Status line set (global): ${command}`, true);
-                }
-              } else if (sub === "clear") {
-                const isLocal = rest === "-l";
-                const isProject = rest === "-p";
-                if (isLocal) {
-                  settingsManager.updateLocalProjectSettings(
-                    { statusLine: undefined },
-                    wd,
-                  );
-                  cmd.finish("Status line cleared (local)", true);
-                } else if (isProject) {
-                  await settingsManager.loadProjectSettings(wd);
-                  settingsManager.updateProjectSettings(
-                    { statusLine: undefined },
-                    wd,
-                  );
-                  cmd.finish("Status line cleared (project)", true);
-                } else {
-                  settingsManager.updateSettings({ statusLine: undefined });
-                  cmd.finish("Status line cleared (global)", true);
-                }
-              } else if (sub === "test") {
-                const config = resolveStatusLineConfig(wd);
-                if (!config) {
-                  cmd.finish("No status line configured", false);
-                  return;
-                }
-                const stats = sessionStatsRef.current.getSnapshot();
-                const result = await executeStatusLineCommand(
-                  config.command,
-                  buildStatusLinePayload({
-                    modelId: llmConfigRef.current?.model ?? null,
-                    modelDisplayName: currentModelDisplay,
-                    reasoningEffort: currentReasoningEffort,
-                    systemPromptId: currentSystemPromptId,
-                    toolset: currentToolset,
-                    currentDirectory: wd,
-                    projectDirectory,
-                    sessionId: conversationIdRef.current,
-                    agentId,
-                    agentName,
-                    lastRunId: lastRunIdRef.current,
-                    totalDurationMs: stats.totalWallMs,
-                    totalApiDurationMs: stats.totalApiMs,
-                    totalInputTokens: stats.usage.promptTokens,
-                    totalOutputTokens: stats.usage.completionTokens,
-                    contextWindowSize: effectiveContextWindowSize,
-                    usedContextTokens:
-                      contextTrackerRef.current.lastContextTokens,
-                    stepCount: stats.usage.stepCount,
-                    turnCount: sharedReminderStateRef.current.turnCount,
-                    reflectionMode: getReflectionSettings(agentId).trigger,
-                    reflectionStepCount:
-                      getReflectionSettings(agentId).stepCount,
-                    memfsEnabled:
-                      agentId !== "loading"
-                        ? settingsManager.isMemfsEnabled(agentId)
-                        : false,
-                    memfsDirectory:
-                      agentId !== "loading" &&
-                      settingsManager.isMemfsEnabled(agentId)
-                        ? getScopedMemoryFilesystemRoot(agentId)
-                        : null,
-                    permissionMode: uiPermissionMode,
-                    networkPhase,
-                    terminalWidth: chromeColumns,
-                  }),
-                  { timeout: config.timeout, workingDirectory: wd },
-                );
-                if (result.ok) {
-                  cmd.finish(
-                    `Output: ${result.text} (${result.durationMs}ms)`,
-                    true,
-                  );
-                } else {
-                  cmd.finish(
-                    `Error: ${result.error} (${result.durationMs}ms)`,
-                    false,
-                  );
-                }
-              } else if (sub === "disable") {
-                settingsManager.updateSettings({
-                  statusLine: {
-                    ...settingsManager.getSettings().statusLine,
-                    command:
-                      settingsManager.getSettings().statusLine?.command ?? "",
-                    disabled: true,
-                  },
-                });
-                cmd.finish("Status line disabled", true);
-              } else if (sub === "enable") {
-                const current = settingsManager.getSettings().statusLine;
-                if (!current?.command) {
-                  cmd.finish(
-                    "No status line configured. Use /statusline set <command> first.",
-                    false,
-                  );
-                } else {
-                  settingsManager.updateSettings({
-                    statusLine: { ...current, disabled: false },
-                  });
-                  cmd.finish("Status line enabled", true);
-                }
-              } else {
-                cmd.finish(
-                  `Unknown subcommand: ${sub}. Use help|show|set|clear|test|enable|disable`,
-                  false,
-                );
-              }
-            } catch (error) {
-              cmd.finish(
-                `Error: ${error instanceof Error ? error.message : String(error)}`,
-                false,
-              );
-            }
-          })();
-
-          triggerStatusLineRefresh();
-          return { submitted: true };
-        }
-
-        // Special handling for /usage command - show session stats
-        if (trimmed === "/usage") {
-          const cmd = commandRunner.start(
-            trimmed,
-            "Fetching usage statistics...",
-          );
-
-          // Fetch balance and display stats asynchronously
-          (async () => {
-            try {
-              const stats = sessionStatsRef.current.getSnapshot();
-
-              // Try to fetch balance info (only works for Letta Cloud)
-              // Silently skip if endpoint not available (not deployed yet or self-hosted)
-              let balance:
-                | {
-                    total_balance: number;
-                    monthly_credit_balance: number;
-                    purchased_credit_balance: number;
-                    billing_tier: string;
-                  }
-                | undefined;
-
-              try {
-                balance = await getBalanceMetadata();
-              } catch {
-                // Silently skip balance info if endpoint not available
-              }
-
-              const output = formatUsageStats({
-                stats,
-                balance,
-              });
-
-              cmd.finish(output, true, true);
-            } catch (error) {
-              cmd.fail(
-                `Error fetching usage: ${error instanceof Error ? error.message : String(error)}`,
-              );
-            }
-          })();
-
-          return { submitted: true };
-        }
-
-        // Special handling for /context command - show context window usage
-        if (trimmed === "/context") {
-          const contextWindow = effectiveContextWindowSize ?? 0;
-          const model = llmConfigRef.current?.model ?? "unknown";
-
-          // Use most recent total tokens from usage_statistics as context size (after turn)
-          const usedTokens = contextTrackerRef.current.lastContextTokens;
-          const history = contextTrackerRef.current.contextTokensHistory;
-
-          const cmd = commandRunner.start(
-            trimmed,
-            "Fetching context breakdown...",
-          );
-
-          // Fetch breakdown (5s timeout)
-          let breakdown: ContextWindowOverview | undefined;
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-            try {
-              breakdown = await getAgentContextOverview<ContextWindowOverview>(
-                agentIdRef.current,
-                { signal: controller.signal },
-              );
-            } finally {
-              clearTimeout(timeoutId);
-            }
-          } catch {
-            // Timeout or network error — proceed without breakdown
-          }
-
-          // Render the full chart once, directly into the finished output
-          cmd.finish(
-            renderContextUsage({
-              usedTokens,
-              contextWindow,
-              model,
-              history,
-              ...(breakdown && { breakdown }),
-            }),
-            true,
-            false,
-            true,
-          );
-
-          return { submitted: true };
-        }
-
-        // Hidden command for setting/resetting the active scope's max context window.
-        if (
-          trimmed === "/set-max-context" ||
-          trimmed.startsWith("/set-max-context ")
-        ) {
-          const args = trimmed.slice("/set-max-context".length).trim();
-          const cmd = commandRunner.start(
-            trimmed,
-            "Setting max context window...",
-          );
-          setCommandRunning(true);
-
-          try {
-            const result = await applySetMaxContext({
-              agentId: agentIdRef.current,
-              conversationId: conversationIdRef.current,
-              args,
-              currentModelId,
-              currentModelHandle,
-              currentLlmConfig: llmConfigRef.current,
-              currentContextWindow: effectiveContextWindowSize ?? null,
-            });
-
-            if (result.updatedAgent) {
-              setAgentState(result.updatedAgent);
-              setHasConversationModelOverride(false);
-              setConversationOverrideModelSettings(null);
-              setConversationOverrideContextWindowLimit(null);
-            } else {
-              setHasConversationModelOverride(true);
-              setConversationOverrideContextWindowLimit(result.contextWindow);
-            }
-
-            setLlmConfig({
-              ...(llmConfigRef.current ?? ({} as LlmConfig)),
-              context_window: result.contextWindow,
-            } as LlmConfig);
-            resetContextHistory(contextTrackerRef.current);
-            cmd.finish(formatSetMaxContextResult(result), true);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed to set max context: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
-
-          return { submitted: true };
+        const diagnosticsCommandResult = await handleDiagnosticsCommand(
+          trimmed,
+          {
+            agentId,
+            agentIdRef,
+            agentName,
+            chromeColumns,
+            commandRunner,
+            contextTrackerRef,
+            conversationIdRef,
+            currentModelDisplay,
+            currentModelHandle,
+            currentModelId,
+            currentReasoningEffort,
+            currentSystemPromptId,
+            currentToolset,
+            effectiveContextWindowSize,
+            lastRunIdRef,
+            llmConfigRef,
+            networkPhase,
+            projectDirectory,
+            sessionStatsRef,
+            setAgentState,
+            setCommandRunning,
+            setConversationOverrideContextWindowLimit,
+            setConversationOverrideModelSettings,
+            setHasConversationModelOverride,
+            setLlmConfig,
+            sharedReminderStateRef,
+            triggerStatusLineRefresh,
+            uiPermissionMode,
+          },
+        );
+        if (diagnosticsCommandResult) {
+          return diagnosticsCommandResult;
         }
 
         // Special handling for /recompile command - recompile agent + current conversation
@@ -2281,413 +1743,51 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /agents command - show agent browser
-        // /pinned, /profiles are hidden aliases
-        if (
-          msg.trim() === "/agents" ||
-          msg.trim() === "/pinned" ||
-          msg.trim() === "/profiles"
-        ) {
-          startOverlayCommand(
-            "resume",
-            "/agents",
-            "Opening agent browser...",
-            "Agent browser dismissed",
-          );
-          setActiveOverlay("resume");
-          return { submitted: true };
+        // Special handling for /agents command - routed through navigation commands.
+        const navigationCommandResult = await handleNavigationCommand(trimmed, {
+          agentId,
+          agentState,
+          buffersRef,
+          commandRunner,
+          contextTrackerRef,
+          conversationId,
+          emittedIdsRef,
+          hasBackfilledRef,
+          pendingConversationSwitchRef,
+          recoverRestoredPendingApprovals,
+          resetBootstrapReminderState,
+          resetDeferredToolCallCommits,
+          resetTrajectoryBases,
+          setActiveOverlay,
+          setCommandRunning,
+          setConversationAutoTitleEligibility,
+          setConversationIdAndRef,
+          setLines,
+          setSearchQuery,
+          setStaticItems,
+          setStaticRenderEpoch,
+          startOverlayCommand,
+        });
+        if (navigationCommandResult) {
+          return navigationCommandResult;
         }
 
-        // Special handling for /resume command - show conversation selector or switch directly
-        if (msg.trim().startsWith("/resume")) {
-          const parts = msg.trim().split(/\s+/);
-          const targetConvId = parts[1]; // Optional conversation ID
-
-          if (targetConvId === "help") {
-            const cmd = commandRunner.start(
-              msg.trim(),
-              "Showing resume help...",
-            );
-            const output = [
-              "/resume help",
-              "",
-              "Resume a previous conversation.",
-              "",
-              "USAGE",
-              "  /resume                       — open conversation selector",
-              "  /resume <conversation_id>     — switch directly to a conversation",
-              "  /resume help                  — show this help",
-            ].join("\n");
-            cmd.finish(output, true);
-            return { submitted: true };
-          }
-
-          if (targetConvId) {
-            const cmd = commandRunner.start(
-              msg.trim(),
-              "Switching conversation...",
-            );
-            // Direct switch to specified conversation
-            if (targetConvId === conversationId) {
-              cmd.finish("Already on this conversation", true);
-              return { submitted: true };
-            }
-
-            // Lock input and show loading
-            setCommandRunning(true);
-
-            try {
-              // Validate conversation exists BEFORE updating state
-              // (getResumeData throws 404/422 for non-existent conversations)
-              if (agentState) {
-                const resumeData = await getResumeDataFromBackend(
-                  agentState,
-                  targetConvId,
-                );
-
-                // Only update state after validation succeeds
-                setConversationIdAndRef(targetConvId);
-                setConversationAutoTitleEligibility(false);
-
-                pendingConversationSwitchRef.current = {
-                  origin: "resume-direct",
-                  conversationId: targetConvId,
-                  isDefault: targetConvId === "default",
-                  messageCount: resumeData.messageHistory.length,
-                  messageHistory: resumeData.messageHistory,
-                };
-
-                settingsManager.persistSession(agentId, targetConvId);
-
-                // Build success message
-                const currentAgentName = agentState.name || "Unnamed Agent";
-                const successLines =
-                  resumeData.messageHistory.length > 0
-                    ? [
-                        `Resumed conversation with "${currentAgentName}"`,
-                        `⎿  Agent: ${agentId}`,
-                        `⎿  Conversation: ${targetConvId}`,
-                      ]
-                    : [
-                        `Switched to conversation with "${currentAgentName}"`,
-                        `⎿  Agent: ${agentId}`,
-                        `⎿  Conversation: ${targetConvId} (empty)`,
-                      ];
-                const successOutput = successLines.join("\n");
-                cmd.finish(successOutput, true);
-                const successItem: StaticItem = {
-                  kind: "command",
-                  id: cmd.id,
-                  input: cmd.input,
-                  output: successOutput,
-                  phase: "finished",
-                  success: true,
-                };
-
-                // Clear current transcript and static items
-                buffersRef.current.byId.clear();
-                buffersRef.current.order = [];
-                buffersRef.current.tokenCount = 0;
-                resetContextHistory(contextTrackerRef.current);
-                resetBootstrapReminderState();
-                emittedIdsRef.current.clear();
-                resetDeferredToolCallCommits();
-                setStaticItems([]);
-                setStaticRenderEpoch((e: number) => e + 1);
-                resetTrajectoryBases();
-
-                // Backfill message history
-                if (resumeData.messageHistory.length > 0) {
-                  hasBackfilledRef.current = false;
-                  backfillBuffers(
-                    buffersRef.current,
-                    resumeData.messageHistory,
-                  );
-                  const backfilledItems: StaticItem[] = [];
-                  for (const id of buffersRef.current.order) {
-                    const ln = buffersRef.current.byId.get(id);
-                    if (!ln) continue;
-                    emittedIdsRef.current.add(id);
-                    backfilledItems.push({ ...ln } as StaticItem);
-                  }
-                  const separator = {
-                    kind: "separator" as const,
-                    id: uid("sep"),
-                  };
-                  setStaticItems([separator, ...backfilledItems, successItem]);
-                  setLines(toLines(buffersRef.current));
-                  hasBackfilledRef.current = true;
-                } else {
-                  const separator = {
-                    kind: "separator" as const,
-                    id: uid("sep"),
-                  };
-                  setStaticItems([separator, successItem]);
-                  setLines(toLines(buffersRef.current));
-                }
-
-                // Restore pending approvals if any (fixes #540 for /resume command)
-                if (resumeData.pendingApprovals.length > 0) {
-                  await recoverRestoredPendingApprovals(
-                    resumeData.pendingApprovals,
-                  );
-                }
-              }
-            } catch (error) {
-              // Update existing loading message instead of creating new one
-              // Format error message to be user-friendly (avoid raw JSON/internal details)
-              let errorMsg = "Unknown error";
-              if (error instanceof APIError) {
-                if (error.status === 404) {
-                  errorMsg = "Conversation not found";
-                } else if (error.status === 422) {
-                  errorMsg = "Invalid conversation ID";
-                } else {
-                  errorMsg = error.message;
-                }
-              } else if (error instanceof Error) {
-                errorMsg = error.message;
-              }
-              cmd.fail(`Failed to switch conversation: ${errorMsg}`);
-            } finally {
-              setCommandRunning(false);
-            }
-            return { submitted: true };
-          }
-
-          // No conversation ID provided - show selector
-          startOverlayCommand(
-            "conversations",
-            "/resume",
-            "Opening conversation selector...",
-            "Conversation selector dismissed",
-          );
-          setActiveOverlay("conversations");
-          return { submitted: true };
-        }
-
-        // Special handling for /search command - show message search
-        if (trimmed.startsWith("/search")) {
-          // Extract optional query after /search
-          const [, ...rest] = trimmed.split(/\s+/);
-          const query = rest.join(" ").trim();
-          setSearchQuery(query);
-          startOverlayCommand(
-            "search",
-            "/search",
-            "Opening message search...",
-            "Message search dismissed",
-          );
-          setActiveOverlay("search");
-          return { submitted: true };
-        }
-
-        // Special handling for /profile command - manage local profiles
-        if (msg.trim().startsWith("/profile")) {
-          const parts = msg.trim().split(/\s+/);
-          const subcommand = parts[1]?.toLowerCase();
-          const profileName = parts.slice(2).join(" ");
-
-          const profileCtx: ProfileCommandContext = {
-            buffersRef,
-            refreshDerived,
-            agentId,
-            agentName: agentName || "",
-            setCommandRunning,
-            updateAgentName,
-          };
-
-          // /profile - open agent browser (now points to /agents)
-          if (!subcommand) {
-            startOverlayCommand(
-              "resume",
-              "/profile",
-              "Opening agent browser...",
-              "Agent browser dismissed",
-            );
-            setActiveOverlay("resume");
-            return { submitted: true };
-          }
-
-          const cmd = commandRunner.start(
-            msg.trim(),
-            "Running profile command...",
-          );
-          setActiveProfileCommandId(cmd.id);
-          const clearProfileCommandId = () => setActiveProfileCommandId(null);
-
-          // /profile save <name>
-          if (subcommand === "save") {
-            await handleProfileSave(profileCtx, msg, profileName);
-            clearProfileCommandId();
-            return { submitted: true };
-          }
-
-          // /profile load <name>
-          if (subcommand === "load") {
-            const validation = validateProfileLoad(
-              profileCtx,
-              msg,
-              profileName,
-            );
-            if (validation.errorMessage) {
-              clearProfileCommandId();
-              return { submitted: true };
-            }
-
-            if (validation.needsConfirmation && validation.targetAgentId) {
-              // Show warning and wait for confirmation
-              const cmdId = addCommandResult(
-                buffersRef,
-                refreshDerived,
-                msg,
-                "Warning: Current agent is not saved to any profile.\nPress Enter to continue, or type anything to cancel.",
-                false,
-                "running",
-              );
-              setProfileConfirmPending({
-                name: profileName,
-                agentId: validation.targetAgentId,
-                cmdId,
-              });
-              clearProfileCommandId();
-              return { submitted: true };
-            }
-
-            // Current agent is saved, proceed with loading
-            if (validation.targetAgentId) {
-              await handleAgentSelect(validation.targetAgentId, {
-                profileName,
-                commandId: cmd.id,
-              });
-            }
-            clearProfileCommandId();
-            return { submitted: true };
-          }
-
-          // /profile delete <name>
-          if (subcommand === "delete") {
-            handleProfileDelete(profileCtx, msg, profileName);
-            clearProfileCommandId();
-            return { submitted: true };
-          }
-
-          // Unknown subcommand
-          handleProfileUsage(profileCtx, msg);
-          clearProfileCommandId();
-          return { submitted: true };
-        }
-
-        // Special handling for /new command - create new agent dialog
-        // Special handling for /pin command - pin current agent to project (or globally with -g)
-        if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
-          const argsStr = msg.trim().slice(4).trim();
-
-          if (argsStr === "help") {
-            const cmd = commandRunner.start(msg.trim(), "Showing pin help...");
-            const output = [
-              "/pin help",
-              "",
-              "Pin the current agent.",
-              "",
-              "USAGE",
-              "  /pin        — pin globally (interactive)",
-              "  /pin -l     — pin locally to this directory",
-              "  /pin help   — show this help",
-            ].join("\n");
-            cmd.finish(output, true);
-            return { submitted: true };
-          }
-
-          // Parse args to check if name was provided
-          const parts = argsStr.split(/\s+/).filter(Boolean);
-          let hasNameArg = false;
-          let isLocal = false;
-
-          for (const part of parts) {
-            if (part === "-l" || part === "--local") {
-              isLocal = true;
-            } else {
-              hasNameArg = true;
-            }
-          }
-
-          // If no name provided, show the pin dialog
-          if (!hasNameArg) {
-            setPinDialogLocal(isLocal);
-            startOverlayCommand(
-              "pin",
-              "/pin",
-              "Opening pin dialog...",
-              "Pin dialog dismissed",
-            );
-            setActiveOverlay("pin");
-            return { submitted: true };
-          }
-
-          // Name was provided, use existing behavior
-          const profileCtx: ProfileCommandContext = {
-            buffersRef,
-            refreshDerived,
-            agentId,
-            agentName: agentName || "",
-            setCommandRunning,
-            updateAgentName,
-          };
-          {
-            const cmd = commandRunner.start(msg.trim(), "Pinning agent...");
-            setActiveProfileCommandId(cmd.id);
-            try {
-              await handlePin(profileCtx, msg, argsStr);
-            } finally {
-              setActiveProfileCommandId(null);
-            }
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /unpin command - unpin current agent from project (or globally with -g)
-        if (msg.trim() === "/unpin" || msg.trim().startsWith("/unpin ")) {
-          const unpinArgsStr = msg.trim().slice(6).trim();
-
-          if (unpinArgsStr === "help") {
-            const cmd = commandRunner.start(
-              msg.trim(),
-              "Showing unpin help...",
-            );
-            const output = [
-              "/unpin help",
-              "",
-              "Unpin the current agent.",
-              "",
-              "USAGE",
-              "  /unpin       — unpin globally",
-              "  /unpin -l    — unpin locally",
-              "  /unpin help  — show this help",
-            ].join("\n");
-            cmd.finish(output, true);
-            return { submitted: true };
-          }
-
-          const profileCtx: ProfileCommandContext = {
-            buffersRef,
-            refreshDerived,
-            agentId,
-            agentName: agentName || "",
-            setCommandRunning,
-            updateAgentName,
-          };
-          const argsStr = msg.trim().slice(6).trim();
-          {
-            const cmd = commandRunner.start(msg.trim(), "Unpinning agent...");
-            setActiveProfileCommandId(cmd.id);
-            try {
-              handleUnpin(profileCtx, msg, argsStr);
-            } finally {
-              setActiveProfileCommandId(null);
-            }
-          }
-          return { submitted: true };
+        const profileCommandResult = await handleProfileCommand(msg, trimmed, {
+          agentId,
+          agentName,
+          buffersRef,
+          commandRunner,
+          handleAgentSelect,
+          refreshDerived,
+          setActiveOverlay,
+          setCommandRunning,
+          setPinDialogLocal,
+          setProfileConfirmPending,
+          startOverlayCommand,
+          updateAgentName,
+        });
+        if (profileCommandResult) {
+          return profileCommandResult;
         }
 
         // Special handling for /bg command - show background shell processes
