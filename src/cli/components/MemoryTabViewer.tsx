@@ -2,7 +2,7 @@ import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useState } from "react";
-import { getClient } from "../../backend/api/client";
+import { getBackend } from "../../backend";
 import { debugLog } from "../../utils/debug";
 import { buildChatUrl } from "../helpers/appUrls";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -52,8 +52,7 @@ export function MemoryTabViewer({
   useEffect(() => {
     const fetchBlocks = async () => {
       try {
-        const client = await getClient();
-        const agent = await client.agents.retrieve(agentId, {
+        const agent = await getBackend().retrieveAgent(agentId, {
           include: ["agent.blocks"],
         });
         setFreshBlocks(agent.memory?.blocks || []);

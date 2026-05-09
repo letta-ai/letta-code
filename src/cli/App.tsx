@@ -47,7 +47,7 @@ import {
   shouldRetryRunMetadataError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
-import { getResumeData } from "../agent/check-approval";
+import { getResumeDataFromBackend } from "../agent/check-approval";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { selectDefaultAgentModel } from "../agent/defaults";
@@ -84,7 +84,6 @@ import { SessionStats } from "../agent/stats";
 import { type ConversationMessageStreamBody, getBackend } from "../backend";
 import { getAgentContextOverview } from "../backend/api/agents";
 import { getClient, getServerUrl } from "../backend/api/client";
-import { forkConversation } from "../backend/api/conversations";
 import {
   getBalanceMetadata,
   getBillingTier,
@@ -3736,13 +3735,12 @@ export default function App({
       }
 
       try {
-        const client = await getClient();
         debugLog(
           "conversations",
           `retrieve(${conversationId}) [syncConversationModel]`,
         );
         const conversation =
-          await client.conversations.retrieve(conversationId);
+          await getBackend().retrieveConversation(conversationId);
         if (cancelled) return;
 
         const conversationModel = (conversation as { model?: string | null })
@@ -4509,10 +4507,14 @@ export default function App({
             ) {
               llmApiErrorRetriesRef.current += 1;
               try {
-                const client = await getClient();
-                const agent = await client.agents.retrieve(agentIdRef.current);
+                const agent = await getBackend().retrieveAgent(
+                  agentIdRef.current,
+                );
                 const { pendingApprovals: existingApprovals } =
-                  await getResumeData(client, agent, conversationIdRef.current);
+                  await getResumeDataFromBackend(
+                    agent,
+                    conversationIdRef.current,
+                  );
                 currentInput = rebuildInputWithFreshDenials(
                   currentInput,
                   existingApprovals ?? [],
@@ -4795,13 +4797,11 @@ export default function App({
               // We need to fetch the actual pending approvals and show them to the user.
               if (isInvalidToolCallIdsError(errorDetail)) {
                 try {
-                  const client = await getClient();
-                  const agent = await client.agents.retrieve(
+                  const agent = await getBackend().retrieveAgent(
                     agentIdRef.current,
                   );
                   const { pendingApprovals: serverApprovals } =
-                    await getResumeData(
-                      client,
+                    await getResumeDataFromBackend(
                       agent,
                       conversationIdRef.current,
                     );
@@ -4904,7 +4904,7 @@ export default function App({
               // (avoids a redundant agents.retrieve per turn).
               const agent =
                 prefetchedAgent ??
-                (await (await getClient()).agents.retrieve(agentIdRef.current));
+                (await getBackend().retrieveAgent(agentIdRef.current));
 
               // Keep model UI in sync with the agent configuration.
               // Note: many tiers share the same handle (e.g. gpt-5.2-none/high), so we
@@ -5210,9 +5210,8 @@ export default function App({
               if (!conversationTitle) {
                 isAutoConversationTitleInFlightRef.current = false;
               } else {
-                const client = await getClient();
-                void client.conversations
-                  .update(conversationIdRef.current, {
+                void getBackend()
+                  .updateConversation(conversationIdRef.current, {
                     summary: conversationTitle,
                   })
                   .then(() => {
@@ -5865,13 +5864,14 @@ export default function App({
 
           if (hasApprovalInPayload && invalidIdsDetected) {
             try {
-              const client = await getClient();
-              const agent = await client.agents.retrieve(agentIdRef.current);
-              const { pendingApprovals: serverApprovals } = await getResumeData(
-                client,
-                agent,
-                conversationIdRef.current,
+              const agent = await getBackend().retrieveAgent(
+                agentIdRef.current,
               );
+              const { pendingApprovals: serverApprovals } =
+                await getResumeDataFromBackend(
+                  agent,
+                  conversationIdRef.current,
+                );
 
               if (serverApprovals && serverApprovals.length > 0) {
                 // Preserve user message from current input (if any)
@@ -5965,10 +5965,14 @@ export default function App({
 
             try {
               // Fetch pending approvals and auto-deny them
-              const client = await getClient();
-              const agent = await client.agents.retrieve(agentIdRef.current);
+              const agent = await getBackend().retrieveAgent(
+                agentIdRef.current,
+              );
               const { pendingApprovals: existingApprovals } =
-                await getResumeData(client, agent, conversationIdRef.current);
+                await getResumeDataFromBackend(
+                  agent,
+                  conversationIdRef.current,
+                );
               currentInput = rebuildInputWithFreshDenials(
                 currentInput,
                 existingApprovals ?? [],
@@ -7037,9 +7041,12 @@ export default function App({
         const isDefault = conversationIdRef.current === "default";
 
         // Fork the conversation
-        const forked = await forkConversation(conversationIdRef.current, {
-          ...(isDefault ? { agentId } : {}),
-        });
+        const forked = await getBackend().forkConversation(
+          conversationIdRef.current,
+          {
+            ...(isDefault ? { agentId } : {}),
+          },
+        );
 
         debugLog("btw", "forked conversationId=%s", forked.id);
         setBtwState((prev) => ({
@@ -7100,7 +7107,6 @@ export default function App({
             ) {
               approvalRecoveryRetries += 1;
               try {
-                const client = await getClient();
                 const currentAgentId = agentIdRef.current ?? agentId;
                 if (!currentAgentId) {
                   currentInput = rebuildInputWithFreshDenials(
@@ -7111,9 +7117,9 @@ export default function App({
                   continue;
                 }
 
-                const agent = await client.agents.retrieve(currentAgentId);
+                const agent = await getBackend().retrieveAgent(currentAgentId);
                 const { pendingApprovals: existingApprovals } =
-                  await getResumeData(client, agent, forked.id);
+                  await getResumeDataFromBackend(agent, forked.id);
                 currentInput = rebuildInputWithFreshDenials(
                   currentInput,
                   existingApprovals ?? [],
@@ -7197,9 +7203,7 @@ export default function App({
           throw new Error("Agent state not available");
         }
 
-        const client = await getClient();
-        const resumeData = await getResumeData(
-          client,
+        const resumeData = await getResumeDataFromBackend(
           agentState,
           conversationId,
         );
@@ -7362,9 +7366,8 @@ export default function App({
       cmd.update({ output: "Switching agent...", phase: "running" });
 
       try {
-        const client = await getClient();
         // Fetch new agent
-        const agent = await client.agents.retrieve(targetAgentId);
+        const agent = await getBackend().retrieveAgent(targetAgentId);
 
         // Use specified conversation or default to the agent's default conversation
         const targetConversationId = opts?.conversationId ?? "default";
@@ -7494,8 +7497,7 @@ export default function App({
         const isSelfHosted = !getServerUrl().includes("api.letta.com");
         if (isSelfHosted) {
           try {
-            const client = await getClient();
-            const availableHandles = (await client.models.list())
+            const availableHandles = (await backend.listModels())
               .map((model) => model.handle)
               .filter((handle): handle is string => typeof handle === "string");
             effectiveModel = selectDefaultAgentModel({
@@ -7798,13 +7800,9 @@ export default function App({
     }
 
     try {
-      const client = await getClient();
-      const agent = await client.agents.retrieve(agentId);
-      const { pendingApprovals: existingApprovals } = await getResumeData(
-        client,
-        agent,
-        conversationIdRef.current,
-      );
+      const agent = await getBackend().retrieveAgent(agentId);
+      const { pendingApprovals: existingApprovals } =
+        await getResumeDataFromBackend(agent, conversationIdRef.current);
 
       if (!existingApprovals || existingApprovals.length === 0) {
         setNeedsEagerApprovalCheck(false);
@@ -8302,6 +8300,17 @@ export default function App({
           const afterMcp = msg.trim().slice(4).trim(); // Remove "/mcp" prefix
           const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
 
+          if (
+            firstWord !== "help" &&
+            !getBackend().capabilities.serverSideToolManagement
+          ) {
+            const cmd = commandRunner.start(msg, "Checking MCP support...");
+            cmd.fail(
+              "MCP server management is not supported by the local backend yet.",
+            );
+            return { submitted: true };
+          }
+
           // /mcp - open MCP server selector
           if (!firstWord) {
             startOverlayCommand(
@@ -8470,6 +8479,13 @@ export default function App({
           }
 
           const cmd = commandRunner.start(msg, "Starting listener...");
+          if (!getBackend().capabilities.remoteMemfs) {
+            cmd.fail(
+              "Remote listener mode is not supported by the local backend.",
+            );
+            return { submitted: true };
+          }
+
           const { handleListen, setActiveCommandId: setActiveListenCommandId } =
             await import("./commands/listen");
           setActiveListenCommandId(cmd.id);
@@ -9140,10 +9156,10 @@ export default function App({
           await runEndHooks();
 
           try {
-            const client = await getClient();
+            const backend = getBackend();
 
             // Create a new conversation for the current agent
-            const conversation = await client.conversations.create({
+            const conversation = await backend.createConversation({
               agent_id: agentId,
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
               ...(conversationName && { summary: conversationName }),
@@ -9218,17 +9234,19 @@ export default function App({
           await runEndHooks();
 
           try {
-            const client = await getClient();
-
             // For default conversation, pass agent_id
             const isDefault = conversationIdRef.current === "default";
-            const forked = await forkConversation(conversationIdRef.current, {
-              ...(isDefault ? { agentId } : {}),
-            });
+            const backend = getBackend();
+            const forked = await backend.forkConversation(
+              conversationIdRef.current,
+              {
+                ...(isDefault ? { agentId } : {}),
+              },
+            );
 
             // If we forked with an explicit summary, update it
             if (conversationSummary) {
-              await client.conversations.update(forked.id, {
+              await backend.updateConversation(forked.id, {
                 summary: conversationSummary,
               });
             }
@@ -9312,19 +9330,24 @@ export default function App({
           await runEndHooks();
 
           try {
-            const client = await getClient();
+            const backend = getBackend();
 
-            // Reset all messages on the agent only when in the default conversation.
+            // Reset all messages on the agent only when in the default API conversation.
+            // Local/headless backends model /clear by switching to a fresh conversation.
             // For named conversations, clearing just means starting a new conversation —
             // there is no reason to wipe the agent's entire message history.
-            if (conversationIdRef.current === "default") {
+            if (
+              conversationIdRef.current === "default" &&
+              !backend.capabilities.localModelCatalog
+            ) {
+              const client = await getClient();
               await client.agents.messages.reset(agentId, {
                 add_default_initial_messages: false,
               });
             }
 
             // Create a new conversation
-            const conversation = await client.conversations.create({
+            const conversation = await backend.createConversation({
               agent_id: agentId,
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
@@ -9565,7 +9588,7 @@ export default function App({
             setCommandRunning(true);
 
             try {
-              const client = await getClient();
+              const backend = getBackend();
               if (shouldAutoGenerate) {
                 const conversationTitle = await generateConversationTitle();
                 if (!conversationTitle) {
@@ -9574,7 +9597,7 @@ export default function App({
                   );
                   return { submitted: true };
                 }
-                await client.conversations.update(conversationId, {
+                await backend.updateConversation(conversationId, {
                   summary: conversationTitle,
                 });
                 setConversationAutoTitleEligibility(false);
@@ -9583,7 +9606,7 @@ export default function App({
                   true,
                 );
               } else {
-                await client.conversations.update(conversationId, {
+                await backend.updateConversation(conversationId, {
                   summary: newValue,
                 });
                 setConversationAutoTitleEligibility(false);
@@ -9613,8 +9636,9 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const client = await getClient();
-            await client.agents.update(agentId, { name: newValue });
+            await getBackend().updateAgent(agentId, {
+              name: newValue,
+            });
             updateAgentName(newValue);
 
             cmd.agentHint = `Your name is now "${newValue}" — acknowledge this and save your new name to memory.`;
@@ -9661,10 +9685,13 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const client = await getClient();
-            await client.agents.update(agentId, {
+            await getBackend().updateAgent(agentId, {
               description: newDescription,
             });
+            setAgentState((prev) =>
+              prev ? { ...prev, description: newDescription } : prev,
+            );
+            setAgentDescription(newDescription);
 
             cmd.finish(`Description updated to "${newDescription}"`, true);
           } catch (error) {
@@ -9735,9 +9762,7 @@ export default function App({
               // Validate conversation exists BEFORE updating state
               // (getResumeData throws 404/422 for non-existent conversations)
               if (agentState) {
-                const client = await getClient();
-                const resumeData = await getResumeData(
-                  client,
+                const resumeData = await getResumeDataFromBackend(
                   agentState,
                   targetConvId,
                 );
@@ -10124,6 +10149,13 @@ export default function App({
             msg.trim(),
             "Exporting agent file...",
           );
+
+          if (!getBackend().capabilities.agentFileImportExport) {
+            cmd.fail(
+              "AgentFile export is not supported by the local backend yet.",
+            );
+            return { submitted: true };
+          }
 
           setCommandRunning(true);
 
@@ -10625,8 +10657,7 @@ export default function App({
             // the core behavioural instructions (filtered to strip dynamic content).
             let systemPrompt: string | undefined;
             try {
-              const client = await getClient();
-              const agent = await client.agents.retrieve(agentId);
+              const agent = await getBackend().retrieveAgent(agentId);
               systemPrompt = agent.system ?? undefined;
             } catch {
               // Non-fatal — the reflection payload will just omit the system prompt.
@@ -11123,8 +11154,7 @@ ${SYSTEM_REMINDER_CLOSE}
           // the core behavioural instructions (filtered to strip dynamic content).
           let systemPrompt: string | undefined;
           try {
-            const client = await getClient();
-            const agent = await client.agents.retrieve(agentId);
+            const agent = await getBackend().retrieveAgent(agentId);
             systemPrompt = agent.system ?? undefined;
           } catch {
             // Non-fatal — the reflection payload will just omit the system prompt.
@@ -11327,14 +11357,10 @@ ${SYSTEM_REMINDER_CLOSE}
         refreshDerived();
 
         try {
-          const client = await getClient();
           // Fetch fresh agent state to check for pending approvals with accurate in-context messages
-          const agent = await client.agents.retrieve(agentId);
-          const { pendingApprovals: existingApprovals } = await getResumeData(
-            client,
-            agent,
-            conversationIdRef.current,
-          );
+          const agent = await getBackend().retrieveAgent(agentId);
+          const { pendingApprovals: existingApprovals } =
+            await getResumeDataFromBackend(agent, conversationIdRef.current);
 
           // Remove eager check status
           buffersRef.current.byId.delete(eagerStatusId);
@@ -12913,24 +12939,29 @@ ${SYSTEM_REMINDER_CLOSE}
         });
 
         try {
-          const client = await getClient();
           // Spread existing compaction_settings to preserve model/other fields,
           // only override the mode. If no model is configured, default to
           // letta/auto so compaction uses a consistent summarization model.
           const existing = agentState?.compaction_settings;
           const existingModel = existing?.model?.trim();
+          const nextCompactionSettings = {
+            ...existing,
+            model: existingModel || DEFAULT_SUMMARIZATION_MODEL,
+            mode: mode as
+              | "all"
+              | "sliding_window"
+              | "self_compact_all"
+              | "self_compact_sliding_window",
+          };
 
-          await client.agents.update(agentId, {
-            compaction_settings: {
-              ...existing,
-              model: existingModel || DEFAULT_SUMMARIZATION_MODEL,
-              mode: mode as
-                | "all"
-                | "sliding_window"
-                | "self_compact_all"
-                | "self_compact_sliding_window",
-            },
+          await getBackend().updateAgent(agentId, {
+            compaction_settings: nextCompactionSettings,
           });
+          setAgentState((prev) =>
+            prev
+              ? { ...prev, compaction_settings: nextCompactionSettings }
+              : prev,
+          );
 
           cmd.finish(`Updated compaction mode to: ${mode}`, true);
         } catch (error) {
@@ -13169,10 +13200,8 @@ ${SYSTEM_REMINDER_CLOSE}
             if (action.conversationId === conversationId) {
               cmd.finish("Already on this conversation", true);
             } else {
-              const client = await getClient();
               if (agentState) {
-                const resumeData = await getResumeData(
-                  client,
+                const resumeData = await getResumeDataFromBackend(
                   agentState,
                   action.conversationId,
                 );
@@ -15083,9 +15112,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                     // Validate conversation exists BEFORE updating state
                     // (getResumeData throws 404/422 for non-existent conversations)
                     if (agentState) {
-                      const client = await getClient();
-                      const resumeData = await getResumeData(
-                        client,
+                      const resumeData = await getResumeDataFromBackend(
                         agentState,
                         convId,
                       );
@@ -15229,8 +15256,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                   try {
                     // Create a new conversation
-                    const client = await getClient();
-                    const conversation = await client.conversations.create({
+                    const conversation = await getBackend().createConversation({
                       agent_id: agentId,
                       isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
                     });
@@ -15359,9 +15385,7 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
 
                   try {
                     if (agentState) {
-                      const client = await getClient();
-                      const resumeData = await getResumeData(
-                        client,
+                      const resumeData = await getResumeDataFromBackend(
                         agentState,
                         actualTargetConv,
                       );
@@ -15584,11 +15608,11 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
                   });
 
                   try {
-                    const client = await getClient();
-
                     // Rename if new name provided
                     if (newName && newName !== agentName) {
-                      await client.agents.update(agentId, { name: newName });
+                      await getBackend().updateAgent(agentId, {
+                        name: newName,
+                      });
                       updateAgentName(newName);
                     }
 

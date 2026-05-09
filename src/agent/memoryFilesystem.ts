@@ -163,9 +163,8 @@ export async function hydrateMemfsSettingFromAgent(
 export async function isMemfsEnabledOnServer(
   agentId: string,
 ): Promise<boolean> {
-  const { getClient } = await import("../backend/api/client");
-  const client = await getClient();
-  const agent = await client.agents.retrieve(agentId, {
+  const { getBackend } = await import("../backend");
+  const agent = await getBackend().retrieveAgent(agentId, {
     include: ["agent.tags"],
   });
   const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");

@@ -170,6 +170,8 @@ describe("approval recovery wiring", () => {
     expect(segment).toContain("getPreStreamErrorAction(");
     expect(segment).toContain("shouldAttemptApprovalRecovery(");
     expect(segment).toContain("rebuildInputWithFreshDenials(");
-    expect(segment).toContain("await getResumeData(client, agent, forked.id)");
+    expect(segment).toContain(
+      "await getResumeDataFromBackend(agent, forked.id)",
+    );
   });
 });

@@ -3,6 +3,7 @@
 
 import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { getBackend } from "../../backend";
 import {
   type HookCommand,
   type HookEvent,
@@ -176,6 +177,9 @@ export const HooksManager = memo(function HooksManager({
 
     const fetchAgentTools = async () => {
       try {
+        if (!getBackend().capabilities.serverSideToolManagement) {
+          return;
+        }
         const { getClient } = await import("../../backend/api/client");
         const client = await getClient();
         // Use dedicated tools endpoint instead of fetching whole agent
