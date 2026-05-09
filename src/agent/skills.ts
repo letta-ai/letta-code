@@ -171,11 +171,23 @@ export const GLOBAL_SKILLS_DIR = join(
 );
 
 /**
- * Get the agent-scoped skills directory for a specific agent
- * @param agentId - The Letta agent ID (e.g., "agent-abc123")
- * @returns Path like ~/.letta/agents/agent-abc123/skills/
+ * Get the agent-scoped skills directory for a specific agent.
+ * Primary path is ~/.letta/agents/{id}/memory/skills/ (memfs).
+ * Falls back to ~/.letta/agents/{id}/skills/ for legacy installs.
  */
 export function getAgentSkillsDir(agentId: string): string {
+  return join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".letta/agents",
+    agentId,
+    "memory/skills",
+  );
+}
+
+/**
+ * Legacy agent skills path from before memfs migration (pre-Feb 2026).
+ */
+export function getLegacyAgentSkillsDir(agentId: string): string {
   return join(
     process.env.HOME || process.env.USERPROFILE || "~",
     ".letta/agents",
@@ -273,7 +285,15 @@ export async function discoverSkills(
   }
 
   // 3. Add agent skills if agentId provided (override global)
+  //    Check legacy path first, then memfs path (memfs wins on conflict)
   if (agentId && includeSource("agent")) {
+    const legacyDir = getLegacyAgentSkillsDir(agentId);
+    const legacyResult = await discoverSkillsFromDir(legacyDir, "agent");
+    allErrors.push(...legacyResult.errors);
+    for (const skill of legacyResult.skills) {
+      skillsById.set(skill.id, skill);
+    }
+
     const agentSkillsDir = getAgentSkillsDir(agentId);
     const agentResult = await discoverSkillsFromDir(agentSkillsDir, "agent");
     allErrors.push(...agentResult.errors);

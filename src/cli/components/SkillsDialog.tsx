@@ -26,7 +26,7 @@ function getTabDescription(tab: SkillTab, agentId: string): string {
     case "project":
       return ".skills/";
     case "agent":
-      return `~/.letta/agents/${shortId}/skills/`;
+      return `~/.letta/agents/${shortId}/memory/skills/`;
     case "global":
       return "~/.letta/skills/";
     case "bundled":
@@ -81,11 +81,8 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
     return grouped;
   }, [skills]);
 
-  // Only show tabs that have skills
-  const availableTabs = useMemo(
-    () => TAB_ORDER.filter((tab) => (skillsBySource.get(tab)?.length ?? 0) > 0),
-    [skillsBySource],
-  );
+  // Always show all tabs so users can discover empty sources
+  const availableTabs = useMemo(() => [...TAB_ORDER], []);
 
   const [activeTab, setActiveTab] = useState<SkillTab | null>(null);
 
@@ -241,13 +238,18 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
         </Box>
       )}
 
+      {/* Empty state for active tab */}
+      {!loading && activeTab && currentSkills.length === 0 && (
+        <Box paddingLeft={2}>
+          <Text dimColor>No skills in this location</Text>
+        </Box>
+      )}
+
       {/* Footer */}
       <Box marginTop={1}>
         <Text dimColor>
           {"  "}
-          {availableTabs.length > 1
-            ? "↑↓ scroll · ←→/Tab switch · Esc to close"
-            : "Esc to close"}
+          {"↑↓ scroll · ←→/Tab switch · Esc to close"}
         </Text>
       </Box>
     </Box>
