@@ -1,12 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
-const appPath = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("conversation switch ref wiring", () => {
   test("defines helper that syncs conversation state and ref", () => {
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     expect(source).toContain(
       "const setConversationIdAndRef = useCallback((nextConversationId: string) => {",
@@ -16,7 +13,7 @@ describe("conversation switch ref wiring", () => {
   });
 
   test("uses the synced helper for conversation switch entry points", () => {
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const anchors = [
       'origin: "fork"',
@@ -44,7 +41,7 @@ describe("conversation switch ref wiring", () => {
   });
 
   test("builds shared reminder parts from the live conversation ref", () => {
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     expect(source).toContain("conversationId: conversationIdRef.current,");
   });

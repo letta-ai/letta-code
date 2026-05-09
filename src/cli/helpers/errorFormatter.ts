@@ -1,5 +1,5 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
-import { buildAppUrl, buildChatUrl } from "./appUrls";
+import { buildAgentTerminalLink, buildAppUrl } from "./appUrls";
 import { getErrorContext } from "./errorContext";
 import { checkZaiError } from "./zaiErrors";
 
@@ -782,6 +782,6 @@ function createAgentLink(
   agentId: string,
   conversationId?: string,
 ): string {
-  const url = buildChatUrl(agentId, { conversationId });
-  return `View agent: \x1b]8;;${url}\x1b\\${agentId}\x1b]8;;\x1b\\ (run: ${runId})`;
+  const agentRef = buildAgentTerminalLink(agentId, { conversationId });
+  return `View agent: ${agentRef} (run: ${runId})`;
 }

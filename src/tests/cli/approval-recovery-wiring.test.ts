@@ -1,13 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("approval recovery wiring", () => {
   test("pre-stream catch uses shared recovery router and stale input rebuild", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const start = source.indexOf("} catch (preStreamError) {");
     const end = source.indexOf(
@@ -27,10 +23,7 @@ describe("approval recovery wiring", () => {
   });
 
   test("lazy recovery is not gated by hasApprovalInPayload", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const start = source.indexOf("const approvalPendingDetected =");
     const end = source.indexOf("// Check if this is a retriable error");
@@ -45,10 +38,7 @@ describe("approval recovery wiring", () => {
   });
 
   test("tool interrupt branch includes backend cancel call before early return", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const start = source.indexOf("if (\n      isExecutingTool");
     const end = source.indexOf("if (!streaming || interruptRequested)");
@@ -62,10 +52,7 @@ describe("approval recovery wiring", () => {
   });
 
   test("startup and resume approval restores route through shared recovery helper", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     expect(source).toContain(
       "const recoverRestoredPendingApprovals = useCallback(",
@@ -114,10 +101,7 @@ describe("approval recovery wiring", () => {
   });
 
   test("slash command recovery consumes queued stale denials on the slash send", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     expect(source).toContain(
       "const processConversationWithQueuedApprovals = useCallback(",
@@ -147,10 +131,7 @@ describe("approval recovery wiring", () => {
   });
 
   test("/btw side-question flow routes pre-stream approval conflicts through shared recovery helpers", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const start = source.indexOf("const handleBtwCommand = useCallback(");
     const end = source.indexOf("const handleBtwJump = useCallback(", start);

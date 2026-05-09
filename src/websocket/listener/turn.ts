@@ -395,6 +395,8 @@ export async function handleIncomingMessage(
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
+  runtime.lastStopReason = null;
+  runtime.lastTerminalLoopErrorMessage = null;
   const turnAbortController = new AbortController();
   runtime.activeAbortController = turnAbortController;
   const turnAbortSignal = turnAbortController.signal;
@@ -1074,7 +1076,7 @@ export async function handleIncomingMessage(
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
 
-        emitLoopErrorNotice(socket, runtime, {
+        const formattedError = emitLoopErrorNotice(socket, runtime, {
           message: errorMessage,
           stopReason: effectiveStopReason,
           isTerminal: true,
@@ -1085,6 +1087,7 @@ export async function handleIncomingMessage(
           cancelRequested: runtime.cancelRequested,
           abortSignal: turnAbortSignal,
         });
+        runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
         break;
       }
 
@@ -1182,7 +1185,7 @@ export async function handleIncomingMessage(
     });
 
     const errorMessage = error instanceof Error ? error.message : String(error);
-    emitLoopErrorNotice(socket, runtime, {
+    const formattedError = emitLoopErrorNotice(socket, runtime, {
       message: errorMessage,
       stopReason: "error",
       isTerminal: true,
@@ -1192,6 +1195,7 @@ export async function handleIncomingMessage(
       cancelRequested: runtime.cancelRequested,
       abortSignal: turnAbortSignal,
     });
+    runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }

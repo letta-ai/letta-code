@@ -125,6 +125,7 @@ export type ConversationRuntime = {
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
   lastStopReason: string | null;
+  lastTerminalLoopErrorMessage: string | null;
   isProcessing: boolean;
   activeWorkingDirectory: string | null;
   expectedWorktreePath: string | null;

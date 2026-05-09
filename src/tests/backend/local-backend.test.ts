@@ -696,6 +696,96 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("retries transient local AI SDK provider failures inside a single persisted turn", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-provider-retry-"),
+    );
+    try {
+      let streamCalls = 0;
+      const transient = new APICallError({
+        message:
+          "Cannot connect to API: The socket connection was closed unexpectedly.",
+        url: "https://example.invalid/v1/responses",
+        requestBodyValues: {},
+        responseHeaders: { "retry-after-ms": "0" },
+        cause: { code: "ECONNRESET" },
+        isRetryable: true,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: () => {
+          streamCalls += 1;
+          return {
+            fullStream: (async function* () {
+              if (streamCalls === 1) throw transient;
+              yield {
+                type: "text-delta",
+                id: "retry-text",
+                text: "recovered response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-recovered",
+              role: "assistant",
+              parts: [{ type: "text", text: "recovered response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Local Retry Agent",
+        system: "retry system",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("hello retry", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(2);
+      expect(chunks).toContainEqual(
+        expect.objectContaining({
+          message_type: "event_message",
+          event_type: "retry",
+        }),
+      );
+      expect(JSON.stringify(chunks)).toContain("recovered response");
+      expect(chunks.at(-1)).toMatchObject({
+        message_type: "stop_reason",
+        stop_reason: "end_turn",
+      });
+
+      const runId = (chunks[0] as { run_id?: string } | undefined)?.run_id;
+      expect(runId).toBe("local-run-1");
+      await expect(backend.retrieveRun(runId ?? "")).resolves.toMatchObject({
+        status: "completed",
+        stop_reason: "end_turn",
+      });
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      expect(persistedMessages.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+      ]);
+      expect(JSON.stringify(persistedMessages)).toContain("hello retry");
+      expect(JSON.stringify(persistedMessages)).toContain("recovered response");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("compacts local conversation history with the backend all-compaction prompt", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-compact-"));
     try {

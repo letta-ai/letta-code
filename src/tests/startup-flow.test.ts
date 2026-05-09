@@ -138,6 +138,16 @@ describe("Startup Flow - Flag Conflicts", () => {
 });
 
 describe("Startup Flow - Smoke", () => {
+  test("update aliases route to manual update instead of flag parsing errors", async () => {
+    for (const alias of ["update", "upgrade", "--update", "--upgrade"]) {
+      const result = await runCli([alias], { expectExit: 1 });
+      expect(result.stdout).toContain(
+        "Manual updates are disabled in development mode",
+      );
+      expect(result.stderr).not.toContain("Unknown option");
+    }
+  });
+
   test("--name conflicts with --new-agent", async () => {
     const result = await runCli(["--name", "MyAgent", "--new-agent"], {
       expectExit: 1,
