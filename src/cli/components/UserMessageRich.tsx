@@ -23,6 +23,12 @@ type RenderedBlockLine = {
   highlighted: boolean;
 };
 
+function getCurrentStdoutColumns(): number | null {
+  if (typeof process === "undefined") return null;
+  const columns = (process.stdout as NodeJS.WriteStream | undefined)?.columns;
+  return typeof columns === "number" && columns > 0 ? columns : null;
+}
+
 /**
  * Word-wrap plain text to a given visible width.
  * Returns an array of lines, each at most `width` visible characters wide.
@@ -182,7 +188,11 @@ export function renderBlock(
  */
 export const UserMessage = memo(
   ({ line, prompt }: { line: UserLine; prompt?: string }) => {
-    const columns = useTerminalWidth();
+    const trackedColumns = useTerminalWidth();
+    const columns = Math.max(
+      trackedColumns,
+      getCurrentStdoutColumns() ?? trackedColumns,
+    );
     const promptPrefix = `${prompt || ">"} `;
     const prefixWidth = stringWidth(promptPrefix);
     const continuationPrefix = " ".repeat(prefixWidth);
