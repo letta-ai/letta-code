@@ -46,9 +46,6 @@ function wordWrap(text: string, width: number): string[] {
   return lines.length > 0 ? lines : [""];
 }
 
-/** Right-padding (in characters) added after content on compact (single-line) messages. */
-const COMPACT_PAD = 1;
-
 /**
  * Split text into system-reminder blocks and user content blocks.
  * System-reminder blocks are identified by <system-reminder>...</system-reminder> tags.
@@ -111,12 +108,19 @@ export function splitSystemReminderBlocks(
   return blocks;
 }
 
+function renderHighlightedBlankLine(
+  columns: number,
+  colorAnsi: string,
+): string {
+  return `${colorAnsi}${" ".repeat(Math.max(0, columns))}\x1b[0m`;
+}
+
 /**
  * Render a block of text with a prompt prefix (first line) and matching-width
  * continuation spaces on subsequent lines.
  * If highlighted, applies background and foreground colors. Otherwise plain text.
  */
-function renderBlock(
+export function renderBlock(
   text: string,
   contentWidth: number,
   columns: number,
@@ -141,9 +145,7 @@ function renderBlock(
 
   if (outputLines.length === 0) return [];
 
-  const isSingleLine = outputLines.length === 1;
-
-  return outputLines.map((ol, i) => {
+  const renderedLines = outputLines.map((ol, i) => {
     const prefix = i === 0 ? promptPrefix : continuationPrefix;
 
     if (!highlighted) {
@@ -159,12 +161,16 @@ function renderBlock(
         ? `${promptPrefix.slice(0, -1)}${colorAnsi} ${ol}`
         : `${prefix}${ol}`;
     const visWidth = stringWidth(content);
-    if (isSingleLine) {
-      return `${colorAnsi}${content}${" ".repeat(COMPACT_PAD)}\x1b[0m`;
-    }
     const pad = Math.max(0, columns - visWidth);
     return `${colorAnsi}${content}${" ".repeat(pad)}\x1b[0m`;
   });
+
+  if (!highlighted) {
+    return renderedLines;
+  }
+
+  const blankLine = renderHighlightedBlankLine(columns, colorAnsi);
+  return [blankLine, ...renderedLines, blankLine];
 }
 
 /**
@@ -172,8 +178,8 @@ function renderBlock(
  *
  * Renders user messages as pre-formatted text with ANSI background codes:
  * - Custom prompt prefix on first line, matching-width spaces on subsequent lines
- * - Single-line messages: compact highlight (content + small padding)
- * - Multi-line messages: full-width highlight box extending to terminal edge
+ * - User content blocks: full-width highlight box extending to terminal edge
+ *   with one highlighted blank row above and below
  * - Word wrapping respects the prompt prefix width
  * - System-reminder parts are shown plain (no highlight), user parts highlighted
  */
