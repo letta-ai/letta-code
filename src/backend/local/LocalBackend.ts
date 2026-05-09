@@ -28,10 +28,16 @@ import type { ProviderTurnInput } from "../dev/ProviderTurnExecutor";
 import { ProviderTurnExecutor } from "../dev/ProviderTurnExecutor";
 import {
   estimateLocalMessageTokens,
+  isLocalSlidingWindowCompactionPlanningError,
+  LOCAL_DEFAULT_COMPACTION_MODE,
+  LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
+  type LocalCompactionMode,
   type LocalCompactionStats,
   type LocalGenerateTextFunction,
   packageLocalSummaryMessage,
+  planLocalSlidingWindowCompaction,
   summarizeLocalMessagesAll,
+  summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
 import type { LocalMessage } from "./LocalMessage";
 import { listLocalModels, resolveLocalModelConfig } from "./LocalModelConfig";
@@ -128,6 +134,63 @@ function initialMemoryFilesFromCreateBody(
   return [...files.values()].sort((a, b) =>
     a.relativePath.localeCompare(b.relativePath),
   );
+}
+
+type LocalCompactionSettingsRecord = Record<string, unknown>;
+
+interface ResolvedLocalCompactionSettings {
+  mode: LocalCompactionMode;
+  prompt?: string | null;
+  clipChars?: number | null;
+  slidingWindowPercentage: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function compactionSettingsRecord(
+  value: unknown,
+): LocalCompactionSettingsRecord | null | undefined {
+  if (value === null) return null;
+  return isRecord(value) ? { ...value } : undefined;
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.hasOwn(record, key);
+}
+
+function localCompactionMode(value: unknown): LocalCompactionMode | undefined {
+  if (value === "all" || value === "sliding_window") return value;
+  return undefined;
+}
+
+function validateLocalCompactionSettingsRecord(
+  settings: LocalCompactionSettingsRecord,
+): void {
+  if (settings.mode === undefined || settings.mode === null) return;
+  if (!localCompactionMode(settings.mode)) {
+    throw new Error(
+      `Local backend compaction currently supports only modes "all" and "sliding_window" (received "${String(
+        settings.mode,
+      )}").`,
+    );
+  }
+}
+
+function localCompactionSettingsForStorage(
+  settings: LocalCompactionSettingsRecord | null | undefined,
+): LocalCompactionSettingsRecord | null | undefined {
+  if (settings === undefined || settings === null) return settings;
+
+  const hasLocalSetting =
+    hasOwn(settings, "mode") ||
+    hasOwn(settings, "prompt") ||
+    hasOwn(settings, "clip_chars") ||
+    hasOwn(settings, "sliding_window_percentage");
+  if (!hasLocalSetting) return undefined;
+
+  return { ...settings };
 }
 
 function createLocalExecutor(
@@ -231,7 +294,25 @@ export class LocalBackend extends HeadlessBackend {
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
     const [body] = args;
-    const agent = await super.createAgent(...args);
+    const requestedCompactionSettings = compactionSettingsRecord(
+      (body as Record<string, unknown>).compaction_settings,
+    );
+    if (
+      requestedCompactionSettings !== undefined &&
+      requestedCompactionSettings !== null
+    ) {
+      validateLocalCompactionSettingsRecord(requestedCompactionSettings);
+    }
+    const compactionSettingsForStorage = localCompactionSettingsForStorage(
+      requestedCompactionSettings,
+    );
+    let agent = await super.createAgent(...args);
+    if (compactionSettingsForStorage !== undefined) {
+      agent = this.store.setAgentCompactionSettings(
+        agent.id,
+        compactionSettingsForStorage,
+      );
+    }
     if (this.isLocalMemfsEnabled()) {
       await this.ensureLocalMemoryRepo(
         agent.id,
@@ -242,6 +323,31 @@ export class LocalBackend extends HeadlessBackend {
     await this.compileAndMaybePersistSystemPrompt("default", agent.id, {
       dryRun: false,
     });
+    return agent;
+  }
+
+  override async updateAgent(
+    ...args: Parameters<HeadlessBackend["updateAgent"]>
+  ) {
+    const [agentId, body] = args;
+    const bodyRecord = body as Record<string, unknown>;
+    const settings = hasOwn(bodyRecord, "compaction_settings")
+      ? compactionSettingsRecord(bodyRecord.compaction_settings)
+      : undefined;
+    if (settings !== undefined && settings !== null) {
+      validateLocalCompactionSettingsRecord(settings);
+    }
+    const compactionSettingsForStorage =
+      localCompactionSettingsForStorage(settings);
+    let agent = await super.updateAgent(...args);
+    if (hasOwn(bodyRecord, "compaction_settings")) {
+      if (compactionSettingsForStorage !== undefined) {
+        agent = this.store.setAgentCompactionSettings(
+          agentId,
+          compactionSettingsForStorage,
+        );
+      }
+    }
     return agent;
   }
 
@@ -283,7 +389,7 @@ export class LocalBackend extends HeadlessBackend {
       typeof bodyRecord.agent_id === "string" && bodyRecord.agent_id.length > 0
         ? bodyRecord.agent_id
         : this.store.resolveAgentIdForConversation(conversationId);
-    const result = await this.compactLocalConversationAll(
+    const result = await this.compactLocalConversation(
       conversationId,
       agentId,
       "manual",
@@ -350,13 +456,10 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const result = await this.compactLocalConversationAll(
+    const result = await this.compactLocalConversation(
       input.conversationId,
       input.agentId,
       "context_window_overflow",
-      {
-        compaction_settings: { mode: "all" },
-      } as ConversationMessageCompactBody,
     );
     return {
       uiMessages: this.store.listLocalMessages(
@@ -389,13 +492,10 @@ export class LocalBackend extends HeadlessBackend {
       return null;
     }
 
-    const result = await this.compactLocalConversationAll(
+    const result = await this.compactLocalConversation(
       input.conversationId,
       input.agentId,
       "context_window_limit",
-      {
-        compaction_settings: { mode: "all" },
-      } as ConversationMessageCompactBody,
     );
     return {
       uiMessages: this.store.listLocalMessages(
@@ -435,7 +535,64 @@ export class LocalBackend extends HeadlessBackend {
       : undefined;
   }
 
-  private async compactLocalConversationAll(
+  private resolveCompactionSettings(
+    agent: LocalAgentRecord,
+    body?: ConversationMessageCompactBody,
+  ): ResolvedLocalCompactionSettings {
+    const bodyRecord = (body ?? {}) as Record<string, unknown>;
+    const requestSettings = compactionSettingsRecord(
+      bodyRecord.compaction_settings,
+    );
+    if (requestSettings !== undefined && requestSettings !== null) {
+      validateLocalCompactionSettingsRecord(requestSettings);
+    }
+    const agentSettings = compactionSettingsRecord(agent.compaction_settings);
+    const baseSettings =
+      agentSettings && agentSettings !== null ? agentSettings : {};
+    const mergedSettings =
+      requestSettings && requestSettings !== null
+        ? { ...baseSettings, ...requestSettings }
+        : baseSettings;
+    const requestChangedMode =
+      requestSettings !== undefined &&
+      requestSettings !== null &&
+      hasOwn(requestSettings, "mode");
+    const requestChangedPrompt =
+      requestSettings !== undefined &&
+      requestSettings !== null &&
+      hasOwn(requestSettings, "prompt");
+    if (
+      requestChangedMode &&
+      !requestChangedPrompt &&
+      agentSettings &&
+      agentSettings !== null &&
+      agentSettings.mode !== requestSettings.mode
+    ) {
+      delete mergedSettings.prompt;
+    }
+
+    const mode =
+      localCompactionMode(mergedSettings.mode) ?? LOCAL_DEFAULT_COMPACTION_MODE;
+    return {
+      mode,
+      prompt:
+        typeof mergedSettings.prompt === "string" ||
+        mergedSettings.prompt === null
+          ? mergedSettings.prompt
+          : undefined,
+      clipChars:
+        typeof mergedSettings.clip_chars === "number" ||
+        mergedSettings.clip_chars === null
+          ? mergedSettings.clip_chars
+          : undefined,
+      slidingWindowPercentage:
+        typeof mergedSettings.sliding_window_percentage === "number"
+          ? mergedSettings.sliding_window_percentage
+          : LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
+    };
+  }
+
+  private async compactLocalConversation(
     conversationId: string,
     agentId: string,
     trigger: string,
@@ -446,31 +603,55 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats: LocalCompactionStats;
   }> {
-    const settings = ((body ?? {}) as Record<string, unknown>)
-      .compaction_settings as Record<string, unknown> | null | undefined;
-    const mode = typeof settings?.mode === "string" ? settings.mode : "all";
-    if (mode !== "all") {
-      throw new Error(
-        `Local backend compaction currently supports only mode "all" (received "${mode}").`,
-      );
-    }
-
     const agent = this.store.retrieveAgentRecord(agentId);
+    const settings = this.resolveCompactionSettings(agent, body);
+    if (settings.mode === "sliding_window") {
+      try {
+        return await this.compactLocalConversationSlidingWindow(
+          conversationId,
+          agentId,
+          agent,
+          trigger,
+          settings,
+        );
+      } catch (error) {
+        if (!isLocalSlidingWindowCompactionPlanningError(error)) throw error;
+      }
+    }
+    return this.compactLocalConversationAll(
+      conversationId,
+      agentId,
+      agent,
+      trigger,
+      {
+        ...settings,
+        mode: "all",
+        prompt: settings.mode === "all" ? settings.prompt : undefined,
+      },
+    );
+  }
+
+  private async compactLocalConversationAll(
+    conversationId: string,
+    agentId: string,
+    agent: LocalAgentRecord,
+    trigger: string,
+    settings: ResolvedLocalCompactionSettings,
+  ): Promise<{
+    numMessagesBefore: number;
+    numMessagesAfter: number;
+    summary: string;
+    stats: LocalCompactionStats;
+  }> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextTokensBefore = estimateLocalMessageTokens(messages);
-    const prompt =
-      typeof settings?.prompt === "string" ? settings.prompt : null;
-    const clipChars =
-      typeof settings?.clip_chars === "number" || settings?.clip_chars === null
-        ? settings.clip_chars
-        : undefined;
     const summary = await summarizeLocalMessagesAll({
       agent,
       messages,
       createModel: this.createModel,
       generateText: this.generateText,
-      prompt,
-      clipChars,
+      prompt: settings.prompt,
+      clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
     });
     const stats: LocalCompactionStats = {
@@ -487,6 +668,60 @@ export class LocalBackend extends HeadlessBackend {
       summary,
       packedSummary: packageLocalSummaryMessage(summary, stats),
       stats,
+    });
+    return {
+      numMessagesBefore: storeResult.numMessagesBefore,
+      numMessagesAfter: storeResult.numMessagesAfter,
+      summary,
+      stats,
+    };
+  }
+
+  private async compactLocalConversationSlidingWindow(
+    conversationId: string,
+    agentId: string,
+    agent: LocalAgentRecord,
+    trigger: string,
+    settings: ResolvedLocalCompactionSettings,
+  ): Promise<{
+    numMessagesBefore: number;
+    numMessagesAfter: number;
+    summary: string;
+    stats: LocalCompactionStats;
+  }> {
+    const messages = this.store.listLocalMessages(conversationId, agentId);
+    const contextWindow = this.effectiveContextWindow(conversationId, agentId);
+    const plan = planLocalSlidingWindowCompaction(messages, {
+      slidingWindowPercentage: settings.slidingWindowPercentage,
+      contextWindow,
+    });
+    const summary = await summarizeLocalMessagesSlidingWindow({
+      agent,
+      messages: plan.messagesToSummarize,
+      createModel: this.createModel,
+      generateText: this.generateText,
+      prompt: settings.prompt,
+      clipChars: settings.clipChars,
+      localProviderAuthStorageDir: this.storageDir,
+    });
+    const contextTokensAfter =
+      Math.ceil(summary.length / 4) +
+      estimateLocalMessageTokens(plan.messagesToKeep);
+    const stats: LocalCompactionStats = {
+      trigger,
+      context_tokens_before: estimateLocalMessageTokens(messages),
+      context_tokens_after: contextTokensAfter,
+      context_window: contextWindow,
+      messages_count_before: messages.length,
+      messages_count_after: 1 + plan.messagesToKeep.length,
+    };
+    const storeResult = this.store.compactConversationAll({
+      conversationId,
+      agentId,
+      summary,
+      packedSummary: packageLocalSummaryMessage(summary, stats),
+      stats,
+      remainingMessages: plan.messagesToKeep,
     });
     return {
       numMessagesBefore: storeResult.numMessagesBefore,

@@ -65,6 +65,7 @@ export interface LocalAgentRecord {
   tags: string[];
   model: string;
   model_settings: Record<string, unknown>;
+  compaction_settings?: Record<string, unknown> | null;
 }
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
@@ -266,6 +267,7 @@ function normalizeAgentRecord(
     modelSettings.max_tokens = legacyLlmConfig.max_tokens;
   }
 
+  const compactionSettings = optionalRecordOrNull(value.compaction_settings);
   return {
     id: value.id,
     name: optionalString(value.name) ?? "Letta Code",
@@ -277,6 +279,9 @@ function normalizeAgentRecord(
       optionalString(legacyLlmConfig.model) ??
       defaultAgentModel,
     model_settings: modelSettings,
+    ...(compactionSettings !== undefined
+      ? { compaction_settings: compactionSettings }
+      : {}),
   };
 }
 
@@ -313,6 +318,9 @@ function projectAgentState(
     tags: record.tags,
     model: record.model,
     model_settings: record.model_settings,
+    ...(record.compaction_settings !== undefined
+      ? { compaction_settings: record.compaction_settings }
+      : {}),
     message_ids: messageIds,
     in_context_message_ids: inContextMessageIds,
     ...(lastRunCompletion ? { last_run_completion: lastRunCompletion } : {}),
@@ -750,6 +758,23 @@ export class LocalStore {
     return this.projectAgent(updated);
   }
 
+  setAgentCompactionSettings(
+    agentId: string,
+    settings: Record<string, unknown> | null,
+  ): AgentState {
+    const existing = this.agents.get(agentId);
+    if (!existing) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
+    const updated: LocalAgentRecord = {
+      ...existing,
+      compaction_settings: settings === null ? null : { ...settings },
+    };
+    this.agents.set(agentId, updated);
+    this.persistAgent(agentId);
+    return this.projectAgent(updated);
+  }
+
   createAgent(body: AgentCreateBody): AgentState {
     const agent = this.createAgentRecord(body);
     const agentId = agent.id;
@@ -1108,6 +1133,7 @@ export class LocalStore {
     summary: string;
     packedSummary: string;
     stats?: LocalCompactionStats;
+    remainingMessages?: LocalMessage[];
   }): LocalCompactionStoreResult {
     const conversation = this.ensureConversation(
       input.conversationId,
@@ -1132,8 +1158,14 @@ export class LocalStore {
       },
       parts: [{ type: "text", text: input.packedSummary } as LocalMessagePart],
     };
-    this.localMessagesByConversationKey.set(key, [summaryMessage]);
-    conversation.in_context_message_ids = [summaryMessage.id];
+    const compactedMessages = [
+      summaryMessage,
+      ...(input.remainingMessages ?? []).map(cloneLocalMessage),
+    ];
+    this.localMessagesByConversationKey.set(key, compactedMessages);
+    conversation.in_context_message_ids = compactedMessages.map(
+      (message) => message.id,
+    );
     conversation.last_message_at = date;
     conversation.updated_at = date;
     this.conversations.set(key, conversation);
@@ -1141,7 +1173,7 @@ export class LocalStore {
     this.rebuildMessageIndex();
     return {
       numMessagesBefore: previousMessages.length,
-      numMessagesAfter: 1,
+      numMessagesAfter: compactedMessages.length,
       summaryMessage: cloneLocalMessage(summaryMessage),
     };
   }
