@@ -1116,6 +1116,87 @@ describe("listen-client multi-worker concurrency", () => {
     });
   });
 
+  test("channel queue lifecycle includes terminal loop error text when the turn stops with error", async () => {
+    const lifecycleEvents: Array<Record<string, unknown>> = [];
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+      handleTurnLifecycleEvent: async (event) => {
+        lifecycleEvents.push(event as unknown as Record<string, unknown>);
+      },
+    } satisfies ChannelAdapter);
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-channel-error",
+    );
+    const socket = new MockSocket();
+    const channelTurnSources = [
+      {
+        channel: "telegram" as const,
+        accountId: "acct-telegram",
+        chatId: "515978553",
+        chatType: "direct" as const,
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-channel-error",
+      },
+    ];
+
+    const enqueuedItem = __listenClientTestUtils.enqueueChannelTurn(
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conv-channel-error",
+      },
+      [
+        {
+          type: "text" as const,
+          text: '<channel-notification source="telegram" chat_id="515978553">test</channel-notification>',
+        },
+      ],
+      channelTurnSources,
+    );
+
+    expect(enqueuedItem).not.toBeNull();
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async () => {
+        runtime.lastStopReason = "error";
+        runtime.lastTerminalLoopErrorMessage =
+          "ChatGPT usage limit reached. Resets at 1:00 PM.";
+      },
+    );
+
+    await waitFor(() => lifecycleEvents.length === 2);
+
+    expect(lifecycleEvents[1]).toEqual({
+      type: "finished",
+      batchId: "batch-1",
+      sources: channelTurnSources,
+      outcome: "error",
+      error: "ChatGPT usage limit reached. Resets at 1:00 PM.",
+    });
+  });
+
   test("task_notification-only queue items re-enter the listener loop as standalone turns", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.setActiveRuntime(listener);

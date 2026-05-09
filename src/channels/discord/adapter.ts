@@ -145,6 +145,7 @@ const INGRESS_DEDUPE_TTL_MS = 60_000;
 const INGRESS_DEDUPE_MAX = 2_000;
 const LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const LIFECYCLE_STATE_MAX = 2_000;
+const DISCORD_LIFECYCLE_ERROR_TEXT_MAX = 1500;
 const INITIAL_THREAD_HISTORY_LIMIT = 20;
 
 type LifecycleState = "queued" | "completed" | "error" | "cancelled";
@@ -270,6 +271,17 @@ export function buildDiscordReplyOptions(
   };
 }
 
+function formatDiscordLifecycleErrorMessage(errorText: string): string {
+  const normalized = errorText.trim() || "Unknown error";
+  const truncated =
+    normalized.length > DISCORD_LIFECYCLE_ERROR_TEXT_MAX
+      ? `${normalized
+          .slice(0, DISCORD_LIFECYCLE_ERROR_TEXT_MAX - 1)
+          .trimEnd()}…`
+      : normalized;
+  return `Turn failed:\n\`\`\`\n${truncated.replace(/```/g, "``\u200b`")}\n\`\`\``;
+}
+
 /**
  * Best-effort: post a user-facing error reply when forwarding a Discord
  * message to the agent runtime fails. Swallows any send failure so the
@@ -327,6 +339,7 @@ export function createDiscordAdapter(
     { state: LifecycleState; updatedAt: number }
   >();
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
+  const lifecycleErrorReplyKeys = new Map<string, number>();
 
   function pruneSeenIngressMessageKeys(now: number = Date.now()): void {
     for (const [key, expiresAt] of seenIngressMessageKeys) {
@@ -370,10 +383,26 @@ export function createDiscordAdapter(
     return `${source.chatId}:${source.messageId}`;
   }
 
+  function getLifecycleReplyKey(source: ChannelTurnSource): string | null {
+    if (source.channel !== "discord" || !isNonEmptyString(source.chatId)) {
+      return null;
+    }
+    return [
+      source.chatId,
+      source.threadId ?? source.messageId ?? "",
+      source.conversationId,
+    ].join(":");
+  }
+
   function pruneLifecycleState(now: number = Date.now()): void {
     for (const [key, entry] of lifecycleStateByMessageKey) {
       if (entry.updatedAt + LIFECYCLE_STATE_TTL_MS <= now) {
         lifecycleStateByMessageKey.delete(key);
+      }
+    }
+    for (const [key, updatedAt] of lifecycleErrorReplyKeys) {
+      if (updatedAt + LIFECYCLE_STATE_TTL_MS <= now) {
+        lifecycleErrorReplyKeys.delete(key);
       }
     }
     if (lifecycleStateByMessageKey.size <= LIFECYCLE_STATE_MAX) {
@@ -389,6 +418,21 @@ export function createDiscordAdapter(
         lifecycleStateByMessageKey.delete(entry[0]);
       }
     }
+  }
+
+  function rememberLifecycleErrorReply(key: string): boolean {
+    pruneLifecycleState();
+    if (lifecycleErrorReplyKeys.has(key)) {
+      return false;
+    }
+    if (lifecycleErrorReplyKeys.size >= LIFECYCLE_STATE_MAX) {
+      const [oldestKey] = lifecycleErrorReplyKeys.keys();
+      if (oldestKey) {
+        lifecycleErrorReplyKeys.delete(oldestKey);
+      }
+    }
+    lifecycleErrorReplyKeys.set(key, Date.now());
+    return true;
   }
 
   async function sendLifecycleReaction(
@@ -420,6 +464,29 @@ export function createDiscordAdapter(
         error instanceof Error ? error.message : error,
       );
     }
+  }
+
+  async function sendLifecycleErrorReply(
+    source: ChannelTurnSource,
+    errorText: string,
+  ): Promise<void> {
+    if (!client) return;
+    const key = getLifecycleReplyKey(source);
+    if (!key || !rememberLifecycleErrorReply(key)) {
+      return;
+    }
+
+    const targetChannelId = source.threadId ?? source.chatId;
+    const channel = await client.channels.fetch(targetChannelId);
+    if (!isDiscordSendableChannel(channel)) {
+      return;
+    }
+    const reply = buildDiscordReplyOptions(source.messageId, targetChannelId);
+    await channel.send({
+      allowedMentions: { parse: [] },
+      content: formatDiscordLifecycleErrorMessage(errorText),
+      ...(reply ?? {}),
+    });
   }
 
   function scheduleLifecycleTransition(
@@ -813,6 +880,7 @@ export function createDiscordAdapter(
       seenIngressMessageKeys.clear();
       lifecycleStateByMessageKey.clear();
       lifecycleOperationByMessageKey.clear();
+      lifecycleErrorReplyKeys.clear();
       console.log("[Discord] Bot stopped");
     },
 
@@ -839,6 +907,29 @@ export function createDiscordAdapter(
         event.sources.map((source) =>
           scheduleLifecycleTransition(source, nextState),
         ),
+      );
+
+      const errorText = event.outcome === "error" ? event.error?.trim() : null;
+      if (!errorText) return;
+
+      const uniqueReplySources = new Map<string, ChannelTurnSource>();
+      for (const source of event.sources) {
+        const key = getLifecycleReplyKey(source);
+        if (!key || uniqueReplySources.has(key)) continue;
+        uniqueReplySources.set(key, source);
+      }
+
+      await Promise.all(
+        Array.from(uniqueReplySources.values()).map(async (source) => {
+          try {
+            await sendLifecycleErrorReply(source, errorText);
+          } catch (error) {
+            console.warn(
+              `[Discord] Failed to post lifecycle error for ${source.chatId}:`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }),
       );
     },
 
