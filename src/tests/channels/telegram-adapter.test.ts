@@ -176,6 +176,26 @@ afterAll(() => {
   mock.restore();
 });
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 test("telegram adapter logs unhandled grammY errors with update context", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
@@ -615,7 +635,15 @@ test("telegram adapter batches media groups and downloads inbound images", async
     allowedUsers: [],
   });
 
-  const onMessage = mock(async () => {});
+  let resolveInboundMessage:
+    | ((message: InboundChannelMessage) => void)
+    | undefined;
+  const inboundMessage = new Promise<InboundChannelMessage>((resolve) => {
+    resolveInboundMessage = resolve;
+  });
+  const onMessage = mock(async (message: InboundChannelMessage) => {
+    resolveInboundMessage?.(message);
+  });
   adapter.onMessage = onMessage;
 
   await adapter.start();
@@ -648,18 +676,13 @@ test("telegram adapter batches media groups and downloads inbound images", async
       },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 220));
+    const inbound = await withTimeout(
+      inboundMessage,
+      2_000,
+      "Timed out waiting for Telegram media group flush",
+    );
 
     expect(onMessage).toHaveBeenCalledTimes(1);
-    const firstCall = onMessage.mock.calls[0] as unknown as
-      | [InboundChannelMessage]
-      | undefined;
-    expect(firstCall).toBeDefined();
-    if (!firstCall) {
-      throw new Error("Expected inbound Telegram album to emit a message");
-    }
-
-    const [inbound] = firstCall;
 
     expect(inbound.text).toBe("Vacation photos");
     expect(inbound.attachments).toHaveLength(2);
