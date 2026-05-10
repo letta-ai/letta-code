@@ -2726,8 +2726,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             await settingsManager.flush();
 
             if (!enabled && permissionMode.getMode() === "plan") {
-              permissionMode.setMode("default");
-              setUiPermissionMode("default");
+              permissionMode.setMode("unrestricted");
+              setUiPermissionMode("unrestricted");
             }
 
             const { forceToolsetSwitch, switchToolsetForModel } = await import(

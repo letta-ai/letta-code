@@ -245,6 +245,7 @@ export interface DeviceStatus {
   is_online: boolean;
   is_processing: boolean;
   current_permission_mode: DevicePermissionMode;
+  plan_mode_enabled: boolean;
   current_working_directory: string | null;
   git_context: GitContext | null;
   letta_code_version: string | null;

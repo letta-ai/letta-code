@@ -10,6 +10,7 @@ import {
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { migratePermissionMode } from "../../permissions/mode";
+import { settingsManager } from "../../settings-manager";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
 import type {
   AbortMessageCommand,
@@ -73,6 +74,14 @@ function trackListenerError(
   });
 }
 
+function isPlanModeEnabled(): boolean {
+  try {
+    return settingsManager.isPlanModeEnabled();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Handle mode change request from cloud.
  * Stores the new mode in ListenerRuntime.permissionModeByConversation so
@@ -99,6 +108,25 @@ export function handleModeChange(
 
     // Migrate legacy mode values from older clients
     const incomingMode = migratePermissionMode(msg.mode) ?? msg.mode;
+
+    // Reject plan mode if it's disabled in settings
+    if (incomingMode === "plan" && !settingsManager.isPlanModeEnabled()) {
+      if (current.mode === "plan") {
+        current.mode = "unrestricted";
+        current.planFilePath = null;
+        current.modeBeforePlan = null;
+        persistPermissionModeMapForRuntime(runtime);
+      }
+      emitRuntimeStateUpdates(runtime, scope);
+      emitLoopErrorNotice(socket, runtime, {
+        message: "Plan mode is disabled in user settings.",
+        stopReason: "error",
+        isTerminal: false,
+        agentId: scope?.agent_id,
+        conversationId: scope?.conversation_id,
+      });
+      return;
+    }
 
     // Track previous mode so ExitPlanMode can restore it
     if (incomingMode === "plan" && current.mode !== "plan") {

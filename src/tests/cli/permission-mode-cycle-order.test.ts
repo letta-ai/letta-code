@@ -11,9 +11,9 @@ describe("permission mode cycle order", () => {
 
     expect(source).toContain("settingsManager.isPlanModeEnabled()");
     expect(source).toContain(
-      '["default", "plan", "acceptEdits", "bypassPermissions"]',
+      '["unrestricted", "plan", "acceptEdits", "standard"]',
     );
-    expect(source).toContain('["default", "acceptEdits", "bypassPermissions"]');
+    expect(source).toContain('["unrestricted", "acceptEdits", "standard"]');
   });
 
   test("/plan-mode command is registered", () => {

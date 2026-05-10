@@ -4000,8 +4000,8 @@ export default function App({
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
       if (mode === "plan" && !settingsManager.isPlanModeEnabled()) {
-        permissionMode.setMode("default");
-        setUiPermissionMode("default");
+        permissionMode.setMode("unrestricted");
+        setUiPermissionMode("unrestricted");
         triggerStatusLineRefresh();
         return;
       }
