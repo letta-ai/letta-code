@@ -195,13 +195,21 @@ function localCompactionSettingsForStorage(
 }
 
 function contextTokensFromUsage(usage: LanguageModelUsage): number | undefined {
-  if (
-    typeof usage.inputTokens === "number" ||
-    typeof usage.outputTokens === "number"
-  ) {
-    return (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+  const inputTokens =
+    typeof usage.inputTokens === "number" ? usage.inputTokens : undefined;
+  const outputTokens =
+    typeof usage.outputTokens === "number" ? usage.outputTokens : undefined;
+  const totalTokens =
+    typeof usage.totalTokens === "number" ? usage.totalTokens : undefined;
+
+  if (inputTokens !== undefined && outputTokens !== undefined) {
+    return inputTokens + outputTokens;
   }
-  return typeof usage.totalTokens === "number" ? usage.totalTokens : undefined;
+  if (totalTokens !== undefined) return totalTokens;
+  if (inputTokens !== undefined || outputTokens !== undefined) {
+    return (inputTokens ?? 0) + (outputTokens ?? 0);
+  }
+  return undefined;
 }
 
 function createLocalExecutor(

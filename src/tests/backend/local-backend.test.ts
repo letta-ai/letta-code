@@ -1352,6 +1352,106 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("uses total token fallback when usage output tokens are missing", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-total-fallback-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage: LanguageModelUsage = {
+        inputTokens: 90,
+        inputTokenDetails: {
+          noCacheTokens: 90,
+          cacheReadTokens: undefined,
+          cacheWriteTokens: undefined,
+        },
+        outputTokens: undefined,
+        outputTokenDetails: {
+          textTokens: undefined,
+          reasoningTokens: undefined,
+        },
+        totalTokens: 102,
+      };
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "usage-total-fallback summary" } as never;
+        }) as never,
+        streamText: () => {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "usage-fallback-text",
+                text: "limit response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-usage-fallback",
+              role: "assistant",
+              parts: [{ type: "text", text: "limit response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Fallback Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 100,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("limit trigger request", agent.id),
+        ),
+      );
+
+      const usageChunk = chunks.find(
+        (chunk) => chunk.message_type === "usage_statistics",
+      ) as
+        | {
+            context_tokens?: number;
+            prompt_tokens?: number;
+            total_tokens?: number;
+            completion_tokens?: number;
+          }
+        | undefined;
+      expect(usageChunk?.context_tokens).toBe(102);
+      expect(usageChunk?.prompt_tokens).toBe(90);
+      expect(usageChunk?.total_tokens).toBe(102);
+      expect(usageChunk?.completion_tokens).toBeUndefined();
+      expect(summaryPrompt).toContain("limit trigger request");
+      expect(summaryPrompt).toContain("limit response");
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("usage-total-fallback summary");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("compacts after usage-limit tool-call turns", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-usage-tool-compact-"),
