@@ -42,6 +42,15 @@ describe("drainStream stop reason wiring", () => {
     );
   });
 
+  test("resume guard skips retries when stream already emitted terminal stop_reason", () => {
+    const streamPath = fileURLToPath(
+      new URL("../../cli/helpers/stream.ts", import.meta.url),
+    );
+    const source = readFileSync(streamPath, "utf-8");
+
+    expect(source).toContain("!result.sawStopReasonChunk");
+  });
+
   test("preserves llm_api_error when stream throws after stop_reason chunk", async () => {
     const fakeStream = {
       controller: new AbortController(),
@@ -61,6 +70,7 @@ describe("drainStream stop reason wiring", () => {
     );
 
     expect(result.stopReason).toBe("llm_api_error");
+    expect(result.sawStopReasonChunk).toBe(true);
   });
 
   test("stream error cancels in-progress tool calls by default (skipCancelToolsOnError=false)", async () => {
@@ -132,6 +142,7 @@ describe("drainStream stop reason wiring", () => {
     );
 
     expect(result.stopReason).toBe("end_turn");
+    expect(result.sawStopReasonChunk).toBe(true);
     expect(getEventListeners(parent.signal, "abort")).toHaveLength(0);
   });
 

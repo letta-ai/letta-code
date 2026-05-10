@@ -69,6 +69,7 @@ export type DrainStreamHook = (
 
 export type DrainResult = {
   stopReason: StopReasonType;
+  sawStopReasonChunk?: boolean;
   lastRunId?: string | null;
   lastSeqId?: number | null;
   approval?: ApprovalRequest | null; // DEPRECATED: kept for backward compat
@@ -601,6 +602,7 @@ export async function drainStream(
 
   return {
     stopReason,
+    sawStopReasonChunk: streamProcessor.stopReason !== null,
     approval,
     approvals,
     lastRunId: streamProcessor.lastRunId,
@@ -746,6 +748,7 @@ export async function drainStreamWithResume(
     false;
   const canResume =
     result.stopReason === "error" &&
+    !result.sawStopReasonChunk &&
     !isApprovalPendingConflict &&
     (runIdToResume || runIdSource === "otid") &&
     abortSignal &&
@@ -928,6 +931,7 @@ export async function drainStreamWithResume(
   // Log when stream errored but resume was NOT attempted, with reasons why
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];
+    if (result.sawStopReasonChunk) skipReasons.push("terminal_stop_reason");
     if (!result.lastRunId && runIdSource !== "otid")
       skipReasons.push("no_run_id");
     if (!abortSignal) skipReasons.push("no_abort_signal");
