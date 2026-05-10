@@ -1154,6 +1154,70 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("uses ChatGPT OAuth instructions when running local compaction summaries", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-chatgpt-oauth-compact-"),
+    );
+    try {
+      let capturedSystem: string | undefined;
+      let capturedProviderOptions: unknown;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: {
+          system?: string;
+          providerOptions?: unknown;
+        }) => {
+          capturedSystem = options.system;
+          capturedProviderOptions = options.providerOptions;
+          return { text: "oauth compaction summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "ChatGPT OAuth Compact Agent",
+        model: "chatgpt-plus-pro/gpt-5.5",
+        model_settings: { provider_type: "chatgpt_oauth" },
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+        { agent_id: agent.id, compaction_settings: { mode: "all" } } as never,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result.summary).toBe("oauth compaction summary");
+      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+      expect(capturedProviderOptions).toMatchObject({
+        openai: {
+          instructions: LOCAL_ALL_COMPACTION_PROMPT,
+          systemMessageMode: "remove",
+          store: false,
+        },
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("auto-compacts and retries local AI SDK turns on context overflow", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-auto-compact-"),

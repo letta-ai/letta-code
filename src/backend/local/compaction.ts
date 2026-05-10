@@ -1,4 +1,4 @@
-import { generateText, type LanguageModel } from "ai";
+import { APICallError, generateText, type LanguageModel, streamText } from "ai";
 import { createAISDKModelFactoryFromAgent } from "../dev/AISDKModelFactory";
 import { buildAISDKProviderOptions } from "../dev/AISDKStreamAdapter";
 import { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
@@ -211,25 +211,62 @@ async function runGenerateText(
   input: LocalAllCompactionInput,
   transcript: string,
   defaultPrompt: string,
-) {
+): Promise<{ text: string }> {
+  const systemPrompt = input.prompt ?? defaultPrompt;
   const run = input.generateText ?? generateText;
-  return run({
-    model:
-      input.createModel?.() ??
-      createAISDKModelFactoryFromAgent(
-        input.agent.model,
-        input.agent.model_settings,
-        { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
-      )(),
-    system: input.prompt ?? defaultPrompt,
-    prompt: transcript,
-    providerOptions: buildAISDKProviderOptions(
+  const model =
+    input.createModel?.() ??
+    createAISDKModelFactoryFromAgent(
       input.agent.model,
       input.agent.model_settings,
-    ),
-    maxRetries: 0,
-    abortSignal: input.abortSignal,
-  });
+      { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
+    )();
+  const providerOptions = buildAISDKProviderOptions(
+    input.agent.model,
+    input.agent.model_settings,
+    { systemPrompt },
+  );
+  try {
+    const result = await run({
+      model,
+      system: systemPrompt,
+      prompt: transcript,
+      providerOptions,
+      maxRetries: 0,
+      abortSignal: input.abortSignal,
+    });
+    return { text: result.text };
+  } catch (error) {
+    const detail = [
+      error instanceof Error ? error.message : "",
+      APICallError.isInstance(error) ? String(error.responseBody ?? "") : "",
+    ]
+      .join("\n")
+      .toLowerCase();
+    if (!detail.includes("stream must be set to true")) {
+      throw error;
+    }
+
+    let text = "";
+    const result = streamText({
+      model,
+      system: systemPrompt,
+      prompt: transcript,
+      providerOptions,
+      maxRetries: 0,
+      abortSignal: input.abortSignal,
+    });
+    for await (const part of result.fullStream) {
+      if (part.type === "text-delta") {
+        text += part.text;
+        continue;
+      }
+      if (part.type === "error") {
+        throw part.error;
+      }
+    }
+    return { text };
+  }
 }
 
 async function summarizeLocalMessagesWithPrompt(
@@ -238,7 +275,7 @@ async function summarizeLocalMessagesWithPrompt(
 ): Promise<string> {
   if (input.messages.length === 0) return "No prior conversation messages.";
   const primaryTranscript = formatLocalMessagesForSummary(input.messages);
-  let result: Awaited<ReturnType<typeof generateText>> | undefined;
+  let result: { text: string } | undefined;
   try {
     result = await runGenerateText(input, primaryTranscript, defaultPrompt);
   } catch (error) {
