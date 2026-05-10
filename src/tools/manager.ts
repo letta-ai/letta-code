@@ -35,6 +35,7 @@ import {
   type RuntimeContextSnapshot,
   runWithRuntimeContext,
 } from "../runtime-context";
+import { settingsManager } from "../settings-manager";
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import {
@@ -251,6 +252,31 @@ export function filterBuiltInToolNamesByClientAllowlist(
       toolName,
     ),
   );
+}
+
+const PLAN_MODE_TOOL_NAMES = new Set<ToolName>([
+  "EnterPlanMode",
+  "ExitPlanMode",
+]);
+
+function isPlanModeTool(toolName: string): boolean {
+  return PLAN_MODE_TOOL_NAMES.has(toolName as ToolName);
+}
+
+function isPlanModeEnabled(): boolean {
+  try {
+    return settingsManager.isPlanModeEnabled();
+  } catch {
+    return false;
+  }
+}
+
+function filterPlanModeTools(toolNames: ToolName[]): ToolName[] {
+  if (isPlanModeEnabled()) {
+    return toolNames;
+  }
+
+  return toolNames.filter((name) => !PLAN_MODE_TOOL_NAMES.has(name));
 }
 
 function filterExternalToolsByClientAllowlist(
@@ -1193,6 +1219,10 @@ async function buildSpecificToolRegistry(
     }
 
     const internalName = getInternalToolName(name);
+    if (!isPlanModeEnabled() && isPlanModeTool(internalName)) {
+      continue;
+    }
+
     const definition = TOOL_DEFINITIONS[internalName as ToolName];
     if (!definition) {
       console.warn(
@@ -1272,6 +1302,8 @@ async function resolveBaseToolNamesForModel(
       }
     }
   }
+
+  baseToolNames = filterPlanModeTools(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(

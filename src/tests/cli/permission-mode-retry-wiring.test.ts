@@ -36,11 +36,17 @@ describe("permission mode retry wiring", () => {
 
     const slashPlanStart = source.indexOf('if (trimmed === "/plan") {');
     const slashPlanEnd = source.indexOf(
-      "return { submitted: true };",
+      "// Special handling for /init command",
       slashPlanStart,
     );
     expect(slashPlanStart).toBeGreaterThan(-1);
     expect(slashPlanEnd).toBeGreaterThan(slashPlanStart);
+    expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
+      "settingsManager.isPlanModeEnabled()",
+    );
+    expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
+      "Plan mode is disabled in user settings.",
+    );
     expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
       "cacheLastPlanFilePath(planPath);",
     );
@@ -53,6 +59,9 @@ describe("permission mode retry wiring", () => {
     );
     expect(modeChangeStart).toBeGreaterThan(-1);
     expect(modeChangeEnd).toBeGreaterThan(modeChangeStart);
+    expect(source.slice(modeChangeStart, modeChangeEnd)).toContain(
+      'if (mode === "plan" && !settingsManager.isPlanModeEnabled())',
+    );
     expect(source.slice(modeChangeStart, modeChangeEnd)).toContain(
       "cacheLastPlanFilePath(planPath);",
     );

@@ -82,6 +82,7 @@ export interface Settings {
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
+  planModeEnabled: boolean; // Enables plan-mode tools and /plan command when true
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionStepCount: number;
@@ -162,6 +163,7 @@ const DEFAULT_SETTINGS: Settings = {
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
   autoSwapOnQuotaLimit: true,
+  planModeEnabled: false,
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
@@ -545,6 +547,14 @@ class SettingsManager {
    */
   getSetting<K extends keyof Settings>(key: K): Settings[K] {
     return this.getSettings()[key];
+  }
+
+  isPlanModeEnabled(): boolean {
+    return this.getSettings().planModeEnabled === true;
+  }
+
+  setPlanModeEnabled(enabled: boolean): void {
+    this.updateSettings({ planModeEnabled: enabled });
   }
 
   getCachedSecureTokens(): SecureTokens {

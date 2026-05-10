@@ -2682,6 +2682,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Special handling for /plan command - enter plan mode
         if (trimmed === "/plan") {
+          const cmd = commandRunner.start("/plan", "Entering plan mode...");
+          if (!settingsManager.isPlanModeEnabled()) {
+            cmd.finish("Plan mode is disabled in user settings.", false);
+            return { submitted: true };
+          }
+
           // Generate plan file path and enter plan mode
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
@@ -2689,10 +2695,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
-          const cmd = commandRunner.start(
-            "/plan",
-            `Plan mode enabled. Plan file: ${planPath}`,
-          );
           cmd.finish(`Plan mode enabled. Plan file: ${planPath}`, true);
 
           return { submitted: true };

@@ -1388,12 +1388,9 @@ export function Input({
       }
 
       // Cycle through permission modes
-      const modes: PermissionMode[] = [
-        "unrestricted",
-        "acceptEdits",
-        "standard",
-        "plan",
-      ];
+      const modes: PermissionMode[] = settingsManager.isPlanModeEnabled()
+        ? ["default", "plan", "acceptEdits", "bypassPermissions"]
+        : ["default", "acceptEdits", "bypassPermissions"];
       const currentIndex = modes.indexOf(currentMode);
       const nextIndex = (currentIndex + 1) % modes.length;
       const nextMode = modes[nextIndex] ?? "unrestricted";
