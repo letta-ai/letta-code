@@ -244,6 +244,54 @@ describe("AISDKStreamAdapter", () => {
     });
   });
 
+  test("heals unresolved historical tool parts before model conversion", async () => {
+    let capturedMessages: unknown[] | undefined;
+    const streamText: AISDKStreamTextFunction = (options) => {
+      capturedMessages = options.messages;
+      return {
+        fullStream: (async function* () {
+          yield streamPart({ type: "text-delta", id: "text-1", text: "ok" });
+          yield streamPart({ type: "finish", finishReason: "stop" });
+        })(),
+      };
+    };
+    const adapter = new AISDKStreamAdapter({
+      createModel: () => ({}) as LanguageModel,
+      streamText,
+    });
+
+    const events = await collect(
+      adapter.stream(
+        providerInput([
+          {
+            id: "ui-assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-ShellCommand",
+                toolCallId: "call-stale",
+                state: "approval-requested",
+                input: { command: "pwd" },
+                approval: { id: "approval-1" },
+              },
+            ],
+          },
+          {
+            id: "ui-user-1",
+            role: "user",
+            parts: [{ type: "text", text: "keep going" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(capturedMessages).toBeDefined();
+    expect(events.map((event) => event.type)).toEqual([
+      "ai-sdk-part",
+      "ai-sdk-part",
+    ]);
+  });
+
   test("retries retryable AI SDK connection errors before yielding model output", async () => {
     let calls = 0;
     let capturedMaxRetries: number | undefined;

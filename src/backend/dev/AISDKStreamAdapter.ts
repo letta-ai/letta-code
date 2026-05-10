@@ -661,12 +661,44 @@ function sanitizeUIMessagesForProvider(
   if (provider === "unknown") return capabilitySanitizedMessages;
   return capabilitySanitizedMessages
     .map((message) => {
-      const parts = message.parts.filter((part) =>
+      let messageChanged = false;
+      const normalizedParts =
+        message.role === "assistant"
+          ? message.parts.map((part) => {
+              if (
+                !isRecord(part) ||
+                typeof part.type !== "string" ||
+                !part.type.startsWith("tool-")
+              ) {
+                return part;
+              }
+              const partRecord = part as Record<string, unknown>;
+              const state = partRecord.state;
+              const settled =
+                state === "output-available" ||
+                state === "output-error" ||
+                state === "output-denied";
+              if (settled) return part;
+              messageChanged = true;
+              const normalized = {
+                ...partRecord,
+                state: "output-error",
+                errorText:
+                  stringValue(partRecord.errorText) ??
+                  "Tool result missing from interrupted previous turn.",
+              } as Record<string, unknown>;
+              delete normalized.approval;
+              return normalized as LocalMessage["parts"][number];
+            })
+          : message.parts;
+
+      const filteredParts = normalizedParts.filter((part) =>
         shouldKeepReasoningPart(part, provider),
       );
-      return parts.length === message.parts.length
-        ? message
-        : { ...message, parts };
+      if (filteredParts.length !== normalizedParts.length) {
+        messageChanged = true;
+      }
+      return messageChanged ? { ...message, parts: filteredParts } : message;
     })
     .filter(
       (message) => message.role !== "assistant" || message.parts.length > 0,
