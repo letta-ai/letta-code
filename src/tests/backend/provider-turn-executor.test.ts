@@ -178,6 +178,136 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual(["user_message", "approval_request_message"]);
   });
 
+  test("keeps approval flow alive when provider stream ends after a tool call without finish", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield streamPart({
+          type: "tool-call",
+          toolCallId: "provider-tool-no-finish",
+          toolName: "ShellCommand",
+          input: { command: "pwd" },
+        });
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    const chunks = await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("call a tool without finish"),
+      ),
+    );
+
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "approval_request_message",
+      "stop_reason",
+    ]);
+    expect(chunks.at(-1)).toMatchObject({
+      message_type: "stop_reason",
+      stop_reason: "requires_approval",
+    });
+    const runId = (chunks[0] as { run_id?: string } | undefined)?.run_id;
+    await expect(backend.retrieveRun(runId ?? "")).resolves.toMatchObject({
+      status: "completed",
+      stop_reason: "requires_approval",
+    });
+  });
+
+  test("synthesizes requires_approval when executor emits approval without terminal stop", async () => {
+    const backend = new FakeHeadlessBackend("agent-provider", {
+      async execute() {
+        return {
+          controller: new AbortController(),
+          async *[Symbol.asyncIterator]() {
+            yield {
+              message_type: "approval_request_message",
+              tool_call: {
+                tool_call_id: "raw-tool-no-stop",
+                name: "ShellCommand",
+                arguments: '{"command":"pwd"}',
+              },
+            } as LettaStreamingResponse;
+          },
+        } as never;
+      },
+    });
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    const chunks = await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("raw approval without stop"),
+      ),
+    );
+
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "approval_request_message",
+      "stop_reason",
+    ]);
+    expect(chunks.at(-1)).toMatchObject({
+      message_type: "stop_reason",
+      stop_reason: "requires_approval",
+    });
+    const runId = (chunks[0] as { run_id?: string } | undefined)?.run_id;
+    await expect(backend.retrieveRun(runId ?? "")).resolves.toMatchObject({
+      status: "completed",
+      stop_reason: "requires_approval",
+    });
+  });
+
+  test("surfaces a protocol error when executor stream ends without any stop reason", async () => {
+    const backend = new FakeHeadlessBackend("agent-provider", {
+      async execute() {
+        return {
+          controller: new AbortController(),
+          async *[Symbol.asyncIterator]() {
+            yield {
+              message_type: "assistant_message",
+              content: [{ type: "text", text: "partial" }],
+            } as LettaStreamingResponse;
+          },
+        } as never;
+      },
+    });
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    const chunks = await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("raw stream without stop"),
+      ),
+    );
+
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "assistant_message",
+      "error_message",
+      "stop_reason",
+    ]);
+    expect(chunks[1]).toMatchObject({
+      message_type: "error_message",
+      message: "Local provider stream ended without a stop reason.",
+    });
+    expect(chunks.at(-1)).toMatchObject({
+      message_type: "stop_reason",
+      stop_reason: "error",
+    });
+    const runId = (chunks[0] as { run_id?: string } | undefined)?.run_id;
+    await expect(backend.retrieveRun(runId ?? "")).resolves.toMatchObject({
+      status: "failed",
+      stop_reason: "error",
+    });
+  });
+
   test("marks retryable provider failures after model output as llm_api_error runs", async () => {
     const providerError = new APICallError({
       message: "upstream connect error",

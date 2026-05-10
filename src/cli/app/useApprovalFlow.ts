@@ -617,6 +617,21 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           // next onSubmit, causing "Invalid tool call IDs" errors.
           queueApprovalResults(null);
         }
+      } catch (error) {
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          true,
+          "stream_error",
+        );
+        const errorDetails = formatErrorDetails(error, agentId);
+        appendError(errorDetails, {
+          ...extractErrorMeta(error),
+          context: "approval_send",
+        });
+        setStreaming(false);
+        closeTrajectorySegment();
+        syncTrajectoryElapsedBase();
+        refreshDerived();
       } finally {
         // Always release the execution guard, even if an error occurred
         clearApprovalToolContext();
@@ -628,6 +643,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       }
     },
     [
+      agentId,
       approvalResults,
       autoHandledResults,
       autoDeniedApprovals,
@@ -700,6 +716,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           setIsExecutingTool(false);
         }
       } catch (e) {
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          true,
+          "stream_error",
+        );
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(errorDetails, {
           ...extractErrorMeta(e),
@@ -707,6 +728,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         });
         setStreaming(false);
         setIsExecutingTool(false);
+        refreshDerived();
       }
     },
     [
@@ -716,6 +738,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       sendAllResults,
       appendError,
       isExecutingTool,
+      refreshDerived,
       setStreaming,
       setApprovalResults,
       setIsExecutingTool,
@@ -913,6 +936,21 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
                 otid: randomUUID(),
               },
             ]);
+          } catch (error) {
+            markIncompleteToolsAsCancelled(
+              buffersRef.current,
+              true,
+              "stream_error",
+            );
+            const errorDetails = formatErrorDetails(error, agentId);
+            appendError(errorDetails, {
+              ...extractErrorMeta(error),
+              context: "approval_send",
+            });
+            setStreaming(false);
+            closeTrajectorySegment();
+            syncTrajectoryElapsedBase();
+            refreshDerived();
           } finally {
             setIsExecutingTool(false);
           }
@@ -934,10 +972,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       handleApproveCurrent,
       processConversation,
       refreshDerived,
+      appendError,
       isExecutingTool,
       setStreaming,
       setUiPermissionMode,
       openTrajectorySegment,
+      closeTrajectorySegment,
+      syncTrajectoryElapsedBase,
       prepareScopedToolExecutionContext,
       updateStreamingOutput,
       setApprovalContexts,
@@ -950,6 +991,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     ],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
   const handleDenyCurrent = useCallback(
     async (reason: string) => {
       if (isExecutingTool) return;
@@ -981,6 +1023,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           setIsExecutingTool(false);
         }
       } catch (e) {
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          true,
+          "stream_error",
+        );
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(errorDetails, {
           ...extractErrorMeta(e),
@@ -988,6 +1035,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         });
         setStreaming(false);
         setIsExecutingTool(false);
+        refreshDerived();
       }
     },
     [
@@ -997,6 +1045,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       sendAllResults,
       appendError,
       isExecutingTool,
+      refreshDerived,
       setStreaming,
       setApprovalResults,
       setIsExecutingTool,

@@ -1291,6 +1291,30 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             stopReasonToHandle = "cancelled";
           }
 
+          const approvalsFromStream =
+            approvals && approvals.length > 0
+              ? approvals
+              : approval
+                ? [approval]
+                : [];
+          if (
+            stopReasonToHandle === "end_turn" &&
+            approvalsFromStream.length > 0
+          ) {
+            telemetry.trackError(
+              "stream_end_turn_with_pending_approvals_tui_guard",
+              "Stream returned end_turn after emitting approval_request_message chunks; continuing approval flow",
+              "message_stream",
+              { runId: lastRunId ?? undefined },
+            );
+            debugWarn(
+              "stream",
+              "Coercing end_turn to requires_approval because %d approval chunk(s) were collected",
+              approvalsFromStream.length,
+            );
+            stopReasonToHandle = "requires_approval";
+          }
+
           // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
             clearApprovalToolContext();
@@ -1567,12 +1591,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             pendingInterruptRecoveryConversationIdRef.current = null;
 
             // Use new approvals array, fallback to legacy approval for backward compat
-            const approvalsToProcess =
-              approvals && approvals.length > 0
-                ? approvals
-                : approval
-                  ? [approval]
-                  : [];
+            const approvalsToProcess = approvalsFromStream;
 
             if (approvalsToProcess.length === 0) {
               clearApprovalToolContext();
