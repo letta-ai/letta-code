@@ -17,15 +17,9 @@ import type { ApprovalRequest } from "../cli/helpers/stream";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
 
 // Backfill should feel like "the last turn(s)", not "the last N raw messages".
-// Tool-heavy turns can generate many tool_call/tool_return messages that would
-// otherwise push the most recent assistant/user messages out of the window.
+// Fetch every renderable message type so the TUI can reconstruct the transcript.
 const BACKFILL_PRIMARY_MESSAGE_LIMIT = 12; // user/assistant/reasoning/event/summary
 const BACKFILL_MAX_RENDERABLE_MESSAGES = 80; // safety cap
-
-// Note: We intentionally do not include tool-call / tool-return chatter in the
-// resume backfill. Pending approvals are handled via `pendingApprovals` and
-// shown separately in the UI. Including tool logs here makes resume feel like a
-// corrupted replay when the last "turn" was tool-heavy.
 
 // Stop fetching once we have enough actual conversational anchors.
 // Reasoning can be extremely tool-step heavy, so anchor on user/assistant.
@@ -43,23 +37,12 @@ const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
   "reasoning_message",
   "event_message",
   "summary_message",
-];
-
-const DEFAULT_RESUME_MESSAGE_TYPES: MessageType[] = [
-  ...RESUME_BACKFILL_MESSAGE_TYPES,
   "approval_request_message",
   "tool_return_message",
   "approval_response_message",
 ];
 
-function isPrimaryMessageType(messageType: string | undefined): boolean {
-  return (
-    messageType === "user_message" ||
-    messageType === "assistant_message" ||
-    messageType === "event_message" ||
-    messageType === "summary_message"
-  );
-}
+const DEFAULT_RESUME_MESSAGE_TYPES = RESUME_BACKFILL_MESSAGE_TYPES;
 
 function isAnchorMessageType(messageType: string | undefined): boolean {
   return messageType === "user_message" || messageType === "assistant_message";
@@ -195,10 +178,10 @@ function pendingApprovalsFromMessageVariants(messages: Message[]): {
   pendingApproval: ApprovalRequest | null;
   pendingApprovals: ApprovalRequest[];
 } {
-  const approvalRequest = messages.find(
+  const approvalRequests = messages.filter(
     (msg) => msg.message_type === "approval_request_message",
   );
-  if (!approvalRequest) {
+  if (approvalRequests.length === 0) {
     return {
       messageToCheck: messages[0],
       pendingApproval: null,
@@ -207,25 +190,35 @@ function pendingApprovalsFromMessageVariants(messages: Message[]): {
   }
 
   const completedToolCallIds = completedToolCallIdsFromMessages(messages);
-  const pendingApprovals = approvalRequestsFromMessage(approvalRequest).filter(
-    (approval) => !completedToolCallIds.has(approval.toolCallId),
-  );
+  const pendingByToolCallId = new Map<string, ApprovalRequest>();
+  for (const approvalRequest of approvalRequests) {
+    for (const approval of approvalRequestsFromMessage(approvalRequest)) {
+      if (completedToolCallIds.has(approval.toolCallId)) continue;
+      if (!pendingByToolCallId.has(approval.toolCallId)) {
+        pendingByToolCallId.set(approval.toolCallId, approval);
+      }
+    }
+  }
+  const pendingApprovals = Array.from(pendingByToolCallId.values());
   const pendingApproval = pendingApprovals[0] || null;
+  const latestApprovalRequest =
+    approvalRequests[approvalRequests.length - 1] ?? messages[0];
 
   logPendingApprovals(pendingApprovals);
 
-  return { messageToCheck: approvalRequest, pendingApproval, pendingApprovals };
+  return {
+    messageToCheck: latestApprovalRequest,
+    pendingApproval,
+    pendingApprovals,
+  };
 }
 
 /**
  * Prepare message history for backfill, trimming orphaned tool returns.
  * Messages should already be in chronological order (oldest first).
  */
-// Exported for tests: resume UX depends on strict message-type filtering.
-export function prepareMessageHistory(
-  messages: Message[],
-  opts?: { primaryOnly?: boolean },
-): Message[] {
+// Exported for tests: resume UX depends on deterministic message-type filtering.
+export function prepareMessageHistory(messages: Message[]): Message[] {
   const isRenderable = (msg: Message): boolean => {
     const t = msg.message_type;
     if (
@@ -245,48 +238,6 @@ export function prepareMessageHistory(
   };
 
   const renderable = messages.filter(isRenderable);
-  if (opts?.primaryOnly) {
-    // Resume view should prioritize the actual conversation (user/assistant + events).
-    // Reasoning can be extremely tool-step heavy and will crowd out assistant messages.
-    const convo = renderable.filter((m) =>
-      isPrimaryMessageType(m.message_type),
-    );
-    let trimmed = convo.slice(-BACKFILL_PRIMARY_MESSAGE_LIMIT);
-
-    // Hardening: if the last N items are all user/system-y content, ensure we
-    // still include the most recent assistant message when one exists.
-    const hasAssistant = trimmed.some(
-      (m) => m.message_type === "assistant_message",
-    );
-    if (!hasAssistant) {
-      const lastAssistantIndex = convo
-        .map((m) => m.message_type)
-        .lastIndexOf("assistant_message");
-      if (lastAssistantIndex >= 0) {
-        const lastAssistant = convo[lastAssistantIndex];
-        if (lastAssistant) {
-          // Preserve recency: keep the newest tail and prepend the last assistant.
-          const tailLimit = Math.max(BACKFILL_PRIMARY_MESSAGE_LIMIT - 1, 0);
-          const newestTail = tailLimit > 0 ? convo.slice(-tailLimit) : [];
-          trimmed = [lastAssistant, ...newestTail];
-        }
-      }
-    }
-    if (trimmed.length > 0) return trimmed;
-
-    // If we have no user/assistant/event/summary (rare), fall back to reasoning.
-    // If reasoning is also absent, show a small tail of whatever renderable
-    // messages exist so resume isn't blank.
-    const reasoning = renderable.filter(
-      (m) => m.message_type === "reasoning_message",
-    );
-    if (reasoning.length > 0) {
-      return reasoning.slice(-BACKFILL_PRIMARY_MESSAGE_LIMIT);
-    }
-    // Last resort: show a small reasoning-only slice.
-    // Do not fall back to tool chatter.
-    return [];
-  }
 
   // Walk backwards until we've captured enough "primary" messages to anchor
   // the replay (user/assistant/reasoning + high-level events), but include tool
@@ -482,9 +433,7 @@ export async function getResumeDataFromBackend(
             return {
               pendingApproval: null,
               pendingApprovals: [],
-              messageHistory: prepareMessageHistory(backfill, {
-                primaryOnly: true,
-              }),
+              messageHistory: prepareMessageHistory(backfill),
             };
           } catch (backfillError) {
             debugWarn(

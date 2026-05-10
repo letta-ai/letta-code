@@ -37,6 +37,25 @@ describe("approval recovery wiring", () => {
     expect(segment).not.toContain("!hasApprovalInPayload &&");
   });
 
+  test("local post-stream retry continues from persisted state instead of replaying input", () => {
+    const source = readInteractiveAppSource();
+
+    const start = source.indexOf("const retryFromPersistedLocalState =");
+    const end = source.indexOf(
+      "// Reset seq_id threshold — new run starts from seq_id 1",
+      start,
+    );
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("backendCapabilities.localModelCatalog");
+    expect(segment).toContain("!backendCapabilities.remoteMemfs");
+    expect(segment).toContain("? []");
+    expect(segment).toContain(": refreshInputOtidsForNewRequest(currentInput)");
+  });
+
   test("tool interrupt branch includes backend cancel call before early return", () => {
     const source = readInteractiveAppSource();
 
@@ -74,8 +93,11 @@ describe("approval recovery wiring", () => {
 
     const recoverSegment = source.slice(recoverStart, recoverEnd);
     expect(recoverSegment).toContain("const hasQueuedRealResults =");
-    expect(recoverSegment).toContain("buildFreshDenialApprovals(");
-    expect(recoverSegment).toContain("queueApprovalResults(staleDenials");
+    expect(recoverSegment).toContain(
+      "await restorePendingApprovalUi(approvals)",
+    );
+    expect(recoverSegment).not.toContain("buildFreshDenialApprovals(");
+    expect(recoverSegment).not.toContain("queueApprovalResults(staleDenials");
     expect(recoverSegment).not.toContain("queueApprovalResults(null)");
     expect(recoverSegment).not.toContain(
       "await classifyApprovals(approvals, {",

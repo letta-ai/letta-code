@@ -2409,9 +2409,55 @@ describe("LocalBackend", () => {
       "2026-01-01T00:00:02.000Z",
       "2026-01-01T00:00:03.000Z",
       "2026-01-01T00:00:04.000Z",
-      "2026-01-01T00:00:04.000Z",
-      "2026-01-01T00:00:04.000Z",
+      "2026-01-01T00:00:04.001Z",
+      "2026-01-01T00:00:04.002Z",
     ]);
+  });
+
+  test("projects local tool variants with stable intra-message ordering", () => {
+    const projected = projectLocalMessagesToStoredMessages(
+      [
+        {
+          id: "ui-assistant-tools",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-ShellCommand",
+              toolCallId: "call-done",
+              state: "output-available",
+              input: { command: "pwd" },
+              output: "/tmp/project",
+            },
+            {
+              type: "tool-ApplyPatch",
+              toolCallId: "call-pending",
+              state: "input-streaming",
+              input: { input: "*** Begin Patch" },
+            },
+          ],
+        },
+      ],
+      "agent-local-test",
+      "default",
+    );
+
+    expect(projected.map((message) => message.id)).toEqual([
+      "ui-assistant-tools:tool:call-done:request",
+      "ui-assistant-tools:tool:call-done:return",
+      "ui-assistant-tools:tool:call-pending:pending",
+    ]);
+    expect(projected.map((message) => message.date)).toEqual([
+      "2026-01-01T00:00:01.000Z",
+      "2026-01-01T00:00:01.001Z",
+      "2026-01-01T00:00:01.002Z",
+    ]);
+
+    const chronologicalAfterDescList = [...projected]
+      .reverse()
+      .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+    expect(chronologicalAfterDescList.map((message) => message.id)).toEqual(
+      projected.map((message) => message.id),
+    );
   });
 
   test("projects local reasoning parts as reasoning messages", () => {

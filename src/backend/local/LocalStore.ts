@@ -35,6 +35,7 @@ import {
   projectedMessageLookupKeys,
   projectLocalMessagesToStoredMessages,
   projectLocalMessageToStoredMessages,
+  withProjectedMessageDates,
 } from "./LocalMessageProjection";
 import {
   getAttachedLocalUIMessage,
@@ -447,6 +448,19 @@ function getCursor(
 ): string | undefined {
   const value = (body as Record<string, unknown> | undefined)?.[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function getIncludedMessageTypes(
+  body?: ConversationMessageListBody | AgentMessageListBody,
+): Set<string> | undefined {
+  const value = (body as Record<string, unknown> | undefined)
+    ?.include_return_message_types;
+  if (!Array.isArray(value)) return undefined;
+
+  const messageTypes = value.filter(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  );
+  return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
 }
 
 function toStoredOutputFields(chunk: Record<string, unknown>) {
@@ -1567,6 +1581,13 @@ export class LocalStore {
     body?: ConversationMessageListBody | AgentMessageListBody,
   ): StoredMessage[] {
     let items = messages;
+    const includedMessageTypes = getIncludedMessageTypes(body);
+    if (includedMessageTypes) {
+      items = items.filter((message) =>
+        includedMessageTypes.has(message.message_type),
+      );
+    }
+
     const before = getCursor(body, "before");
     if (before) {
       const beforeIndex = items.findIndex((message) => message.id === before);
@@ -1605,11 +1626,14 @@ export class LocalStore {
     for (let index = 0; index < localMessages.length; index++) {
       const localMessage = localMessages[index];
       if (!localMessage) continue;
-      const projected = projectLocalMessageToStoredMessages(
-        localMessage,
-        agentId,
-        resolvedConversationId,
-        new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+      const projected = withProjectedMessageDates(
+        projectLocalMessageToStoredMessages(
+          localMessage,
+          agentId,
+          resolvedConversationId,
+          new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+        ),
+        index,
       );
       messages.push(...projected);
       for (const [lookupKey, lookupMessages] of projectedMessageLookupKeys(

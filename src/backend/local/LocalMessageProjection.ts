@@ -271,13 +271,29 @@ export function projectLocalMessagesToStoredMessages(
   fallbackAgentId: string,
   fallbackConversationId: string,
 ): StoredMessage[] {
-  return messages.flatMap((message, index) =>
-    projectLocalMessageToStoredMessages(
+  return messages.flatMap((message, index) => {
+    const projected = projectLocalMessageToStoredMessages(
       message,
       fallbackAgentId,
       fallbackConversationId,
       new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
-    ),
+    );
+    return withProjectedMessageDates(projected, index);
+  });
+}
+
+export function withProjectedMessageDates(
+  messages: StoredMessage[],
+  sourceMessageIndex: number,
+): StoredMessage[] {
+  return messages.map(
+    (message, projectedIndex) =>
+      ({
+        ...message,
+        date: new Date(
+          Date.UTC(2026, 0, 1, 0, 0, sourceMessageIndex + 1, projectedIndex),
+        ).toISOString(),
+      }) as StoredMessage,
   );
 }
 
