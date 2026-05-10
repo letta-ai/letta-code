@@ -74,8 +74,11 @@ describe("approval recovery wiring", () => {
 
     const recoverSegment = source.slice(recoverStart, recoverEnd);
     expect(recoverSegment).toContain("const hasQueuedRealResults =");
-    expect(recoverSegment).toContain("buildFreshDenialApprovals(");
-    expect(recoverSegment).toContain("queueApprovalResults(staleDenials");
+    expect(recoverSegment).toContain(
+      "await restorePendingApprovalUi(approvals)",
+    );
+    expect(recoverSegment).not.toContain("buildFreshDenialApprovals(");
+    expect(recoverSegment).not.toContain("queueApprovalResults(staleDenials");
     expect(recoverSegment).not.toContain("queueApprovalResults(null)");
     expect(recoverSegment).not.toContain(
       "await classifyApprovals(approvals, {",

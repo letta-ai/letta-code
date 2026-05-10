@@ -16,10 +16,6 @@ import {
   type ApprovalResult,
   getDisplayableToolReturn,
 } from "../../agent/approval-execution";
-import {
-  buildFreshDenialApprovals,
-  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-} from "../../agent/approval-recovery";
 import type { SessionStats } from "../../agent/stats";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import type { PermissionMode } from "../../permissions/mode";
@@ -247,7 +243,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
   const recoverRestoredPendingApprovals = useCallback(
     async (
       approvals: ApprovalRequest[],
-      _options: { notifyOnManualApproval?: boolean } = {},
+      options: { notifyOnManualApproval?: boolean } = {},
     ): Promise<void> => {
       if (approvals.length === 0) {
         return;
@@ -303,16 +299,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        const staleDenials = buildFreshDenialApprovals(
-          approvals,
-          STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-        ) as ApprovalResult[];
-        if (staleDenials.length > 0) {
-          queueApprovalResults(staleDenials, {
-            conversationId: conversationIdRef.current,
-            generation: generationAtStart,
-          });
-          setNeedsEagerApprovalCheck(false);
+        await restorePendingApprovalUi(approvals);
+        setNeedsEagerApprovalCheck(false);
+        if (options.notifyOnManualApproval) {
+          sendDesktopNotification("Approval needed");
         }
 
         restoredApprovalRecoveryRef.current = {
@@ -323,10 +313,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       } catch (error) {
         debugLog(
           "approvals",
-          "Failed to recover restored approvals automatically: %O",
+          "Failed to restore pending approval UI: %O",
           error,
         );
         await restorePendingApprovalUi(approvals);
+        setNeedsEagerApprovalCheck(false);
         setAutoHandledResults([]);
         setAutoDeniedApprovals([]);
         sendDesktopNotification("Approval needed");
@@ -338,7 +329,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       }
     },
     [
-      queueApprovalResults,
       restorePendingApprovalUi,
       restoredApprovalRecoveryRef,
       setApprovalContexts,

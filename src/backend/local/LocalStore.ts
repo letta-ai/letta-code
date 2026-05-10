@@ -449,6 +449,19 @@ function getCursor(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function getIncludedMessageTypes(
+  body?: ConversationMessageListBody | AgentMessageListBody,
+): Set<string> | undefined {
+  const value = (body as Record<string, unknown> | undefined)
+    ?.include_return_message_types;
+  if (!Array.isArray(value)) return undefined;
+
+  const messageTypes = value.filter(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  );
+  return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
+}
+
 function toStoredOutputFields(chunk: Record<string, unknown>) {
   const { id: _id, date: _date, agent_id, conversation_id, ...fields } = chunk;
   void agent_id;
@@ -1567,6 +1580,13 @@ export class LocalStore {
     body?: ConversationMessageListBody | AgentMessageListBody,
   ): StoredMessage[] {
     let items = messages;
+    const includedMessageTypes = getIncludedMessageTypes(body);
+    if (includedMessageTypes) {
+      items = items.filter((message) =>
+        includedMessageTypes.has(message.message_type),
+      );
+    }
+
     const before = getCursor(body, "before");
     if (before) {
       const beforeIndex = items.findIndex((message) => message.id === before);
