@@ -1,11 +1,91 @@
+import bashLang from "@shikijs/langs/bash";
+import cLang from "@shikijs/langs/c";
+import cppLang from "@shikijs/langs/cpp";
+import csharpLang from "@shikijs/langs/csharp";
+import cssLang from "@shikijs/langs/css";
+import diffLang from "@shikijs/langs/diff";
+import dockerLang from "@shikijs/langs/docker";
+import goLang from "@shikijs/langs/go";
+import graphqlLang from "@shikijs/langs/graphql";
+import htmlLang from "@shikijs/langs/html";
+import iniLang from "@shikijs/langs/ini";
+import javaLang from "@shikijs/langs/java";
+import javascriptLang from "@shikijs/langs/javascript";
+import jsonLang from "@shikijs/langs/json";
+import kotlinLang from "@shikijs/langs/kotlin";
+import lessLang from "@shikijs/langs/less";
+import luaLang from "@shikijs/langs/lua";
+import makeLang from "@shikijs/langs/make";
+import markdownLang from "@shikijs/langs/markdown";
+import perlLang from "@shikijs/langs/perl";
+import phpLang from "@shikijs/langs/php";
+import pythonLang from "@shikijs/langs/python";
+import rLang from "@shikijs/langs/r";
+import rubyLang from "@shikijs/langs/ruby";
+import rustLang from "@shikijs/langs/rust";
+import scalaLang from "@shikijs/langs/scala";
+import scssLang from "@shikijs/langs/scss";
+import sqlLang from "@shikijs/langs/sql";
+import swiftLang from "@shikijs/langs/swift";
+import tomlLang from "@shikijs/langs/toml";
+import tsxLang from "@shikijs/langs/tsx";
+import typescriptLang from "@shikijs/langs/typescript";
+import wasmLang from "@shikijs/langs/wasm";
+import xmlLang from "@shikijs/langs/xml";
+import yamlLang from "@shikijs/langs/yaml";
+import catppuccinLatte from "@shikijs/themes/catppuccin-latte";
+import catppuccinMocha from "@shikijs/themes/catppuccin-mocha";
 import type { ElementContent, RootContent } from "hast";
 import { Box } from "ink";
 import { common, createLowlight } from "lowlight";
 import { memo } from "react";
+import { createHighlighterCoreSync } from "shiki/core";
+import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
 const lowlight = createLowlight(common);
+const shikiHighlighter = createHighlighterCoreSync({
+  themes: [catppuccinMocha, catppuccinLatte],
+  langs: [
+    bashLang,
+    cLang,
+    cppLang,
+    csharpLang,
+    cssLang,
+    diffLang,
+    dockerLang,
+    goLang,
+    graphqlLang,
+    htmlLang,
+    iniLang,
+    javaLang,
+    javascriptLang,
+    jsonLang,
+    kotlinLang,
+    lessLang,
+    luaLang,
+    makeLang,
+    markdownLang,
+    perlLang,
+    phpLang,
+    pythonLang,
+    rLang,
+    rubyLang,
+    rustLang,
+    scalaLang,
+    scssLang,
+    sqlLang,
+    swiftLang,
+    tomlLang,
+    tsxLang,
+    typescriptLang,
+    wasmLang,
+    xmlLang,
+    yamlLang,
+  ],
+  engine: createJavaScriptRegexEngine(),
+});
 const BASH_LANGUAGE = "bash";
 const FIRST_LINE_PROMPT = "$";
 const PROMPT_COLUMN_WIDTH = 2;
@@ -324,33 +404,23 @@ export function highlightCode(
   code: string,
   language: string,
 ): StyledSpan[][] | undefined {
-  const palette = colors.shellSyntax;
-  let spans: StyledSpan[];
   try {
-    const root = lowlight.highlight(language, code);
-    spans = [];
-    for (const child of root.children) {
-      collectSpans(child, palette, spans);
-    }
+    const result = shikiHighlighter.codeToTokens(code, {
+      lang: language,
+      theme:
+        colors.shellSyntax === colors.shellSyntaxLight
+          ? "catppuccin-latte"
+          : "catppuccin-mocha",
+    });
+    return result.tokens.map((line) =>
+      line.map((token) => ({
+        text: token.content,
+        color: token.color ?? colors.shellSyntax.text,
+      })),
+    );
   } catch {
     return undefined;
   }
-
-  const lines: StyledSpan[][] = [[]];
-  for (const span of spans) {
-    const parts = span.text.split("\n");
-    for (let i = 0; i < parts.length; i++) {
-      if (i > 0) {
-        lines.push([]);
-      }
-      const part = parts[i];
-      if (part && part.length > 0) {
-        const currentLine = lines[lines.length - 1];
-        currentLine?.push({ text: part, color: span.color });
-      }
-    }
-  }
-  return lines;
 }
 
 export const SyntaxHighlightedCommand = memo(

@@ -55,14 +55,38 @@ test("markdown fenced code blocks use syntax highlighting when language is provi
   );
   const plain = stripAnsi(output);
   const highlighted = highlightCode(
-    'def greet(name: str) -> str:\n    return f"Hello, {name}!"',
+    'def greet(name: str) -> str:\n    return f"Hello, {name}!"\n\nprint(greet("world"))',
     "python",
   );
 
   expect(plain).toContain("def greet(name: str) -> str:");
   expect(plain).toContain('return f"Hello, {name}!"');
-  expect(highlighted?.[0]?.map((span) => span.color)).toContain("#89b4fa");
-  expect(highlighted?.[1]?.map((span) => span.color)).toContain("#a6e3a1");
+  expect(highlighted?.[0]?.map((span) => span.color)).toEqual([
+    "#CBA6F7",
+    "#CDD6F4",
+    "#89B4FA",
+    "#9399B2",
+    "#EBA0AC",
+    "#9399B2",
+    "#EBA0AC",
+    "#CBA6F7",
+    "#9399B2",
+    "#CDD6F4",
+    "#9399B2",
+    "#CDD6F4",
+    "#CBA6F7",
+    "#9399B2",
+  ]);
+  expect(highlighted?.[1]?.map((span) => span.color)).toContain("#A6E3A1");
+  expect(highlighted?.[0]?.find((span) => span.text === "greet")?.color).toBe(
+    "#89B4FA",
+  );
+  expect(highlighted?.[3]?.find((span) => span.text === "print")?.color).toBe(
+    "#FAB387",
+  );
+  expect(highlighted?.[3]?.find((span) => span.text === "greet")?.color).toBe(
+    "#89B4FA",
+  );
 });
 
 test("markdown code block fallback renders plain code content", async () => {
