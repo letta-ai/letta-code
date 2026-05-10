@@ -55,6 +55,16 @@ describe("built-in subagents", () => {
     expect(configs.init?.permissionMode).toBe("memory");
   });
 
+  test("reflection and memory built-ins do not expose first-class file tools", async () => {
+    const configs = await getAllSubagentConfigs();
+    const removedFileTools = ["Read", "Edit", "Write", "Glob", "Grep"];
+
+    for (const tool of removedFileTools) {
+      expect(configs.reflection?.allowedTools).not.toContain(tool);
+      expect(configs.memory?.allowedTools).not.toContain(tool);
+    }
+  });
+
   test("parses subagent mode and defaults missing mode to stateful", async () => {
     const configs = await getAllSubagentConfigs();
 
