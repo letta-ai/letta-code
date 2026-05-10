@@ -1452,6 +1452,107 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("prefers provider total tokens when both total and split usage are present", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-total-preferred-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage: LanguageModelUsage = {
+        inputTokens: 90,
+        inputTokenDetails: {
+          noCacheTokens: 90,
+          cacheReadTokens: undefined,
+          cacheWriteTokens: undefined,
+        },
+        outputTokens: 12,
+        outputTokenDetails: {
+          textTokens: 12,
+          reasoningTokens: undefined,
+        },
+        // Deliberately differs from input+output to verify precedence.
+        totalTokens: 140,
+      };
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "usage-total-preferred summary" } as never;
+        }) as never,
+        streamText: () => {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "usage-total-preferred-text",
+                text: "limit response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-usage-total-preferred",
+              role: "assistant",
+              parts: [{ type: "text", text: "limit response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Total Preferred Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 120,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("limit trigger request", agent.id),
+        ),
+      );
+
+      const usageChunk = chunks.find(
+        (chunk) => chunk.message_type === "usage_statistics",
+      ) as
+        | {
+            context_tokens?: number;
+            prompt_tokens?: number;
+            total_tokens?: number;
+            completion_tokens?: number;
+          }
+        | undefined;
+      expect(usageChunk?.context_tokens).toBe(140);
+      expect(usageChunk?.prompt_tokens).toBe(90);
+      expect(usageChunk?.completion_tokens).toBe(12);
+      expect(usageChunk?.total_tokens).toBe(140);
+      expect(summaryPrompt).toContain("limit trigger request");
+      expect(summaryPrompt).toContain("limit response");
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("usage-total-preferred summary");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("compacts after usage-limit tool-call turns", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-usage-tool-compact-"),

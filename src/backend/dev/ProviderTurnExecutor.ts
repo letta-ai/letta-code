@@ -114,9 +114,6 @@ function contextTokensFromUsage(usage: LanguageModelUsage): number | undefined {
   const totalTokens =
     typeof usage.totalTokens === "number" ? usage.totalTokens : undefined;
 
-  if (promptTokens !== undefined && completionTokens !== undefined) {
-    return promptTokens + completionTokens;
-  }
   if (totalTokens !== undefined) return totalTokens;
   if (promptTokens !== undefined || completionTokens !== undefined) {
     return (promptTokens ?? 0) + (completionTokens ?? 0);
