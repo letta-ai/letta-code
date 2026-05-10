@@ -42,6 +42,7 @@ type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
 type InputModality = "text" | "image" | "audio" | "video" | "pdf";
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
 const LOCAL_PROVIDER_MAX_RETRY_DELAY_MS = 60_000;
+const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 type AISDKUIMessageStreamFinish = {
   messages: LocalMessage[];
   responseMessage: LocalMessage;
@@ -58,6 +59,7 @@ export type AISDKStreamTextFunction = (options: {
   providerOptions?: AISDKProviderOptions;
   maxRetries: number;
   abortSignal?: AbortSignal;
+  onError?: (event: { error: unknown }) => void;
 }) => {
   fullStream: AsyncIterable<TextStreamPart<ToolSet>>;
   toUIMessageStream?: (options?: {
@@ -834,6 +836,9 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       ),
       maxRetries: 0,
       abortSignal: this.abortSignal,
+      // We classify and handle stream errors in this adapter; suppress AI SDK's
+      // default console.error logging for each error chunk.
+      onError: () => {},
     });
     let uiMessageError: unknown;
     const finalUIMessage = captureFinalUIMessage(result, uiMessages).catch(
@@ -845,8 +850,6 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
 
     let streamError: unknown;
     let lastUsage: LanguageModelUsage | undefined;
-    let sawToolCall = false;
-    let finishReason: string | undefined;
     for await (const part of result.fullStream) {
       if (part.type === "error") {
         if (
@@ -857,14 +860,10 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
           break;
         }
       }
-      if (part.type === "tool-call") {
-        sawToolCall = true;
-      }
       if (part.type === "finish-step") {
         lastUsage = part.usage;
       }
       if (part.type === "finish") {
-        finishReason = part.finishReason;
         lastUsage ??= part.totalUsage;
       }
       yield providerStreamPart(part);
@@ -880,12 +879,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     if (message) {
       yield providerUIMessage(message);
     }
-    if (
-      lastUsage &&
-      !sawToolCall &&
-      finishReason !== "tool-calls" &&
-      this.onContextUsage
-    ) {
+    if (lastUsage && this.onContextUsage) {
       const compaction = await this.onContextUsage(input, lastUsage);
       if (compaction) {
         yield* this.emitCompactionChunks(compaction, "context_window_limit");
@@ -895,7 +889,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
 
   async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
     let activeInput = input;
-    let handledContextOverflow = false;
+    let contextOverflowCompactions = 0;
     let transientRetries = 0;
 
     while (true) {
@@ -910,7 +904,10 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
         return;
       } catch (error) {
         if (isContextWindowOverflowError(error)) {
-          if (handledContextOverflow || !this.onContextWindowOverflow) {
+          if (
+            !this.onContextWindowOverflow ||
+            contextOverflowCompactions >= LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS
+          ) {
             throw error;
           }
 
@@ -920,7 +917,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
           );
           if (!compaction) throw error;
 
-          handledContextOverflow = true;
+          contextOverflowCompactions += 1;
           activeInput = {
             ...activeInput,
             uiMessages: compaction.uiMessages,

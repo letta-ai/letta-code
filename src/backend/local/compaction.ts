@@ -1,4 +1,4 @@
-import { generateText, type LanguageModel } from "ai";
+import { APICallError, generateText, type LanguageModel, streamText } from "ai";
 import { createAISDKModelFactoryFromAgent } from "../dev/AISDKModelFactory";
 import { buildAISDKProviderOptions } from "../dev/AISDKStreamAdapter";
 import { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
@@ -10,6 +10,18 @@ const SLIDING_WORD_LIMIT = 300;
 const SUMMARY_TRUNCATION_SUFFIX = "... [summary truncated to fit]";
 const TOOL_TRANSCRIPT_TRUNCATION_CHARS = 4000;
 const TRANSCRIPT_FALLBACK_MAX_CHARS = 120000;
+const TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS = [
+  TRANSCRIPT_FALLBACK_MAX_CHARS,
+  90_000,
+  60_000,
+  40_000,
+  25_000,
+  15_000,
+  10_000,
+  6_000,
+  4_000,
+  2_000,
+] as const;
 export const LOCAL_DEFAULT_COMPACTION_MODE = "sliding_window";
 export const LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE = 0.3;
 
@@ -80,6 +92,13 @@ export interface LocalCompactionStats {
   messages_count_after?: number;
 }
 
+function isChatGPTOAuthModel(agent: LocalAgentRecord): boolean {
+  return (
+    agent.model.startsWith("chatgpt-plus-pro/") ||
+    agent.model_settings.provider_type === "chatgpt_oauth"
+  );
+}
+
 export type LocalGenerateTextFunction = (options: {
   model: LanguageModel;
   system?: string;
@@ -104,6 +123,11 @@ export interface LocalSlidingWindowCompactionPlan {
   messagesToSummarize: LocalMessage[];
   messagesToKeep: LocalMessage[];
   cutoffIndex: number;
+}
+
+export interface LocalAllCompactionPlan {
+  messagesToSummarize: LocalMessage[];
+  messagesToKeep: LocalMessage[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -194,25 +218,66 @@ async function runGenerateText(
   input: LocalAllCompactionInput,
   transcript: string,
   defaultPrompt: string,
-) {
+): Promise<{ text: string }> {
+  const systemPrompt = input.prompt ?? defaultPrompt;
+  const system =
+    isChatGPTOAuthModel(input.agent) === true ? undefined : systemPrompt;
   const run = input.generateText ?? generateText;
-  return run({
-    model:
-      input.createModel?.() ??
-      createAISDKModelFactoryFromAgent(
-        input.agent.model,
-        input.agent.model_settings,
-        { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
-      )(),
-    system: input.prompt ?? defaultPrompt,
-    prompt: transcript,
-    providerOptions: buildAISDKProviderOptions(
+  const model =
+    input.createModel?.() ??
+    createAISDKModelFactoryFromAgent(
       input.agent.model,
       input.agent.model_settings,
-    ),
-    maxRetries: 0,
-    abortSignal: input.abortSignal,
-  });
+      { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
+    )();
+  const providerOptions = buildAISDKProviderOptions(
+    input.agent.model,
+    input.agent.model_settings,
+    { systemPrompt },
+  );
+  try {
+    const result = await run({
+      model,
+      system,
+      prompt: transcript,
+      providerOptions,
+      maxRetries: 0,
+      abortSignal: input.abortSignal,
+    });
+    return { text: result.text };
+  } catch (error) {
+    const detail = [
+      error instanceof Error ? error.message : "",
+      APICallError.isInstance(error) ? String(error.responseBody ?? "") : "",
+    ]
+      .join("\n")
+      .toLowerCase();
+    if (!detail.includes("stream must be set to true")) {
+      throw error;
+    }
+
+    let text = "";
+    const result = streamText({
+      model,
+      system,
+      prompt: transcript,
+      providerOptions,
+      maxRetries: 0,
+      abortSignal: input.abortSignal,
+      // Compaction handles stream error parts directly below.
+      onError: () => {},
+    });
+    for await (const part of result.fullStream) {
+      if (part.type === "text-delta") {
+        text += part.text;
+        continue;
+      }
+      if (part.type === "error") {
+        throw part.error;
+      }
+    }
+    return { text };
+  }
 }
 
 async function summarizeLocalMessagesWithPrompt(
@@ -221,18 +286,38 @@ async function summarizeLocalMessagesWithPrompt(
 ): Promise<string> {
   if (input.messages.length === 0) return "No prior conversation messages.";
   const primaryTranscript = formatLocalMessagesForSummary(input.messages);
-  let result: Awaited<ReturnType<typeof generateText>>;
+  let result: { text: string } | undefined;
   try {
     result = await runGenerateText(input, primaryTranscript, defaultPrompt);
   } catch (error) {
     if (!isContextWindowOverflowError(error)) throw error;
-    const fallbackTranscript = formatLocalMessagesForSummary(input.messages, {
-      truncationChars: TOOL_TRANSCRIPT_TRUNCATION_CHARS,
-      maxChars: TRANSCRIPT_FALLBACK_MAX_CHARS,
-    });
-    result = await runGenerateText(input, fallbackTranscript, defaultPrompt);
+    let overflowError: unknown = error;
+    let previousTranscript: string | undefined;
+    for (const maxChars of TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS) {
+      const fallbackTranscript = formatLocalMessagesForSummary(input.messages, {
+        truncationChars: TOOL_TRANSCRIPT_TRUNCATION_CHARS,
+        maxChars,
+      });
+      if (fallbackTranscript === previousTranscript) continue;
+      previousTranscript = fallbackTranscript;
+      try {
+        result = await runGenerateText(
+          input,
+          fallbackTranscript,
+          defaultPrompt,
+        );
+        break;
+      } catch (fallbackError) {
+        if (!isContextWindowOverflowError(fallbackError)) throw fallbackError;
+        overflowError = fallbackError;
+      }
+    }
+    if (!result) throw overflowError;
   }
 
+  if (!result) {
+    throw new Error("Compaction summarizer did not return a result.");
+  }
   let summary = result.text.trim();
   const clipChars = input.clipChars === undefined ? 50000 : input.clipChars;
   if (clipChars !== null && summary.length > clipChars) {
@@ -283,7 +368,7 @@ function isValidSlidingWindowCutoff(
 ): boolean {
   const message = messages[index];
   return (
-    message?.role === "assistant" && index > 1 && index < maximumCutoffIndex
+    message?.role === "assistant" && index > 0 && index < maximumCutoffIndex
   );
 }
 
@@ -310,17 +395,22 @@ export function planLocalSlidingWindowCompaction(
     Number.isFinite(options.contextWindow)
       ? (1 - percentage) * options.contextWindow
       : undefined;
+  let approxTokenCount = options.contextWindow ?? Number.POSITIVE_INFINITY;
+  let cutoffIndex: number | undefined;
 
-  for (
-    let evictionPercentage = percentage;
-    evictionPercentage < 1.0;
-    evictionPercentage += 0.1
+  let evictionPercentage = percentage;
+  while (
+    (goalTokens === undefined
+      ? cutoffIndex === undefined
+      : approxTokenCount >= goalTokens) &&
+    evictionPercentage < 1.0
   ) {
+    evictionPercentage += 0.1;
     const messageCutoffIndex = Math.min(
       Math.round(evictionPercentage * messages.length),
       messages.length - 1,
     );
-    const cutoffIndex = [...Array(messageCutoffIndex + 1).keys()]
+    cutoffIndex = [...Array(messageCutoffIndex + 1).keys()]
       .reverse()
       .find((index) =>
         isValidSlidingWindowCutoff(messages, index, maximumCutoffIndex),
@@ -328,23 +418,43 @@ export function planLocalSlidingWindowCompaction(
     if (cutoffIndex === undefined) continue;
 
     const messagesToKeep = messages.slice(cutoffIndex);
-    if (
-      goalTokens !== undefined &&
-      estimateLocalMessageTokens(messagesToKeep) >= goalTokens
-    ) {
-      continue;
-    }
+    approxTokenCount = estimateLocalMessageTokens(messagesToKeep);
+  }
 
+  if (cutoffIndex === undefined || evictionPercentage >= 1.0) {
+    throw new LocalSlidingWindowCompactionPlanningError(
+      "No assistant message found for sliding window compaction.",
+    );
+  }
+
+  if (cutoffIndex >= maximumCutoffIndex) {
+    throw new LocalSlidingWindowCompactionPlanningError(
+      `Assistant message index ${cutoffIndex} is at the end of the message buffer, skipping compaction.`,
+    );
+  }
+
+  return {
+    messagesToSummarize: messages.slice(0, cutoffIndex),
+    messagesToKeep: messages.slice(cutoffIndex),
+    cutoffIndex,
+  };
+}
+
+export function planLocalAllCompaction(
+  messages: LocalMessage[],
+): LocalAllCompactionPlan {
+  const lastMessage = messages.at(-1);
+  if (lastMessage && hasPendingLocalToolPart(lastMessage)) {
     return {
-      messagesToSummarize: messages.slice(0, cutoffIndex),
-      messagesToKeep,
-      cutoffIndex,
+      messagesToSummarize: messages.slice(0, -1),
+      messagesToKeep: [lastMessage],
     };
   }
 
-  throw new LocalSlidingWindowCompactionPlanningError(
-    "No assistant message found for sliding window compaction.",
-  );
+  return {
+    messagesToSummarize: messages,
+    messagesToKeep: [],
+  };
 }
 
 export async function summarizeLocalMessagesSlidingWindow(

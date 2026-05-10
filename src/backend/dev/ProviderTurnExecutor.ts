@@ -106,6 +106,21 @@ function createLocalUIMessageChunk(
   ) as unknown as LettaStreamingResponse;
 }
 
+function contextTokensFromUsage(usage: LanguageModelUsage): number | undefined {
+  const promptTokens =
+    typeof usage.inputTokens === "number" ? usage.inputTokens : undefined;
+  const completionTokens =
+    typeof usage.outputTokens === "number" ? usage.outputTokens : undefined;
+  const totalTokens =
+    typeof usage.totalTokens === "number" ? usage.totalTokens : undefined;
+
+  if (totalTokens !== undefined) return totalTokens;
+  if (promptTokens !== undefined || completionTokens !== undefined) {
+    return (promptTokens ?? 0) + (completionTokens ?? 0);
+  }
+  return undefined;
+}
+
 function createUsageStatisticsChunk(
   usage: LanguageModelUsage | undefined,
 ): LettaStreamingResponse | undefined {
@@ -113,6 +128,7 @@ function createUsageStatisticsChunk(
   const promptTokens = usage.inputTokens;
   const completionTokens = usage.outputTokens;
   const totalTokens = usage.totalTokens;
+  const contextTokens = contextTokensFromUsage(usage);
   const cachedInputTokens = usage.inputTokenDetails.cacheReadTokens;
   const cacheWriteTokens = usage.inputTokenDetails.cacheWriteTokens;
   const reasoningTokens = usage.outputTokenDetails.reasoningTokens;
@@ -142,7 +158,7 @@ function createUsageStatisticsChunk(
     ...(reasoningTokens !== undefined
       ? { reasoning_tokens: reasoningTokens }
       : {}),
-    ...(promptTokens !== undefined ? { context_tokens: promptTokens } : {}),
+    ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
   } as unknown as LettaStreamingResponse;
 }
 
