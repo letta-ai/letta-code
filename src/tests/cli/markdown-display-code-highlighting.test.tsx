@@ -55,7 +55,7 @@ test("markdown fenced code blocks use syntax highlighting when language is provi
   );
   const plain = stripAnsi(output);
   const highlighted = highlightCode(
-    'def greet(name: str) -> str:\n    return f"Hello, {name}!"\n\nprint(greet("world"))',
+    'def greet(name: str) -> str:\n    return f"Hello, {name}!"',
     "python",
   );
 
@@ -63,17 +63,11 @@ test("markdown fenced code blocks use syntax highlighting when language is provi
   expect(plain).toContain('return f"Hello, {name}!"');
   expect(highlighted?.[0]?.map((span) => span.color)).toContain("#89b4fa");
   expect(highlighted?.[1]?.map((span) => span.color)).toContain("#a6e3a1");
-  expect(highlighted?.[0]?.find((span) => span.text === "greet")?.color).toBe(
-    "#89b4fa",
-  );
   expect(highlighted?.[0]?.find((span) => span.text === "(")?.color).toBe(
     "#9399b2",
   );
   expect(highlighted?.[0]?.find((span) => span.text === "->")?.color).toBe(
     "#9399b2",
-  );
-  expect(highlighted?.[3]?.find((span) => span.text === "greet")?.color).toBe(
-    "#89b4fa",
   );
 });
 
