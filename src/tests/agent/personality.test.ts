@@ -63,9 +63,10 @@ describe("personality helpers", () => {
     expect(getPersonalityHumanContent("codex")).toBe(defaultHuman);
   });
 
-  test("default create-agent personalities are exactly memo, linus, and kawaii", () => {
+  test("default create-agent personalities are exactly memo, blank, linus, and kawaii", () => {
     expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
       "memo",
+      "blank",
       "linus",
       "kawaii",
     ]);
@@ -112,5 +113,16 @@ describe("personality helpers", () => {
     const definitions = getPersonalityBlockDefinitions("kawaii");
     expect(definitions.persona.description).toContain("sparkly memory");
     expect(definitions.human.description).toContain("senpai");
+  });
+
+  test("blank personality uses persona_blank.mdx content", () => {
+    const content = getPersonalityContent("blank");
+    expect(content).toContain("blank starter personality");
+    expect(content).toContain("ask the user to provide a personality prompt");
+  });
+
+  test("blank personality uses the default human block", () => {
+    const defaultHuman = getDefaultHumanContent();
+    expect(getPersonalityHumanContent("blank")).toBe(defaultHuman);
   });
 });

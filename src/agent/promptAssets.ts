@@ -12,6 +12,7 @@ import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import personaPrompt from "./prompts/persona.mdx";
+import personaBlankPrompt from "./prompts/persona_blank.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import personaLinusPrompt from "./prompts/persona_linus.mdx";
 import personaMemoPrompt from "./prompts/persona_memo.mdx";
@@ -38,6 +39,7 @@ export const SLEEPTIME_MEMORY_PERSONA = sleeptimePersona;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,
+  "persona_blank.mdx": personaBlankPrompt,
   "persona_kawaii.mdx": personaKawaiiPrompt,
   "persona_linus.mdx": personaLinusPrompt,
   "persona_memo.mdx": personaMemoPrompt,

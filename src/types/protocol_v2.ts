@@ -967,7 +967,7 @@ export interface CreateAgentCommand {
   /** Echoed back in the response for request correlation. */
   request_id: string;
   /** Built-in personality preset to create. */
-  personality: "memo" | "linus" | "kawaii";
+  personality: "memo" | "blank" | "linus" | "kawaii";
   /** Model identifier (e.g. "sonnet", "gpt-4o"). Uses default if omitted. */
   model?: string;
   /** Whether to pin the agent globally after creation. Defaults to true. */

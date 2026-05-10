@@ -201,9 +201,10 @@ describe("listen-client parseServerMessage", () => {
   });
 
   describe("listen-client create_agent command handling", () => {
-    test("creates the memo, linus, and kawaii presets through the shared helper", async () => {
+    test("creates the default presets through the shared helper", async () => {
       expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
         "memo",
+        "blank",
         "linus",
         "kawaii",
       ]);

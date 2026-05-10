@@ -23,7 +23,7 @@ const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
 
 export interface PersonalityOption {
-  id: "kawaii" | "codex" | "claude" | "linus" | "memo";
+  id: "blank" | "kawaii" | "codex" | "claude" | "linus" | "memo";
   label: string;
   description: string;
   /** Model ID from models.json to use when no explicit model is provided. */
@@ -35,6 +35,11 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
     id: "memo",
     label: "Letta Code",
     description: "The memory-first agent",
+  },
+  {
+    id: "blank",
+    label: "Blank",
+    description: "Blank starter — you provide the personality",
   },
   {
     id: "linus",
@@ -63,6 +68,7 @@ export type PersonalityId = PersonalityOption["id"];
 
 export const DEFAULT_CREATE_AGENT_PERSONALITIES = [
   "memo",
+  "blank",
   "linus",
   "kawaii",
 ] as const;
@@ -267,6 +273,10 @@ export function getPersonalityContent(personalityId: PersonalityId): string {
     return getPromptBody("persona_memo.mdx");
   }
 
+  if (personalityId === "blank") {
+    return getPromptBody("persona_blank.mdx");
+  }
+
   if (personalityId === "kawaii") {
     return getPromptBody("persona_kawaii.mdx");
   }
@@ -301,6 +311,10 @@ export function getPersonalityHumanContent(
     return getPromptBody("human_kawaii.mdx");
   }
 
+  if (personalityId === "blank") {
+    return getDefaultHumanContent();
+  }
+
   return getDefaultHumanContent();
 }
 
@@ -322,11 +336,13 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
   const personaTemplatePromptAssetName =
     personalityId === "memo"
       ? "persona_memo.mdx"
-      : personalityId === "kawaii"
-        ? "persona_kawaii.mdx"
-        : personalityId === "linus"
-          ? "persona_linus.mdx"
-          : "persona.mdx";
+      : personalityId === "blank"
+        ? "persona_blank.mdx"
+        : personalityId === "kawaii"
+          ? "persona_kawaii.mdx"
+          : personalityId === "linus"
+            ? "persona_linus.mdx"
+            : "persona.mdx";
   const humanTemplatePromptAssetName =
     personalityId === "memo"
       ? "human_memo.mdx"
