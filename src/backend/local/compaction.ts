@@ -10,6 +10,18 @@ const SLIDING_WORD_LIMIT = 300;
 const SUMMARY_TRUNCATION_SUFFIX = "... [summary truncated to fit]";
 const TOOL_TRANSCRIPT_TRUNCATION_CHARS = 4000;
 const TRANSCRIPT_FALLBACK_MAX_CHARS = 120000;
+const TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS = [
+  TRANSCRIPT_FALLBACK_MAX_CHARS,
+  90_000,
+  60_000,
+  40_000,
+  25_000,
+  15_000,
+  10_000,
+  6_000,
+  4_000,
+  2_000,
+] as const;
 export const LOCAL_DEFAULT_COMPACTION_MODE = "sliding_window";
 export const LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE = 0.3;
 
@@ -226,18 +238,38 @@ async function summarizeLocalMessagesWithPrompt(
 ): Promise<string> {
   if (input.messages.length === 0) return "No prior conversation messages.";
   const primaryTranscript = formatLocalMessagesForSummary(input.messages);
-  let result: Awaited<ReturnType<typeof generateText>>;
+  let result: Awaited<ReturnType<typeof generateText>> | undefined;
   try {
     result = await runGenerateText(input, primaryTranscript, defaultPrompt);
   } catch (error) {
     if (!isContextWindowOverflowError(error)) throw error;
-    const fallbackTranscript = formatLocalMessagesForSummary(input.messages, {
-      truncationChars: TOOL_TRANSCRIPT_TRUNCATION_CHARS,
-      maxChars: TRANSCRIPT_FALLBACK_MAX_CHARS,
-    });
-    result = await runGenerateText(input, fallbackTranscript, defaultPrompt);
+    let overflowError: unknown = error;
+    let previousTranscript: string | undefined;
+    for (const maxChars of TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS) {
+      const fallbackTranscript = formatLocalMessagesForSummary(input.messages, {
+        truncationChars: TOOL_TRANSCRIPT_TRUNCATION_CHARS,
+        maxChars,
+      });
+      if (fallbackTranscript === previousTranscript) continue;
+      previousTranscript = fallbackTranscript;
+      try {
+        result = await runGenerateText(
+          input,
+          fallbackTranscript,
+          defaultPrompt,
+        );
+        break;
+      } catch (fallbackError) {
+        if (!isContextWindowOverflowError(fallbackError)) throw fallbackError;
+        overflowError = fallbackError;
+      }
+    }
+    if (!result) throw overflowError;
   }
 
+  if (!result) {
+    throw new Error("Compaction summarizer did not return a result.");
+  }
   let summary = result.text.trim();
   const clipChars = input.clipChars === undefined ? 50000 : input.clipChars;
   if (clipChars !== null && summary.length > clipChars) {

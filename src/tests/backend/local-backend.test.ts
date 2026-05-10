@@ -1262,6 +1262,219 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("keeps compacting the same turn when overflow persists after the first compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-auto-compact-multi-"),
+    );
+    try {
+      let streamCalls = 0;
+      let compactionCalls = 0;
+      const modelMessagesByCall: ModelMessage[][] = [];
+      const overflow = {
+        type: "invalid_request_error",
+        code: "context_length_exceeded",
+        message:
+          "Your input exceeds the context window of this model. Please adjust your input and try again.",
+        param: "input",
+      };
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async () => {
+          compactionCalls += 1;
+          return {
+            text:
+              compactionCalls === 1
+                ? "first compacted summary"
+                : "second compacted summary",
+          } as never;
+        }) as never,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+
+          if (streamCalls === 2 || streamCalls === 3) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after second compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Auto Compact Multi Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(4);
+      expect(compactionCalls).toBe(2);
+      expect(
+        chunks.filter(
+          (chunk) =>
+            (chunk as { message_type?: string }).message_type ===
+            "summary_message",
+        ).length,
+      ).toBe(2);
+      expect(JSON.stringify(chunks)).toContain("after second compaction");
+      expect(JSON.stringify(modelMessagesByCall[3])).toContain(
+        "second compacted summary",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("shrinks compaction transcripts progressively when summarizer fallback still overflows", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-shrink-fallback-"),
+    );
+    try {
+      let streamCalls = 0;
+      let summaryCalls = 0;
+      const summaryPromptLengths: number[] = [];
+      const overflowThresholdChars = 3_000;
+      const overflow = new APICallError({
+        message: "context_length_exceeded: maximum context length exceeded",
+        url: "https://example.invalid/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: JSON.stringify({
+          error: {
+            type: "invalid_request_error",
+            code: "context_length_exceeded",
+            message:
+              "Your input exceeds the context window of this model. Please adjust your input and try again.",
+            param: "input",
+          },
+        }),
+        isRetryable: false,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryCalls += 1;
+          const prompt = options.prompt ?? "";
+          summaryPromptLengths.push(prompt.length);
+          if (prompt.length > overflowThresholdChars) {
+            throw overflow;
+          }
+          return { text: "iteratively compacted summary" } as never;
+        }) as never,
+        streamText: (_options) => {
+          streamCalls += 1;
+          if (streamCalls === 2) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after iterative compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Fallback Shrink Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody(`first request ${"x".repeat(9_000)}`, agent.id),
+        ),
+      );
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(3);
+      expect(summaryCalls).toBeGreaterThan(2);
+      expect(summaryPromptLengths[0]).toBeGreaterThan(overflowThresholdChars);
+      expect(summaryPromptLengths.at(-1)).toBeLessThanOrEqual(
+        overflowThresholdChars,
+      );
+      expect(JSON.stringify(chunks)).toContain("iteratively compacted summary");
+      expect(JSON.stringify(chunks)).toContain("after iterative compaction");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("compacts after local AI SDK usage exceeds the configured context window", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-usage-compact-"),
