@@ -36,7 +36,6 @@
     "@letta-ai/letta-client": "^1.10.2",
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
-    "lowlight": "^3.3.0",
     "node-pty": "^1.1.0",
     "open": "^10.2.0",
     "sharp": "^0.34.5",

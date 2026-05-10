@@ -102,7 +102,10 @@ function createChatGPTFetch(options: {
 }): typeof fetch {
   const baseFetch = options.fetch ?? fetch;
   return (async (input, init) => {
-    const request = new Request(input, init);
+    const request =
+      input instanceof Request
+        ? new Request(input, init)
+        : new Request(input instanceof URL ? input.toString() : input, init);
     const rewrittenUrl = shouldRewriteOpenAIUrl(request.url)
       ? CODEX_API_ENDPOINT
       : request.url;
