@@ -59,6 +59,7 @@ export type AISDKStreamTextFunction = (options: {
   providerOptions?: AISDKProviderOptions;
   maxRetries: number;
   abortSignal?: AbortSignal;
+  onError?: (event: { error: unknown }) => void;
 }) => {
   fullStream: AsyncIterable<TextStreamPart<ToolSet>>;
   toUIMessageStream?: (options?: {
@@ -835,6 +836,9 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       ),
       maxRetries: 0,
       abortSignal: this.abortSignal,
+      // We classify and handle stream errors in this adapter; suppress AI SDK's
+      // default console.error logging for each error chunk.
+      onError: () => {},
     });
     let uiMessageError: unknown;
     const finalUIMessage = captureFinalUIMessage(result, uiMessages).catch(

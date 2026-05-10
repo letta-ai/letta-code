@@ -658,9 +658,11 @@ describe("AISDKStreamAdapter", () => {
     const model = {} as LanguageModel;
     let capturedSystem: string | undefined;
     let capturedProviderOptions: unknown;
+    let capturedOnError: ((event: { error: unknown }) => void) | undefined;
     const streamText: AISDKStreamTextFunction = (options) => {
       capturedSystem = options.system;
       capturedProviderOptions = options.providerOptions;
+      capturedOnError = options.onError;
       return {
         fullStream: (async function* () {
           yield streamPart({ type: "finish", finishReason: "stop" });
@@ -703,6 +705,7 @@ describe("AISDKStreamAdapter", () => {
         systemMessageMode: "remove",
       },
     });
+    expect(typeof capturedOnError).toBe("function");
   });
 
   test("passes provider reasoning options from local model settings", async () => {

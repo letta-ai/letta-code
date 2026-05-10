@@ -1205,7 +1205,7 @@ describe("LocalBackend", () => {
       };
 
       expect(result.summary).toBe("oauth compaction summary");
-      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+      expect(capturedSystem).toBeUndefined();
       expect(capturedProviderOptions).toMatchObject({
         openai: {
           instructions: LOCAL_ALL_COMPACTION_PROMPT,

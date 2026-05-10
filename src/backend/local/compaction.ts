@@ -92,6 +92,13 @@ export interface LocalCompactionStats {
   messages_count_after?: number;
 }
 
+function isChatGPTOAuthModel(agent: LocalAgentRecord): boolean {
+  return (
+    agent.model.startsWith("chatgpt-plus-pro/") ||
+    agent.model_settings.provider_type === "chatgpt_oauth"
+  );
+}
+
 export type LocalGenerateTextFunction = (options: {
   model: LanguageModel;
   system?: string;
@@ -213,6 +220,8 @@ async function runGenerateText(
   defaultPrompt: string,
 ): Promise<{ text: string }> {
   const systemPrompt = input.prompt ?? defaultPrompt;
+  const system =
+    isChatGPTOAuthModel(input.agent) === true ? undefined : systemPrompt;
   const run = input.generateText ?? generateText;
   const model =
     input.createModel?.() ??
@@ -229,7 +238,7 @@ async function runGenerateText(
   try {
     const result = await run({
       model,
-      system: systemPrompt,
+      system,
       prompt: transcript,
       providerOptions,
       maxRetries: 0,
@@ -250,11 +259,13 @@ async function runGenerateText(
     let text = "";
     const result = streamText({
       model,
-      system: systemPrompt,
+      system,
       prompt: transcript,
       providerOptions,
       maxRetries: 0,
       abortSignal: input.abortSignal,
+      // Compaction handles stream error parts directly below.
+      onError: () => {},
     });
     for await (const part of result.fullStream) {
       if (part.type === "text-delta") {
