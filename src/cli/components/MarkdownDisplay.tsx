@@ -119,7 +119,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     );
 
     return (
-      <Box key={key} paddingLeft={2} flexDirection="column">
+      <Box key={key} flexDirection="column">
         {Array.from({ length: lineCount }, (_, lineIdx) =>
           renderCodeLine(
             highlightedLines?.[lineIdx],
