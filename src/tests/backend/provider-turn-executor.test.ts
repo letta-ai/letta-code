@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { APICallError } from "ai";
 import type {
   ConversationMessageCreateBody,
   ConversationMessageListBody,
@@ -175,6 +176,84 @@ describe("ProviderTurnExecutor", () => {
     expect(
       page.getPaginatedItems().map((message) => message.message_type),
     ).toEqual(["user_message", "approval_request_message"]);
+  });
+
+  test("marks retryable provider failures after model output as llm_api_error runs", async () => {
+    const providerError = new APICallError({
+      message: "upstream connect error",
+      url: "https://example.invalid/v1/responses",
+      requestBodyValues: {},
+      statusCode: 503,
+      responseHeaders: { "retry-after-ms": "0" },
+      responseBody: '{"type":"server_error"}',
+      isRetryable: true,
+    });
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield streamPart({
+          type: "text-delta",
+          id: "text-1",
+          text: "partial output",
+        });
+        throw providerError;
+      },
+    };
+    const backend = new FakeHeadlessBackend(
+      "agent-provider",
+      new ProviderTurnExecutor(adapter),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-provider",
+    });
+
+    const chunks = await collectStream(
+      await backend.createConversationMessageStream(
+        conversation.id,
+        createBody("fail after output"),
+      ),
+    );
+
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "assistant_message",
+      "error_message",
+      "stop_reason",
+    ]);
+    const errorChunk = chunks.find(
+      (chunk) => chunk.message_type === "error_message",
+    ) as LettaStreamingResponse & {
+      error_type?: string;
+      detail?: string;
+      retryable?: boolean;
+    };
+    expect(errorChunk).toMatchObject({
+      message_type: "error_message",
+      message: "upstream connect error",
+      error_type: "llm_error",
+      retryable: true,
+    });
+    expect(errorChunk.detail).toContain("upstream connect error");
+    expect(errorChunk.detail).toContain('{"type":"server_error"}');
+    expect(errorChunk.detail).not.toContain("[object Object]");
+    expect(chunks.at(-1)).toMatchObject({
+      message_type: "stop_reason",
+      stop_reason: "llm_api_error",
+    });
+
+    const runId = (chunks[0] as { run_id?: string }).run_id ?? "";
+    await expect(backend.retrieveRun(runId)).resolves.toMatchObject({
+      id: runId,
+      status: "failed",
+      stop_reason: "llm_api_error",
+      metadata: {
+        error: {
+          message: "upstream connect error",
+          detail: expect.stringContaining("upstream connect error"),
+          error_type: "llm_error",
+          retryable: true,
+          run_id: runId,
+        },
+      },
+    });
   });
 
   test("passes persisted UIMessage tool outputs through continuations", async () => {

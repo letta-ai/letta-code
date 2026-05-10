@@ -2414,8 +2414,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
 
             if (!cancelled) {
-              // Post-stream retry is a new request/run, so refresh OTIDs.
-              currentInput = refreshInputOtidsForNewRequest(currentInput);
+              const backendCapabilities = getBackend().capabilities;
+              const retryFromPersistedLocalState =
+                backendCapabilities.localModelCatalog &&
+                !backendCapabilities.remoteMemfs;
+              // Local already appended the turn input before the failed run.
+              // Continue from persisted conversation state instead of duplicating
+              // user/approval messages into the retry run.
+              currentInput = retryFromPersistedLocalState
+                ? []
+                : refreshInputOtidsForNewRequest(currentInput);
               // Reset seq_id threshold — new run starts from seq_id 1, not a resume.
               highestSeqIdSeen = null;
               // Reset interrupted flag so retry stream chunks are processed

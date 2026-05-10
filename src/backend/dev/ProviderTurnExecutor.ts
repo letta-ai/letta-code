@@ -14,6 +14,7 @@ import type {
   HeadlessTurnExecutor,
   HeadlessTurnExecutorInput,
 } from "./HeadlessTurnExecutor";
+import { normalizeLocalProviderError } from "./LocalProviderErrors";
 
 export interface ProviderTurnInput {
   conversationId: string;
@@ -94,16 +95,29 @@ function stringifyToolInput(input: unknown): string {
   return JSON.stringify(input ?? {});
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function createLocalUIMessageChunk(
   message: LocalMessage,
 ): LettaStreamingResponse {
   return markLocalStateChunkOnly(
     attachLocalUIMessage({ message_type: "local_ui_message" }, message),
   ) as unknown as LettaStreamingResponse;
+}
+
+function createProviderErrorChunks(error: unknown): LettaStreamingResponse[] {
+  const info = normalizeLocalProviderError(error);
+  return [
+    {
+      message_type: "error_message",
+      message: info.message,
+      detail: info.detail,
+      error_type: info.error_type,
+      retryable: info.retryable,
+    } as unknown as LettaStreamingResponse,
+    {
+      message_type: "stop_reason",
+      stop_reason: info.stop_reason,
+    } as LettaStreamingResponse,
+  ];
 }
 
 function contextTokensFromUsage(usage: LanguageModelUsage): number | undefined {
@@ -177,14 +191,7 @@ function createProviderLettaStream(
       try {
         for await (const event of events) {
           if (event.type === "error") {
-            yield {
-              message_type: "error_message",
-              message: errorMessage(event.error),
-            } as LettaStreamingResponse;
-            yield {
-              message_type: "stop_reason",
-              stop_reason: "error",
-            } as LettaStreamingResponse;
+            yield* createProviderErrorChunks(event.error);
             return;
           }
 
@@ -258,14 +265,7 @@ function createProviderLettaStream(
           }
 
           if (part.type === "error") {
-            yield {
-              message_type: "error_message",
-              message: errorMessage(part.error),
-            } as LettaStreamingResponse;
-            yield {
-              message_type: "stop_reason",
-              stop_reason: "error",
-            } as LettaStreamingResponse;
+            yield* createProviderErrorChunks(part.error);
             return;
           }
         }
@@ -273,14 +273,7 @@ function createProviderLettaStream(
           yield pendingStopReason;
         }
       } catch (error) {
-        yield {
-          message_type: "error_message",
-          message: errorMessage(error),
-        } as LettaStreamingResponse;
-        yield {
-          message_type: "stop_reason",
-          stop_reason: "error",
-        } as LettaStreamingResponse;
+        yield* createProviderErrorChunks(error);
       }
     },
   } as unknown as Stream<LettaStreamingResponse>;
