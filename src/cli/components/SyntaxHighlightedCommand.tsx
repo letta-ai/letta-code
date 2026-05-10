@@ -30,8 +30,8 @@ type ClippedSpans = {
   clipped: boolean;
 };
 
-const PUNCTUATION_OR_OPERATOR_RE =
-  /([(){}[\],.:;]|->|=>|==|!=|<=|>=|[+*/%=&|!<>-])/g;
+const DEFAULT_TEXT_TOKEN_RE =
+  /([A-Za-z_]\w*)(?=\()|([(){}[\],.:;]|->|=>|==|!=|<=|>=|[+*/%=&|!<>-])/g;
 
 function pushDefaultTextSpans(
   text: string,
@@ -39,12 +39,15 @@ function pushDefaultTextSpans(
   spans: StyledSpan[],
 ): void {
   let lastIndex = 0;
-  for (const match of text.matchAll(PUNCTUATION_OR_OPERATOR_RE)) {
+  for (const match of text.matchAll(DEFAULT_TEXT_TOKEN_RE)) {
     const index = match.index ?? 0;
     if (index > lastIndex) {
       spans.push({ text: text.slice(lastIndex, index), color: palette.text });
     }
-    spans.push({ text: match[0], color: palette.punctuation });
+    spans.push({
+      text: match[0],
+      color: match[1] ? palette.title : palette.punctuation,
+    });
     lastIndex = index + match[0].length;
   }
 
