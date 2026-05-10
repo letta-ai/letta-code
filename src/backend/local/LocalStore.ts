@@ -35,6 +35,7 @@ import {
   projectedMessageLookupKeys,
   projectLocalMessagesToStoredMessages,
   projectLocalMessageToStoredMessages,
+  withProjectedMessageDates,
 } from "./LocalMessageProjection";
 import {
   getAttachedLocalUIMessage,
@@ -1625,11 +1626,14 @@ export class LocalStore {
     for (let index = 0; index < localMessages.length; index++) {
       const localMessage = localMessages[index];
       if (!localMessage) continue;
-      const projected = projectLocalMessageToStoredMessages(
-        localMessage,
-        agentId,
-        resolvedConversationId,
-        new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+      const projected = withProjectedMessageDates(
+        projectLocalMessageToStoredMessages(
+          localMessage,
+          agentId,
+          resolvedConversationId,
+          new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+        ),
+        index,
       );
       messages.push(...projected);
       for (const [lookupKey, lookupMessages] of projectedMessageLookupKeys(
