@@ -63,6 +63,12 @@ test("markdown fenced code blocks use syntax highlighting when language is provi
   expect(plain).toContain('return f"Hello, {name}!"');
   expect(highlighted?.[0]?.map((span) => span.color)).toContain("#89b4fa");
   expect(highlighted?.[1]?.map((span) => span.color)).toContain("#a6e3a1");
+  expect(highlighted?.[0]?.find((span) => span.text === "(")?.color).toBe(
+    "#9399b2",
+  );
+  expect(highlighted?.[0]?.find((span) => span.text === "->")?.color).toBe(
+    "#9399b2",
+  );
 });
 
 test("markdown code block fallback renders plain code content", async () => {

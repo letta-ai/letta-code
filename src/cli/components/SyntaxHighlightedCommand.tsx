@@ -30,6 +30,29 @@ type ClippedSpans = {
   clipped: boolean;
 };
 
+const PUNCTUATION_OR_OPERATOR_RE =
+  /([(){}[\],.:;]|->|=>|==|!=|<=|>=|[+*/%=&|!<>-])/g;
+
+function pushDefaultTextSpans(
+  text: string,
+  palette: ShellSyntaxPalette,
+  spans: StyledSpan[],
+): void {
+  let lastIndex = 0;
+  for (const match of text.matchAll(PUNCTUATION_OR_OPERATOR_RE)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      spans.push({ text: text.slice(lastIndex, index), color: palette.text });
+    }
+    spans.push({ text: match[0], color: palette.punctuation });
+    lastIndex = index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    spans.push({ text: text.slice(lastIndex), color: palette.text });
+  }
+}
+
 function clipStyledSpans(
   spans: StyledSpan[],
   maxColumns: number,
@@ -179,7 +202,11 @@ export function collectSpans(
   inheritedColor?: string,
 ): void {
   if (node.type === "text") {
-    spans.push({ text: node.value, color: inheritedColor ?? palette.text });
+    if (inheritedColor) {
+      spans.push({ text: node.value, color: inheritedColor });
+    } else {
+      pushDefaultTextSpans(node.value, palette, spans);
+    }
     return;
   }
 
