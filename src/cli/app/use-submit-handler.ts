@@ -2561,8 +2561,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /reflect command - manually launch reflection subagent
-        if (trimmed === "/reflect") {
+        // Special handling for /reflect and /reflection - manually launch reflection subagent
+        if (trimmed === "/reflect" || trimmed === "/reflection") {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
 
           if (!isActiveMemfsEnabled(agentId)) {
