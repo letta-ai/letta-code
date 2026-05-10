@@ -2700,6 +2700,64 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        if (trimmed === "/plan-mode" || trimmed.startsWith("/plan-mode ")) {
+          const cmd = commandRunner.start(
+            "/plan-mode",
+            "Updating plan mode setting...",
+          );
+          const arg = trimmed.split(/\s+/)[1]?.toLowerCase();
+          const enabled = (() => {
+            if (arg === "on" || arg === "true" || arg === "enable") {
+              return true;
+            }
+            if (arg === "off" || arg === "false" || arg === "disable") {
+              return false;
+            }
+            return null;
+          })();
+
+          if (enabled === null) {
+            cmd.fail("Usage: /plan-mode on|off");
+            return { submitted: true };
+          }
+
+          try {
+            settingsManager.setPlanModeEnabled(enabled);
+            await settingsManager.flush();
+
+            if (!enabled && permissionMode.getMode() === "plan") {
+              permissionMode.setMode("default");
+              setUiPermissionMode("default");
+            }
+
+            const { forceToolsetSwitch, switchToolsetForModel } = await import(
+              "../../tools/toolset"
+            );
+            if (currentToolset) {
+              await forceToolsetSwitch(currentToolset, agentId);
+            } else {
+              await switchToolsetForModel(
+                currentModelHandle ??
+                  currentModelId ??
+                  "anthropic/claude-sonnet-4",
+                agentId,
+              );
+            }
+
+            cmd.finish(
+              enabled
+                ? "Plan mode enabled. /plan and plan-mode tools are now available."
+                : "Plan mode disabled. /plan is disabled and plan-mode tools are hidden.",
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to update plan mode setting: ${errorDetails}`);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /init command
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");

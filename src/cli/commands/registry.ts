@@ -491,6 +491,14 @@ export const commands: Record<string, Command> = {
       return "Entering plan mode...";
     },
   },
+  "/plan-mode": {
+    desc: "Enable or disable plan mode (/plan-mode on|off)",
+    order: 40.5,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Updating plan mode setting...";
+    },
+  },
   "/disconnect": {
     desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
     order: 41,

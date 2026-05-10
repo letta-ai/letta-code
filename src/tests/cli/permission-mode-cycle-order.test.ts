@@ -15,4 +15,14 @@ describe("permission mode cycle order", () => {
     );
     expect(source).toContain('["default", "acceptEdits", "bypassPermissions"]');
   });
+
+  test("/plan-mode command is registered", () => {
+    const registryPath = fileURLToPath(
+      new URL("../../cli/commands/registry.ts", import.meta.url),
+    );
+    const source = readFileSync(registryPath, "utf-8");
+
+    expect(source).toContain('"/plan-mode": {');
+    expect(source).toContain("Enable or disable plan mode (/plan-mode on|off)");
+  });
 });

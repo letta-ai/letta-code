@@ -79,6 +79,27 @@ describe("permission mode retry wiring", () => {
     );
   });
 
+  test("/plan-mode toggles setting and refreshes loaded tools", () => {
+    const source = readAppSource();
+
+    const start = source.indexOf(
+      'if (trimmed === "/plan-mode" || trimmed.startsWith("/plan-mode "))',
+    );
+    const end = source.indexOf("// Special handling for /init command", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("settingsManager.setPlanModeEnabled(enabled)");
+    expect(segment).toContain("await settingsManager.flush()");
+    expect(segment).toContain('permissionMode.setMode("default")');
+    expect(segment).toContain(
+      "await forceToolsetSwitch(currentToolset, agentId)",
+    );
+    expect(segment).toContain("await switchToolsetForModel(");
+    expect(segment).toContain("Usage: /plan-mode on|off");
+  });
+
   test("pins submission permission mode and defines a restore helper", () => {
     const source = readAppSource();
 
