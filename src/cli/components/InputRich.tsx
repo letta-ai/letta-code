@@ -1573,29 +1573,44 @@ export function Input({
     }
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
-  const goalStatusText = (() => {
-    if (!conversationId) return null;
-    const goal = settingsManager.getConversationGoal(conversationId);
-    if (!goal) return null;
-    return formatGoalStatusIndicator(goal);
-  })();
+  // Goal status footer text. Stored in state (rather than recomputed every
+  // render) so we only trigger a re-render when the displayed string actually
+  // changes. The previous implementation used setGoalFooterTick + setInterval
+  // which forced a full Input re-render every second while a goal was active,
+  // matching the flicker pattern documented in review-knowledge.md.
+  const currentGoal = conversationId
+    ? settingsManager.getConversationGoal(conversationId)
+    : null;
+  const goalStatus = currentGoal?.status ?? null;
+  const goalActiveStartedAt = currentGoal?.activeStartedAt ?? null;
+  const goalIsActive = goalStatus === "active";
 
-  const goalIsActive = (() => {
-    if (!conversationId) return false;
-    return (
-      settingsManager.getConversationGoal(conversationId)?.status === "active"
-    );
-  })();
+  const [goalStatusText, setGoalStatusText] = useState<string | null>(() =>
+    currentGoal ? formatGoalStatusIndicator(currentGoal) : null,
+  );
 
-  const [, setGoalFooterTick] = useState(0);
+  // Sync on prop-driven changes (status transitions, clear, pause, complete).
   useEffect(() => {
-    if (!goalIsActive) return;
-    const timer = setInterval(
-      () => setGoalFooterTick((tick) => tick + 1),
-      1000,
-    );
+    const goal = conversationId
+      ? settingsManager.getConversationGoal(conversationId)
+      : null;
+    const nextText = goal ? formatGoalStatusIndicator(goal) : null;
+    setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
+  }, [conversationId, goalStatus, goalActiveStartedAt]);
+
+  // While the goal is active, re-check the formatted string each second but
+  // only re-render when it actually changes. Combined with the fixed-width
+  // format from formatGoalElapsedSeconds, the string changes at most once per
+  // second and the change is always same-width, so no footer flicker.
+  useEffect(() => {
+    if (!goalIsActive || !conversationId) return;
+    const timer = setInterval(() => {
+      const goal = settingsManager.getConversationGoal(conversationId);
+      const nextText = goal ? formatGoalStatusIndicator(goal) : null;
+      setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
+    }, 1000);
     return () => clearInterval(timer);
-  }, [goalIsActive]);
+  }, [goalIsActive, conversationId]);
 
   // Create a horizontal line using box-drawing characters.
   const horizontalLine = useMemo(
