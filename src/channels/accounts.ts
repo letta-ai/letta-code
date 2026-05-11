@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { migratePermissionMode } from "../permissions/mode";
 import {
   getChannelAccountsPath,
   getChannelDir,
@@ -87,15 +88,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   if (isSlackChannelAccount(next)) {
     const raw: string =
       (next as SlackChannelAccount).defaultPermissionMode ?? "standard";
-    // Migrate legacy values: "default" → "standard", "bypassPermissions"/"fullAccess" → "unrestricted"
-    const migrated =
-      raw === "default"
-        ? "standard"
-        : raw === "bypassPermissions" || raw === "fullAccess"
-          ? "unrestricted"
-          : raw;
     (next as SlackChannelAccount).defaultPermissionMode =
-      migrated as SlackDefaultPermissionMode;
+      (migratePermissionMode(raw) ?? raw) as SlackDefaultPermissionMode;
   }
   return next;
 }

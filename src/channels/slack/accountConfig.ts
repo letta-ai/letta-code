@@ -1,3 +1,4 @@
+import { migratePermissionMode } from "../../permissions/mode";
 import type { ChannelAccountConfigAdapter } from "../pluginTypes";
 import type { SlackChannelAccount, SlackDefaultPermissionMode } from "../types";
 
@@ -20,27 +21,15 @@ function isNullableString(value: unknown): value is string | null {
 function isDefaultPermissionMode(
   value: unknown,
 ): value is SlackDefaultPermissionMode {
+  // Also accepts legacy values that migratePermissionMode will map to current names.
   return (
     value === "standard" ||
     value === "acceptEdits" ||
     value === "unrestricted" ||
-    value === "default" || // legacy — migrated to "standard" on read
-    value === "bypassPermissions" || // legacy — migrated to "unrestricted" on read
-    value === "fullAccess" // legacy — migrated to "unrestricted" on read
+    value === "default" || // legacy → "standard"
+    value === "bypassPermissions" || // legacy → "unrestricted"
+    value === "fullAccess" // legacy → "unrestricted"
   );
-}
-
-function migratePermissionMode(
-  value:
-    | SlackDefaultPermissionMode
-    | "default"
-    | "bypassPermissions"
-    | "fullAccess",
-): SlackDefaultPermissionMode {
-  if (value === "default") return "standard";
-  if (value === "bypassPermissions" || value === "fullAccess")
-    return "unrestricted";
-  return value;
 }
 
 export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannelAccount> =
@@ -72,7 +61,9 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         defaultPermissionMode: isDefaultPermissionMode(
           config.default_permission_mode,
         )
-          ? migratePermissionMode(config.default_permission_mode)
+          ? (migratePermissionMode(
+              config.default_permission_mode,
+            ) as SlackDefaultPermissionMode)
           : undefined,
       };
     },
