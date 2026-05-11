@@ -8,6 +8,7 @@
  */
 
 import {
+  DEFAULT_PERMISSION_MODE,
   permissionMode as globalPermissionMode,
   migratePermissionMode,
   type PermissionMode,
@@ -177,7 +178,9 @@ export function loadPersistedPermissionModeMap(): Map<
         : null;
       // If "plan" was somehow saved, restore to the pre-plan mode.
       const restoredMode: PermissionMode =
-        rawMode === "plan" ? (rawModeBeforePlan ?? "standard") : rawMode;
+        rawMode === "plan"
+          ? (rawModeBeforePlan ?? DEFAULT_PERMISSION_MODE)
+          : rawMode;
       map.set(key, {
         mode: restoredMode,
         planFilePath: null,
@@ -216,11 +219,13 @@ function persistPermissionModeMap(
     // If currently in plan mode, persist the effective mode as modeBeforePlan
     // so we don't restore into plan mode (plan file path is ephemeral).
     const modeToSave: PermissionMode =
-      state.mode === "plan" ? (state.modeBeforePlan ?? "standard") : state.mode;
+      state.mode === "plan"
+        ? (state.modeBeforePlan ?? DEFAULT_PERMISSION_MODE)
+        : state.mode;
 
-    // Skip entries that match the current global default with no context — lean map.
+    // Skip entries that are just the default starting mode with no context — lean map.
     if (
-      modeToSave === globalPermissionMode.getMode() &&
+      modeToSave === DEFAULT_PERMISSION_MODE &&
       state.modeBeforePlan === null
     ) {
       continue;

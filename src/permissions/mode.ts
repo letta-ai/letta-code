@@ -24,6 +24,9 @@ export type PermissionMode =
   | "memory"
   | "unrestricted";
 
+/** The default starting permission mode. */
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "unrestricted";
+
 /** All valid current permission mode values. */
 export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
   "unrestricted",
@@ -120,7 +123,7 @@ function buildWriteOutsideRootsReason(
 function getGlobalMode(): PermissionMode {
   const global = globalThis as GlobalWithMode;
   if (!global[MODE_KEY]) {
-    global[MODE_KEY] = "unrestricted";
+    global[MODE_KEY] = DEFAULT_PERMISSION_MODE;
   }
   return global[MODE_KEY];
 }
@@ -705,7 +708,7 @@ class PermissionModeManager {
    * Reset to default mode
    */
   reset(): void {
-    this.currentMode = "unrestricted";
+    this.currentMode = DEFAULT_PERMISSION_MODE;
     setGlobalPlanFilePath(null);
     setGlobalModeBeforePlan(null);
   }
