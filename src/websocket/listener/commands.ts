@@ -8,19 +8,19 @@ import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { REMEMBER_PROMPT } from "../../agent/promptAssets";
 import { getBackend } from "../../backend";
 import {
-  buildDoctorMessage,
-  buildInitMessage,
-  gatherInitGitContext,
-} from "../../cli/helpers/initCommand";
-import {
-  GOAL_USAGE,
-  GOAL_USAGE_HINT,
   buildGoalContinuationPrompt,
   formatGoalSummary,
+  GOAL_USAGE,
+  GOAL_USAGE_HINT,
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
 } from "../../cli/helpers/goalCommand";
+import {
+  buildDoctorMessage,
+  buildInitMessage,
+  gatherInitGitContext,
+} from "../../cli/helpers/initCommand";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
@@ -32,13 +32,13 @@ import type {
   StreamDelta,
 } from "../../types/protocol_v2";
 import {
-  createLifecycleMessageBase,
-  emitCanonicalMessageDelta,
-} from "./protocol-outbound";
-import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
 } from "./permissionMode";
+import {
+  createLifecycleMessageBase,
+  emitCanonicalMessageDelta,
+} from "./protocol-outbound";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
@@ -549,7 +549,8 @@ async function handleGoalCommand(
         status: "active",
         tokensUsed: storedGoal?.tokensUsed ?? 0,
         tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
-        timeUsedSeconds: (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
+        timeUsedSeconds:
+          (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
       });
 
       await handleIncomingMessage(
@@ -599,12 +600,7 @@ async function handleGoalCommand(
     parsedGoal.tokenBudget,
     true,
   );
-  ralphMode.activateGoal(
-    parsedGoal.objective,
-    0,
-    true,
-    parsedGoal.tokenBudget,
-  );
+  ralphMode.activateGoal(parsedGoal.objective, 0, true, parsedGoal.tokenBudget);
 
   const permState = getOrCreateConversationPermissionModeStateRef(
     conversationRuntime.listener,
