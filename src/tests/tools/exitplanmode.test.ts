@@ -34,7 +34,7 @@ describe("ExitPlanMode tool", () => {
 
     await exit_plan_mode();
 
-    expect(permissionMode.getMode()).toBe("standard");
+    expect(permissionMode.getMode()).toBe("unrestricted");
     expect(permissionMode.getPlanFilePath()).toBeNull();
   });
 

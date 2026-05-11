@@ -1547,6 +1547,7 @@ export function Input({
         return {
           name: "standard (request approval) mode",
           color: colors.status.processingShimmer,
+          glyph: "▶",
         };
       case "plan":
         return {
