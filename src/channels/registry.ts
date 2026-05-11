@@ -963,7 +963,7 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "default") {
+    if (config.defaultPermissionMode !== "standard") {
       this.eventHandler?.({
         type: "slack_conversation_created",
         channelId: "slack",

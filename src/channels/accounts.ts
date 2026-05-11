@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { migratePermissionMode } from "../permissions/mode";
 import {
   getChannelAccountsPath,
   getChannelDir,
@@ -85,9 +86,10 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.displayName = undefined;
   }
   if (isSlackChannelAccount(next)) {
-    (next as SlackChannelAccount).defaultPermissionMode = ((
-      next as SlackChannelAccount
-    ).defaultPermissionMode ?? "default") as SlackDefaultPermissionMode;
+    const raw: string =
+      (next as SlackChannelAccount).defaultPermissionMode ?? "standard";
+    (next as SlackChannelAccount).defaultPermissionMode =
+      (migratePermissionMode(raw) ?? raw) as SlackDefaultPermissionMode;
   }
   return next;
 }
@@ -147,7 +149,7 @@ function makeDefaultLegacyAccount(
     dmPolicy: config.dmPolicy,
     allowedUsers: [...config.allowedUsers],
     agentId: null,
-    defaultPermissionMode: "default",
+    defaultPermissionMode: "standard",
     createdAt: now,
     updatedAt: now,
   };

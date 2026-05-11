@@ -152,12 +152,12 @@ async function buildPlanModeReminder(
 }
 
 const PERMISSION_MODE_DESCRIPTIONS = {
-  default: "Normal approval flow.",
+  standard: "Normal approval flow.",
   acceptEdits: "File edits auto-approved.",
   plan: "Read-only mode. Focus on exploration and planning.",
   memory:
     "Memory-scoped mode. Reads are broad; mutations are limited to allowed memory roots.",
-  bypassPermissions: "All tools auto-approved. Bias toward action.",
+  unrestricted: "All tools auto-approved. Bias toward action.",
 } as const;
 
 async function buildPermissionModeReminder(
@@ -169,8 +169,8 @@ async function buildPermissionModeReminder(
   const shouldEmit = (() => {
     if (context.mode === "interactive" || context.mode === "listen") {
       if (previousMode === null) {
-        // First turn: only remind if in a non-default mode (e.g. bypassPermissions).
-        return currentMode !== "default";
+        // First turn: only remind if not in the default mode (unrestricted).
+        return currentMode !== "unrestricted";
       }
       return previousMode !== currentMode;
     }

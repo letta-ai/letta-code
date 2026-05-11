@@ -1377,14 +1377,14 @@ export function Input({
 
       // Cycle through permission modes
       const modes: PermissionMode[] = [
-        "default",
-        "plan",
+        "unrestricted",
         "acceptEdits",
-        "bypassPermissions",
+        "standard",
+        "plan",
       ];
       const currentIndex = modes.indexOf(currentMode);
       const nextIndex = (currentIndex + 1) % modes.length;
-      const nextMode = modes[nextIndex] ?? "default";
+      const nextMode = modes[nextIndex] ?? "unrestricted";
 
       // Update both singleton and local state
       permissionMode.setMode(nextMode);
@@ -1745,18 +1745,21 @@ export function Input({
     switch (currentMode) {
       case "acceptEdits":
         return { name: "accept edits", color: colors.status.processing };
+      case "standard":
+        return {
+          name: "standard (request approval) mode",
+          color: colors.status.processingShimmer,
+          glyph: "▶",
+        };
       case "plan":
         return {
           name: "plan (read-only) mode",
           color: colors.status.success,
           glyph: "⏸",
         };
-      case "bypassPermissions":
-        return {
-          name: "yolo (allow all) mode",
-          color: colors.status.error,
-          glyph: "⚡︎",
-        };
+      case "unrestricted":
+        // Default mode — show nothing so "Press / for commands" renders instead
+        return null;
       default:
         return null;
     }

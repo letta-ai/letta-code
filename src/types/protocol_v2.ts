@@ -32,11 +32,11 @@ export interface RuntimeEnvelope {
 }
 
 export type DevicePermissionMode =
-  | "default"
+  | "standard"
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "bypassPermissions";
+  | "unrestricted";
 
 export type ToolsetName =
   | "codex"

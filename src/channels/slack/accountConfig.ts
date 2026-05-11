@@ -1,3 +1,4 @@
+import { migratePermissionMode } from "../../permissions/mode";
 import type { ChannelAccountConfigAdapter } from "../pluginTypes";
 import type { SlackChannelAccount, SlackDefaultPermissionMode } from "../types";
 
@@ -20,10 +21,14 @@ function isNullableString(value: unknown): value is string | null {
 function isDefaultPermissionMode(
   value: unknown,
 ): value is SlackDefaultPermissionMode {
+  // Also accepts legacy values that migratePermissionMode will map to current names.
   return (
-    value === "default" ||
+    value === "standard" ||
     value === "acceptEdits" ||
-    value === "bypassPermissions"
+    value === "unrestricted" ||
+    value === "default" || // legacy → "standard"
+    value === "bypassPermissions" || // legacy → "unrestricted"
+    value === "fullAccess" // legacy → "unrestricted"
   );
 }
 
@@ -56,7 +61,9 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         defaultPermissionMode: isDefaultPermissionMode(
           config.default_permission_mode,
         )
-          ? config.default_permission_mode
+          ? (migratePermissionMode(
+              config.default_permission_mode,
+            ) as SlackDefaultPermissionMode)
           : undefined,
       };
     },
@@ -67,7 +74,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         has_bot_token: account.botToken.trim().length > 0,
         has_app_token: account.appToken.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "default",
+        default_permission_mode: account.defaultPermissionMode ?? "standard",
       };
     },
 
@@ -77,7 +84,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         has_bot_token: account.botToken.trim().length > 0,
         has_app_token: account.appToken.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "default",
+        default_permission_mode: account.defaultPermissionMode ?? "standard",
       };
     },
 

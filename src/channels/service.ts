@@ -472,7 +472,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
-    defaultPermissionMode: account.defaultPermissionMode ?? "default",
+    defaultPermissionMode: account.defaultPermissionMode ?? "standard",
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -543,7 +543,7 @@ function createAccountFromPatch(
     botToken: normalizedPatch.botToken ?? "",
     appToken: normalizedPatch.appToken ?? "",
     agentId: normalizedPatch.agentId ?? null,
-    defaultPermissionMode: normalizedPatch.defaultPermissionMode ?? "default",
+    defaultPermissionMode: normalizedPatch.defaultPermissionMode ?? "standard",
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -734,7 +734,7 @@ export function getChannelConfigSnapshot(
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
-    defaultPermissionMode: account.defaultPermissionMode ?? "default",
+    defaultPermissionMode: account.defaultPermissionMode ?? "standard",
   };
 }
 
