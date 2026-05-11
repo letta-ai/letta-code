@@ -18,8 +18,11 @@ import {
 } from "../../agent/approval-execution";
 import type { SessionStats } from "../../agent/stats";
 import type { ApprovalContext } from "../../permissions/analyzer";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
+import {
+  DEFAULT_PERMISSION_MODE,
+  type PermissionMode,
+  permissionMode,
+} from "../../permissions/mode";
 import {
   analyzeToolApproval,
   checkToolPermission,
@@ -1117,8 +1120,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             : acceptEdits
               ? "acceptEdits"
               : previousMode === "memory"
-                ? "standard"
-                : (previousMode ?? "standard");
+                ? DEFAULT_PERMISSION_MODE
+                : (previousMode ?? DEFAULT_PERMISSION_MODE);
         permissionMode.setMode(restoreMode);
         setUiPermissionMode(restoreMode);
       } else {

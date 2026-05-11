@@ -3,7 +3,10 @@
  * Exits plan mode - the plan is read from the plan file by the UI
  */
 
-import { permissionMode } from "../../permissions/mode";
+import {
+  DEFAULT_PERMISSION_MODE,
+  permissionMode,
+} from "../../permissions/mode";
 import { getExecutionContextPermissionModeState } from "../manager";
 
 interface ExitPlanModeArgs {
@@ -28,14 +31,20 @@ export async function exit_plan_mode(
     if (scopedState.mode === "plan") {
       const prev = scopedState.modeBeforePlan;
       // Restore the previous mode, but never restore "memory" — fall back to
-      // "standard" so the user isn't stuck in a restricted mode after plan approval.
-      scopedState.mode = prev === "memory" ? "standard" : (prev ?? "standard");
+      // DEFAULT_PERMISSION_MODE so the user isn't stuck in a restricted mode after plan approval.
+      scopedState.mode =
+        prev === "memory"
+          ? DEFAULT_PERMISSION_MODE
+          : (prev ?? DEFAULT_PERMISSION_MODE);
       scopedState.modeBeforePlan = null;
       scopedState.planFilePath = null;
     }
   } else if (permissionMode.getMode() === "plan") {
     const prev = permissionMode.getModeBeforePlan();
-    const restoredMode = prev === "memory" ? "standard" : (prev ?? "standard");
+    const restoredMode =
+      prev === "memory"
+        ? DEFAULT_PERMISSION_MODE
+        : (prev ?? DEFAULT_PERMISSION_MODE);
     permissionMode.setMode(restoredMode);
   }
 
