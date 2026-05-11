@@ -2217,10 +2217,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             continue;
           }
 
-          // Quota-limit fallback: set a temporary client-side override to Auto,
-          // append a brief continuation message, and continue the same turn.
+          // Quota-limit fallback: hosted Letta API can recover by switching to
+          // Auto. Local/embedded mode has no hosted Auto router, so surface the
+          // provider quota error and let the user choose/connect a local model.
           const autoSwapOnQuotaLimitEnabled =
             settingsManager.getSetting("autoSwapOnQuotaLimit") !== false;
+          const supportsHostedAutoQuotaFallback =
+            !getBackend().capabilities.localModelCatalog;
           const isQuotaLimit = isQuotaLimitErrorDetail(
             detailFromRun ?? fallbackError,
           );
@@ -2228,6 +2231,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             tempModelOverrideRef.current === TEMP_QUOTA_OVERRIDE_MODEL;
           const canAttemptQuotaAutoSwap =
             autoSwapOnQuotaLimitEnabled &&
+            supportsHostedAutoQuotaFallback &&
             isQuotaLimit &&
             !alreadyOnTempAuto &&
             !quotaAutoSwapAttemptedRef.current;
