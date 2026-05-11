@@ -74,6 +74,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
           track_progress: ""
+          tracking_comment: "false"
           model: auto
           prompt: |
             You are reviewing PR #${{ env.PR_NUMBER }} in ${{ github.repository }}.
