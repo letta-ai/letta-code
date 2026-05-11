@@ -20,6 +20,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
       checks: read
     env:
       PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
@@ -30,6 +31,7 @@ jobs:
 
       # Wait for CI lint to pass before running review
       - name: Wait for CI lint
+        id: lint_wait
         if: github.event_name == 'pull_request'
         run: |
           # Poll until the lint check completes
@@ -42,6 +44,7 @@ jobs:
               echo "Lint check completed: $CONCLUSION"
               if [ "$CONCLUSION" != "success" ]; then
                 echo "Lint check failed or was cancelled ($CONCLUSION), skipping review"
+                echo "skipped=true" >> $GITHUB_OUTPUT
                 exit 0
               fi
               break
@@ -52,7 +55,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: React with eyes (review starting)
+        id: eyes_reaction
+        if: >
+          github.event_name == 'workflow_dispatch' ||
+          steps.lint_wait.outputs.skipped != 'true'
+        run: |
+          REACTION_ID=$(gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
+            -X POST -f content="eyes" --jq '.id')
+          echo "reaction_id=$REACTION_ID" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: letta-ai/letta-code-action@f501f5f72b49d102125fdc90f280f9cdae6a0258
+        if: >
+          github.event_name == 'workflow_dispatch' ||
+          steps.lint_wait.outputs.skipped != 'true'
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -113,3 +131,19 @@ jobs:
             - ✅ `track_progress` will crash on `workflow_dispatch` — the action rejects it for non-PR events.
             - ✅ `show_full_output: "true"` leaks tool output (potentially secrets) into CI logs.
             - ❌ The `track_progress` option is set to "true" in this workflow, but the letta-code-action's `validateTrackProgressEvent` function explicitly rejects the `workflow_dispatch` event type when track_progress is enabled. This means every manual dispatch will throw an error. You should either remove track_progress and handle tracking yourself in the prompt, or split into two jobs — one for pull_request (with track_progress) and one for workflow_dispatch (without it).
+
+      - name: React with rocket (review complete)
+        if: >
+          always() &&
+          (github.event_name == 'workflow_dispatch' ||
+          steps.lint_wait.outputs.skipped != 'true')
+        run: |
+          # Delete eyes reaction if we have its ID
+          if [ -n "${{ steps.eyes_reaction.outputs.reaction_id }}" ]; then
+            gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions/${{ steps.eyes_reaction.outputs.reaction_id }} \
+              -X DELETE || true
+          fi
+          gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
+            -X POST -f content="rocket"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
