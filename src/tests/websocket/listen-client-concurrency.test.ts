@@ -2414,7 +2414,7 @@ describe("listen-client multi-worker concurrency", () => {
 
     const [resumeConversationId, resumeParams] =
       conversationMessagesStreamMock.mock.calls[0] ?? [];
-    expect(resumeConversationId).toBe("standard");
+    expect(resumeConversationId).toBe("default");
     expect(resumeParams).toMatchObject({
       agent_id: "agent-409-default",
       otid: "otid-default",

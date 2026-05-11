@@ -21,8 +21,17 @@ function isDefaultPermissionMode(
   value: unknown,
 ): value is SlackDefaultPermissionMode {
   return (
-    value === "default" || value === "acceptEdits" || value === "fullAccess"
+    value === "standard" ||
+    value === "acceptEdits" ||
+    value === "fullAccess" ||
+    value === "default" // legacy alias — migrated to "standard" on read
   );
+}
+
+function migratePermissionMode(
+  value: SlackDefaultPermissionMode | "default",
+): SlackDefaultPermissionMode {
+  return value === "default" ? "standard" : value;
 }
 
 export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannelAccount> =
@@ -54,7 +63,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         defaultPermissionMode: isDefaultPermissionMode(
           config.default_permission_mode,
         )
-          ? config.default_permission_mode
+          ? migratePermissionMode(config.default_permission_mode)
           : undefined,
       };
     },
