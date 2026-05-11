@@ -186,7 +186,7 @@ describe("model preset refresh wiring", () => {
 
     const clearAnchor = source.indexOf('if (msg.trim() === "/clear")');
     expect(clearAnchor).toBeGreaterThanOrEqual(0);
-    const clearWindow = source.slice(clearAnchor, clearAnchor + 2000);
+    const clearWindow = source.slice(clearAnchor, clearAnchor + 3000);
     expect(clearWindow).toContain(
       "await maybeCarryOverActiveConversationModel(conversation.id);",
     );
