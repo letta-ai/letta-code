@@ -57,9 +57,7 @@ jobs:
 
       - name: React with eyes (review starting)
         id: eyes_reaction
-        if: >
-          github.event_name == 'workflow_dispatch' ||
-          steps.lint_wait.outputs.skipped != 'true'
+        if: steps.lint_wait.outputs.skipped != 'true'
         run: |
           REACTION_ID=$(gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
             -X POST -f content="eyes" --jq '.id')
@@ -68,9 +66,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: letta-ai/letta-code-action@f501f5f72b49d102125fdc90f280f9cdae6a0258
-        if: >
-          github.event_name == 'workflow_dispatch' ||
-          steps.lint_wait.outputs.skipped != 'true'
+        if: steps.lint_wait.outputs.skipped != 'true'
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -133,10 +129,7 @@ jobs:
             - ❌ The `track_progress` option is set to "true" in this workflow, but the letta-code-action's `validateTrackProgressEvent` function explicitly rejects the `workflow_dispatch` event type when track_progress is enabled. This means every manual dispatch will throw an error. You should either remove track_progress and handle tracking yourself in the prompt, or split into two jobs — one for pull_request (with track_progress) and one for workflow_dispatch (without it).
 
       - name: React with rocket (review complete)
-        if: >
-          always() &&
-          (github.event_name == 'workflow_dispatch' ||
-          steps.lint_wait.outputs.skipped != 'true')
+        if: always() && steps.lint_wait.outputs.skipped != 'true'
         run: |
           # Delete eyes reaction if we have its ID
           if [ -n "${{ steps.eyes_reaction.outputs.reaction_id }}" ]; then
