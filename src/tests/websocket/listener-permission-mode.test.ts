@@ -73,7 +73,7 @@ describe("listener permission mode helpers", () => {
       "agent-1",
       "conv-prune",
     );
-    ref2.mode = "fullAccess";
+    ref2.mode = "acceptEdits";
 
     const prunedNonDefault = pruneConversationPermissionModeStateIfDefault(
       listener,
