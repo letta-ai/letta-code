@@ -692,7 +692,7 @@ export class LocalBackend extends HeadlessBackend {
       conversationId,
       agentId,
       summary,
-      packedSummary: packageLocalSummaryMessage(summary, stats),
+      packedSummary: packageLocalSummaryMessage(summary, stats, settings.mode),
       stats,
       remainingMessages: plan.messagesToKeep,
     });
@@ -746,7 +746,7 @@ export class LocalBackend extends HeadlessBackend {
       conversationId,
       agentId,
       summary,
-      packedSummary: packageLocalSummaryMessage(summary, stats),
+      packedSummary: packageLocalSummaryMessage(summary, stats, settings.mode),
       stats,
       remainingMessages: plan.messagesToKeep,
     });
