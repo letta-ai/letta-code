@@ -91,10 +91,11 @@ jobs:
 
             1. Read your review-knowledge.md memory file — it has the detailed codebase footguns, bug patterns, and provider-specific traps
             2. Run `gh pr view $PR_NUMBER --json title,body,comments` to get the PR title, description, and comments
-            3. Run `gh pr diff $PR_NUMBER` to read the full diff
-            4. Assess whether the PR introduces real risk
-            5. If nothing to flag, respond with exactly: `LGTM`
-            6. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
+            3. Resolve any previously addressed comments — see "Resolving addressed comments" below
+            4. Run `gh pr diff $PR_NUMBER` to read the full diff
+            5. Assess whether the PR introduces real risk
+            6. If nothing to flag, respond with exactly: `LGTM`
+            7. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
 
             **Default posture: signal-only.** Most PRs are fine. Only speak when there's something worth saying.
 
@@ -185,6 +186,22 @@ jobs:
               return lettaDebug === "1" || lettaDebug === "true" || legacyDebug === "1" || legacyDebug === "true";
             ```
             ```
+
+            ## Resolving addressed comments
+
+            Before reviewing the new diff, check if any of your previous review comments have been addressed. If they have, resolve the thread so the author doesn't have to.
+
+            1. Fetch unresolved review threads you left:
+               ```bash
+               OWNER=$(echo $GITHUB_REPOSITORY | cut -d/ -f1)
+               REPO=$(echo $GITHUB_REPOSITORY | cut -d/ -f2)
+               gh api graphql -f query="{ repository(owner: \"$OWNER\", name: \"$REPO\") { pullRequest(number: $PR_NUMBER) { reviewThreads(first: 50) { nodes { id isResolved comments(first: 1) { nodes { author { login } databaseId body path line } } } } } } }" --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select(.comments.nodes[0].author.login == "amelia-letta-code") | {threadId: .id, commentId: .comments.nodes[0].databaseId, body: .comments.nodes[0].body[0:120], path: .comments.nodes[0].path, line: .comments.nodes[0].line}'
+               ```
+            2. For each unresolved thread, check the current code at that path/line. If the issue has been clearly addressed, resolve it:
+               ```bash
+               gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "THREAD_ID"}) { thread { isResolved } } }'
+               ```
+            3. Only resolve threads where you are the author. Only resolve when the fix clearly addresses your original comment.
 
       - name: React based on review outcome
         if: steps.lint_wait.outputs.skipped != 'true' && steps.letta_review.outputs.execution_file != ''
