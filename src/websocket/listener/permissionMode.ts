@@ -170,7 +170,7 @@ export function loadPersistedPermissionModeMap(): Map<
       return map;
     }
     for (const [key, persisted] of Object.entries(settings.permissionModeMap)) {
-      // Migrate legacy mode values ("default" → "standard", "bypassPermissions" → "fullAccess").
+      // Migrate legacy mode values ("default" → "standard", "bypassPermissions" → "unrestricted").
       const rawMode = migratePermissionMode(persisted.mode) ?? "standard";
       const rawModeBeforePlan = persisted.modeBeforePlan
         ? (migratePermissionMode(persisted.modeBeforePlan) ?? null)
@@ -202,7 +202,7 @@ export function persistPermissionModeMapForRuntime(
 /**
  * Serialize the permission mode map and persist to remote-settings.json.
  * Strips planFilePath (ephemeral). Converts "plan" mode to modeBeforePlan.
- * Skips entries that are effectively "standard" (lean map).
+ * Skips entries that match the current global default mode (lean map).
  */
 function persistPermissionModeMap(
   map: Map<string, ConversationPermissionModeState>,
@@ -218,8 +218,11 @@ function persistPermissionModeMap(
     const modeToSave: PermissionMode =
       state.mode === "plan" ? (state.modeBeforePlan ?? "standard") : state.mode;
 
-    // Skip entries that are just "standard" with no context — lean map.
-    if (modeToSave === "standard" && state.modeBeforePlan === null) {
+    // Skip entries that match the current global default with no context — lean map.
+    if (
+      modeToSave === globalPermissionMode.getMode() &&
+      state.modeBeforePlan === null
+    ) {
       continue;
     }
 

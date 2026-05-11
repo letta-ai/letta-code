@@ -70,7 +70,7 @@ export type ProcessQueuedTurn = (
 ) => Promise<void>;
 
 export interface ModeChangePayload {
-  mode: "standard" | "acceptEdits" | "plan" | "memory" | "fullAccess";
+  mode: "standard" | "acceptEdits" | "plan" | "memory" | "unrestricted";
 }
 
 export interface ChangeCwdMessage {

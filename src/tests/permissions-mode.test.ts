@@ -112,11 +112,11 @@ test("default mode - treats Agent like Task for safe subagent auto-approval", ()
 });
 
 // ============================================================================
-// Permission Mode: fullAccess
+// Permission Mode: unrestricted
 // ============================================================================
 
-test("fullAccess mode - allows all tools", () => {
-  permissionMode.setMode("fullAccess");
+test("unrestricted mode - allows all tools", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -131,7 +131,7 @@ test("fullAccess mode - allows all tools", () => {
     "/Users/test/project",
   );
   expect(bashResult.decision).toBe("allow");
-  expect(bashResult.reason).toBe("Permission mode: fullAccess");
+  expect(bashResult.reason).toBe("Permission mode: unrestricted");
 
   const writeResult = checkPermission(
     "Write",
@@ -142,8 +142,8 @@ test("fullAccess mode - allows all tools", () => {
   expect(writeResult.decision).toBe("allow");
 });
 
-test("fullAccess mode - ExitPlanMode always requires approval", () => {
-  permissionMode.setMode("fullAccess");
+test("unrestricted mode - ExitPlanMode always requires approval", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -178,8 +178,8 @@ test("fullAccess mode - ExitPlanMode always requires approval", () => {
   expect(enterResult.decision).toBe("allow");
 });
 
-test("fullAccess mode - does NOT override deny rules", () => {
-  permissionMode.setMode("fullAccess");
+test("unrestricted mode - does NOT override deny rules", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -194,7 +194,7 @@ test("fullAccess mode - does NOT override deny rules", () => {
     "/Users/test/project",
   );
 
-  // Deny rules take precedence even in fullAccess mode
+  // Deny rules take precedence even in unrestricted mode
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
 });
@@ -1403,7 +1403,7 @@ test("plan mode - denies WebFetch", () => {
 // ============================================================================
 
 test("Deny rules override permission mode", () => {
-  permissionMode.setMode("fullAccess");
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -1418,7 +1418,7 @@ test("Deny rules override permission mode", () => {
     "/Users/test/project",
   );
 
-  // Deny rule takes precedence over fullAccess
+  // Deny rule takes precedence over unrestricted
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
 });
@@ -1452,17 +1452,17 @@ test("Permission mode takes precedence over CLI allowedTools", () => {
 });
 
 test("plan mode - remembers and restores previous mode", () => {
-  permissionMode.setMode("fullAccess");
-  expect(permissionMode.getMode()).toBe("fullAccess");
+  permissionMode.setMode("unrestricted");
+  expect(permissionMode.getMode()).toBe("unrestricted");
 
   // Enter plan mode - should remember prior mode.
   permissionMode.setMode("plan");
   expect(permissionMode.getMode()).toBe("plan");
-  expect(permissionMode.getModeBeforePlan()).toBe("fullAccess");
+  expect(permissionMode.getModeBeforePlan()).toBe("unrestricted");
 
   // Exit plan mode by restoring previous mode.
-  permissionMode.setMode(permissionMode.getModeBeforePlan() ?? "fullAccess");
-  expect(permissionMode.getMode()).toBe("fullAccess");
+  permissionMode.setMode(permissionMode.getModeBeforePlan() ?? "unrestricted");
+  expect(permissionMode.getMode()).toBe("unrestricted");
 
   // Once we leave plan mode, the remembered mode is consumed.
   expect(permissionMode.getModeBeforePlan()).toBe(null);

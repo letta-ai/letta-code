@@ -149,7 +149,7 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain('permissionMode.setMode("plan")');
   });
 
-  test("auto-approves EnterPlanMode in fullAccess mode", () => {
+  test("auto-approves EnterPlanMode in unrestricted mode", () => {
     const source = readAppSource();
 
     const guardStart = source.indexOf("Guard EnterPlanMode:");
@@ -163,7 +163,7 @@ describe("permission mode retry wiring", () => {
 
     const segment = source.slice(guardStart, guardEnd);
     expect(segment).toContain('approval?.toolName === "EnterPlanMode"');
-    expect(segment).toContain('permissionMode.getMode() === "fullAccess"');
+    expect(segment).toContain('permissionMode.getMode() === "unrestricted"');
     expect(segment).toContain("handleEnterPlanModeApprove(true)");
   });
 
@@ -186,7 +186,7 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain("lastPlanFilePathRef.current = planFilePath;");
   });
 
-  test("restores fullAccess when it was active before plan approval", () => {
+  test("restores unrestricted when it was active before plan approval", () => {
     const source = readAppSource();
 
     const start = source.indexOf("const handlePlanApprove = useCallback(");
@@ -201,11 +201,11 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain(
       "const previousMode = permissionMode.getModeBeforePlan();",
     );
-    expect(segment).toContain('previousMode === "fullAccess"');
-    expect(segment).toContain('"fullAccess"');
+    expect(segment).toContain('previousMode === "unrestricted"');
+    expect(segment).toContain('"unrestricted"');
   });
 
-  test("does not auto-approve ExitPlanMode in fullAccess mode", () => {
+  test("does not auto-approve ExitPlanMode in unrestricted mode", () => {
     const source = readAppSource();
 
     const guardStart = source.indexOf("Guard ExitPlanMode:");

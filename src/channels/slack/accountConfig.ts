@@ -23,17 +23,23 @@ function isDefaultPermissionMode(
   return (
     value === "standard" ||
     value === "acceptEdits" ||
-    value === "fullAccess" ||
+    value === "unrestricted" ||
     value === "default" || // legacy — migrated to "standard" on read
-    value === "bypassPermissions" // legacy — migrated to "fullAccess" on read
+    value === "bypassPermissions" || // legacy — migrated to "unrestricted" on read
+    value === "fullAccess" // legacy — migrated to "unrestricted" on read
   );
 }
 
 function migratePermissionMode(
-  value: SlackDefaultPermissionMode | "default" | "bypassPermissions",
+  value:
+    | SlackDefaultPermissionMode
+    | "default"
+    | "bypassPermissions"
+    | "fullAccess",
 ): SlackDefaultPermissionMode {
   if (value === "default") return "standard";
-  if (value === "bypassPermissions") return "fullAccess";
+  if (value === "bypassPermissions" || value === "fullAccess")
+    return "unrestricted";
   return value;
 }
 

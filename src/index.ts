@@ -1035,8 +1035,8 @@ async function main(): Promise<void> {
 
   if (yoloMode || permissionModeValue) {
     if (yoloMode) {
-      // --yolo is an alias for --permission-mode fullAccess
-      permissionMode.setMode("fullAccess");
+      // --yolo is an alias for --permission-mode unrestricted
+      permissionMode.setMode("unrestricted");
     } else if (permissionModeValue) {
       const migrated = migratePermissionMode(permissionModeValue);
       if (migrated) {

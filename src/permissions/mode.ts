@@ -1,5 +1,5 @@
 // src/permissions/mode.ts
-// Permission mode management (fullAccess, standard, acceptEdits, plan, memory)
+// Permission mode management (unrestricted, standard, acceptEdits, plan, memory)
 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -22,11 +22,11 @@ export type PermissionMode =
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "fullAccess";
+  | "unrestricted";
 
 /** All valid current permission mode values. */
 export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
-  "fullAccess",
+  "unrestricted",
   "standard",
   "acceptEdits",
   "plan",
@@ -36,7 +36,7 @@ export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
 /**
  * Migrate legacy permission mode strings to their current equivalents.
  * - "default" → "standard" (renamed for clarity)
- * - "bypassPermissions" → "fullAccess" (renamed for clarity)
+ * - "bypassPermissions" → "unrestricted" (renamed for clarity)
  * Returns null if the value is not a recognized mode (current or legacy).
  */
 export function migratePermissionMode(value: string): PermissionMode | null {
@@ -44,7 +44,8 @@ export function migratePermissionMode(value: string): PermissionMode | null {
     return value as PermissionMode;
   }
   if (value === "default") return "standard";
-  if (value === "bypassPermissions") return "fullAccess";
+  if (value === "bypassPermissions" || value === "fullAccess")
+    return "unrestricted";
   return null;
 }
 
@@ -119,7 +120,7 @@ function buildWriteOutsideRootsReason(
 function getGlobalMode(): PermissionMode {
   const global = globalThis as GlobalWithMode;
   if (!global[MODE_KEY]) {
-    global[MODE_KEY] = "fullAccess";
+    global[MODE_KEY] = "unrestricted";
   }
   return global[MODE_KEY];
 }
@@ -283,7 +284,7 @@ class PermissionModeManager {
 
   /**
    * Get the permission mode that was active before entering plan mode.
-   * Used to restore the user's previous setting (e.g., fullAccess).
+   * Used to restore the user's previous setting (e.g., unrestricted).
    */
   getModeBeforePlan(): PermissionMode | null {
     return getGlobalModeBeforePlan();
@@ -335,8 +336,8 @@ class PermissionModeManager {
         ? planFilePathOverride
         : this.getPlanFilePath();
     switch (effectiveMode) {
-      case "fullAccess":
-        // ExitPlanMode always requires human approval, even in fullAccess mode
+      case "unrestricted":
+        // ExitPlanMode always requires human approval, even in unrestricted mode
         if (toolName === "ExitPlanMode" || toolName === "exit_plan_mode") {
           return null;
         }
@@ -704,7 +705,7 @@ class PermissionModeManager {
    * Reset to default mode
    */
   reset(): void {
-    this.currentMode = "fullAccess";
+    this.currentMode = "unrestricted";
     setGlobalPlanFilePath(null);
     setGlobalModeBeforePlan(null);
   }

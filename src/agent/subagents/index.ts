@@ -82,7 +82,7 @@ export interface SubagentConfig {
   fork: boolean;
   /** Whether this subagent should run in the background by default. */
   background: boolean;
-  /** Permission mode for this subagent (default, acceptEdits, plan, memory, fullAccess) */
+  /** Permission mode for this subagent (default, acceptEdits, plan, memory, unrestricted) */
   permissionMode?: string;
 }
 

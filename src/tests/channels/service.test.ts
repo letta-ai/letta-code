@@ -178,7 +178,7 @@ describe("channel service", () => {
     const updated = updateChannelAccountLive("slack", "docsbot", {
       displayName: "DocsBot Support",
       enabled: true,
-      defaultPermissionMode: "fullAccess",
+      defaultPermissionMode: "unrestricted",
     });
     expect(updated.displayName).toBe("DocsBot Support");
     expect(updated.enabled).toBe(true);
@@ -186,7 +186,7 @@ describe("channel service", () => {
     if (updated.channelId !== "slack") {
       throw new Error("Expected Slack account snapshot");
     }
-    expect(updated.defaultPermissionMode).toBe("fullAccess");
+    expect(updated.defaultPermissionMode).toBe("unrestricted");
 
     const bound = bindChannelAccountLive(
       "slack",
@@ -205,7 +205,7 @@ describe("channel service", () => {
         accountId: "docsbot",
         displayName: "DocsBot Support",
         agentId: "agent-docs",
-        defaultPermissionMode: "fullAccess",
+        defaultPermissionMode: "unrestricted",
       }),
     );
 

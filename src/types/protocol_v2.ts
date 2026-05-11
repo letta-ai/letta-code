@@ -36,7 +36,7 @@ export type DevicePermissionMode =
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "fullAccess";
+  | "unrestricted";
 
 export type ToolsetName =
   | "codex"

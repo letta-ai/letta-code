@@ -157,7 +157,7 @@ const PERMISSION_MODE_DESCRIPTIONS = {
   plan: "Read-only mode. Focus on exploration and planning.",
   memory:
     "Memory-scoped mode. Reads are broad; mutations are limited to allowed memory roots.",
-  fullAccess: "All tools auto-approved. Bias toward action.",
+  unrestricted: "All tools auto-approved. Bias toward action.",
 } as const;
 
 async function buildPermissionModeReminder(
@@ -169,8 +169,8 @@ async function buildPermissionModeReminder(
   const shouldEmit = (() => {
     if (context.mode === "interactive" || context.mode === "listen") {
       if (previousMode === null) {
-        // First turn: only remind if not in the default mode (fullAccess).
-        return currentMode !== "fullAccess";
+        // First turn: only remind if not in the default mode (unrestricted).
+        return currentMode !== "unrestricted";
       }
       return previousMode !== currentMode;
     }

@@ -6,7 +6,7 @@ export type RuntimePermissionMode =
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "fullAccess";
+  | "unrestricted";
 
 export interface RuntimeContextSnapshot {
   agentId?: string | null;

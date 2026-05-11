@@ -1112,8 +1112,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         const previousMode = permissionMode.getModeBeforePlan();
         const restoreMode =
           // If the user was in YOLO before entering plan mode, always restore it.
-          previousMode === "fullAccess"
-            ? "fullAccess"
+          previousMode === "unrestricted"
+            ? "unrestricted"
             : acceptEdits
               ? "acceptEdits"
               : previousMode === "memory"
@@ -1246,7 +1246,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        if (mode === "fullAccess") {
+        if (mode === "unrestricted") {
           // YOLO mode but no plan file yet — tell agent to write it first.
           const planFilePath = activePlanPath ?? fallbackPlanPath;
           const plansDir = join(homedir(), ".letta", "plans");
@@ -1512,14 +1512,14 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
   ]);
 
   // Guard EnterPlanMode:
-  // When in fullAccess (YOLO) mode, auto-approve EnterPlanMode and stay
+  // When in unrestricted (YOLO) mode, auto-approve EnterPlanMode and stay
   // in YOLO — the agent gets plan instructions but keeps full permissions.
   // ExitPlanMode still requires explicit user approval.
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "EnterPlanMode") {
-      if (permissionMode.getMode() === "fullAccess") {
+      if (permissionMode.getMode() === "unrestricted") {
         if (
           lastAutoApprovedEnterPlanToolCallIdRef.current === approval.toolCallId
         ) {

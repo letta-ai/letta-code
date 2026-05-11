@@ -2237,7 +2237,7 @@ describe("listen-client multi-worker concurrency", () => {
       command: {
         type: "change_device_state",
         runtime: { agent_id: "agent-1", conversation_id: "conv-mid" },
-        payload: { mode: "fullAccess" },
+        payload: { mode: "unrestricted" },
       },
       socket: socket as unknown as WebSocket,
       opts: {},
@@ -2248,7 +2248,7 @@ describe("listen-client multi-worker concurrency", () => {
 
     await turnPromise;
 
-    expect(capturedModeAtClassification === "fullAccess").toBe(true);
+    expect(capturedModeAtClassification === "unrestricted").toBe(true);
     const continuationMessages = sendMessageStreamMock.mock.calls[1]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;

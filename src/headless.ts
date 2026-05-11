@@ -474,7 +474,7 @@ export async function handleHeadlessCommand(
   if (yoloMode || permissionModeValue) {
     const { permissionMode } = await import("./permissions/mode");
     if (yoloMode) {
-      permissionMode.setMode("fullAccess");
+      permissionMode.setMode("unrestricted");
     } else if (permissionModeValue) {
       const { migratePermissionMode } = await import("./permissions/mode");
       const migrated = migratePermissionMode(permissionModeValue);

@@ -48,13 +48,13 @@ describe("shared permission-mode reminder", () => {
     const first = await provider(context);
     expect(first).toContain("Permission mode active: standard");
 
-    permissionMode.setMode("fullAccess");
+    permissionMode.setMode("unrestricted");
     const second = await provider(context);
-    expect(second).toContain("Permission mode changed to: fullAccess");
+    expect(second).toContain("Permission mode changed to: unrestricted");
   });
 
-  test("interactive does not emit on first turn in fullAccess mode (it is the default)", async () => {
-    permissionMode.setMode("fullAccess");
+  test("interactive does not emit on first turn in unrestricted mode (it is the default)", async () => {
+    permissionMode.setMode("unrestricted");
     const provider = sharedReminderProviders["permission-mode"];
     const reminder = await provider(baseContext("interactive"));
     expect(reminder).toBeNull();

@@ -23,7 +23,7 @@ export type ChannelChatType = "direct" | "channel";
 export type SlackDefaultPermissionMode =
   | "standard"
   | "acceptEdits"
-  | "fullAccess";
+  | "unrestricted";
 
 export interface ChannelMessageAttachment {
   id?: string;

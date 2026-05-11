@@ -5,24 +5,24 @@ import { exit_plan_mode } from "../../tools/impl/ExitPlanMode";
 describe("ExitPlanMode tool", () => {
   test("restores prior permission mode when exiting plan mode", async () => {
     permissionMode.reset();
-    permissionMode.setMode("fullAccess");
+    permissionMode.setMode("unrestricted");
     permissionMode.setMode("plan");
     permissionMode.setPlanFilePath("/tmp/test-plan.md");
 
     await exit_plan_mode();
 
-    expect(permissionMode.getMode()).toBe("fullAccess");
+    expect(permissionMode.getMode()).toBe("unrestricted");
     expect(permissionMode.getPlanFilePath()).toBeNull();
   });
 
-  test("restores to fullAccess when entering plan from reset state", async () => {
+  test("restores to unrestricted when entering plan from reset state", async () => {
     permissionMode.reset();
     permissionMode.setMode("plan");
     permissionMode.setPlanFilePath("/tmp/test-plan.md");
 
     await exit_plan_mode();
 
-    expect(permissionMode.getMode()).toBe("fullAccess");
+    expect(permissionMode.getMode()).toBe("unrestricted");
     expect(permissionMode.getPlanFilePath()).toBeNull();
   });
 

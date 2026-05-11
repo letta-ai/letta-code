@@ -2426,7 +2426,7 @@ describe("listen-client permission mode scope keys", () => {
         accountId: "acct-1",
         agentId: "agent-123",
         conversationId: "conv-slack-1",
-        defaultPermissionMode: "fullAccess",
+        defaultPermissionMode: "unrestricted",
       },
       socket as unknown as WebSocket,
       listener,
@@ -2437,11 +2437,11 @@ describe("listen-client permission mode scope keys", () => {
       conversation_id: "conv-slack-1",
     });
 
-    expect(status.current_permission_mode).toBe("fullAccess");
+    expect(status.current_permission_mode).toBe("unrestricted");
     expect(
       listener.permissionModeByConversation.get("conversation:conv-slack-1"),
     ).toEqual({
-      mode: "fullAccess",
+      mode: "unrestricted",
       planFilePath: null,
       modeBeforePlan: null,
     });
