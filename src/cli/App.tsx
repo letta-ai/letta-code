@@ -5,3 +5,5 @@
  */
 
 export { default } from "./app/App";
+
+// Re-export the CLI app entrypoint from the app module.
