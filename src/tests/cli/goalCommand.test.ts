@@ -154,12 +154,12 @@ describe("goalCommand - formatGoalElapsedSeconds", () => {
     expect(formatGoalElapsedSeconds(45)).toBe("45s");
   });
 
-  test("formats minutes", () => {
-    expect(formatGoalElapsedSeconds(120)).toBe("2m");
+  test("formats minutes with seconds", () => {
+    expect(formatGoalElapsedSeconds(120)).toBe("2m 0s");
   });
 
-  test("formats hours", () => {
-    expect(formatGoalElapsedSeconds(3600)).toBe("1h");
+  test("formats hours with minutes", () => {
+    expect(formatGoalElapsedSeconds(3600)).toBe("1h 0m");
   });
 
   test("formats hours and minutes", () => {

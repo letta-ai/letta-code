@@ -77,7 +77,8 @@ export function formatGoalElapsedSeconds(seconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(seconds));
   if (safeSeconds < 60) return `${safeSeconds}s`;
   const minutes = Math.floor(safeSeconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  const remainingSeconds = safeSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   if (hours >= 24) {
@@ -85,9 +86,7 @@ export function formatGoalElapsedSeconds(seconds: number): string {
     const remainingHours = hours % 24;
     return `${days}d ${remainingHours}h ${remainingMinutes}m`;
   }
-  return remainingMinutes === 0
-    ? `${hours}h`
-    : `${hours}h ${remainingMinutes}m`;
+  return `${hours}h ${remainingMinutes}m`;
 }
 
 export function formatGoalStatusIndicator(goal: ConversationGoal): string {
