@@ -73,6 +73,42 @@ describe("drainStream stop reason wiring", () => {
     expect(result.sawStopReasonChunk).toBe(true);
   });
 
+  test("coerces end_turn with pending approvals into requires_approval", async () => {
+    const fakeStream = {
+      controller: new AbortController(),
+      async *[Symbol.asyncIterator]() {
+        yield {
+          message_type: "approval_request_message",
+          tool_call: {
+            tool_call_id: "tc-end-turn",
+            name: "ShellCommand",
+            arguments: '{"command":"pwd"}',
+          },
+        } as LettaStreamingResponse;
+        yield {
+          message_type: "stop_reason",
+          stop_reason: "end_turn",
+        } as LettaStreamingResponse;
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+
+    const result = await drainStream(
+      fakeStream,
+      createBuffers("agent-test"),
+      () => {},
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.sawStopReasonChunk).toBe(true);
+    expect(result.approvals).toEqual([
+      {
+        toolCallId: "tc-end-turn",
+        toolName: "ShellCommand",
+        toolArgs: '{"command":"pwd"}',
+      },
+    ]);
+  });
+
   test("stream error cancels in-progress tool calls by default (skipCancelToolsOnError=false)", async () => {
     const buffers = createBuffers("agent-test");
     await drainStream(makeStreamWithToolCall("tc-1"), buffers, () => {});

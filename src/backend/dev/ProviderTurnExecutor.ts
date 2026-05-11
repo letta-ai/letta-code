@@ -271,6 +271,11 @@ function createProviderLettaStream(
         }
         if (pendingStopReason) {
           yield pendingStopReason;
+        } else if (sawToolCall) {
+          yield {
+            message_type: "stop_reason",
+            stop_reason: "requires_approval",
+          } as LettaStreamingResponse;
         }
       } catch (error) {
         yield* createProviderErrorChunks(error);
