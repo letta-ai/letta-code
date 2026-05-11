@@ -324,29 +324,6 @@ function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
       }
     }
 
-    // Handle 256-color foreground: 38;5;N
-    if (code === 38 && match[2] === "5") {
-      const n = match[3];
-      if (n) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        const color256 = get256Color(parseInt(n, 10));
-        if (color256) currentColor = color256;
-        continue;
-      }
-    }
-
     // Handle 256-color background: 48;5;N
     if (code === 48 && match[2] === "5") {
       const n = match[3];
