@@ -322,7 +322,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
       // Pin the user's permission mode for the duration of the submission so
-      // auto-approvals (YOLO / bypassPermissions) don't regress after a retry.
+      // auto-approvals (YOLO / fullAccess) don't regress after a retry.
       const pinnedPermissionMode = uiPermissionModeRef.current;
       const restorePinnedPermissionMode = () => {
         if (pinnedPermissionMode === "plan") return;
@@ -396,8 +396,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           ralphMode.deactivate();
           setUiRalphActive(false);
           if (wasYolo) {
-            permissionMode.setMode("default");
-            setUiPermissionMode("default");
+            permissionMode.setMode("standard");
+            setUiPermissionMode("standard");
           }
 
           // Add completion status to transcript
@@ -421,8 +421,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           ralphMode.deactivate();
           setUiRalphActive(false);
           if (wasYolo) {
-            permissionMode.setMode("default");
-            setUiPermissionMode("default");
+            permissionMode.setMode("standard");
+            setUiPermissionMode("standard");
           }
 
           // Add status to transcript
@@ -1179,8 +1179,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
           };
 
-          const isAutoApprovalMode =
-            pinnedPermissionMode === "bypassPermissions";
+          const isAutoApprovalMode = pinnedPermissionMode === "fullAccess";
           const isUserInitiated = currentInput.some(
             (item) => item.type === "message" && item.role === "user",
           );

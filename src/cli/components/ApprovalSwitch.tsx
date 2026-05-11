@@ -364,7 +364,7 @@ export const ApprovalSwitch = memo(
     if (toolName === "ExitPlanMode" && onPlanApprove && onPlanKeepPlanning) {
       const showAcceptEditsOption =
         permissionMode.getMode() === "plan" &&
-        permissionMode.getModeBeforePlan() !== "bypassPermissions";
+        permissionMode.getModeBeforePlan() !== "fullAccess";
       return (
         <StaticPlanApproval
           onApprove={() => onPlanApprove(false)}

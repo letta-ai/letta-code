@@ -28,14 +28,14 @@ export async function exit_plan_mode(
     if (scopedState.mode === "plan") {
       const prev = scopedState.modeBeforePlan;
       // Restore the previous mode, but never restore "memory" — fall back to
-      // "default" so the user isn't stuck in a restricted mode after plan approval.
-      scopedState.mode = prev === "memory" ? "default" : (prev ?? "default");
+      // "standard" so the user isn't stuck in a restricted mode after plan approval.
+      scopedState.mode = prev === "memory" ? "standard" : (prev ?? "standard");
       scopedState.modeBeforePlan = null;
       scopedState.planFilePath = null;
     }
   } else if (permissionMode.getMode() === "plan") {
     const prev = permissionMode.getModeBeforePlan();
-    const restoredMode = prev === "memory" ? "default" : (prev ?? "default");
+    const restoredMode = prev === "memory" ? "standard" : (prev ?? "standard");
     permissionMode.setMode(restoredMode);
   }
 

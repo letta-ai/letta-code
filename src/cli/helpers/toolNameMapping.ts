@@ -130,13 +130,13 @@ export function isFancyUITool(name: string): boolean {
 }
 
 /**
- * Checks if a tool always requires user interaction, even in yolo mode.
+ * Checks if a tool always requires user interaction, even in fullAccess mode.
  * These are tools that fundamentally need user input to proceed:
  * - AskUserQuestion: needs user to answer questions
  * - EnterPlanMode: needs user to approve entering plan mode
  * - ExitPlanMode: needs user to approve the plan
  *
- * Other tools (bash, file edits) should respect yolo mode and auto-approve.
+ * Other tools (bash, file edits) should respect fullAccess mode and auto-approve.
  */
 export function alwaysRequiresUserInput(name: string): boolean {
   return isInteractiveApprovalTool(name);

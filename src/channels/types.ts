@@ -21,9 +21,9 @@ export const SUPPORTED_CHANNEL_IDS = FIRST_PARTY_CHANNEL_IDS;
 export type SupportedChannelId = string;
 export type ChannelChatType = "direct" | "channel";
 export type SlackDefaultPermissionMode =
-  | "default"
+  | "standard"
   | "acceptEdits"
-  | "bypassPermissions";
+  | "fullAccess";
 
 export interface ChannelMessageAttachment {
   id?: string;

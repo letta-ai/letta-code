@@ -170,7 +170,7 @@ export function loadPersistedPermissionModeMap(): Map<
       // If "plan" was somehow saved, restore to the pre-plan mode.
       const restoredMode: PermissionMode =
         persisted.mode === "plan"
-          ? (persisted.modeBeforePlan ?? "default")
+          ? (persisted.modeBeforePlan ?? "standard")
           : persisted.mode;
       map.set(key, {
         mode: restoredMode,
@@ -196,7 +196,7 @@ export function persistPermissionModeMapForRuntime(
 /**
  * Serialize the permission mode map and persist to remote-settings.json.
  * Strips planFilePath (ephemeral). Converts "plan" mode to modeBeforePlan.
- * Skips entries that are effectively "default" (lean map).
+ * Skips entries that are effectively "standard" (lean map).
  */
 function persistPermissionModeMap(
   map: Map<string, ConversationPermissionModeState>,
@@ -210,10 +210,10 @@ function persistPermissionModeMap(
     // If currently in plan mode, persist the effective mode as modeBeforePlan
     // so we don't restore into plan mode (plan file path is ephemeral).
     const modeToSave: PermissionMode =
-      state.mode === "plan" ? (state.modeBeforePlan ?? "default") : state.mode;
+      state.mode === "plan" ? (state.modeBeforePlan ?? "standard") : state.mode;
 
-    // Skip entries that are just "default" with no context — lean map.
-    if (modeToSave === "default" && state.modeBeforePlan === null) {
+    // Skip entries that are just "standard" with no context — lean map.
+    if (modeToSave === "standard" && state.modeBeforePlan === null) {
       continue;
     }
 

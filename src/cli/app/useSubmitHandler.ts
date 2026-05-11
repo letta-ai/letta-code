@@ -580,8 +580,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         setPendingRalphConfig(null);
         justActivatedRalph = true;
         if (isYolo) {
-          permissionMode.setMode("bypassPermissions");
-          setUiPermissionMode("bypassPermissions");
+          permissionMode.setMode("fullAccess");
+          setUiPermissionMode("fullAccess");
         }
 
         const ralphState = ralphMode.getState();
@@ -1062,8 +1062,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
             setUiRalphActive(true);
             if (isYolo) {
-              permissionMode.setMode("bypassPermissions");
-              setUiPermissionMode("bypassPermissions");
+              permissionMode.setMode("fullAccess");
+              setUiPermissionMode("fullAccess");
             }
 
             const ralphState = ralphMode.getState();

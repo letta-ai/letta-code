@@ -21,9 +21,7 @@ function isDefaultPermissionMode(
   value: unknown,
 ): value is SlackDefaultPermissionMode {
   return (
-    value === "default" ||
-    value === "acceptEdits" ||
-    value === "bypassPermissions"
+    value === "default" || value === "acceptEdits" || value === "fullAccess"
   );
 }
 
@@ -67,7 +65,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         has_bot_token: account.botToken.trim().length > 0,
         has_app_token: account.appToken.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "default",
+        default_permission_mode: account.defaultPermissionMode ?? "standard",
       };
     },
 
@@ -77,7 +75,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         has_bot_token: account.botToken.trim().length > 0,
         has_app_token: account.appToken.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "default",
+        default_permission_mode: account.defaultPermissionMode ?? "standard",
       };
     },
 

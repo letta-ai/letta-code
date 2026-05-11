@@ -1031,16 +1031,16 @@ async function main(): Promise<void> {
 
   if (yoloMode || permissionModeValue) {
     if (yoloMode) {
-      // --yolo is an alias for --permission-mode bypassPermissions
-      permissionMode.setMode("bypassPermissions");
+      // --yolo is an alias for --permission-mode fullAccess
+      permissionMode.setMode("fullAccess");
     } else if (permissionModeValue) {
       const mode = permissionModeValue;
       const validModes = [
-        "default",
+        "standard",
         "acceptEdits",
         "plan",
         "memory",
-        "bypassPermissions",
+        "fullAccess",
       ] as const;
 
       if (validModes.includes(mode as (typeof validModes)[number])) {

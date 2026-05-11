@@ -3839,8 +3839,8 @@ export default function App({
       ralphMode.deactivate();
       setUiRalphActive(false);
       if (wasYolo) {
-        permissionMode.setMode("default");
-        setUiPermissionMode("default");
+        permissionMode.setMode("standard");
+        setUiPermissionMode("standard");
       }
     }
   }, [setUiPermissionMode]);

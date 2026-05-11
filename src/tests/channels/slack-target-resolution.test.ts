@@ -26,7 +26,7 @@ function makeSlackAccount(accountId: string): SlackChannelAccount {
     botToken: `xoxb-${accountId}`,
     appToken: `xapp-${accountId}`,
     agentId: "agent-1",
-    defaultPermissionMode: "default",
+    defaultPermissionMode: "standard",
   };
 }
 

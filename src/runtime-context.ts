@@ -2,11 +2,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { SkillSource } from "./agent/skills";
 
 export type RuntimePermissionMode =
-  | "default"
+  | "standard"
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "bypassPermissions";
+  | "fullAccess";
 
 export interface RuntimeContextSnapshot {
   agentId?: string | null;

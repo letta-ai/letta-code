@@ -1,5 +1,5 @@
 // src/permissions/mode.ts
-// Permission mode management (default, acceptEdits, plan, memory, bypassPermissions)
+// Permission mode management (fullAccess, standard, acceptEdits, plan, memory)
 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -18,11 +18,11 @@ import {
 import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
 export type PermissionMode =
-  | "default"
+  | "standard"
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "bypassPermissions";
+  | "fullAccess";
 
 /**
  * Result of a permission-mode check. Includes a decision and an optional
@@ -95,7 +95,7 @@ function buildWriteOutsideRootsReason(
 function getGlobalMode(): PermissionMode {
   const global = globalThis as GlobalWithMode;
   if (!global[MODE_KEY]) {
-    global[MODE_KEY] = "default";
+    global[MODE_KEY] = "fullAccess";
   }
   return global[MODE_KEY];
 }
@@ -259,7 +259,7 @@ class PermissionModeManager {
 
   /**
    * Get the permission mode that was active before entering plan mode.
-   * Used to restore the user's previous setting (e.g., bypassPermissions).
+   * Used to restore the user's previous setting (e.g., fullAccess).
    */
   getModeBeforePlan(): PermissionMode | null {
     return getGlobalModeBeforePlan();
@@ -311,8 +311,8 @@ class PermissionModeManager {
         ? planFilePathOverride
         : this.getPlanFilePath();
     switch (effectiveMode) {
-      case "bypassPermissions":
-        // ExitPlanMode always requires human approval, even in yolo mode
+      case "fullAccess":
+        // ExitPlanMode always requires human approval, even in fullAccess mode
         if (toolName === "ExitPlanMode" || toolName === "exit_plan_mode") {
           return null;
         }
@@ -667,7 +667,7 @@ class PermissionModeManager {
         };
       }
 
-      case "default":
+      case "standard":
         // No mode overrides, use normal permission flow
         return null;
 
@@ -680,7 +680,7 @@ class PermissionModeManager {
    * Reset to default mode
    */
   reset(): void {
-    this.currentMode = "default";
+    this.currentMode = "fullAccess";
     setGlobalPlanFilePath(null);
     setGlobalModeBeforePlan(null);
   }

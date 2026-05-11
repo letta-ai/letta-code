@@ -87,7 +87,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   if (isSlackChannelAccount(next)) {
     (next as SlackChannelAccount).defaultPermissionMode = ((
       next as SlackChannelAccount
-    ).defaultPermissionMode ?? "default") as SlackDefaultPermissionMode;
+    ).defaultPermissionMode ?? "standard") as SlackDefaultPermissionMode;
   }
   return next;
 }
@@ -147,7 +147,7 @@ function makeDefaultLegacyAccount(
     dmPolicy: config.dmPolicy,
     allowedUsers: [...config.allowedUsers],
     agentId: null,
-    defaultPermissionMode: "default",
+    defaultPermissionMode: "standard",
     createdAt: now,
     updatedAt: now,
   };

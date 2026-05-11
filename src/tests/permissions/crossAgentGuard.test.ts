@@ -385,8 +385,8 @@ describe("evaluateCrossAgentGuard", () => {
 describe("checkPermission integration", () => {
   const permissions = { allow: [], deny: [], ask: [] };
 
-  test("bypassPermissions mode does NOT let you write another agent's memory", () => {
-    permissionMode.setMode("bypassPermissions");
+  test("fullAccess mode does NOT let you write another agent's memory", () => {
+    permissionMode.setMode("fullAccess");
     const result = checkPermission(
       "Write",
       { file_path: otherMemory("system/a.md") },
@@ -437,11 +437,11 @@ describe("checkPermission integration", () => {
 
   test("reads against another agent's memory are denied across all modes", () => {
     const modes = [
-      "default",
+      "standard",
       "acceptEdits",
       "plan",
       "memory",
-      "bypassPermissions",
+      "fullAccess",
     ] as const;
     for (const mode of modes) {
       permissionMode.setMode(mode);
@@ -458,12 +458,7 @@ describe("checkPermission integration", () => {
 
   test("own-memory access is unaffected by guard in every mode", () => {
     process.env.MEMORY_DIR = selfMemory();
-    const modes = [
-      "default",
-      "acceptEdits",
-      "memory",
-      "bypassPermissions",
-    ] as const;
+    const modes = ["standard", "acceptEdits", "memory", "fullAccess"] as const;
     for (const mode of modes) {
       permissionMode.setMode(mode);
       const result = checkPermission(
@@ -478,8 +473,8 @@ describe("checkPermission integration", () => {
     }
   });
 
-  test("bash against another agent's memory is denied even in bypassPermissions", () => {
-    permissionMode.setMode("bypassPermissions");
+  test("bash against another agent's memory is denied even in fullAccess", () => {
+    permissionMode.setMode("fullAccess");
     const result = checkPermission(
       "Bash",
       { command: `git -C ${otherMemory()} log` },
