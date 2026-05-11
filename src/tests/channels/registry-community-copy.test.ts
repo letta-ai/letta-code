@@ -4,12 +4,15 @@ const { buildPairingInstructions, buildUnboundRouteInstructions } =
   await import("../../channels/registry");
 
 describe("registry copy: first-party channels", () => {
-  test("pairing instructions point at the desktop UI for telegram", () => {
+  test("pairing instructions point at both desktop UI and CLI for telegram", () => {
     const text = buildPairingInstructions("telegram", "ABC123");
     expect(text).toContain("open Channels >");
     expect(text).toContain("Telegram");
     expect(text).toContain("Pairing code: ABC123");
-    expect(text).not.toContain("letta channels pair");
+    expect(text).toContain(
+      "letta channels pair --channel telegram --code ABC123 --agent <agent-id>",
+    );
+    expect(text).toContain("Find your agent id with letta agents list.");
     expect(text).not.toContain("(community channel)");
   });
 
@@ -22,10 +25,13 @@ describe("registry copy: first-party channels", () => {
     expect(text).not.toContain("(community channel)");
   });
 
-  test("first-party discord pairing keeps the desktop wording", () => {
+  test("first-party discord pairing includes the CLI pairing command", () => {
     const text = buildPairingInstructions("discord", "XYZ789");
     expect(text).toContain("open Channels >");
     expect(text).toContain("Discord");
+    expect(text).toContain(
+      "letta channels pair --channel discord --code XYZ789 --agent <agent-id>",
+    );
   });
 
   test("first-party copy uses 'Letta agent' consistently", () => {
