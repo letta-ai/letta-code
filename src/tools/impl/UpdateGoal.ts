@@ -23,10 +23,6 @@ export async function update_goal(
   if (!goal) {
     throw new Error("No active goal exists for this conversation.");
   }
-  const { ralphMode } = await import("../../ralph/mode");
-  if (ralphMode.getState().mode === "goal") {
-    ralphMode.deactivate();
-  }
   return {
     goal,
     remaining_tokens:

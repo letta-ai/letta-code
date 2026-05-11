@@ -1213,6 +1213,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
+          // Pause any active goal for the current conversation before switching
+          const prevConversationId = conversationIdRef.current;
+          const prevGoal = prevConversationId
+            ? settingsManager.getConversationGoal(prevConversationId)
+            : null;
+          if (prevGoal?.status === "active") {
+            settingsManager.updateConversationGoalStatus(
+              prevConversationId,
+              "paused",
+            );
+          }
+
           // Run SessionEnd hooks for current session before starting new one
           await runEndHooks();
 
@@ -1291,6 +1303,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           resetPendingReasoningCycle();
           setCommandRunning(true);
+
+          // Pause any active goal for the current conversation before forking
+          const forkPrevConversationId = conversationIdRef.current;
+          const forkPrevGoal = forkPrevConversationId
+            ? settingsManager.getConversationGoal(forkPrevConversationId)
+            : null;
+          if (forkPrevGoal?.status === "active") {
+            settingsManager.updateConversationGoalStatus(
+              forkPrevConversationId,
+              "paused",
+            );
+          }
 
           await runEndHooks();
 
@@ -1386,6 +1410,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           // Clearing conversation state should also clear pending reasoning-tier debounce.
           resetPendingReasoningCycle();
           setCommandRunning(true);
+
+          // Pause any active goal for the current conversation before clearing
+          const clearPrevConversationId = conversationIdRef.current;
+          const clearPrevGoal = clearPrevConversationId
+            ? settingsManager.getConversationGoal(clearPrevConversationId)
+            : null;
+          if (clearPrevGoal?.status === "active") {
+            settingsManager.updateConversationGoalStatus(
+              clearPrevConversationId,
+              "paused",
+            );
+          }
 
           // Run SessionEnd hooks for current session before clearing
           await runEndHooks();

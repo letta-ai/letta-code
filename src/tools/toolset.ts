@@ -375,7 +375,7 @@ export async function prepareToolExecutionContextForScope(params: {
 
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
-    conversationId: conversationId ?? "default",
+    conversationId: conversationId ?? undefined,
     toolsetPreference,
     exclude,
     clientToolAllowlist,

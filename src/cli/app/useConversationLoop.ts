@@ -1300,10 +1300,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   conversationIdRef.current,
                   "budget_limited",
                 );
+              const wasYolo = ralphMode.getState().isYolo;
               ralphMode.deactivate();
               setUiRalphActive(false);
-              permissionMode.setMode("default");
-              setUiPermissionMode("default");
+              if (wasYolo) {
+                permissionMode.setMode("default");
+                setUiPermissionMode("default");
+              }
               if (budgetLimitedGoal) {
                 const systemMsg = buildGoalBudgetLimitPrompt(budgetLimitedGoal);
                 setTimeout(() => {
