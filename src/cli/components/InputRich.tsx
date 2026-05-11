@@ -1590,6 +1590,9 @@ export function Input({
   );
 
   // Sync on prop-driven changes (status transitions, clear, pause, complete).
+  // goalStatus and goalActiveStartedAt are intentional triggers — they detect
+  // transitions even though the effect body re-reads via getConversationGoal.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are change triggers, not values used in the effect body
   useEffect(() => {
     const goal = conversationId
       ? settingsManager.getConversationGoal(conversationId)
