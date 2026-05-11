@@ -160,6 +160,7 @@ describe("channel account list responses", () => {
             config: {
               token: "discord-token",
               agent_id: "agent-1",
+              default_permission_mode: "acceptEdits",
               allowed_channels: ["channel-1"],
             },
           },
@@ -182,6 +183,7 @@ describe("channel account list responses", () => {
           patch: {
             config: {
               agent_id: "agent-2",
+              default_permission_mode: "bypassPermissions",
               allowed_channels: ["channel-2"],
             },
           },
@@ -238,6 +240,7 @@ describe("channel account list responses", () => {
           config: {
             has_token: true,
             agent_id: "agent-1",
+            default_permission_mode: "acceptEdits",
             allowed_channels: ["channel-1"],
           },
         },
@@ -250,6 +253,7 @@ describe("channel account list responses", () => {
           config: {
             has_token: true,
             agent_id: "agent-2",
+            default_permission_mode: "bypassPermissions",
             allowed_channels: ["channel-2"],
           },
         },
@@ -263,6 +267,7 @@ describe("channel account list responses", () => {
             config: {
               has_token: true,
               agent_id: "agent-2",
+              default_permission_mode: "bypassPermissions",
               allowed_channels: ["channel-2"],
             },
           },
@@ -276,6 +281,7 @@ describe("channel account list responses", () => {
           config: {
             has_token: true,
             agent_id: "agent-2",
+            default_permission_mode: "bypassPermissions",
             allowed_channels: ["channel-2"],
           },
         },

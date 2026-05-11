@@ -6,10 +6,10 @@ import {
 } from "./config";
 import type {
   ChannelAccount,
+  ChannelDefaultPermissionMode,
   CustomChannelAccount,
   DiscordChannelAccount,
   SlackChannelAccount,
-  SlackDefaultPermissionMode,
   SupportedChannelId,
   TelegramChannelAccount,
 } from "./types";
@@ -87,7 +87,12 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   if (isSlackChannelAccount(next)) {
     (next as SlackChannelAccount).defaultPermissionMode = ((
       next as SlackChannelAccount
-    ).defaultPermissionMode ?? "default") as SlackDefaultPermissionMode;
+    ).defaultPermissionMode ?? "default") as ChannelDefaultPermissionMode;
+  }
+  if (isDiscordChannelAccount(next)) {
+    (next as DiscordChannelAccount).defaultPermissionMode = ((
+      next as DiscordChannelAccount
+    ).defaultPermissionMode ?? "default") as ChannelDefaultPermissionMode;
   }
   return next;
 }
@@ -132,6 +137,7 @@ function makeDefaultLegacyAccount(
         ? [...config.allowedChannels]
         : undefined,
       agentId: null,
+      defaultPermissionMode: config.defaultPermissionMode ?? "default",
       createdAt: now,
       updatedAt: now,
     };

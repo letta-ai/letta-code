@@ -25,6 +25,7 @@ describe("discord protocol-inbound validators", () => {
         config: {
           token: "test-token",
           agent_id: "a-1",
+          default_permission_mode: "acceptEdits",
           allowed_channels: ["channel-1"],
         },
       },
@@ -41,6 +42,7 @@ describe("discord protocol-inbound validators", () => {
         config: {
           token: "test-token",
           agent_id: "a-1",
+          default_permission_mode: "bypassPermissions",
           allowed_channels: ["channel-1"],
         },
       },
@@ -55,6 +57,18 @@ describe("discord protocol-inbound validators", () => {
       request_id: "r1",
       account: {
         config: { token: "test-token", allowed_channels: ["channel-1", 42] },
+      },
+    };
+    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+  });
+
+  test("discord account create rejects invalid default_permission_mode", () => {
+    const msg = {
+      type: "channel_account_create",
+      channel_id: "discord",
+      request_id: "r1",
+      account: {
+        config: { token: "test-token", default_permission_mode: "memory" },
       },
     };
     expect(isChannelAccountCreateCommand(msg)).toBe(false);
@@ -86,7 +100,9 @@ describe("discord protocol-inbound validators", () => {
       channel_id: "discord",
       account_id: "acc-1",
       request_id: "r1",
-      patch: { config: { token: "new-token" } },
+      patch: {
+        config: { token: "new-token", default_permission_mode: "acceptEdits" },
+      },
     };
     expect(isChannelAccountUpdateCommand(msg)).toBe(true);
   });
@@ -97,7 +113,11 @@ describe("discord protocol-inbound validators", () => {
       channel_id: "discord",
       request_id: "r1",
       config: {
-        plugin_config: { token: "new-token", allowed_channels: ["channel-1"] },
+        plugin_config: {
+          token: "new-token",
+          default_permission_mode: "bypassPermissions",
+          allowed_channels: ["channel-1"],
+        },
       },
     };
     expect(isChannelSetConfigCommand(msg)).toBe(true);

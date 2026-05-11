@@ -99,6 +99,7 @@ describe("discord channel registry", () => {
         enabled: true,
         token: "discord-token",
         agentId: "agent-1",
+        defaultPermissionMode: "default",
         dmPolicy: "pairing",
         allowedUsers: [],
         createdAt: "2026-04-11T00:00:00.000Z",
@@ -181,6 +182,7 @@ describe("discord channel registry", () => {
         enabled: true,
         token: "discord-token",
         agentId: "agent-1",
+        defaultPermissionMode: "default",
         dmPolicy: "open",
         allowedUsers: [],
         createdAt: "2026-04-11T00:00:00.000Z",
@@ -226,6 +228,51 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(1);
   });
 
+  test("emits default permission mode when Discord creates a conversation", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "bypassPermissions",
+        dmPolicy: "open",
+        allowedUsers: [],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("../../channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+    const events: unknown[] = [];
+    registry.setEventHandler((event) => events.push(event));
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "dm-1",
+        threadId: null,
+        chatType: "direct",
+        isMention: false,
+        messageId: "dm-msg-1",
+      }),
+    );
+
+    expect(events).toContainEqual({
+      type: "discord_conversation_created",
+      channelId: "discord",
+      accountId: "discord-bot",
+      agentId: "agent-1",
+      conversationId: "conv-discord",
+      defaultPermissionMode: "bypassPermissions",
+    });
+  });
+
   test("rejects direct messages from users outside a Discord allowlist", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
@@ -235,6 +282,7 @@ describe("discord channel registry", () => {
         enabled: true,
         token: "discord-token",
         agentId: "agent-1",
+        defaultPermissionMode: "default",
         dmPolicy: "allowlist",
         allowedUsers: ["user-2"],
         createdAt: "2026-04-11T00:00:00.000Z",

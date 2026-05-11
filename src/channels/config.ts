@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   ChannelConfig,
+  ChannelDefaultPermissionMode,
   DiscordChannelConfig,
   DmPolicy,
   SlackChannelConfig,
@@ -161,6 +162,14 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
   },
 };
 
+function parseDefaultPermissionMode(
+  value: unknown,
+): ChannelDefaultPermissionMode {
+  return value === "acceptEdits" || value === "bypassPermissions"
+    ? value
+    : "default";
+}
+
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
   parse(parsed) {
     const rawAllowedChannels = parsed.allowed_channels;
@@ -168,6 +177,9 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
       channel: "discord",
       enabled: parsed.enabled !== false,
       token: String(parsed.token ?? ""),
+      defaultPermissionMode: parseDefaultPermissionMode(
+        parsed.default_permission_mode,
+      ),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       allowedChannels: Array.isArray(rawAllowedChannels)
