@@ -66,6 +66,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # TODO: replace with SHA before merging to main
       - uses: letta-ai/letta-code-action@fix/agent-mode-tracking-comment-and-conversation-persistence
         if: steps.lint_wait.outputs.skipped != 'true'
         with:
