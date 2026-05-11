@@ -82,6 +82,34 @@ describe("local compaction API parity", () => {
     );
   });
 
+  test("uses raw compaction summaries for recursive compaction", () => {
+    const packedSummary = JSON.stringify({
+      type: "system_alert",
+      message:
+        "Note: prior messages have been hidden from view due to conversation memory constraints.\nThe following is a summary of the previous messages:\n raw recursive summary",
+      time: "2026-01-01T00:00:00.000Z",
+    });
+
+    const transcript = formatLocalMessagesForSummary([
+      message({
+        id: "summary-1",
+        role: "user",
+        metadata: {
+          compaction: {
+            summary: "raw recursive summary",
+          },
+        },
+        parts: [{ type: "text", text: packedSummary }],
+      } as LocalMessage),
+    ]);
+
+    expect(transcript).toBe(
+      " \n[user] raw recursive summary\n \n. Generate the summary.",
+    );
+    expect(transcript).not.toContain("system_alert");
+    expect(transcript).not.toContain("prior messages have been hidden");
+  });
+
   test("packs all-mode summaries like API package_summarize_message_no_counts", () => {
     const stats: LocalCompactionStats = {
       trigger: "manual",

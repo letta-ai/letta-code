@@ -267,6 +267,12 @@ function localMessagesToSummaryOpenAIDicts(
   for (const message of messages) {
     if (message.role === "system") continue;
 
+    const compactionSummary = message.metadata?.compaction?.summary;
+    if (typeof compactionSummary === "string") {
+      result.push({ role: "user", content: compactionSummary });
+      continue;
+    }
+
     const toolParts: Record<string, unknown>[] = [];
     for (const part of message.parts) {
       if (
