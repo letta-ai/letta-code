@@ -85,9 +85,17 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.displayName = undefined;
   }
   if (isSlackChannelAccount(next)) {
-    (next as SlackChannelAccount).defaultPermissionMode = ((
-      next as SlackChannelAccount
-    ).defaultPermissionMode ?? "standard") as SlackDefaultPermissionMode;
+    const raw: string =
+      (next as SlackChannelAccount).defaultPermissionMode ?? "standard";
+    // Migrate legacy values: "default" → "standard", "bypassPermissions"/"fullAccess" → "unrestricted"
+    const migrated =
+      raw === "default"
+        ? "standard"
+        : raw === "bypassPermissions" || raw === "fullAccess"
+          ? "unrestricted"
+          : raw;
+    (next as SlackChannelAccount).defaultPermissionMode =
+      migrated as SlackDefaultPermissionMode;
   }
   return next;
 }
