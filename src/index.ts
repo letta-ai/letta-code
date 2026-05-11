@@ -61,7 +61,11 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startupFlagValidation";
 import { runSubcommand } from "./cli/subcommands/router";
-import { permissionMode } from "./permissions/mode";
+import {
+  migratePermissionMode,
+  permissionMode,
+  VALID_PERMISSION_MODES,
+} from "./permissions/mode";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
@@ -1034,20 +1038,12 @@ async function main(): Promise<void> {
       // --yolo is an alias for --permission-mode fullAccess
       permissionMode.setMode("fullAccess");
     } else if (permissionModeValue) {
-      const mode = permissionModeValue;
-      const validModes = [
-        "standard",
-        "acceptEdits",
-        "plan",
-        "memory",
-        "fullAccess",
-      ] as const;
-
-      if (validModes.includes(mode as (typeof validModes)[number])) {
-        permissionMode.setMode(mode as (typeof validModes)[number]);
+      const migrated = migratePermissionMode(permissionModeValue);
+      if (migrated) {
+        permissionMode.setMode(migrated);
       } else {
         console.error(
-          `Invalid permission mode: ${mode}. Valid modes: ${validModes.join(", ")}`,
+          `Invalid permission mode: ${permissionModeValue}. Valid modes: ${VALID_PERMISSION_MODES.join(", ")}`,
         );
         process.exit(1);
       }

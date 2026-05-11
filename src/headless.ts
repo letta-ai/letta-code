@@ -476,22 +476,10 @@ export async function handleHeadlessCommand(
     if (yoloMode) {
       permissionMode.setMode("fullAccess");
     } else if (permissionModeValue) {
-      const validModes = [
-        "standard",
-        "acceptEdits",
-        "fullAccess",
-        "plan",
-        "memory",
-      ];
-      if (validModes.includes(permissionModeValue)) {
-        permissionMode.setMode(
-          permissionModeValue as
-            | "standard"
-            | "acceptEdits"
-            | "fullAccess"
-            | "plan"
-            | "memory",
-        );
+      const { migratePermissionMode } = await import("./permissions/mode");
+      const migrated = migratePermissionMode(permissionModeValue);
+      if (migrated) {
+        permissionMode.setMode(migrated);
       }
     }
   }

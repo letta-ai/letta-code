@@ -24,14 +24,17 @@ function isDefaultPermissionMode(
     value === "standard" ||
     value === "acceptEdits" ||
     value === "fullAccess" ||
-    value === "default" // legacy alias — migrated to "standard" on read
+    value === "default" || // legacy — migrated to "standard" on read
+    value === "bypassPermissions" // legacy — migrated to "fullAccess" on read
   );
 }
 
 function migratePermissionMode(
-  value: SlackDefaultPermissionMode | "default",
+  value: SlackDefaultPermissionMode | "default" | "bypassPermissions",
 ): SlackDefaultPermissionMode {
-  return value === "default" ? "standard" : value;
+  if (value === "default") return "standard";
+  if (value === "bypassPermissions") return "fullAccess";
+  return value;
 }
 
 export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannelAccount> =

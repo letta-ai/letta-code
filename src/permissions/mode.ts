@@ -24,6 +24,30 @@ export type PermissionMode =
   | "memory"
   | "fullAccess";
 
+/** All valid current permission mode values. */
+export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
+  "fullAccess",
+  "standard",
+  "acceptEdits",
+  "plan",
+  "memory",
+] as const;
+
+/**
+ * Migrate legacy permission mode strings to their current equivalents.
+ * - "default" → "standard" (renamed for clarity)
+ * - "bypassPermissions" → "fullAccess" (renamed for clarity)
+ * Returns null if the value is not a recognized mode (current or legacy).
+ */
+export function migratePermissionMode(value: string): PermissionMode | null {
+  if (VALID_PERMISSION_MODES.includes(value as PermissionMode)) {
+    return value as PermissionMode;
+  }
+  if (value === "default") return "standard";
+  if (value === "bypassPermissions") return "fullAccess";
+  return null;
+}
+
 /**
  * Result of a permission-mode check. Includes a decision and an optional
  * `reason` string the caller can surface to the agent (e.g. denial guidance

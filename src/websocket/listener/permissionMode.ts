@@ -7,8 +7,11 @@
  * - A scope key derived from agentId + conversationId is used as the map key.
  */
 
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode as globalPermissionMode } from "../../permissions/mode";
+import {
+  permissionMode as globalPermissionMode,
+  migratePermissionMode,
+  type PermissionMode,
+} from "../../permissions/mode";
 import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
@@ -167,11 +170,14 @@ export function loadPersistedPermissionModeMap(): Map<
       return map;
     }
     for (const [key, persisted] of Object.entries(settings.permissionModeMap)) {
+      // Migrate legacy mode values ("default" → "standard", "bypassPermissions" → "fullAccess").
+      const rawMode = migratePermissionMode(persisted.mode) ?? "standard";
+      const rawModeBeforePlan = persisted.modeBeforePlan
+        ? (migratePermissionMode(persisted.modeBeforePlan) ?? null)
+        : null;
       // If "plan" was somehow saved, restore to the pre-plan mode.
       const restoredMode: PermissionMode =
-        persisted.mode === "plan"
-          ? (persisted.modeBeforePlan ?? "standard")
-          : persisted.mode;
+        rawMode === "plan" ? (rawModeBeforePlan ?? "standard") : rawMode;
       map.set(key, {
         mode: restoredMode,
         planFilePath: null,
