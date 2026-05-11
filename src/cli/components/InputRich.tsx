@@ -135,13 +135,16 @@ function findCursorLine(
 }
 
 // Combined regex for ANSI colors (256-color and 24-bit) and OSC 8 hyperlinks
-// 256-color: \x1b[38;5;Nm (fg), \x1b[48;5;Nm (bg)
-// 24-bit: \x1b[38;2;R;G;Bm, \x1b[48;2;R;G;Bm
-// Reset: \x1b[0m
+// Captures: p1[;p2[;p3[;p4[;p5]]]]m
+// 256-color fg: 38;5;N     → p1=38, p2=5,  p3=N
+// 256-color bg: 48;5;N     → p1=48, p2=5,  p3=N
+// 24-bit fg:    38;2;R;G;B → p1=38, p2=2,  p3=R, p4=G, p5=B
+// 24-bit bg:    48;2;R;G;B → p1=48, p2=2,  p3=R, p4=G, p5=B
+// Reset:        0m         → p1=0
 // OSC 8: \x1b]8;;URL\x1b\DISPLAY\x1b]8;;\x1b\
 const COMBINED_STYLE_REGEX =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI/OSC escape sequences require control characters
-  /\x1b\[(\d+)(?:;(\d+);(\d+)(?:;(\d+);(\d+);(\d+))?)?m|\x1b\]8;;([^\x1b]*)\x1b\\([^\x1b]*)\x1b\]8;;\x1b\\/g;
+  /\x1b\[(\d+)(?:;(\d+)(?:;(\d+)(?:;(\d+)(?:;(\d+))?)?)?)?m|\x1b\]8;;([^\x1b]*)\x1b\\([^\x1b]*)\x1b\]8;;\x1b\\/g;
 
 // 256-color palette lookup (simplified - standard xterm colors 0-255)
 // Returns hex color for palette index
@@ -198,9 +201,9 @@ function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
   for (let match = regex.exec(line); match !== null; match = regex.exec(line)) {
     const fullMatch = match[0];
 
-    // Handle OSC 8 hyperlink: groups 7=URL, 8=display text (after ANSI color groups)
-    const osc8Url = match[7];
-    const osc8Display = match[8];
+    // Handle OSC 8 hyperlink: groups 6=URL, 7=display text
+    const osc8Url = match[6];
+    const osc8Display = match[7];
     if (osc8Url !== undefined && osc8Display !== undefined) {
       // Flush any pending text with current color before the link
       if (match.index > lastIndex) {
@@ -253,7 +256,7 @@ function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
       continue;
     }
 
-    // Handle 24-bit foreground color: 38;2;R;G;B
+    // Handle 24-bit foreground color: 38;2;R;G;B → p1=38,p2=2,p3=R,p4=G,p5=B
     if (code === 38 && match[2] === "2") {
       const r = match[3];
       const g = match[4];
@@ -300,7 +303,7 @@ function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
       }
     }
 
-    // Handle 24-bit background color: 48;2;R;G;B
+    // Handle 24-bit background color: 48;2;R;G;B → p1=48,p2=2,p3=R,p4=G,p5=B
     if (code === 48 && match[2] === "2") {
       const r = match[3];
       const g = match[4];
