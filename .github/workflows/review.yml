@@ -61,6 +61,7 @@ jobs:
         run: |
           REACTION_ID=$(gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
             -X POST -f content="eyes" --jq '.id')
+          echo "Eyes reaction ID: $REACTION_ID"
           echo "reaction_id=$REACTION_ID" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
