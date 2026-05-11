@@ -345,6 +345,10 @@ function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
         if (color256) currentBgColor = color256;
       }
     }
+
+    // Fallback: unrecognized SGR code (bold, underline, standard 16-color, etc.)
+    // Advance lastIndex past the matched sequence so raw escape bytes don't leak into rendered text
+    lastIndex = match.index + fullMatch.length;
   }
 
   // Add remaining text with current color
