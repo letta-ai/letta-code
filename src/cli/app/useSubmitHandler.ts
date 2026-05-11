@@ -462,6 +462,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
       if (!msg && !hasOverrideContent) return { submitted: false };
 
+      // Auto-dismiss completed/budget-limited goals on the next user turn
+      const existingGoal = conversationIdRef.current
+        ? settingsManager.getConversationGoal(conversationIdRef.current)
+        : null;
+      if (
+        existingGoal &&
+        (existingGoal.status === "complete" ||
+          existingGoal.status === "budget_limited")
+      ) {
+        settingsManager.clearConversationGoal(
+          conversationIdRef.current,
+          process.cwd(),
+        );
+      }
+
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
       await flushPendingReasoningEffort();
