@@ -60,9 +60,14 @@ describe("formatChannelNotification", () => {
     const reminder = buildChannelReminderText(msg);
 
     expect(reminder).toContain("<system-reminder>");
-    expect(reminder).toContain("must call the MessageChannel tool");
     expect(reminder).toContain(
-      'Use action="send", channel="telegram", and chat_id="12345"',
+      "Plain assistant text is not delivered to the user.",
+    );
+    expect(reminder).toContain(
+      'MUST be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
+    );
+    expect(reminder).toContain(
+      "Do not produce a plain text assistant response as the user-visible reply.",
     );
     expect(reminder).toContain('action="react"');
     expect(reminder).toContain("Current local time on this device:");
@@ -82,7 +87,7 @@ describe("formatChannelNotification", () => {
     const xml = buildChannelNotificationXml(msg);
 
     expect(reminder).toContain(
-      'Use action="send", channel="telegram", and chat_id="12345"',
+      'MUST be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
     );
     expect(reminder).not.toContain('accountId="account-1"');
     expect(xml).toContain('account_id="account-1"');

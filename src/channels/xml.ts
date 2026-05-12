@@ -48,9 +48,9 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
 
   const lines = [
     SYSTEM_REMINDER_OPEN,
-    `This message originated from an external ${escapedChannel} channel.`,
-    `If you want to ensure the user on ${escapedChannel} will see your reply, you must call the MessageChannel tool to send a message back on the same channel.`,
-    `Use action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}" when calling MessageChannel, and put your reply text in message.`,
+    `This is an external ${escapedChannel} turn. Plain assistant text is not delivered to the user.`,
+    `To reply, your final action for this turn MUST be exactly one MessageChannel call with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
+    "Do not produce a plain text assistant response as the user-visible reply.",
     "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
     "Only pass replyTo if you intentionally want the platform's quote/reply UI.",
     `Current local time on this device: ${localTime}`,
