@@ -150,6 +150,7 @@ export interface ChannelConfigFieldBase {
   description?: string;
   required?: boolean;
   restartRequired?: boolean;
+  scope?: "app" | "account";
 }
 
 export interface ChannelConfigTextField extends ChannelConfigFieldBase {
