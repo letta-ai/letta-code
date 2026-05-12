@@ -17,7 +17,8 @@ export function getDisplayToolName(rawName: string): string {
   // Anthropic toolset
   if (rawName === "write") return "Write";
   if (rawName === "edit" || rawName === "multi_edit") return "Update";
-  if (rawName === "read") return "Read";
+  if (rawName === "read" || rawName === "read_lsp" || rawName === "ReadLSP")
+    return "Read";
   if (rawName === "view_image" || rawName === "ViewImage") return "View Image";
   if (rawName === "bash") return "Bash";
   if (rawName === "grep" || rawName === "Grep") return "Search";
@@ -191,7 +192,9 @@ export function isFileReadTool(name: string): boolean {
     name === "read_file_gemini" ||
     name === "ReadFileGemini" ||
     name === "read_many_files" ||
-    name === "ReadManyFiles"
+    name === "ReadManyFiles" ||
+    name === "read_lsp" ||
+    name === "ReadLSP"
   );
 }
 

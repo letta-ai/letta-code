@@ -382,20 +382,52 @@ export function formatArgsDisplay(
           const v = parsed[firstKey];
           display = typeof v === "string" ? v : String(v);
         } else {
-          display = Object.entries(parsed)
-            .map(([k, v]) => {
-              if (v === undefined || v === null) return `${k}: ${v}`;
-              if (typeof v === "boolean" || typeof v === "number")
-                return `${k}: ${v}`;
-              if (typeof v === "string")
-                return v.length > 50 ? `${k}: …` : `${k}: "${v}"`;
-              if (Array.isArray(v)) return `${k}: [${v.length} items]`;
-              if (typeof v === "object")
-                return `${k}: {${Object.keys(v as Record<string, unknown>).length} props}`;
-              const str = JSON.stringify(v);
-              return str.length > 50 ? `${k}: …` : `${k}: ${str}`;
-            })
-            .join(", ");
+          // For multi-key args with a path-like key, show path first without label
+          const pathKey = keys.find((k) =>
+            ["path", "file_path", "target_file", "target_directory"].includes(
+              k,
+            ),
+          );
+          if (pathKey) {
+            const pathVal = parsed[pathKey];
+            const pathDisplay =
+              typeof pathVal === "string"
+                ? formatDisplayPath(pathVal)
+                : String(pathVal);
+            const otherParts = Object.entries(parsed)
+              .filter(([k]) => k !== pathKey)
+              .map(([k, v]) => {
+                if (v === undefined || v === null) return `${k}: ${v}`;
+                if (typeof v === "boolean" || typeof v === "number")
+                  return `${k}: ${v}`;
+                if (typeof v === "string")
+                  return v.length > 50 ? `${k}: …` : `${k}: "${v}"`;
+                if (Array.isArray(v)) return `${k}: [${v.length} items]`;
+                if (typeof v === "object")
+                  return `${k}: {${Object.keys(v as Record<string, unknown>).length} props}`;
+                const str = JSON.stringify(v);
+                return str.length > 50 ? `${k}: …` : `${k}: ${str}`;
+              });
+            display =
+              otherParts.length > 0
+                ? `${pathDisplay}, ${otherParts.join(", ")}`
+                : pathDisplay;
+          } else {
+            display = Object.entries(parsed)
+              .map(([k, v]) => {
+                if (v === undefined || v === null) return `${k}: ${v}`;
+                if (typeof v === "boolean" || typeof v === "number")
+                  return `${k}: ${v}`;
+                if (typeof v === "string")
+                  return v.length > 50 ? `${k}: …` : `${k}: "${v}"`;
+                if (Array.isArray(v)) return `${k}: [${v.length} items]`;
+                if (typeof v === "object")
+                  return `${k}: {${Object.keys(v as Record<string, unknown>).length} props}`;
+                const str = JSON.stringify(v);
+                return str.length > 50 ? `${k}: …` : `${k}: ${str}`;
+              })
+              .join(", ");
+          }
         }
       }
     }
