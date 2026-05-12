@@ -383,19 +383,33 @@ export function validateConfigAgainstSchema(
   // Reserved JSON-bucket keys are always permitted regardless of whether
   // the plugin's schema declares them — they back the dedicated Accounts /
   // Config / Metadata tabs and are stored as opaque strings.
-  const reservedKeys = new Set([
+  // Reserved string-bucket keys: always accepted regardless of schema.
+  const reservedStringKeys = new Set([
     "accounts_json",
     "configs_json",
     "metadata_json",
   ]);
+  // Reserved nullable-string keys (e.g. agent binding) — also always
+  // accepted, but allow null as well as string.
+  const reservedNullableStringKeys = new Set(["agent_id"]);
   for (const key of Object.keys(config)) {
     if (fieldsByKey.has(key)) continue;
-    if (reservedKeys.has(key)) {
+    if (reservedStringKeys.has(key)) {
       const value = config[key];
       if (value !== undefined && typeof value !== "string") {
         return {
           ok: false,
           reason: `reserved field ${key} must be a string`,
+        };
+      }
+      continue;
+    }
+    if (reservedNullableStringKeys.has(key)) {
+      const value = config[key];
+      if (value !== undefined && value !== null && typeof value !== "string") {
+        return {
+          ok: false,
+          reason: `reserved field ${key} must be a string or null`,
         };
       }
       continue;
@@ -620,6 +634,14 @@ export function redactConfigForSnapshot(
     if (result[reservedKey] !== undefined) continue;
     const stored = storedConfig[reservedKey];
     result[reservedKey] = typeof stored === "string" ? stored : "";
+  }
+
+  // Reserved nullable-string keys: agent_id powers the Connected agent
+  // tab and must round-trip regardless of schema.
+  if (result.agent_id === undefined) {
+    const stored = storedConfig.agent_id;
+    result.agent_id =
+      typeof stored === "string" || stored === null ? stored : null;
   }
 
   return result;
