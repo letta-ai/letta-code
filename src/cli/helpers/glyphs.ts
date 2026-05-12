@@ -9,6 +9,4 @@ export const CLI_GLYPHS = {
   bullet: "•",
   /** Result continuation bracket */
   result: "⎿",
-  /** Multi-line command continuation bar */
-  continuation: "│",
 } as const;

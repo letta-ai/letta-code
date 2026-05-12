@@ -100,12 +100,12 @@ type Props = {
 /** Styled text span with a resolved color. */
 export type StyledSpan = { text: string; color: string };
 
-export type ClippedSpans = {
+type ClippedSpans = {
   spans: StyledSpan[];
   clipped: boolean;
 };
 
-export function clipStyledSpans(
+function clipStyledSpans(
   spans: StyledSpan[],
   maxColumns: number,
 ): ClippedSpans {
@@ -210,7 +210,7 @@ const REDIRECT_FILE_RE = />>?\s+(\S+)/;
  * When a heredoc is detected, the body is highlighted using the language
  * inferred from the redirect target filename (e.g. .ts -> typescript).
  */
-export function highlightCommand(command: string): StyledSpan[][] {
+function highlightCommand(command: string): StyledSpan[][] {
   const allLines = command.split("\n");
   const firstLine = allLines[0] ?? "";
   const heredocMatch = HEREDOC_RE.exec(firstLine);
