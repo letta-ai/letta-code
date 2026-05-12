@@ -90,7 +90,9 @@ export function buildPairingInstructions(
     );
   }
   return (
-    `To connect this chat to a Letta agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
+    `To connect this chat to a Letta agent, either open Channels > ${displayName} in Letta Code and finish connecting this chat there, or run this on the machine where your listener runs:\n\n` +
+    `letta channels pair --channel ${channelId} --code ${code} --agent <agent-id>\n\n` +
+    `Find your agent id with letta agents list.\n\n` +
     `Pairing code: ${code}\n\n` +
     `This code expires in 15 minutes.`
   );
@@ -971,7 +973,7 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "default") {
+    if (config.defaultPermissionMode !== "standard") {
       this.eventHandler?.({
         type: "slack_conversation_created",
         channelId: "slack",

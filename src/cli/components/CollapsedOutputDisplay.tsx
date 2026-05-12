@@ -1,11 +1,12 @@
 import { Box } from "ink";
 import { memo } from "react";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 import { Text } from "./Text";
 
 const DEFAULT_COLLAPSED_LINES = 3;
-const PREFIX_WIDTH = 5; // "  ⎿  " or "     "
+const PREFIX_WIDTH = 5; // `  └  ` or `     `
 
 interface CollapsedOutputDisplayProps {
   output: string; // Full output from completion
@@ -56,10 +57,10 @@ export const CollapsedOutputDisplay = memo(
 
     return (
       <Box flexDirection="column">
-        {/* L-bracket on first line - matches ToolCallMessageRich format "  ⎿  " */}
+        {/* L-bracket on first line - matches ToolCallMessageRich result prefix */}
         <Box flexDirection="row">
           <Box width={PREFIX_WIDTH} flexShrink={0}>
-            <Text>{"  ⎿  "}</Text>
+            <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
             <MarkdownDisplay text={visibleLines[0] ?? ""} />

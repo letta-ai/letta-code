@@ -69,6 +69,15 @@ import { resetContextHistory } from "../helpers/contextTracker";
 import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
 import { formatErrorDetails } from "../helpers/errorFormatter";
 import {
+  buildGoalReminder,
+  formatGoalSummary,
+  GOAL_USAGE,
+  GOAL_USAGE_HINT,
+  goalStatusLabel,
+  parseGoalArgs,
+  validateGoalObjective,
+} from "../helpers/goalCommand";
+import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
@@ -101,8 +110,9 @@ import { AUTO_REFLECTION_DESCRIPTION } from "./constants";
 import { buildTextParts } from "./contentParts";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import {
-  buildRalphContinuationReminder,
-  buildRalphFirstTurnReminder,
+  buildGoalPrompt,
+  buildLoopFirstTurnPrompt,
+  buildLoopPrompt,
   parseRalphArgs,
 } from "./ralph";
 import { hasActiveReflectionSubagent } from "./reflection";
@@ -452,6 +462,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
       if (!msg && !hasOverrideContent) return { submitted: false };
 
+      // Auto-dismiss completed/budget-limited goals on the next user turn
+      const existingGoal = conversationIdRef.current
+        ? settingsManager.getConversationGoal(conversationIdRef.current)
+        : null;
+      if (
+        existingGoal &&
+        (existingGoal.status === "complete" ||
+          existingGoal.status === "budget_limited")
+      ) {
+        settingsManager.clearConversationGoal(
+          conversationIdRef.current,
+          process.cwd(),
+        );
+      }
+
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
       await flushPendingReasoningEffort();
@@ -580,8 +605,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         setPendingRalphConfig(null);
         justActivatedRalph = true;
         if (isYolo) {
-          permissionMode.setMode("bypassPermissions");
-          setUiPermissionMode("bypassPermissions");
+          permissionMode.setMode("unrestricted");
+          setUiPermissionMode("unrestricted");
         }
 
         const ralphState = ralphMode.getState();
@@ -1062,8 +1087,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
             setUiRalphActive(true);
             if (isYolo) {
-              permissionMode.setMode("bypassPermissions");
-              setUiPermissionMode("bypassPermissions");
+              permissionMode.setMode("unrestricted");
+              setUiPermissionMode("unrestricted");
             }
 
             const ralphState = ralphMode.getState();
@@ -1077,7 +1102,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
 
             // Send the prompt with ralph reminder prepended
-            const systemMsg = buildRalphFirstTurnReminder(ralphState);
+            const systemMsg = buildLoopFirstTurnPrompt(
+              ralphState,
+              conversationIdRef.current,
+            );
             processConversationWithQueuedApprovals([
               {
                 type: "message",
@@ -1200,6 +1228,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
+          // Pause any active goal for the current conversation before switching
+          const prevConversationId = conversationIdRef.current;
+          const prevGoal = prevConversationId
+            ? settingsManager.getConversationGoal(prevConversationId)
+            : null;
+          if (prevGoal?.status === "active") {
+            settingsManager.updateConversationGoalStatus(
+              prevConversationId,
+              "paused",
+            );
+          }
+
           // Run SessionEnd hooks for current session before starting new one
           await runEndHooks();
 
@@ -1278,6 +1318,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           resetPendingReasoningCycle();
           setCommandRunning(true);
+
+          // Pause any active goal for the current conversation before forking
+          const forkPrevConversationId = conversationIdRef.current;
+          const forkPrevGoal = forkPrevConversationId
+            ? settingsManager.getConversationGoal(forkPrevConversationId)
+            : null;
+          if (forkPrevGoal?.status === "active") {
+            settingsManager.updateConversationGoalStatus(
+              forkPrevConversationId,
+              "paused",
+            );
+          }
 
           await runEndHooks();
 
@@ -1374,6 +1426,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
+          // Pause any active goal for the current conversation before clearing
+          const clearPrevConversationId = conversationIdRef.current;
+          const clearPrevGoal = clearPrevConversationId
+            ? settingsManager.getConversationGoal(clearPrevConversationId)
+            : null;
+          if (clearPrevGoal?.status === "active") {
+            settingsManager.updateConversationGoalStatus(
+              clearPrevConversationId,
+              "paused",
+            );
+          }
+
           // Run SessionEnd hooks for current session before clearing
           await runEndHooks();
 
@@ -1445,6 +1509,176 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           } finally {
             setCommandRunning(false);
           }
+          return { submitted: true };
+        }
+
+        if (trimmed === "/goal" || trimmed.startsWith("/goal ")) {
+          const objective = trimmed.slice("/goal".length).trim();
+          const cmd = commandRunner.start(trimmed, "Managing goal...");
+          const currentConversationId = conversationIdRef.current;
+
+          if (!currentConversationId) {
+            cmd.fail("No active conversation.");
+            return { submitted: true };
+          }
+
+          const lowerGoalArg = objective.toLowerCase();
+          if (
+            !objective ||
+            lowerGoalArg === "show" ||
+            lowerGoalArg === "status"
+          ) {
+            const goal = settingsManager.getConversationGoal(
+              currentConversationId,
+            );
+            if (!goal) {
+              cmd.finish(
+                `${GOAL_USAGE}\n${GOAL_USAGE_HINT}\nNo goal is currently set.`,
+                true,
+              );
+              return { submitted: true };
+            }
+            cmd.finish(
+              `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`,
+              true,
+            );
+            return { submitted: true };
+          }
+
+          if (lowerGoalArg === "clear" || lowerGoalArg === "disable") {
+            const cleared = settingsManager.clearConversationGoal(
+              currentConversationId,
+            );
+            settingsManager.setConversationGoalToolsEnabled(
+              currentConversationId,
+              false,
+            );
+            if (ralphMode.getState().mode === "goal") {
+              ralphMode.deactivate();
+              setUiRalphActive(false);
+              permissionMode.setMode("standard");
+              setUiPermissionMode("standard");
+            }
+            cmd.finish(
+              cleared || lowerGoalArg === "disable"
+                ? lowerGoalArg === "disable"
+                  ? "Goal disabled; goal tools removed for this conversation."
+                  : "Goal cleared"
+                : "No goal to clear. This conversation does not currently have a goal.",
+              true,
+            );
+            return { submitted: true };
+          }
+
+          if (
+            lowerGoalArg === "pause" ||
+            lowerGoalArg === "resume" ||
+            lowerGoalArg === "complete"
+          ) {
+            const status = lowerGoalArg === "resume" ? "active" : lowerGoalArg;
+            const goal = settingsManager.updateConversationGoalStatus(
+              currentConversationId,
+              status as "active" | "paused" | "complete",
+            );
+            if (!goal) {
+              cmd.fail(
+                `${GOAL_USAGE}\nThe session must have a goal before you can ${lowerGoalArg} it.`,
+              );
+              return { submitted: true };
+            }
+            if (lowerGoalArg === "pause" || lowerGoalArg === "complete") {
+              if (ralphMode.getState().mode === "goal") {
+                ralphMode.deactivate();
+                setUiRalphActive(false);
+                permissionMode.setMode("standard");
+                setUiPermissionMode("standard");
+              }
+            } else if (lowerGoalArg === "resume") {
+              settingsManager.setConversationGoalToolsEnabled(
+                currentConversationId,
+                true,
+              );
+              ralphMode.activateGoal(goal.objective, 0, true);
+              setUiRalphActive(true);
+              permissionMode.setMode("unrestricted");
+              setUiPermissionMode("unrestricted");
+              const goalState = ralphMode.getState();
+              const systemMsg = buildGoalPrompt(
+                goalState,
+                currentConversationId,
+              );
+              processConversationWithQueuedApprovals([
+                {
+                  type: "message",
+                  role: "user",
+                  content: buildTextParts(systemMsg),
+                  otid: randomUUID(),
+                },
+              ]);
+            }
+            cmd.finish(
+              `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`,
+              true,
+            );
+            return { submitted: true };
+          }
+
+          const parsedGoal = parseGoalArgs(objective);
+          if (parsedGoal.error) {
+            cmd.fail(`${parsedGoal.error}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`);
+            return { submitted: true };
+          }
+
+          const validationError = validateGoalObjective(parsedGoal.objective);
+          if (validationError) {
+            cmd.fail(`${validationError}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`);
+            return { submitted: true };
+          }
+
+          const previousGoal = settingsManager.getConversationGoal(
+            currentConversationId,
+          );
+          if (previousGoal && !parsedGoal.replace) {
+            cmd.fail(
+              `A goal already exists. Run /goal --replace ${parsedGoal.objective} to replace it, or /goal clear first.`,
+            );
+            return { submitted: true };
+          }
+          settingsManager.setConversationGoalToolsEnabled(
+            currentConversationId,
+            true,
+          );
+          const goal = settingsManager.setConversationGoal(
+            currentConversationId,
+            parsedGoal.objective,
+            process.cwd(),
+            parsedGoal.tokenBudget,
+            true,
+          );
+          ralphMode.activateGoal(
+            parsedGoal.objective,
+            0,
+            true,
+            parsedGoal.tokenBudget,
+          );
+          setUiRalphActive(true);
+          permissionMode.setMode("unrestricted");
+          setUiPermissionMode("unrestricted");
+          const replaced = previousGoal ? " replaced" : " active";
+          cmd.finish(
+            `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`,
+            true,
+          );
+          const goalState = ralphMode.getState();
+          const systemMsg = buildGoalPrompt(goalState, currentConversationId);
+          processConversationWithQueuedApprovals([
+            {
+              type: "message",
+              role: "user",
+              content: buildTextParts(systemMsg),
+              otid: randomUUID(),
+            },
+          ]);
           return { submitted: true };
         }
 
@@ -2818,12 +3052,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         if (justActivatedRalph) {
           // First turn - use full first turn reminder, don't increment (already at 1)
           const ralphState = ralphMode.getState();
-          ralphModeReminder = `${buildRalphFirstTurnReminder(ralphState)}\n\n`;
+          ralphModeReminder = `${buildLoopFirstTurnPrompt(ralphState, conversationIdRef.current)}\n\n`;
         } else {
           // Continuation after ESC - increment iteration and use shorter reminder
           ralphMode.incrementIteration();
           const ralphState = ralphMode.getState();
-          ralphModeReminder = `${buildRalphContinuationReminder(ralphState)}\n\n`;
+          ralphModeReminder = `${buildLoopPrompt(ralphState, conversationIdRef.current)}\n\n`;
         }
       }
 
@@ -3055,6 +3289,12 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryGitReminder);
+      const currentGoal = settingsManager.getConversationGoal(
+        conversationIdRef.current,
+      );
+      if (currentGoal) {
+        pushReminder(buildGoalReminder(currentGoal));
+      }
       const messageContent =
         reminderParts.length > 0
           ? [...reminderParts, ...contentParts]

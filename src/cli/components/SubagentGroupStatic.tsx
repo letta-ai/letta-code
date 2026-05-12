@@ -15,6 +15,7 @@
 
 import { Box } from "ink";
 import { memo } from "react";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import {
   formatStats,
   getSubagentModelDisplay,
@@ -115,7 +116,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
         <Box flexDirection="row">
           <Text color={colors.subagent.treeChar}>
             {rowIndent}
-            {continueChar} ⎿{" "}
+            {continueChar} {CLI_GLYPHS.result}{" "}
           </Text>
           <Text dimColor>{"Subagent: "}</Text>
           <Text dimColor>{agent.agentURL}</Text>
@@ -190,7 +191,7 @@ export const SubagentGroupStatic = memo(
       <Box flexDirection="column">
         {/* Header */}
         <Box flexDirection="row">
-          <Text color={dotColor}>●</Text>
+          <Text color={dotColor}>{CLI_GLYPHS.bullet}</Text>
           <Text>
             {" "}
             {label} <Text bold>{agents.length}</Text> {suffix}

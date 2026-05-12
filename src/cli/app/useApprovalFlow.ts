@@ -18,8 +18,11 @@ import {
 } from "../../agent/approval-execution";
 import type { SessionStats } from "../../agent/stats";
 import type { ApprovalContext } from "../../permissions/analyzer";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
+import {
+  DEFAULT_PERMISSION_MODE,
+  type PermissionMode,
+  permissionMode,
+} from "../../permissions/mode";
 import {
   analyzeToolApproval,
   checkToolPermission,
@@ -1112,13 +1115,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         const previousMode = permissionMode.getModeBeforePlan();
         const restoreMode =
           // If the user was in YOLO before entering plan mode, always restore it.
-          previousMode === "bypassPermissions"
-            ? "bypassPermissions"
+          previousMode === "unrestricted"
+            ? "unrestricted"
             : acceptEdits
               ? "acceptEdits"
               : previousMode === "memory"
-                ? "default"
-                : (previousMode ?? "default");
+                ? DEFAULT_PERMISSION_MODE
+                : (previousMode ?? DEFAULT_PERMISSION_MODE);
         permissionMode.setMode(restoreMode);
         setUiPermissionMode(restoreMode);
       } else {
@@ -1246,7 +1249,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        if (mode === "bypassPermissions") {
+        if (mode === "unrestricted") {
           // YOLO mode but no plan file yet — tell agent to write it first.
           const planFilePath = activePlanPath ?? fallbackPlanPath;
           const plansDir = join(homedir(), ".letta", "plans");
@@ -1512,14 +1515,14 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
   ]);
 
   // Guard EnterPlanMode:
-  // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
+  // When in unrestricted (YOLO) mode, auto-approve EnterPlanMode and stay
   // in YOLO — the agent gets plan instructions but keeps full permissions.
   // ExitPlanMode still requires explicit user approval.
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "EnterPlanMode") {
-      if (permissionMode.getMode() === "bypassPermissions") {
+      if (permissionMode.getMode() === "unrestricted") {
         if (
           lastAutoApprovedEnterPlanToolCallIdRef.current === approval.toolCallId
         ) {

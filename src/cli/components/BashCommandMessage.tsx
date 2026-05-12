@@ -3,6 +3,7 @@ import { memo } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { clipToolReturn } from "../../tools/manager";
 import type { StreamingState } from "../helpers/accumulator";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
@@ -76,7 +77,7 @@ export const BashCommandMessage = memo(
             // Red styling for interrupted commands (LET-7199)
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
-                <Text>{"  ⎿  "}</Text>
+                <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
               </Box>
               <Text color={colors.status.interrupt}>{INTERRUPTED_BY_USER}</Text>
             </Box>
@@ -88,7 +89,7 @@ export const BashCommandMessage = memo(
         {!line.phase && line.output && (
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
-              <Text>{"  ⎿  "}</Text>
+              <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
               <MarkdownDisplay

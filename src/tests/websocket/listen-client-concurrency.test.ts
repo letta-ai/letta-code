@@ -2237,7 +2237,7 @@ describe("listen-client multi-worker concurrency", () => {
       command: {
         type: "change_device_state",
         runtime: { agent_id: "agent-1", conversation_id: "conv-mid" },
-        payload: { mode: "bypassPermissions" },
+        payload: { mode: "unrestricted" },
       },
       socket: socket as unknown as WebSocket,
       opts: {},
@@ -2248,7 +2248,7 @@ describe("listen-client multi-worker concurrency", () => {
 
     await turnPromise;
 
-    expect(capturedModeAtClassification === "bypassPermissions").toBe(true);
+    expect(capturedModeAtClassification === "unrestricted").toBe(true);
     const continuationMessages = sendMessageStreamMock.mock.calls[1]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
@@ -2267,7 +2267,7 @@ describe("listen-client multi-worker concurrency", () => {
       command: {
         type: "change_device_state",
         runtime: { agent_id: "agent-1", conversation_id: "default" },
-        payload: { mode: "default" },
+        payload: { mode: "standard" },
       },
       socket: socket as unknown as WebSocket,
       opts: {},

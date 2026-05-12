@@ -1,5 +1,7 @@
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import type { RalphState } from "../../ralph/mode";
+import { settingsManager } from "../../settings-manager";
+import { buildGoalContinuationPrompt } from "../helpers/goalCommand";
 
 // Parse /ralph or /yolo-ralph command arguments
 export function parseRalphArgs(input: string): {
@@ -93,4 +95,47 @@ ${SYSTEM_REMINDER_CLOSE}`;
 🔄 Ralph iteration ${iterInfo} | No completion promise set - loop runs infinitely
 ${SYSTEM_REMINDER_CLOSE}`;
   }
+}
+
+export function buildGoalPrompt(
+  state: RalphState,
+  conversationId?: string | null,
+): string {
+  const storedGoal = conversationId
+    ? settingsManager.getConversationGoal(conversationId)
+    : null;
+  const liveActiveSeconds =
+    storedGoal?.activeStartedAt && storedGoal.status === "active"
+      ? Math.max(
+          0,
+          Math.floor(
+            (Date.now() - Date.parse(storedGoal.activeStartedAt)) / 1000,
+          ),
+        )
+      : 0;
+  return buildGoalContinuationPrompt({
+    objective: state.originalPrompt,
+    status: "active",
+    tokensUsed: storedGoal?.tokensUsed ?? 0,
+    tokenBudget: storedGoal?.tokenBudget ?? state.tokenBudget,
+    timeUsedSeconds: (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
+  });
+}
+
+export function buildLoopPrompt(
+  state: RalphState,
+  conversationId?: string | null,
+): string {
+  return state.mode === "goal"
+    ? buildGoalPrompt(state, conversationId)
+    : buildRalphContinuationReminder(state);
+}
+
+export function buildLoopFirstTurnPrompt(
+  state: RalphState,
+  conversationId?: string | null,
+): string {
+  return state.mode === "goal"
+    ? buildGoalPrompt(state, conversationId)
+    : buildRalphFirstTurnReminder(state);
 }

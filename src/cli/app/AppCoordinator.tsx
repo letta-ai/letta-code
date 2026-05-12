@@ -1206,6 +1206,7 @@ export default function App({
       if (desiredModel) {
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
+          conversationId: conversationIdRef.current,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1213,6 +1214,7 @@ export default function App({
 
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
+        conversationId: conversationIdRef.current,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -3836,11 +3838,18 @@ export default function App({
     const ralph = ralphMode.getState();
     if (ralph.isActive) {
       const wasYolo = ralph.isYolo;
+      const wasGoal = ralph.mode === "goal";
       ralphMode.deactivate();
       setUiRalphActive(false);
+      if (wasGoal) {
+        settingsManager.updateConversationGoalStatus(
+          conversationIdRef.current,
+          "paused",
+        );
+      }
       if (wasYolo) {
-        permissionMode.setMode("default");
-        setUiPermissionMode("default");
+        permissionMode.setMode("standard");
+        setUiPermissionMode("standard");
       }
     }
   }, [setUiPermissionMode]);

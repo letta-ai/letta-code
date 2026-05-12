@@ -1,5 +1,6 @@
 import { Box } from "ink";
 import { memo } from "react";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
@@ -42,7 +43,7 @@ export const AssistantMessage = memo(({ line }: { line: AssistantLine }) => {
   return (
     <Box flexDirection="row">
       <Box width={2} flexShrink={0}>
-        <Text>{line.isContinuation ? " " : "●"}</Text>
+        <Text>{line.isContinuation ? " " : CLI_GLYPHS.bullet}</Text>
       </Box>
       <Box flexGrow={1} width={contentWidth}>
         <MarkdownDisplay text={normalizedText} hangingIndent={0} />

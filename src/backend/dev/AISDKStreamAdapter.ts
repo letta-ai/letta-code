@@ -476,53 +476,85 @@ function replaceUnsupportedInputParts(
   return didChange ? transformed : messages;
 }
 
+function isToolUIPart(part: unknown): part is Record<string, unknown> {
+  return (
+    isRecord(part) &&
+    typeof part.type === "string" &&
+    part.type.startsWith("tool-")
+  );
+}
+
+function normalizeToolPartForModelConversion(part: Record<string, unknown>): {
+  part: LocalMessage["parts"][number];
+  changed: boolean;
+} {
+  const hasInput = Object.hasOwn(part, "input");
+  if (part.state === "output-available" && Object.hasOwn(part, "output")) {
+    if (hasInput) {
+      return { part: part as LocalMessage["parts"][number], changed: false };
+    }
+    return {
+      part: { ...part, input: {} } as LocalMessage["parts"][number],
+      changed: true,
+    };
+  }
+
+  const errorText =
+    stringValue(part.errorText) ??
+    (part.state === "output-available"
+      ? "Tool output missing from previous turn."
+      : "Tool result missing from interrupted previous turn.");
+  const normalized = {
+    ...part,
+    state: "output-error",
+    input: hasInput ? part.input : {},
+    errorText,
+  } as Record<string, unknown>;
+  delete normalized.approval;
+  delete normalized.output;
+  return { part: normalized as LocalMessage["parts"][number], changed: true };
+}
+
+function normalizeToolPartsForModelConversion(
+  messages: LocalMessage[],
+): LocalMessage[] {
+  let didChange = false;
+  const transformed = messages.map((message) => {
+    if (message.role !== "assistant") return message;
+
+    let messageChanged = false;
+    const parts = message.parts.map((part) => {
+      if (!isToolUIPart(part)) return part;
+      const partRecord = part as Record<string, unknown>;
+      const normalized = normalizeToolPartForModelConversion(partRecord);
+      if (normalized.changed) {
+        messageChanged = true;
+        didChange = true;
+      }
+      return normalized.part;
+    });
+
+    return messageChanged ? { ...message, parts } : message;
+  });
+  return didChange ? transformed : messages;
+}
+
 function sanitizeUIMessagesForProvider(
   messages: LocalMessage[],
   provider: AISDKProviderKind,
   agent: ProviderTurnInput["agent"],
 ): LocalMessage[] {
-  const capabilitySanitizedMessages = replaceUnsupportedInputParts(
-    messages,
-    agent,
+  const settledMessages = normalizeToolPartsForModelConversion(
+    replaceUnsupportedInputParts(messages, agent),
   );
-  if (provider === "unknown") return capabilitySanitizedMessages;
-  return capabilitySanitizedMessages
+  if (provider === "unknown") return settledMessages;
+  return settledMessages
     .map((message) => {
       let messageChanged = false;
-      const normalizedParts =
-        message.role === "assistant"
-          ? message.parts.map((part) => {
-              if (
-                !isRecord(part) ||
-                typeof part.type !== "string" ||
-                !part.type.startsWith("tool-")
-              ) {
-                return part;
-              }
-              const partRecord = part as Record<string, unknown>;
-              const state = partRecord.state;
-              const settled =
-                state === "output-available" ||
-                state === "output-error" ||
-                state === "output-denied";
-              if (settled) return part;
-              messageChanged = true;
-              const normalized = {
-                ...partRecord,
-                state: "output-error",
-                errorText:
-                  stringValue(partRecord.errorText) ??
-                  "Tool result missing from interrupted previous turn.",
-              } as Record<string, unknown>;
-              delete normalized.approval;
-              return normalized as LocalMessage["parts"][number];
-            })
-          : message.parts;
-
-      const filteredParts = normalizedParts.filter((part) =>
+      const filteredParts = message.parts.filter((part) =>
         shouldKeepReasoningPart(part, provider),
       );
-      if (filteredParts.length !== normalizedParts.length) {
+      if (filteredParts.length !== message.parts.length) {
         messageChanged = true;
       }
       return messageChanged ? { ...message, parts: filteredParts } : message;

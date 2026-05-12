@@ -1,5 +1,6 @@
 import { Box } from "ink";
 import type React from "react";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
@@ -19,7 +20,7 @@ export const PlanRenderer: React.FC<PlanRendererProps> = ({
   explanation,
 }) => {
   const columns = useTerminalWidth();
-  const prefixWidth = 5; // "  ⎿  " or "     "
+  const prefixWidth = 5; // `  └  ` or `     `
   const contentWidth = Math.max(0, columns - prefixWidth);
 
   return (
@@ -27,7 +28,7 @@ export const PlanRenderer: React.FC<PlanRendererProps> = ({
       {explanation && (
         <Box flexDirection="row">
           <Box width={prefixWidth} flexShrink={0}>
-            <Text>{"  ⎿  "}</Text>
+            <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
             <Text italic dimColor wrap="wrap">
@@ -65,7 +66,8 @@ export const PlanRenderer: React.FC<PlanRendererProps> = ({
         }
 
         // First item (or first after explanation) gets the prefix, others get indentation
-        const prefix = index === 0 && !explanation ? "  ⎿  " : "     ";
+        const prefix =
+          index === 0 && !explanation ? `  ${CLI_GLYPHS.result}  ` : "     ";
 
         return (
           <Box key={`${index}-${item.step.slice(0, 20)}`} flexDirection="row">

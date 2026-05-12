@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { migratePermissionMode } from "../permissions/mode";
 import {
   getChannelAccountsPath,
   getChannelDir,
@@ -153,7 +154,7 @@ function makeDefaultLegacyAccount(
     dmPolicy: config.dmPolicy,
     allowedUsers: [...config.allowedUsers],
     agentId: null,
-    defaultPermissionMode: "default",
+    defaultPermissionMode: "standard",
     createdAt: now,
     updatedAt: now,
   };
