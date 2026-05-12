@@ -32,7 +32,10 @@ const originalFetch = globalThis.fetch;
 let captured: CapturedRequest[] = [];
 
 function setFetchResponse(response: Response | Promise<Response>): void {
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     captured.push({
       url: typeof input === "string" ? input : input.toString(),
       init: init ?? {},
