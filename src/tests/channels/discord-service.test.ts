@@ -79,6 +79,7 @@ describe("discord channel service", () => {
     if (created.channelId !== "discord") throw new Error("wrong channel");
     expect(created.hasToken).toBe(true);
     expect(created.agentId).toBeNull();
+    expect(created.defaultPermissionMode).toBe("standard");
 
     const updated = updateChannelAccountLive("discord", "discord-bot", {
       displayName: "My Bot",
@@ -122,6 +123,8 @@ describe("discord channel service", () => {
 
     expect(snapshot.hasToken).toBe(true);
     expect(snapshot.dmPolicy).toBe("pairing");
+    expect(snapshot.defaultPermissionMode).toBe("standard");
+    expect(snapshot.config.default_permission_mode).toBe("standard");
 
     // Should NOT have Slack-specific fields
     expect((snapshot as Record<string, unknown>).mode).toBeUndefined();
@@ -150,6 +153,7 @@ describe("discord channel service", () => {
     const snapshot = await setChannelConfigLive("discord", {
       token: "new-token",
       dmPolicy: "allowlist",
+      defaultPermissionMode: "acceptEdits",
       allowedChannels: ["channel-1"],
     });
 
@@ -158,32 +162,42 @@ describe("discord channel service", () => {
     if (snapshot.channelId !== "discord") throw new Error("wrong channel");
     expect(snapshot.hasToken).toBe(true);
     expect(snapshot.dmPolicy).toBe("allowlist");
+    expect(snapshot.defaultPermissionMode).toBe("acceptEdits");
+    expect(snapshot.config.default_permission_mode).toBe("acceptEdits");
     expect(snapshot.allowedChannels).toEqual(["channel-1"]);
   });
 
-  test("discord account snapshots round-trip allowed channel allowlist", () => {
+  test("discord account snapshots round-trip permission mode and channel allowlist", () => {
     const created = createChannelAccountLive(
       "discord",
       {
         token: "test-token",
+        defaultPermissionMode: "acceptEdits",
         allowedChannels: ["channel-1", "channel-2"],
       },
       { accountId: "discord-bot" },
     );
 
     if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.defaultPermissionMode).toBe("acceptEdits");
+    expect(created.config.default_permission_mode).toBe("acceptEdits");
     expect(created.allowedChannels).toEqual(["channel-1", "channel-2"]);
 
     const updated = updateChannelAccountLive("discord", "discord-bot", {
+      defaultPermissionMode: "unrestricted",
       allowedChannels: ["channel-3"],
     });
 
     if (updated.channelId !== "discord") throw new Error("wrong channel");
+    expect(updated.defaultPermissionMode).toBe("unrestricted");
+    expect(updated.config.default_permission_mode).toBe("unrestricted");
     expect(updated.allowedChannels).toEqual(["channel-3"]);
 
     const config = getChannelConfigSnapshot("discord", "discord-bot");
     if (!config || config.channelId !== "discord")
       throw new Error("wrong channel");
+    expect(config.defaultPermissionMode).toBe("unrestricted");
+    expect(config.config.default_permission_mode).toBe("unrestricted");
     expect(config.allowedChannels).toEqual(["channel-3"]);
   });
 
@@ -197,6 +211,7 @@ describe("discord channel service", () => {
     expect(created.channelId).toBe("discord");
     if (created.channelId !== "discord") throw new Error("wrong channel");
     expect(created.dmPolicy).toBe("pairing");
+    expect(created.defaultPermissionMode).toBe("standard");
   });
 
   test("placeholder display names are scrubbed", () => {
@@ -209,6 +224,7 @@ describe("discord channel service", () => {
         enabled: false,
         token: "test-token",
         agentId: null,
+        defaultPermissionMode: "standard",
         dmPolicy: "pairing",
         allowedUsers: [],
         createdAt: "2026-04-11T00:00:00.000Z",

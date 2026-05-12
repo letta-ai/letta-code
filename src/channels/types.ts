@@ -7,6 +7,8 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+import type { PermissionMode } from "../permissions/mode";
+
 export const FIRST_PARTY_CHANNEL_IDS = [
   "telegram",
   "slack",
@@ -20,10 +22,12 @@ export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 export const SUPPORTED_CHANNEL_IDS = FIRST_PARTY_CHANNEL_IDS;
 export type SupportedChannelId = string;
 export type ChannelChatType = "direct" | "channel";
-export type SlackDefaultPermissionMode =
-  | "standard"
-  | "acceptEdits"
-  | "unrestricted";
+export type ChannelDefaultPermissionMode = Extract<
+  PermissionMode,
+  "standard" | "acceptEdits" | "unrestricted"
+>;
+export type SlackDefaultPermissionMode = ChannelDefaultPermissionMode;
+export type DiscordDefaultPermissionMode = ChannelDefaultPermissionMode;
 
 export interface ChannelMessageAttachment {
   id?: string;
@@ -306,6 +310,7 @@ export interface DiscordChannelConfig {
   channel: "discord";
   enabled: boolean;
   token: string;
+  defaultPermissionMode: DiscordDefaultPermissionMode;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
   /**
@@ -352,6 +357,8 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   token: string;
   /** Agent ID used for account-bound DM and guild auto-routing. */
   agentId: string | null;
+  /** Permission mode for new Discord-created conversations. */
+  defaultPermissionMode: DiscordDefaultPermissionMode;
   /**
    * Optional allowlist of guild channel IDs. When non-empty, only messages
    * whose channel ID (or parent channel ID for thread messages) appears in

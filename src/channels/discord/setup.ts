@@ -104,6 +104,7 @@ export async function runDiscordSetup(): Promise<boolean> {
       enabled: true,
       token,
       agentId,
+      defaultPermissionMode: "standard",
       dmPolicy: policy,
       allowedUsers,
       createdAt: now,

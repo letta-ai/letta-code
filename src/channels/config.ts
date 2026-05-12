@@ -8,8 +8,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { migratePermissionMode } from "../permissions/mode";
 import type {
   ChannelConfig,
+  ChannelDefaultPermissionMode,
   DiscordChannelConfig,
   DmPolicy,
   SlackChannelConfig,
@@ -161,6 +163,18 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
   },
 };
 
+function parseDefaultPermissionMode(
+  value: unknown,
+): ChannelDefaultPermissionMode {
+  if (typeof value !== "string") return "standard";
+  const migrated = migratePermissionMode(value);
+  return migrated === "standard" ||
+    migrated === "acceptEdits" ||
+    migrated === "unrestricted"
+    ? migrated
+    : "standard";
+}
+
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
   parse(parsed) {
     const rawAllowedChannels = parsed.allowed_channels;
@@ -168,6 +182,9 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
       channel: "discord",
       enabled: parsed.enabled !== false,
       token: String(parsed.token ?? ""),
+      defaultPermissionMode: parseDefaultPermissionMode(
+        parsed.default_permission_mode,
+      ),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       allowedChannels: Array.isArray(rawAllowedChannels)

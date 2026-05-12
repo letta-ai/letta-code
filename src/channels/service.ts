@@ -58,12 +58,12 @@ import { validateTelegramToken } from "./telegram/adapter";
 import type {
   ChannelAccount,
   ChannelBindableTarget,
+  ChannelDefaultPermissionMode,
   ChannelRoute,
   CustomChannelAccount,
   DmPolicy,
   PendingPairing,
   SlackChannelMode,
-  SlackDefaultPermissionMode,
   SupportedChannelId,
 } from "./types";
 import {
@@ -98,7 +98,7 @@ export interface ChannelConfigSnapshot {
   hasBotToken?: boolean;
   hasAppToken?: boolean;
   agentId?: string | null;
-  defaultPermissionMode?: SlackDefaultPermissionMode;
+  defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[];
 }
 
@@ -162,7 +162,7 @@ export interface ChannelAccountSnapshot {
     conversationId: string | null;
   };
   agentId?: string | null;
-  defaultPermissionMode?: SlackDefaultPermissionMode;
+  defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[];
   createdAt: string;
   updatedAt: string;
@@ -437,6 +437,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       allowedChannels: [...(account.allowedChannels ?? [])],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
+      defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -512,6 +513,8 @@ function createAccountFromPatch(
       enabled: normalizedPatch.enabled ?? false,
       token: normalizedPatch.token ?? "",
       agentId: normalizedPatch.agentId ?? null,
+      defaultPermissionMode:
+        normalizedPatch.defaultPermissionMode ?? "standard",
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
@@ -584,6 +587,10 @@ function mergeAccountPatch(
       enabled: normalizedPatch.enabled ?? existing.enabled,
       token: normalizedPatch.token ?? existing.token,
       agentId: normalizedPatch.agentId ?? existing.agentId,
+      defaultPermissionMode:
+        normalizedPatch.defaultPermissionMode ??
+        existing.defaultPermissionMode ??
+        "standard",
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       allowedChannels:
@@ -624,7 +631,7 @@ function mergeAccountPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ??
       existing.defaultPermissionMode ??
-      "default",
+      "standard",
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
@@ -707,6 +714,7 @@ export function getChannelConfigSnapshot(
       allowedChannels: [...(account.allowedChannels ?? [])],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
+      defaultPermissionMode: account.defaultPermissionMode ?? "standard",
     };
   }
 
@@ -755,6 +763,7 @@ export async function setChannelConfigLive(
       botToken: normalizedPatch.botToken,
       appToken: normalizedPatch.appToken,
       mode: normalizedPatch.mode,
+      defaultPermissionMode: normalizedPatch.defaultPermissionMode,
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
@@ -774,6 +783,7 @@ export async function setChannelConfigLive(
         botToken: normalizedPatch.botToken,
         appToken: normalizedPatch.appToken,
         mode: normalizedPatch.mode,
+        defaultPermissionMode: normalizedPatch.defaultPermissionMode,
         dmPolicy: normalizedPatch.dmPolicy,
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
