@@ -149,6 +149,7 @@ export interface ChannelConfigFieldBase {
   label: string;
   description?: string;
   required?: boolean;
+  restartRequired?: boolean;
 }
 
 export interface ChannelConfigTextField extends ChannelConfigFieldBase {
@@ -178,11 +179,40 @@ export interface ChannelConfigBooleanField extends ChannelConfigFieldBase {
   default?: boolean;
 }
 
+export interface ChannelConfigNumberField extends ChannelConfigFieldBase {
+  type: "number";
+  default?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  suffix?: string;
+  placeholder?: string;
+}
+
+export interface ChannelConfigStringArrayField extends ChannelConfigFieldBase {
+  type: "string-array";
+  default?: string[];
+  placeholder?: string;
+}
+
+export interface ChannelConfigKeyValueMapField extends ChannelConfigFieldBase {
+  type: "key-value-map";
+  valueType: "string" | "number";
+  default?: Record<string, string | number>;
+  keyLabel?: string;
+  valueLabel?: string;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+}
+
 export type ChannelConfigField =
   | ChannelConfigTextField
   | ChannelConfigSecretField
   | ChannelConfigSelectField
-  | ChannelConfigBooleanField;
+  | ChannelConfigBooleanField
+  | ChannelConfigNumberField
+  | ChannelConfigStringArrayField
+  | ChannelConfigKeyValueMapField;
 
 export interface ChannelConfigSchema {
   version: 1;

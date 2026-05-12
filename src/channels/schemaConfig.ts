@@ -1,10 +1,13 @@
 import type {
   ChannelConfigBooleanField,
   ChannelConfigField,
+  ChannelConfigKeyValueMapField,
+  ChannelConfigNumberField,
   ChannelConfigSchema,
   ChannelConfigSecretField,
   ChannelConfigSelectField,
   ChannelConfigSelectOption,
+  ChannelConfigStringArrayField,
   ChannelConfigTextField,
   ChannelProtocolConfig,
 } from "./pluginTypes";
@@ -15,6 +18,9 @@ const FIELD_TYPES: ReadonlySet<ChannelConfigField["type"]> = new Set([
   "secret",
   "select",
   "boolean",
+  "number",
+  "string-array",
+  "key-value-map",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -73,6 +79,12 @@ function parseField(value: unknown): ChannelConfigField | null {
   if (value.required !== undefined && typeof value.required !== "boolean") {
     return null;
   }
+  if (
+    value.restartRequired !== undefined &&
+    typeof value.restartRequired !== "boolean"
+  ) {
+    return null;
+  }
 
   const base = {
     key: value.key,
@@ -80,6 +92,10 @@ function parseField(value: unknown): ChannelConfigField | null {
     description:
       typeof value.description === "string" ? value.description : undefined,
     required: typeof value.required === "boolean" ? value.required : undefined,
+    restartRequired:
+      typeof value.restartRequired === "boolean"
+        ? value.restartRequired
+        : undefined,
   };
 
   if (type === "text") {
@@ -152,7 +168,153 @@ function parseField(value: unknown): ChannelConfigField | null {
     return field;
   }
 
+  if (type === "number") {
+    if (value.default !== undefined && !isFiniteNumber(value.default)) {
+      return null;
+    }
+    if (value.min !== undefined && !isFiniteNumber(value.min)) {
+      return null;
+    }
+    if (value.max !== undefined && !isFiniteNumber(value.max)) {
+      return null;
+    }
+    if (value.step !== undefined && !isFiniteNumber(value.step)) {
+      return null;
+    }
+    if (
+      value.min !== undefined &&
+      value.max !== undefined &&
+      (value.min as number) > (value.max as number)
+    ) {
+      return null;
+    }
+    if (
+      value.default !== undefined &&
+      !numberWithinBounds(
+        value.default as number,
+        value.min as number | undefined,
+        value.max as number | undefined,
+      )
+    ) {
+      return null;
+    }
+    if (value.suffix !== undefined && typeof value.suffix !== "string") {
+      return null;
+    }
+    if (
+      value.placeholder !== undefined &&
+      typeof value.placeholder !== "string"
+    ) {
+      return null;
+    }
+    const field: ChannelConfigNumberField = {
+      ...base,
+      type: "number",
+      default: isFiniteNumber(value.default)
+        ? (value.default as number)
+        : undefined,
+      min: isFiniteNumber(value.min) ? (value.min as number) : undefined,
+      max: isFiniteNumber(value.max) ? (value.max as number) : undefined,
+      step: isFiniteNumber(value.step) ? (value.step as number) : undefined,
+      suffix: typeof value.suffix === "string" ? value.suffix : undefined,
+      placeholder:
+        typeof value.placeholder === "string" ? value.placeholder : undefined,
+    };
+    return field;
+  }
+
+  if (type === "string-array") {
+    if (value.default !== undefined) {
+      if (!Array.isArray(value.default)) {
+        return null;
+      }
+      if (!value.default.every((entry) => typeof entry === "string")) {
+        return null;
+      }
+    }
+    if (
+      value.placeholder !== undefined &&
+      typeof value.placeholder !== "string"
+    ) {
+      return null;
+    }
+    const field: ChannelConfigStringArrayField = {
+      ...base,
+      type: "string-array",
+      default: Array.isArray(value.default)
+        ? (value.default as string[]).slice()
+        : undefined,
+      placeholder:
+        typeof value.placeholder === "string" ? value.placeholder : undefined,
+    };
+    return field;
+  }
+
+  if (type === "key-value-map") {
+    if (value.valueType !== "string" && value.valueType !== "number") {
+      return null;
+    }
+    const valueType = value.valueType;
+    if (value.default !== undefined) {
+      if (!isRecord(value.default)) {
+        return null;
+      }
+      for (const entry of Object.values(value.default)) {
+        if (valueType === "string" && typeof entry !== "string") {
+          return null;
+        }
+        if (valueType === "number" && !isFiniteNumber(entry)) {
+          return null;
+        }
+      }
+    }
+    for (const key of [
+      "keyLabel",
+      "valueLabel",
+      "keyPlaceholder",
+      "valuePlaceholder",
+    ] as const) {
+      if (value[key] !== undefined && typeof value[key] !== "string") {
+        return null;
+      }
+    }
+    const field: ChannelConfigKeyValueMapField = {
+      ...base,
+      type: "key-value-map",
+      valueType,
+      default: isRecord(value.default)
+        ? ({ ...value.default } as Record<string, string | number>)
+        : undefined,
+      keyLabel: typeof value.keyLabel === "string" ? value.keyLabel : undefined,
+      valueLabel:
+        typeof value.valueLabel === "string" ? value.valueLabel : undefined,
+      keyPlaceholder:
+        typeof value.keyPlaceholder === "string"
+          ? value.keyPlaceholder
+          : undefined,
+      valuePlaceholder:
+        typeof value.valuePlaceholder === "string"
+          ? value.valuePlaceholder
+          : undefined,
+    };
+    return field;
+  }
+
   return null;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function numberWithinBounds(
+  value: number,
+  min: number | undefined,
+  max: number | undefined,
+): boolean {
+  if (min !== undefined && value < min) return false;
+  if (max !== undefined && value > max) return false;
+  return true;
 }
 
 /**
@@ -262,6 +424,73 @@ export function validateConfigAgainstSchema(
         }
         break;
       }
+      case "number": {
+        if (!isFiniteNumber(value)) {
+          return {
+            ok: false,
+            reason: `field ${field.key} must be a finite number`,
+          };
+        }
+        if (!numberWithinBounds(value, field.min, field.max)) {
+          return {
+            ok: false,
+            reason: `field ${field.key} is out of bounds`,
+          };
+        }
+        break;
+      }
+      case "string-array": {
+        if (!Array.isArray(value)) {
+          return {
+            ok: false,
+            reason: `field ${field.key} must be an array of strings`,
+          };
+        }
+        for (const entry of value) {
+          if (typeof entry !== "string") {
+            return {
+              ok: false,
+              reason: `field ${field.key} must contain only strings`,
+            };
+          }
+        }
+        if (field.required && value.length === 0) {
+          return {
+            ok: false,
+            reason: `field ${field.key} is required`,
+          };
+        }
+        break;
+      }
+      case "key-value-map": {
+        if (!isRecord(value)) {
+          return {
+            ok: false,
+            reason: `field ${field.key} must be an object`,
+          };
+        }
+        for (const entry of Object.values(value)) {
+          if (field.valueType === "string" && typeof entry !== "string") {
+            return {
+              ok: false,
+              reason: `field ${field.key} values must be strings`,
+            };
+          }
+          if (field.valueType === "number" && !isFiniteNumber(entry)) {
+            return {
+              ok: false,
+              reason: `field ${field.key} values must be finite numbers`,
+            };
+          }
+        }
+        if (field.required && Object.keys(value).length === 0) {
+          return {
+            ok: false,
+            reason: `field ${field.key} is required`,
+          };
+        }
+        break;
+      }
     }
   }
 
@@ -294,6 +523,50 @@ export function redactConfigForSnapshot(
         result[field.key] = stored;
       } else if (typeof field.default === "boolean") {
         result[field.key] = field.default;
+      }
+      continue;
+    }
+
+    if (field.type === "number") {
+      if (isFiniteNumber(stored)) {
+        result[field.key] = stored;
+      } else if (isFiniteNumber(field.default)) {
+        result[field.key] = field.default;
+      } else {
+        result[field.key] = 0;
+      }
+      continue;
+    }
+
+    if (field.type === "string-array") {
+      if (
+        Array.isArray(stored) &&
+        stored.every((entry) => typeof entry === "string")
+      ) {
+        result[field.key] = stored.slice();
+      } else if (Array.isArray(field.default)) {
+        result[field.key] = field.default.slice();
+      } else {
+        result[field.key] = [];
+      }
+      continue;
+    }
+
+    if (field.type === "key-value-map") {
+      if (isRecord(stored)) {
+        const filtered: Record<string, string | number> = {};
+        for (const [k, v] of Object.entries(stored)) {
+          if (field.valueType === "string" && typeof v === "string") {
+            filtered[k] = v;
+          } else if (field.valueType === "number" && isFiniteNumber(v)) {
+            filtered[k] = v;
+          }
+        }
+        result[field.key] = filtered;
+      } else if (isRecord(field.default)) {
+        result[field.key] = { ...field.default };
+      } else {
+        result[field.key] = {};
       }
       continue;
     }
