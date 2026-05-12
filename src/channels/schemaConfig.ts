@@ -590,5 +590,20 @@ export function redactConfigForSnapshot(
       result[field.key] = "";
     }
   }
+
+  // Always pass through Letta's reserved JSON-bucket keys regardless of
+  // whether the plugin declared them in its schema. These power the
+  // dedicated Accounts / Config / Metadata tabs in the desktop dialog
+  // and round-trip as opaque strings on the snapshot.
+  for (const reservedKey of [
+    "accounts_json",
+    "configs_json",
+    "metadata_json",
+  ]) {
+    if (result[reservedKey] !== undefined) continue;
+    const stored = storedConfig[reservedKey];
+    result[reservedKey] = typeof stored === "string" ? stored : "";
+  }
+
   return result;
 }
