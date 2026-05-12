@@ -525,6 +525,11 @@ export async function handleChannelsProtocolCommand(
   }
 
   if (parsed.type === "channel_account_create") {
+    // Track plugin dirs we scaffold in this request so we can roll back on
+    // any downstream failure — otherwise a thrown createChannelAccountLive
+    // leaves an orphaned channel folder on disk that blocks reuse of the
+    // same display name (the slug would already be taken).
+    let scaffoldedChannelId: string | null = null;
     try {
       // For the first-party "custom" channel, scaffold a dedicated user plugin
       // folder so the new app gets its own channel ID (e.g. "my-webhook-app").
@@ -538,6 +543,7 @@ export async function handleChannelsProtocolCommand(
                 .display_name as string)
             : "custom-app";
         effectiveChannelId = scaffoldUserPlugin(displayName);
+        scaffoldedChannelId = effectiveChannelId;
       }
 
       const pluginConfig =
@@ -589,6 +595,17 @@ export async function handleChannelsProtocolCommand(
       });
       emitChannelsUpdated(socket, safeSocketSend, effectiveChannelId);
     } catch (err) {
+      // Roll back the scaffolded plugin directory so the same display
+      // name can be reused on retry. Best-effort: cleanup errors are
+      // swallowed so we still send the original failure to the client.
+      if (scaffoldedChannelId) {
+        try {
+          removeUserPlugin(scaffoldedChannelId);
+        } catch {
+          // Intentionally swallow — the original error is what the
+          // caller needs to see.
+        }
+      }
       safeSocketSend(
         socket,
         {
