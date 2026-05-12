@@ -102,7 +102,7 @@ describe("createCustomAdapter", () => {
 
     const headers = request.init.headers as Record<string, string>;
     expect(headers["Content-Type"]).toBe("application/json");
-    expect(headers["Authorization"]).toBe("Bearer secret-bot");
+    expect(headers.Authorization).toBe("Bearer secret-bot");
     expect(headers["X-Letta-Auth"]).toBe("secret-auth");
 
     const body = JSON.parse(request.init.body as string);
@@ -179,7 +179,7 @@ describe("createCustomAdapter", () => {
     const request = captured[0];
     if (!request) throw new Error("no request captured");
     const headers = request.init.headers as Record<string, string>;
-    expect(headers["Authorization"]).toBeUndefined();
+    expect(headers.Authorization).toBeUndefined();
     expect(headers["X-Letta-Auth"]).toBe("secret-auth");
   });
 

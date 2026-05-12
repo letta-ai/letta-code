@@ -182,15 +182,15 @@ test("user plugin configSchema is parsed from channel.json", () => {
   expect(isSupportedChannelId("schemademo")).toBe(true);
   const metadata = getChannelPluginMetadata("schemademo");
   expect(metadata.configSchema).not.toBeUndefined();
-  expect(metadata.configSchema!.version).toBe(1);
-  expect(metadata.configSchema!.fields).toHaveLength(4);
-  expect(metadata.configSchema!.fields[0]).toEqual({
+  expect(metadata.configSchema?.version).toBe(1);
+  expect(metadata.configSchema?.fields).toHaveLength(4);
+  expect(metadata.configSchema?.fields[0]).toEqual({
     type: "text",
     key: "endpoint",
     label: "Endpoint",
     required: true,
   });
-  expect(metadata.configSchema!.fields[1]).toEqual({
+  expect(metadata.configSchema?.fields[1]).toEqual({
     type: "secret",
     key: "api_key",
     label: "API Key",
@@ -240,10 +240,10 @@ test("user plugin with invalid configSchema still loads (schema dropped)", () =>
 test("first-party custom channel has configSchema", () => {
   const metadata = getChannelPluginMetadata("custom");
   expect(metadata.configSchema).not.toBeUndefined();
-  expect(metadata.configSchema!.version).toBe(1);
-  expect(metadata.configSchema!.fields.length).toBeGreaterThan(0);
-  const urlField = metadata.configSchema!.fields.find((f) => f.key === "url");
+  expect(metadata.configSchema?.version).toBe(1);
+  expect(metadata.configSchema?.fields.length).toBeGreaterThan(0);
+  const urlField = metadata.configSchema?.fields.find((f) => f.key === "url");
   expect(urlField).not.toBeUndefined();
-  expect(urlField!.type).toBe("text");
-  expect(urlField!.required).toBe(true);
+  expect(urlField?.type).toBe("text");
+  expect(urlField?.required).toBe(true);
 });

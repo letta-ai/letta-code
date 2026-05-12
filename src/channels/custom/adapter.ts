@@ -55,7 +55,7 @@ export function createCustomAdapter(
     };
     const botToken = readString(account, "bot_token");
     if (botToken) {
-      headers["Authorization"] = `Bearer ${botToken}`;
+      headers.Authorization = `Bearer ${botToken}`;
     }
     const auth = readString(account, "auth");
     if (auth) {

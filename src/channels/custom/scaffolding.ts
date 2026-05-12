@@ -175,7 +175,7 @@ export function scaffoldUserPlugin(displayName: string): string {
   };
   writeFileSync(
     join(channelDir, "channel.json"),
-    JSON.stringify(manifest, null, 2) + "\n",
+    `${JSON.stringify(manifest, null, 2)}\n`,
     "utf-8",
   );
 
