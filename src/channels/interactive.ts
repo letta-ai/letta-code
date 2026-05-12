@@ -153,7 +153,100 @@ function matchQuestionOption(
     return exactLabel.label.trim();
   }
 
+  const trimmedLower = trimmed.toLowerCase();
+  const exactAlias = options.find((option) =>
+    optionAliases(option).some(
+      (alias) => normalizeWhitespace(alias).toLowerCase() === trimmedLower,
+    ),
+  );
+  if (exactAlias?.label?.trim()) {
+    return exactAlias.label.trim();
+  }
+
+  if (/^(recommended|default|defaults)$/i.test(trimmed)) {
+    const recommended = options.find((option) => {
+      const label = option.label?.toLowerCase() ?? "";
+      const description = option.description?.toLowerCase() ?? "";
+      return (
+        label.includes("recommended") || description.includes("recommended")
+      );
+    });
+    if (recommended?.label?.trim()) {
+      return recommended.label.trim();
+    }
+  }
+
   return trimmed;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function optionAliases(option: { label?: string }): string[] {
+  const aliases = new Set<string>();
+  const label = normalizeWhitespace(option.label ?? "");
+  if (label) {
+    aliases.add(label);
+    const withoutParenthetical = normalizeWhitespace(
+      label.replace(/\s*\([^)]*\)\s*/g, " "),
+    );
+    if (withoutParenthetical) {
+      aliases.add(withoutParenthetical);
+    }
+  }
+  return Array.from(aliases).filter((alias) => alias.length >= 3);
+}
+
+function containsPhrase(text: string, phrase: string): boolean {
+  const normalizedText = normalizeWhitespace(text);
+  const normalizedPhrase = normalizeWhitespace(phrase);
+  if (!normalizedText || !normalizedPhrase) {
+    return false;
+  }
+
+  const escapedPhrase = escapeRegExp(normalizedPhrase).replace(/\s+/g, "\\s+");
+  return new RegExp(`(^|\\W)${escapedPhrase}(?=$|\\W)`, "i").test(
+    normalizedText,
+  );
+}
+
+function inferQuestionAnswerFromText(
+  question: NonNullable<AskUserQuestionInput["questions"]>[number],
+  rawText: string,
+): string | null {
+  const options = question.options ?? [];
+  const matches = options
+    .filter((option) =>
+      optionAliases(option).some((alias) => containsPhrase(rawText, alias)),
+    )
+    .map((option) => option.label?.trim())
+    .filter((label): label is string => Boolean(label));
+
+  const uniqueMatches = Array.from(new Set(matches));
+  if (uniqueMatches.length === 1) {
+    return uniqueMatches[0] ?? null;
+  }
+
+  const normalized = normalizeWhitespace(rawText).toLowerCase();
+  if (
+    /\b(recommended|default|defaults|you decide|whatever you recommend)\b/.test(
+      normalized,
+    )
+  ) {
+    const recommended = options.find((option) => {
+      const label = option.label?.toLowerCase() ?? "";
+      const description = option.description?.toLowerCase() ?? "";
+      return (
+        label.includes("recommended") || description.includes("recommended")
+      );
+    });
+    if (recommended?.label?.trim()) {
+      return recommended.label.trim();
+    }
+  }
+
+  return null;
 }
 
 function matchQuestionAnswer(
@@ -219,6 +312,89 @@ function parseNumberedAnswers(
   return Object.keys(answers).length > 0 ? answers : null;
 }
 
+function parsePositionalAnswers(
+  rawText: string,
+  questions: NonNullable<AskUserQuestionInput["questions"]>,
+): Record<string, string> | null {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((line) => normalizeWhitespace(line))
+    .filter(Boolean);
+  if (lines.length === questions.length) {
+    const answers: Record<string, string> = {};
+    questions.forEach((question, index) => {
+      if (question.question) {
+        answers[question.question] = matchQuestionAnswer(
+          question,
+          lines[index] ?? "",
+        );
+      }
+    });
+    return answers;
+  }
+
+  const normalized = normalizeWhitespace(rawText);
+  const compactParts = normalized
+    .split(/\s*(?:,|\/|;)\s*/)
+    .map((part) => normalizeWhitespace(part))
+    .filter(Boolean);
+  if (
+    compactParts.length === questions.length &&
+    compactParts.every((part) => /^\d+$/.test(part))
+  ) {
+    const answers: Record<string, string> = {};
+    questions.forEach((question, index) => {
+      if (question.question) {
+        answers[question.question] = matchQuestionAnswer(
+          question,
+          compactParts[index] ?? "",
+        );
+      }
+    });
+    return answers;
+  }
+
+  return null;
+}
+
+function parseFlexibleMultiQuestionAnswers(
+  rawText: string,
+  questions: NonNullable<AskUserQuestionInput["questions"]>,
+): Record<string, string> | null {
+  const normalized = normalizeWhitespace(rawText);
+  if (!normalized) {
+    return null;
+  }
+
+  const positionalAnswers = parsePositionalAnswers(rawText, questions);
+  if (positionalAnswers) {
+    return positionalAnswers;
+  }
+
+  const answers: Record<string, string> = {};
+  for (const question of questions) {
+    if (!question.question) {
+      continue;
+    }
+    const inferred = inferQuestionAnswerFromText(question, rawText);
+    if (inferred) {
+      answers[question.question] = inferred;
+    }
+  }
+
+  const hasInferredAnswers = Object.keys(answers).length > 0;
+  for (const question of questions) {
+    if (!question.question || Object.hasOwn(answers, question.question)) {
+      continue;
+    }
+    answers[question.question] = hasInferredAnswers
+      ? `Not specified. Full user reply: ${normalized}`
+      : normalized;
+  }
+
+  return Object.keys(answers).length > 0 ? answers : null;
+}
+
 function buildAllowResponse(
   requestId: string,
   decision: ApprovalResponseDecision,
@@ -257,7 +433,7 @@ function formatAskUserQuestionPrompt(
   );
 
   const lines = [
-    "The agent needs an answer before it can continue.",
+    "SYSTEM MESSAGE — reply required to continue",
     "",
     ...questions.flatMap((question, index) =>
       buildQuestionPrompt(question, index),
@@ -274,11 +450,11 @@ function formatAskUserQuestionPrompt(
     );
   } else {
     lines.push(
-      "Reply with numbered lines, for example:",
+      "Reply in plain language, or answer each question separately with numbered lines:",
       "1: your answer",
       "2: your answer",
       "",
-      "You can also use option numbers or option labels. For multi-select questions, separate multiple answers with commas.",
+      "Option numbers/labels work too. For multi-select questions, separate multiple answers with commas.",
     );
   }
 
@@ -392,24 +568,13 @@ function parseAskUserQuestionResponse(
   }
 
   const numberedAnswers = parseNumberedAnswers(rawText, questions);
-  if (!numberedAnswers) {
+  const answers =
+    numberedAnswers ?? parseFlexibleMultiQuestionAnswers(rawText, questions);
+  if (!answers) {
     return {
       type: "reprompt",
       message:
-        "Please answer with numbered lines so I can map each reply to the right question.\nExample:\n1: your answer\n2: your answer",
-    };
-  }
-
-  const missingQuestions = questions.filter(
-    (question) =>
-      question.question && !Object.hasOwn(numberedAnswers, question.question),
-  );
-  if (missingQuestions.length > 0) {
-    return {
-      type: "reprompt",
-      message: `I still need answers for: ${missingQuestions
-        .map((question) => question.question)
-        .join(", ")}`,
+        "Please send a reply so I can pass it back to the agent. You can answer naturally or use numbered lines like `1: ...` and `2: ...`.",
     };
   }
 
@@ -421,7 +586,7 @@ function parseAskUserQuestionResponse(
         ...event.input,
         answers: {
           ...(input.answers ?? {}),
-          ...numberedAnswers,
+          ...answers,
         },
       },
     }),

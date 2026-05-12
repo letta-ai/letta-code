@@ -309,7 +309,7 @@ describe("channel control request recovery", () => {
       {
         chatId: "C123",
         text: expect.stringContaining(
-          "The agent needs an answer before it can continue.",
+          "SYSTEM MESSAGE — reply required to continue",
         ),
         replyToMessageId: "1712790000.000050",
       },
