@@ -212,7 +212,12 @@ function getMemoryInfo(approval: ApprovalRequest): MemoryInfo | null {
     return {
       command,
       reason: typeof args.reason === "string" ? args.reason : undefined,
-      path: typeof args.path === "string" ? args.path : undefined,
+      path:
+        typeof args.file_path === "string"
+          ? args.file_path
+          : typeof args.path === "string"
+            ? args.path
+            : undefined,
       oldPath: typeof args.old_path === "string" ? args.old_path : undefined,
       newPath: typeof args.new_path === "string" ? args.new_path : undefined,
       oldString:
@@ -265,7 +270,12 @@ function getMemoryFileEditInfo(
     }
 
     const command = typeof args.command === "string" ? args.command : "";
-    const relPath = typeof args.path === "string" ? args.path : "";
+    const relPath =
+      typeof args.file_path === "string"
+        ? args.file_path
+        : typeof args.path === "string"
+          ? args.path
+          : "";
     const absPath = memoryDir && relPath ? `${memoryDir}/${relPath}` : relPath;
     const display = memoryDisplayPath(relPath);
 
