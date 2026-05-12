@@ -6,6 +6,7 @@ import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
 } from "../helpers/diff";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { EditRenderer, MultiEditRenderer, WriteRenderer } from "./DiffRenderer";
@@ -239,7 +240,7 @@ export function AdvancedDiffRenderer(
         <Box width={gutterWidth} flexShrink={0}>
           <Text>
             {"  "}
-            <Text dimColor>⎿</Text>
+            <Text dimColor>{CLI_GLYPHS.result}</Text>
           </Text>
         </Box>
         <Box flexGrow={1}>
@@ -362,7 +363,7 @@ export function AdvancedDiffRenderer(
             <Box width={noChangesGutter} flexShrink={0}>
               <Text>
                 {"  "}
-                <Text dimColor>⎿</Text>
+                <Text dimColor>{CLI_GLYPHS.result}</Text>
               </Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - noChangesGutter)}>
@@ -385,7 +386,7 @@ export function AdvancedDiffRenderer(
     );
   }
 
-  // Gutter width for "  ⎿" prefix (4 chars: 2 spaces + ⎿ + space)
+  // Gutter width for `  └` prefix (4 chars: 2 spaces + └ + space)
   const toolResultGutter = 4;
 
   return (
@@ -396,7 +397,7 @@ export function AdvancedDiffRenderer(
             <Box width={toolResultGutter} flexShrink={0}>
               <Text>
                 {"  "}
-                <Text dimColor>⎿</Text>
+                <Text dimColor>{CLI_GLYPHS.result}</Text>
               </Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - toolResultGutter)}>

@@ -26,7 +26,7 @@ type CommandLine = {
  * - Two-column layout with left gutter (2 chars) and right content area
  * - Proper terminal width calculation and wrapping
  * - Markdown rendering for output
- * - Consistent symbols (• for command, ⎿ for result)
+ * - Consistent symbols (• for command, └ for result)
  */
 export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
   const columns = useTerminalWidth();
@@ -67,7 +67,7 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
       {line.output && (
         <Box flexDirection="row">
           <Box width={5} flexShrink={0}>
-            <Text>{"  ⎿  "}</Text>
+            <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
           </Box>
           <Box flexGrow={1} width={Math.max(0, columns - 5)}>
             {line.preformatted ? (

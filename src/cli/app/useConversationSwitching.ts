@@ -47,6 +47,7 @@ import {
 } from "../helpers/contextTracker";
 import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
 import { formatErrorDetails } from "../helpers/errorFormatter";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import type { ApprovalRequest } from "../helpers/stream";
 
 import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
@@ -594,12 +595,12 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         const successOutput = isSpecificConv
           ? [
               `Switched to **${agentLabel}**`,
-              `⎿  Conversation: ${opts.conversationId}`,
+              `${CLI_GLYPHS.result}  Conversation: ${opts.conversationId}`,
             ].join("\n")
           : [
               `Resumed the default conversation with **${agentLabel}**.`,
-              `⎿  Type /resume to browse all conversations`,
-              `⎿  Type /new to start a new conversation`,
+              `${CLI_GLYPHS.result}  Type /resume to browse all conversations`,
+              `${CLI_GLYPHS.result}  Type /new to start a new conversation`,
             ].join("\n");
         const separator = {
           kind: "separator" as const,
@@ -711,8 +712,8 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           "Tip: use /init to initialize your agent's memory system!";
         const successOutput = [
           `Created **${agent.name || agent.id}** (use /pin to save)`,
-          `⎿  ${agentUrl}`,
-          `⎿  ${memfsTip}`,
+          `${CLI_GLYPHS.result}  ${agentUrl}`,
+          `${CLI_GLYPHS.result}  ${memfsTip}`,
         ].join("\n");
         cmd.finish(successOutput, true);
         const successItem: StaticItem = {

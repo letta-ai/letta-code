@@ -138,7 +138,7 @@ type ToolCallLine = {
  * - Two-column layout for tool calls (2 chars for dot)
  * - Smart wrapping that keeps function name and args together when possible
  * - Blinking dots for pending/running states
- * - Result shown with ⎿ prefix underneath
+ * - Result shown with └ prefix underneath
  */
 export const ToolCallMessage = memo(
   ({
@@ -360,7 +360,7 @@ export const ToolCallMessage = memo(
         if (!line.resultText) return null;
 
         const extractedText = extractMessageFromResult(line.resultText);
-        const prefix = `  ⎿  `; // Match old format: 2 spaces, glyph, 2 spaces
+        const prefix = `  ${CLI_GLYPHS.result}  `; // 2 spaces, glyph, 2 spaces
         const prefixWidth = 5; // Total width of prefix
         const contentWidth = Math.max(0, columns - prefixWidth);
 
@@ -738,7 +738,7 @@ export const ToolCallMessage = memo(
                             <Box width={gutterWidth} flexShrink={0}>
                               <Text>
                                 {"  "}
-                                <Text dimColor>⎿</Text>
+                                <Text dimColor>{CLI_GLYPHS.result}</Text>
                               </Text>
                             </Box>
                             <Box flexGrow={1}>
@@ -995,13 +995,15 @@ export const ToolCallMessage = memo(
 
           {/* Shell command continuation lines with │ prefix */}
           {shellContinuationLines.map((spans) => {
-            const clipped = clipStyledSpans(spans, rightWidth - 2);
+            const clipped = clipStyledSpans(spans, columns - 5);
             const lineKey = spans.map((s) => s.text).join("");
             return (
               <Box key={lineKey} flexDirection="row">
-                <Box width={2} flexShrink={0}>
+                <Box width={5} flexShrink={0}>
                   <Text color={colors.shellSyntax.text}>
+                    {"  "}
                     {CLI_GLYPHS.continuation}
+                    {"  "}
                   </Text>
                 </Box>
                 <Box flexGrow={1}>
