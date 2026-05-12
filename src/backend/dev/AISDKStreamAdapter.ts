@@ -484,6 +484,62 @@ function isToolUIPart(part: unknown): part is Record<string, unknown> {
   );
 }
 
+/**
+ * When the user interrupts a multi-step turn mid-stream, the last assistant
+ * message can end up with a text part immediately following a tool part in the
+ * same step (i.e., between two `step-start` markers). The AI SDK's
+ * `convertToModelMessages` will then produce an assistant content block that
+ * contains both a `tool_use` block and a `text` block, which Anthropic rejects
+ * because text may not follow `tool_use` when a `tool_result` is expected next.
+ *
+ * This function inserts a `step-start` marker before any such trailing text
+ * part, splitting the text into its own step so that `convertToModelMessages`
+ * places it in a separate assistant message block.
+ */
+function separateTrailingTextAfterToolCalls(
+  messages: LocalMessage[],
+): LocalMessage[] {
+  let didChange = false;
+  const transformed = messages.map((message) => {
+    if (message.role !== "assistant") return message;
+
+    let messageChanged = false;
+    const newParts: LocalMessage["parts"] = [];
+    let stepHasToolCall = false;
+
+    for (const part of message.parts) {
+      if (!part) continue;
+
+      if (part.type === "step-start") {
+        stepHasToolCall = false;
+        newParts.push(part);
+        continue;
+      }
+
+      if (isToolUIPart(part)) {
+        stepHasToolCall = true;
+        newParts.push(part);
+        continue;
+      }
+
+      if (stepHasToolCall && (part as { type?: unknown }).type === "text") {
+        // Insert a step-start to separate the trailing text from the tool call,
+        // preventing a mixed tool_use+text block in the converted model message.
+        newParts.push({ type: "step-start" } as LocalMessage["parts"][number]);
+        stepHasToolCall = false;
+        messageChanged = true;
+        didChange = true;
+      }
+
+      newParts.push(part);
+    }
+
+    return messageChanged ? { ...message, parts: newParts } : message;
+  });
+
+  return didChange ? transformed : messages;
+}
+
 function normalizeToolPartForModelConversion(part: Record<string, unknown>): {
   part: LocalMessage["parts"][number];
   changed: boolean;
@@ -545,7 +601,9 @@ function sanitizeUIMessagesForProvider(
   agent: ProviderTurnInput["agent"],
 ): LocalMessage[] {
   const settledMessages = normalizeToolPartsForModelConversion(
-    replaceUnsupportedInputParts(messages, agent),
+    separateTrailingTextAfterToolCalls(
+      replaceUnsupportedInputParts(messages, agent),
+    ),
   );
   if (provider === "unknown") return settledMessages;
   return settledMessages
