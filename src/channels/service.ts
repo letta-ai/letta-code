@@ -590,7 +590,7 @@ function mergeAccountPatch(
       defaultPermissionMode:
         normalizedPatch.defaultPermissionMode ??
         existing.defaultPermissionMode ??
-        "default",
+        "standard",
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       allowedChannels:
@@ -631,7 +631,7 @@ function mergeAccountPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ??
       existing.defaultPermissionMode ??
-      "default",
+      "standard",
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
