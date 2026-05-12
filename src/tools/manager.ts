@@ -385,6 +385,9 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
+  get_goal: { requiresApproval: false },
+  create_goal: { requiresApproval: false },
+  update_goal: { requiresApproval: false },
   // Gemini toolset
   glob_gemini: { requiresApproval: false },
   list_directory: { requiresApproval: false },
@@ -403,6 +406,9 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   GrepFiles: { requiresApproval: false },
   ApplyPatch: { requiresApproval: true },
   UpdatePlan: { requiresApproval: false },
+  GetGoal: { requiresApproval: false },
+  CreateGoal: { requiresApproval: false },
+  UpdateGoal: { requiresApproval: false },
   // Gemini-2 toolset (PascalCase)
   RunShellCommand: { requiresApproval: true },
   ReadFileGemini: { requiresApproval: false },
@@ -1018,6 +1024,7 @@ export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
@@ -1232,6 +1239,7 @@ async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
@@ -1257,6 +1265,16 @@ async function resolveBaseToolNamesForModel(
     baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
   }
 
+  if (options?.include && options.include.length > 0) {
+    const seen = new Set(baseToolNames);
+    for (const name of options.include) {
+      if (!seen.has(name)) {
+        baseToolNames.push(name);
+        seen.add(name);
+      }
+    }
+  }
+
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
     baseToolNames,
@@ -1275,6 +1293,7 @@ async function buildRegistryForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },

@@ -13,10 +13,12 @@ export const DEFAULT_COMPLETION_PROMISE =
 export type RalphState = {
   isActive: boolean;
   isYolo: boolean;
+  mode: "ralph" | "goal";
   originalPrompt: string;
   completionPromise: string | null; // null = no promise check (Claude Code style)
   maxIterations: number; // 0 = unlimited
   currentIteration: number;
+  tokenBudget: number | null;
 };
 
 // Use globalThis to ensure singleton across bundle
@@ -30,10 +32,12 @@ function getDefaultState(): RalphState {
   return {
     isActive: false,
     isYolo: false,
+    mode: "ralph",
     originalPrompt: "",
     completionPromise: null,
     maxIterations: 0,
     currentIteration: 0,
+    tokenBudget: null,
   };
 }
 
@@ -68,6 +72,7 @@ class RalphModeManager {
     completionPromise: string | null | undefined,
     maxIterations: number,
     isYolo: boolean,
+    options?: { mode?: "ralph" | "goal"; tokenBudget?: number | null },
   ): void {
     // If completionPromise is undefined, use default
     // If it's null or empty string, that means "no promise check" (Claude Code style)
@@ -87,10 +92,24 @@ class RalphModeManager {
     setGlobalState({
       isActive: true,
       isYolo,
+      mode: options?.mode ?? "ralph",
       originalPrompt: prompt,
       completionPromise: resolvedPromise,
       maxIterations,
       currentIteration: 1,
+      tokenBudget: options?.tokenBudget ?? null,
+    });
+  }
+
+  activateGoal(
+    objective: string,
+    maxIterations: number,
+    isYolo: boolean,
+    tokenBudget: number | null = null,
+  ): void {
+    this.activate(objective, null, maxIterations, isYolo, {
+      mode: "goal",
+      tokenBudget,
     });
   }
 
@@ -138,6 +157,19 @@ class RalphModeManager {
     const expected = state.completionPromise.trim().replace(/\s+/g, " ");
 
     return promiseText === expected;
+  }
+
+  checkForGoalComplete(text: string): boolean {
+    const state = getGlobalState();
+    if (state.mode !== "goal") return false;
+    return /<goal_status>\s*complete\s*<\/goal_status>/i.test(text);
+  }
+
+  checkForCompletion(text: string): boolean {
+    const state = getGlobalState();
+    return state.mode === "goal"
+      ? this.checkForGoalComplete(text)
+      : this.checkForPromise(text);
   }
 
   /**

@@ -32,6 +32,7 @@ import { settingsManager } from "../../settings-manager";
 import { buildChatUrl } from "../helpers/appUrls.js";
 import { bytesToTokens, formatCompact } from "../helpers/format";
 import { CLI_GLYPHS } from "../helpers/glyphs";
+import { formatGoalStatusIndicator } from "../helpers/goalCommand";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
   getActiveBackgroundAgents,
@@ -379,6 +380,9 @@ function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
 }
 
 function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
+  if (modeGlyph === "") {
+    return modeName;
+  }
   if (modeGlyph === "⚡︎") {
     return `${modeGlyph}${modeName}`;
   }
@@ -449,6 +453,7 @@ const InputFooter = memo(function InputFooter({
   statusLineRight,
   statusLinePadding,
   footerNotification,
+  goalStatusText,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -469,6 +474,7 @@ const InputFooter = memo(function InputFooter({
   statusLineRight?: string;
   statusLinePadding?: number;
   footerNotification?: string | null;
+  goalStatusText?: string | null;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -586,10 +592,12 @@ const InputFooter = memo(function InputFooter({
     hasTemporaryModelOverride,
   ]);
 
-  const rightLabel = useMemo(
-    () => " ".repeat(rightPrefixSpaces) + rightLabelCore,
-    [rightPrefixSpaces, rightLabelCore],
-  );
+  const rightLabel = useMemo(() => {
+    if (goalStatusText) {
+      return chalk.magenta(goalStatusText);
+    }
+    return " ".repeat(rightPrefixSpaces) + rightLabelCore;
+  }, [goalStatusText, rightPrefixSpaces, rightLabelCore]);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -1710,6 +1718,7 @@ export function Input({
     name: string;
     color: string;
     glyph?: string;
+    showExitHint?: boolean;
   } | null>(() => {
     // Check ralph pending first (waiting for task input)
     if (ralphPending) {
@@ -1732,6 +1741,10 @@ export function Input({
         ralph.maxIterations > 0
           ? `${ralph.currentIteration}/${ralph.maxIterations}`
           : `${ralph.currentIteration}`;
+
+      if (ralph.mode === "goal") {
+        return null;
+      }
 
       if (ralph.isYolo) {
         return {
@@ -1768,6 +1781,48 @@ export function Input({
         return null;
     }
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
+
+  // Goal status footer text. Stored in state (rather than recomputed every
+  // render) so we only trigger a re-render when the displayed string actually
+  // changes. The previous implementation used setGoalFooterTick + setInterval
+  // which forced a full Input re-render every second while a goal was active,
+  // matching the flicker pattern documented in review-knowledge.md.
+  const currentGoal = conversationId
+    ? settingsManager.getConversationGoal(conversationId)
+    : null;
+  const goalStatus = currentGoal?.status ?? null;
+  const goalActiveStartedAt = currentGoal?.activeStartedAt ?? null;
+  const goalIsActive = goalStatus === "active";
+
+  const [goalStatusText, setGoalStatusText] = useState<string | null>(() =>
+    currentGoal ? formatGoalStatusIndicator(currentGoal) : null,
+  );
+
+  // Sync on prop-driven changes (status transitions, clear, pause, complete).
+  // goalStatus and goalActiveStartedAt are intentional triggers — they detect
+  // transitions even though the effect body re-reads via getConversationGoal.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are change triggers, not values used in the effect body
+  useEffect(() => {
+    const goal = conversationId
+      ? settingsManager.getConversationGoal(conversationId)
+      : null;
+    const nextText = goal ? formatGoalStatusIndicator(goal) : null;
+    setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
+  }, [conversationId, goalStatus, goalActiveStartedAt]);
+
+  // While the goal is active, re-check the formatted string each second but
+  // only re-render when it actually changes. Combined with the fixed-width
+  // format from formatGoalElapsedSeconds, the string changes at most once per
+  // second and the change is always same-width, so no footer flicker.
+  useEffect(() => {
+    if (!goalIsActive || !conversationId) return;
+    const timer = setInterval(() => {
+      const goal = settingsManager.getConversationGoal(conversationId);
+      const nextText = goal ? formatGoalStatusIndicator(goal) : null;
+      setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [goalIsActive, conversationId]);
 
   // Create a horizontal line using box-drawing characters.
   const horizontalLine = useMemo(
@@ -1861,7 +1916,9 @@ export function Input({
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
-                showExitHint={ralphActive || ralphPending}
+                showExitHint={
+                  modeInfo?.showExitHint ?? (ralphActive || ralphPending)
+                }
                 agentName={agentName}
                 currentModel={currentModel}
                 currentReasoningEffort={currentReasoningEffort}
@@ -1879,6 +1936,7 @@ export function Input({
                 statusLineRight={statusLineRight}
                 statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
+                goalStatusText={goalStatusText}
               />
             )}
           </Box>
@@ -1913,6 +1971,7 @@ export function Input({
     modeInfo?.name,
     modeInfo?.color,
     modeInfo?.glyph,
+    modeInfo?.showExitHint,
     ralphActive,
     ralphPending,
     currentModel,
@@ -1927,6 +1986,7 @@ export function Input({
     statusLineRight,
     statusLinePadding,
     footerNotification,
+    goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,

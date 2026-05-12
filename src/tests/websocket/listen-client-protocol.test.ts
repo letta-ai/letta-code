@@ -942,6 +942,7 @@ describe("listen-client parseServerMessage", () => {
 
   test("advertises and parses remote set-max-context execute_command", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("set-max-context");
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
 
     const command = parseServerMessage(
       Buffer.from(
