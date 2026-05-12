@@ -23,7 +23,7 @@ export const QueuedMessages = memo(({ messages }: QueuedMessagesProps) => {
       {displayMessages.slice(0, maxDisplay).map((msg, index) => (
         <Box key={`${index}-${msg.slice(0, 50)}`} flexDirection="row">
           <Box width={2} flexShrink={0}>
-            <Text dimColor>{">"}</Text>
+            <Text dimColor>{"›"}</Text>
           </Box>
           <Box flexGrow={1}>
             <Text dimColor>{msg}</Text>

@@ -170,7 +170,7 @@ export function resolveStatusLineConfig(
 /**
  * Resolve the prompt character from status line settings.
  * Independent of whether a `command` is configured.
- * Returns `">"` when disabled or no prompt is configured at any level.
+ * Returns `"›"` when disabled or no prompt is configured at any level.
  *
  * Precedence: local project > project > global.
  */
@@ -178,7 +178,7 @@ export function resolvePromptChar(
   workingDirectory: string = process.cwd(),
 ): string {
   try {
-    if (isStatusLineDisabled(workingDirectory)) return ">";
+    if (isStatusLineDisabled(workingDirectory)) return "›";
 
     // Local project settings (highest priority)
     try {
@@ -206,13 +206,13 @@ export function resolvePromptChar(
       // Not initialized
     }
 
-    return ">";
+    return "›";
   } catch (error) {
     debugLog(
       "statusline",
       "resolvePromptChar: Failed to resolve prompt",
       error,
     );
-    return ">";
+    return "›";
   }
 }
