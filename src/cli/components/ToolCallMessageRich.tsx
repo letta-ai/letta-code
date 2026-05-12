@@ -52,9 +52,8 @@ function colorizeArgs(argsStr: string): ReactNode {
   // Group 2: filenames with extension (e.g. foo.tsx, package.json)
   // Group 3: labels before : (e.g. offset, limit)
   // Group 4: standalone numbers (e.g. 50, 10)
-  // Group 5: paths after " in " keyword (e.g. src in "query" in src)
   const re =
-    /([\w.*?\-@~/]+\/[\w.*?\-@~/]*)|((?<=[(\s,])[\w.-]+\.\w{1,5}(?=[)\s,]|$))|(\w+)(?=\s*:)|(\b\d+\b)|(?<=\bin\s)([\w.*?\-@~/]+(?:\/[\w.*?\-@~/]*)?)/g;
+    /([\w.*?\-@~/]+\/[\w.*?\-@~/]*)|((?<=[(\s,])[\w.-]+\.\w{1,5}(?=[)\s,]|$))|(\w+)(?=\s*:)|(\b\d+\b)/g;
 
   for (let m = re.exec(argsStr); m !== null; m = re.exec(argsStr)) {
     if (m.index > lastIndex) {
@@ -69,9 +68,7 @@ function colorizeArgs(argsStr: string): ReactNode {
         ? palette.string // filename.ext
         : m[3]
           ? palette.comment // label (dimmed)
-          : m[5]
-            ? palette.string // path after "in" keyword
-            : palette.number; // number
+          : palette.number; // number
 
     parts.push(
       <Text key={key++} color={color}>
