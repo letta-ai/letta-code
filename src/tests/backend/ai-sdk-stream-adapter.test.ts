@@ -285,7 +285,37 @@ describe("AISDKStreamAdapter", () => {
       ),
     );
 
-    expect(capturedMessages).toBeDefined();
+    expect(capturedMessages).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-stale",
+            toolName: "ShellCommand",
+            input: { command: "pwd" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-stale",
+            toolName: "ShellCommand",
+            output: {
+              type: "error-text",
+              value: "Tool result missing from interrupted previous turn.",
+            },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "keep going" }],
+      },
+    ]);
     expect(events.map((event) => event.type)).toEqual([
       "ai-sdk-part",
       "ai-sdk-part",

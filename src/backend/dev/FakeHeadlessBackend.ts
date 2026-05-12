@@ -307,6 +307,14 @@ export class HeadlessBackend implements Backend {
     const runId =
       this.activeRunByConversation.get(conversationIdOrAgentId) ??
       this.findActiveRunByAgentId(conversationIdOrAgentId);
+    const run = runId ? this.runs.get(runId) : undefined;
+    if (run?.conversation_id && run.agent_id) {
+      this.store.settleInterruptedToolCalls(run.conversation_id, {
+        agentId: run.agent_id,
+      });
+    } else {
+      this.store.settleInterruptedToolCalls(conversationIdOrAgentId);
+    }
     if (runId) {
       const controller = this.runControllerByRunId.get(runId);
       this.recordRunChunk(runId, {
