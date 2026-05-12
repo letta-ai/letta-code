@@ -12,6 +12,7 @@ import {
   isFileWriteTool,
   isPatchTool,
   isPlanTool,
+  isSearchTool,
   isShellTool,
   isTodoTool,
 } from "./toolNameMapping.js";
@@ -286,6 +287,24 @@ export function formatArgsDisplay(
               display = `${relativePath}, ${otherArgs.join(", ")}`;
             } else {
               display = relativePath;
+            }
+            return { display, parsed };
+          }
+
+          // Search/Grep tools: show "query in path" instead of "query: ..., path: ..."
+          if (isSearchTool(toolName)) {
+            const query = String(parsed.query ?? parsed.pattern ?? "");
+            const path = parsed.path
+              ? String(parsed.path)
+              : parsed.file_path
+                ? String(parsed.file_path)
+                : null;
+            if (query && path) {
+              display = `"${query}" in ${formatDisplayPath(path)}`;
+            } else if (query) {
+              display = `"${query}"`;
+            } else if (path) {
+              display = formatDisplayPath(path);
             }
             return { display, parsed };
           }
