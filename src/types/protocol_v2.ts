@@ -142,6 +142,53 @@ export type ChannelId = string;
 
 export type ChannelPluginConfig = Record<string, unknown>;
 
+// ── Channel config schema (declarative plugin UI) ──
+
+export interface ChannelConfigFieldBase {
+  key: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface ChannelConfigTextField extends ChannelConfigFieldBase {
+  type: "text";
+  default?: string;
+  placeholder?: string;
+}
+
+export interface ChannelConfigSecretField extends ChannelConfigFieldBase {
+  type: "secret";
+  placeholder?: string;
+}
+
+export interface ChannelConfigSelectOption {
+  value: string;
+  label: string;
+}
+
+export interface ChannelConfigSelectField extends ChannelConfigFieldBase {
+  type: "select";
+  options: ChannelConfigSelectOption[];
+  default?: string;
+}
+
+export interface ChannelConfigBooleanField extends ChannelConfigFieldBase {
+  type: "boolean";
+  default?: boolean;
+}
+
+export type ChannelConfigField =
+  | ChannelConfigTextField
+  | ChannelConfigSecretField
+  | ChannelConfigSelectField
+  | ChannelConfigBooleanField;
+
+export interface ChannelConfigSchema {
+  version: 1;
+  fields: ChannelConfigField[];
+}
+
 export interface ChannelSummary {
   channel_id: ChannelId;
   display_name: string;
@@ -152,6 +199,8 @@ export interface ChannelSummary {
   pending_pairings_count: number;
   approved_users_count: number;
   routes_count: number;
+  /** Declarative config schema for dynamic settings UI, or null. */
+  config_schema: ChannelConfigSchema | null;
 }
 
 export interface ChannelConfigSnapshot {

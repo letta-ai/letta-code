@@ -2,7 +2,13 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getChannelDir, getChannelsRoot } from "./config";
-import type { ChannelPlugin, ChannelPluginMetadata } from "./pluginTypes";
+import { CUSTOM_CHANNEL_CONFIG_SCHEMA } from "./custom/plugin";
+import type {
+  ChannelConfigSchema,
+  ChannelPlugin,
+  ChannelPluginMetadata,
+} from "./pluginTypes";
+import { parseChannelConfigSchema } from "./schemaConfig";
 import { FIRST_PARTY_CHANNEL_IDS, type FirstPartyChannelId } from "./types";
 
 type ChannelPluginRegistration = {
@@ -16,6 +22,7 @@ type ChannelManifest = {
   entry: string;
   runtimePackages: string[];
   runtimeModules: string[];
+  configSchema?: ChannelConfigSchema;
 };
 
 const CHANNEL_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
@@ -66,6 +73,21 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       return discordChannelPlugin;
     },
   },
+  custom: {
+    metadata: {
+      id: "custom",
+      displayName: "Custom",
+      runtimePackages: [],
+      runtimeModules: [],
+      source: "first-party",
+      firstParty: true,
+      configSchema: CUSTOM_CHANNEL_CONFIG_SCHEMA,
+    },
+    load: async () => {
+      const { customChannelPlugin } = await import("./custom/plugin");
+      return customChannelPlugin;
+    },
+  },
 };
 
 const loadedUserPlugins = new Map<string, Promise<ChannelPlugin>>();
@@ -104,12 +126,15 @@ function readChannelManifest(channelDir: string): ChannelManifest | null {
       return null;
     }
 
+    const configSchema = parseChannelConfigSchema(parsed.configSchema);
+
     return {
       id,
       displayName,
       entry,
       runtimePackages: readStringArray(parsed.runtimePackages),
       runtimeModules: readStringArray(parsed.runtimeModules),
+      configSchema: configSchema ?? undefined,
     };
   } catch {
     return null;
@@ -132,6 +157,7 @@ function createUserChannelRegistration(
     runtimeModules: manifest.runtimeModules,
     source: "user",
     firstParty: false,
+    configSchema: manifest.configSchema,
   };
 
   return {
