@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { QrCodeTerminalModule } from "./runtime";
 import { loadQrCodeTerminalModule, loadWhatsAppModule } from "./runtime";
 import { setWhatsAppConnectionState } from "./state";
 
@@ -127,6 +128,31 @@ function createSilentLogger() {
   return logger;
 }
 
+export function renderQrTerminal(
+  qrMod: QrCodeTerminalModule | null,
+  input: string,
+): string | undefined {
+  const qrGenerator =
+    typeof qrMod?.generate === "function"
+      ? qrMod
+      : typeof qrMod?.default?.generate === "function"
+        ? qrMod.default
+        : null;
+  if (!qrGenerator) return undefined;
+  const generate = qrGenerator.generate;
+  if (typeof generate !== "function") return undefined;
+
+  let qrTerminal: string | undefined;
+  try {
+    generate.call(qrGenerator, input, { small: true }, (output) => {
+      qrTerminal = output;
+    });
+  } catch {
+    return undefined;
+  }
+  return qrTerminal;
+}
+
 export async function createWhatsAppSocket(params: {
   accountId: string;
   printQr?: boolean;
@@ -200,13 +226,7 @@ export async function createWhatsAppSocket(params: {
     params.onConnectionUpdate?.(update);
     if (update.qr) {
       const qrMod = await loadQrCodeTerminalModule().catch(() => null);
-      const generate = qrMod?.generate ?? qrMod?.default?.generate;
-      let qrTerminal: string | undefined;
-      if (typeof generate === "function") {
-        generate(update.qr, { small: true }, (output) => {
-          qrTerminal = output;
-        });
-      }
+      const qrTerminal = renderQrTerminal(qrMod, update.qr);
       setWhatsAppConnectionState(params.accountId, {
         status: "qr",
         qr: update.qr,

@@ -343,12 +343,17 @@ export function createWhatsAppAdapter(
 
       const timestamp = timestampToMs(msg.messageTimestamp);
       if (isHistory || timestamp < connectedAtMs - 1000) continue;
-      if (rememberSeen(`${remoteJid}:${messageId}`)) continue;
+
+      const group = isGroupJid(remoteJid);
+      const chatId = group
+        ? stripDeviceSuffix(remoteJid)
+        : resolveInboundChatId(remoteJid, selfChat, msg);
+      if (rememberSeen(`${chatId}:${messageId}`)) continue;
 
       const text = extractWhatsAppText(msg.message);
       const attachmentResult = await collectWhatsAppAttachments({
         accountId: account.accountId,
-        chatId: remoteJid,
+        chatId,
         messageId,
         message: msg.message,
         downloadContentFromMessage: downloadContentFromMessage ?? undefined,
@@ -359,10 +364,6 @@ export function createWhatsAppAdapter(
       const body = attachmentResult.transcriptionText || text;
       if (!body.trim() && attachmentResult.attachments.length === 0) continue;
 
-      const group = isGroupJid(remoteJid);
-      const chatId = group
-        ? stripDeviceSuffix(remoteJid)
-        : resolveInboundChatId(remoteJid, selfChat, msg);
       const senderJid = group
         ? (msg.key?.participant ?? msg.key?.senderPn ?? remoteJid)
         : chatId;
