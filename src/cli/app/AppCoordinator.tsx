@@ -1661,6 +1661,15 @@ export default function App({
           isPatchTool(ln.name)
         );
       };
+
+      const shouldSkipDeferral = (ln: Line): boolean => {
+        if (ln.kind !== "tool_call") return false;
+        if (ln.phase !== "finished") return false;
+        // Skip deferral when the result is already available: the component height
+        // has already changed (header + result), so deferring only extends the
+        // live-area repaint window that causes ghost lines in the terminal scrollback.
+        return ln.resultText != null;
+      };
       if (!deferToolCalls && deferredCommits.size > 0) {
         deferredCommits.clear();
         setDeferredCommitAt(null);
@@ -1749,7 +1758,8 @@ export default function App({
           if (
             deferToolCalls &&
             ln.kind === "tool_call" &&
-            (!ln.name || !isTaskTool(ln.name))
+            (!ln.name || !isTaskTool(ln.name)) &&
+            !shouldSkipDeferral(ln)
           ) {
             const commitAt = deferredCommits.get(id);
             if (commitAt === undefined) {
