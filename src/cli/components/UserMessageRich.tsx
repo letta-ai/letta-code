@@ -6,6 +6,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "../../constants";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -226,7 +227,7 @@ export const UserMessage = memo(
   ({ line, prompt }: { line: UserLine; prompt?: string }) => {
     const trackedColumns = useTerminalWidth();
     const columns = getCurrentStdoutColumns() ?? trackedColumns;
-    const promptPrefix = `${prompt || "›"} `;
+    const promptPrefix = `${prompt || CLI_GLYPHS.prompt} `;
     const prefixWidth = inkStringWidth(promptPrefix);
     const continuationPrefix = " ".repeat(prefixWidth);
     const contentWidth = Math.max(1, columns - prefixWidth);

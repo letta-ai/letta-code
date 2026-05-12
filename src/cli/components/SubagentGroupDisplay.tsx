@@ -18,6 +18,7 @@
 import { Box, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
 import { useAnimation } from "../contexts/AnimationContext.js";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import {
   formatStats,
   getSubagentModelDisplay,
@@ -322,7 +323,7 @@ const GroupHeader = memo(
     return (
       <Box flexDirection="row">
         {allCompleted ? (
-          <Text color={dotColor}>•</Text>
+          <Text color={dotColor}>{CLI_GLYPHS.bullet}</Text>
         ) : (
           // BlinkDot now gets shouldAnimate from AnimationContext
           <BlinkDot color={runningDotColor} />

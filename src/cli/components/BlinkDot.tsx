@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { useAnimation } from "../contexts/AnimationContext.js";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
 
@@ -16,7 +17,7 @@ import { Text } from "./Text";
 export const BlinkDot = memo(
   ({
     color = colors.tool.pending,
-    symbol = "•",
+    symbol = CLI_GLYPHS.bullet,
     shouldAnimate: shouldAnimateProp,
   }: {
     color?: string;
