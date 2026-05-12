@@ -50,6 +50,8 @@ type SlackRepliesPageMessage = {
   bot_id?: string;
   ts?: string;
   files?: unknown[];
+  attachments?: unknown[];
+  blocks?: unknown[];
 };
 
 type SlackRepliesPage = {
@@ -68,7 +70,7 @@ function mapSlackThreadMessage(
   message: SlackRepliesPageMessage,
 ): SlackThreadMessage {
   return {
-    text: resolveSlackThreadMessageText(message),
+    text: resolveSlackMessageText(message),
     userId: isNonEmptyString(message.user) ? message.user : undefined,
     botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
     ts: isNonEmptyString(message.ts) ? message.ts : undefined,
@@ -127,16 +129,85 @@ function normalizeSlackAttachmentLike(
   };
 }
 
-function resolveSlackThreadMessageText(
-  message: SlackRepliesPageMessage,
-): string {
-  const text = typeof message.text === "string" ? message.text.trim() : "";
-  if (text) {
-    return text;
+function appendUniqueText(fragments: string[], value: unknown): void {
+  if (typeof value !== "string") {
+    return;
   }
 
-  const files = Array.isArray(message.files)
-    ? message.files
+  const text = value.trim();
+  if (!text || fragments.includes(text)) {
+    return;
+  }
+
+  fragments.push(text);
+}
+
+function collectSlackBlockTextFragments(
+  value: unknown,
+  fragments: string[],
+): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectSlackBlockTextFragments(entry, fragments);
+    }
+    return;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return;
+  }
+
+  appendUniqueText(fragments, record.text);
+  collectSlackBlockTextFragments(record.text, fragments);
+
+  for (const key of ["blocks", "elements", "fields"] as const) {
+    collectSlackBlockTextFragments(record[key], fragments);
+  }
+}
+
+function collectSlackAttachmentTextFragments(
+  attachments: unknown,
+  fragments: string[],
+): void {
+  if (!Array.isArray(attachments)) {
+    return;
+  }
+
+  for (const attachment of attachments) {
+    const record = asRecord(attachment);
+    if (!record) {
+      continue;
+    }
+
+    appendUniqueText(fragments, record.pretext);
+    appendUniqueText(fragments, record.author_name);
+    appendUniqueText(fragments, record.title);
+    appendUniqueText(fragments, record.text);
+    collectSlackBlockTextFragments(record.text, fragments);
+    collectSlackBlockTextFragments(record.blocks, fragments);
+    collectSlackBlockTextFragments(record.fields, fragments);
+    appendUniqueText(fragments, record.fallback);
+  }
+}
+
+export function resolveSlackMessageText(message: unknown): string {
+  const record = asRecord(message);
+  if (!record) {
+    return "";
+  }
+
+  const fragments: string[] = [];
+  appendUniqueText(fragments, record.text);
+  collectSlackBlockTextFragments(record.blocks, fragments);
+  collectSlackAttachmentTextFragments(record.attachments, fragments);
+
+  if (fragments.length > 0) {
+    return fragments.join("\n\n");
+  }
+
+  const files = Array.isArray(record.files)
+    ? record.files
         .map((entry) => normalizeSlackFileLike(entry))
         .filter((entry): entry is SlackFileLike => Boolean(entry))
     : [];
@@ -415,7 +486,7 @@ export async function resolveSlackThreadStarter(params: {
       return null;
     }
 
-    const text = resolveSlackThreadMessageText(message);
+    const text = resolveSlackMessageText(message);
     if (!text) {
       return null;
     }
@@ -458,7 +529,7 @@ export async function resolveSlackThreadHistory(params: {
       })) as SlackRepliesPage;
 
       for (const message of response.messages ?? []) {
-        const text = resolveSlackThreadMessageText(message);
+        const text = resolveSlackMessageText(message);
         if (!text) {
           continue;
         }
@@ -515,7 +586,7 @@ export async function resolveSlackChannelHistory(params: {
           return false;
         }
 
-        return Boolean(resolveSlackThreadMessageText(message));
+        return Boolean(resolveSlackMessageText(message));
       })
       .slice(0, fetchLimit)
       .reverse();

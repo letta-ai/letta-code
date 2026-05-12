@@ -15,6 +15,8 @@ type SlackMessageHandler = (args: {
     hidden?: boolean;
     bot_id?: string;
     files?: Array<{ id?: string; name?: string }>;
+    attachments?: Array<Record<string, unknown>>;
+    blocks?: Array<Record<string, unknown>>;
     message?: Record<string, unknown>;
   };
 }) => Promise<void>;
@@ -34,6 +36,8 @@ type SlackEventHandler = (args: {
     item_user?: string;
     reaction?: string;
     event_ts?: string;
+    attachments?: Array<Record<string, unknown>>;
+    blocks?: Array<Record<string, unknown>>;
   };
 }) => Promise<void>;
 
@@ -164,6 +168,36 @@ const resolveSlackChannelHistoryMock = mock(
   > => [],
 );
 
+function resolveMockSlackMessageText(message: unknown): string {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+
+  const record = message as {
+    text?: unknown;
+    attachments?: Array<Record<string, unknown>>;
+  };
+  const fragments: string[] = [];
+  if (typeof record.text === "string" && record.text.trim()) {
+    fragments.push(record.text.trim());
+  }
+  for (const attachment of record.attachments ?? []) {
+    for (const key of ["title", "text", "fallback"] as const) {
+      const value = attachment[key];
+      if (typeof value === "string" && value.trim()) {
+        const text = value.trim();
+        if (!fragments.includes(text)) {
+          fragments.push(text);
+        }
+      }
+    }
+  }
+
+  return fragments.join("\n\n");
+}
+
+const resolveSlackMessageTextMock = mock(resolveMockSlackMessageText);
+
 mock.module("../../channels/slack/runtime", () => ({
   ensureSlackRuntimeInstalled: async () => false,
   installSlackRuntime: async () => {},
@@ -185,6 +219,7 @@ mock.module("../../channels/slack/runtime", () => ({
 mock.module("../../channels/slack/media", () => ({
   resolveSlackChannelHistory: resolveSlackChannelHistoryMock,
   resolveSlackInboundAttachments: resolveSlackInboundAttachmentsMock,
+  resolveSlackMessageText: resolveSlackMessageTextMock,
   resolveSlackThreadStarter: resolveSlackThreadStarterMock,
   resolveSlackThreadHistory: resolveSlackThreadHistoryMock,
 }));
@@ -221,6 +256,8 @@ beforeEach(() => {
   resolveSlackThreadHistoryMock.mockImplementation(async () => []);
   resolveSlackChannelHistoryMock.mockReset();
   resolveSlackChannelHistoryMock.mockImplementation(async () => []);
+  resolveSlackMessageTextMock.mockReset();
+  resolveSlackMessageTextMock.mockImplementation(resolveMockSlackMessageText);
   fetchMock.mockClear();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -426,6 +463,52 @@ test("slack adapter forwards app mentions as channel input", async () => {
       messageId: "1712800000.000100",
       threadId: "1712790000.000050",
       chatType: "channel",
+      isMention: true,
+    }),
+  );
+});
+
+test("slack adapter includes quoted Slack attachment text in app mentions", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.eventHandlers.get("app_mention");
+  if (!handler) {
+    throw new Error("Expected app_mention handler");
+  }
+
+  await handler({
+    event: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U999>",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+      attachments: [
+        {
+          title: "Forwarded from Amy",
+          text: "Can you ask the agent to look at this failure?",
+        },
+      ],
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      text: "Forwarded from Amy\n\nCan you ask the agent to look at this failure?",
       isMention: true,
     }),
   );

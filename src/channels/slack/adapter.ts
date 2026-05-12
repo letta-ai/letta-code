@@ -18,6 +18,7 @@ import type {
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
+  resolveSlackMessageText,
   resolveSlackThreadHistory,
   resolveSlackThreadStarter,
 } from "./media";
@@ -953,8 +954,9 @@ export function createSlackAdapter(
         return;
       }
 
-      const text = isNonEmptyString(rawMessage.text) ? rawMessage.text : "";
-      const wasMentioned = hasSlackMention(text, botUserId);
+      const rawText = isNonEmptyString(rawMessage.text) ? rawMessage.text : "";
+      const text = resolveSlackMessageText(rawMessage);
+      const wasMentioned = hasSlackMention(rawText, botUserId);
       const attachments = await resolveSlackInboundAttachments({
         accountId: config.accountId,
         token: config.botToken,
@@ -1089,7 +1091,7 @@ export function createSlackAdapter(
         senderId: event.user,
         senderName: await resolveUserName(instance, event.user),
         chatLabel: event.channel,
-        text: normalizeSlackText(event.text ?? ""),
+        text: normalizeSlackText(resolveSlackMessageText(event)),
         timestamp: slackTimestampToMillis(event.ts),
         messageId: event.ts,
         threadId: event.thread_ts ?? event.ts,
