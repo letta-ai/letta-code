@@ -14,6 +14,7 @@ import type {
   TelegramChannelAccount,
 } from "./types";
 import {
+  isCustomChannelAccount,
   isDiscordChannelAccount,
   isFirstPartyChannelId,
   isSlackChannelAccount,
@@ -64,7 +65,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   const next = cloneAccount(account);
-  if (!isFirstPartyChannelId(next.channel)) {
+  // Both the "custom" first-party channel and all user-installed channels use
+  // the generic `config: Record<string, unknown>` shape, so make sure that
+  // field is present and well-formed before downstream code reads it.
+  if (isCustomChannelAccount(next) || !isFirstPartyChannelId(next.channel)) {
     (next as CustomChannelAccount).config = isRecord(
       (next as Partial<CustomChannelAccount>).config,
     )

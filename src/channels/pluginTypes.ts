@@ -16,6 +16,61 @@ export interface ChannelPluginMetadata {
   runtimeModules: string[];
   source?: "first-party" | "user";
   firstParty?: boolean;
+  /**
+   * Optional declarative description of the plugin's account-config fields.
+   * When present, clients can render a dynamic settings form instead of
+   * relying on free-form JSON textareas. Surfaced to clients via
+   * `channels_list_response.channels[*].config_schema`.
+   */
+  configSchema?: ChannelConfigSchema;
+}
+
+export type ChannelConfigFieldType = "text" | "secret" | "select" | "boolean";
+
+export interface ChannelConfigFieldBase {
+  /** Snake-case key used in the plugin's stored config payload. */
+  key: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface ChannelConfigTextField extends ChannelConfigFieldBase {
+  type: "text";
+  default?: string;
+  placeholder?: string;
+}
+
+export interface ChannelConfigSecretField extends ChannelConfigFieldBase {
+  type: "secret";
+  placeholder?: string;
+}
+
+export interface ChannelConfigSelectOption {
+  value: string;
+  label: string;
+}
+
+export interface ChannelConfigSelectField extends ChannelConfigFieldBase {
+  type: "select";
+  options: ChannelConfigSelectOption[];
+  default?: string;
+}
+
+export interface ChannelConfigBooleanField extends ChannelConfigFieldBase {
+  type: "boolean";
+  default?: boolean;
+}
+
+export type ChannelConfigField =
+  | ChannelConfigTextField
+  | ChannelConfigSecretField
+  | ChannelConfigSelectField
+  | ChannelConfigBooleanField;
+
+export interface ChannelConfigSchema {
+  version: 1;
+  fields: ChannelConfigField[];
 }
 
 export type ChannelProtocolConfig = Record<string, unknown>;
