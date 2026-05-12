@@ -122,6 +122,9 @@ mock.module("../../channels/telegram/runtime", () => ({
 const { createTelegramAdapter } = await import(
   "../../channels/telegram/adapter"
 );
+const { MAX_TELEGRAM_DOWNLOAD_BYTES } = await import(
+  "../../channels/telegram/media"
+);
 
 const telegramAccountDefaults = {
   accountId: "telegram-test-account",
@@ -135,7 +138,9 @@ const telegramAccountDefaults = {
 } as const;
 
 const consoleErrorSpy = mock(() => {});
+const consoleWarnSpy = mock(() => {});
 const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
 const originalFetch = globalThis.fetch;
 const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
 
@@ -155,7 +160,9 @@ beforeEach(() => {
     file_path: `photos/${fileId}.jpg`,
   });
   consoleErrorSpy.mockClear();
+  consoleWarnSpy.mockClear();
   console.error = consoleErrorSpy as typeof console.error;
+  console.warn = consoleWarnSpy as typeof console.warn;
   globalThis.fetch = originalFetch;
   delete process.env.OPENAI_API_KEY;
 });
@@ -163,6 +170,7 @@ beforeEach(() => {
 afterEach(() => {
   __testOverrideChannelsRoot(null);
   console.error = originalConsoleError;
+  console.warn = originalConsoleWarn;
   globalThis.fetch = originalFetch;
   if (originalOpenAiApiKey === undefined) {
     delete process.env.OPENAI_API_KEY;
@@ -874,6 +882,171 @@ test("telegram adapter preserves photo mime type when Telegram download responds
     rmSync(channelRoot, { recursive: true, force: true });
     channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
   }
+});
+
+test("telegram adapter downloads inbound wav documents as audio", async () => {
+  const wavBytes = Buffer.from("wav-bytes");
+  globalThis.fetch = mock(
+    async () =>
+      new Response(wavBytes, {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      }),
+  ) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "documents/clip",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  try {
+    await bot?.emit("message", {
+      message: {
+        chat: { id: 123 },
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        date: 1_736_380_800,
+        message_id: 10,
+        document: {
+          file_id: "wav1",
+          file_name: "clip.wav",
+          file_size: wavBytes.byteLength,
+        },
+      },
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const firstCall = onMessage.mock.calls[0] as unknown as
+      | [InboundChannelMessage]
+      | undefined;
+    expect(firstCall).toBeDefined();
+    if (!firstCall) {
+      throw new Error("Expected inbound Telegram WAV to emit a message");
+    }
+
+    const [inbound] = firstCall;
+    expect(inbound.attachments).toHaveLength(1);
+    const attachment = inbound.attachments?.[0];
+    expect(attachment).toMatchObject({
+      kind: "audio",
+      name: "clip.wav",
+      mimeType: "audio/wav",
+      sizeBytes: wavBytes.byteLength,
+    });
+    expect(attachment?.localPath).toBeDefined();
+    if (!attachment?.localPath) {
+      throw new Error("Expected inbound Telegram WAV to be saved locally");
+    }
+    expect(readFileSync(attachment.localPath)).toEqual(wavBytes);
+  } finally {
+    rmSync(channelRoot, { recursive: true, force: true });
+    channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
+  }
+});
+
+test("telegram adapter logs when oversized inbound attachments are skipped", async () => {
+  globalThis.fetch = mock(async () => {
+    throw new Error("oversized attachment should not be downloaded");
+  }) as unknown as typeof fetch;
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  const oversizedBytes = MAX_TELEGRAM_DOWNLOAD_BYTES + 1;
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123 },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Oversized attachment",
+      date: 1_736_380_800,
+      message_id: 10,
+      document: {
+        file_id: "too-big",
+        file_name: "too-big.wav",
+        file_size: oversizedBytes,
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ attachments: undefined }),
+  );
+  expect(bot?.api.getFile).not.toHaveBeenCalled();
+  expect(consoleWarnSpy).toHaveBeenCalledWith(
+    `[Telegram] Skipping attachment too-big.wav: ${oversizedBytes} bytes exceeds public Bot API download limit (${MAX_TELEGRAM_DOWNLOAD_BYTES} bytes).`,
+  );
+});
+
+test("telegram adapter logs attachment download failures", async () => {
+  globalThis.fetch = mock(async () => {
+    throw new Error("network down");
+  }) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "documents/fail.wav",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123 },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Download this",
+      date: 1_736_380_800,
+      message_id: 10,
+      document: {
+        file_id: "fail",
+        file_name: "fail.wav",
+        file_size: 9,
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ attachments: undefined }),
+  );
+  expect(consoleWarnSpy).toHaveBeenCalledWith(
+    "[Telegram] Attachment download failed for fail.wav: network down",
+  );
 });
 
 test("telegram adapter sends typing chat action while a turn is processing", async () => {
