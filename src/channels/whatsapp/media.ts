@@ -165,9 +165,17 @@ function extensionFromMime(mimeType?: string): string {
 
 async function streamToBuffer(
   stream: AsyncIterable<Uint8Array>,
-): Promise<Buffer> {
+  maxBytes: number,
+): Promise<Buffer | null> {
   const chunks: Uint8Array[] = [];
-  for await (const chunk of stream) chunks.push(chunk);
+  let totalBytes = 0;
+  for await (const chunk of stream) {
+    totalBytes += chunk.byteLength;
+    if (totalBytes > maxBytes) {
+      return null;
+    }
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks);
 }
 
@@ -238,7 +246,10 @@ export async function collectWhatsAppAttachments(params: {
     candidate.mediaMessage,
     candidate.mediaKind,
   );
-  const buffer = await streamToBuffer(stream);
+  const buffer = await streamToBuffer(stream, maxBytes);
+  if (!buffer) {
+    return { attachments: [attachment] };
+  }
   await writeFile(localPath, buffer);
   attachment.localPath = localPath;
 

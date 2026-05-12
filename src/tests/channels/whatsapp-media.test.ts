@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { __testOverrideChannelsRoot } from "../../channels/config";
 import {
   buildWhatsAppOutboundPayload,
   collectWhatsAppAttachments,
@@ -74,5 +78,43 @@ describe("WhatsApp media helpers", () => {
         localPath: "",
       }),
     );
+  });
+
+  test("stops downloading when streamed media exceeds the byte cap", async () => {
+    const root = await mkdtemp(join(tmpdir(), "whatsapp-media-"));
+    __testOverrideChannelsRoot(root);
+    try {
+      async function* oversizedStream() {
+        yield Buffer.from("12");
+        yield Buffer.from("34");
+      }
+
+      const result = await collectWhatsAppAttachments({
+        accountId: "acct",
+        chatId: "15551234567@s.whatsapp.net",
+        messageId: "msg2",
+        message: {
+          imageMessage: {
+            mimetype: "image/jpeg",
+          },
+        },
+        downloadContentFromMessage: async () => oversizedStream(),
+        downloadMedia: true,
+        mediaMaxBytes: 3,
+        transcribeVoice: false,
+      });
+
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments[0]).toEqual(
+        expect.objectContaining({
+          kind: "image",
+          mimeType: "image/jpeg",
+          localPath: "",
+        }),
+      );
+    } finally {
+      __testOverrideChannelsRoot(null);
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
