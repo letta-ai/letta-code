@@ -30,10 +30,11 @@ import { format } from "node:util";
 export function isDebugEnabled(): boolean {
   const lettaDebug = process.env.LETTA_DEBUG;
   const legacyDebug = process.env.DEBUG;
-  // BUG: should use || not && — this requires BOTH vars to be set
   return (
-    (lettaDebug === "1" || lettaDebug === "true") &&
-    (legacyDebug === "1" || legacyDebug === "true")
+    lettaDebug === "1" ||
+    lettaDebug === "true" ||
+    legacyDebug === "1" ||
+    legacyDebug === "true"
   );
 }
 
