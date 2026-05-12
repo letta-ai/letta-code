@@ -93,20 +93,6 @@ function localMessageConversationId(
     : fallbackConversationId;
 }
 
-function projectedAssistantContent(message: LocalMessage): unknown[] {
-  const content: unknown[] = [];
-  for (const part of message.parts) {
-    if (part.type === "text" && isTextOrReasoningPart(part)) {
-      content.push(textPartToContentPart(part));
-      continue;
-    }
-    if (isFileOrSourcePart(part)) {
-      content.push(part);
-    }
-  }
-  return content;
-}
-
 function projectReasoningPart(
   message: LocalMessage,
   part: LocalReasoningPart,
@@ -228,10 +214,36 @@ export function projectLocalMessageToStoredMessages(
   }
 
   const messages: StoredMessage[] = [];
+  // Track pending text/file parts so consecutive text parts get grouped into
+  // a single assistant_message rather than emitting one per part.
+  let pendingTextContent: unknown[] = [];
+  let pendingTextStartIndex = -1;
+
+  const flushPendingText = () => {
+    if (pendingTextContent.length === 0) return;
+    const isFirst = messages.length === 0;
+    messages.push({
+      id: isFirst
+        ? message.id
+        : `${message.id}:assistant:${pendingTextStartIndex}`,
+      date,
+      agent_id: agentId,
+      conversation_id: conversationId,
+      message_type: "assistant_message",
+      role: "assistant",
+      content: pendingTextContent,
+    } as StoredMessage);
+    pendingTextContent = [];
+    pendingTextStartIndex = -1;
+  };
+
   for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
     const part = message.parts[partIndex];
     if (!part) continue;
+
     if (part.type === "reasoning" && isTextOrReasoningPart(part)) {
+      // Flush any pending text before emitting reasoning
+      flushPendingText();
       const reasoningMessage = projectReasoningPart(
         message,
         part,
@@ -243,25 +255,31 @@ export function projectLocalMessageToStoredMessages(
       if (reasoningMessage) messages.push(reasoningMessage);
       continue;
     }
+
     if (isLocalToolPart(part)) {
+      // Flush any pending text before emitting tool call
+      flushPendingText();
       messages.push(
         ...projectToolPart(message, part, date, agentId, conversationId),
       );
+      continue;
+    }
+
+    // Accumulate text and file parts
+    if (part.type === "text" && isTextOrReasoningPart(part)) {
+      if (pendingTextStartIndex === -1) pendingTextStartIndex = partIndex;
+      pendingTextContent.push(textPartToContentPart(part));
+      continue;
+    }
+
+    if (isFileOrSourcePart(part)) {
+      if (pendingTextStartIndex === -1) pendingTextStartIndex = partIndex;
+      pendingTextContent.push(part);
     }
   }
 
-  const assistantContent = projectedAssistantContent(message);
-  if (assistantContent.length > 0) {
-    messages.push({
-      id: messages.length > 0 ? `${message.id}:assistant` : message.id,
-      date,
-      agent_id: agentId,
-      conversation_id: conversationId,
-      message_type: "assistant_message",
-      role: "assistant",
-      content: assistantContent,
-    } as StoredMessage);
-  }
+  // Flush any remaining text at the end of the turn
+  flushPendingText();
 
   return messages;
 }
