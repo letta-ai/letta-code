@@ -39,7 +39,7 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
     return (
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
-          <Text color={colors.tool.completed}>●</Text>
+          <Text color={colors.tool.completed}>•</Text>
         </Box>
         <Box flexGrow={1} width={rightWidth}>
           <Text bold>{summary}</Text>
@@ -68,7 +68,7 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
   const dotElement = isRunning ? (
     <BlinkDot color={colors.tool.running} />
   ) : (
-    <Text color={colors.tool.completed}>●</Text>
+    <Text color={colors.tool.completed}>•</Text>
   );
 
   // Format the args display (message count or fallback)

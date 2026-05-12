@@ -16,7 +16,7 @@ import { Text } from "./Text";
 export const BlinkDot = memo(
   ({
     color = colors.tool.pending,
-    symbol = "●",
+    symbol = "•",
     shouldAnimate: shouldAnimateProp,
   }: {
     color?: string;

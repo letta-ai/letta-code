@@ -42,7 +42,7 @@ export const AssistantMessage = memo(({ line }: { line: AssistantLine }) => {
   return (
     <Box flexDirection="row">
       <Box width={2} flexShrink={0}>
-        <Text>{line.isContinuation ? " " : "●"}</Text>
+        <Text>{line.isContinuation ? " " : "•"}</Text>
       </Box>
       <Box flexGrow={1} width={contentWidth}>
         <MarkdownDisplay text={normalizedText} hangingIndent={0} />

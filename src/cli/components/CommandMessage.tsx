@@ -25,7 +25,7 @@ type CommandLine = {
  * - Two-column layout with left gutter (2 chars) and right content area
  * - Proper terminal width calculation and wrapping
  * - Markdown rendering for output
- * - Consistent symbols (● for command, ⎿ for result)
+ * - Consistent symbols (• for command, ⎿ for result)
  */
 export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
   const columns = useTerminalWidth();
@@ -39,14 +39,14 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
     if (!line.phase || line.phase === "finished") {
       // Show red dot for failed commands, green for successful
       if (line.success === false) {
-        return <Text color={colors.command.error}>●</Text>;
+        return <Text color={colors.command.error}>•</Text>;
       }
-      return <Text color={colors.tool.completed}>●</Text>;
+      return <Text color={colors.tool.completed}>•</Text>;
     }
     if (line.phase === "running") {
       return <BlinkDot color={colors.command.running} />;
     }
-    return <Text>●</Text>;
+    return <Text>•</Text>;
   };
 
   return (

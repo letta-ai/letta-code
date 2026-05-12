@@ -190,7 +190,7 @@ export const SubagentGroupStatic = memo(
       <Box flexDirection="column">
         {/* Header */}
         <Box flexDirection="row">
-          <Text color={dotColor}>●</Text>
+          <Text color={dotColor}>•</Text>
           <Text>
             {" "}
             {label} <Text bold>{agents.length}</Text> {suffix}

@@ -59,7 +59,7 @@ export const StatusMessage = memo(({ line }: { line: StatusLine }) => {
         // biome-ignore lint/suspicious/noArrayIndexKey: Static status lines never reorder
         <Box key={idx} flexDirection="row">
           <Box width={2} flexShrink={0}>
-            <Text dimColor>{idx === 0 ? "●" : " "}</Text>
+            <Text dimColor>{idx === 0 ? "•" : " "}</Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
             <Text>{renderColoredText(text)}</Text>

@@ -895,7 +895,7 @@ const StreamingStatus = memo(function StreamingStatus({
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
           <Text color={colors.status.processing}>
-            {animate ? <Spinner type="layer" /> : "●"}
+            {animate ? <Spinner type="layer" /> : "•"}
           </Text>
         </Box>
         <Box width={statusContentWidth} flexShrink={0} flexDirection="row">

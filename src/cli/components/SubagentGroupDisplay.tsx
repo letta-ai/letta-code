@@ -322,7 +322,7 @@ const GroupHeader = memo(
     return (
       <Box flexDirection="row">
         {allCompleted ? (
-          <Text color={dotColor}>●</Text>
+          <Text color={dotColor}>•</Text>
         ) : (
           // BlinkDot now gets shouldAnimate from AnimationContext
           <BlinkDot color={runningDotColor} />
