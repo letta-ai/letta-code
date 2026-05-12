@@ -39,7 +39,7 @@ export interface StatusLineConfig {
   debounceMs?: number; // Debounce for event-driven refreshes (default 300)
   refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
   disabled?: boolean; // Disable at this level
-  prompt?: string; // Custom input prompt character (default ">")
+  prompt?: string; // Custom input prompt character (default "›")
 }
 
 /**

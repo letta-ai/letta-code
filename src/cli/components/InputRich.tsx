@@ -31,6 +31,7 @@ import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { buildChatUrl } from "../helpers/appUrls.js";
 import { bytesToTokens, formatCompact } from "../helpers/format";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
   getActiveBackgroundAgents,
@@ -895,7 +896,7 @@ const StreamingStatus = memo(function StreamingStatus({
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
           <Text color={colors.status.processing}>
-            {animate ? <Spinner type="layer" /> : "●"}
+            {animate ? <Spinner type="layer" /> : CLI_GLYPHS.bullet}
           </Text>
         </Box>
         <Box width={statusContentWidth} flexShrink={0} flexDirection="row">

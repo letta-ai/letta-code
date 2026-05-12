@@ -1,5 +1,6 @@
 import { Box } from "ink";
 import { memo } from "react";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -59,7 +60,7 @@ export const StatusMessage = memo(({ line }: { line: StatusLine }) => {
         // biome-ignore lint/suspicious/noArrayIndexKey: Static status lines never reorder
         <Box key={idx} flexDirection="row">
           <Box width={2} flexShrink={0}>
-            <Text dimColor>{idx === 0 ? "●" : " "}</Text>
+            <Text dimColor>{idx === 0 ? CLI_GLYPHS.bullet : " "}</Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
             <Text>{renderColoredText(text)}</Text>

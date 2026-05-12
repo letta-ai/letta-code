@@ -6,6 +6,7 @@
 // - Optional polling when refreshIntervalMs is configured
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import {
   type NormalizedStatusLineConfig,
   resolvePromptChar,
@@ -132,7 +133,7 @@ export function useConfigurableStatusLine(
   const [executing, setExecuting] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [padding, setPadding] = useState(0);
-  const [prompt, setPrompt] = useState(">");
+  const [prompt, setPrompt] = useState<string>(CLI_GLYPHS.prompt);
 
   const inputsRef = useRef(inputs);
   const configRef = useRef<NormalizedStatusLineConfig | null>(null);
