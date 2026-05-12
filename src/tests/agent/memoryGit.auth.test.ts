@@ -321,6 +321,29 @@ describe("git auth hardening", () => {
     expect(args.join("\n")).toContain("http.extraHeader=Authorization: Basic");
   });
 
+  test("does NOT add Pierre routing header when LETTA_MEMFS_BACKEND is unset", () => {
+    const args = buildGitAuthArgs("token-123", { PATH: "/usr/bin" });
+    expect(args.join("\n")).not.toContain("x-letta-memfs-backend");
+  });
+
+  test("adds Pierre routing header when LETTA_MEMFS_BACKEND=pierre", () => {
+    const args = buildGitAuthArgs("token-123", {
+      LETTA_MEMFS_BACKEND: "pierre",
+    });
+    expect(args.join("\n")).toContain(
+      "http.extraHeader=x-letta-memfs-backend: pierre",
+    );
+  });
+
+  test("does NOT add Pierre routing header for other LETTA_MEMFS_BACKEND values", () => {
+    for (const value of ["memfs-py", "dual", "PIERRE", ""]) {
+      const args = buildGitAuthArgs("token-123", {
+        LETTA_MEMFS_BACKEND: value,
+      });
+      expect(args.join("\n")).not.toContain("x-letta-memfs-backend");
+    }
+  });
+
   test("git env disables terminal and Git Credential Manager prompts", () => {
     const env = buildNonInteractiveGitEnv({ PATH: "/usr/bin" });
 
