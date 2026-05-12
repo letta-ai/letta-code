@@ -12,7 +12,9 @@ import type { CustomChannelAccount } from "../types";
  *   agent_id       — agent this app is bound to
  *   accounts_json  — user-supplied JSON describing accounts on the remote service
  *   configs_json   — user-supplied JSON of arbitrary configuration values
- *   metadata_json  — user-supplied JSON scratchpad (notes, secret-manager refs, etc.)
+ *   metadata_json  — user-supplied JSON of additional plugin configuration
+ *                    (anything that doesn't fit accounts_json / configs_json);
+ *                    plugins are free to read and interpret this however they want
  *
  * Tokens never round-trip back to the client; snapshots only expose
  * `has_bot_token` / `has_auth` boolean flags.
