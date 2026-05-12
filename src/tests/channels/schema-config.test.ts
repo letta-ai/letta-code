@@ -318,6 +318,14 @@ describe("validateConfigAgainstSchema", () => {
   });
 });
 
+// Reserved JSON-bucket keys that redactConfigForSnapshot always emits,
+// regardless of whether the schema declares them.
+const RESERVED_BASE = {
+  accounts_json: "",
+  configs_json: "",
+  metadata_json: "",
+};
+
 describe("redactConfigForSnapshot", () => {
   test("redacts secret fields to has_<key> booleans", () => {
     const result = redactConfigForSnapshot(SIMPLE_SCHEMA, {
@@ -327,6 +335,7 @@ describe("redactConfigForSnapshot", () => {
       debug: true,
     });
     expect(result).toEqual({
+      ...RESERVED_BASE,
       url: "https://example.com",
       has_api_key: true,
       mode: "fast",
@@ -342,6 +351,7 @@ describe("redactConfigForSnapshot", () => {
       debug: false,
     });
     expect(result).toEqual({
+      ...RESERVED_BASE,
       url: "https://example.com",
       has_api_key: false,
       mode: "slow",
@@ -354,6 +364,7 @@ describe("redactConfigForSnapshot", () => {
       url: "https://example.com",
     });
     expect(result).toEqual({
+      ...RESERVED_BASE,
       url: "https://example.com",
       has_api_key: false,
       mode: "fast", // default
@@ -367,7 +378,7 @@ describe("redactConfigForSnapshot", () => {
       fields: [{ type: "text", key: "name", label: "Name" }],
     };
     const result = redactConfigForSnapshot(schema, {});
-    expect(result).toEqual({ name: "" });
+    expect(result).toEqual({ ...RESERVED_BASE, name: "" });
   });
 
   test("uses schema default for boolean when no stored value", () => {
@@ -376,7 +387,7 @@ describe("redactConfigForSnapshot", () => {
       fields: [{ type: "boolean", key: "flag", label: "Flag", default: true }],
     };
     const result = redactConfigForSnapshot(schema, {});
-    expect(result).toEqual({ flag: true });
+    expect(result).toEqual({ ...RESERVED_BASE, flag: true });
   });
 
   test("omits undeclared stored keys", () => {
@@ -388,7 +399,7 @@ describe("redactConfigForSnapshot", () => {
       name: "hello",
       secret_backdoor: "oops",
     });
-    expect(result).toEqual({ name: "hello" });
+    expect(result).toEqual({ ...RESERVED_BASE, name: "hello" });
   });
 });
 
@@ -777,7 +788,7 @@ describe("redactConfigForSnapshot > new field types", () => {
       ],
     };
     const result = redactConfigForSnapshot(schema, { a: 42 });
-    expect(result).toEqual({ a: 42, b: 7, c: 0 });
+    expect(result).toEqual({ ...RESERVED_BASE, a: 42, b: 7, c: 0 });
   });
 
   test("string-array falls through to stored, default, then []", () => {
@@ -790,7 +801,12 @@ describe("redactConfigForSnapshot > new field types", () => {
       ],
     };
     const result = redactConfigForSnapshot(schema, { a: ["x", "y"] });
-    expect(result).toEqual({ a: ["x", "y"], b: ["en"], c: [] });
+    expect(result).toEqual({
+      ...RESERVED_BASE,
+      a: ["x", "y"],
+      b: ["en"],
+      c: [],
+    });
   });
 
   test("string-array ignores stored value with non-string members", () => {
@@ -801,7 +817,7 @@ describe("redactConfigForSnapshot > new field types", () => {
       ],
     };
     const result = redactConfigForSnapshot(schema, { a: ["x", 1] });
-    expect(result).toEqual({ a: ["fallback"] });
+    expect(result).toEqual({ ...RESERVED_BASE, a: ["fallback"] });
   });
 
   test("key-value-map filters stored entries by valueType", () => {
@@ -819,7 +835,7 @@ describe("redactConfigForSnapshot > new field types", () => {
     const result = redactConfigForSnapshot(schema, {
       tiers: { good: 1, bad: "two", nan: Number.NaN, ok: 3 },
     });
-    expect(result).toEqual({ tiers: { good: 1, ok: 3 } });
+    expect(result).toEqual({ ...RESERVED_BASE, tiers: { good: 1, ok: 3 } });
   });
 
   test("key-value-map falls through to default then {}", () => {
@@ -842,7 +858,7 @@ describe("redactConfigForSnapshot > new field types", () => {
       ],
     };
     const result = redactConfigForSnapshot(schema, {});
-    expect(result).toEqual({ a: {}, b: { x: "1" } });
+    expect(result).toEqual({ ...RESERVED_BASE, a: {}, b: { x: "1" } });
   });
 });
 
@@ -969,6 +985,7 @@ describe("bluesky-shape schema (integration)", () => {
     const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON)!;
     const snapshot = redactConfigForSnapshot(parsed, {});
     expect(snapshot).toEqual({
+      ...RESERVED_BASE,
       identifier: "",
       has_password: false,
       pds: "https://bsky.social",
