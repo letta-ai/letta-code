@@ -25,7 +25,14 @@ export interface ChannelPluginMetadata {
   configSchema?: ChannelConfigSchema;
 }
 
-export type ChannelConfigFieldType = "text" | "secret" | "select" | "boolean";
+export type ChannelConfigFieldType =
+  | "text"
+  | "secret"
+  | "select"
+  | "boolean"
+  | "number"
+  | "string-array"
+  | "key-value-map";
 
 export interface ChannelConfigFieldBase {
   /** Snake-case key used in the plugin's stored config payload. */
@@ -33,6 +40,13 @@ export interface ChannelConfigFieldBase {
   label: string;
   description?: string;
   required?: boolean;
+  /**
+   * Advisory UI hint: when true the dialog renders a "restart required"
+   * chip near the field. Does not yet enforce restart semantics — that's
+   * future work. Plugins should still document which fields they hot-read
+   * vs. read once at startup.
+   */
+  restartRequired?: boolean;
 }
 
 export interface ChannelConfigTextField extends ChannelConfigFieldBase {
@@ -62,11 +76,47 @@ export interface ChannelConfigBooleanField extends ChannelConfigFieldBase {
   default?: boolean;
 }
 
+export interface ChannelConfigNumberField extends ChannelConfigFieldBase {
+  type: "number";
+  default?: number;
+  /** Inclusive lower bound (validated server-side + UI-rendered). */
+  min?: number;
+  /** Inclusive upper bound. */
+  max?: number;
+  /** Step granularity for the UI input (e.g. 0.05). */
+  step?: number;
+  /** Trailing adornment text rendered after the input (e.g. "ms", "%"). */
+  suffix?: string;
+  placeholder?: string;
+}
+
+export interface ChannelConfigStringArrayField extends ChannelConfigFieldBase {
+  type: "string-array";
+  default?: string[];
+  /** Placeholder shown inside each row's input. */
+  placeholder?: string;
+}
+
+export interface ChannelConfigKeyValueMapField extends ChannelConfigFieldBase {
+  type: "key-value-map";
+  /** Whether row values are typed strings or numbers. */
+  valueType: "string" | "number";
+  default?: Record<string, string | number>;
+  /** Column-header labels for the key/value columns. */
+  keyLabel?: string;
+  valueLabel?: string;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+}
+
 export type ChannelConfigField =
   | ChannelConfigTextField
   | ChannelConfigSecretField
   | ChannelConfigSelectField
-  | ChannelConfigBooleanField;
+  | ChannelConfigBooleanField
+  | ChannelConfigNumberField
+  | ChannelConfigStringArrayField
+  | ChannelConfigKeyValueMapField;
 
 export interface ChannelConfigSchema {
   version: 1;
