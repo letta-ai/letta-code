@@ -47,6 +47,16 @@ export interface ChannelConfigFieldBase {
    * vs. read once at startup.
    */
   restartRequired?: boolean;
+  /**
+   * Where this field lives in the storage model:
+   *   - 'app' (default): stored on the app's plugin config, shared across
+   *     all accounts. Rendered in the App settings tab.
+   *   - 'account': stored on each individual account (e.g. credentials,
+   *     per-handle identifiers). Rendered in the Accounts tab. The App
+   *     settings form omits these fields entirely.
+   * If unspecified, treat as 'app' to preserve backwards compatibility.
+   */
+  scope?: "app" | "account";
 }
 
 export interface ChannelConfigTextField extends ChannelConfigFieldBase {

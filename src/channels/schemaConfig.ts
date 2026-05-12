@@ -85,6 +85,13 @@ function parseField(value: unknown): ChannelConfigField | null {
   ) {
     return null;
   }
+  if (
+    value.scope !== undefined &&
+    value.scope !== "app" &&
+    value.scope !== "account"
+  ) {
+    return null;
+  }
 
   const base = {
     key: value.key,
@@ -96,6 +103,9 @@ function parseField(value: unknown): ChannelConfigField | null {
       typeof value.restartRequired === "boolean"
         ? value.restartRequired
         : undefined,
+    scope: (value.scope === "app" || value.scope === "account"
+      ? value.scope
+      : undefined) as "app" | "account" | undefined,
   };
 
   if (type === "text") {
