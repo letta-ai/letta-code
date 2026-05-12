@@ -79,7 +79,7 @@ describe("discord channel service", () => {
     if (created.channelId !== "discord") throw new Error("wrong channel");
     expect(created.hasToken).toBe(true);
     expect(created.agentId).toBeNull();
-    expect(created.defaultPermissionMode).toBe("default");
+    expect(created.defaultPermissionMode).toBe("standard");
 
     const updated = updateChannelAccountLive("discord", "discord-bot", {
       displayName: "My Bot",
@@ -123,8 +123,8 @@ describe("discord channel service", () => {
 
     expect(snapshot.hasToken).toBe(true);
     expect(snapshot.dmPolicy).toBe("pairing");
-    expect(snapshot.defaultPermissionMode).toBe("default");
-    expect(snapshot.config.default_permission_mode).toBe("default");
+    expect(snapshot.defaultPermissionMode).toBe("standard");
+    expect(snapshot.config.default_permission_mode).toBe("standard");
 
     // Should NOT have Slack-specific fields
     expect((snapshot as Record<string, unknown>).mode).toBeUndefined();
@@ -184,20 +184,20 @@ describe("discord channel service", () => {
     expect(created.allowedChannels).toEqual(["channel-1", "channel-2"]);
 
     const updated = updateChannelAccountLive("discord", "discord-bot", {
-      defaultPermissionMode: "bypassPermissions",
+      defaultPermissionMode: "unrestricted",
       allowedChannels: ["channel-3"],
     });
 
     if (updated.channelId !== "discord") throw new Error("wrong channel");
-    expect(updated.defaultPermissionMode).toBe("bypassPermissions");
-    expect(updated.config.default_permission_mode).toBe("bypassPermissions");
+    expect(updated.defaultPermissionMode).toBe("unrestricted");
+    expect(updated.config.default_permission_mode).toBe("unrestricted");
     expect(updated.allowedChannels).toEqual(["channel-3"]);
 
     const config = getChannelConfigSnapshot("discord", "discord-bot");
     if (!config || config.channelId !== "discord")
       throw new Error("wrong channel");
-    expect(config.defaultPermissionMode).toBe("bypassPermissions");
-    expect(config.config.default_permission_mode).toBe("bypassPermissions");
+    expect(config.defaultPermissionMode).toBe("unrestricted");
+    expect(config.config.default_permission_mode).toBe("unrestricted");
     expect(config.allowedChannels).toEqual(["channel-3"]);
   });
 
@@ -211,7 +211,7 @@ describe("discord channel service", () => {
     expect(created.channelId).toBe("discord");
     if (created.channelId !== "discord") throw new Error("wrong channel");
     expect(created.dmPolicy).toBe("pairing");
-    expect(created.defaultPermissionMode).toBe("default");
+    expect(created.defaultPermissionMode).toBe("standard");
   });
 
   test("placeholder display names are scrubbed", () => {
@@ -224,7 +224,7 @@ describe("discord channel service", () => {
         enabled: false,
         token: "test-token",
         agentId: null,
-        defaultPermissionMode: "default",
+        defaultPermissionMode: "standard",
         dmPolicy: "pairing",
         allowedUsers: [],
         createdAt: "2026-04-11T00:00:00.000Z",

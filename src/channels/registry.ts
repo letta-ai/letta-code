@@ -1099,7 +1099,7 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "default") {
+    if (config.defaultPermissionMode !== "standard") {
       this.eventHandler?.({
         type: "discord_conversation_created",
         channelId: "discord",

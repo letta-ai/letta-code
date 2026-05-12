@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { migratePermissionMode } from "../permissions/mode";
 import type {
   ChannelConfig,
   ChannelDefaultPermissionMode,
@@ -165,9 +166,13 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
 function parseDefaultPermissionMode(
   value: unknown,
 ): ChannelDefaultPermissionMode {
-  return value === "acceptEdits" || value === "bypassPermissions"
-    ? value
-    : "default";
+  if (typeof value !== "string") return "standard";
+  const migrated = migratePermissionMode(value);
+  return migrated === "standard" ||
+    migrated === "acceptEdits" ||
+    migrated === "unrestricted"
+    ? migrated
+    : "standard";
 }
 
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {

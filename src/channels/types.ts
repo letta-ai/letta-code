@@ -7,6 +7,8 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+import type { PermissionMode } from "../permissions/mode";
+
 export const FIRST_PARTY_CHANNEL_IDS = [
   "telegram",
   "slack",
@@ -20,10 +22,10 @@ export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 export const SUPPORTED_CHANNEL_IDS = FIRST_PARTY_CHANNEL_IDS;
 export type SupportedChannelId = string;
 export type ChannelChatType = "direct" | "channel";
-export type ChannelDefaultPermissionMode =
-  | "default"
-  | "acceptEdits"
-  | "bypassPermissions";
+export type ChannelDefaultPermissionMode = Extract<
+  PermissionMode,
+  "standard" | "acceptEdits" | "unrestricted"
+>;
 export type SlackDefaultPermissionMode = ChannelDefaultPermissionMode;
 export type DiscordDefaultPermissionMode = ChannelDefaultPermissionMode;
 

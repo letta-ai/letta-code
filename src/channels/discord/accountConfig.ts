@@ -1,3 +1,4 @@
+import { migratePermissionMode } from "../../permissions/mode";
 import type { ChannelAccountConfigAdapter } from "../pluginTypes";
 import type {
   ChannelDefaultPermissionMode,
@@ -29,9 +30,12 @@ function isDefaultPermissionMode(
   value: unknown,
 ): value is ChannelDefaultPermissionMode {
   return (
-    value === "default" ||
+    value === "standard" ||
     value === "acceptEdits" ||
-    value === "bypassPermissions"
+    value === "unrestricted" ||
+    value === "default" || // legacy → "standard"
+    value === "bypassPermissions" || // legacy → "unrestricted"
+    value === "fullAccess" // legacy → "unrestricted"
   );
 }
 
@@ -62,7 +66,9 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         defaultPermissionMode: isDefaultPermissionMode(
           config.default_permission_mode,
         )
-          ? config.default_permission_mode
+          ? (migratePermissionMode(
+              config.default_permission_mode,
+            ) as ChannelDefaultPermissionMode)
           : undefined,
         allowedChannels: isStringArray(config.allowed_channels)
           ? [...config.allowed_channels]
@@ -74,7 +80,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
       return {
         has_token: account.token.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "default",
+        default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: [...(account.allowedChannels ?? [])],
       };
     },
@@ -83,7 +89,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
       return {
         has_token: account.token.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "default",
+        default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: [...(account.allowedChannels ?? [])],
       };
     },
