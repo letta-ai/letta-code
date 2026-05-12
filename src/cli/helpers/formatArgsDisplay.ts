@@ -11,6 +11,7 @@ import {
   isFileReadTool,
   isFileWriteTool,
   isGlobTool,
+  isMemoryTool,
   isPatchTool,
   isPlanTool,
   isSearchTool,
@@ -324,6 +325,20 @@ export function formatArgsDisplay(
               display = pattern;
             } else if (path) {
               display = formatDisplayPath(path);
+            }
+            return { display, parsed };
+          }
+
+          // Memory tools: show "reason" in file_path
+          if (isMemoryTool(toolName)) {
+            const reason = String(parsed.reason ?? "");
+            const filePath = parsed.file_path ? String(parsed.file_path) : null;
+            if (reason && filePath) {
+              display = `"${reason}" in ${formatDisplayPath(filePath)}`;
+            } else if (reason) {
+              display = `"${reason}"`;
+            } else if (filePath) {
+              display = formatDisplayPath(filePath);
             }
             return { display, parsed };
           }
