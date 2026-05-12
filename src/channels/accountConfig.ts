@@ -1,6 +1,5 @@
 import { customAccountConfigAdapter } from "./custom/accountConfig";
 import { discordAccountConfigAdapter } from "./discord/accountConfig";
-import { getChannelPluginMetadata } from "./pluginRegistry";
 import type {
   ChannelAccountConfigAdapter,
   ChannelAccountPatch,
@@ -33,31 +32,46 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
 };
 
 /**
- * Keys recognized as secrets across all user-installed plugins. These are
- * never sent back to the client; only their `has_<key>` presence flag is
- * exposed. Keep in sync with the secret-handling convention in
- * `customAccountConfigAdapter` (which uses `bot_token` / `auth`).
+ * Reserved custom-channel keys that are safe to surface to the desktop UI
+ * verbatim. Plugins without a declared schema route through this allow-list
+ * — any non-reserved keys in the stored config are dropped to avoid
+ * leaking plugin-specific secrets (api_key, password, token, etc.) that
+ * we don't recognize.
  */
-const KNOWN_SECRET_KEYS = new Set(["bot_token", "auth"]);
+const CUSTOM_SAFE_KEYS = new Set([
+  "url",
+  "agent_id",
+  "accounts_json",
+  "configs_json",
+  "metadata_json",
+]);
 
 /**
- * Build a client-safe snapshot of a user-plugin account config when no
- * schema is available. Surfaces every non-secret value from the stored
- * config (so fields like `accounts_json` / `configs_json` / `agent_id`
- * round-trip to the UI) while collapsing recognized secret keys to
- * `has_<key>` booleans (Slack pattern).
+ * Known secret keys for the custom channel. Stored values are never sent
+ * back to the client; only their `has_<key>` presence flag is exposed.
+ */
+const CUSTOM_SECRET_KEYS = new Set(["bot_token", "auth"]);
+
+/**
+ * Build a client-safe snapshot of a schemaless user-plugin account
+ * config. Only emits:
+ *   - reserved custom-channel keys (url / agent_id / *_json) as-is
+ *   - has_<key> presence booleans for known secret keys
+ * Any other stored keys are dropped, since we can't tell whether they
+ * contain sensitive data and the schemaless dialog doesn't surface them.
  */
 function redactSchemalessConfig(
   storedConfig: Record<string, unknown>,
 ): ChannelProtocolConfig {
   const result: ChannelProtocolConfig = {};
-  for (const [key, value] of Object.entries(storedConfig)) {
-    if (KNOWN_SECRET_KEYS.has(key)) {
-      result[`has_${key}`] =
-        typeof value === "string" && value.trim().length > 0;
-      continue;
+  for (const key of CUSTOM_SAFE_KEYS) {
+    if (key in storedConfig) {
+      result[key] = storedConfig[key];
     }
-    result[key] = value;
+  }
+  for (const key of CUSTOM_SECRET_KEYS) {
+    const value = storedConfig[key];
+    result[`has_${key}`] = typeof value === "string" && value.trim().length > 0;
   }
   return result;
 }
@@ -102,7 +116,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * {@link ChannelConfigSchema}. Used as a fallback for user-installed plugins
  * that don't ship a hand-written adapter.
  */
-function buildSchemaAdapter(
+function _buildSchemaAdapter(
   schema: ChannelConfigSchema,
 ): ChannelAccountConfigAdapter<ChannelAccount> {
   return {
