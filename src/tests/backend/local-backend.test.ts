@@ -697,6 +697,89 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("settles pending local tool calls when a requires-approval turn is cancelled", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-tool-cancel-"),
+    );
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: () => ({
+          fullStream: (async function* () {
+            yield {
+              type: "tool-call",
+              toolCallId: "call-interrupted",
+              toolName: "ShellCommand",
+              input: { command: "sleep 10" },
+            } as TextStreamPart<ToolSet>;
+            yield {
+              type: "finish",
+              finishReason: "tool-calls",
+            } as TextStreamPart<ToolSet>;
+          })(),
+        }),
+      });
+
+      const agent = await backend.createAgent({
+        name: "Local Tool Agent",
+        system: "tool system",
+        model: "openrouter/test-model",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("run a long command", agent.id),
+        ),
+      );
+      expect(chunks.at(-1)).toMatchObject({
+        message_type: "stop_reason",
+        stop_reason: "requires_approval",
+      });
+
+      await backend.cancelConversation(conversation.id);
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "user_message",
+        "approval_request_message",
+        "tool_return_message",
+      ]);
+      expect(messages[2]).toMatchObject({
+        message_type: "tool_return_message",
+        tool_call_id: "call-interrupted",
+        status: "error",
+        tool_return: "Interrupted by user",
+      });
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      const toolPart = persistedMessages
+        .flatMap((message) => message.parts ?? [])
+        .find(
+          (part): part is Record<string, unknown> =>
+            typeof part === "object" &&
+            part !== null &&
+            "toolCallId" in part &&
+            part.toolCallId === "call-interrupted",
+        );
+      expect(toolPart).toMatchObject({
+        state: "output-error",
+        errorText: "Interrupted by user",
+      });
+      expect(toolPart).not.toHaveProperty("approval");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("retries transient local AI SDK provider failures inside a single persisted turn", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-provider-retry-"),
