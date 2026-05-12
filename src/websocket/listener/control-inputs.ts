@@ -9,6 +9,7 @@ import {
 } from "../../cli/helpers/fileIndex";
 import { generatePlanFilePath } from "../../cli/helpers/planName";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { migratePermissionMode } from "../../permissions/mode";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
 import type {
   AbortMessageCommand,
@@ -96,19 +97,22 @@ export function handleModeChange(
       conversationId,
     );
 
+    // Migrate legacy mode values from older clients
+    const incomingMode = migratePermissionMode(msg.mode) ?? msg.mode;
+
     // Track previous mode so ExitPlanMode can restore it
-    if (msg.mode === "plan" && current.mode !== "plan") {
+    if (incomingMode === "plan" && current.mode !== "plan") {
       current.modeBeforePlan = current.mode;
     }
-    current.mode = msg.mode;
+    current.mode = incomingMode;
 
     // Generate plan file path when entering plan mode
-    if (msg.mode === "plan" && !current.planFilePath) {
+    if (incomingMode === "plan" && !current.planFilePath) {
       current.planFilePath = generatePlanFilePath();
     }
 
     // Clear plan-related state when leaving plan mode
-    if (msg.mode !== "plan") {
+    if (incomingMode !== "plan") {
       current.planFilePath = null;
       current.modeBeforePlan = null;
     }

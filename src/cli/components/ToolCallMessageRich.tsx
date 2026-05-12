@@ -10,6 +10,7 @@ import {
   parsePatchInput,
   parsePatchOperations,
 } from "../helpers/formatArgsDisplay.js";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { getSubagentByToolCallId } from "../helpers/subagentState.js";
 import {
   getDisplayToolName,
@@ -99,10 +100,23 @@ import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
 import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
-import { SyntaxHighlightedCommand } from "./SyntaxHighlightedCommand";
+import {
+  clipStyledSpans,
+  highlightCommand,
+  type StyledSpan,
+} from "./SyntaxHighlightedCommand";
 import { TodoRenderer } from "./TodoRenderer.js";
 
 const LIVE_SHELL_ARGS_MAX_LINES = 2;
+
+/** Render an array of StyledSpans as inline <Text> elements */
+function renderSpans(spans: StyledSpan[]): ReactNode {
+  return spans.map((span, i) => (
+    <Text key={`${i}:${span.color}`} color={span.color}>
+      {span.text}
+    </Text>
+  ));
+}
 
 type ToolCallLine = {
   kind: "tool_call";
@@ -259,7 +273,7 @@ export const ToolCallMessage = memo(
             const separator = truncatedDisplay.startsWith("(") ? "" : " ";
             args = colorizeArgs(separator + truncatedDisplay);
           } else {
-            args = colorizeArgs(`(${truncatedDisplay})`);
+            args = colorizeArgs(` ${truncatedDisplay}`);
           }
         }
       }
@@ -280,6 +294,25 @@ export const ToolCallMessage = memo(
         } catch {
           // Keep shellCommand null and fall back to plain args rendering.
         }
+      }
+
+      // Pre-compute shell command highlighting for first-line + continuation rendering
+      let shellFirstLineSpans: StyledSpan[] | null = null;
+      let shellContinuationLines: StyledSpan[][] = [];
+      if (shellCommand) {
+        const highlightedLines = highlightCommand(shellCommand);
+        const nameWidth = displayName.length + 1; // +1 for space separator
+        const commandMaxColumns = Math.max(10, rightWidth - nameWidth);
+        const visibleLines = highlightedLines.slice(
+          0,
+          LIVE_SHELL_ARGS_MAX_LINES,
+        );
+        const clippedFirstLine = clipStyledSpans(
+          visibleLines[0] ?? [],
+          commandMaxColumns,
+        );
+        shellFirstLineSpans = clippedFirstLine.spans;
+        shellContinuationLines = visibleLines.slice(1);
       }
 
       // If name exceeds available width, fall back to simple wrapped rendering
@@ -937,22 +970,15 @@ export const ToolCallMessage = memo(
                   >
                     {displayName}
                   </Text>
-                  {shellCommand ? (
+                  {shellFirstLineSpans ? (
                     <Box
                       flexGrow={1}
-                      width={Math.max(0, rightWidth - displayName.length)}
+                      width={Math.max(0, rightWidth - displayName.length - 1)}
                     >
-                      <SyntaxHighlightedCommand
-                        command={shellCommand}
-                        showPrompt={false}
-                        prefix="("
-                        suffix=")"
-                        maxLines={LIVE_SHELL_ARGS_MAX_LINES}
-                        maxColumns={Math.max(
-                          10,
-                          rightWidth - displayName.length,
-                        )}
-                      />
+                      <Text color={colors.shellSyntax.text}>
+                        {" "}
+                        {renderSpans(shellFirstLineSpans)}
+                      </Text>
                     </Box>
                   ) : args ? (
                     <Box
@@ -966,6 +992,26 @@ export const ToolCallMessage = memo(
               )}
             </Box>
           </Box>
+
+          {/* Shell command continuation lines with │ prefix */}
+          {shellContinuationLines.map((spans) => {
+            const clipped = clipStyledSpans(spans, rightWidth - 2);
+            const lineKey = spans.map((s) => s.text).join("");
+            return (
+              <Box key={lineKey} flexDirection="row">
+                <Box width={2} flexShrink={0}>
+                  <Text color={colors.shellSyntax.text}>
+                    {CLI_GLYPHS.continuation}
+                  </Text>
+                </Box>
+                <Box flexGrow={1}>
+                  <Text color={colors.shellSyntax.text}>
+                    {renderSpans(clipped.spans)}
+                  </Text>
+                </Box>
+              </Box>
+            );
+          })}
 
           {/* Streaming output for shell tools during execution */}
           {isShellOutputTool(rawName) &&

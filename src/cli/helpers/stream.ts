@@ -69,6 +69,7 @@ export type DrainStreamHook = (
 
 export type DrainResult = {
   stopReason: StopReasonType;
+  sawStopReasonChunk?: boolean;
   lastRunId?: string | null;
   lastSeqId?: number | null;
   approval?: ApprovalRequest | null; // DEPRECATED: kept for backward compat
@@ -584,6 +585,22 @@ export async function drainStream(
   const approval: ApprovalRequest | null = approvals[0] || null;
   streamProcessor.pendingApprovals.clear();
 
+  if (stopReason === "end_turn" && approvals.length > 0) {
+    debugWarn(
+      "drainStream",
+      "Coercing end_turn to requires_approval because approval_request_message chunks were received",
+    );
+    telemetry.trackError(
+      "stream_end_turn_with_pending_approvals",
+      "Stream ended with end_turn after emitting approval_request_message chunks",
+      "stream_drain",
+      {
+        runId: streamProcessor.lastRunId || undefined,
+      },
+    );
+    stopReason = "requires_approval";
+  }
+
   if (
     stopReason === "requires_approval" &&
     approvals.length === 0 &&
@@ -601,6 +618,7 @@ export async function drainStream(
 
   return {
     stopReason,
+    sawStopReasonChunk: streamProcessor.stopReason !== null,
     approval,
     approvals,
     lastRunId: streamProcessor.lastRunId,
@@ -746,6 +764,7 @@ export async function drainStreamWithResume(
     false;
   const canResume =
     result.stopReason === "error" &&
+    !result.sawStopReasonChunk &&
     !isApprovalPendingConflict &&
     (runIdToResume || runIdSource === "otid") &&
     abortSignal &&
@@ -895,6 +914,25 @@ export async function drainStreamWithResume(
           });
           result.approval = result.approvals[0] ?? null;
         }
+      } else if (
+        result.stopReason === "end_turn" &&
+        (originalApprovals?.length ?? 0) > 0
+      ) {
+        debugWarn(
+          "stream",
+          "[MID-STREAM RESUME] Coercing resumed end_turn to requires_approval because the original stream had approval chunks",
+        );
+        telemetry.trackError(
+          "stream_resume_end_turn_with_original_approvals",
+          "Resumed stream ended with end_turn after original stream emitted approval_request_message chunks",
+          "stream_resume",
+          {
+            runId: result.lastRunId ?? undefined,
+          },
+        );
+        result.stopReason = "requires_approval";
+        result.approvals = originalApprovals;
+        result.approval = originalApproval;
       }
     } catch (resumeError) {
       // Resume failed - cancel tools and finalize the streaming line now
@@ -928,6 +966,7 @@ export async function drainStreamWithResume(
   // Log when stream errored but resume was NOT attempted, with reasons why
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];
+    if (result.sawStopReasonChunk) skipReasons.push("terminal_stop_reason");
     if (!result.lastRunId && runIdSource !== "otid")
       skipReasons.push("no_run_id");
     if (!abortSignal) skipReasons.push("no_abort_signal");

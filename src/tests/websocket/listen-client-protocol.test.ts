@@ -356,7 +356,7 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "change_device_state",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
-          payload: { mode: "default" },
+          payload: { mode: "standard" },
         }),
       ),
     );
@@ -2427,7 +2427,7 @@ describe("listen-client permission mode scope keys", () => {
         accountId: "acct-1",
         agentId: "agent-123",
         conversationId: "conv-slack-1",
-        defaultPermissionMode: "bypassPermissions",
+        defaultPermissionMode: "unrestricted",
       },
       socket as unknown as WebSocket,
       listener,
@@ -2438,11 +2438,11 @@ describe("listen-client permission mode scope keys", () => {
       conversation_id: "conv-slack-1",
     });
 
-    expect(status.current_permission_mode).toBe("bypassPermissions");
+    expect(status.current_permission_mode).toBe("unrestricted");
     expect(
       listener.permissionModeByConversation.get("conversation:conv-slack-1"),
     ).toEqual({
-      mode: "bypassPermissions",
+      mode: "unrestricted",
       planFilePath: null,
       modeBeforePlan: null,
     });
@@ -2809,7 +2809,7 @@ describe("listen-client v2 status builders", () => {
       {
         mode: "plan",
         planFilePath: "/tmp/listener-plan.md",
-        modeBeforePlan: "default",
+        modeBeforePlan: "standard",
       },
     );
 
@@ -3981,7 +3981,7 @@ describe("listen-client capability-gated approval flow", () => {
     expect(firstPlanPath).toBeTruthy();
 
     __listenClientTestUtils.handleModeChange(
-      { mode: "default" },
+      { mode: "standard" },
       socket as unknown as WebSocket,
       listener,
       scope,

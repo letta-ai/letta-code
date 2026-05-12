@@ -23,6 +23,10 @@ import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "./HeadlessTurnExecutor";
+import {
+  type LocalProviderErrorInfo,
+  normalizeLocalProviderError,
+} from "./LocalProviderErrors";
 
 function createPage<T>(items: T[]) {
   return {
@@ -40,10 +44,37 @@ function runStopReason(chunk: LettaStreamingResponse): string | undefined {
   return typeof stopReason === "string" ? stopReason : undefined;
 }
 
-function runErrorMessage(chunk: LettaStreamingResponse): string | undefined {
+type RunErrorMetadata = Pick<
+  LocalProviderErrorInfo,
+  "message" | "detail" | "error_type" | "retryable"
+> & { run_id?: string };
+
+function runErrorInfo(
+  chunk: LettaStreamingResponse,
+): RunErrorMetadata | undefined {
   if (chunk.message_type !== "error_message") return undefined;
-  const message = (chunk as { message?: unknown }).message;
-  return typeof message === "string" ? message : undefined;
+  const record = chunk as {
+    message?: unknown;
+    detail?: unknown;
+    error_type?: unknown;
+    retryable?: unknown;
+  };
+  const message = typeof record.message === "string" ? record.message : "";
+  const detail =
+    typeof record.detail === "string"
+      ? record.detail
+      : message || "Unknown local backend error";
+  const errorType =
+    record.error_type === "llm_error" ||
+    record.error_type === "local_backend_error"
+      ? record.error_type
+      : "local_backend_error";
+  return {
+    message: message || detail,
+    detail,
+    error_type: errorType,
+    retryable: record.retryable === true,
+  };
 }
 
 function attachRunId(
@@ -63,6 +94,32 @@ function cloneStreamingChunk(
   chunk: LettaStreamingResponse,
 ): LettaStreamingResponse {
   return JSON.parse(JSON.stringify(chunk)) as LettaStreamingResponse;
+}
+
+function localStreamProtocolError(message: string): RunErrorMetadata {
+  return {
+    message,
+    detail: message,
+    error_type: "local_backend_error",
+    retryable: false,
+  };
+}
+
+function localErrorChunk(info: RunErrorMetadata): LettaStreamingResponse {
+  return {
+    message_type: "error_message",
+    message: info.message,
+    detail: info.detail,
+    error_type: info.error_type,
+    retryable: info.retryable,
+  } as unknown as LettaStreamingResponse;
+}
+
+function localStopReasonChunk(stopReason: string): LettaStreamingResponse {
+  return {
+    message_type: "stop_reason",
+    stop_reason: stopReason,
+  } as LettaStreamingResponse;
 }
 
 function createReplayStream(
@@ -250,6 +307,14 @@ export class HeadlessBackend implements Backend {
     const runId =
       this.activeRunByConversation.get(conversationIdOrAgentId) ??
       this.findActiveRunByAgentId(conversationIdOrAgentId);
+    const run = runId ? this.runs.get(runId) : undefined;
+    if (run?.conversation_id && run.agent_id) {
+      this.store.settleInterruptedToolCalls(run.conversation_id, {
+        agentId: run.agent_id,
+      });
+    } else {
+      this.store.settleInterruptedToolCalls(conversationIdOrAgentId);
+    }
     if (runId) {
       const controller = this.runControllerByRunId.get(runId);
       this.recordRunChunk(runId, {
@@ -379,7 +444,11 @@ export class HeadlessBackend implements Backend {
     return run;
   }
 
-  private completeRun(runId: string, stopReason: string): void {
+  private completeRun(
+    runId: string,
+    stopReason: string,
+    errorInfo?: RunErrorMetadata,
+  ): void {
     const run = this.runs.get(runId);
     if (!run) return;
     if (isTerminalRun(run)) return;
@@ -395,6 +464,16 @@ export class HeadlessBackend implements Backend {
       status,
       stop_reason: stopReason as Run["stop_reason"],
       completed_at: completedAt,
+      metadata:
+        status === "failed" && errorInfo
+          ? {
+              ...(run.metadata ?? {}),
+              error: {
+                ...errorInfo,
+                run_id: runId,
+              },
+            }
+          : run.metadata,
     });
     if (run.conversation_id) {
       this.activeRunByConversation.delete(run.conversation_id);
@@ -406,17 +485,19 @@ export class HeadlessBackend implements Backend {
     const run = this.runs.get(runId);
     if (!run) return;
     if (isTerminalRun(run)) return;
-    const message = error instanceof Error ? error.message : String(error);
+    const info = normalizeLocalProviderError(error);
     this.runs.set(runId, {
       ...run,
       status: "failed",
-      stop_reason: "error",
+      stop_reason: info.stop_reason as Run["stop_reason"],
       completed_at: timestampForRun(this.runSeq + this.runs.size),
       metadata: {
         ...(run.metadata ?? {}),
         error: {
-          message,
-          error_type: "local_backend_error",
+          message: info.message,
+          detail: info.detail,
+          error_type: info.error_type,
+          retryable: info.retryable,
           run_id: runId,
         },
       },
@@ -460,17 +541,22 @@ export class HeadlessBackend implements Backend {
       controller: stream.controller,
       async *[Symbol.asyncIterator]() {
         let sawStopReason = false;
+        let sawApprovalRequest = false;
+        let pendingErrorInfo: RunErrorMetadata | undefined;
         try {
           for await (const rawChunk of stream) {
             const chunk = attachRunId(rawChunk, runId);
-            const errorMessage = runErrorMessage(chunk);
-            if (errorMessage) {
-              backend.failRun(runId, new Error(errorMessage));
+            if (chunk.message_type === "approval_request_message") {
+              sawApprovalRequest = true;
+            }
+            const errorInfo = runErrorInfo(chunk);
+            if (errorInfo) {
+              pendingErrorInfo = errorInfo;
             }
             const stopReason = runStopReason(chunk);
             if (stopReason) {
               sawStopReason = true;
-              backend.completeRun(runId, stopReason);
+              backend.completeRun(runId, stopReason, pendingErrorInfo);
             }
 
             const persisted = store.appendStreamChunk(
@@ -486,7 +572,41 @@ export class HeadlessBackend implements Backend {
             }
           }
           if (!sawStopReason) {
-            backend.completeRun(runId, "end_turn");
+            if (pendingErrorInfo) {
+              backend.completeRun(runId, "error", pendingErrorInfo);
+              yield backend.recordRunChunk(
+                runId,
+                attachRunId(localStopReasonChunk("error"), runId),
+              );
+            } else if (sawApprovalRequest) {
+              backend.completeRun(runId, "requires_approval");
+              yield backend.recordRunChunk(
+                runId,
+                attachRunId(localStopReasonChunk("requires_approval"), runId),
+              );
+            } else {
+              const info = localStreamProtocolError(
+                "Local provider stream ended without a stop reason.",
+              );
+              backend.completeRun(runId, "error", info);
+              for (const terminalChunk of [
+                localErrorChunk(info),
+                localStopReasonChunk("error"),
+              ]) {
+                const chunk = attachRunId(terminalChunk, runId);
+                const persisted = store.appendStreamChunk(
+                  conversationId,
+                  agentId,
+                  chunk,
+                );
+                if (!isLocalStateChunkOnly(persisted)) {
+                  yield backend.recordRunChunk(
+                    runId,
+                    attachRunId(persisted, runId),
+                  );
+                }
+              }
+            }
           }
         } catch (error) {
           backend.failRun(runId, error);

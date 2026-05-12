@@ -17,7 +17,7 @@ function msg(
 }
 
 describe("prepareMessageHistory", () => {
-  test("primaryOnly returns only primary message types", () => {
+  test("keeps renderable tool messages in transcript order", () => {
     const base = 1_700_000_000_000;
     const messages: Message[] = [
       msg("user_message", "u1", base + 1),
@@ -31,83 +31,53 @@ describe("prepareMessageHistory", () => {
       msg("summary_message", "s1", base + 9),
     ];
 
-    const out = prepareMessageHistory(messages, { primaryOnly: true });
+    const out = prepareMessageHistory(messages);
     expect(out.map((m) => m.message_type)).toEqual([
       "user_message",
+      "tool_call_message",
+      "approval_request_message",
+      "tool_return_message",
       "assistant_message",
+      "reasoning_message",
+      "approval_response_message",
       "event_message",
       "summary_message",
     ]);
   });
 
-  test("primaryOnly includes most recent assistant even if last N primary messages lack it", () => {
+  test("uses primary anchors for recency without dropping intervening tools", () => {
     const base = 1_700_000_000_000;
     const messages: Message[] = [];
 
-    // An older assistant message, then many user/event messages.
-    messages.push(msg("assistant_message", "a1", base + 1));
-    for (let i = 0; i < 30; i += 1) {
+    for (let i = 0; i < 14; i += 1) {
       messages.push(msg("user_message", `u${i}`, base + 10 + i));
+      if (i === 12) {
+        messages.push(msg("approval_request_message", "tool-12", base + 100));
+        messages.push(msg("tool_return_message", "return-12", base + 101));
+      }
     }
+    messages.push(msg("assistant_message", "a1", base + 200));
 
-    const out = prepareMessageHistory(messages, { primaryOnly: true });
-    expect(out.some((m) => m.message_type === "assistant_message")).toBe(true);
-    expect(
-      out.every((m) =>
-        [
-          "user_message",
-          "assistant_message",
-          "event_message",
-          "summary_message",
-        ].includes(m.message_type as string),
-      ),
-    ).toBe(true);
-    // Preserve recency: keep latest tail and prepend last assistant anchor.
+    const out = prepareMessageHistory(messages);
     expect(out.map((m) => m.id)).toEqual([
+      "u3",
+      "u4",
+      "u5",
+      "u6",
+      "u7",
+      "u8",
+      "u9",
+      "u10",
+      "u11",
+      "u12",
+      "tool-12",
+      "return-12",
+      "u13",
       "a1",
-      "u19",
-      "u20",
-      "u21",
-      "u22",
-      "u23",
-      "u24",
-      "u25",
-      "u26",
-      "u27",
-      "u28",
-      "u29",
     ]);
   });
 
-  test("primaryOnly falls back to reasoning when no primary messages exist", () => {
-    const base = 1_700_000_000_000;
-    const messages: Message[] = [
-      msg("tool_return_message", "tr1", base + 1),
-      msg("reasoning_message", "r1", base + 2),
-      msg("tool_return_message", "tr2", base + 3),
-      msg("reasoning_message", "r2", base + 4),
-    ];
-
-    const out = prepareMessageHistory(messages, { primaryOnly: true });
-    expect(out.map((m) => m.message_type)).toEqual([
-      "reasoning_message",
-      "reasoning_message",
-    ]);
-  });
-
-  test("primaryOnly returns [] when no primary or reasoning messages exist", () => {
-    const base = 1_700_000_000_000;
-    const messages: Message[] = [
-      msg("tool_return_message", "tr1", base + 1),
-      msg("approval_request_message", "ar1", base + 2),
-      msg("approval_response_message", "ap1", base + 3),
-    ];
-
-    const out = prepareMessageHistory(messages, { primaryOnly: true });
-    expect(out).toEqual([]);
-  });
-
-  test("non-primaryOnly skips orphaned leading tool_return_message", () => {
+  test("skips orphaned leading tool_return_message", () => {
     const base = 1_700_000_000_000;
     const messages: Message[] = [
       msg("tool_return_message", "tr1", base + 1),

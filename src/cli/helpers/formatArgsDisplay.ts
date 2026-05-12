@@ -267,7 +267,13 @@ export function formatArgsDisplay(
             // Collect other non-hidden args
             const otherArgs: string[] = [];
             for (const [k, v] of Object.entries(parsed)) {
-              if (k === "file_path" || k === "path") continue;
+              if (
+                k === "file_path" ||
+                k === "path" ||
+                k === "offset" ||
+                k === "limit"
+              )
+                continue;
               if (v === undefined || v === null) continue;
               if (typeof v === "boolean" || typeof v === "number") {
                 otherArgs.push(`${k}: ${v}`);

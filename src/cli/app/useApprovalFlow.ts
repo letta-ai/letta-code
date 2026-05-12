@@ -16,14 +16,13 @@ import {
   type ApprovalResult,
   getDisplayableToolReturn,
 } from "../../agent/approval-execution";
-import {
-  buildFreshDenialApprovals,
-  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-} from "../../agent/approval-recovery";
 import type { SessionStats } from "../../agent/stats";
 import type { ApprovalContext } from "../../permissions/analyzer";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
+import {
+  DEFAULT_PERMISSION_MODE,
+  type PermissionMode,
+  permissionMode,
+} from "../../permissions/mode";
 import {
   analyzeToolApproval,
   checkToolPermission,
@@ -247,7 +246,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
   const recoverRestoredPendingApprovals = useCallback(
     async (
       approvals: ApprovalRequest[],
-      _options: { notifyOnManualApproval?: boolean } = {},
+      options: { notifyOnManualApproval?: boolean } = {},
     ): Promise<void> => {
       if (approvals.length === 0) {
         return;
@@ -303,16 +302,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        const staleDenials = buildFreshDenialApprovals(
-          approvals,
-          STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-        ) as ApprovalResult[];
-        if (staleDenials.length > 0) {
-          queueApprovalResults(staleDenials, {
-            conversationId: conversationIdRef.current,
-            generation: generationAtStart,
-          });
-          setNeedsEagerApprovalCheck(false);
+        await restorePendingApprovalUi(approvals);
+        setNeedsEagerApprovalCheck(false);
+        if (options.notifyOnManualApproval) {
+          sendDesktopNotification("Approval needed");
         }
 
         restoredApprovalRecoveryRef.current = {
@@ -323,10 +316,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       } catch (error) {
         debugLog(
           "approvals",
-          "Failed to recover restored approvals automatically: %O",
+          "Failed to restore pending approval UI: %O",
           error,
         );
         await restorePendingApprovalUi(approvals);
+        setNeedsEagerApprovalCheck(false);
         setAutoHandledResults([]);
         setAutoDeniedApprovals([]);
         sendDesktopNotification("Approval needed");
@@ -338,7 +332,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       }
     },
     [
-      queueApprovalResults,
       restorePendingApprovalUi,
       restoredApprovalRecoveryRef,
       setApprovalContexts,
@@ -627,6 +620,21 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           // next onSubmit, causing "Invalid tool call IDs" errors.
           queueApprovalResults(null);
         }
+      } catch (error) {
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          true,
+          "stream_error",
+        );
+        const errorDetails = formatErrorDetails(error, agentId);
+        appendError(errorDetails, {
+          ...extractErrorMeta(error),
+          context: "approval_send",
+        });
+        setStreaming(false);
+        closeTrajectorySegment();
+        syncTrajectoryElapsedBase();
+        refreshDerived();
       } finally {
         // Always release the execution guard, even if an error occurred
         clearApprovalToolContext();
@@ -638,6 +646,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       }
     },
     [
+      agentId,
       approvalResults,
       autoHandledResults,
       autoDeniedApprovals,
@@ -710,6 +719,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           setIsExecutingTool(false);
         }
       } catch (e) {
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          true,
+          "stream_error",
+        );
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(errorDetails, {
           ...extractErrorMeta(e),
@@ -717,6 +731,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         });
         setStreaming(false);
         setIsExecutingTool(false);
+        refreshDerived();
       }
     },
     [
@@ -726,6 +741,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       sendAllResults,
       appendError,
       isExecutingTool,
+      refreshDerived,
       setStreaming,
       setApprovalResults,
       setIsExecutingTool,
@@ -923,6 +939,21 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
                 otid: randomUUID(),
               },
             ]);
+          } catch (error) {
+            markIncompleteToolsAsCancelled(
+              buffersRef.current,
+              true,
+              "stream_error",
+            );
+            const errorDetails = formatErrorDetails(error, agentId);
+            appendError(errorDetails, {
+              ...extractErrorMeta(error),
+              context: "approval_send",
+            });
+            setStreaming(false);
+            closeTrajectorySegment();
+            syncTrajectoryElapsedBase();
+            refreshDerived();
           } finally {
             setIsExecutingTool(false);
           }
@@ -944,10 +975,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       handleApproveCurrent,
       processConversation,
       refreshDerived,
+      appendError,
       isExecutingTool,
       setStreaming,
       setUiPermissionMode,
       openTrajectorySegment,
+      closeTrajectorySegment,
+      syncTrajectoryElapsedBase,
       prepareScopedToolExecutionContext,
       updateStreamingOutput,
       setApprovalContexts,
@@ -960,6 +994,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     ],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
   const handleDenyCurrent = useCallback(
     async (reason: string) => {
       if (isExecutingTool) return;
@@ -991,6 +1026,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           setIsExecutingTool(false);
         }
       } catch (e) {
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          true,
+          "stream_error",
+        );
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(errorDetails, {
           ...extractErrorMeta(e),
@@ -998,6 +1038,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         });
         setStreaming(false);
         setIsExecutingTool(false);
+        refreshDerived();
       }
     },
     [
@@ -1007,6 +1048,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       sendAllResults,
       appendError,
       isExecutingTool,
+      refreshDerived,
       setStreaming,
       setApprovalResults,
       setIsExecutingTool,
@@ -1073,13 +1115,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         const previousMode = permissionMode.getModeBeforePlan();
         const restoreMode =
           // If the user was in YOLO before entering plan mode, always restore it.
-          previousMode === "bypassPermissions"
-            ? "bypassPermissions"
+          previousMode === "unrestricted"
+            ? "unrestricted"
             : acceptEdits
               ? "acceptEdits"
               : previousMode === "memory"
-                ? "default"
-                : (previousMode ?? "default");
+                ? DEFAULT_PERMISSION_MODE
+                : (previousMode ?? DEFAULT_PERMISSION_MODE);
         permissionMode.setMode(restoreMode);
         setUiPermissionMode(restoreMode);
       } else {
@@ -1207,7 +1249,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        if (mode === "bypassPermissions") {
+        if (mode === "unrestricted") {
           // YOLO mode but no plan file yet — tell agent to write it first.
           const planFilePath = activePlanPath ?? fallbackPlanPath;
           const plansDir = join(homedir(), ".letta", "plans");
@@ -1473,14 +1515,14 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
   ]);
 
   // Guard EnterPlanMode:
-  // When in bypassPermissions (YOLO) mode, auto-approve EnterPlanMode and stay
+  // When in unrestricted (YOLO) mode, auto-approve EnterPlanMode and stay
   // in YOLO — the agent gets plan instructions but keeps full permissions.
   // ExitPlanMode still requires explicit user approval.
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "EnterPlanMode") {
-      if (permissionMode.getMode() === "bypassPermissions") {
+      if (permissionMode.getMode() === "unrestricted") {
         if (
           lastAutoApprovedEnterPlanToolCallIdRef.current === approval.toolCallId
         ) {

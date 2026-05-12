@@ -485,8 +485,8 @@ async function handleGoalCommand(
       agentId,
       conversationId,
     );
-    if (permState.mode === "bypassPermissions") {
-      permState.mode = "default";
+    if (permState.mode === "unrestricted") {
+      permState.mode = "standard";
       persistPermissionModeMapForRuntime(conversationRuntime.listener);
     }
     if (cleared || lowerGoalArg === "disable") {
@@ -522,14 +522,14 @@ async function handleGoalCommand(
       if (ralphMode.getState().mode === "goal") {
         ralphMode.deactivate();
       }
-      if (permState.mode === "bypassPermissions") {
-        permState.mode = "default";
+      if (permState.mode === "unrestricted") {
+        permState.mode = "standard";
         persistPermissionModeMapForRuntime(conversationRuntime.listener);
       }
     } else if (lowerGoalArg === "resume") {
       settingsManager.setConversationGoalToolsEnabled(conversationId, true);
       ralphMode.activateGoal(goal.objective, 0, true);
-      permState.mode = "bypassPermissions";
+      permState.mode = "unrestricted";
       persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
       // Send continuation prompt through the turn pipeline
@@ -607,7 +607,7 @@ async function handleGoalCommand(
     agentId,
     conversationId,
   );
-  permState.mode = "bypassPermissions";
+  permState.mode = "unrestricted";
   persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
   const replaced = previousGoal ? " replaced" : " active";

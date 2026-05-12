@@ -605,8 +605,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         setPendingRalphConfig(null);
         justActivatedRalph = true;
         if (isYolo) {
-          permissionMode.setMode("bypassPermissions");
-          setUiPermissionMode("bypassPermissions");
+          permissionMode.setMode("unrestricted");
+          setUiPermissionMode("unrestricted");
         }
 
         const ralphState = ralphMode.getState();
@@ -1087,8 +1087,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
             setUiRalphActive(true);
             if (isYolo) {
-              permissionMode.setMode("bypassPermissions");
-              setUiPermissionMode("bypassPermissions");
+              permissionMode.setMode("unrestricted");
+              setUiPermissionMode("unrestricted");
             }
 
             const ralphState = ralphMode.getState();
@@ -1556,8 +1556,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             if (ralphMode.getState().mode === "goal") {
               ralphMode.deactivate();
               setUiRalphActive(false);
-              permissionMode.setMode("default");
-              setUiPermissionMode("default");
+              permissionMode.setMode("standard");
+              setUiPermissionMode("standard");
             }
             cmd.finish(
               cleared || lowerGoalArg === "disable"
@@ -1590,8 +1590,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               if (ralphMode.getState().mode === "goal") {
                 ralphMode.deactivate();
                 setUiRalphActive(false);
-                permissionMode.setMode("default");
-                setUiPermissionMode("default");
+                permissionMode.setMode("standard");
+                setUiPermissionMode("standard");
               }
             } else if (lowerGoalArg === "resume") {
               settingsManager.setConversationGoalToolsEnabled(
@@ -1600,8 +1600,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               );
               ralphMode.activateGoal(goal.objective, 0, true);
               setUiRalphActive(true);
-              permissionMode.setMode("bypassPermissions");
-              setUiPermissionMode("bypassPermissions");
+              permissionMode.setMode("unrestricted");
+              setUiPermissionMode("unrestricted");
               const goalState = ralphMode.getState();
               const systemMsg = buildGoalPrompt(
                 goalState,
@@ -1662,8 +1662,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             parsedGoal.tokenBudget,
           );
           setUiRalphActive(true);
-          permissionMode.setMode("bypassPermissions");
-          setUiPermissionMode("bypassPermissions");
+          permissionMode.setMode("unrestricted");
+          setUiPermissionMode("unrestricted");
           const replaced = previousGoal ? " replaced" : " active";
           cmd.finish(
             `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`,

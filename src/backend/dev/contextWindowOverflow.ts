@@ -18,6 +18,19 @@ function contextOverflowHaystack(error: unknown): string {
     }
     if (value instanceof Error) {
       pieces.push(value.name, value.message);
+      if (APICallError.isInstance(value)) {
+        pieces.push(
+          String(value.statusCode ?? ""),
+          value.responseBody ?? "",
+          JSON.stringify(value.data ?? ""),
+        );
+      }
+      for (const [key, item] of Object.entries(
+        value as unknown as Record<string, unknown>,
+      )) {
+        pieces.push(key);
+        visit(item, depth + 1);
+      }
       visit((value as { cause?: unknown }).cause, depth + 1);
       return;
     }

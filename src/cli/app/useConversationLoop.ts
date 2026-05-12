@@ -323,7 +323,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
       // Pin the user's permission mode for the duration of the submission so
-      // auto-approvals (YOLO / bypassPermissions) don't regress after a retry.
+      // auto-approvals (YOLO / unrestricted) don't regress after a retry.
       const pinnedPermissionMode = uiPermissionModeRef.current;
       const restorePinnedPermissionMode = () => {
         if (pinnedPermissionMode === "plan") return;
@@ -411,8 +411,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             );
           }
           if (wasYolo) {
-            permissionMode.setMode("default");
-            setUiPermissionMode("default");
+            permissionMode.setMode("standard");
+            setUiPermissionMode("standard");
           }
 
           // Add completion status to transcript
@@ -445,8 +445,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             );
           }
           if (wasYolo) {
-            permissionMode.setMode("default");
-            setUiPermissionMode("default");
+            permissionMode.setMode("standard");
+            setUiPermissionMode("standard");
           }
 
           // Add status to transcript
@@ -1208,8 +1208,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
           };
 
-          const isAutoApprovalMode =
-            pinnedPermissionMode === "bypassPermissions";
+          const isAutoApprovalMode = pinnedPermissionMode === "unrestricted";
           const isUserInitiated = currentInput.some(
             (item) => item.type === "message" && item.role === "user",
           );
@@ -1304,8 +1303,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               ralphMode.deactivate();
               setUiRalphActive(false);
               if (wasYolo) {
-                permissionMode.setMode("default");
-                setUiPermissionMode("default");
+                permissionMode.setMode("standard");
+                setUiPermissionMode("standard");
               }
               if (budgetLimitedGoal) {
                 const systemMsg = buildGoalBudgetLimitPrompt(budgetLimitedGoal);
@@ -1358,6 +1357,30 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           // and keeps queue-cancel flags consistent with the normal cancel branch below.
           if (wasInterrupted && stopReasonToHandle === "requires_approval") {
             stopReasonToHandle = "cancelled";
+          }
+
+          const approvalsFromStream =
+            approvals && approvals.length > 0
+              ? approvals
+              : approval
+                ? [approval]
+                : [];
+          if (
+            stopReasonToHandle === "end_turn" &&
+            approvalsFromStream.length > 0
+          ) {
+            telemetry.trackError(
+              "stream_end_turn_with_pending_approvals_tui_guard",
+              "Stream returned end_turn after emitting approval_request_message chunks; continuing approval flow",
+              "message_stream",
+              { runId: lastRunId ?? undefined },
+            );
+            debugWarn(
+              "stream",
+              "Coercing end_turn to requires_approval because %d approval chunk(s) were collected",
+              approvalsFromStream.length,
+            );
+            stopReasonToHandle = "requires_approval";
           }
 
           // Case 1: Turn ended normally
@@ -1642,12 +1665,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             pendingInterruptRecoveryConversationIdRef.current = null;
 
             // Use new approvals array, fallback to legacy approval for backward compat
-            const approvalsToProcess =
-              approvals && approvals.length > 0
-                ? approvals
-                : approval
-                  ? [approval]
-                  : [];
+            const approvalsToProcess = approvalsFromStream;
 
             if (approvalsToProcess.length === 0) {
               clearApprovalToolContext();
@@ -2273,10 +2291,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             continue;
           }
 
-          // Quota-limit fallback: set a temporary client-side override to Auto,
-          // append a brief continuation message, and continue the same turn.
+          // Quota-limit fallback: hosted Letta API can recover by switching to
+          // Auto. Local/embedded mode has no hosted Auto router, so surface the
+          // provider quota error and let the user choose/connect a local model.
           const autoSwapOnQuotaLimitEnabled =
             settingsManager.getSetting("autoSwapOnQuotaLimit") !== false;
+          const supportsHostedAutoQuotaFallback =
+            !getBackend().capabilities.localModelCatalog;
           const isQuotaLimit = isQuotaLimitErrorDetail(
             detailFromRun ?? fallbackError,
           );
@@ -2284,6 +2305,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             tempModelOverrideRef.current === TEMP_QUOTA_OVERRIDE_MODEL;
           const canAttemptQuotaAutoSwap =
             autoSwapOnQuotaLimitEnabled &&
+            supportsHostedAutoQuotaFallback &&
             isQuotaLimit &&
             !alreadyOnTempAuto &&
             !quotaAutoSwapAttemptedRef.current;
@@ -2489,8 +2511,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
 
             if (!cancelled) {
-              // Post-stream retry is a new request/run, so refresh OTIDs.
-              currentInput = refreshInputOtidsForNewRequest(currentInput);
+              const backendCapabilities = getBackend().capabilities;
+              const retryFromPersistedLocalState =
+                backendCapabilities.localModelCatalog &&
+                !backendCapabilities.remoteMemfs;
+              // Local already appended the turn input before the failed run.
+              // Continue from persisted conversation state instead of duplicating
+              // user/approval messages into the retry run.
+              currentInput = retryFromPersistedLocalState
+                ? []
+                : refreshInputOtidsForNewRequest(currentInput);
               // Reset seq_id threshold — new run starts from seq_id 1, not a resume.
               highestSeqIdSeen = null;
               // Reset interrupted flag so retry stream chunks are processed

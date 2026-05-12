@@ -42,6 +42,15 @@ describe("drainStream stop reason wiring", () => {
     );
   });
 
+  test("resume guard skips retries when stream already emitted terminal stop_reason", () => {
+    const streamPath = fileURLToPath(
+      new URL("../../cli/helpers/stream.ts", import.meta.url),
+    );
+    const source = readFileSync(streamPath, "utf-8");
+
+    expect(source).toContain("!result.sawStopReasonChunk");
+  });
+
   test("preserves llm_api_error when stream throws after stop_reason chunk", async () => {
     const fakeStream = {
       controller: new AbortController(),
@@ -61,6 +70,43 @@ describe("drainStream stop reason wiring", () => {
     );
 
     expect(result.stopReason).toBe("llm_api_error");
+    expect(result.sawStopReasonChunk).toBe(true);
+  });
+
+  test("coerces end_turn with pending approvals into requires_approval", async () => {
+    const fakeStream = {
+      controller: new AbortController(),
+      async *[Symbol.asyncIterator]() {
+        yield {
+          message_type: "approval_request_message",
+          tool_call: {
+            tool_call_id: "tc-end-turn",
+            name: "ShellCommand",
+            arguments: '{"command":"pwd"}',
+          },
+        } as LettaStreamingResponse;
+        yield {
+          message_type: "stop_reason",
+          stop_reason: "end_turn",
+        } as LettaStreamingResponse;
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+
+    const result = await drainStream(
+      fakeStream,
+      createBuffers("agent-test"),
+      () => {},
+    );
+
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.sawStopReasonChunk).toBe(true);
+    expect(result.approvals).toEqual([
+      {
+        toolCallId: "tc-end-turn",
+        toolName: "ShellCommand",
+        toolArgs: '{"command":"pwd"}',
+      },
+    ]);
   });
 
   test("stream error cancels in-progress tool calls by default (skipCancelToolsOnError=false)", async () => {
@@ -132,6 +178,7 @@ describe("drainStream stop reason wiring", () => {
     );
 
     expect(result.stopReason).toBe("end_turn");
+    expect(result.sawStopReasonChunk).toBe(true);
     expect(getEventListeners(parent.signal, "abort")).toHaveLength(0);
   });
 

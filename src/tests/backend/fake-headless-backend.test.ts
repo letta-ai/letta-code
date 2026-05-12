@@ -862,6 +862,15 @@ describe("FakeHeadlessBackend", () => {
       "tool_return_message",
       "assistant_message",
     ]);
+
+    const filteredPage = await backend.listAgentMessages("agent-tool", {
+      conversation_id: conversation.id,
+      order: "desc",
+      include_return_message_types: ["user_message", "assistant_message"],
+    } as AgentMessageListBody);
+    expect(
+      filteredPage.getPaginatedItems().map((message) => message.message_type),
+    ).toEqual(["assistant_message", "user_message"]);
   });
 
   test("forks conversations by copying LocalMessage transcript state", async () => {

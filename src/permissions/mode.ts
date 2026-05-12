@@ -1,5 +1,5 @@
 // src/permissions/mode.ts
-// Permission mode management (default, acceptEdits, plan, memory, bypassPermissions)
+// Permission mode management (unrestricted, standard, acceptEdits, plan, memory)
 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -18,11 +18,39 @@ import {
 import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
 export type PermissionMode =
-  | "default"
+  | "standard"
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "bypassPermissions";
+  | "unrestricted";
+
+/** The default starting permission mode. */
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "unrestricted";
+
+/** All valid current permission mode values. */
+export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
+  "unrestricted",
+  "standard",
+  "acceptEdits",
+  "plan",
+  "memory",
+] as const;
+
+/**
+ * Migrate legacy permission mode strings to their current equivalents.
+ * - "default" → "standard" (renamed for clarity)
+ * - "bypassPermissions" → "unrestricted" (renamed for clarity)
+ * Returns null if the value is not a recognized mode (current or legacy).
+ */
+export function migratePermissionMode(value: string): PermissionMode | null {
+  if (VALID_PERMISSION_MODES.includes(value as PermissionMode)) {
+    return value as PermissionMode;
+  }
+  if (value === "default") return "standard";
+  if (value === "bypassPermissions" || value === "fullAccess")
+    return "unrestricted";
+  return null;
+}
 
 /**
  * Result of a permission-mode check. Includes a decision and an optional
@@ -95,7 +123,7 @@ function buildWriteOutsideRootsReason(
 function getGlobalMode(): PermissionMode {
   const global = globalThis as GlobalWithMode;
   if (!global[MODE_KEY]) {
-    global[MODE_KEY] = "default";
+    global[MODE_KEY] = DEFAULT_PERMISSION_MODE;
   }
   return global[MODE_KEY];
 }
@@ -259,7 +287,7 @@ class PermissionModeManager {
 
   /**
    * Get the permission mode that was active before entering plan mode.
-   * Used to restore the user's previous setting (e.g., bypassPermissions).
+   * Used to restore the user's previous setting (e.g., unrestricted).
    */
   getModeBeforePlan(): PermissionMode | null {
     return getGlobalModeBeforePlan();
@@ -311,8 +339,8 @@ class PermissionModeManager {
         ? planFilePathOverride
         : this.getPlanFilePath();
     switch (effectiveMode) {
-      case "bypassPermissions":
-        // ExitPlanMode always requires human approval, even in yolo mode
+      case "unrestricted":
+        // ExitPlanMode always requires human approval, even in unrestricted mode
         if (toolName === "ExitPlanMode" || toolName === "exit_plan_mode") {
           return null;
         }
@@ -667,7 +695,7 @@ class PermissionModeManager {
         };
       }
 
-      case "default":
+      case "standard":
         // No mode overrides, use normal permission flow
         return null;
 
@@ -680,7 +708,7 @@ class PermissionModeManager {
    * Reset to default mode
    */
   reset(): void {
-    this.currentMode = "default";
+    this.currentMode = DEFAULT_PERMISSION_MODE;
     setGlobalPlanFilePath(null);
     setGlobalModeBeforePlan(null);
   }

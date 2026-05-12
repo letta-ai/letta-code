@@ -597,7 +597,7 @@ describe("MessageChannel", () => {
       botToken: "xoxb-test-token",
       appToken: "xapp-test-token",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
     upsertChannelTarget("slack", {
       accountId: "account-1",
@@ -702,7 +702,7 @@ describe("MessageChannel", () => {
       botToken: "xoxb-test-token-1",
       appToken: "xapp-test-token-1",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
     upsertChannelAccount("slack", {
       channel: "slack",
@@ -717,7 +717,7 @@ describe("MessageChannel", () => {
       botToken: "xoxb-test-token-2",
       appToken: "xapp-test-token-2",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
 
     const result = await message_channel({
@@ -784,7 +784,7 @@ describe("MessageChannel", () => {
       botToken: "xoxb-test-token",
       appToken: "xapp-test-token",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
 
     const result = await message_channel({

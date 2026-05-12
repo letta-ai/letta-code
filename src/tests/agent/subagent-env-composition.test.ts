@@ -26,7 +26,7 @@ describe("composeSubagentChildEnv", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
       parentAgentId: PARENT_ID,
-      permissionMode: "default",
+      permissionMode: "standard",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
@@ -101,7 +101,7 @@ describe("composeSubagentChildEnv", () => {
         MEMORY_DIR: existingMemoryDir,
       },
       parentAgentId: PARENT_ID,
-      permissionMode: "default",
+      permissionMode: "standard",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
@@ -199,7 +199,7 @@ describe("composeSubagentChildEnv", () => {
         HOME: "/home/user",
       },
       parentAgentId: PARENT_ID,
-      permissionMode: "default",
+      permissionMode: "standard",
       inheritedPrimaryRoot: null,
     });
 
@@ -233,7 +233,7 @@ describe("composeSubagentChildEnv", () => {
         CUSTOM_VAR: "preserved",
       },
       parentAgentId: PARENT_ID,
-      permissionMode: "default",
+      permissionMode: "standard",
       inheritedPrimaryRoot: null,
     });
 

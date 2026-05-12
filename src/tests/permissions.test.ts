@@ -1,7 +1,16 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { analyzeApprovalContext } from "../permissions/analyzer";
 import { checkPermission } from "../permissions/checker";
+import { permissionMode } from "../permissions/mode";
 import type { PermissionRules } from "../permissions/types";
+
+beforeEach(() => {
+  permissionMode.setMode("standard");
+});
+
+afterEach(() => {
+  permissionMode.reset();
+});
 
 test("Read within working directory is auto-allowed", () => {
   if (process.platform === "win32") return; // Skip on Windows - Unix paths

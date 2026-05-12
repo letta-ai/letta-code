@@ -34,14 +34,23 @@ export async function isRetriableError(
         | {
             error_type?: string;
             detail?: string;
+            retryable?: boolean;
             // Handle nested error structure (error.error) that can occur in some edge cases
-            error?: { error_type?: string; detail?: string };
+            error?: {
+              error_type?: string;
+              detail?: string;
+              retryable?: boolean;
+            };
           }
         | undefined;
 
       // Check for llm_error at top level or nested (handles error.error nesting)
       const errorType = metaError?.error_type ?? metaError?.error?.error_type;
       const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+      const retryable = metaError?.retryable ?? metaError?.error?.retryable;
+
+      if (retryable === false) return false;
+      if (retryable === true) return true;
 
       if (shouldRetryRunMetadataError(errorType, detail)) {
         return true;

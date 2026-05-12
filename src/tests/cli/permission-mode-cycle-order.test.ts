@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 describe("permission mode cycle order", () => {
-  test("Shift+Tab cycles from default to plan before edit and yolo modes", () => {
+  test("Shift+Tab cycles from unrestricted through acceptEdits, standard, and plan", () => {
     const inputRichPath = fileURLToPath(
       new URL("../../cli/components/InputRich.tsx", import.meta.url),
     );
@@ -11,8 +11,7 @@ describe("permission mode cycle order", () => {
 
     expect(source).toContain("const modes: PermissionMode[] = [");
     expect(source).toContain(
-      '"default",\n        "plan",\n        "acceptEdits",',
+      '"unrestricted",\n        "acceptEdits",\n        "standard",\n        "plan",',
     );
-    expect(source).toContain('"acceptEdits",\n        "bypassPermissions",');
   });
 });

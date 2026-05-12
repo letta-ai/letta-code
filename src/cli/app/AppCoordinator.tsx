@@ -3848,8 +3848,8 @@ export default function App({
         );
       }
       if (wasYolo) {
-        permissionMode.setMode("default");
-        setUiPermissionMode("default");
+        permissionMode.setMode("standard");
+        setUiPermissionMode("standard");
       }
     }
   }, [setUiPermissionMode]);

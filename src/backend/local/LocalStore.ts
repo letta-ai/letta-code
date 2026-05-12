@@ -14,6 +14,7 @@ import type {
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -35,6 +36,7 @@ import {
   projectedMessageLookupKeys,
   projectLocalMessagesToStoredMessages,
   projectLocalMessageToStoredMessages,
+  withProjectedMessageDates,
 } from "./LocalMessageProjection";
 import {
   getAttachedLocalUIMessage,
@@ -447,6 +449,19 @@ function getCursor(
 ): string | undefined {
   const value = (body as Record<string, unknown> | undefined)?.[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function getIncludedMessageTypes(
+  body?: ConversationMessageListBody | AgentMessageListBody,
+): Set<string> | undefined {
+  const value = (body as Record<string, unknown> | undefined)
+    ?.include_return_message_types;
+  if (!Array.isArray(value)) return undefined;
+
+  const messageTypes = value.filter(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  );
+  return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
 }
 
 function toStoredOutputFields(chunk: Record<string, unknown>) {
@@ -1037,6 +1052,25 @@ export class LocalStore {
     ).map(cloneLocalMessage);
   }
 
+  settleInterruptedToolCalls(
+    conversationIdOrAgentId: string,
+    options: { agentId?: string; reason?: string } = {},
+  ): number {
+    const targets = this.toolSettlementTargets(
+      conversationIdOrAgentId,
+      options.agentId,
+    );
+    let settledCount = 0;
+    for (const target of targets) {
+      settledCount += this.settleInterruptedToolCallsForConversation(
+        target.conversationId,
+        target.agentId,
+        options.reason ?? INTERRUPTED_BY_USER,
+      );
+    }
+    return settledCount;
+  }
+
   resolveAgentIdForConversation(conversationId: string): string {
     return this.agentIdForConversation(conversationId);
   }
@@ -1421,6 +1455,56 @@ export class LocalStore {
     }
   }
 
+  private settleInterruptedToolCallsForConversation(
+    conversationId: string,
+    agentId: string,
+    reason: string,
+  ): number {
+    const conversation = this.findConversation(conversationId, agentId);
+    if (!conversation) return 0;
+
+    const messages = this.localMessagesForConversation(
+      conversation.id,
+      agentId,
+    );
+    const touchedMessages = new Set<LocalMessage>();
+    let settledCount = 0;
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      for (const part of message.parts) {
+        if (!part || !isLocalToolPart(part)) continue;
+        const state = (part as { state?: unknown }).state;
+        if (isSettledLocalToolState(state)) continue;
+
+        const record = part as Record<string, unknown>;
+        delete record.approval;
+        Object.assign(record, {
+          state: "output-error",
+          input: Object.hasOwn(record, "input") ? record.input : {},
+          errorText:
+            typeof record.errorText === "string" && record.errorText.length > 0
+              ? record.errorText
+              : reason,
+        });
+        touchedMessages.add(message);
+        settledCount += 1;
+      }
+    }
+
+    if (settledCount > 0) {
+      for (const message of touchedMessages) {
+        this.touchLocalMessageForToolSettlement(
+          message,
+          conversation.id,
+          agentId,
+        );
+      }
+      this.persistConversationState(conversation.id, agentId);
+      this.rebuildMessageIndex();
+    }
+    return settledCount;
+  }
+
   private findToolPart(
     conversationId: string,
     agentId: string,
@@ -1520,6 +1604,21 @@ export class LocalStore {
     this.touchConversationForLocalMessage(conversationId, agentId, message);
   }
 
+  private touchLocalMessageForToolSettlement(
+    message: LocalMessage,
+    conversationId: string,
+    agentId: string,
+  ): void {
+    const updatedAt = this.nextLocalMessageDate();
+    message.metadata = {
+      ...message.metadata,
+      updated_at: updatedAt,
+      agent_id: agentId,
+      conversation_id: conversationId,
+    };
+    this.touchConversationForLocalMessage(conversationId, agentId, message);
+  }
+
   private toolCallFromChunk(
     chunk: LettaStreamingResponse,
   ): { toolCallId: string; toolName: string; input: unknown } | undefined {
@@ -1567,6 +1666,13 @@ export class LocalStore {
     body?: ConversationMessageListBody | AgentMessageListBody,
   ): StoredMessage[] {
     let items = messages;
+    const includedMessageTypes = getIncludedMessageTypes(body);
+    if (includedMessageTypes) {
+      items = items.filter((message) =>
+        includedMessageTypes.has(message.message_type),
+      );
+    }
+
     const before = getCursor(body, "before");
     if (before) {
       const beforeIndex = items.findIndex((message) => message.id === before);
@@ -1605,11 +1711,14 @@ export class LocalStore {
     for (let index = 0; index < localMessages.length; index++) {
       const localMessage = localMessages[index];
       if (!localMessage) continue;
-      const projected = projectLocalMessageToStoredMessages(
-        localMessage,
-        agentId,
-        resolvedConversationId,
-        new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+      const projected = withProjectedMessageDates(
+        projectLocalMessageToStoredMessages(
+          localMessage,
+          agentId,
+          resolvedConversationId,
+          new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+        ),
+        index,
       );
       messages.push(...projected);
       for (const [lookupKey, lookupMessages] of projectedMessageLookupKeys(
@@ -1921,6 +2030,43 @@ export class LocalStore {
       if (conversation.id === conversationId) return conversation;
     }
     return undefined;
+  }
+
+  private toolSettlementTargets(
+    conversationIdOrAgentId: string,
+    agentId?: string,
+  ): Array<{ conversationId: string; agentId: string }> {
+    if (agentId) {
+      const conversation = this.findConversation(
+        conversationIdOrAgentId,
+        agentId,
+      );
+      return conversation
+        ? [{ conversationId: conversation.id, agentId: conversation.agent_id }]
+        : [];
+    }
+
+    const conversation = this.findConversation(conversationIdOrAgentId);
+    if (conversation) {
+      return [
+        { conversationId: conversation.id, agentId: conversation.agent_id },
+      ];
+    }
+
+    if (this.agents.has(conversationIdOrAgentId)) {
+      const defaultConversation = this.ensureConversation(
+        "default",
+        conversationIdOrAgentId,
+      );
+      return [
+        {
+          conversationId: defaultConversation.id,
+          agentId: defaultConversation.agent_id,
+        },
+      ];
+    }
+
+    return [];
   }
 
   private agentIdForConversation(conversationId: string): string {

@@ -3,6 +3,11 @@ import type React from "react";
 import stringWidth from "string-width";
 import { colors, hexToBgAnsi } from "./colors.js";
 import { InlineMarkdown } from "./InlineMarkdownRenderer.js";
+import {
+  highlightCode,
+  languageFromPath,
+  type StyledSpan,
+} from "./SyntaxHighlightedCommand.js";
 import { Text } from "./Text";
 
 interface MarkdownDisplayProps {
@@ -15,7 +20,7 @@ interface MarkdownDisplayProps {
 
 // Regex patterns for markdown elements (defined outside component to avoid re-creation)
 const headerRegex = /^(#{1,6})\s+(.*)$/;
-const codeBlockRegex = /^```(\w*)?$/;
+const codeBlockRegex = /^```([^\s`]*)?.*$/;
 const listItemRegex = /^(\s*)([*\-+]|\d+\.)\s+(.*)$/;
 const blockquoteRegex = /^>\s*(.*)$/;
 const hrRegex = /^[-*_]{3,}$/;
@@ -64,6 +69,67 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
 
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
+  let codeBlockLanguage: string | undefined;
+
+  const resolveFenceLanguage = (rawLanguage: string | undefined) => {
+    if (!rawLanguage) return undefined;
+    const normalized = rawLanguage.trim().toLowerCase();
+    if (!normalized) return undefined;
+    return languageFromPath(`code.${normalized}`) ?? normalized;
+  };
+
+  const renderCodeLine = (
+    spans: StyledSpan[] | undefined,
+    fallbackText: string,
+    key: string,
+  ) => (
+    <Text
+      key={key}
+      color={spans ? undefined : colors.shellSyntax.string}
+      backgroundColor={backgroundColor}
+      dimColor={dimColor}
+    >
+      {spans
+        ? spans.length > 0
+          ? spans.map((span, spanIdx) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: spans are static render chunks
+              <Text key={spanIdx} color={span.color}>
+                {span.text}
+              </Text>
+            ))
+          : " "
+        : fallbackText || " "}
+      {backgroundColor ? "  " : null}
+    </Text>
+  );
+
+  const renderCodeBlock = (
+    code: string,
+    language: string | undefined,
+    key: string,
+  ) => {
+    const highlightedLines = language
+      ? highlightCode(code, language)
+      : undefined;
+    const fallbackLines = code.split("\n");
+    const lineCount = Math.max(
+      highlightedLines?.length ?? 0,
+      fallbackLines.length,
+      1,
+    );
+
+    return (
+      <Box key={key} flexDirection="column">
+        {Array.from({ length: lineCount }, (_, lineIdx) =>
+          renderCodeLine(
+            highlightedLines?.[lineIdx],
+            fallbackLines[lineIdx] ?? "",
+            `${key}-code-${lineIdx}`,
+          ),
+        )}
+      </Box>
+    );
+  };
 
   // Helper function to parse table cells from a row
   const parseTableCells = (row: string): string[] => {
@@ -163,22 +229,18 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     const key = `line-${index}`;
 
     // Handle code blocks
-    if (codeBlockRegex.test(line)) {
+    const codeBlockMatch = line.match(codeBlockRegex);
+    if (codeBlockMatch) {
       if (!inCodeBlock) {
         inCodeBlock = true;
         codeBlockContent = [];
+        codeBlockLanguage = resolveFenceLanguage(codeBlockMatch[1]);
       } else {
         inCodeBlock = false;
         const code = codeBlockContent.join("\n");
-        contentBlocks.push(
-          <Box key={key} paddingLeft={2}>
-            <Text color={colors.code.inline} backgroundColor={backgroundColor}>
-              {code}
-              {backgroundColor ? "  " : null}
-            </Text>
-          </Box>,
-        );
+        contentBlocks.push(renderCodeBlock(code, codeBlockLanguage, key));
         codeBlockContent = [];
+        codeBlockLanguage = undefined;
       }
       index++;
       continue;
@@ -388,12 +450,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   if (inCodeBlock && codeBlockContent.length > 0) {
     const code = codeBlockContent.join("\n");
     contentBlocks.push(
-      <Box key="unclosed-code" paddingLeft={2}>
-        <Text color={colors.code.inline} backgroundColor={backgroundColor}>
-          {code}
-          {backgroundColor ? "  " : null}
-        </Text>
-      </Box>,
+      renderCodeBlock(code, codeBlockLanguage, "unclosed-code"),
     );
   }
 

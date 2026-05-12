@@ -1,5 +1,4 @@
 import {
-  APICallError,
   tool as aiTool,
   convertToModelMessages,
   jsonSchema,
@@ -12,12 +11,6 @@ import {
   type UIMessageChunk,
   validateUIMessages,
 } from "ai";
-import {
-  getRetryDelayMs,
-  isQuotaLimitErrorDetail,
-  parseRetryAfterHeaderMs,
-  shouldRetryPreStreamTransientError,
-} from "../../agent/approval-recovery";
 import type { ClientTool } from "../../tools/manager";
 import type { LocalCompactionStats } from "../local/compaction";
 import type { LocalMessage } from "../local/LocalMessage";
@@ -27,6 +20,11 @@ import {
   aiSDKProviderKindFromModel,
 } from "./AISDKProviderRegistry";
 import { isContextWindowOverflowError } from "./contextWindowOverflow";
+import {
+  isRetryableLocalProviderError,
+  localProviderRetryDelayMs,
+  localProviderRetryMessage,
+} from "./LocalProviderErrors";
 import type {
   ProviderStreamAdapter,
   ProviderStreamEvent,
@@ -41,7 +39,7 @@ import {
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
 type InputModality = "text" | "image" | "audio" | "video" | "pdf";
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
-const LOCAL_PROVIDER_MAX_RETRY_DELAY_MS = 60_000;
+const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 type AISDKUIMessageStreamFinish = {
   messages: LocalMessage[];
   responseMessage: LocalMessage;
@@ -58,6 +56,7 @@ export type AISDKStreamTextFunction = (options: {
   providerOptions?: AISDKProviderOptions;
   maxRetries: number;
   abortSignal?: AbortSignal;
+  onError?: (event: { error: unknown }) => void;
 }) => {
   fullStream: AsyncIterable<TextStreamPart<ToolSet>>;
   toUIMessageStream?: (options?: {
@@ -94,176 +93,6 @@ export interface AISDKStreamAdapterOptions {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringValueForRetry(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function stringifyRetryValue(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return undefined;
-  }
-}
-
-function retryHeaderValue(
-  headers: Record<string, string> | undefined,
-  headerName: string,
-): string | undefined {
-  if (!headers) return undefined;
-  const direct = headers[headerName];
-  if (direct !== undefined) return direct;
-  const lower = headerName.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === lower) return value;
-  }
-  return undefined;
-}
-
-function retryAfterMsFromHeaders(
-  headers: Record<string, string> | undefined,
-): number | null {
-  const retryAfterMs = retryHeaderValue(headers, "retry-after-ms");
-  if (retryAfterMs) {
-    const parsed = Number.parseFloat(retryAfterMs);
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      return Math.round(parsed);
-    }
-  }
-
-  return parseRetryAfterHeaderMs(retryHeaderValue(headers, "retry-after"));
-}
-
-function retryErrorDetail(error: unknown): string {
-  const parts: string[] = [];
-
-  if (error instanceof Error) {
-    parts.push(error.message);
-  } else {
-    const value = stringifyRetryValue(error);
-    if (value) parts.push(value);
-  }
-
-  if (APICallError.isInstance(error)) {
-    const responseBody = stringValueForRetry(error.responseBody);
-    if (responseBody) parts.push(responseBody);
-    const data = stringifyRetryValue(error.data);
-    if (data) parts.push(data);
-    const cause = error.cause;
-    if (isRecord(cause)) {
-      const code = stringValueForRetry(cause.code);
-      if (code) parts.push(code);
-      const causeMessage = stringValueForRetry(cause.message);
-      if (causeMessage) parts.push(causeMessage);
-    } else if (cause instanceof Error) {
-      parts.push(cause.message);
-    }
-  }
-
-  return parts.filter(Boolean).join("\n");
-}
-
-function parseRetryableJSONRecord(
-  value: string,
-): Record<string, unknown> | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const candidates = [trimmed];
-  const jsonStart = trimmed.indexOf("{");
-  if (jsonStart > 0) {
-    candidates.push(trimmed.slice(jsonStart));
-  }
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (isRecord(parsed)) return parsed;
-    } catch {
-      // Continue to next candidate.
-    }
-  }
-  return null;
-}
-
-function isRetryableRateLimitJSONDetail(detail: string): boolean {
-  const candidates = [detail, ...detail.split("\n")];
-  for (const candidate of candidates) {
-    const parsed = parseRetryableJSONRecord(candidate);
-    if (!parsed) continue;
-
-    const type = stringValueForRetry(parsed.type)?.toLowerCase();
-    const topLevelCode = stringValueForRetry(parsed.code)?.toLowerCase();
-    const nestedError = isRecord(parsed.error) ? parsed.error : undefined;
-    const nestedType = stringValueForRetry(nestedError?.type)?.toLowerCase();
-    const nestedCode = stringValueForRetry(nestedError?.code)?.toLowerCase();
-
-    if (type === "error" && nestedType === "too_many_requests") return true;
-    if (
-      typeof topLevelCode === "string" &&
-      (topLevelCode.includes("exhausted") ||
-        topLevelCode.includes("unavailable"))
-    ) {
-      return true;
-    }
-    if (typeof nestedCode === "string" && nestedCode.includes("rate_limit")) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function isRetryableLocalProviderError(error: unknown): boolean {
-  if (isContextWindowOverflowError(error)) return false;
-
-  const detail = retryErrorDetail(error);
-  if (APICallError.isInstance(error)) {
-    if (isQuotaLimitErrorDetail(detail)) return false;
-    if (error.isRetryable === true) return true;
-    const status = error.statusCode;
-    if (status !== undefined && status >= 500) return true;
-    if (status === undefined && isRetryableRateLimitJSONDetail(detail)) {
-      return true;
-    }
-    return shouldRetryPreStreamTransientError({ status, detail });
-  }
-
-  if (isRetryableRateLimitJSONDetail(detail)) return true;
-  return shouldRetryPreStreamTransientError({
-    status: undefined,
-    detail,
-  });
-}
-
-function localProviderRetryDelayMs(error: unknown, attempt: number): number {
-  const retryAfterMs = APICallError.isInstance(error)
-    ? retryAfterMsFromHeaders(error.responseHeaders)
-    : null;
-  return Math.min(
-    getRetryDelayMs({
-      category: "transient_provider",
-      attempt,
-      detail: retryErrorDetail(error),
-      retryAfterMs,
-    }),
-    LOCAL_PROVIDER_MAX_RETRY_DELAY_MS,
-  );
-}
-
-function localProviderRetryMessage(error: unknown): string {
-  if (APICallError.isInstance(error)) {
-    const status =
-      error.statusCode !== undefined ? `HTTP ${error.statusCode}: ` : "";
-    return `${status}${error.message}`;
-  }
-  return error instanceof Error ? error.message : String(error);
 }
 
 function isModelOutputEvent(event: ProviderStreamEvent): boolean {
@@ -647,24 +476,88 @@ function replaceUnsupportedInputParts(
   return didChange ? transformed : messages;
 }
 
+function isToolUIPart(part: unknown): part is Record<string, unknown> {
+  return (
+    isRecord(part) &&
+    typeof part.type === "string" &&
+    part.type.startsWith("tool-")
+  );
+}
+
+function normalizeToolPartForModelConversion(part: Record<string, unknown>): {
+  part: LocalMessage["parts"][number];
+  changed: boolean;
+} {
+  const hasInput = Object.hasOwn(part, "input");
+  if (part.state === "output-available" && Object.hasOwn(part, "output")) {
+    if (hasInput) {
+      return { part: part as LocalMessage["parts"][number], changed: false };
+    }
+    return {
+      part: { ...part, input: {} } as LocalMessage["parts"][number],
+      changed: true,
+    };
+  }
+
+  const errorText =
+    stringValue(part.errorText) ??
+    (part.state === "output-available"
+      ? "Tool output missing from previous turn."
+      : "Tool result missing from interrupted previous turn.");
+  const normalized = {
+    ...part,
+    state: "output-error",
+    input: hasInput ? part.input : {},
+    errorText,
+  } as Record<string, unknown>;
+  delete normalized.approval;
+  delete normalized.output;
+  return { part: normalized as LocalMessage["parts"][number], changed: true };
+}
+
+function normalizeToolPartsForModelConversion(
+  messages: LocalMessage[],
+): LocalMessage[] {
+  let didChange = false;
+  const transformed = messages.map((message) => {
+    if (message.role !== "assistant") return message;
+
+    let messageChanged = false;
+    const parts = message.parts.map((part) => {
+      if (!isToolUIPart(part)) return part;
+      const partRecord = part as Record<string, unknown>;
+      const normalized = normalizeToolPartForModelConversion(partRecord);
+      if (normalized.changed) {
+        messageChanged = true;
+        didChange = true;
+      }
+      return normalized.part;
+    });
+
+    return messageChanged ? { ...message, parts } : message;
+  });
+  return didChange ? transformed : messages;
+}
+
 function sanitizeUIMessagesForProvider(
   messages: LocalMessage[],
   provider: AISDKProviderKind,
   agent: ProviderTurnInput["agent"],
 ): LocalMessage[] {
-  const capabilitySanitizedMessages = replaceUnsupportedInputParts(
-    messages,
-    agent,
+  const settledMessages = normalizeToolPartsForModelConversion(
+    replaceUnsupportedInputParts(messages, agent),
   );
-  if (provider === "unknown") return capabilitySanitizedMessages;
-  return capabilitySanitizedMessages
+  if (provider === "unknown") return settledMessages;
+  return settledMessages
     .map((message) => {
-      const parts = message.parts.filter((part) =>
+      let messageChanged = false;
+      const filteredParts = message.parts.filter((part) =>
         shouldKeepReasoningPart(part, provider),
       );
-      return parts.length === message.parts.length
-        ? message
-        : { ...message, parts };
+      if (filteredParts.length !== message.parts.length) {
+        messageChanged = true;
+      }
+      return messageChanged ? { ...message, parts: filteredParts } : message;
     })
     .filter(
       (message) => message.role !== "assistant" || message.parts.length > 0,
@@ -834,6 +727,9 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       ),
       maxRetries: 0,
       abortSignal: this.abortSignal,
+      // We classify and handle stream errors in this adapter; suppress AI SDK's
+      // default console.error logging for each error chunk.
+      onError: () => {},
     });
     let uiMessageError: unknown;
     const finalUIMessage = captureFinalUIMessage(result, uiMessages).catch(
@@ -845,8 +741,6 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
 
     let streamError: unknown;
     let lastUsage: LanguageModelUsage | undefined;
-    let sawToolCall = false;
-    let finishReason: string | undefined;
     for await (const part of result.fullStream) {
       if (part.type === "error") {
         if (
@@ -857,14 +751,10 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
           break;
         }
       }
-      if (part.type === "tool-call") {
-        sawToolCall = true;
-      }
       if (part.type === "finish-step") {
         lastUsage = part.usage;
       }
       if (part.type === "finish") {
-        finishReason = part.finishReason;
         lastUsage ??= part.totalUsage;
       }
       yield providerStreamPart(part);
@@ -880,12 +770,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     if (message) {
       yield providerUIMessage(message);
     }
-    if (
-      lastUsage &&
-      !sawToolCall &&
-      finishReason !== "tool-calls" &&
-      this.onContextUsage
-    ) {
+    if (lastUsage && this.onContextUsage) {
       const compaction = await this.onContextUsage(input, lastUsage);
       if (compaction) {
         yield* this.emitCompactionChunks(compaction, "context_window_limit");
@@ -895,7 +780,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
 
   async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
     let activeInput = input;
-    let handledContextOverflow = false;
+    let contextOverflowCompactions = 0;
     let transientRetries = 0;
 
     while (true) {
@@ -910,7 +795,10 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
         return;
       } catch (error) {
         if (isContextWindowOverflowError(error)) {
-          if (handledContextOverflow || !this.onContextWindowOverflow) {
+          if (
+            !this.onContextWindowOverflow ||
+            contextOverflowCompactions >= LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS
+          ) {
             throw error;
           }
 
@@ -920,7 +808,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
           );
           if (!compaction) throw error;
 
-          handledContextOverflow = true;
+          contextOverflowCompactions += 1;
           activeInput = {
             ...activeInput,
             uiMessages: compaction.uiMessages,
