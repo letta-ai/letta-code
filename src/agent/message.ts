@@ -79,6 +79,19 @@ export type SendMessageStreamOptions = {
   preparedToolContext?: PreparedToolExecutionContext;
   /** Skip shared image normalization when the caller already did it. */
   skipImageNormalization?: boolean;
+  /**
+   * Cloud user id of the human who pressed "send" (multi-user
+   * sandbox scenario). When set, `sendMessageStream` echoes this on
+   * the outbound HTTP request as the `X-Letta-Acting-User-Id`
+   * header so cloud-api can re-attribute credits + rate limits to
+   * the actual sender — rather than the user whose API key is the
+   * bearer credential (i.e. whoever spawned the sandbox).
+   *
+   * Set by the listener after reading
+   * `runtime.acting_user_id` from cloud's status WS frame; absent
+   * for self-hosted / single-user / pre-channel-split flows.
+   */
+  actingUserId?: string;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -204,6 +217,12 @@ export async function sendMessageStream(
   const extraHeaders: Record<string, string> = {};
   if (process.env.LETTA_RESPONSES_WS === "1") {
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
+  }
+  // Echo the cloud user id back to cloud-api so it can re-attribute
+  // credits + rate limits on multi-user sandboxes. See
+  // SendMessageStreamOptions.actingUserId for full context.
+  if (opts.actingUserId) {
+    extraHeaders["X-Letta-Acting-User-Id"] = opts.actingUserId;
   }
 
   const messageSummary = normalizedMessages

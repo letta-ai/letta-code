@@ -62,6 +62,15 @@ export interface IncomingMessage {
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
+  /**
+   * Cloud user id of the human who actually pressed "send", forwarded
+   * from cloud-api's status WS. When set, the listener echoes it on
+   * the outbound createMessage HTTP call (X-Letta-Acting-User-Id) so
+   * cloud attributes credits + rate limits to the actual sender, not
+   * to whoever spawned the sandbox / desktop runtime. Undefined for
+   * self-hosted, single-user, or pre-channel-split flows.
+   */
+  actingUserId?: string;
 }
 
 export type ProcessQueuedTurn = (

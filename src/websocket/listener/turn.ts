@@ -609,6 +609,11 @@ export async function handleIncomingMessage(
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
       skipImageNormalization: true,
+      // Forward cloud-api's per-WS acting user id so the outbound
+      // createMessage HTTP call carries X-Letta-Acting-User-Id and
+      // cloud can attribute credits to the actual sender on
+      // multi-user sandboxes.
+      ...(msg.actingUserId ? { actingUserId: msg.actingUserId } : {}),
       ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
