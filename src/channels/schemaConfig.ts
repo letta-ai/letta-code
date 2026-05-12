@@ -380,10 +380,27 @@ export function validateConfigAgainstSchema(
   config: ChannelProtocolConfig,
 ): SchemaValidationResult {
   const fieldsByKey = new Map(schema.fields.map((field) => [field.key, field]));
+  // Reserved JSON-bucket keys are always permitted regardless of whether
+  // the plugin's schema declares them — they back the dedicated Accounts /
+  // Config / Metadata tabs and are stored as opaque strings.
+  const reservedKeys = new Set([
+    "accounts_json",
+    "configs_json",
+    "metadata_json",
+  ]);
   for (const key of Object.keys(config)) {
-    if (!fieldsByKey.has(key)) {
-      return { ok: false, reason: `unknown field: ${key}` };
+    if (fieldsByKey.has(key)) continue;
+    if (reservedKeys.has(key)) {
+      const value = config[key];
+      if (value !== undefined && typeof value !== "string") {
+        return {
+          ok: false,
+          reason: `reserved field ${key} must be a string`,
+        };
+      }
+      continue;
     }
+    return { ok: false, reason: `unknown field: ${key}` };
   }
 
   for (const field of schema.fields) {
