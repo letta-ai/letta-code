@@ -7,8 +7,8 @@ export const CLI_GLYPHS = {
   prompt: "›",
   /** Bullet for assistant/tool/status messages */
   bullet: "•",
-  /** Result continuation bracket */
-  result: "⎿",
+  /** Result continuation corner — aligns with continuation bar */
+  result: "└",
   /** Multi-line command continuation bar */
   continuation: "│",
 } as const;

@@ -112,7 +112,7 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
             {/* Header line with L-bracket */}
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
-                <Text dimColor>{"  ⎿  "}</Text>
+                <Text dimColor>{`  ${CLI_GLYPHS.result}  `}</Text>
               </Box>
               <Box flexGrow={1} width={Math.max(0, rightWidth - 3)}>
                 <Text dimColor>{COMPACTION_SUMMARY_HEADER}</Text>

@@ -8,6 +8,7 @@ import { backfillBuffers } from "../helpers/backfill";
 import type { ContextTracker } from "../helpers/contextTracker";
 import { resetContextHistory } from "../helpers/contextTracker";
 import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import type { ApprovalRequest } from "../helpers/stream";
 import { uid } from "./ids";
 import type { ActiveOverlay, AppCommandRunner, StaticItem } from "./types";
@@ -147,13 +148,13 @@ export async function handleNavigationCommand(
             resumeData.messageHistory.length > 0
               ? [
                   `Resumed conversation with "${currentAgentName}"`,
-                  `⎿  Agent: ${agentId}`,
-                  `⎿  Conversation: ${targetConvId}`,
+                  `${CLI_GLYPHS.result}  Agent: ${agentId}`,
+                  `${CLI_GLYPHS.result}  Conversation: ${targetConvId}`,
                 ]
               : [
                   `Switched to conversation with "${currentAgentName}"`,
-                  `⎿  Agent: ${agentId}`,
-                  `⎿  Conversation: ${targetConvId} (empty)`,
+                  `${CLI_GLYPHS.result}  Agent: ${agentId}`,
+                  `${CLI_GLYPHS.result}  Conversation: ${targetConvId} (empty)`,
                 ];
           const successOutput = successLines.join("\n");
           cmd.finish(successOutput, true);

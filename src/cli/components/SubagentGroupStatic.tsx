@@ -116,7 +116,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
         <Box flexDirection="row">
           <Text color={colors.subagent.treeChar}>
             {rowIndent}
-            {continueChar} ⎿{" "}
+            {continueChar} {CLI_GLYPHS.result}{" "}
           </Text>
           <Text dimColor>{"Subagent: "}</Text>
           <Text dimColor>{agent.agentURL}</Text>

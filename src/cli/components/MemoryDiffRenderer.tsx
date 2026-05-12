@@ -1,5 +1,6 @@
 import * as Diff from "diff";
 import { Box } from "ink";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -62,7 +63,7 @@ export function MemoryDiffRenderer({
               <Box width={prefixWidth} flexShrink={0}>
                 <Text>
                   {"  "}
-                  <Text dimColor>⎿</Text>
+                  <Text dimColor>{CLI_GLYPHS.result}</Text>
                 </Text>
               </Box>
               <Box flexGrow={1} width={contentWidth}>
@@ -109,7 +110,7 @@ export function MemoryDiffRenderer({
               <Box width={prefixWidth} flexShrink={0}>
                 <Text>
                   {"  "}
-                  <Text dimColor>⎿</Text>
+                  <Text dimColor>{CLI_GLYPHS.result}</Text>
                 </Text>
               </Box>
               <Box flexGrow={1} width={contentWidth}>
@@ -163,7 +164,7 @@ export function MemoryDiffRenderer({
             <Box width={prefixWidth} flexShrink={0}>
               <Text>
                 {"  "}
-                <Text dimColor>⎿</Text>
+                <Text dimColor>{CLI_GLYPHS.result}</Text>
               </Text>
             </Box>
             <Box flexGrow={1} width={contentWidth}>
@@ -190,7 +191,7 @@ export function MemoryDiffRenderer({
               <Box width={prefixWidth} flexShrink={0}>
                 <Text>
                   {"  "}
-                  <Text dimColor>⎿</Text>
+                  <Text dimColor>{CLI_GLYPHS.result}</Text>
                 </Text>
               </Box>
               <Box flexGrow={1} width={contentWidth}>
@@ -209,7 +210,7 @@ export function MemoryDiffRenderer({
             <Box width={prefixWidth} flexShrink={0}>
               <Text>
                 {"  "}
-                <Text dimColor>⎿</Text>
+                <Text dimColor>{CLI_GLYPHS.result}</Text>
               </Text>
             </Box>
             <Box flexGrow={1} width={contentWidth}>
@@ -236,7 +237,7 @@ export function MemoryDiffRenderer({
             <Box width={defaultPrefixWidth} flexShrink={0}>
               <Text>
                 {"  "}
-                <Text dimColor>⎿</Text>
+                <Text dimColor>{CLI_GLYPHS.result}</Text>
               </Text>
             </Box>
             <Box flexGrow={1} width={defaultContentWidth}>
@@ -350,7 +351,7 @@ function MemoryStrReplaceDiff({
         <Box width={prefixWidth} flexShrink={0}>
           <Text>
             {"  "}
-            <Text dimColor>⎿</Text>
+            <Text dimColor>{CLI_GLYPHS.result}</Text>
           </Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>
@@ -512,7 +513,7 @@ function PatchDiffRenderer({
         <Box width={prefixWidth} flexShrink={0}>
           <Text>
             {"  "}
-            <Text dimColor>⎿</Text>
+            <Text dimColor>{CLI_GLYPHS.result}</Text>
           </Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>

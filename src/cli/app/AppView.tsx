@@ -69,6 +69,7 @@ import {
 } from "../helpers/contextTracker";
 import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import {
   getReflectionSettings,
   type ReflectionSettings,
@@ -1046,13 +1047,13 @@ export function AppView(props: AppViewProps) {
                         resumeData.messageHistory.length > 0
                           ? [
                               `Resumed conversation with "${currentAgentName}"`,
-                              `⎿  Agent: ${agentId}`,
-                              `⎿  Conversation: ${convId}`,
+                              `${CLI_GLYPHS.result}  Agent: ${agentId}`,
+                              `${CLI_GLYPHS.result}  Conversation: ${convId}`,
                             ]
                           : [
                               `Switched to conversation with "${currentAgentName}"`,
-                              `⎿  Agent: ${agentId}`,
-                              `⎿  Conversation: ${convId} (empty)`,
+                              `${CLI_GLYPHS.result}  Agent: ${agentId}`,
+                              `${CLI_GLYPHS.result}  Conversation: ${convId} (empty)`,
                             ];
                       const successOutput = successLines.join("\n");
                       cmd.finish(successOutput, true);
@@ -1179,8 +1180,8 @@ export function AppView(props: AppViewProps) {
                     const shortConvId = conversation.id.slice(0, 20);
                     const successLines = [
                       `Started new conversation with "${currentAgentName}"`,
-                      `⎿  Agent: ${agentId}`,
-                      `⎿  Conversation: ${shortConvId}... (new)`,
+                      `${CLI_GLYPHS.result}  Agent: ${agentId}`,
+                      `${CLI_GLYPHS.result}  Conversation: ${shortConvId}... (new)`,
                     ];
                     const successOutput = successLines.join("\n");
                     cmd.finish(successOutput, true);
@@ -1314,7 +1315,7 @@ export function AppView(props: AppViewProps) {
                         agentState.name || "Unnamed Agent";
                       const successOutput = [
                         `Switched to conversation with "${currentAgentName}"`,
-                        `⎿  Conversation: ${actualTargetConv}`,
+                        `${CLI_GLYPHS.result}  Conversation: ${actualTargetConv}`,
                       ].join("\n");
                       cmd.finish(successOutput, true);
                       const successItem: StaticItem = {

@@ -884,7 +884,10 @@ const StreamingStatus = memo(function StreamingStatus({
     );
   }, [interruptRequested, statusHintSuffix]);
   const tipLineText = useMemo(() => {
-    return truncateEnd(`⎿  Tip: ${tipMessage}`, statusContentWidth);
+    return truncateEnd(
+      `${CLI_GLYPHS.result}  Tip: ${tipMessage}`,
+      statusContentWidth,
+    );
   }, [tipMessage, statusContentWidth]);
 
   if (!streaming || !visible) {

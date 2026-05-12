@@ -7,6 +7,7 @@ import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Backend, getBackend } from "../../backend";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
@@ -532,8 +533,8 @@ export function ConversationSelector({
     // Build preview content: (1) summary if exists, (2) preview lines, (3) message count fallback
     // Uses L-bracket indentation style for visual hierarchy
     const renderPreview = () => {
-      const bracket = <Text dimColor>{"⎿  "}</Text>;
-      const indent = "   "; // Same width as "⎿  " for alignment
+      const bracket = <Text dimColor>{`${CLI_GLYPHS.result}  `}</Text>;
+      const indent = "   "; // Same width as "└  " for alignment
 
       // Still loading message data
       if (previewLines === null) {

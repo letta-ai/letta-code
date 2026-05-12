@@ -143,7 +143,7 @@ const AgentRow = memo(
                 <>
                   <Text color={colors.subagent.treeChar}>
                     {rowIndent}
-                    {continueChar} ⎿{" "}
+                    {continueChar} {CLI_GLYPHS.result}{" "}
                   </Text>
                   <Text dimColor>Launching...</Text>
                 </>
@@ -218,7 +218,7 @@ const AgentRow = memo(
           <Box flexDirection="row">
             <Text color={colors.subagent.treeChar}>
               {rowIndent}
-              {continueChar} ⎿{" "}
+              {continueChar} {CLI_GLYPHS.result}{" "}
             </Text>
             <Text dimColor>{"Subagent: "}</Text>
             <Text dimColor>{agent.agentURL}</Text>
@@ -270,7 +270,7 @@ const AgentRow = memo(
               <>
                 <Text color={colors.subagent.treeChar}>
                   {rowIndent}
-                  {continueChar} ⎿{" "}
+                  {continueChar} {CLI_GLYPHS.result}{" "}
                 </Text>
                 <Text dimColor>Launching...</Text>
               </>
