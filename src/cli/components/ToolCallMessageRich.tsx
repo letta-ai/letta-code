@@ -303,10 +303,11 @@ export const ToolCallMessage = memo(
         const highlightedLines = highlightCommand(shellCommand);
         const nameWidth = displayName.length + 1; // +1 for space separator
         const commandMaxColumns = Math.max(10, rightWidth - nameWidth);
-        const visibleLines = highlightedLines.slice(
-          0,
-          LIVE_SHELL_ARGS_MAX_LINES,
+        // Filter out empty lines (e.g. trailing newline from shiki tokenizer)
+        const nonEmptyLines = highlightedLines.filter((spans) =>
+          spans.some((s) => s.text.length > 0),
         );
+        const visibleLines = nonEmptyLines.slice(0, LIVE_SHELL_ARGS_MAX_LINES);
         const clippedFirstLine = clipStyledSpans(
           visibleLines[0] ?? [],
           commandMaxColumns,
