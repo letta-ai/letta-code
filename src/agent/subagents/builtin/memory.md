@@ -1,7 +1,7 @@
 ---
 name: memory
 description: Decompose and reorganize memory files into focused, single-purpose files using `/` naming
-tools: Read, Edit, Write, Glob, Grep, Bash, TaskOutput
+tools: Bash, TaskOutput
 model: auto
 memoryBlocks: none
 permissionMode: memory
@@ -105,10 +105,10 @@ ls $WORK/
 
 Then read relevant memory files:
 
-```
-Read({ file_path: "$WORK/project.md" })
-Read({ file_path: "$WORK/persona.md" })
-Read({ file_path: "$WORK/human.md" })
+```bash
+sed -n '1,240p' "$WORK/project.md"
+sed -n '1,240p' "$WORK/persona.md"
+sed -n '1,240p' "$WORK/human.md"
 ```
 
 ### Step 2: Identify system-managed files (skip)

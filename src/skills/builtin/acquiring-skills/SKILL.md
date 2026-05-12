@@ -64,7 +64,7 @@ Browse these repositories to discover available skills. Check the README for ski
 
 | Location | Path | When to Use |
 |----------|------|-------------|
-| **Agent-scoped** | `~/.letta/agents/<agent-id>/skills/<skill>/` | Skills for a single agent (default for agent-specific capabilities) |
+| **Agent-scoped** | `~/.letta/agents/<agent-id>/memory/skills/<skill>/` | Skills for a single agent (default for agent-specific capabilities) |
 | **Global** | `~/.letta/skills/<skill>/` | General-purpose skills useful across projects |
 | **Project** | `.skills/<skill>/` | Project-specific skills |
 
@@ -82,7 +82,7 @@ git clone --depth 1 https://github.com/anthropics/skills /tmp/skills-temp
 
 # 2. Copy the skill to your skills directory
 # For agent-scoped (recommended default):
-cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/agents/<agent-id>/skills/
+cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/agents/<agent-id>/memory/skills/
 # For global:
 # cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/skills/
 # For project:
@@ -96,13 +96,13 @@ rm -rf /tmp/skills-temp
 
 ```bash
 git clone --depth 1 https://github.com/anthropics/skills /tmp/skills-temp
-rsync -av /tmp/skills-temp/skills/webapp-testing/ ~/.letta/agents/<agent-id>/skills/webapp-testing/
+rsync -av /tmp/skills-temp/skills/webapp-testing/ ~/.letta/agents/<agent-id>/memory/skills/webapp-testing/
 rm -rf /tmp/skills-temp
 ```
 
 ## Registering New Skills
 
-After downloading a skill, it will be automatically discovered on the next message. Skills are discovered from `~/.letta/skills/`, `.skills/`, and agent-scoped `~/.letta/agents/<agent-id>/skills/` directories.
+After downloading a skill, it will be automatically discovered on the next message. Skills are discovered from `~/.letta/skills/`, `.skills/`, and agent-scoped `~/.letta/agents/<agent-id>/memory/skills/` directories.
 
 ## Complete Example
 
@@ -114,7 +114,7 @@ User asks: "Can you help me test my React app's UI?"
 4. **Download** (trusted source):
    ```bash
    git clone --depth 1 https://github.com/anthropics/skills /tmp/skills-temp
-   cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/agents/<agent-id>/skills/
+   cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/agents/<agent-id>/memory/skills/
    rm -rf /tmp/skills-temp
    ```
 5. **Inspect scripts**: Read any .py or .ts files before using them

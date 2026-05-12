@@ -90,6 +90,11 @@ describe("accumulator usage statistics", () => {
     );
 
     expect(tracker.pendingReflectionTrigger).toBe(false);
+    expect(buffers.byId.get("evt-compaction-1")).toMatchObject({
+      kind: "event",
+      eventType: "compaction",
+      phase: "running",
+    });
 
     onChunk(
       buffers,
@@ -103,6 +108,70 @@ describe("accumulator usage statistics", () => {
 
     expect(tracker.pendingCompaction).toBe(true);
     expect(tracker.pendingReflectionTrigger).toBe(true);
+    expect(buffers.byId.get("evt-compaction-1")).toMatchObject({
+      kind: "event",
+      eventType: "compaction",
+      phase: "finished",
+    });
+  });
+
+  test("renders retry event messages as status lines", () => {
+    const buffers = createBuffers("agent-1");
+
+    onChunk(buffers, {
+      message_type: "event_message",
+      id: "retry-event-1",
+      event_type: "retry",
+      event_data: {
+        attempt: 1,
+        max_attempts: 3,
+        delay_ms: 2000,
+        message: "Cannot connect to API",
+      },
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("retry-event-1")).toEqual({
+      kind: "status",
+      id: "retry-event-1",
+      lines: [
+        "Provider stream error, retrying (attempt 1/3, in 2s): Cannot connect to API",
+      ],
+    });
+  });
+
+  test("uses run sequence fallback ids for retry status events", () => {
+    const buffers = createBuffers("agent-1");
+
+    onChunk(buffers, {
+      message_type: "event_message",
+      run_id: "local-run-1",
+      seq_id: 7,
+      event_type: "retry",
+      event_data: { attempt: 2, delay_ms: 250 },
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("local-run-1-retry-7")).toEqual({
+      kind: "status",
+      id: "local-run-1-retry-7",
+      lines: ["Provider stream error, retrying (attempt 2, in 250ms)"],
+    });
+  });
+
+  test("marks non-compaction event messages as finished immediately", () => {
+    const buffers = createBuffers("agent-1");
+
+    onChunk(buffers, {
+      message_type: "event_message",
+      id: "event-custom-1",
+      event_type: "custom_notification",
+      event_data: {},
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("event-custom-1")).toMatchObject({
+      kind: "event",
+      eventType: "custom_notification",
+      phase: "finished",
+    });
   });
 
   test("sets reflection trigger for legacy compaction summary user_message", () => {

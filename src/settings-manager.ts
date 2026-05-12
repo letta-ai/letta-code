@@ -39,7 +39,7 @@ export interface StatusLineConfig {
   debounceMs?: number; // Debounce for event-driven refreshes (default 300)
   refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
   disabled?: boolean; // Disable at this level
-  prompt?: string; // Custom input prompt character (default ">")
+  prompt?: string; // Custom input prompt character (default "›")
 }
 
 /**
@@ -62,6 +62,17 @@ export interface AgentSettings {
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
 }
 
+export interface ConversationGoal {
+  objective: string;
+  status: "active" | "paused" | "complete" | "budget_limited";
+  createdAt: string;
+  updatedAt: string;
+  activeStartedAt?: string | null;
+  activeTimeSeconds: number;
+  tokensUsed: number;
+  tokenBudget?: number | null;
+}
+
 export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
@@ -82,7 +93,6 @@ export interface Settings {
     }
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
-  globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
@@ -113,7 +123,6 @@ export interface Settings {
 }
 
 export interface ProjectSettings {
-  localSharedBlockIds: Record<string, string>;
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   statusLine?: StatusLineConfig; // Project-specific status line command
 }
@@ -140,6 +149,8 @@ export interface LocalProjectSettings {
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
+  conversationGoalsByServer?: Record<string, Record<string, ConversationGoal>>;
+  conversationGoalToolsByServer?: Record<string, Record<string, boolean>>;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -154,12 +165,9 @@ const DEFAULT_SETTINGS: Settings = {
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
-  globalSharedBlockIds: {},
 };
 
-const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
-  localSharedBlockIds: {},
-};
+const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {};
 
 const DEFAULT_LOCAL_PROJECT_SETTINGS: LocalProjectSettings = {
   lastAgent: null,
@@ -707,8 +715,6 @@ class SettingsManager {
       const rawSettings = JSON.parse(content) as Record<string, unknown>;
 
       const projectSettings: ProjectSettings = {
-        localSharedBlockIds:
-          (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
         hooks: rawSettings.hooks as HooksConfig | undefined,
         statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
       };
@@ -1241,6 +1247,196 @@ class SettingsManager {
     const session: SessionRef = { agentId, conversationId };
     this.setLocalLastSession(session, workingDirectory);
     this.setGlobalLastSession(session);
+  }
+
+  areConversationGoalToolsEnabled(
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): boolean {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    return (
+      localSettings.conversationGoalToolsByServer?.[serverKey]?.[
+        conversationId
+      ] === true
+    );
+  }
+
+  setConversationGoalToolsEnabled(
+    conversationId: string,
+    enabled: boolean,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const serverGoalTools = {
+      ...(localSettings.conversationGoalToolsByServer?.[serverKey] ?? {}),
+    };
+    if (enabled) {
+      serverGoalTools[conversationId] = true;
+    } else {
+      delete serverGoalTools[conversationId];
+    }
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalToolsByServer: {
+          ...localSettings.conversationGoalToolsByServer,
+          [serverKey]: serverGoalTools,
+        },
+      },
+      workingDirectory,
+    );
+  }
+
+  getConversationGoal(
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): ConversationGoal | null {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    return (
+      localSettings.conversationGoalsByServer?.[serverKey]?.[conversationId] ??
+      null
+    );
+  }
+
+  setConversationGoal(
+    conversationId: string,
+    objective: string,
+    workingDirectory: string = process.cwd(),
+    tokenBudget: number | null = null,
+    resetUsage: boolean = true,
+  ): ConversationGoal {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const now = new Date().toISOString();
+    const previous =
+      localSettings.conversationGoalsByServer?.[serverKey]?.[conversationId];
+    const goal: ConversationGoal = {
+      objective,
+      status: "active",
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+      activeStartedAt: now,
+      activeTimeSeconds: resetUsage ? 0 : (previous?.activeTimeSeconds ?? 0),
+      tokensUsed: resetUsage ? 0 : (previous?.tokensUsed ?? 0),
+      tokenBudget,
+    };
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalsByServer: {
+          ...localSettings.conversationGoalsByServer,
+          [serverKey]: {
+            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
+            [conversationId]: goal,
+          },
+        },
+      },
+      workingDirectory,
+    );
+    return goal;
+  }
+
+  updateConversationGoalStatus(
+    conversationId: string,
+    status: ConversationGoal["status"],
+    workingDirectory: string = process.cwd(),
+  ): ConversationGoal | null {
+    const existing = this.getConversationGoal(conversationId, workingDirectory);
+    if (!existing) return null;
+
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const now = new Date().toISOString();
+    const accruedSeconds =
+      existing.status === "active" && existing.activeStartedAt
+        ? Math.max(
+            0,
+            Math.floor(
+              (Date.parse(now) - Date.parse(existing.activeStartedAt)) / 1000,
+            ),
+          )
+        : 0;
+    const goal: ConversationGoal = {
+      ...existing,
+      status,
+      activeTimeSeconds: existing.activeTimeSeconds + accruedSeconds,
+      activeStartedAt: status === "active" ? now : null,
+      updatedAt: now,
+    };
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalsByServer: {
+          ...localSettings.conversationGoalsByServer,
+          [serverKey]: {
+            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
+            [conversationId]: goal,
+          },
+        },
+      },
+      workingDirectory,
+    );
+    return goal;
+  }
+
+  accountConversationGoalUsage(
+    conversationId: string,
+    tokenDelta: number,
+    workingDirectory: string = process.cwd(),
+  ): ConversationGoal | null {
+    const existing = this.getConversationGoal(conversationId, workingDirectory);
+    if (!existing) return null;
+
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const goal: ConversationGoal = {
+      ...existing,
+      tokensUsed: Math.max(0, existing.tokensUsed + Math.max(0, tokenDelta)),
+      updatedAt: new Date().toISOString(),
+    };
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalsByServer: {
+          ...localSettings.conversationGoalsByServer,
+          [serverKey]: {
+            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
+            [conversationId]: goal,
+          },
+        },
+      },
+      workingDirectory,
+    );
+    return goal;
+  }
+
+  clearConversationGoal(
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): boolean {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const serverGoals = {
+      ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
+    };
+    const hadGoal = Object.hasOwn(serverGoals, conversationId);
+    delete serverGoals[conversationId];
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalsByServer: {
+          ...localSettings.conversationGoalsByServer,
+          [serverKey]: serverGoals,
+        },
+      },
+      workingDirectory,
+    );
+    return hadGoal;
   }
 
   // =====================================================================

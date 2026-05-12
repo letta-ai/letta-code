@@ -18,6 +18,7 @@
 import { Box, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
 import { useAnimation } from "../contexts/AnimationContext.js";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import {
   formatStats,
   getSubagentModelDisplay,
@@ -142,7 +143,7 @@ const AgentRow = memo(
                 <>
                   <Text color={colors.subagent.treeChar}>
                     {rowIndent}
-                    {continueChar} ⎿{" "}
+                    {continueChar} {CLI_GLYPHS.result}{" "}
                   </Text>
                   <Text dimColor>Launching...</Text>
                 </>
@@ -217,7 +218,7 @@ const AgentRow = memo(
           <Box flexDirection="row">
             <Text color={colors.subagent.treeChar}>
               {rowIndent}
-              {continueChar} ⎿{" "}
+              {continueChar} {CLI_GLYPHS.result}{" "}
             </Text>
             <Text dimColor>{"Subagent: "}</Text>
             <Text dimColor>{agent.agentURL}</Text>
@@ -269,7 +270,7 @@ const AgentRow = memo(
               <>
                 <Text color={colors.subagent.treeChar}>
                   {rowIndent}
-                  {continueChar} ⎿{" "}
+                  {continueChar} {CLI_GLYPHS.result}{" "}
                 </Text>
                 <Text dimColor>Launching...</Text>
               </>
@@ -322,7 +323,7 @@ const GroupHeader = memo(
     return (
       <Box flexDirection="row">
         {allCompleted ? (
-          <Text color={dotColor}>●</Text>
+          <Text color={dotColor}>{CLI_GLYPHS.bullet}</Text>
         ) : (
           // BlinkDot now gets shouldAnimate from AnimationContext
           <BlinkDot color={runningDotColor} />

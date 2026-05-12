@@ -14,6 +14,7 @@ import type {
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -26,6 +27,7 @@ import type {
   ConversationMessageStreamBody,
   ConversationUpdateBody,
 } from "../backend";
+import type { LocalCompactionStats } from "./compaction";
 import type { LocalMessage } from "./LocalMessage";
 import {
   cloneLocalMessage,
@@ -34,6 +36,7 @@ import {
   projectedMessageLookupKeys,
   projectLocalMessagesToStoredMessages,
   projectLocalMessageToStoredMessages,
+  withProjectedMessageDates,
 } from "./LocalMessageProjection";
 import {
   getAttachedLocalUIMessage,
@@ -64,6 +67,7 @@ export interface LocalAgentRecord {
   tags: string[];
   model: string;
   model_settings: Record<string, unknown>;
+  compaction_settings?: Record<string, unknown> | null;
 }
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
@@ -265,6 +269,7 @@ function normalizeAgentRecord(
     modelSettings.max_tokens = legacyLlmConfig.max_tokens;
   }
 
+  const compactionSettings = optionalRecordOrNull(value.compaction_settings);
   return {
     id: value.id,
     name: optionalString(value.name) ?? "Letta Code",
@@ -276,6 +281,9 @@ function normalizeAgentRecord(
       optionalString(legacyLlmConfig.model) ??
       defaultAgentModel,
     model_settings: modelSettings,
+    ...(compactionSettings !== undefined
+      ? { compaction_settings: compactionSettings }
+      : {}),
   };
 }
 
@@ -312,6 +320,9 @@ function projectAgentState(
     tags: record.tags,
     model: record.model,
     model_settings: record.model_settings,
+    ...(record.compaction_settings !== undefined
+      ? { compaction_settings: record.compaction_settings }
+      : {}),
     message_ids: messageIds,
     in_context_message_ids: inContextMessageIds,
     ...(lastRunCompletion ? { last_run_completion: lastRunCompletion } : {}),
@@ -348,6 +359,47 @@ function normalizeContent(content: unknown): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function localFilePartFromLegacyImage(
+  part: Record<string, unknown>,
+): LocalMessagePart | null {
+  if (part.type !== "image" || !isRecord(part.source)) {
+    return null;
+  }
+
+  const source = part.source;
+  if (source.type !== "base64") {
+    return null;
+  }
+
+  const mediaType = source.media_type;
+  const data = source.data;
+  if (typeof mediaType !== "string" || typeof data !== "string") {
+    return null;
+  }
+
+  return {
+    type: "file",
+    mediaType,
+    url: `data:${mediaType};base64,${data}`,
+  } as LocalMessagePart;
+}
+
+function normalizeLocalMessageForAISDK(message: LocalMessage): LocalMessage {
+  let didChange = false;
+  const parts = message.parts.map((part) => {
+    if (isRecord(part)) {
+      const filePart = localFilePartFromLegacyImage(part);
+      if (filePart) {
+        didChange = true;
+        return filePart;
+      }
+    }
+    return part;
+  });
+
+  return didChange ? { ...message, parts } : message;
 }
 
 function textFromContent(content: unknown): string {
@@ -399,6 +451,19 @@ function getCursor(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function getIncludedMessageTypes(
+  body?: ConversationMessageListBody | AgentMessageListBody,
+): Set<string> | undefined {
+  const value = (body as Record<string, unknown> | undefined)
+    ?.include_return_message_types;
+  if (!Array.isArray(value)) return undefined;
+
+  const messageTypes = value.filter(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  );
+  return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
+}
+
 function toStoredOutputFields(chunk: Record<string, unknown>) {
   const { id: _id, date: _date, agent_id, conversation_id, ...fields } = chunk;
   void agent_id;
@@ -409,6 +474,12 @@ function toStoredOutputFields(chunk: Record<string, unknown>) {
 export interface StoredTurnInput {
   agentId: string;
   conversationId: string;
+}
+
+export interface LocalCompactionStoreResult {
+  numMessagesBefore: number;
+  numMessagesAfter: number;
+  summaryMessage: LocalMessage;
 }
 
 export interface LocalStoreOptions {
@@ -702,6 +773,23 @@ export class LocalStore {
     return this.projectAgent(updated);
   }
 
+  setAgentCompactionSettings(
+    agentId: string,
+    settings: Record<string, unknown> | null,
+  ): AgentState {
+    const existing = this.agents.get(agentId);
+    if (!existing) {
+      throw new LocalBackendNotFoundError("Agent", agentId);
+    }
+    const updated: LocalAgentRecord = {
+      ...existing,
+      compaction_settings: settings === null ? null : { ...settings },
+    };
+    this.agents.set(agentId, updated);
+    this.persistAgent(agentId);
+    return this.projectAgent(updated);
+  }
+
   createAgent(body: AgentCreateBody): AgentState {
     const agent = this.createAgentRecord(body);
     const agentId = agent.id;
@@ -964,6 +1052,25 @@ export class LocalStore {
     ).map(cloneLocalMessage);
   }
 
+  settleInterruptedToolCalls(
+    conversationIdOrAgentId: string,
+    options: { agentId?: string; reason?: string } = {},
+  ): number {
+    const targets = this.toolSettlementTargets(
+      conversationIdOrAgentId,
+      options.agentId,
+    );
+    let settledCount = 0;
+    for (const target of targets) {
+      settledCount += this.settleInterruptedToolCallsForConversation(
+        target.conversationId,
+        target.agentId,
+        options.reason ?? INTERRUPTED_BY_USER,
+      );
+    }
+    return settledCount;
+  }
+
   resolveAgentIdForConversation(conversationId: string): string {
     return this.agentIdForConversation(conversationId);
   }
@@ -1052,6 +1159,57 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Message", messageId);
     }
     return [...messages];
+  }
+
+  compactConversationAll(input: {
+    conversationId: string;
+    agentId: string;
+    summary: string;
+    packedSummary: string;
+    stats?: LocalCompactionStats;
+    remainingMessages?: LocalMessage[];
+  }): LocalCompactionStoreResult {
+    const conversation = this.ensureConversation(
+      input.conversationId,
+      input.agentId,
+    );
+    const key = this.conversationKey(conversation.id, input.agentId);
+    const previousMessages = this.localMessagesByConversationKey.get(key) ?? [];
+    const id = this.nextLocalMessageId();
+    const date = this.currentLocalMessageDate();
+    const summaryMessage: LocalMessage = {
+      id,
+      role: "user",
+      metadata: {
+        created_at: date,
+        updated_at: date,
+        agent_id: input.agentId,
+        conversation_id: conversation.id,
+        compaction: {
+          summary: input.summary,
+          ...(input.stats ? { stats: input.stats } : {}),
+        },
+      },
+      parts: [{ type: "text", text: input.packedSummary } as LocalMessagePart],
+    };
+    const compactedMessages = [
+      summaryMessage,
+      ...(input.remainingMessages ?? []).map(cloneLocalMessage),
+    ];
+    this.localMessagesByConversationKey.set(key, compactedMessages);
+    conversation.in_context_message_ids = compactedMessages.map(
+      (message) => message.id,
+    );
+    conversation.last_message_at = date;
+    conversation.updated_at = date;
+    this.conversations.set(key, conversation);
+    this.persistConversationState(conversation.id, input.agentId);
+    this.rebuildMessageIndex();
+    return {
+      numMessagesBefore: previousMessages.length,
+      numMessagesAfter: compactedMessages.length,
+      summaryMessage: cloneLocalMessage(summaryMessage),
+    };
   }
 
   private appendUserLocalMessage(
@@ -1297,6 +1455,56 @@ export class LocalStore {
     }
   }
 
+  private settleInterruptedToolCallsForConversation(
+    conversationId: string,
+    agentId: string,
+    reason: string,
+  ): number {
+    const conversation = this.findConversation(conversationId, agentId);
+    if (!conversation) return 0;
+
+    const messages = this.localMessagesForConversation(
+      conversation.id,
+      agentId,
+    );
+    const touchedMessages = new Set<LocalMessage>();
+    let settledCount = 0;
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      for (const part of message.parts) {
+        if (!part || !isLocalToolPart(part)) continue;
+        const state = (part as { state?: unknown }).state;
+        if (isSettledLocalToolState(state)) continue;
+
+        const record = part as Record<string, unknown>;
+        delete record.approval;
+        Object.assign(record, {
+          state: "output-error",
+          input: Object.hasOwn(record, "input") ? record.input : {},
+          errorText:
+            typeof record.errorText === "string" && record.errorText.length > 0
+              ? record.errorText
+              : reason,
+        });
+        touchedMessages.add(message);
+        settledCount += 1;
+      }
+    }
+
+    if (settledCount > 0) {
+      for (const message of touchedMessages) {
+        this.touchLocalMessageForToolSettlement(
+          message,
+          conversation.id,
+          agentId,
+        );
+      }
+      this.persistConversationState(conversation.id, agentId);
+      this.rebuildMessageIndex();
+    }
+    return settledCount;
+  }
+
   private findToolPart(
     conversationId: string,
     agentId: string,
@@ -1396,6 +1604,21 @@ export class LocalStore {
     this.touchConversationForLocalMessage(conversationId, agentId, message);
   }
 
+  private touchLocalMessageForToolSettlement(
+    message: LocalMessage,
+    conversationId: string,
+    agentId: string,
+  ): void {
+    const updatedAt = this.nextLocalMessageDate();
+    message.metadata = {
+      ...message.metadata,
+      updated_at: updatedAt,
+      agent_id: agentId,
+      conversation_id: conversationId,
+    };
+    this.touchConversationForLocalMessage(conversationId, agentId, message);
+  }
+
   private toolCallFromChunk(
     chunk: LettaStreamingResponse,
   ): { toolCallId: string; toolName: string; input: unknown } | undefined {
@@ -1443,6 +1666,13 @@ export class LocalStore {
     body?: ConversationMessageListBody | AgentMessageListBody,
   ): StoredMessage[] {
     let items = messages;
+    const includedMessageTypes = getIncludedMessageTypes(body);
+    if (includedMessageTypes) {
+      items = items.filter((message) =>
+        includedMessageTypes.has(message.message_type),
+      );
+    }
+
     const before = getCursor(body, "before");
     if (before) {
       const beforeIndex = items.findIndex((message) => message.id === before);
@@ -1481,11 +1711,14 @@ export class LocalStore {
     for (let index = 0; index < localMessages.length; index++) {
       const localMessage = localMessages[index];
       if (!localMessage) continue;
-      const projected = projectLocalMessageToStoredMessages(
-        localMessage,
-        agentId,
-        resolvedConversationId,
-        new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+      const projected = withProjectedMessageDates(
+        projectLocalMessageToStoredMessages(
+          localMessage,
+          agentId,
+          resolvedConversationId,
+          new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+        ),
+        index,
       );
       messages.push(...projected);
       for (const [lookupKey, lookupMessages] of projectedMessageLookupKeys(
@@ -1584,6 +1817,11 @@ export class LocalStore {
         parts.push({ type: "text", text: part.text } as LocalMessagePart);
         continue;
       }
+      const filePart = localFilePartFromLegacyImage(part);
+      if (filePart) {
+        parts.push(filePart);
+        continue;
+      }
       parts.push(part as LocalMessagePart);
     }
     return parts.length > 0 ? parts : textContent(textFromContent(content));
@@ -1634,7 +1872,7 @@ export class LocalStore {
         );
         const localMessages = readJsonlFile<LocalMessage>(
           join(conversationDir, "messages.jsonl"),
-        );
+        ).map(normalizeLocalMessageForAISDK);
         const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
           join(conversationDir, "system-prompt.json"),
         );
@@ -1792,6 +2030,43 @@ export class LocalStore {
       if (conversation.id === conversationId) return conversation;
     }
     return undefined;
+  }
+
+  private toolSettlementTargets(
+    conversationIdOrAgentId: string,
+    agentId?: string,
+  ): Array<{ conversationId: string; agentId: string }> {
+    if (agentId) {
+      const conversation = this.findConversation(
+        conversationIdOrAgentId,
+        agentId,
+      );
+      return conversation
+        ? [{ conversationId: conversation.id, agentId: conversation.agent_id }]
+        : [];
+    }
+
+    const conversation = this.findConversation(conversationIdOrAgentId);
+    if (conversation) {
+      return [
+        { conversationId: conversation.id, agentId: conversation.agent_id },
+      ];
+    }
+
+    if (this.agents.has(conversationIdOrAgentId)) {
+      const defaultConversation = this.ensureConversation(
+        "default",
+        conversationIdOrAgentId,
+      );
+      return [
+        {
+          conversationId: defaultConversation.id,
+          agentId: defaultConversation.agent_id,
+        },
+      ];
+    }
+
+    return [];
   }
 
   private agentIdForConversation(conversationId: string): string {

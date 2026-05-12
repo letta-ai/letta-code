@@ -5,6 +5,7 @@ import {
   buildInitMessage,
   buildShallowInitPrompt,
 } from "../../cli/helpers/initCommand";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("init wiring", () => {
   const readSource = (relativePath: string) =>
@@ -14,7 +15,7 @@ describe("init wiring", () => {
     );
 
   test("App.tsx checks pending approvals before /init runs", () => {
-    const appSource = readSource("../../cli/App.tsx");
+    const appSource = readInteractiveAppSource();
 
     const approvalIdx = appSource.indexOf(
       "checkPendingApprovalsForSlashCommand",
@@ -30,7 +31,7 @@ describe("init wiring", () => {
   });
 
   test("App.tsx uses processConversation for /init", () => {
-    const appSource = readSource("../../cli/App.tsx");
+    const appSource = readInteractiveAppSource();
 
     expect(appSource).toContain("buildInitMessage({");
     expect(appSource).toContain("processConversation(");

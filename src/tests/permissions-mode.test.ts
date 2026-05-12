@@ -17,7 +17,7 @@ afterEach(() => {
 // ============================================================================
 
 test("default mode - no overrides", () => {
-  permissionMode.setMode("default");
+  permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -38,7 +38,7 @@ test("default mode - no overrides", () => {
 });
 
 test("default mode - auto-allows memory", () => {
-  permissionMode.setMode("default");
+  permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -64,7 +64,7 @@ test("default mode - auto-allows memory", () => {
 });
 
 test("default mode - auto-allows memory_apply_patch", () => {
-  permissionMode.setMode("default");
+  permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -88,7 +88,7 @@ test("default mode - auto-allows memory_apply_patch", () => {
 });
 
 test("default mode - treats Agent like Task for safe subagent auto-approval", () => {
-  permissionMode.setMode("default");
+  permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -112,11 +112,11 @@ test("default mode - treats Agent like Task for safe subagent auto-approval", ()
 });
 
 // ============================================================================
-// Permission Mode: bypassPermissions
+// Permission Mode: unrestricted
 // ============================================================================
 
-test("bypassPermissions mode - allows all tools", () => {
-  permissionMode.setMode("bypassPermissions");
+test("unrestricted mode - allows all tools", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -131,7 +131,7 @@ test("bypassPermissions mode - allows all tools", () => {
     "/Users/test/project",
   );
   expect(bashResult.decision).toBe("allow");
-  expect(bashResult.reason).toBe("Permission mode: bypassPermissions");
+  expect(bashResult.reason).toBe("Permission mode: unrestricted");
 
   const writeResult = checkPermission(
     "Write",
@@ -142,8 +142,8 @@ test("bypassPermissions mode - allows all tools", () => {
   expect(writeResult.decision).toBe("allow");
 });
 
-test("bypassPermissions mode - ExitPlanMode always requires approval", () => {
-  permissionMode.setMode("bypassPermissions");
+test("unrestricted mode - ExitPlanMode always requires approval", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -178,8 +178,8 @@ test("bypassPermissions mode - ExitPlanMode always requires approval", () => {
   expect(enterResult.decision).toBe("allow");
 });
 
-test("bypassPermissions mode - does NOT override deny rules", () => {
-  permissionMode.setMode("bypassPermissions");
+test("unrestricted mode - does NOT override deny rules", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -194,7 +194,7 @@ test("bypassPermissions mode - does NOT override deny rules", () => {
     "/Users/test/project",
   );
 
-  // Deny rules take precedence even in bypassPermissions mode
+  // Deny rules take precedence even in unrestricted mode
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
 });
@@ -1403,7 +1403,7 @@ test("plan mode - denies WebFetch", () => {
 // ============================================================================
 
 test("Deny rules override permission mode", () => {
-  permissionMode.setMode("bypassPermissions");
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -1418,7 +1418,7 @@ test("Deny rules override permission mode", () => {
     "/Users/test/project",
   );
 
-  // Deny rule takes precedence over bypassPermissions
+  // Deny rule takes precedence over unrestricted
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
 });
@@ -1452,17 +1452,17 @@ test("Permission mode takes precedence over CLI allowedTools", () => {
 });
 
 test("plan mode - remembers and restores previous mode", () => {
-  permissionMode.setMode("bypassPermissions");
-  expect(permissionMode.getMode()).toBe("bypassPermissions");
+  permissionMode.setMode("unrestricted");
+  expect(permissionMode.getMode()).toBe("unrestricted");
 
   // Enter plan mode - should remember prior mode.
   permissionMode.setMode("plan");
   expect(permissionMode.getMode()).toBe("plan");
-  expect(permissionMode.getModeBeforePlan()).toBe("bypassPermissions");
+  expect(permissionMode.getModeBeforePlan()).toBe("unrestricted");
 
   // Exit plan mode by restoring previous mode.
-  permissionMode.setMode(permissionMode.getModeBeforePlan() ?? "default");
-  expect(permissionMode.getMode()).toBe("bypassPermissions");
+  permissionMode.setMode(permissionMode.getModeBeforePlan() ?? "unrestricted");
+  expect(permissionMode.getMode()).toBe("unrestricted");
 
   // Once we leave plan mode, the remembered mode is consumed.
   expect(permissionMode.getModeBeforePlan()).toBe(null);

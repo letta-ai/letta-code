@@ -84,6 +84,7 @@ import {
 } from "./queue";
 import {
   getApprovalContinuationRecoveryDisposition,
+  getApprovalToolCallDesyncErrorText,
   recoverApprovalStateForSync,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
@@ -461,6 +462,7 @@ export const __listenClientTestUtils = {
   getInterruptApprovalsForEmission,
   normalizeToolReturnWireMessage,
   normalizeExecutionResultsForInterruptParity,
+  getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
   getApprovalContinuationRecoveryDisposition,
   markAwaitingAcceptedApprovalContinuationRunId,

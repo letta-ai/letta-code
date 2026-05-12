@@ -822,6 +822,9 @@ describe("isReadOnlyShellCommand", () => {
     test("blocks unknown letta group", () => {
       expect(isReadOnlyShellCommand("letta install plugin")).toBe(false);
       expect(isReadOnlyShellCommand("letta doctor")).toBe(false);
+      expect(
+        isReadOnlyShellCommand("letta blocks list --agent agent-123"),
+      ).toBe(false);
     });
 
     test("allows legacy letta memfs alias", () => {

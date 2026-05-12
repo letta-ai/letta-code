@@ -15,6 +15,7 @@ import {
   resolveScopedMemoryDir,
 } from "../../agent/memoryFilesystem";
 import { getServerUrl } from "../../backend/api/client";
+import { isLocalBackendNoMemfsEnvEnabled } from "../../backend/local/paths";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 
@@ -317,10 +318,13 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.AGENT_ID = agentId;
 
     try {
-      if (
-        settingsManager.isMemfsEnabled(agentId) ||
+      const localBackendNoMemfs = isLocalBackendNoMemfsEnvEnabled();
+      const localBackendEnabled =
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
-        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true"
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";
+      if (
+        !localBackendNoMemfs &&
+        (settingsManager.isMemfsEnabled(agentId) || localBackendEnabled)
       ) {
         const memoryDir = resolveScopedMemoryDir({ agentId });
         if (!memoryDir) {

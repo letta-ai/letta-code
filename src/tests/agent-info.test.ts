@@ -1,7 +1,40 @@
 import { describe, expect, test } from "bun:test";
-import { getMemoryFilesystemRoot } from "../agent/memoryFilesystem";
+import {
+  getMemoryFilesystemRoot,
+  getScopedMemoryFilesystemRoot,
+} from "../agent/memoryFilesystem";
+import { getLocalBackendMemoryFilesystemRoot } from "../backend/local/paths";
 import { buildAgentInfo } from "../cli/helpers/agentInfo";
 import { settingsManager } from "../settings-manager";
+
+function withTemporaryEnv<T>(
+  updates: Record<string, string | undefined>,
+  fn: () => T,
+): T {
+  const original = Object.fromEntries(
+    Object.keys(updates).map((key) => [key, process.env[key]]),
+  ) as Record<string, string | undefined>;
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
 
 describe("agent info reminder", () => {
   test("always includes AGENT_ID env var", () => {
@@ -74,6 +107,43 @@ describe("agent info reminder", () => {
       expect(context).toContain(
         `- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getMemoryFilesystemRoot(agentId)}\``,
       );
+    } finally {
+      (
+        settingsManager as unknown as {
+          isMemfsEnabled: (id: string) => boolean;
+        }
+      ).isMemfsEnabled = original;
+    }
+  });
+
+  test("uses local backend MemFS path for local backend agents", () => {
+    const agentId = "agent-local-agent-info-enabled";
+    const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+    (
+      settingsManager as unknown as {
+        isMemfsEnabled: (id: string) => boolean;
+      }
+    ).isMemfsEnabled = () => false;
+
+    try {
+      withTemporaryEnv({ LETTA_LOCAL_BACKEND_EXPERIMENTAL: "1" }, () => {
+        const context = buildAgentInfo({
+          agentInfo: {
+            id: agentId,
+            name: "Test Agent",
+            description: "Test description",
+            lastRunAt: null,
+          },
+        });
+
+        expect(getScopedMemoryFilesystemRoot(agentId)).toBe(
+          getLocalBackendMemoryFilesystemRoot(agentId),
+        );
+        expect(context).toContain(
+          `- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getLocalBackendMemoryFilesystemRoot(agentId)}\``,
+        );
+        expect(context).not.toContain(getMemoryFilesystemRoot(agentId));
+      });
     } finally {
       (
         settingsManager as unknown as {

@@ -1,5 +1,6 @@
 import { relative } from "node:path";
 import { Box } from "ink";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import {
@@ -150,7 +151,7 @@ export function WriteRenderer({ filePath, content }: WriteRendererProps) {
         <Box width={gutterWidth} flexShrink={0}>
           <Text>
             {"  "}
-            <Text dimColor>⎿</Text>
+            <Text dimColor>{CLI_GLYPHS.result}</Text>
           </Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>
@@ -209,7 +210,7 @@ export function EditRenderer({
         <Box width={gutterWidth} flexShrink={0}>
           <Text>
             {"  "}
-            <Text dimColor>⎿</Text>
+            <Text dimColor>{CLI_GLYPHS.result}</Text>
           </Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>
@@ -285,7 +286,7 @@ export function MultiEditRenderer({
         <Box width={gutterWidth} flexShrink={0}>
           <Text>
             {"  "}
-            <Text dimColor>⎿</Text>
+            <Text dimColor>{CLI_GLYPHS.result}</Text>
           </Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>

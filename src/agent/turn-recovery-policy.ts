@@ -11,6 +11,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { isCloudflareEdge52xErrorText } from "../cli/helpers/errorFormatter";
 import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
+import type { StopReasonType } from "../types/protocol_v2";
 
 // ── Error fragment constants ────────────────────────────────────────
 
@@ -25,6 +26,7 @@ const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "ChatGPT API error",
   "ChatGPT server error",
   "Connection error during Anthropic streaming",
+  "Connection error during OpenRouter streaming",
   "Connection error during streaming",
   "upstream connect error",
   "connection termination",
@@ -160,6 +162,20 @@ export function shouldRetryRunMetadataError(
   if (nonRetryableDetail && !retryable429Detail) return false;
   if (explicitLlmError) return true;
   return retryable429Detail || retryableDetail;
+}
+
+export function normalizeStreamErrorTypeToStopReason(
+  errorType: unknown,
+): StopReasonType {
+  if (errorType === "llm_error" || errorType === "llm_api_error") {
+    return "llm_api_error";
+  }
+
+  if (errorType === "internal_error" || errorType === "stream_incomplete") {
+    return "error";
+  }
+
+  return "error";
 }
 
 /**

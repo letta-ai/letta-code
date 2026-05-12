@@ -433,7 +433,7 @@ describe("tool execution context snapshot", () => {
       botToken: "xoxb-test-token",
       appToken: "xapp-test-token",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
 
     const scope = resolveConversationChannelToolScope("agent-1", "default");
@@ -469,7 +469,7 @@ describe("tool execution context snapshot", () => {
       botToken: "xoxb-test-token",
       appToken: "xapp-test-token",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
     setRouteInMemory("slack", {
       accountId: "acct-slack",

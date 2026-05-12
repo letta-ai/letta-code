@@ -174,6 +174,31 @@ const classifyApprovalsMock = mock(async () => ({
 const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("../../cli/helpers/stream");
+// Capture real implementations BEFORE applying `mock.module(...)` so they
+// can be restored in afterAll. Bun's `mock.restore()` only resets mock
+// function state — it does NOT undo `mock.module()` swaps, so mocked modules
+// would otherwise leak into subsequent test files (e.g. approvalClassification.test.ts)
+// because module identity is process-global.
+//
+// Note: ES module namespace exports are LIVE bindings, so we copy each
+// function reference into a local `const` here. Re-reading
+// `module.classifyApprovals` after `mock.module` runs would return the mocked
+// value, and feeding that back into `mockImplementation` would cause infinite
+// recursion at restore time.
+const realApprovalClassificationModule = await import(
+  "../../cli/helpers/approvalClassification"
+);
+const realClassifyApprovals =
+  realApprovalClassificationModule.classifyApprovals;
+const realApprovalExecutionModule = await import(
+  "../../agent/approval-execution"
+);
+const realExecuteApprovalBatch =
+  realApprovalExecutionModule.executeApprovalBatch;
+const realApprovalRecoveryModule = await import(
+  "../../agent/approval-recovery"
+);
+const realFetchRunErrorDetail = realApprovalRecoveryModule.fetchRunErrorDetail;
 
 mock.module("../../agent/message", () => ({
   sendMessageStream: sendMessageStreamMock,
@@ -346,6 +371,29 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   afterAll(() => {
+    // Bun's `mock.module()` swaps are process-global and are NOT undone by
+    // `mock.restore()` (which only resets mock function call history /
+    // queued return values). Subsequent test files that statically import
+    // these module paths would otherwise receive the mocked version, with
+    // any leftover `mockResolvedValueOnce(...)` values bleeding into them.
+    //
+    // Mitigation: reset the underlying mock functions and re-point them at
+    // the real implementations captured before mocking. The `mock.module`
+    // factory always returns the same wrapper object, so swapping the
+    // function reference behind it propagates to all consumers.
+    classifyApprovalsMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: real implementations have wider signatures than the narrow zero-arg mocks
+    (classifyApprovalsMock as any).mockImplementation(realClassifyApprovals);
+    executeApprovalBatchMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (executeApprovalBatchMock as any).mockImplementation(
+      realExecuteApprovalBatch,
+    );
+    fetchRunErrorDetailMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (fetchRunErrorDetailMock as any).mockImplementation(
+      realFetchRunErrorDetail,
+    );
     mock.restore();
   });
 
@@ -1065,6 +1113,87 @@ describe("listen-client multi-worker concurrency", () => {
       batchId: "batch-1",
       sources: channelTurnSources,
       outcome: "completed",
+    });
+  });
+
+  test("channel queue lifecycle includes terminal loop error text when the turn stops with error", async () => {
+    const lifecycleEvents: Array<Record<string, unknown>> = [];
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+      handleTurnLifecycleEvent: async (event) => {
+        lifecycleEvents.push(event as unknown as Record<string, unknown>);
+      },
+    } satisfies ChannelAdapter);
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-channel-error",
+    );
+    const socket = new MockSocket();
+    const channelTurnSources = [
+      {
+        channel: "telegram" as const,
+        accountId: "acct-telegram",
+        chatId: "515978553",
+        chatType: "direct" as const,
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-channel-error",
+      },
+    ];
+
+    const enqueuedItem = __listenClientTestUtils.enqueueChannelTurn(
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conv-channel-error",
+      },
+      [
+        {
+          type: "text" as const,
+          text: '<channel-notification source="telegram" chat_id="515978553">test</channel-notification>',
+        },
+      ],
+      channelTurnSources,
+    );
+
+    expect(enqueuedItem).not.toBeNull();
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async () => {
+        runtime.lastStopReason = "error";
+        runtime.lastTerminalLoopErrorMessage =
+          "ChatGPT usage limit reached. Resets at 1:00 PM.";
+      },
+    );
+
+    await waitFor(() => lifecycleEvents.length === 2);
+
+    expect(lifecycleEvents[1]).toEqual({
+      type: "finished",
+      batchId: "batch-1",
+      sources: channelTurnSources,
+      outcome: "error",
+      error: "ChatGPT usage limit reached. Resets at 1:00 PM.",
     });
   });
 
@@ -2108,7 +2237,7 @@ describe("listen-client multi-worker concurrency", () => {
       command: {
         type: "change_device_state",
         runtime: { agent_id: "agent-1", conversation_id: "conv-mid" },
-        payload: { mode: "bypassPermissions" },
+        payload: { mode: "unrestricted" },
       },
       socket: socket as unknown as WebSocket,
       opts: {},
@@ -2119,7 +2248,7 @@ describe("listen-client multi-worker concurrency", () => {
 
     await turnPromise;
 
-    expect(capturedModeAtClassification === "bypassPermissions").toBe(true);
+    expect(capturedModeAtClassification === "unrestricted").toBe(true);
     const continuationMessages = sendMessageStreamMock.mock.calls[1]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
@@ -2138,7 +2267,7 @@ describe("listen-client multi-worker concurrency", () => {
       command: {
         type: "change_device_state",
         runtime: { agent_id: "agent-1", conversation_id: "default" },
-        payload: { mode: "default" },
+        payload: { mode: "standard" },
       },
       socket: socket as unknown as WebSocket,
       opts: {},

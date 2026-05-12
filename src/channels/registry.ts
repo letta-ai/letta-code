@@ -580,12 +580,17 @@ export class ChannelRegistry {
     chatId: string,
     agentId: string,
     conversationId: string,
+    accountId?: string,
   ): ChannelRoute | null {
+    const normalizedAccountId = accountId?.trim();
     const matches = getRoutesForChannel(channel).filter(
       (route) =>
         route.chatId === chatId &&
         route.agentId === agentId &&
         route.conversationId === conversationId &&
+        (!normalizedAccountId ||
+          (route.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) ===
+            normalizedAccountId) &&
         route.enabled,
     );
 
@@ -978,7 +983,7 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "default") {
+    if (config.defaultPermissionMode !== "standard") {
       this.eventHandler?.({
         type: "slack_conversation_created",
         channelId: "slack",

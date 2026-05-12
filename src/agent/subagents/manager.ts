@@ -8,9 +8,14 @@
  */
 
 import { spawn } from "node:child_process";
-import { getClient } from "../../backend/api/client";
+import {
+  type BackendMode,
+  getBackend,
+  getLocalBackendStorageDir,
+} from "../../backend";
 import { getBillingTier } from "../../backend/api/metadata";
-import { buildChatUrl } from "../../cli/helpers/appUrls";
+import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
+import { buildAgentReference } from "../../cli/helpers/appUrls";
 import {
   addToolCall,
   emitStreamEvent,
@@ -83,28 +88,33 @@ interface ExecutionState {
  * Get the primary agent's model ID
  * Fetches from API and resolves to a known model ID
  */
-function getModelHandleFromAgent(agent: {
+export function getModelHandleFromAgent(agent: {
+  model?: string | null;
   llm_config?: { model_endpoint_type?: string | null; model?: string | null };
 }): string | null {
+  const directModel = agent.model;
+  if (directModel?.includes("/")) {
+    return directModel;
+  }
   const endpoint = agent.llm_config?.model_endpoint_type;
   const model = agent.llm_config?.model;
   if (endpoint && model) {
     return `${endpoint}/${model}`;
   }
-  return model || null;
+  return directModel || model || null;
 }
 
 async function getPrimaryAgentModelHandle(): Promise<{
   handle: string | null;
   agent: {
+    model?: string | null;
     name?: string | null;
     llm_config?: { model_endpoint_type?: string | null; model?: string | null };
   } | null;
 }> {
   try {
     const agentId = getCurrentAgentId();
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await getBackend().retrieveAgent(agentId);
     return { handle: getModelHandleFromAgent(agent), agent };
   } catch {
     return { handle: null, agent: null };
@@ -291,7 +301,7 @@ function handleInitEvent(
 ): void {
   if (event.agent_id) {
     state.agentId = event.agent_id;
-    const agentURL = buildChatUrl(event.agent_id, {
+    const agentURL = buildAgentReference(event.agent_id, {
       conversationId: event.conversation_id,
     });
     updateSubagent(subagentId, { agentId: event.agent_id, agentURL });
@@ -568,6 +578,10 @@ export function resolveSubagentLauncher(
 export interface ComposeSubagentChildEnvOptions {
   /** The env of the process spawning the subagent (parent). */
   parentProcessEnv: NodeJS.ProcessEnv;
+  /** Active backend mode to force in the child CLI process. */
+  backendMode?: BackendMode;
+  /** Local backend flatfile root to forward when backendMode="local". */
+  localBackendStorageDir?: string | null;
   /** Parent agent ID. When present, authorizes the subagent to touch the
    * parent's memory via the cross-agent guard and sets LETTA_PARENT_AGENT_ID
    * so prompts / scripts that reference it resolve correctly. */
@@ -611,6 +625,8 @@ export function composeSubagentChildEnv(
 ): NodeJS.ProcessEnv {
   const {
     parentProcessEnv,
+    backendMode,
+    localBackendStorageDir,
     parentAgentId,
     permissionMode,
     inheritedPrimaryRoot,
@@ -625,6 +641,15 @@ export function composeSubagentChildEnv(
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
   };
+
+  if (backendMode === "local") {
+    childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    if (localBackendStorageDir) {
+      childEnv.LETTA_LOCAL_BACKEND_DIR = localBackendStorageDir;
+    }
+  } else if (backendMode === "api") {
+    childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "0";
+  }
 
   const nextScope = new Set<string>([
     ...parseScopeList(parentProcessEnv.LETTA_MEMORY_SCOPE),
@@ -659,6 +684,21 @@ export function composeSubagentChildEnv(
   }
 
   return childEnv;
+}
+
+export function resolveSubagentInheritedPrimaryRoot(options: {
+  backendMode: BackendMode;
+  parentAgentId: string | undefined;
+  inheritedPrimaryRoot: string | null;
+  localBackendStorageDir?: string | null;
+}): string | null {
+  if (options.backendMode === "local" && options.parentAgentId) {
+    return getLocalBackendMemoryFilesystemRoot(
+      options.parentAgentId,
+      options.localBackendStorageDir ?? getLocalBackendStorageDir(),
+    );
+  }
+  return options.inheritedPrimaryRoot;
 }
 
 // ============================================================================
@@ -761,11 +801,16 @@ export function buildSubagentArgs(
   existingAgentId?: string,
   existingConversationId?: string,
   maxTurns?: number,
+  options: { backendMode?: BackendMode } = {},
 ): string[] {
   const args: string[] = [];
   const isDeployingExisting = Boolean(
     existingAgentId || existingConversationId,
   );
+
+  if (options.backendMode) {
+    args.push("--backend", options.backendMode);
+  }
 
   if (isDeployingExisting) {
     // Deploy existing agent/conversation
@@ -903,6 +948,10 @@ async function executeSubagent(
   }
 
   try {
+    const activeBackend = getBackend();
+    const backendMode: BackendMode = activeBackend.capabilities.localMemfs
+      ? "local"
+      : "api";
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -911,6 +960,7 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       maxTurns,
+      { backendMode },
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
@@ -937,13 +987,21 @@ async function executeSubagent(
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
       currentAgentId: parentAgentId ?? null,
     });
+    const localBackendStorageDir =
+      backendMode === "local" ? getLocalBackendStorageDir() : null;
+    const inheritedPrimaryRoot = resolveSubagentInheritedPrimaryRoot({
+      backendMode,
+      parentAgentId,
+      inheritedPrimaryRoot: inheritedMemoryRoots.primaryRoot,
+      localBackendStorageDir,
+    });
     const subagentWorkingDirectory = resolveSubagentWorkingDirectory(
       process.env,
       getCurrentWorkingDirectory(),
       {
         subagentType: type,
         permissionMode: config.permissionMode,
-        inheritedPrimaryRoot: inheritedMemoryRoots.primaryRoot,
+        inheritedPrimaryRoot,
       },
     );
     const childEnv = composeSubagentChildEnv({
@@ -951,9 +1009,11 @@ async function executeSubagent(
         ...process.env,
         USER_CWD: subagentWorkingDirectory,
       },
+      backendMode,
+      localBackendStorageDir,
       parentAgentId,
       permissionMode: config.permissionMode,
-      inheritedPrimaryRoot: inheritedMemoryRoots.primaryRoot,
+      inheritedPrimaryRoot,
       inheritedApiKey,
       inheritedBaseUrl,
     });
@@ -1257,7 +1317,7 @@ export async function spawnSubagent(
     try {
       const cachedParent =
         parentAgent ??
-        (await (await getClient()).agents.retrieve(resolvedParentAgentId));
+        (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
         const systemReminder = buildForkSystemReminder(type);
         finalPrompt = systemReminder + prompt;

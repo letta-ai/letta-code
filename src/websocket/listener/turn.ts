@@ -9,7 +9,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
-import { getResumeData } from "../../agent/check-approval";
+import { getResumeDataFromBackend } from "../../agent/check-approval";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -24,10 +24,11 @@ import {
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
+  normalizeStreamErrorTypeToStopReason,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
 } from "../../agent/turn-recovery-policy";
-import { getClient } from "../../backend/api/client";
+import { getBackend } from "../../backend";
 import { createBuffers, toLines } from "../../cli/helpers/accumulator";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import {
@@ -91,6 +92,7 @@ import {
   emitRecoverableStatusNotice,
 } from "./recoverable-notices";
 import {
+  getApprovalToolCallDesyncErrorText,
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
@@ -197,8 +199,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       let systemPrompt: string | undefined = cachedAgent?.system ?? undefined;
       if (!systemPrompt) {
         try {
-          const client = await getClient();
-          const agent = await client.agents.retrieve(agentId);
+          const agent = await getBackend().retrieveAgent(agentId);
           systemPrompt = agent.system ?? undefined;
         } catch {
           // Non-fatal — the reflection payload will just omit the system prompt.
@@ -394,6 +395,8 @@ export async function handleIncomingMessage(
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
+  runtime.lastStopReason = null;
+  runtime.lastTerminalLoopErrorMessage = null;
   const turnAbortController = new AbortController();
   runtime.activeAbortController = turnAbortController;
   const turnAbortSignal = turnAbortController.signal;
@@ -511,8 +514,9 @@ export async function handleIncomingMessage(
         );
         if (agentId) {
           try {
-            const client = await getClient();
-            cachedAgent = (await client.agents.retrieve(agentId)) as AgentState;
+            cachedAgent = (await getBackend().retrieveAgent(
+              agentId,
+            )) as AgentState;
           } catch {
             // Best-effort only. If the fetch fails, reminder and tool prep
             // will fall back to the existing null/placeholder behavior.
@@ -684,18 +688,34 @@ export async function handleIncomingMessage(
           }
 
           if (errorInfo) {
-            latestErrorText = errorInfo.message || latestErrorText;
-            emitLoopErrorNotice(socket, runtime, {
-              message: errorInfo.message || "Stream error",
-              stopReason: (errorInfo.error_type as StopReasonType) || "error",
-              isTerminal: false,
-              runId: runId || errorInfo.run_id,
-              agentId,
-              conversationId,
-              errorInfo,
-              cancelRequested: runtime.cancelRequested,
-              abortSignal: turnAbortSignal,
-            });
+            const recoverableApprovalErrorText =
+              getApprovalToolCallDesyncErrorText(errorInfo);
+            latestErrorText =
+              recoverableApprovalErrorText ||
+              errorInfo.detail ||
+              errorInfo.message ||
+              latestErrorText;
+            if (!recoverableApprovalErrorText) {
+              emitLoopErrorNotice(socket, runtime, {
+                message: errorInfo.message || "Stream error",
+                stopReason: normalizeStreamErrorTypeToStopReason(
+                  errorInfo.error_type,
+                ),
+                isTerminal: false,
+                runId: runId || errorInfo.run_id,
+                agentId,
+                conversationId,
+                errorInfo,
+                cancelRequested: runtime.cancelRequested,
+                abortSignal: turnAbortSignal,
+              });
+            } else {
+              debugLog(
+                "recovery",
+                "Suppressing streamed approval conflict while post-stop recovery runs: %s",
+                recoverableApprovalErrorText,
+              );
+            }
           }
 
           if (shouldOutput) {
@@ -725,6 +745,7 @@ export async function handleIncomingMessage(
 
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
+      const fallbackError = result.fallbackError ?? null;
       lastApprovalContinuationAccepted = false;
 
       if (stopReason === "end_turn" && runtime.cancelRequested) {
@@ -789,6 +810,7 @@ export async function handleIncomingMessage(
           latestErrorText ||
           runErrorInfo?.detail ||
           runErrorInfo?.message ||
+          fallbackError ||
           null;
 
         if (
@@ -798,6 +820,7 @@ export async function handleIncomingMessage(
             retries: postStopApprovalRecoveryRetries,
             runErrorDetail: errorDetail,
             latestErrorText,
+            fallbackError,
           })
         ) {
           postStopApprovalRecoveryRetries += 1;
@@ -812,13 +835,9 @@ export async function handleIncomingMessage(
           });
 
           try {
-            const client = await getClient();
-            const agent = await client.agents.retrieve(agentId || "");
-            const { pendingApprovals: existingApprovals } = await getResumeData(
-              client,
-              agent,
-              requestedConversationId,
-            );
+            const agent = await getBackend().retrieveAgent(agentId || "");
+            const { pendingApprovals: existingApprovals } =
+              await getResumeDataFromBackend(agent, requestedConversationId);
             currentInput = rebuildInputWithFreshDenials(
               currentInput,
               existingApprovals ?? [],
@@ -1057,7 +1076,7 @@ export async function handleIncomingMessage(
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
 
-        emitLoopErrorNotice(socket, runtime, {
+        const formattedError = emitLoopErrorNotice(socket, runtime, {
           message: errorMessage,
           stopReason: effectiveStopReason,
           isTerminal: true,
@@ -1068,6 +1087,7 @@ export async function handleIncomingMessage(
           cancelRequested: runtime.cancelRequested,
           abortSignal: turnAbortSignal,
         });
+        runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
         break;
       }
 
@@ -1165,7 +1185,7 @@ export async function handleIncomingMessage(
     });
 
     const errorMessage = error instanceof Error ? error.message : String(error);
-    emitLoopErrorNotice(socket, runtime, {
+    const formattedError = emitLoopErrorNotice(socket, runtime, {
       message: errorMessage,
       stopReason: "error",
       isTerminal: true,
@@ -1175,6 +1195,7 @@ export async function handleIncomingMessage(
       cancelRequested: runtime.cancelRequested,
       abortSignal: turnAbortSignal,
     });
+    runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }

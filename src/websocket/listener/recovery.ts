@@ -9,17 +9,20 @@ import {
   type ApprovalDecision,
   executeApprovalBatch,
 } from "../../agent/approval-execution";
-import { getResumeData } from "../../agent/check-approval";
+import {
+  getResumeDataFromBackend,
+  type ResumeData,
+} from "../../agent/check-approval";
 import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  normalizeStreamErrorTypeToStopReason,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
 } from "../../agent/turn-recovery-policy";
 import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
 import { formatPermissionDenial } from "../../permissions/formatDenial";
@@ -34,10 +37,7 @@ import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
-import {
-  MAX_POST_STOP_APPROVAL_RECOVERY,
-  NO_AWAITING_APPROVAL_DETAIL_FRAGMENT,
-} from "./constants";
+import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   createToolExecutionOutputEmitter,
@@ -71,12 +71,29 @@ import type {
 } from "./types";
 
 export function isApprovalToolCallDesyncError(detail: unknown): boolean {
-  if (isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail)) {
-    return true;
+  return isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail);
+}
+
+export function getApprovalToolCallDesyncErrorText(errorInfo: {
+  detail?: unknown;
+  message?: unknown;
+}): string | null {
+  const detail = errorInfo.detail;
+  if (typeof detail === "string" && isApprovalToolCallDesyncError(detail)) {
+    return detail;
   }
+  const message = errorInfo.message;
+  if (typeof message === "string" && isApprovalToolCallDesyncError(message)) {
+    return message;
+  }
+  return null;
+}
+
+function isBackendNotFoundError(error: unknown): boolean {
   return (
-    typeof detail === "string" &&
-    detail.toLowerCase().includes(NO_AWAITING_APPROVAL_DETAIL_FRAGMENT)
+    (error instanceof APIError &&
+      (error.status === 404 || error.status === 422)) ||
+    (error instanceof Error && error.name === "LocalBackendNotFoundError")
   );
 }
 
@@ -86,16 +103,15 @@ export function shouldAttemptPostStopApprovalRecovery(params: {
   retries: number;
   runErrorDetail: string | null;
   latestErrorText: string | null;
+  fallbackError?: string | null;
 }): boolean {
   const approvalDesyncDetected =
     isApprovalToolCallDesyncError(params.runErrorDetail) ||
-    isApprovalToolCallDesyncError(params.latestErrorText);
-
-  const genericNoRunError =
-    params.stopReason === "error" && params.runIdsSeen === 0;
+    isApprovalToolCallDesyncError(params.latestErrorText) ||
+    isApprovalToolCallDesyncError(params.fallbackError);
 
   return shouldAttemptApprovalRecovery({
-    approvalPendingDetected: approvalDesyncDetected || genericNoRunError,
+    approvalPendingDetected: approvalDesyncDetected,
     retries: params.retries,
     maxRetries: MAX_POST_STOP_APPROVAL_RECOVERY,
   });
@@ -182,7 +198,9 @@ export async function drainRecoveryStreamWithEmission(
       if (errorInfo) {
         emitLoopErrorNotice(socket, runtime, {
           message: errorInfo.message || "Stream error",
-          stopReason: (errorInfo.error_type as StopReasonType) || "error",
+          stopReason: normalizeStreamErrorTypeToStopReason(
+            errorInfo.error_type,
+          ),
           isTerminal: false,
           runId: runtime.activeRunId || errorInfo.run_id,
           agentId: params.agentId ?? undefined,
@@ -292,20 +310,19 @@ export async function debugLogApprovalResumeState(
   }
 
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(params.agentId);
+    const backend = getBackend();
+    const agent = await backend.retrieveAgent(params.agentId);
     const isExplicitConversation =
       params.conversationId.length > 0 && params.conversationId !== "default";
     const lastInContextId = isExplicitConversation
       ? ((
-          await client.conversations.retrieve(params.conversationId)
+          await backend.retrieveConversation(params.conversationId)
         ).in_context_message_ids?.at(-1) ?? null)
       : (agent.message_ids?.at(-1) ?? null);
     const lastInContextMessages = lastInContextId
-      ? await client.messages.retrieve(lastInContextId)
+      ? await backend.retrieveMessage(lastInContextId)
       : [];
-    const resumeData = await getResumeData(
-      client,
+    const resumeData = await getResumeDataFromBackend(
       agent,
       params.conversationId,
       {
@@ -388,31 +405,25 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  const client = await getClient();
-  let agent: Awaited<ReturnType<typeof client.agents.retrieve>>;
+  const backend = getBackend();
+  let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
   try {
-    agent = await client.agents.retrieve(scope.agent_id);
+    agent = await backend.retrieveAgent(scope.agent_id);
   } catch (error) {
-    if (
-      error instanceof APIError &&
-      (error.status === 404 || error.status === 422)
-    ) {
+    if (isBackendNotFoundError(error)) {
       clearRecoveredApprovalState(runtime);
       return;
     }
     throw error;
   }
 
-  let resumeData: Awaited<ReturnType<typeof getResumeData>>;
+  let resumeData: ResumeData;
   try {
-    resumeData = await getResumeData(client, agent, scope.conversation_id, {
+    resumeData = await getResumeDataFromBackend(agent, scope.conversation_id, {
       includeMessageHistory: false,
     });
   } catch (error) {
-    if (
-      error instanceof APIError &&
-      (error.status === 404 || error.status === 422)
-    ) {
+    if (isBackendNotFoundError(error)) {
       clearRecoveredApprovalState(runtime);
       return;
     }
@@ -657,6 +668,7 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
+        channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
       });
     } finally {
       emitToolExecutionOutput.flush();

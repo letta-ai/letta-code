@@ -197,6 +197,22 @@ export function projectLocalMessageToStoredMessages(
   );
   const date = fallbackDate;
 
+  if (message.metadata?.compaction) {
+    return [
+      {
+        id: message.id,
+        date,
+        agent_id: agentId,
+        conversation_id: conversationId,
+        message_type: "summary_message",
+        summary: message.metadata.compaction.summary,
+        ...(message.metadata.compaction.stats
+          ? { compaction_stats: message.metadata.compaction.stats }
+          : {}),
+      } as StoredMessage,
+    ];
+  }
+
   if (message.role === "user" || message.role === "system") {
     return [
       {
@@ -255,13 +271,29 @@ export function projectLocalMessagesToStoredMessages(
   fallbackAgentId: string,
   fallbackConversationId: string,
 ): StoredMessage[] {
-  return messages.flatMap((message, index) =>
-    projectLocalMessageToStoredMessages(
+  return messages.flatMap((message, index) => {
+    const projected = projectLocalMessageToStoredMessages(
       message,
       fallbackAgentId,
       fallbackConversationId,
       new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
-    ),
+    );
+    return withProjectedMessageDates(projected, index);
+  });
+}
+
+export function withProjectedMessageDates(
+  messages: StoredMessage[],
+  sourceMessageIndex: number,
+): StoredMessage[] {
+  return messages.map(
+    (message, projectedIndex) =>
+      ({
+        ...message,
+        date: new Date(
+          Date.UTC(2026, 0, 1, 0, 0, sourceMessageIndex + 1, projectedIndex),
+        ).toISOString(),
+      }) as StoredMessage,
   );
 }
 

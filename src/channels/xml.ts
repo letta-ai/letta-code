@@ -219,6 +219,10 @@ export function buildChannelNotificationXml(
     `sender_id="${escapeXmlAttribute(msg.senderId)}"`,
   ];
 
+  if (msg.accountId) {
+    attrs.push(`account_id="${escapeXmlAttribute(msg.accountId)}"`);
+  }
+
   if (msg.senderName) {
     attrs.push(`sender_name="${escapeXmlAttribute(msg.senderName)}"`);
   }

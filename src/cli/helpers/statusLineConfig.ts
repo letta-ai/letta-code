@@ -4,6 +4,7 @@
 import type { StatusLineConfig } from "../../settings-manager";
 import { settingsManager } from "../../settings-manager";
 import { debugLog } from "../../utils/debug";
+import { CLI_GLYPHS } from "./glyphs";
 
 /** Minimum allowed polling interval (1 second). */
 export const MIN_STATUS_LINE_INTERVAL_MS = 1_000;
@@ -170,7 +171,7 @@ export function resolveStatusLineConfig(
 /**
  * Resolve the prompt character from status line settings.
  * Independent of whether a `command` is configured.
- * Returns `">"` when disabled or no prompt is configured at any level.
+ * Returns `CLI_GLYPHS.prompt` when disabled or no prompt is configured at any level.
  *
  * Precedence: local project > project > global.
  */
@@ -178,7 +179,7 @@ export function resolvePromptChar(
   workingDirectory: string = process.cwd(),
 ): string {
   try {
-    if (isStatusLineDisabled(workingDirectory)) return ">";
+    if (isStatusLineDisabled(workingDirectory)) return CLI_GLYPHS.prompt;
 
     // Local project settings (highest priority)
     try {
@@ -206,13 +207,13 @@ export function resolvePromptChar(
       // Not initialized
     }
 
-    return ">";
+    return CLI_GLYPHS.prompt;
   } catch (error) {
     debugLog(
       "statusline",
       "resolvePromptChar: Failed to resolve prompt",
       error,
     );
-    return ">";
+    return CLI_GLYPHS.prompt;
   }
 }

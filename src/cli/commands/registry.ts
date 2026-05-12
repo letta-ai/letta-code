@@ -60,6 +60,15 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
+  "/goal": {
+    desc: "Manage goal: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
+    args: "[status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
+    order: 14,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing conversation goal...";
+    },
+  },
   "/reflect": {
     desc: "Launch reflection (/reflect [transcript_file])",
     args: "[transcript_file]",
@@ -219,7 +228,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/rename": {
-    desc: "Rename agent or conversation (/rename agent|convo <name>)",
+    desc: "Rename agent or conversation (/rename agent [name]|convo [name])",
     order: 24,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client

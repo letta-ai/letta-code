@@ -164,6 +164,7 @@ export function createConversationRuntime(
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
     lastStopReason: null,
+    lastTerminalLoopErrorMessage: null,
     isProcessing: false,
     activeWorkingDirectory: null,
     expectedWorktreePath: null,

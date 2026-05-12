@@ -1,5 +1,9 @@
 const APP_BASE = "https://app.letta.com";
 
+export function isLocalAgentId(agentId: string): boolean {
+  return agentId.startsWith("agent-local-");
+}
+
 /**
  * Build a chat URL for an agent, with optional conversation and extra query params.
  */
@@ -26,6 +30,37 @@ export function buildChatUrl(
 
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
+}
+
+/**
+ * Build a user-facing agent reference. API-backed agents can link to the app,
+ * but local-backend agents are not available at app.letta.com, so show the ID.
+ */
+export function buildAgentReference(
+  agentId: string,
+  options?: Parameters<typeof buildChatUrl>[1],
+): string {
+  if (isLocalAgentId(agentId)) {
+    return agentId;
+  }
+
+  return buildChatUrl(agentId, options);
+}
+
+/**
+ * Build an OSC8 terminal hyperlink for API-backed agents, or plain text for
+ * local-backend agents that do not exist in the web app.
+ */
+export function buildAgentTerminalLink(
+  agentId: string,
+  options?: Parameters<typeof buildChatUrl>[1],
+): string {
+  if (isLocalAgentId(agentId)) {
+    return agentId;
+  }
+
+  const url = buildChatUrl(agentId, options);
+  return `\x1b]8;;${url}\x1b\\${agentId}\x1b]8;;\x1b\\`;
 }
 
 /**

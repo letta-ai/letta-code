@@ -35,6 +35,46 @@ describe("Skills formatting (system reminder)", () => {
     expect(result).toBe("");
   });
 
+  test("hides skills marked disable-model-invocation", () => {
+    const skills: Skill[] = [
+      {
+        id: "deploy",
+        name: "Deploy",
+        description: "Deploy production",
+        path: "/test/.skills/deploy/SKILL.md",
+        source: "project",
+        disableModelInvocation: true,
+      },
+      {
+        id: "api-conventions",
+        name: "API Conventions",
+        description: "API conventions",
+        path: "/test/.skills/api-conventions/SKILL.md",
+        source: "project",
+      },
+    ];
+
+    const result = formatSkillsAsSystemReminder(skills);
+
+    expect(result).toContain("api-conventions");
+    expect(result).not.toContain("deploy");
+  });
+
+  test("returns empty string when all skills are hidden from model invocation", () => {
+    const result = formatSkillsAsSystemReminder([
+      {
+        id: "deploy",
+        name: "Deploy",
+        description: "Deploy production",
+        path: "/test/.skills/deploy/SKILL.md",
+        source: "project",
+        disableModelInvocation: true,
+      },
+    ]);
+
+    expect(result).toBe("");
+  });
+
   test("includes skills from multiple sources", () => {
     const skills: Skill[] = [
       {

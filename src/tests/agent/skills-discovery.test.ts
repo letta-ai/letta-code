@@ -128,3 +128,60 @@ describe.skipIf(process.platform === "win32")(
     });
   },
 );
+
+describe("skills frontmatter metadata", () => {
+  const testDir = join(process.cwd(), ".test-skills-frontmatter");
+  const projectSkillsDir = join(testDir, ".skills");
+  const originalCwd = process.cwd();
+
+  beforeEach(() => {
+    mkdirSync(testDir, { recursive: true });
+    process.chdir(testDir);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  test("parses invocation controls and appends when_to_use to description", async () => {
+    const skillDir = join(projectSkillsDir, "deploy");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: Deploy",
+        "description: Deploy the application",
+        "when_to_use: When the user asks to ship a release",
+        "argument-hint: [environment]",
+        "arguments: environment version",
+        "disable-model-invocation: true",
+        "user-invocable: false",
+        "---",
+        "",
+        "Deploy $environment at $version.",
+      ].join("\n"),
+    );
+
+    const result = await discoverSkills(projectSkillsDir, undefined, {
+      skipBundled: true,
+      sources: ["project"],
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.skills).toHaveLength(1);
+    const skill = result.skills[0];
+    expect(skill?.id).toBe("deploy");
+    expect(skill?.description).toContain("Deploy the application");
+    expect(skill?.description).toContain(
+      "When to use: When the user asks to ship a release",
+    );
+    expect(skill?.argumentHint).toBe("[environment]");
+    expect(skill?.arguments).toEqual(["environment", "version"]);
+    expect(skill?.disableModelInvocation).toBe(true);
+    expect(skill?.userInvocable).toBe(false);
+  });
+});

@@ -15,6 +15,9 @@ export type ConnectProviderCanonical =
   | "kimi-code"
   | "gemini"
   | "openrouter"
+  | "ollama"
+  | "ollama-cloud"
+  | "lmstudio"
   | "bedrock";
 
 const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
@@ -29,6 +32,9 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   "kimi-code": "kimi-code",
   gemini: "gemini",
   openrouter: "openrouter",
+  ollama: "ollama",
+  "ollama-cloud": "ollama-cloud",
+  lmstudio: "lmstudio",
   bedrock: "bedrock",
 };
 
@@ -43,6 +49,9 @@ const CANONICAL_ORDER: ConnectProviderCanonical[] = [
   "kimi-code",
   "gemini",
   "openrouter",
+  "ollama",
+  "ollama-cloud",
+  "lmstudio",
   "bedrock",
 ];
 
@@ -122,6 +131,20 @@ export function isConnectApiKeyProvider(
   return (
     !isConnectOAuthProvider(provider) && !isConnectBedrockProvider(provider)
   );
+}
+
+export function defaultConnectApiKey(
+  provider: ResolvedConnectProvider,
+): string | undefined {
+  if (
+    "requiresApiKey" in provider.byokProvider &&
+    provider.byokProvider.requiresApiKey === false
+  ) {
+    return "defaultApiKey" in provider.byokProvider
+      ? provider.byokProvider.defaultApiKey
+      : "not-needed";
+  }
+  return undefined;
 }
 
 export function isConnectZaiBaseProvider(

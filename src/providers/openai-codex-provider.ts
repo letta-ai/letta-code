@@ -1,7 +1,7 @@
 /**
- * ChatGPT OAuth provider management backed by the centralized Letta API seam.
- * Uses the chatgpt_oauth provider type - backend handles request transformation
- * (transforms OpenAI API format → ChatGPT backend API format)
+ * ChatGPT OAuth provider management backed by the active provider store.
+ * API mode stores a chatgpt_oauth provider on Letta; local mode stores OAuth
+ * tokens in the local provider auth file and uses a local fetch shim at runtime.
  */
 
 import { getBalanceMetadata } from "../backend/api/metadata";
@@ -9,11 +9,12 @@ import {
   createProvider,
   deleteProvider,
   getProviderByName,
+  listProviders,
   type ProviderResponse,
-} from "../backend/api/providers";
-import { apiRequest } from "../backend/api/request";
+  updateProvider,
+} from "./byok-providers";
 
-export { listProviders } from "../backend/api/providers";
+export { listProviders };
 
 // Provider name constant for letta-code's ChatGPT OAuth provider
 export const OPENAI_CODEX_PROVIDER_NAME = "chatgpt-plus-pro";
@@ -22,8 +23,7 @@ export const OPENAI_CODEX_PROVIDER_NAME = "chatgpt-plus-pro";
 export const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
 
 /**
- * ChatGPT OAuth configuration sent to Letta backend
- * Backend uses this to authenticate with ChatGPT and transform requests
+ * ChatGPT OAuth configuration persisted by the active provider store.
  */
 export interface ChatGPTOAuthConfig {
   access_token: string;
@@ -58,8 +58,7 @@ export async function getOpenAICodexProvider(): Promise<ProviderResponse | null>
 
 /**
  * Create a new ChatGPT OAuth provider
- * OAuth config is JSON-encoded in api_key field to avoid backend schema changes
- * Backend parses api_key as JSON when provider_type is "chatgpt_oauth"
+ * OAuth config is JSON-encoded in api_key field for API-mode compatibility.
  */
 export async function createOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
@@ -73,15 +72,13 @@ export async function createOpenAICodexProvider(
 
 /**
  * Update an existing ChatGPT OAuth provider with new OAuth config
- * OAuth config is JSON-encoded in api_key field
+ * OAuth config is JSON-encoded in api_key field for API-mode compatibility.
  */
 export async function updateOpenAICodexProvider(
   providerId: string,
   config: ChatGPTOAuthConfig,
 ): Promise<ProviderResponse> {
-  return apiRequest<ProviderResponse>("PATCH", `/v1/providers/${providerId}`, {
-    api_key: encodeOAuthConfig(config),
-  });
+  return updateProvider(providerId, encodeOAuthConfig(config));
 }
 
 /**
@@ -97,7 +94,7 @@ export async function deleteOpenAICodexProvider(
  * Create or update the ChatGPT OAuth provider
  * This is the main function called after successful /connect codex
  *
- * The Letta backend will:
+ * In API mode the Letta backend will:
  * 1. Store the OAuth tokens securely
  * 2. Handle token refresh when needed
  * 3. Transform requests from OpenAI format to ChatGPT backend format

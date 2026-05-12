@@ -317,6 +317,82 @@ describe("MessageChannel", () => {
     });
   });
 
+  test("infers accountId from channel turn source for duplicate Telegram chat routes", async () => {
+    const registry = new ChannelRegistry();
+
+    const oldSendMessage = mock(async () => ({ messageId: "old-msg" }));
+    const newSendMessage = mock(async () => ({ messageId: "new-msg" }));
+
+    const oldAdapter: ChannelAdapter = {
+      id: "telegram:old-account",
+      channelId: "telegram",
+      accountId: "old-account",
+      name: "Telegram Old",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: oldSendMessage,
+      sendDirectReply: async () => {},
+    };
+    const newAdapter: ChannelAdapter = {
+      id: "telegram:new-account",
+      channelId: "telegram",
+      accountId: "new-account",
+      name: "Telegram New",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: newSendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(oldAdapter);
+    registry.registerAdapter(newAdapter);
+
+    for (const accountId of ["old-account", "new-account"]) {
+      setRouteInMemory("telegram", {
+        accountId,
+        chatId: "7952253975",
+        agentId: "agent-1",
+        conversationId: "default",
+        enabled: true,
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      });
+    }
+
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "7952253975",
+      message: "hello new bot",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+      channelTurnSources: [
+        {
+          channel: "telegram",
+          accountId: "new-account",
+          chatId: "7952253975",
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(oldSendMessage).not.toHaveBeenCalled();
+    expect(newSendMessage).toHaveBeenCalledWith({
+      channel: "telegram",
+      accountId: "new-account",
+      chatId: "7952253975",
+      text: "hello new bot",
+      replyToMessageId: undefined,
+      parseMode: "HTML",
+    });
+  });
+
   test("uploads Telegram media through the routed account adapter", async () => {
     const registry = new ChannelRegistry();
 
@@ -521,7 +597,7 @@ describe("MessageChannel", () => {
       botToken: "xoxb-test-token",
       appToken: "xapp-test-token",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
     upsertChannelTarget("slack", {
       accountId: "account-1",
@@ -626,7 +702,7 @@ describe("MessageChannel", () => {
       botToken: "xoxb-test-token-1",
       appToken: "xapp-test-token-1",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
     upsertChannelAccount("slack", {
       channel: "slack",
@@ -641,7 +717,7 @@ describe("MessageChannel", () => {
       botToken: "xoxb-test-token-2",
       appToken: "xapp-test-token-2",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
 
     const result = await message_channel({
@@ -708,7 +784,7 @@ describe("MessageChannel", () => {
       botToken: "xoxb-test-token",
       appToken: "xapp-test-token",
       agentId: "agent-1",
-      defaultPermissionMode: "default",
+      defaultPermissionMode: "standard",
     });
 
     const result = await message_channel({

@@ -14,6 +14,17 @@ import {
   removeProviderByName as removeProviderByNameRequest,
   updateProvider as updateProviderRequest,
 } from "../backend/api/providers";
+import { getBackend } from "../backend/backend";
+import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "../backend/dev/AISDKProviderRegistry";
+import {
+  createOrUpdateLocalProvider,
+  deleteLocalProvider,
+  getLocalProviderByName,
+  isLocalProviderTypeSupported,
+  listLocalProviders,
+  removeLocalProviderByName,
+  updateLocalProvider,
+} from "../backend/local/LocalProviderAuthStore";
 
 export type { ProviderResponse } from "../backend/api/providers";
 
@@ -107,6 +118,31 @@ export const BYOK_PROVIDERS = [
     providerName: "lc-openrouter",
   },
   {
+    id: "ollama",
+    displayName: "Ollama (local)",
+    description: "Connect local Ollama at http://localhost:11434/v1",
+    providerType: "ollama",
+    providerName: "lc-ollama",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
+  },
+  {
+    id: "ollama-cloud",
+    displayName: "Ollama Cloud",
+    description: "Connect an Ollama Cloud API key",
+    providerType: "ollama_cloud",
+    providerName: "lc-ollama-cloud",
+  },
+  {
+    id: "lmstudio",
+    displayName: "LM Studio (local)",
+    description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
+    providerType: "lmstudio",
+    providerName: "lc-lmstudio",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
+  },
+  {
     id: "bedrock",
     displayName: "AWS Bedrock",
     description: "Connect to Claude on Amazon Bedrock",
@@ -143,6 +179,22 @@ export const BYOK_PROVIDERS = [
 export type ByokProviderId = (typeof BYOK_PROVIDERS)[number]["id"];
 export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 
+export function isLocalProviderStoreEnabled(): boolean {
+  return getBackend().capabilities.localModelCatalog;
+}
+
+export function providerStorageTargetLabel(): string {
+  return isLocalProviderStoreEnabled() ? "local storage" : "Letta";
+}
+
+function assertLocalProviderSupported(providerType: string): void {
+  if (!isLocalProviderTypeSupported(providerType)) {
+    throw new Error(
+      `${providerType} provider connections are not supported in local mode yet.`,
+    );
+  }
+}
+
 // ── BYOK handle classification helpers ──────────────────────────────────────
 // These are used by both the TUI ModelSelector and the WS list_models handler
 // to categorize model handles as BYOK vs Letta API.
@@ -150,25 +202,7 @@ export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 /** Prefixes that always indicate a BYOK handle (ChatGPT OAuth + lc-* providers) */
 export const STATIC_BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
 
-/**
- * Maps provider_type → base provider string used in model handles.
- * Used to translate BYOK provider names back to their canonical handle prefix
- * (e.g., "lc-anthropic/claude-sonnet-4" → "anthropic/claude-sonnet-4").
- */
-export const PROVIDER_TYPE_TO_BASE_PROVIDER: Record<string, string> = {
-  chatgpt_oauth: "chatgpt-plus-pro",
-  anthropic: "anthropic",
-  openai: "openai",
-  zai: "zai",
-  zai_coding: "zai",
-  google_ai: "google_ai",
-  google_vertex: "google_vertex",
-  minimax: "minimax",
-  moonshot: "moonshot",
-  moonshot_coding: "moonshot_coding",
-  openrouter: "openrouter",
-  bedrock: "bedrock",
-};
+export { PROVIDER_TYPE_TO_BASE_PROVIDER };
 
 /**
  * Build a mapping of BYOK provider names → base provider strings.
@@ -229,6 +263,9 @@ export function isByokHandleForSelector(
  * List all BYOK providers for the current user
  */
 export async function listProviders(): Promise<ProviderResponse[]> {
+  if (isLocalProviderStoreEnabled()) {
+    return listLocalProviders();
+  }
   return listApiProviders();
 }
 
@@ -262,6 +299,9 @@ export async function isProviderConnected(
 export async function getProviderByName(
   providerName: string,
 ): Promise<ProviderResponse | null> {
+  if (isLocalProviderStoreEnabled()) {
+    return getLocalProviderByName(providerName);
+  }
   return getProviderByNameRequest(providerName);
 }
 
@@ -276,6 +316,10 @@ export async function checkProviderApiKey(
   region?: string,
   profile?: string,
 ): Promise<void> {
+  if (isLocalProviderStoreEnabled()) {
+    assertLocalProviderSupported(providerType);
+    return;
+  }
   await checkProviderApiKeyRequest(
     providerType,
     apiKey,
@@ -296,6 +340,16 @@ export async function createProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
+  if (isLocalProviderStoreEnabled()) {
+    return createOrUpdateLocalProvider({
+      providerType,
+      providerName,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+    });
+  }
   return createProviderRequest(
     providerType,
     providerName,
@@ -316,6 +370,9 @@ export async function updateProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
+  if (isLocalProviderStoreEnabled()) {
+    return updateLocalProvider(providerId, apiKey, accessKey, region, profile);
+  }
   return updateProviderRequest(providerId, apiKey, accessKey, region, profile);
 }
 
@@ -323,6 +380,10 @@ export async function updateProvider(
  * Delete a provider by ID
  */
 export async function deleteProvider(providerId: string): Promise<void> {
+  if (isLocalProviderStoreEnabled()) {
+    await deleteLocalProvider(providerId);
+    return;
+  }
   await deleteProviderRequest(providerId);
 }
 
@@ -338,6 +399,16 @@ export async function createOrUpdateProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
+  if (isLocalProviderStoreEnabled()) {
+    return createOrUpdateLocalProvider({
+      providerType,
+      providerName,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+    });
+  }
   return createOrUpdateProviderRequest(
     providerType,
     providerName,
@@ -354,6 +425,10 @@ export async function createOrUpdateProvider(
 export async function removeProviderByName(
   providerName: string,
 ): Promise<void> {
+  if (isLocalProviderStoreEnabled()) {
+    await removeLocalProviderByName(providerName);
+    return;
+  }
   await removeProviderByNameRequest(providerName);
 }
 

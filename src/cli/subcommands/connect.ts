@@ -4,10 +4,12 @@ import { parseArgs } from "node:util";
 import {
   checkProviderApiKey,
   createOrUpdateProvider,
+  providerStorageTargetLabel,
 } from "../../providers/byok-providers";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import {
+  defaultConnectApiKey,
   isConnectApiKeyProvider,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
@@ -255,7 +257,7 @@ export async function runConnectSubcommand(
       );
 
       io.stdout(
-        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}).`,
+        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${providerStorageTargetLabel()}.`,
       );
       return 0;
     } catch (error) {
@@ -267,6 +269,7 @@ export async function runConnectSubcommand(
   if (isConnectApiKeyProvider(provider)) {
     let apiKey =
       readStringOption(parsed.values["api-key"]) ?? restPositionals[0] ?? "";
+    apiKey ||= defaultConnectApiKey(provider) ?? "";
     if (!apiKey && isConnectZaiBaseProvider(provider)) {
       io.stdout(
         "Do you have a Z.ai Coding plan?\n" +
@@ -304,7 +307,7 @@ export async function runConnectSubcommand(
       );
 
       io.stdout(
-        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}).`,
+        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${providerStorageTargetLabel()}.`,
       );
       return 0;
     } catch (error) {

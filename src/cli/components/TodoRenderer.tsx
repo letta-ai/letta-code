@@ -1,5 +1,6 @@
 import { Box } from "ink";
 import type React from "react";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
@@ -17,7 +18,7 @@ interface TodoRendererProps {
 
 export const TodoRenderer: React.FC<TodoRendererProps> = ({ todos }) => {
   const columns = useTerminalWidth();
-  const prefixWidth = 5; // "  ⎿  " or "     "
+  const prefixWidth = 5; // `  └  ` or `     `
   const contentWidth = Math.max(0, columns - prefixWidth);
 
   return (
@@ -51,7 +52,7 @@ export const TodoRenderer: React.FC<TodoRendererProps> = ({ todos }) => {
         }
 
         // First item gets the prefix, others get indentation
-        const prefix = index === 0 ? "  ⎿  " : "     ";
+        const prefix = index === 0 ? `  ${CLI_GLYPHS.result}  ` : "     ";
 
         return (
           <Box key={todo.id || index} flexDirection="row">

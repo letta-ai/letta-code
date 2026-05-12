@@ -16,6 +16,7 @@ import {
   type MessageChannelToolDiscoveryScope,
 } from "../channels/messageTool";
 import { getActiveChannelIds } from "../channels/registry";
+import type { ChannelTurnSource } from "../channels/types";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
@@ -384,6 +385,9 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
+  get_goal: { requiresApproval: false },
+  create_goal: { requiresApproval: false },
+  update_goal: { requiresApproval: false },
   // Gemini toolset
   glob_gemini: { requiresApproval: false },
   list_directory: { requiresApproval: false },
@@ -402,6 +406,9 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   GrepFiles: { requiresApproval: false },
   ApplyPatch: { requiresApproval: true },
   UpdatePlan: { requiresApproval: false },
+  GetGoal: { requiresApproval: false },
+  CreateGoal: { requiresApproval: false },
+  UpdateGoal: { requiresApproval: false },
   // Gemini-2 toolset (PascalCase)
   RunShellCommand: { requiresApproval: true },
   ReadFileGemini: { requiresApproval: false },
@@ -1017,6 +1024,7 @@ export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
@@ -1231,6 +1239,7 @@ async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
@@ -1256,6 +1265,16 @@ async function resolveBaseToolNamesForModel(
     baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
   }
 
+  if (options?.include && options.include.length > 0) {
+    const seen = new Set(baseToolNames);
+    for (const name of options.include) {
+      if (!seen.has(name)) {
+        baseToolNames.push(name);
+        seen.add(name);
+      }
+    }
+  }
+
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
     baseToolNames,
@@ -1274,6 +1293,7 @@ async function buildRegistryForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
     clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
@@ -1638,6 +1658,7 @@ export async function executeTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
+    channelTurnSources?: ChannelTurnSource[];
     /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
@@ -1775,8 +1796,16 @@ export async function executeTool(
       }
 
       // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
-      if (internalName === "MessageChannel" && options?.parentScope) {
-        enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+      if (internalName === "MessageChannel") {
+        if (options?.parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+        }
+        if (options?.channelTurnSources?.length) {
+          enhancedArgs = {
+            ...enhancedArgs,
+            channelTurnSources: options.channelTurnSources,
+          };
+        }
       }
 
       // Inject the execution context id for plan-mode tools so they can update

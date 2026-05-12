@@ -186,6 +186,11 @@ describe("provider detail retry helpers", () => {
         "Connection error during streaming: incomplete chunked read",
       ),
     ).toBe(true);
+    expect(
+      isRetryableProviderErrorDetail(
+        "INTERNAL_SERVER_ERROR: Connection error during OpenRouter streaming: peer closed connection without sending complete message body (incomplete chunked read)",
+      ),
+    ).toBe(true);
   });
 
   test("detects non-retryable auth patterns", () => {
@@ -220,6 +225,17 @@ describe("provider detail retry helpers", () => {
         "You've reached your hosted model usage limit.",
       ),
     ).toBe(false);
+  });
+
+  test("OpenRouter streaming incomplete chunked reads are retryable", () => {
+    const detail =
+      "INTERNAL_SERVER_ERROR: Connection error during OpenRouter streaming: peer closed connection without sending complete message body (incomplete chunked read)";
+
+    expect(shouldRetryRunMetadataError("internal_error", detail)).toBe(true);
+    expect(shouldRetryRunMetadataError(undefined, detail)).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({ status: undefined, detail }),
+    ).toBe(true);
   });
 
   test("ChatGPT usage_limit_reached is non-retryable", () => {

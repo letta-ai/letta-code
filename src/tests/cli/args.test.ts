@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   CLI_FLAG_CATALOG,
   CLI_OPTIONS,
+  extractBackendFlag,
+  parseBackendModeFlag,
   parseCliArgs,
   preprocessCliArgs,
   renderCliOptionsHelp,
@@ -52,6 +54,7 @@ describe("shared CLI arg schema", () => {
   test("rendered OPTIONS help is generated from catalog metadata", () => {
     const help = renderCliOptionsHelp();
     expect(help).toContain("-h, --help");
+    expect(help).toContain("--backend <mode>");
     expect(help).toContain("--memfs-startup <m>");
     expect(help).toContain("Default: text");
     expect(help).not.toContain("--run");
@@ -106,6 +109,36 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["max-turns"]).toBe("3");
     expect(parsed.values["block-value"]).toEqual(["persona=hello"]);
     expect(parsed.values["dev-backend"]).toBe("fake-headless");
+  });
+
+  test("recognizes backend mode flag in strict mode", () => {
+    const parsed = parseCliArgs(
+      preprocessCliArgs(["node", "script", "--backend", "local", "-p", "hi"]),
+      true,
+    );
+    expect(parsed.values.backend).toBe("local");
+  });
+
+  test("validates backend mode values", () => {
+    expect(parseBackendModeFlag(undefined)).toBeUndefined();
+    expect(parseBackendModeFlag("api")).toBe("api");
+    expect(parseBackendModeFlag("local")).toBe("local");
+    expect(() => parseBackendModeFlag("server")).toThrow(
+      'Invalid --backend value "server"',
+    );
+  });
+
+  test("extracts backend flag before routing subcommands", () => {
+    expect(
+      extractBackendFlag(["--backend", "local", "connect", "help"]),
+    ).toEqual({ backend: "local", args: ["connect", "help"] });
+    expect(extractBackendFlag(["connect", "help", "--backend=api"])).toEqual({
+      backend: "api",
+      args: ["connect", "help"],
+    });
+    expect(() => extractBackendFlag(["--backend"])).toThrow(
+      "Missing value for --backend",
+    );
   });
 
   test("rejects removed system-append flag in strict mode", () => {

@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,42 +14,88 @@ import { dirname, join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   LanguageModel,
+  LanguageModelUsage,
   ModelMessage,
   TextStreamPart,
   ToolSet,
   UIMessageChunk,
 } from "ai";
+import { APICallError } from "ai";
 import type {
   AgentCreateBody,
   ConversationCreateBody,
   ConversationMessageCreateBody,
   ConversationMessageListBody,
+  ConversationRecompileBody,
   RunMessageStreamBody,
 } from "../../backend";
 import {
+  createAISDKModelFactoryFromAgent,
+  resolveZaiConnection,
+} from "../../backend/dev/AISDKModelFactory";
+import {
+  createOrUpdateLocalProvider,
+  getLocalProviderAuthPath,
+  isContextWindowOverflowError,
+  LOCAL_ALL_COMPACTION_PROMPT,
+  LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
   LocalBackend,
   listLocalModels,
   resolveLocalModelConfig,
+  setLocalChatGPTOAuth,
 } from "../../backend/local";
 import type { LocalMessage } from "../../backend/local/LocalMessage";
 import { projectLocalMessagesToStoredMessages } from "../../backend/local/LocalMessageProjection";
 import { LocalStore } from "../../backend/local/LocalStore";
 import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
 
+const TEST_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+
 async function withLocalModelEnv<T>(
   env: {
     openAIKey?: string;
     anthropicKey?: string;
+    openRouterKey?: string;
+    zaiKey?: string;
+    zhipuKey?: string;
   },
   fn: () => T | Promise<T>,
 ): Promise<T> {
   const originalOpenAIKey = process.env.OPENAI_API_KEY;
   const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
+  const originalZaiKey = process.env.ZAI_API_KEY;
+  const originalZhipuKey = process.env.ZHIPU_API_KEY;
+  const originalMinimaxKey = process.env.MINIMAX_API_KEY;
+  const originalMoonshotKey = process.env.MOONSHOT_API_KEY;
+  const originalGoogleKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  const originalAwsAccessKey = process.env.AWS_ACCESS_KEY_ID;
+  const originalAwsSecretKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const originalAwsRegion = process.env.AWS_REGION;
+  const originalOllamaKey = process.env.OLLAMA_API_KEY;
+  const originalLmstudioKey = process.env.LMSTUDIO_API_KEY;
   try {
     if (env.openAIKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = env.openAIKey;
     if (env.anthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = env.anthropicKey;
+    if (env.openRouterKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = env.openRouterKey;
+    if (env.zaiKey === undefined) delete process.env.ZAI_API_KEY;
+    else process.env.ZAI_API_KEY = env.zaiKey;
+    if (env.zhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = env.zhipuKey;
+    delete process.env.MINIMAX_API_KEY;
+    delete process.env.MOONSHOT_API_KEY;
+    delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.AWS_ACCESS_KEY_ID;
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    delete process.env.AWS_REGION;
+    delete process.env.OLLAMA_API_KEY;
+    delete process.env.LMSTUDIO_API_KEY;
     return await fn();
   } finally {
     if (originalOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -56,6 +103,34 @@ async function withLocalModelEnv<T>(
     if (originalAnthropicKey === undefined)
       delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+    if (originalOpenRouterKey === undefined)
+      delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalOpenRouterKey;
+    if (originalZaiKey === undefined) delete process.env.ZAI_API_KEY;
+    else process.env.ZAI_API_KEY = originalZaiKey;
+    if (originalZhipuKey === undefined) delete process.env.ZHIPU_API_KEY;
+    else process.env.ZHIPU_API_KEY = originalZhipuKey;
+    if (originalMinimaxKey === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = originalMinimaxKey;
+    if (originalMoonshotKey === undefined) delete process.env.MOONSHOT_API_KEY;
+    else process.env.MOONSHOT_API_KEY = originalMoonshotKey;
+    if (originalGoogleKey === undefined)
+      delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    else process.env.GOOGLE_GENERATIVE_AI_API_KEY = originalGoogleKey;
+    if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalGeminiKey;
+    if (originalAwsAccessKey === undefined)
+      delete process.env.AWS_ACCESS_KEY_ID;
+    else process.env.AWS_ACCESS_KEY_ID = originalAwsAccessKey;
+    if (originalAwsSecretKey === undefined)
+      delete process.env.AWS_SECRET_ACCESS_KEY;
+    else process.env.AWS_SECRET_ACCESS_KEY = originalAwsSecretKey;
+    if (originalAwsRegion === undefined) delete process.env.AWS_REGION;
+    else process.env.AWS_REGION = originalAwsRegion;
+    if (originalOllamaKey === undefined) delete process.env.OLLAMA_API_KEY;
+    else process.env.OLLAMA_API_KEY = originalOllamaKey;
+    if (originalLmstudioKey === undefined) delete process.env.LMSTUDIO_API_KEY;
+    else process.env.LMSTUDIO_API_KEY = originalLmstudioKey;
   }
 }
 
@@ -176,6 +251,26 @@ function uiMessageStream(
   });
 }
 
+function modelUsage(
+  inputTokens: number,
+  outputTokens: number,
+): LanguageModelUsage {
+  return {
+    inputTokens,
+    inputTokenDetails: {
+      noCacheTokens: inputTokens,
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+    },
+    outputTokens,
+    outputTokenDetails: {
+      textTokens: outputTokens,
+      reasoningTokens: undefined,
+    },
+    totalTokens: inputTokens + outputTokens,
+  };
+}
+
 type MockUIMessageStreamOptions = {
   originalMessages?: LocalMessage[];
   onFinish?: (options: {
@@ -249,6 +344,177 @@ describe("LocalBackend", () => {
     });
   });
 
+  test("lists models for locally connected providers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-auth-"));
+    try {
+      await withLocalModelEnv({}, async () => {
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "openrouter",
+          providerName: "lc-openrouter",
+          apiKey: "test-openrouter-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "zai",
+          providerName: "lc-zai",
+          apiKey: "test-zai-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "minimax",
+          providerName: "lc-minimax",
+          apiKey: "test-minimax-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "moonshot",
+          providerName: "lc-moonshot",
+          apiKey: "test-moonshot-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "google_ai",
+          providerName: "lc-gemini",
+          apiKey: "test-gemini-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "bedrock",
+          providerName: "lc-bedrock",
+          apiKey: "test-aws-secret-key",
+          accessKey: "test-aws-access-key",
+          region: "us-east-1",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "ollama",
+          providerName: "lc-ollama",
+          apiKey: "not-needed",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "ollama_cloud",
+          providerName: "lc-ollama-cloud",
+          apiKey: "test-ollama-cloud-key",
+        });
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "lmstudio",
+          providerName: "lc-lmstudio",
+          apiKey: "not-needed",
+        });
+        setLocalChatGPTOAuth(
+          {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account",
+          },
+          storageDir,
+        );
+
+        const authFile = await stat(getLocalProviderAuthPath(storageDir));
+        if (process.platform !== "win32") {
+          expect(authFile.mode & 0o777).toBe(0o600);
+        }
+
+        const handles = listLocalModels(storageDir).map(
+          (model) => model.handle,
+        );
+        expect(handles).toContain("openrouter/deepseek/deepseek-v4-pro");
+        expect(handles).toContain("zai/glm-5.1");
+        expect(handles).toContain("minimax/MiniMax-M2.7");
+        expect(handles).toContain("moonshot/kimi-k2.5");
+        expect(handles).toContain("google_ai/gemini-3.1-pro-preview");
+        expect(handles).toContain("bedrock/us.anthropic.claude-sonnet-4-6");
+        expect(handles).toContain("ollama/llama2");
+        expect(handles).toContain("ollama-cloud/gpt-oss:20b");
+        expect(handles).toContain("lmstudio/google/gemma-3n-e4b");
+        expect(handles).toContain("chatgpt-plus-pro/gpt-5.5");
+        expect(handles).not.toContain("anthropic/claude-opus-4-7");
+
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        const backendModels = (await backend.listModels()) as Array<{
+          handle: string;
+          model_endpoint_type: string;
+        }>;
+        expect(backendModels.map((model) => model.handle)).toContain(
+          "openrouter/deepseek/deepseek-v4-pro",
+        );
+        expect(backendModels).toContainEqual(
+          expect.objectContaining({
+            handle: "zai/glm-5.1",
+            model_endpoint_type: "zai",
+          }),
+        );
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves local AI SDK providers from model prefixes before generic settings", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-factory-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openrouter",
+        providerName: "lc-openrouter",
+        apiKey: "test-openrouter-key",
+      });
+
+      let capturedModel: string | undefined;
+      const factory = createAISDKModelFactoryFromAgent(
+        "openrouter/deepseek/deepseek-v4-pro",
+        { provider_type: "openai" },
+        {
+          localProviderAuthStorageDir: storageDir,
+          createOpenAICompatibleModel: (model) => {
+            capturedModel = model;
+            return {} as LanguageModel;
+          },
+        },
+      );
+
+      factory();
+      expect(capturedModel).toBe("deepseek/deepseek-v4-pro");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses Z.AI coding endpoint when only a coding-plan key is connected", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-zai-coding-"));
+    try {
+      await withLocalModelEnv({}, async () => {
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "zai_coding",
+          providerName: "lc-zai-coding",
+          apiKey: "test-zai-coding-key",
+        });
+
+        expect(
+          resolveZaiConnection({
+            storageDir,
+            preferredProviderType: "zai_coding",
+          }),
+        ).toMatchObject({
+          apiKey: "test-zai-coding-key",
+          providerName: "zai-coding",
+          baseURL: "https://api.z.ai/api/coding/paas/v4",
+        });
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("uses strict local flatfile semantics behind the real local entrypoint", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-"));
     try {
@@ -316,6 +582,44 @@ describe("LocalBackend", () => {
       ).join("\n");
       expect(persistedMessageText).toContain('"id":"ui-msg-');
       expect(persistedMessageText).not.toContain("fake-headless");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("can run local turns without creating a local MemFS repo", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-no-memfs-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+
+      const agent = await backend.createAgent({
+        name: "No MemFS Local Agent",
+        system: "Plain local system prompt.",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("ping", agent.id),
+        ),
+      );
+
+      await expect(
+        stat(getLocalBackendMemoryFilesystemRoot(agent.id, storageDir)),
+      ).rejects.toThrow();
+      await expect(
+        backend.recompileConversation(conversation.id, {
+          agent_id: agent.id,
+          dry_run: true,
+        } as ConversationRecompileBody),
+      ).resolves.toContain("Plain local system prompt.");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -391,6 +695,1393 @@ describe("LocalBackend", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("settles pending local tool calls when a requires-approval turn is cancelled", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-tool-cancel-"),
+    );
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: () => ({
+          fullStream: (async function* () {
+            yield {
+              type: "tool-call",
+              toolCallId: "call-interrupted",
+              toolName: "ShellCommand",
+              input: { command: "sleep 10" },
+            } as TextStreamPart<ToolSet>;
+            yield {
+              type: "finish",
+              finishReason: "tool-calls",
+            } as TextStreamPart<ToolSet>;
+          })(),
+        }),
+      });
+
+      const agent = await backend.createAgent({
+        name: "Local Tool Agent",
+        system: "tool system",
+        model: "openrouter/test-model",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("run a long command", agent.id),
+        ),
+      );
+      expect(chunks.at(-1)).toMatchObject({
+        message_type: "stop_reason",
+        stop_reason: "requires_approval",
+      });
+
+      await backend.cancelConversation(conversation.id);
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "user_message",
+        "approval_request_message",
+        "tool_return_message",
+      ]);
+      expect(messages[2]).toMatchObject({
+        message_type: "tool_return_message",
+        tool_call_id: "call-interrupted",
+        status: "error",
+        tool_return: "Interrupted by user",
+      });
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      const toolPart = persistedMessages
+        .flatMap((message) => message.parts ?? [])
+        .find(
+          (part): part is Record<string, unknown> =>
+            typeof part === "object" &&
+            part !== null &&
+            "toolCallId" in part &&
+            part.toolCallId === "call-interrupted",
+        );
+      expect(toolPart).toMatchObject({
+        state: "output-error",
+        errorText: "Interrupted by user",
+      });
+      expect(toolPart).not.toHaveProperty("approval");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("retries transient local AI SDK provider failures inside a single persisted turn", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-provider-retry-"),
+    );
+    try {
+      let streamCalls = 0;
+      const transient = new APICallError({
+        message:
+          "Cannot connect to API: The socket connection was closed unexpectedly.",
+        url: "https://example.invalid/v1/responses",
+        requestBodyValues: {},
+        responseHeaders: { "retry-after-ms": "0" },
+        cause: { code: "ECONNRESET" },
+        isRetryable: true,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: () => {
+          streamCalls += 1;
+          return {
+            fullStream: (async function* () {
+              if (streamCalls === 1) throw transient;
+              yield {
+                type: "text-delta",
+                id: "retry-text",
+                text: "recovered response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-recovered",
+              role: "assistant",
+              parts: [{ type: "text", text: "recovered response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Local Retry Agent",
+        system: "retry system",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("hello retry", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(2);
+      expect(chunks).toContainEqual(
+        expect.objectContaining({
+          message_type: "event_message",
+          event_type: "retry",
+        }),
+      );
+      expect(JSON.stringify(chunks)).toContain("recovered response");
+      expect(chunks.at(-1)).toMatchObject({
+        message_type: "stop_reason",
+        stop_reason: "end_turn",
+      });
+
+      const runId = (chunks[0] as { run_id?: string } | undefined)?.run_id;
+      expect(runId).toBe("local-run-1");
+      await expect(backend.retrieveRun(runId ?? "")).resolves.toMatchObject({
+        status: "completed",
+        stop_reason: "end_turn",
+      });
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      expect(persistedMessages.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+      ]);
+      expect(JSON.stringify(persistedMessages)).toContain("hello retry");
+      expect(JSON.stringify(persistedMessages)).toContain("recovered response");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts local conversation history with the backend all-compaction prompt", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-compact-"));
+    try {
+      let capturedSystem: string | undefined;
+      let capturedPrompt: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: {
+          system?: string;
+          prompt?: string;
+        }) => {
+          capturedSystem = options.system;
+          capturedPrompt = options.prompt;
+          return { text: "manual local summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Compact Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+        {
+          compaction_settings: { mode: "all" },
+        } as never,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 4,
+        num_messages_after: 1,
+        summary: "manual local summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+      expect(capturedPrompt).toContain("first request");
+      expect(capturedPrompt).toContain("second request");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain("manual local summary");
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      expect(persistedMessages).toHaveLength(1);
+      expect(JSON.stringify(persistedMessages[0])).toContain("system_alert");
+      expect(JSON.stringify(persistedMessages[0])).toContain(
+        "manual local summary",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts local conversation history with sliding-window mode", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-sliding-compact-"),
+    );
+    try {
+      let capturedSystem: string | undefined;
+      let capturedPrompt: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: {
+          system?: string;
+          prompt?: string;
+        }) => {
+          capturedSystem = options.system;
+          capturedPrompt = options.prompt;
+          return { text: "sliding local summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Sliding Compact Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("third request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 6,
+        num_messages_after: 6,
+        summary: "sliding local summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT);
+      expect(capturedPrompt).toContain("first request");
+      expect(capturedPrompt).not.toContain("second request");
+      expect(capturedPrompt).not.toContain("third request");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+        "assistant_message",
+        "user_message",
+        "assistant_message",
+        "user_message",
+        "assistant_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain("sliding local summary");
+      expect(JSON.stringify(messages)).toContain("third request");
+      expect(JSON.stringify(messages)).not.toContain("first request");
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      expect(persistedMessages).toHaveLength(6);
+      expect(JSON.stringify(persistedMessages[0])).toContain(
+        "sliding local summary",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to all compaction when sliding-window mode cannot plan a cutoff", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-sliding-plan-fallback-"),
+    );
+    try {
+      let capturedSystem: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: { system?: string }) => {
+          capturedSystem = options.system;
+          return { text: "fallback all summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Sliding Plan Fallback Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("only request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 2,
+        num_messages_after: 1,
+        summary: "fallback all summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not fall back to all compaction for sliding-window summarizer failures", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-sliding-summarizer-error-"),
+    );
+    try {
+      let summarizeCalls = 0;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: { system?: string }) => {
+          summarizeCalls += 1;
+          if (options.system === LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT) {
+            throw new Error("synthetic sliding summarizer failure");
+          }
+          return { text: "unexpected all summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Sliding Summarizer Error Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("third request", agent.id),
+        ),
+      );
+
+      await expect(
+        backend.compactConversationMessages(conversation.id),
+      ).rejects.toThrow("synthetic sliding summarizer failure");
+      expect(summarizeCalls).toBe(1);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not persist cloud-only compaction model settings locally", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-cloud-compaction-model-"),
+    );
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+
+      const agent = await backend.createAgent({
+        name: "Cloud Model Settings Agent",
+        compaction_settings: { model: "letta/auto" },
+      } as never);
+      expect(agent.compaction_settings).toBeUndefined();
+
+      const agentFiles = await readdir(join(storageDir, "agents"));
+      expect(agentFiles).toHaveLength(1);
+      const agentPath = join(storageDir, "agents", agentFiles[0] ?? "");
+      let persisted = JSON.parse(await readFile(agentPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      expect(persisted.compaction_settings).toBeUndefined();
+
+      const updated = await backend.updateAgent(agent.id, {
+        compaction_settings: { model: "letta/auto" },
+      } as never);
+      expect(updated.compaction_settings).toBeUndefined();
+
+      persisted = JSON.parse(await readFile(agentPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      expect(persisted.compaction_settings).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses saved local compaction settings as the default", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-saved-compact-settings-"),
+    );
+    try {
+      let capturedSystem: string | undefined;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: { system?: string }) => {
+          capturedSystem = options.system;
+          return { text: "saved settings summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "Saved Compact Settings Agent",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+
+      const updated = await backend.updateAgent(agent.id, {
+        compaction_settings: { mode: "all" },
+      } as never);
+      expect(updated.compaction_settings).toMatchObject({ mode: "all" });
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result).toEqual({
+        num_messages_before: 4,
+        num_messages_after: 1,
+        summary: "saved settings summary",
+      });
+      expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses ChatGPT OAuth instructions when running local compaction summaries", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-chatgpt-oauth-compact-"),
+    );
+    try {
+      let capturedSystem: string | undefined;
+      let capturedProviderOptions: unknown;
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        generateText: (async (options: {
+          system?: string;
+          providerOptions?: unknown;
+        }) => {
+          capturedSystem = options.system;
+          capturedProviderOptions = options.providerOptions;
+          return { text: "oauth compaction summary" } as never;
+        }) as never,
+      });
+
+      const agent = await backend.createAgent({
+        name: "ChatGPT OAuth Compact Agent",
+        model: "chatgpt-plus-pro/gpt-5.5",
+        model_settings: { provider_type: "chatgpt_oauth" },
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("second request", agent.id),
+        ),
+      );
+
+      const result = (await backend.compactConversationMessages(
+        conversation.id,
+        { agent_id: agent.id, compaction_settings: { mode: "all" } } as never,
+      )) as {
+        num_messages_before: number;
+        num_messages_after: number;
+        summary: string;
+      };
+
+      expect(result.summary).toBe("oauth compaction summary");
+      expect(capturedSystem).toBeUndefined();
+      expect(capturedProviderOptions).toMatchObject({
+        openai: {
+          instructions: LOCAL_ALL_COMPACTION_PROMPT,
+          systemMessageMode: "remove",
+          store: false,
+        },
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("auto-compacts and retries local AI SDK turns on context overflow", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-auto-compact-"),
+    );
+    try {
+      let streamCalls = 0;
+      let summaryPrompt: string | undefined;
+      const modelMessagesByCall: ModelMessage[][] = [];
+      const overflow = new APICallError({
+        message: "context_length_exceeded: maximum context length exceeded",
+        url: "https://example.invalid/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: "maximum context length exceeded",
+        isRetryable: false,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "overflow local summary" } as never;
+        }) as never,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+
+          if (streamCalls === 2) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Auto Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(3);
+      expect(summaryPrompt).toContain("first request");
+      expect(summaryPrompt).toContain("overflowing request");
+      const chunkTypes = chunks.map((chunk) => chunk.message_type as string);
+      expect(chunkTypes).toContain("event_message");
+      expect(chunkTypes).toContain("summary_message");
+      expect(JSON.stringify(chunks)).toContain("after compaction");
+      expect(JSON.stringify(modelMessagesByCall[2])).toContain(
+        "overflow local summary",
+      );
+      expect(JSON.stringify(modelMessagesByCall[2])).not.toContain(
+        "first request",
+      );
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      expect(
+        page.getPaginatedItems().map((message) => message.message_type),
+      ).toEqual(["summary_message", "assistant_message"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps compacting the same turn when overflow persists after the first compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-auto-compact-multi-"),
+    );
+    try {
+      let streamCalls = 0;
+      let compactionCalls = 0;
+      const modelMessagesByCall: ModelMessage[][] = [];
+      const overflow = {
+        type: "invalid_request_error",
+        code: "context_length_exceeded",
+        message:
+          "Your input exceeds the context window of this model. Please adjust your input and try again.",
+        param: "input",
+      };
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async () => {
+          compactionCalls += 1;
+          return {
+            text:
+              compactionCalls === 1
+                ? "first compacted summary"
+                : "second compacted summary",
+          } as never;
+        }) as never,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+
+          if (streamCalls === 2 || streamCalls === 3) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after second compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Auto Compact Multi Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(4);
+      expect(compactionCalls).toBe(2);
+      expect(
+        chunks.filter(
+          (chunk) =>
+            (chunk as { message_type?: string }).message_type ===
+            "summary_message",
+        ).length,
+      ).toBe(2);
+      expect(JSON.stringify(chunks)).toContain("after second compaction");
+      expect(JSON.stringify(modelMessagesByCall[3])).toContain(
+        "second compacted summary",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("shrinks compaction transcripts progressively when summarizer fallback still overflows", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-shrink-fallback-"),
+    );
+    try {
+      let streamCalls = 0;
+      let summaryCalls = 0;
+      const summaryPromptLengths: number[] = [];
+      const overflowThresholdChars = 3_000;
+      const overflow = new APICallError({
+        message: "context_length_exceeded: maximum context length exceeded",
+        url: "https://example.invalid/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: JSON.stringify({
+          error: {
+            type: "invalid_request_error",
+            code: "context_length_exceeded",
+            message:
+              "Your input exceeds the context window of this model. Please adjust your input and try again.",
+            param: "input",
+          },
+        }),
+        isRetryable: false,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryCalls += 1;
+          const prompt = options.prompt ?? "";
+          summaryPromptLengths.push(prompt.length);
+          if (prompt.length > overflowThresholdChars) {
+            throw overflow;
+          }
+          return { text: "iteratively compacted summary" } as never;
+        }) as never,
+        streamText: (_options) => {
+          streamCalls += 1;
+          if (streamCalls === 2) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after iterative compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Fallback Shrink Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody(`first request ${"x".repeat(9_000)}`, agent.id),
+        ),
+      );
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(3);
+      expect(summaryCalls).toBeGreaterThan(2);
+      expect(summaryPromptLengths[0]).toBeGreaterThan(overflowThresholdChars);
+      expect(summaryPromptLengths.at(-1)).toBeLessThanOrEqual(
+        overflowThresholdChars,
+      );
+      expect(JSON.stringify(chunks)).toContain("iteratively compacted summary");
+      expect(JSON.stringify(chunks)).toContain("after iterative compaction");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts after local AI SDK usage exceeds the configured context window", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-compact-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage = modelUsage(90, 12);
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "usage-triggered local summary" } as never;
+        }) as never,
+        streamText: () => {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "usage-text",
+                text: "limit response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-usage-limit",
+              role: "assistant",
+              parts: [{ type: "text", text: "limit response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 100,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("limit trigger request", agent.id),
+        ),
+      );
+
+      const usageChunk = chunks.find(
+        (chunk) => chunk.message_type === "usage_statistics",
+      ) as { context_tokens?: number; prompt_tokens?: number } | undefined;
+      expect(usageChunk?.context_tokens).toBe(102);
+      expect(usageChunk?.prompt_tokens).toBe(90);
+      expect(summaryPrompt).toContain("limit trigger request");
+      expect(summaryPrompt).toContain("limit response");
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("usage-triggered local summary");
+
+      const page = await backend.listConversationMessages(conversation.id, {
+        order: "asc",
+      } as ConversationMessageListBody);
+      const messages = page.getPaginatedItems();
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "summary_message",
+      ]);
+      expect(JSON.stringify(messages[0])).toContain(
+        "usage-triggered local summary",
+      );
+      expect(JSON.stringify(messages[0])).toContain('"context_window":100');
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses total token fallback when usage output tokens are missing", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-total-fallback-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage: LanguageModelUsage = {
+        inputTokens: 90,
+        inputTokenDetails: {
+          noCacheTokens: 90,
+          cacheReadTokens: undefined,
+          cacheWriteTokens: undefined,
+        },
+        outputTokens: undefined,
+        outputTokenDetails: {
+          textTokens: undefined,
+          reasoningTokens: undefined,
+        },
+        totalTokens: 102,
+      };
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "usage-total-fallback summary" } as never;
+        }) as never,
+        streamText: () => {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "usage-fallback-text",
+                text: "limit response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-usage-fallback",
+              role: "assistant",
+              parts: [{ type: "text", text: "limit response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Fallback Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 100,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("limit trigger request", agent.id),
+        ),
+      );
+
+      const usageChunk = chunks.find(
+        (chunk) => chunk.message_type === "usage_statistics",
+      ) as
+        | {
+            context_tokens?: number;
+            prompt_tokens?: number;
+            total_tokens?: number;
+            completion_tokens?: number;
+          }
+        | undefined;
+      expect(usageChunk?.context_tokens).toBe(102);
+      expect(usageChunk?.prompt_tokens).toBe(90);
+      expect(usageChunk?.total_tokens).toBe(102);
+      expect(usageChunk?.completion_tokens).toBeUndefined();
+      expect(summaryPrompt).toContain("limit trigger request");
+      expect(summaryPrompt).toContain("limit response");
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("usage-total-fallback summary");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("prefers provider total tokens when both total and split usage are present", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-total-preferred-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage: LanguageModelUsage = {
+        inputTokens: 90,
+        inputTokenDetails: {
+          noCacheTokens: 90,
+          cacheReadTokens: undefined,
+          cacheWriteTokens: undefined,
+        },
+        outputTokens: 12,
+        outputTokenDetails: {
+          textTokens: 12,
+          reasoningTokens: undefined,
+        },
+        // Deliberately differs from input+output to verify precedence.
+        totalTokens: 140,
+      };
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "usage-total-preferred summary" } as never;
+        }) as never,
+        streamText: () => {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "usage-total-preferred-text",
+                text: "limit response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+                rawFinishReason: "stop",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-usage-total-preferred",
+              role: "assistant",
+              parts: [{ type: "text", text: "limit response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Total Preferred Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 120,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("limit trigger request", agent.id),
+        ),
+      );
+
+      const usageChunk = chunks.find(
+        (chunk) => chunk.message_type === "usage_statistics",
+      ) as
+        | {
+            context_tokens?: number;
+            prompt_tokens?: number;
+            total_tokens?: number;
+            completion_tokens?: number;
+          }
+        | undefined;
+      expect(usageChunk?.context_tokens).toBe(140);
+      expect(usageChunk?.prompt_tokens).toBe(90);
+      expect(usageChunk?.completion_tokens).toBe(12);
+      expect(usageChunk?.total_tokens).toBe(140);
+      expect(summaryPrompt).toContain("limit trigger request");
+      expect(summaryPrompt).toContain("limit response");
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("usage-total-preferred summary");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts after usage-limit tool-call turns", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-usage-tool-compact-"),
+    );
+    try {
+      let summaryPrompt: string | undefined;
+      const usage = modelUsage(90, 12);
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        generateText: (async (options: { prompt?: string }) => {
+          summaryPrompt = options.prompt;
+          return { text: "tool-call usage summary" } as never;
+        }) as never,
+        streamText: (options) => {
+          const hasToolOutput = JSON.stringify(options.messages).includes(
+            "read result after compaction",
+          );
+          if (hasToolOutput) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "text-delta",
+                  id: "tool-result-text",
+                  text: "continued after compacted tool call",
+                } as TextStreamPart<ToolSet>;
+                yield {
+                  type: "finish",
+                  finishReason: "stop",
+                } as TextStreamPart<ToolSet>;
+              })(),
+              toUIMessageStream: uiMessageStreamWithFinish([], {
+                id: "assistant-tool-result",
+                role: "assistant",
+                parts: [
+                  { type: "text", text: "continued after compacted tool call" },
+                ],
+              } as LocalMessage),
+            };
+          }
+
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "tool-call",
+                toolCallId: "call-read",
+                toolName: "Read",
+                input: { path: "src/tools/toolDefinitions.ts" },
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish-step",
+                response: {},
+                usage,
+                finishReason: "tool-calls",
+                rawFinishReason: "tool-calls",
+                providerMetadata: undefined,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "tool-calls",
+                rawFinishReason: "tool-calls",
+                totalUsage: usage,
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish(
+              [],
+              {
+                id: "assistant-tool-call-limit",
+                role: "assistant",
+                parts: [
+                  {
+                    type: "tool-Read",
+                    toolCallId: "call-read",
+                    state: "input-available",
+                    input: { path: "src/tools/toolDefinitions.ts" },
+                  },
+                ],
+              } as LocalMessage,
+              "tool-calls",
+            ),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Usage Tool Compact Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 100,
+      } as never);
+
+      const chunks = await collectStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("call read", agent.id),
+        ),
+      );
+
+      expect(JSON.stringify(chunks)).toContain("context_window_limit");
+      expect(JSON.stringify(chunks)).toContain("tool-call usage summary");
+      expect(summaryPrompt).toContain("call read");
+
+      const approvalChunk = chunks.find(
+        (chunk) => chunk.message_type === "approval_request_message",
+      ) as
+        | (LettaStreamingResponse & {
+            tool_call?: { tool_call_id?: string; name?: string };
+          })
+        | undefined;
+      expect(approvalChunk?.tool_call?.tool_call_id).toBe("call-read");
+
+      const persistedAfterCompaction =
+        await readPersistedLocalMessages(storageDir);
+      expect(persistedAfterCompaction.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+      ]);
+      expect(JSON.stringify(persistedAfterCompaction)).toContain(
+        "tool-call usage summary",
+      );
+      expect(JSON.stringify(persistedAfterCompaction)).toContain("call-read");
+
+      const continuationChunks = await collectStream(
+        await backend.createConversationMessageStream(conversation.id, {
+          ...createBody("", agent.id),
+          messages: [
+            {
+              type: "approval",
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: approvalChunk?.tool_call?.tool_call_id,
+                  tool_return: "read result after compaction",
+                  status: "success",
+                },
+              ],
+            },
+          ],
+        } as unknown as ConversationMessageCreateBody),
+      );
+      expect(JSON.stringify(continuationChunks)).toContain(
+        "continued after compacted tool call",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("detects context overflow from AI SDK API response bodies", () => {
+    const error = new APICallError({
+      message: "Bad Request",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 400,
+      responseBody: JSON.stringify({
+        error: {
+          type: "invalid_request_error",
+          code: "context_length_exceeded",
+          message: "Your input exceeds the context window of this model.",
+        },
+      }),
+      isRetryable: false,
+    });
+
+    expect(isContextWindowOverflowError(error)).toBe(true);
   });
 
   test("persists compiled system prompt snapshots and reuses them for turns", async () => {
@@ -801,9 +2492,55 @@ describe("LocalBackend", () => {
       "2026-01-01T00:00:02.000Z",
       "2026-01-01T00:00:03.000Z",
       "2026-01-01T00:00:04.000Z",
-      "2026-01-01T00:00:04.000Z",
-      "2026-01-01T00:00:04.000Z",
+      "2026-01-01T00:00:04.001Z",
+      "2026-01-01T00:00:04.002Z",
     ]);
+  });
+
+  test("projects local tool variants with stable intra-message ordering", () => {
+    const projected = projectLocalMessagesToStoredMessages(
+      [
+        {
+          id: "ui-assistant-tools",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-ShellCommand",
+              toolCallId: "call-done",
+              state: "output-available",
+              input: { command: "pwd" },
+              output: "/tmp/project",
+            },
+            {
+              type: "tool-ApplyPatch",
+              toolCallId: "call-pending",
+              state: "input-streaming",
+              input: { input: "*** Begin Patch" },
+            },
+          ],
+        },
+      ],
+      "agent-local-test",
+      "default",
+    );
+
+    expect(projected.map((message) => message.id)).toEqual([
+      "ui-assistant-tools:tool:call-done:request",
+      "ui-assistant-tools:tool:call-done:return",
+      "ui-assistant-tools:tool:call-pending:pending",
+    ]);
+    expect(projected.map((message) => message.date)).toEqual([
+      "2026-01-01T00:00:01.000Z",
+      "2026-01-01T00:00:01.001Z",
+      "2026-01-01T00:00:01.002Z",
+    ]);
+
+    const chronologicalAfterDescList = [...projected]
+      .reverse()
+      .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+    expect(chronologicalAfterDescList.map((message) => message.id)).toEqual(
+      projected.map((message) => message.id),
+    );
   });
 
   test("projects local reasoning parts as reasoning messages", () => {
@@ -1353,6 +3090,111 @@ describe("LocalBackend", () => {
         "tool_return_message",
         "assistant_message",
       ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("converts pasted Letta image parts to AI SDK file UI parts for local history", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-image-"));
+    try {
+      const modelMessagesByCall: ModelMessage[][] = [];
+      let streamCalls = 0;
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        streamText: (options) => {
+          streamCalls += 1;
+          modelMessagesByCall.push(options.messages);
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text: `image response ${streamCalls}`,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-image-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text: `image response ${streamCalls}` }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Image Agent",
+        model: "openai/gpt-4.1",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(conversation.id, {
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "please inspect this" },
+                {
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: "image/png",
+                    data: TEST_PNG_BASE64,
+                  },
+                },
+              ],
+            },
+          ],
+          streaming: true,
+          stream_tokens: true,
+          include_pings: true,
+          background: true,
+          client_tools: [],
+          client_skills: [],
+          agent_id: agent.id,
+        } as unknown as ConversationMessageCreateBody),
+      );
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("and now a text-only follow-up", agent.id),
+        ),
+      );
+
+      expect(modelMessagesByCall).toHaveLength(2);
+      expect(JSON.stringify(modelMessagesByCall[0])).toContain('"type":"file"');
+      expect(JSON.stringify(modelMessagesByCall[1])).toContain('"type":"file"');
+      expect(JSON.stringify(modelMessagesByCall[1])).not.toContain(
+        '"type":"image"',
+      );
+
+      const persistedMessages = await readPersistedLocalMessages(storageDir);
+      const persistedUserWithFile = persistedMessages.find(
+        (message) =>
+          message.role === "user" &&
+          message.parts?.some(
+            (part) =>
+              typeof part === "object" &&
+              part !== null &&
+              (part as { type?: unknown }).type === "file",
+          ),
+      );
+      expect(persistedUserWithFile).toBeDefined();
+      expect(JSON.stringify(persistedUserWithFile)).toContain(
+        "data:image/png;base64,",
+      );
+      expect(JSON.stringify(persistedUserWithFile)).not.toContain(
+        '"type":"image"',
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

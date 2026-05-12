@@ -9,6 +9,3 @@ export const LLM_API_ERROR_MAX_RETRIES = 3;
 export const EMPTY_RESPONSE_MAX_RETRIES = 2;
 export const MAX_PRE_STREAM_RECOVERY = 2;
 export const MAX_POST_STOP_APPROVAL_RECOVERY = 2;
-
-export const NO_AWAITING_APPROVAL_DETAIL_FRAGMENT =
-  "no tool call is currently awaiting approval";

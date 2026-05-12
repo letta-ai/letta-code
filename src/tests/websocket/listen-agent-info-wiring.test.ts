@@ -23,13 +23,15 @@ describe("listen agent-info wiring", () => {
     );
     expect(warmupSource).toContain("async function fetchListenerAgentMetadata");
     expect(warmupSource).toContain(
-      "const agent = await client.agents.retrieve(agentId);",
+      "const agent = await getBackend().retrieveAgent(agentId);",
     );
     expect(warmupSource).toContain("name: agent.name ?? null,");
     expect(warmupSource).toContain("description: agent.description ?? null,");
     expect(warmupSource).toContain("lastRunAt:");
     expect(turnSource).toContain("let cachedAgent: AgentState | null = null;");
-    expect(turnSource).toContain("cachedAgent = (await client.agents.retrieve");
+    expect(turnSource).toContain(
+      "cachedAgent = (await getBackend().retrieveAgent(",
+    );
     expect(turnSource).toContain(
       "if (!runtime.reminderState.hasSentAgentInfo && cachedAgent)",
     );
