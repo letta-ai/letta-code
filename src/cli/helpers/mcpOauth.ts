@@ -3,9 +3,7 @@
  * Uses the /v1/tools/mcp/servers/connect SSE streaming endpoint.
  */
 
-import { getServerUrl } from "../../agent/client";
-import { getMcpOAuthHeaders } from "../../agent/http-headers";
-import { settingsManager } from "../../settings-manager";
+import { apiFetch, getApiRequestConfig } from "../../backend/api/request";
 
 // Match backend's OauthStreamEvent enum
 export enum OauthStreamEvent {
@@ -67,18 +65,16 @@ export async function connectMcpServer(
 ): Promise<McpTool[]> {
   const { onEvent, abortSignal } = options;
 
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const baseUrl = getServerUrl();
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const { apiKey } = await getApiRequestConfig();
 
   if (!apiKey) {
     throw new Error("Missing LETTA_API_KEY");
   }
 
-  const response = await fetch(`${baseUrl}/v1/tools/mcp/servers/connect`, {
+  const response = await apiFetch("/v1/tools/mcp/servers/connect", {
     method: "POST",
-    headers: getMcpOAuthHeaders(apiKey),
-    body: JSON.stringify(config),
+    headers: { Accept: "text/event-stream" },
+    body: config as unknown as Record<string, unknown>,
     signal: abortSignal,
   });
 

@@ -3,6 +3,7 @@ import {
   getDisplayToolName,
   isMemoryTool,
   isShellOutputTool,
+  isTaskTool,
 } from "../../cli/helpers/toolNameMapping";
 
 describe("toolNameMapping display mappings", () => {
@@ -36,5 +37,15 @@ describe("toolNameMapping task output mappings", () => {
     expect(isShellOutputTool("TaskOutput")).toBe(true);
     expect(isShellOutputTool("BashOutput")).toBe(true);
     expect(isShellOutputTool("Task")).toBe(false);
+  });
+});
+
+describe("toolNameMapping task aliases", () => {
+  test("treats Agent as a task/subagent tool for TUI rendering", () => {
+    expect(isTaskTool("Task")).toBe(true);
+    expect(isTaskTool("task")).toBe(true);
+    expect(isTaskTool("Agent")).toBe(true);
+    expect(isTaskTool("agent")).toBe(true);
+    expect(isTaskTool("TaskOutput")).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,7 +24,7 @@ type RuntimeResolver = {
 
 let spawnInstallProcess: InstallProcessFactory = spawn;
 let userRuntimeRootOverride: string | null = null;
-let bundledRuntimeRootOverride: string | null = null;
+let bundledRuntimeRootOverride: string | null | undefined;
 let packageManagerOverride: RuntimePackageManager | null = null;
 let platformOverride: NodeJS.Platform | null = null;
 
@@ -49,7 +50,9 @@ export function getBundledChannelRuntimeDir(
   channelId: SupportedChannelId,
 ): string | null {
   const root =
-    bundledRuntimeRootOverride ?? process.env[CHANNEL_RUNTIME_ROOT_ENV] ?? null;
+    bundledRuntimeRootOverride !== undefined
+      ? bundledRuntimeRootOverride
+      : (process.env[CHANNEL_RUNTIME_ROOT_ENV] ?? null);
   if (!root) {
     return null;
   }
@@ -151,6 +154,35 @@ async function writeChannelRuntimeManifest(
   );
 }
 
+async function linkUserPluginNodeModules(
+  channelId: SupportedChannelId,
+): Promise<void> {
+  const spec = getChannelPluginMetadata(channelId);
+  if (spec.firstParty) {
+    return;
+  }
+
+  const runtimeNodeModules = join(
+    getChannelRuntimeDir(channelId),
+    "node_modules",
+  );
+  const channelNodeModules = join(getChannelDir(channelId), "node_modules");
+  if (!existsSync(runtimeNodeModules) || existsSync(channelNodeModules)) {
+    return;
+  }
+
+  try {
+    await mkdir(getChannelDir(channelId), { recursive: true });
+    await symlink(
+      runtimeNodeModules,
+      channelNodeModules,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  } catch {
+    // Best-effort convenience for ESM package resolution from plugin.mjs.
+  }
+}
+
 function resolveInstallPackageManager(): RuntimePackageManager {
   return packageManagerOverride ?? detectPackageManager();
 }
@@ -226,6 +258,8 @@ export async function installChannelRuntime(
       }
     });
   });
+
+  await linkUserPluginNodeModules(channelId);
 }
 
 export async function ensureChannelRuntimeInstalled(
@@ -277,7 +311,9 @@ export function __testOverrideChannelRuntimeDeps(
   } | null,
 ): void {
   userRuntimeRootOverride = overrides?.runtimeRoot ?? null;
-  bundledRuntimeRootOverride = overrides?.bundledRuntimeRoot ?? null;
+  bundledRuntimeRootOverride = overrides
+    ? (overrides.bundledRuntimeRoot ?? null)
+    : undefined;
   spawnInstallProcess = overrides?.spawnImpl ?? spawn;
   packageManagerOverride = overrides?.packageManager ?? null;
   platformOverride = overrides?.platform ?? null;

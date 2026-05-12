@@ -112,4 +112,17 @@ describe("Bash tool", () => {
       "Worktrees must be created under .letta/worktrees/",
     );
   });
+
+  test("blocks env-prefixed git worktree add outside .letta/worktrees/", async () => {
+    const result = await bash({
+      command:
+        "FOO=1 env -i BAR=2 git worktree add -b fix/feature ../my-worktree main",
+      description: "Test env-prefixed worktree path enforcement",
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain(
+      "Worktrees must be created under .letta/worktrees/",
+    );
+  });
 });

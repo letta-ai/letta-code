@@ -7,11 +7,12 @@
  *  - pending approval flag
  *  - optional wall-clock timings
  *
- * Accepting minimal client/context interfaces keeps the handler fully testable
+ * Accepting minimal backend/context interfaces keeps the handler fully testable
  * without a real network or subprocess.
  */
 
 import { randomUUID } from "node:crypto";
+import type { Backend, ConversationMessageListBody } from "../backend";
 import type {
   BootstrapSessionStatePayload,
   BootstrapSessionStateRequest,
@@ -23,27 +24,7 @@ import { resolveListMessagesRoute } from "./listMessagesRouting";
 // Minimal interfaces — only what the handler needs
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface BootstrapMessagesPage {
-  /** conversations.messages.list() returns a paginated resource */
-  getPaginatedItems(): unknown[];
-}
-
-export interface BootstrapHandlerClient {
-  conversations: {
-    messages: {
-      list(
-        conversationId: string,
-        opts: {
-          limit: number;
-          order: "asc" | "desc";
-          agent_id?: string;
-          before?: string;
-          after?: string;
-        },
-      ): Promise<BootstrapMessagesPage>;
-    };
-  };
-}
+export type BootstrapHandlerBackend = Pick<Backend, "listConversationMessages">;
 
 export interface BootstrapHandlerSessionContext {
   agentId: string;
@@ -58,7 +39,7 @@ export interface HandleBootstrapParams {
   bootstrapReq: BootstrapSessionStateRequest;
   sessionContext: BootstrapHandlerSessionContext;
   requestId: string;
-  client: BootstrapHandlerClient;
+  backend: BootstrapHandlerBackend;
   /** Optional: flag indicating a pending approval is waiting. */
   hasPendingApproval?: boolean;
 }
@@ -80,7 +61,7 @@ export async function handleBootstrapSessionState(
     bootstrapReq,
     sessionContext,
     requestId,
-    client,
+    backend,
     hasPendingApproval,
   } = params;
 
@@ -98,10 +79,11 @@ export async function handleBootstrapSessionState(
     );
 
     const listStart = Date.now();
-    const page = await client.conversations.messages.list(
-      route.conversationId,
-      { limit, order, ...(route.agentId ? { agent_id: route.agentId } : {}) },
-    );
+    const page = await backend.listConversationMessages(route.conversationId, {
+      limit,
+      order,
+      ...(route.agentId ? { agent_id: route.agentId } : {}),
+    } as ConversationMessageListBody);
     const items = page.getPaginatedItems();
     const listEnd = Date.now();
 

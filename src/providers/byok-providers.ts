@@ -3,9 +3,30 @@
  * Unified module for managing custom LLM provider connections
  */
 
-import { getLettaCodeHeaders } from "../agent/http-headers";
-import { LETTA_CLOUD_API_URL } from "../auth/oauth";
-import { settingsManager } from "../settings-manager";
+import {
+  checkProviderApiKey as checkProviderApiKeyRequest,
+  createOrUpdateProvider as createOrUpdateProviderRequest,
+  createProvider as createProviderRequest,
+  deleteProvider as deleteProviderRequest,
+  getProviderByName as getProviderByNameRequest,
+  listProviders as listApiProviders,
+  type ProviderResponse,
+  removeProviderByName as removeProviderByNameRequest,
+  updateProvider as updateProviderRequest,
+} from "../backend/api/providers";
+import { getBackend } from "../backend/backend";
+import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "../backend/dev/AISDKProviderRegistry";
+import {
+  createOrUpdateLocalProvider,
+  deleteLocalProvider,
+  getLocalProviderByName,
+  isLocalProviderTypeSupported,
+  listLocalProviders,
+  removeLocalProviderByName,
+  updateLocalProvider,
+} from "../backend/local/LocalProviderAuthStore";
+
+export type { ProviderResponse } from "../backend/api/providers";
 
 // Field definition for multi-field providers (like Bedrock)
 export interface ProviderField {
@@ -76,11 +97,50 @@ export const BYOK_PROVIDERS = [
     providerName: "lc-gemini",
   },
   {
+    id: "moonshot",
+    displayName: "Moonshot AI",
+    description: "Connect a Moonshot AI API key",
+    providerType: "moonshot",
+    providerName: "lc-moonshot",
+  },
+  {
+    id: "kimi-code",
+    displayName: "Kimi Code",
+    description: "Connect a Kimi Code API key",
+    providerType: "moonshot_coding",
+    providerName: "lc-kimi-code",
+  },
+  {
     id: "openrouter",
     displayName: "OpenRouter API",
     description: "Connect an OpenRouter API key",
     providerType: "openrouter",
     providerName: "lc-openrouter",
+  },
+  {
+    id: "ollama",
+    displayName: "Ollama (local)",
+    description: "Connect local Ollama at http://localhost:11434/v1",
+    providerType: "ollama",
+    providerName: "lc-ollama",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
+  },
+  {
+    id: "ollama-cloud",
+    displayName: "Ollama Cloud",
+    description: "Connect an Ollama Cloud API key",
+    providerType: "ollama_cloud",
+    providerName: "lc-ollama-cloud",
+  },
+  {
+    id: "lmstudio",
+    displayName: "LM Studio (local)",
+    description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
+    providerType: "lmstudio",
+    providerName: "lc-lmstudio",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
   },
   {
     id: "bedrock",
@@ -119,6 +179,22 @@ export const BYOK_PROVIDERS = [
 export type ByokProviderId = (typeof BYOK_PROVIDERS)[number]["id"];
 export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 
+export function isLocalProviderStoreEnabled(): boolean {
+  return getBackend().capabilities.localModelCatalog;
+}
+
+export function providerStorageTargetLabel(): string {
+  return isLocalProviderStoreEnabled() ? "local storage" : "Letta";
+}
+
+function assertLocalProviderSupported(providerType: string): void {
+  if (!isLocalProviderTypeSupported(providerType)) {
+    throw new Error(
+      `${providerType} provider connections are not supported in local mode yet.`,
+    );
+  }
+}
+
 // ── BYOK handle classification helpers ──────────────────────────────────────
 // These are used by both the TUI ModelSelector and the WS list_models handler
 // to categorize model handles as BYOK vs Letta API.
@@ -126,23 +202,7 @@ export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 /** Prefixes that always indicate a BYOK handle (ChatGPT OAuth + lc-* providers) */
 export const STATIC_BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
 
-/**
- * Maps provider_type → base provider string used in model handles.
- * Used to translate BYOK provider names back to their canonical handle prefix
- * (e.g., "lc-anthropic/claude-sonnet-4" → "anthropic/claude-sonnet-4").
- */
-export const PROVIDER_TYPE_TO_BASE_PROVIDER: Record<string, string> = {
-  chatgpt_oauth: "chatgpt-plus-pro",
-  anthropic: "anthropic",
-  openai: "openai",
-  zai: "zai",
-  zai_coding: "zai",
-  google_ai: "google_ai",
-  google_vertex: "google_vertex",
-  minimax: "minimax",
-  openrouter: "openrouter",
-  bedrock: "bedrock",
-};
+export { PROVIDER_TYPE_TO_BASE_PROVIDER };
 
 /**
  * Build a mapping of BYOK provider names → base provider strings.
@@ -199,73 +259,14 @@ export function isByokHandleForSelector(
   return provider in byokProviderAliases;
 }
 
-// Response type from the providers API
-export interface ProviderResponse {
-  id: string;
-  name: string;
-  provider_type: string;
-  api_key?: string;
-  base_url?: string;
-  access_key?: string;
-  region?: string;
-}
-
-/**
- * Get the Letta API base URL and auth token
- */
-async function getLettaConfig(): Promise<{ baseUrl: string; apiKey: string }> {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const baseUrl =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "";
-  return { baseUrl, apiKey };
-}
-
-/**
- * Make a request to the Letta providers API
- */
-async function providersRequest<T>(
-  method: "GET" | "POST" | "PATCH" | "DELETE",
-  path: string,
-  body?: Record<string, unknown>,
-): Promise<T> {
-  const { baseUrl, apiKey } = await getLettaConfig();
-  const url = `${baseUrl}${path}`;
-
-  const response = await fetch(url, {
-    method,
-    headers: getLettaCodeHeaders(apiKey),
-    ...(body && { body: JSON.stringify(body) }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Provider API error (${response.status}): ${errorText}`);
-  }
-
-  // Handle empty responses (e.g., DELETE)
-  const text = await response.text();
-  if (!text) {
-    return {} as T;
-  }
-  return JSON.parse(text) as T;
-}
-
 /**
  * List all BYOK providers for the current user
  */
 export async function listProviders(): Promise<ProviderResponse[]> {
-  try {
-    const response = await providersRequest<ProviderResponse[]>(
-      "GET",
-      "/v1/providers",
-    );
-    return response;
-  } catch {
-    return [];
+  if (isLocalProviderStoreEnabled()) {
+    return listLocalProviders();
   }
+  return listApiProviders();
 }
 
 /**
@@ -298,8 +299,10 @@ export async function isProviderConnected(
 export async function getProviderByName(
   providerName: string,
 ): Promise<ProviderResponse | null> {
-  const providers = await listProviders();
-  return providers.find((p) => p.name === providerName) || null;
+  if (isLocalProviderStoreEnabled()) {
+    return getLocalProviderByName(providerName);
+  }
+  return getProviderByNameRequest(providerName);
 }
 
 /**
@@ -313,13 +316,17 @@ export async function checkProviderApiKey(
   region?: string,
   profile?: string,
 ): Promise<void> {
-  await providersRequest<{ message: string }>("POST", "/v1/providers/check", {
-    provider_type: providerType,
-    api_key: apiKey,
-    ...(accessKey && { access_key: accessKey }),
-    ...(region && { region }),
-    ...(profile && { profile }),
-  });
+  if (isLocalProviderStoreEnabled()) {
+    assertLocalProviderSupported(providerType);
+    return;
+  }
+  await checkProviderApiKeyRequest(
+    providerType,
+    apiKey,
+    accessKey,
+    region,
+    profile,
+  );
 }
 
 /**
@@ -333,14 +340,24 @@ export async function createProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
-  return providersRequest<ProviderResponse>("POST", "/v1/providers", {
-    name: providerName,
-    provider_type: providerType,
-    api_key: apiKey,
-    ...(accessKey && { access_key: accessKey }),
-    ...(region && { region }),
-    ...(profile && { profile }),
-  });
+  if (isLocalProviderStoreEnabled()) {
+    return createOrUpdateLocalProvider({
+      providerType,
+      providerName,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+    });
+  }
+  return createProviderRequest(
+    providerType,
+    providerName,
+    apiKey,
+    accessKey,
+    region,
+    profile,
+  );
 }
 
 /**
@@ -353,23 +370,21 @@ export async function updateProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
-  return providersRequest<ProviderResponse>(
-    "PATCH",
-    `/v1/providers/${providerId}`,
-    {
-      api_key: apiKey,
-      ...(accessKey && { access_key: accessKey }),
-      ...(region && { region }),
-      ...(profile && { profile }),
-    },
-  );
+  if (isLocalProviderStoreEnabled()) {
+    return updateLocalProvider(providerId, apiKey, accessKey, region, profile);
+  }
+  return updateProviderRequest(providerId, apiKey, accessKey, region, profile);
 }
 
 /**
  * Delete a provider by ID
  */
 export async function deleteProvider(providerId: string): Promise<void> {
-  await providersRequest<void>("DELETE", `/v1/providers/${providerId}`);
+  if (isLocalProviderStoreEnabled()) {
+    await deleteLocalProvider(providerId);
+    return;
+  }
+  await deleteProviderRequest(providerId);
 }
 
 /**
@@ -384,13 +399,17 @@ export async function createOrUpdateProvider(
   region?: string,
   profile?: string,
 ): Promise<ProviderResponse> {
-  const existing = await getProviderByName(providerName);
-
-  if (existing) {
-    return updateProvider(existing.id, apiKey, accessKey, region, profile);
+  if (isLocalProviderStoreEnabled()) {
+    return createOrUpdateLocalProvider({
+      providerType,
+      providerName,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+    });
   }
-
-  return createProvider(
+  return createOrUpdateProviderRequest(
     providerType,
     providerName,
     apiKey,
@@ -406,10 +425,11 @@ export async function createOrUpdateProvider(
 export async function removeProviderByName(
   providerName: string,
 ): Promise<void> {
-  const existing = await getProviderByName(providerName);
-  if (existing) {
-    await deleteProvider(existing.id);
+  if (isLocalProviderStoreEnabled()) {
+    await removeLocalProviderByName(providerName);
+    return;
   }
+  await removeProviderByNameRequest(providerName);
 }
 
 /**

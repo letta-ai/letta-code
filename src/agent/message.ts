@@ -9,6 +9,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { getBackend } from "../backend";
 import {
   type ClientTool,
   type PermissionModeState,
@@ -17,13 +18,16 @@ import {
   waitForToolsetReady,
 } from "../tools/manager";
 import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
+import {
+  assertSupportedBase64ImageMediaTypes,
+  normalizeMessageImageParts,
+} from "../utils/messageImageNormalization";
 import { createStreamAbortRelay } from "../utils/streamAbortRelay";
 import { isTimingsEnabled } from "../utils/timing";
 import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import { getClient } from "./client";
 import { buildClientSkillsPayload } from "./clientSkills";
 import { getSkillSources } from "./context";
 
@@ -73,6 +77,8 @@ export type SendMessageStreamOptions = {
   overrideModel?: string;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
+  /** Skip shared image normalization when the caller already did it. */
+  skipImageNormalization?: boolean;
 };
 
 export function buildConversationMessagesCreateRequestBody(
@@ -132,7 +138,11 @@ export async function sendMessageStream(
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
-  const client = await getClient();
+  const backend = getBackend();
+  const normalizedMessages = opts.skipImageNormalization
+    ? messages
+    : await normalizeMessageImageParts(messages);
+  assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext
     ? opts.preparedToolContext
@@ -155,7 +165,7 @@ export async function sendMessageStream(
   const resolvedConversationId = conversationId;
   const requestBody = buildConversationMessagesCreateRequestBody(
     conversationId,
-    messages,
+    normalizedMessages,
     opts,
     clientTools,
     clientSkills,
@@ -196,7 +206,7 @@ export async function sendMessageStream(
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
   }
 
-  const messageSummary = messages
+  const messageSummary = normalizedMessages
     .map((item) => {
       if (item.type === "approval") {
         return `approval:${item.approvals?.length ?? 0}`;
@@ -212,7 +222,8 @@ export async function sendMessageStream(
     })
     .join(",");
 
-  const firstOtid = (messages[0] as unknown as { otid?: string })?.otid;
+  const firstOtid = (normalizedMessages[0] as unknown as { otid?: string })
+    ?.otid;
   debugLog(
     "send-message-stream",
     "request_start conversation_id=%s agent_id=%s messages=%s otid=%s stream_tokens=%s background=%s max_retries=%s",
@@ -228,7 +239,7 @@ export async function sendMessageStream(
   let stream: Stream<LettaStreamingResponse>;
   const abortRelay = createStreamAbortRelay(requestOptions.signal);
   try {
-    stream = await client.conversations.messages.create(
+    stream = await backend.createConversationMessageStream(
       resolvedConversationId,
       requestBody,
       {

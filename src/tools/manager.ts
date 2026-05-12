@@ -1,5 +1,6 @@
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
+import stripAnsi from "strip-ansi";
 import { getDisplayableToolReturn } from "../agent/approval-execution";
 import {
   getConversationId,
@@ -15,6 +16,7 @@ import {
   type MessageChannelToolDiscoveryScope,
 } from "../channels/messageTool";
 import { getActiveChannelIds } from "../channels/registry";
+import type { ChannelTurnSource } from "../channels/types";
 import { refreshFileIndex } from "../cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
@@ -36,8 +38,8 @@ import {
 import { telemetry } from "../telemetry";
 import { debugLog } from "../utils/debug";
 import {
+  extractSecretEnvFromCommand,
   scrubSecretsFromString,
-  substituteSecretsInArgs,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
@@ -91,11 +93,49 @@ async function maybeResolveDynamicChannelTool(
   };
 }
 
+async function resolveBackendSpecificToolDescription(
+  name: string,
+  description: string,
+): Promise<string> {
+  let isLocalMemfs = false;
+  try {
+    const { getBackend } = await import("../backend");
+    isLocalMemfs = getBackend().capabilities.localMemfs;
+  } catch {
+    isLocalMemfs = false;
+  }
+  if (!isLocalMemfs) return description;
+
+  if (name === "memory_apply_patch") {
+    return description
+      .replace(
+        "then automatically commit and push the change.",
+        "then automatically commit the change locally.",
+      )
+      .replace("- Pushes to remote", "- Does not push to a Letta remote");
+  }
+
+  if (name === "memory") {
+    return description.replace(
+      "automatically commits and pushes changes.",
+      "automatically commits changes locally.",
+    );
+  }
+
+  return description;
+}
+
 function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
   const nextRegistry = new Map(registry);
   const existing = nextRegistry.get("MessageChannel");
+
+  // Only update an existing entry — never inject MessageChannel into a registry
+  // that deliberately excluded it (e.g. a conversation with no channel routes).
+  if (!existing) {
+    return nextRegistry;
+  }
+
   if (
-    existing &&
     existing.schema.description !== TOOL_DEFINITIONS.MessageChannel.description
   ) {
     return nextRegistry;
@@ -152,6 +192,10 @@ const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
   read_file_gemini: "read_file",
   list_directory: "list_directory",
   run_shell_command: "run_shell_command",
+  // Align subagent-spawning tool with Claude Code: surface internal `Task` as `Agent`.
+  // Internal implementation name stays `Task` for backward compat with existing
+  // agent states; getInternalToolName("Agent") resolves back to "Task".
+  Task: "Agent",
 };
 
 /**
@@ -174,6 +218,55 @@ export function getInternalToolName(serverName: string): string {
   }
   // If not in mapping, the server name is the internal name
   return serverName;
+}
+
+function matchesClientToolAllowlistEntry(
+  allowSet: Set<string> | null,
+  serverToolName: string,
+  internalToolName?: string,
+): boolean {
+  if (!allowSet) {
+    return true;
+  }
+
+  return (
+    allowSet.has(serverToolName) ||
+    (internalToolName !== undefined && allowSet.has(internalToolName))
+  );
+}
+
+export function filterBuiltInToolNamesByClientAllowlist(
+  toolNames: ToolName[],
+  clientToolAllowlist?: string[],
+): ToolName[] {
+  if (clientToolAllowlist === undefined) {
+    return toolNames;
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return toolNames.filter((toolName) =>
+    matchesClientToolAllowlistEntry(
+      allowSet,
+      getServerToolName(toolName),
+      toolName,
+    ),
+  );
+}
+
+function filterExternalToolsByClientAllowlist(
+  externalTools: Map<string, ExternalToolDefinition>,
+  clientToolAllowlist?: string[],
+): Map<string, ExternalToolDefinition> {
+  if (clientToolAllowlist === undefined) {
+    return new Map(externalTools);
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return new Map(
+    Array.from(externalTools.entries()).filter(([internalName, tool]) =>
+      matchesClientToolAllowlistEntry(allowSet, tool.name, internalName),
+    ),
+  );
 }
 
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
@@ -292,6 +385,9 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
+  get_goal: { requiresApproval: false },
+  create_goal: { requiresApproval: false },
+  update_goal: { requiresApproval: false },
   // Gemini toolset
   glob_gemini: { requiresApproval: false },
   list_directory: { requiresApproval: false },
@@ -310,6 +406,9 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   GrepFiles: { requiresApproval: false },
   ApplyPatch: { requiresApproval: true },
   UpdatePlan: { requiresApproval: false },
+  GetGoal: { requiresApproval: false },
+  CreateGoal: { requiresApproval: false },
+  UpdateGoal: { requiresApproval: false },
   // Gemini-2 toolset (PascalCase)
   RunShellCommand: { requiresApproval: true },
   ReadFileGemini: { requiresApproval: false },
@@ -821,6 +920,7 @@ function capturePreparedToolExecutionContext(
     externalExecutor?: ExternalToolExecutor;
   },
   options?: {
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
@@ -829,7 +929,10 @@ function capturePreparedToolExecutionContext(
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
-    externalTools: new Map(snapshot.externalTools),
+    externalTools: filterExternalToolsByClientAllowlist(
+      snapshot.externalTools,
+      options?.clientToolAllowlist,
+    ),
     externalExecutor: snapshot.externalExecutor,
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
@@ -896,6 +999,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
 export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -920,6 +1024,8 @@ export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
+    clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -1101,9 +1207,14 @@ async function buildSpecificToolRegistry(
       throw new Error(`Tool implementation not found for ${internalName}`);
     }
 
-    const resolvedTool = await maybeResolveDynamicChannelTool(
+    const description = await resolveBackendSpecificToolDescription(
       internalName,
       definition.description,
+    );
+
+    const resolvedTool = await maybeResolveDynamicChannelTool(
+      internalName,
+      description,
       definition.schema,
       channelToolScope,
     );
@@ -1128,6 +1239,8 @@ async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
+    clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolName[]> {
@@ -1136,16 +1249,12 @@ async function resolveBaseToolNamesForModel(
   if (
     !toolFilter.isActive() &&
     modelIdentifier &&
-    isGeminiModel(modelIdentifier)
-  ) {
-    baseToolNames = GEMINI_PASCAL_TOOLS;
-  } else if (
-    !toolFilter.isActive() &&
-    modelIdentifier &&
     isOpenAIModel(modelIdentifier)
   ) {
     baseToolNames = OPENAI_PASCAL_TOOLS;
   } else if (!toolFilter.isActive()) {
+    // Temporary rollback: Gemini models should use the default Claude-style
+    // toolset until we intentionally restore the Gemini-specific toolset.
     baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
   } else {
     baseToolNames = TOOL_NAMES;
@@ -1156,10 +1265,25 @@ async function resolveBaseToolNamesForModel(
     baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
   }
 
+  if (options?.include && options.include.length > 0) {
+    const seen = new Set(baseToolNames);
+    for (const name of options.include) {
+      if (!seen.has(name)) {
+        baseToolNames.push(name);
+        seen.add(name);
+      }
+    }
+  }
+
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
     baseToolNames,
     options?.channelToolScope,
+  );
+
+  baseToolNames = filterBuiltInToolNamesByClientAllowlist(
+    baseToolNames,
+    options?.clientToolAllowlist,
   );
 
   return baseToolNames;
@@ -1169,6 +1293,8 @@ async function buildRegistryForModel(
   modelIdentifier?: string,
   options?: {
     exclude?: ToolName[];
+    include?: ToolName[];
+    clientToolAllowlist?: string[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolRegistry> {
@@ -1202,7 +1328,10 @@ async function buildRegistryForModel(
         throw new Error(`Tool implementation not found for ${name}`);
       }
 
-      let description = definition.description;
+      let description = await resolveBackendSpecificToolDescription(
+        name,
+        definition.description,
+      );
       if (name === "Task" && discoveredSubagents.length > 0) {
         description = injectSubagentsIntoTaskDescription(
           description,
@@ -1529,6 +1658,7 @@ export async function executeTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
+    channelTurnSources?: ChannelTurnSource[];
     /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
@@ -1619,13 +1749,27 @@ export async function executeTool(
           enhancedArgs = {
             ...enhancedArgs,
             onOutput: (chunk: string, stream: "stdout" | "stderr") => {
-              options.onOutput?.(scrubSecretsFromString(chunk), stream);
+              options.onOutput?.(
+                stripAnsi(scrubSecretsFromString(chunk, scopedAgentId)),
+                stream,
+              );
             },
           };
         }
 
-        // Substitute $SECRET_NAME patterns with actual secret values
-        enhancedArgs = substituteSecretsInArgs(enhancedArgs);
+        // Inject secrets as environment variables instead of substituting into
+        // the command string. This prevents shell metacharacters in secrets
+        // (e.g. $$, backticks, quotes) from being interpreted by the shell.
+        const command = enhancedArgs.command;
+        const secretEnv =
+          typeof command === "string" ||
+          (Array.isArray(command) &&
+            command.every((part) => typeof part === "string"))
+            ? extractSecretEnvFromCommand(command, scopedAgentId)
+            : {};
+        if (Object.keys(secretEnv).length > 0) {
+          enhancedArgs = { ...enhancedArgs, secretEnv };
+        }
       }
 
       // Inject toolCallId, abort signal, and parent scope for Task tool
@@ -1652,8 +1796,16 @@ export async function executeTool(
       }
 
       // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
-      if (internalName === "MessageChannel" && options?.parentScope) {
-        enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+      if (internalName === "MessageChannel") {
+        if (options?.parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+        }
+        if (options?.channelTurnSources?.length) {
+          enhancedArgs = {
+            ...enhancedArgs,
+            channelTurnSources: options.channelTurnSources,
+          };
+        }
       }
 
       // Inject the execution context id for plan-mode tools so they can update
@@ -1712,14 +1864,17 @@ export async function executeTool(
       // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
-      // Scrub secret values from tool output so they don't leak into agent context
+      // Scrub secret values + ANSI escape sequences from tool output so they
+      // don't leak into agent context or render as garbage in downstream UIs.
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
+        const sanitize = (text: string) =>
+          stripAnsi(scrubSecretsFromString(text, scopedAgentId));
         if (typeof flattenedResponse === "string") {
-          flattenedResponse = scrubSecretsFromString(flattenedResponse);
+          flattenedResponse = sanitize(flattenedResponse);
         } else if (Array.isArray(flattenedResponse)) {
           flattenedResponse = flattenedResponse.map((block) =>
             block.type === "text"
-              ? { ...block, text: scrubSecretsFromString(block.text) }
+              ? { ...block, text: sanitize(block.text) }
               : block,
           );
         }
@@ -1727,7 +1882,7 @@ export async function executeTool(
           for (let i = 0; i < stdout.length; i++) {
             const line = stdout[i];
             if (line !== undefined) {
-              stdout[i] = scrubSecretsFromString(line);
+              stdout[i] = sanitize(line);
             }
           }
         }
@@ -1735,7 +1890,7 @@ export async function executeTool(
           for (let i = 0; i < stderr.length; i++) {
             const line = stderr[i];
             if (line !== undefined) {
-              stderr[i] = scrubSecretsFromString(line);
+              stderr[i] = sanitize(line);
             }
           }
         }

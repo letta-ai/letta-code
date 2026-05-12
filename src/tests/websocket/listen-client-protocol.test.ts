@@ -7,12 +7,15 @@ import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
 import { models } from "../../agent/model";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
 } from "../../agent/personality";
+import { __testSetBackend, type AgentCreateBody } from "../../backend";
+import { LocalBackend } from "../../backend/local";
 import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
 import {
   ensureFileIndex,
@@ -24,6 +27,7 @@ import {
   clearAllSubagents,
   registerSubagent,
 } from "../../cli/helpers/subagentState";
+import { setSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { LocalProjectSettings, Settings } from "../../settings-manager";
@@ -45,6 +49,10 @@ import {
   requestApprovalOverWS,
   resolvePendingApprovalResolver,
 } from "../../websocket/listen-client";
+import {
+  handleExecuteCommand,
+  SUPPORTED_REMOTE_COMMANDS,
+} from "../../websocket/listener/commands";
 import { isEditFileCommand } from "../../websocket/listener/protocol-inbound";
 import {
   DESKTOP_DEBUG_PANEL_INFO_PREFIX,
@@ -86,6 +94,7 @@ class MockSocket {
 const actualChannelsService = await import("../../channels/service");
 
 afterEach(() => {
+  __testSetBackend(null);
   __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
   mock.restore();
 });
@@ -107,10 +116,12 @@ describe("listen-client channel command dispatch", () => {
         channel_id: "slack",
         account: {
           display_name: "DocsBot Slack",
-          bot_token: "xoxb-test",
-          app_token: "xapp-test",
-          mode: "socket",
           dm_policy: "pairing",
+          config: {
+            bot_token: "xoxb-test",
+            app_token: "xapp-test",
+            mode: "socket",
+          },
         },
       }),
     ).toBe(true);
@@ -332,7 +343,11 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "input",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
-          payload: { kind: "create_message", messages: [] },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            client_tool_allowlist: ["Read", "Grep"],
+          },
         }),
       ),
     );
@@ -341,12 +356,37 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "change_device_state",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
-          payload: { mode: "default" },
+          payload: { mode: "standard" },
         }),
       ),
     );
     expect(msg?.type).toBe("input");
+    if (msg?.type === "input" && msg.payload.kind === "create_message") {
+      expect(msg.payload.client_tool_allowlist).toEqual(["Read", "Grep"]);
+    }
     expect(changeDeviceState?.type).toBe("change_device_state");
+  });
+
+  test("rejects input create_message with invalid client tool allowlist", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            client_tool_allowlist: ["Read", 42],
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain("client_tool_allowlist must be string[]");
+    }
   });
 
   test("parses abort_message as the canonical abort command", () => {
@@ -369,10 +409,15 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "sync",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
+          recover_approvals: false,
         }),
       ),
     );
     expect(sync?.type).toBe("sync");
+    if (sync?.type !== "sync") {
+      throw new Error("expected sync command");
+    }
+    expect(sync.recover_approvals).toBe(false);
   });
 
   test("parses cron CRUD commands", () => {
@@ -470,11 +515,13 @@ describe("listen-client parseServerMessage", () => {
           channel_id: "slack",
           account: {
             display_name: "DocsBot Slack",
-            bot_token: "xoxb-test",
-            app_token: "xapp-test",
-            mode: "socket",
             dm_policy: "pairing",
             allowed_users: ["user-1"],
+            config: {
+              bot_token: "xoxb-test",
+              app_token: "xapp-test",
+              mode: "socket",
+            },
           },
         }),
       ),
@@ -488,8 +535,10 @@ describe("listen-client parseServerMessage", () => {
           account_id: "bot-1",
           patch: {
             display_name: "@docsbot",
-            token: "telegram-token",
             dm_policy: "open",
+            config: {
+              token: "telegram-token",
+            },
           },
         }),
       ),
@@ -552,11 +601,13 @@ describe("listen-client parseServerMessage", () => {
           request_id: "channel-set-config-1",
           channel_id: "slack",
           config: {
-            bot_token: "xoxb-test",
-            app_token: "xapp-test",
-            mode: "socket",
             dm_policy: "pairing",
             allowed_users: ["user-1"],
+            plugin_config: {
+              bot_token: "xoxb-test",
+              app_token: "xapp-test",
+              mode: "socket",
+            },
           },
         }),
       ),
@@ -863,6 +914,144 @@ describe("listen-client parseServerMessage", () => {
 
     expect(getSettings?.type).toBe("get_reflection_settings");
     expect(setSettings?.type).toBe("set_reflection_settings");
+  });
+
+  test("parses experiment commands", () => {
+    const getExperiments = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "get_experiments",
+          request_id: "experiments-get-1",
+        }),
+      ),
+    );
+    const setExperiment = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "set_experiment",
+          request_id: "experiment-set-1",
+          experiment_id: "node",
+          enabled: true,
+        }),
+      ),
+    );
+
+    expect(getExperiments?.type).toBe("get_experiments");
+    expect(setExperiment?.type).toBe("set_experiment");
+  });
+
+  test("advertises and parses remote set-max-context execute_command", () => {
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("set-max-context");
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
+
+    const command = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "execute_command",
+          command_id: "set-max-context",
+          request_id: "set-max-context-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          args: "10000 --override",
+        }),
+      ),
+    );
+
+    expect(command).toMatchObject({
+      type: "execute_command",
+      command_id: "set-max-context",
+      args: "10000 --override",
+    });
+  });
+
+  test("runs remote set-max-context execute_command", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-max-context-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "WS Max Context Agent",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "set-max-context",
+          request_id: "set-max-context-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "default" },
+          args: "10000 --override",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      expect(
+        (
+          (await backend.retrieveAgent(agent.id)) as {
+            llm_config?: { context_window?: number };
+          }
+        ).llm_config?.context_window,
+      ).toBe(10_000);
+      expect(socket.sentPayloads.join("\n")).toContain(
+        "Agent max context set to 10,000 tokens with override.",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("runs remote clear execute_command against local backend", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-clear-local-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "WS Clear Local Agent",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "clear",
+          request_id: "clear-local-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "default" },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      expect(runtime.conversationId).toStartWith("local-conv-");
+      await expect(
+        backend.retrieveConversation(runtime.conversationId),
+      ).resolves.toMatchObject({ agent_id: agent.id });
+      expect(socket.sentPayloads.join("\n")).toContain(
+        "Agent's in-context messages cleared",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
@@ -1274,6 +1463,14 @@ describe("listen-client channels command handling", () => {
           running: true,
           dmPolicy: "pairing" as const,
           allowedUsers: [],
+          config: {
+            has_token: true,
+            transcribe_voice: false,
+            binding: {
+              agent_id: "agent-1",
+              conversation_id: "default",
+            },
+          },
           hasToken: true,
           transcribeVoice: false,
           binding: {
@@ -1316,10 +1513,12 @@ describe("listen-client channels command handling", () => {
             configured: true,
             running: true,
             dm_policy: "pairing",
-            has_token: true,
-            binding: {
-              agent_id: "agent-1",
-              conversation_id: "default",
+            config: {
+              has_token: true,
+              binding: {
+                agent_id: "agent-1",
+                conversation_id: "default",
+              },
             },
             created_at: "2026-04-11T00:00:00.000Z",
             updated_at: "2026-04-11T01:00:00.000Z",
@@ -1589,6 +1788,13 @@ describe("listen-client channels command handling", () => {
         mode: "socket" as const,
         dmPolicy: "pairing" as const,
         allowedUsers: [],
+        config: {
+          mode: "socket",
+          has_bot_token: true,
+          has_app_token: true,
+          agent_id: "agent-1",
+          default_permission_mode: "acceptEdits",
+        },
         hasBotToken: true,
         hasAppToken: true,
         agentId: "agent-1",
@@ -1606,6 +1812,13 @@ describe("listen-client channels command handling", () => {
         mode: "socket" as const,
         dmPolicy: "pairing" as const,
         allowedUsers: [],
+        config: {
+          mode: "socket",
+          has_bot_token: true,
+          has_app_token: true,
+          agent_id: null,
+          default_permission_mode: "acceptEdits",
+        },
         hasBotToken: true,
         hasAppToken: true,
         agentId: null,
@@ -1646,8 +1859,10 @@ describe("listen-client channels command handling", () => {
         channel_id: "slack",
         account: {
           account_id: "acct-1",
-          agent_id: "agent-1",
-          default_permission_mode: "acceptEdits",
+          config: {
+            agent_id: "agent-1",
+            default_permission_mode: "acceptEdits",
+          },
         },
       });
       expect(messages[1]).toMatchObject({
@@ -1688,8 +1903,10 @@ describe("listen-client channels command handling", () => {
         channel_id: "slack",
         account: {
           account_id: "acct-1",
-          agent_id: null,
-          default_permission_mode: "acceptEdits",
+          config: {
+            agent_id: null,
+            default_permission_mode: "acceptEdits",
+          },
         },
       });
       expect(messages[1]).toMatchObject({
@@ -1721,6 +1938,14 @@ describe("listen-client channels command handling", () => {
         running: false,
         dmPolicy: "pairing" as const,
         allowedUsers: [],
+        config: {
+          has_token: true,
+          transcribe_voice: false,
+          binding: {
+            agent_id: null,
+            conversation_id: null,
+          },
+        },
         hasToken: true,
         transcribeVoice: false,
         binding: {
@@ -1739,6 +1964,14 @@ describe("listen-client channels command handling", () => {
         running: true,
         dmPolicy: "pairing" as const,
         allowedUsers: [],
+        config: {
+          has_token: true,
+          transcribe_voice: false,
+          binding: {
+            agent_id: null,
+            conversation_id: null,
+          },
+        },
         hasToken: true,
         transcribeVoice: false,
         binding: {
@@ -1759,8 +1992,10 @@ describe("listen-client channels command handling", () => {
           channel_id: "telegram",
           account: {
             display_name: "@docsbot",
-            token: "telegram-token",
             dm_policy: "pairing",
+            config: {
+              token: "telegram-token",
+            },
           },
         },
         socket as unknown as WebSocket,
@@ -1783,7 +2018,9 @@ describe("listen-client channels command handling", () => {
         account: {
           account_id: "bot-1",
           display_name: "@docsbot",
-          has_token: true,
+          config: {
+            has_token: true,
+          },
         },
       });
       expect(messages[1]).toMatchObject({
@@ -2043,6 +2280,110 @@ describe("listen-client reflection settings command handling", () => {
   });
 });
 
+describe("listen-client experiment command handling", () => {
+  test("wraps typed experiment reads and writes over WS", async () => {
+    const originalGetSettings = settingsManager.getSettings;
+    const originalUpdateSettings = settingsManager.updateSettings;
+    const originalNodeFlag = process.env.LETTA_NODE;
+    const globalSettings = {} as Settings;
+
+    try {
+      delete process.env.LETTA_NODE;
+      (settingsManager as typeof settingsManager).getSettings = (() =>
+        globalSettings) as typeof settingsManager.getSettings;
+      (settingsManager as typeof settingsManager).updateSettings = ((
+        updates: Record<string, unknown>,
+      ) => {
+        Object.assign(
+          globalSettings as unknown as Record<string, unknown>,
+          updates,
+        );
+      }) as typeof settingsManager.updateSettings;
+
+      const socket = new MockSocket(WebSocket.OPEN);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-1",
+        "default",
+      );
+
+      await __listenClientTestUtils.handleExperimentCommand(
+        {
+          type: "get_experiments",
+          request_id: "experiments-get-1",
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const getResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(getResponse).toMatchObject({
+        type: "get_experiments_response",
+        request_id: "experiments-get-1",
+        success: true,
+        experiments: expect.arrayContaining([
+          expect.objectContaining({
+            id: "node",
+            enabled: false,
+            source: "default",
+          }),
+        ]),
+      });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleExperimentCommand(
+        {
+          type: "set_experiment",
+          request_id: "experiment-set-1",
+          experiment_id: "node",
+          enabled: true,
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const setResponse = JSON.parse(socket.sentPayloads[0] as string);
+      const deviceStatusUpdate = JSON.parse(socket.sentPayloads[1] as string);
+      expect(setResponse).toMatchObject({
+        type: "set_experiment_response",
+        request_id: "experiment-set-1",
+        success: true,
+        experiments: expect.arrayContaining([
+          expect.objectContaining({
+            id: "node",
+            enabled: true,
+            source: "override",
+          }),
+        ]),
+      });
+      expect(deviceStatusUpdate).toMatchObject({
+        type: "update_device_status",
+        device_status: {
+          experiments: expect.arrayContaining([
+            expect.objectContaining({
+              id: "node",
+              enabled: true,
+              source: "override",
+            }),
+          ]),
+        },
+      });
+    } finally {
+      if (originalNodeFlag === undefined) {
+        delete process.env.LETTA_NODE;
+      } else {
+        process.env.LETTA_NODE = originalNodeFlag;
+      }
+      (settingsManager as typeof settingsManager).getSettings =
+        originalGetSettings;
+      (settingsManager as typeof settingsManager).updateSettings =
+        originalUpdateSettings;
+    }
+  });
+});
+
 describe("listen-client permission mode scope keys", () => {
   test("falls back from legacy default key and migrates to agent-scoped key", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
@@ -2086,7 +2427,7 @@ describe("listen-client permission mode scope keys", () => {
         accountId: "acct-1",
         agentId: "agent-123",
         conversationId: "conv-slack-1",
-        defaultPermissionMode: "bypassPermissions",
+        defaultPermissionMode: "unrestricted",
       },
       socket as unknown as WebSocket,
       listener,
@@ -2097,11 +2438,43 @@ describe("listen-client permission mode scope keys", () => {
       conversation_id: "conv-slack-1",
     });
 
-    expect(status.current_permission_mode).toBe("bypassPermissions");
+    expect(status.current_permission_mode).toBe("unrestricted");
     expect(
       listener.permissionModeByConversation.get("conversation:conv-slack-1"),
     ).toEqual({
-      mode: "bypassPermissions",
+      mode: "unrestricted",
+      planFilePath: null,
+      modeBeforePlan: null,
+    });
+  });
+
+  test("discord conversation created event seeds the new conversation permission mode", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    __listenClientTestUtils.handleChannelRegistryEvent(
+      {
+        type: "discord_conversation_created",
+        channelId: "discord",
+        accountId: "acct-1",
+        agentId: "agent-123",
+        conversationId: "conv-discord-1",
+        defaultPermissionMode: "acceptEdits",
+      },
+      socket as unknown as WebSocket,
+      listener,
+    );
+
+    const status = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-123",
+      conversation_id: "conv-discord-1",
+    });
+
+    expect(status.current_permission_mode).toBe("acceptEdits");
+    expect(
+      listener.permissionModeByConversation.get("conversation:conv-discord-1"),
+    ).toEqual({
+      mode: "acceptEdits",
       planFilePath: null,
       modeBeforePlan: null,
     });
@@ -2468,7 +2841,7 @@ describe("listen-client v2 status builders", () => {
       {
         mode: "plan",
         planFilePath: "/tmp/listener-plan.md",
-        modeBeforePlan: "default",
+        modeBeforePlan: "standard",
       },
     );
 
@@ -2485,13 +2858,70 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
+    const originalNodeFlag = process.env.LETTA_NODE;
+    delete process.env.LETTA_NODE;
     const runtime = __listenClientTestUtils.createRuntime();
-    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
-    expect(typeof deviceStatus.current_working_directory).toBe("string");
-    expect(
-      (deviceStatus.current_working_directory ?? "").length,
-    ).toBeGreaterThan(0);
-    expect(deviceStatus.current_toolset_preference).toBe("auto");
+    try {
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+      expect(typeof deviceStatus.current_working_directory).toBe("string");
+      expect(
+        (deviceStatus.current_working_directory ?? "").length,
+      ).toBeGreaterThan(0);
+      expect(deviceStatus.current_toolset_preference).toBe("auto");
+      expect(deviceStatus.experiments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "node",
+            source: "default",
+          }),
+        ]),
+      );
+    } finally {
+      if (originalNodeFlag === undefined) {
+        delete process.env.LETTA_NODE;
+      } else {
+        process.env.LETTA_NODE = originalNodeFlag;
+      }
+    }
+  });
+
+  test("buildDeviceStatus includes should_doctor state when available", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    setSystemPromptDoctorState("agent-doctor-status", 31000);
+
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+      agent_id: "agent-doctor-status",
+      conversation_id: "default",
+    });
+
+    expect(deviceStatus.should_doctor).toBe(true);
+  });
+
+  test("buildDeviceStatus does not cold-refresh should_doctor from stray memfs", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const agentId = `agent-doctor-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const memoryDir = getMemoryFilesystemRoot(agentId);
+    const systemDir = join(memoryDir, "system");
+    const originalIsMemfsEnabled = settingsManager.isMemfsEnabled;
+
+    await mkdir(systemDir, { recursive: true });
+
+    try {
+      (settingsManager as typeof settingsManager).isMemfsEnabled = (() =>
+        false) as typeof settingsManager.isMemfsEnabled;
+      await writeFile(join(systemDir, "context.md"), "x".repeat(120_000));
+
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener, {
+        agent_id: agentId,
+        conversation_id: "default",
+      });
+
+      expect(deviceStatus.should_doctor).toBe(false);
+    } finally {
+      (settingsManager as typeof settingsManager).isMemfsEnabled =
+        originalIsMemfsEnabled;
+      await rm(memoryDir, { recursive: true, force: true });
+    }
   });
 
   test("buildDeviceStatus includes only active bash and task background processes", () => {
@@ -2721,6 +3151,71 @@ describe("listen-client v2 status builders", () => {
           message.delta?.message_type === "loop_error",
       ),
     ).toBe(false);
+  });
+
+  test("sync replay can skip backend approval recovery for lightweight state sync", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const recoverApprovalStateForSync = mock(async () => {});
+
+    await __listenClientTestUtils.replaySyncStateForRuntime(
+      listener,
+      socket as unknown as WebSocket,
+      {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      },
+      {
+        recoverApprovals: false,
+        recoverApprovalStateForSync,
+      },
+    );
+
+    expect(recoverApprovalStateForSync).not.toHaveBeenCalled();
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    expect(outbound.map((message) => message.type)).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
+  });
+
+  test("sync replay schedules background warmups after state sync", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const scheduleWarmupsAfterSync = mock(() => {});
+
+    await __listenClientTestUtils.replaySyncStateForRuntime(
+      listener,
+      socket as unknown as WebSocket,
+      {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      },
+      {
+        recoverApprovals: false,
+        scheduleWarmupsAfterSync,
+      },
+    );
+
+    expect(scheduleWarmupsAfterSync).toHaveBeenCalledTimes(1);
+    expect(scheduleWarmupsAfterSync).toHaveBeenCalledWith(listener, {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
   });
 
   test("sync includes silent background reflection subagents in update_subagent_state", () => {
@@ -3518,7 +4013,7 @@ describe("listen-client capability-gated approval flow", () => {
     expect(firstPlanPath).toBeTruthy();
 
     __listenClientTestUtils.handleModeChange(
-      { mode: "default" },
+      { mode: "standard" },
       socket as unknown as WebSocket,
       listener,
       scope,
@@ -4519,7 +5014,30 @@ describe("listen-client post-stop approval recovery policy", () => {
     expect(shouldRecover).toBe(true);
   });
 
-  test("retries on generic no-run error heuristic", () => {
+  test("extracts streamed approval conflict details from generic error messages", () => {
+    const conflictDetail =
+      "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
+
+    expect(
+      __listenClientTestUtils.getApprovalToolCallDesyncErrorText({
+        message: "An unknown error occurred with the LLM streaming request.",
+        detail: conflictDetail,
+      }),
+    ).toBe(conflictDetail);
+
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: conflictDetail,
+      });
+
+    expect(shouldRecover).toBe(true);
+  });
+
+  test("does not retry on generic no-run errors without an approval conflict", () => {
     const shouldRecover =
       __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
         stopReason: "error",
@@ -4529,7 +5047,35 @@ describe("listen-client post-stop approval recovery policy", () => {
         latestErrorText: null,
       });
 
+    expect(shouldRecover).toBe(false);
+  });
+
+  test("retries on explicit approval conflicts captured as fallback errors", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 0,
+        retries: 0,
+        runErrorDetail: null,
+        latestErrorText: null,
+        fallbackError:
+          "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.",
+      });
+
     expect(shouldRecover).toBe(true);
+  });
+
+  test("does not retry when approval response is already stale", () => {
+    const shouldRecover =
+      __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
+        stopReason: "error",
+        runIdsSeen: 1,
+        retries: 0,
+        runErrorDetail: "No tool call is currently awaiting approval",
+        latestErrorText: null,
+      });
+
+    expect(shouldRecover).toBe(false);
   });
 
   test("does not retry once retry budget is exhausted", () => {

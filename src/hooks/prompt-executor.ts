@@ -1,5 +1,5 @@
-import { getClient } from "../agent/client";
 import { getCurrentAgentId } from "../agent/context";
+import { generateAgentResponse } from "../backend/api/generate";
 import {
   HookExitCode,
   type HookInput,
@@ -241,19 +241,15 @@ async function callGenerateEndpoint(
   overrideModel: string | undefined,
   timeout: number,
 ): Promise<string> {
-  const client = await getClient();
-
-  const response = await client.post<GenerateResponse>(
-    `/v1/agents/${agentId}/generate`,
+  const response = await generateAgentResponse<GenerateResponse>(
+    agentId,
     {
-      body: {
-        prompt: userPrompt,
-        system_prompt: systemPrompt,
-        ...(overrideModel && { override_model: overrideModel }),
-        response_schema: PROMPT_HOOK_RESPONSE_SCHEMA,
-      },
-      timeout,
+      prompt: userPrompt,
+      system_prompt: systemPrompt,
+      ...(overrideModel && { override_model: overrideModel }),
+      response_schema: PROMPT_HOOK_RESPONSE_SCHEMA,
     },
+    timeout,
   );
 
   return response.content;

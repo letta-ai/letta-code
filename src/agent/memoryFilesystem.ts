@@ -10,6 +10,13 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type { Backend } from "../backend";
+import {
+  getLocalBackendMemoryFilesystemRoot,
+  getLocalBackendStorageDir,
+  isLocalBackendEnvEnabled,
+} from "../backend/local/paths";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
@@ -53,6 +60,25 @@ export function getMemorySystemDir(
   return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_SYSTEM_DIR);
 }
 
+export function getScopedMemoryFilesystemRoot(
+  agentId: string,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    homeDir?: string;
+    localBackendStorageDir?: string;
+  } = {},
+): string {
+  const env = options.env ?? process.env;
+  if (isLocalBackendEnvEnabled(env)) {
+    const storageDir =
+      options.localBackendStorageDir ??
+      env.LETTA_LOCAL_BACKEND_DIR ??
+      getLocalBackendStorageDir(options.homeDir ?? homedir());
+    return getLocalBackendMemoryFilesystemRoot(agentId, storageDir);
+  }
+  return getMemoryFilesystemRoot(agentId, options.homeDir ?? homedir());
+}
+
 export interface ResolveScopedMemoryDirOptions {
   agentId?: string | null;
   env?: NodeJS.ProcessEnv;
@@ -76,13 +102,13 @@ export function resolveScopedMemoryDir(
 
   const explicitAgentId = options.agentId?.trim();
   if (explicitAgentId) {
-    return getMemoryFilesystemRoot(explicitAgentId, homeDir);
+    return getScopedMemoryFilesystemRoot(explicitAgentId, { env, homeDir });
   }
 
   try {
     const scopedAgentId = getCurrentAgentId().trim();
     if (scopedAgentId) {
-      return getMemoryFilesystemRoot(scopedAgentId, homeDir);
+      return getScopedMemoryFilesystemRoot(scopedAgentId, { env, homeDir });
     }
   } catch {
     // No runtime-scoped agent context; fall back below.
@@ -95,7 +121,7 @@ export function resolveScopedMemoryDir(
 
   const envAgentId = (env.LETTA_AGENT_ID || env.AGENT_ID || "").trim();
   if (envAgentId) {
-    return getMemoryFilesystemRoot(envAgentId, homeDir);
+    return getScopedMemoryFilesystemRoot(envAgentId, { env, homeDir });
   }
 
   return null;
@@ -116,6 +142,17 @@ export function ensureMemoryFilesystemDirs(
   }
 }
 
+export async function hydrateMemfsSettingFromAgent(
+  agent: Pick<AgentState, "id" | "tags">,
+): Promise<boolean> {
+  const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");
+  const enabled = agent.tags?.includes(GIT_MEMORY_ENABLED_TAG) ?? false;
+
+  const { settingsManager } = await import("../settings-manager");
+  settingsManager.setMemfsEnabled(agent.id, enabled);
+  return enabled;
+}
+
 /**
  * Returns whether memfs is enabled for the agent on the server.
  *
@@ -126,15 +163,15 @@ export function ensureMemoryFilesystemDirs(
 export async function isMemfsEnabledOnServer(
   agentId: string,
 ): Promise<boolean> {
-  const { getClient } = await import("./client");
-  const client = await getClient();
-  const agent = await client.agents.retrieve(agentId);
+  const { getBackend } = await import("../backend");
+  const agent = await getBackend().retrieveAgent(agentId, {
+    include: ["agent.tags"],
+  });
   const { GIT_MEMORY_ENABLED_TAG } = await import("./memoryGit");
   const enabled = agent.tags?.includes(GIT_MEMORY_ENABLED_TAG) ?? false;
 
   const { settingsManager } = await import("../settings-manager");
   settingsManager.setMemfsEnabled(agentId, enabled);
-
   return enabled;
 }
 
@@ -335,13 +372,13 @@ export interface ApplyMemfsFlagsOptions {
  * the /memfs enable command (App.tsx) to avoid duplicating the setup logic.
  *
  * Steps when toggling:
- *   1. Validate Letta Cloud requirement (for explicit enable)
+ *   1. Validate MemFS API endpoint support (for explicit enable)
  *   2. Reconcile system prompt to the target memory mode
  *   3. Persist memfs setting locally
  *   4. Detach old API-based memory tools (when enabling)
  *   5. Add git-memory-enabled tag + clone/pull repo
  *
- * @throws {Error} if Letta Cloud validation fails or git setup fails
+ * @throws {Error} if MemFS endpoint validation fails or git setup fails
  */
 export async function applyMemfsFlags(
   agentId: string,
@@ -350,12 +387,40 @@ export async function applyMemfsFlags(
   options?: ApplyMemfsFlagsOptions,
 ): Promise<ApplyMemfsFlagsResult> {
   const { settingsManager } = await import("../settings-manager");
+  const { getBackend } = await import("../backend");
+  const backend = getBackend();
 
-  // Validate explicit enable on supported backend.
-  if (memfsFlag && !(await isLettaCloud())) {
-    throw new Error(
-      "--memfs is only available on Letta Cloud (api.letta.com).",
-    );
+  if (backend.capabilities.localMemfs) {
+    if (noMemfsFlag) {
+      settingsManager.setMemfsEnabled(agentId, false);
+      return { action: "disabled" };
+    }
+    const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+    const { initializeLocalMemoryRepo } = await import("./memoryGit");
+    await initializeLocalMemoryRepo({
+      memoryDir,
+      agentId,
+      files: [],
+    });
+    settingsManager.setMemfsEnabled(agentId, true);
+    return { action: "enabled", memoryDir };
+  }
+
+  if (!backend.capabilities.remoteMemfs) {
+    if (memfsFlag) {
+      throw new Error("MemFS is not supported by the active backend.");
+    }
+    if (noMemfsFlag) {
+      settingsManager.setMemfsEnabled(agentId, false);
+      return { action: "disabled" };
+    }
+    return { action: "unchanged" };
+  }
+
+  // LCD proxies normal API traffic through localhost, while MemFS git sync can
+  // still target api.letta.com through getMemfsServerUrl().
+  if (memfsFlag && !(await isLettaMemfsServer())) {
+    throw new Error(await getMemfsSyncUnavailableMessage());
   }
 
   const hasExplicitToggle = Boolean(memfsFlag || noMemfsFlag);
@@ -386,7 +451,7 @@ export async function applyMemfsFlags(
       }
       // Force recompile of the system message so the updated template
       // (with/without memfs addon) is reflected in the compiled prompt.
-      const { getClient } = await import("./client");
+      const { getClient } = await import("../backend/api/client");
       const client = await getClient();
       await client.agents.recompile(agentId, { update_timestamp: false });
     }
@@ -405,7 +470,7 @@ export async function applyMemfsFlags(
 
     // Migration (LET-7353): Remove legacy skills/loaded_skills blocks.
     // These blocks are no longer used — skills are now injected via system reminders.
-    const { getClient } = await import("./client");
+    const { getClient } = await import("../backend/api/client");
     const client = await getClient();
     for (const label of ["skills", "loaded_skills"]) {
       try {
@@ -469,10 +534,10 @@ export async function applyMemfsFlags(
 }
 
 /**
- * Whether the current server is Letta Cloud (or local memfs testing is enabled).
+ * Whether the current server is the Letta API (or local memfs testing is enabled).
  */
 export async function isLettaCloud(): Promise<boolean> {
-  const { getServerUrl } = await import("./client");
+  const { getServerUrl } = await import("../backend/api/client");
   const serverUrl = getServerUrl();
 
   return (
@@ -482,14 +547,48 @@ export async function isLettaCloud(): Promise<boolean> {
   );
 }
 
+function getServerHostLabel(serverUrl: string): string {
+  const trimmed = serverUrl.trim();
+  try {
+    return new URL(trimmed).host || trimmed;
+  } catch {
+    return trimmed.replace(/^https?:\/\//, "").replace(/\/+$/, "") || trimmed;
+  }
+}
+
 /**
- * Enable memfs for a newly created agent if on Letta Cloud.
+ * Whether the MemFS sync endpoint is backed by the Letta API.
+ */
+export async function isLettaMemfsServer(): Promise<boolean> {
+  const { getMemfsServerUrl } = await import("../backend/api/memfs-git-proxy");
+  const memfsServerUrl = getMemfsServerUrl();
+
+  return (
+    memfsServerUrl.includes("api.letta.com") ||
+    process.env.LETTA_MEMFS_LOCAL === "1" ||
+    process.env.LETTA_API_KEY === "local-desktop"
+  );
+}
+
+async function getMemfsSyncUnavailableMessage(): Promise<string> {
+  const { getMemfsServerUrl } = await import("../backend/api/memfs-git-proxy");
+  const memfsServerUrl = getMemfsServerUrl();
+  return `MemFS sync failed (expected api.letta.com, got ${getServerHostLabel(memfsServerUrl)})`;
+}
+
+/**
+ * Enable memfs for a newly created agent if on the Letta API.
  * Non-fatal: logs a warning on failure. Skips on self-hosted.
  *
  * Skips the system prompt update since callers are expected to create
  * the agent with the correct memory mode upfront.
  */
-export async function enableMemfsIfCloud(agentId: string): Promise<void> {
+export async function enableMemfsIfCloud(
+  agentId: string,
+  backend?: Backend,
+): Promise<void> {
+  const resolvedBackend = backend ?? (await import("../backend")).getBackend();
+  if (!resolvedBackend.capabilities.remoteMemfs) return;
   if (!(await isLettaCloud())) return;
 
   try {

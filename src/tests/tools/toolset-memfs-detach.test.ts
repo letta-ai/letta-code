@@ -1,6 +1,16 @@
 // Tests for detaching server-side memory tools when enabling memfs
 
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
+import { __testSetBackend } from "../../backend";
+import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
 
 // Mock getClient before importing the module under test
 
@@ -33,9 +43,11 @@ const mockGetClient = mock(() =>
   }),
 );
 
-mock.module("../../agent/client", () => ({
+mock.module("../../backend/api/client", () => ({
   getClient: mockGetClient,
   getServerUrl: () => "http://localhost:8283",
+  getMemfsServerUrl: () => "http://localhost:8283",
+  getMemfsGitProxyRewriteConfig: () => null,
 }));
 
 const { detachMemoryTools } = await import("../../tools/toolset");
@@ -45,6 +57,10 @@ describe("detachMemoryTools", () => {
     detachMock.mockClear();
     retrieveMock.mockClear();
     mockGetClient.mockClear();
+  });
+
+  afterEach(() => {
+    __testSetBackend(null);
   });
 
   afterAll(() => {
@@ -75,6 +91,17 @@ describe("detachMemoryTools", () => {
 
     const detached = await detachMemoryTools("agent-123");
     expect(detached).toBe(false);
+    expect(detachMock).not.toHaveBeenCalled();
+  });
+
+  test("returns false without API calls when backend has no server tool management", async () => {
+    __testSetBackend(new FakeHeadlessBackend());
+
+    const detached = await detachMemoryTools("agent-123");
+
+    expect(detached).toBe(false);
+    expect(mockGetClient).not.toHaveBeenCalled();
+    expect(retrieveMock).not.toHaveBeenCalled();
     expect(detachMock).not.toHaveBeenCalled();
   });
 });

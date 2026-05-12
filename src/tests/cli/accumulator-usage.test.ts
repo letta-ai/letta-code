@@ -90,6 +90,11 @@ describe("accumulator usage statistics", () => {
     );
 
     expect(tracker.pendingReflectionTrigger).toBe(false);
+    expect(buffers.byId.get("evt-compaction-1")).toMatchObject({
+      kind: "event",
+      eventType: "compaction",
+      phase: "running",
+    });
 
     onChunk(
       buffers,
@@ -103,6 +108,70 @@ describe("accumulator usage statistics", () => {
 
     expect(tracker.pendingCompaction).toBe(true);
     expect(tracker.pendingReflectionTrigger).toBe(true);
+    expect(buffers.byId.get("evt-compaction-1")).toMatchObject({
+      kind: "event",
+      eventType: "compaction",
+      phase: "finished",
+    });
+  });
+
+  test("renders retry event messages as status lines", () => {
+    const buffers = createBuffers("agent-1");
+
+    onChunk(buffers, {
+      message_type: "event_message",
+      id: "retry-event-1",
+      event_type: "retry",
+      event_data: {
+        attempt: 1,
+        max_attempts: 3,
+        delay_ms: 2000,
+        message: "Cannot connect to API",
+      },
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("retry-event-1")).toEqual({
+      kind: "status",
+      id: "retry-event-1",
+      lines: [
+        "Provider stream error, retrying (attempt 1/3, in 2s): Cannot connect to API",
+      ],
+    });
+  });
+
+  test("uses run sequence fallback ids for retry status events", () => {
+    const buffers = createBuffers("agent-1");
+
+    onChunk(buffers, {
+      message_type: "event_message",
+      run_id: "local-run-1",
+      seq_id: 7,
+      event_type: "retry",
+      event_data: { attempt: 2, delay_ms: 250 },
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("local-run-1-retry-7")).toEqual({
+      kind: "status",
+      id: "local-run-1-retry-7",
+      lines: ["Provider stream error, retrying (attempt 2, in 250ms)"],
+    });
+  });
+
+  test("marks non-compaction event messages as finished immediately", () => {
+    const buffers = createBuffers("agent-1");
+
+    onChunk(buffers, {
+      message_type: "event_message",
+      id: "event-custom-1",
+      event_type: "custom_notification",
+      event_data: {},
+    } as unknown as LettaStreamingResponse);
+
+    expect(buffers.byId.get("event-custom-1")).toMatchObject({
+      kind: "event",
+      eventType: "custom_notification",
+      phase: "finished",
+    });
   });
 
   test("sets reflection trigger for legacy compaction summary user_message", () => {
@@ -309,6 +378,136 @@ describe("accumulator usage statistics", () => {
     expect(
       assistant && "messageId" in assistant ? assistant.messageId : undefined,
     ).toBe("shared-stream-id");
+  });
+
+  test("starts a new reasoning line when a new otid arrives for the same message id", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-split",
+      otid: "reasoning-otid-split-1",
+      reasoning: "**Checking user preferences**\n\nFirst section.",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-split",
+      otid: "reasoning-otid-split-2",
+      reasoning: "**Interpreting math notations**\n\nSecond section.",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-split",
+      reasoning: " More detail.",
+    } as unknown as LettaStreamingResponse);
+
+    const firstLine = buffers.byId.get("reasoning-msg-split");
+    const secondLine = buffers.byId.get("reasoning-otid-split-2");
+
+    expect(firstLine?.kind).toBe("reasoning");
+    expect(firstLine && "text" in firstLine ? firstLine.text : "").toBe(
+      "**Checking user preferences**\n\nFirst section.",
+    );
+    expect(
+      firstLine && "phase" in firstLine ? firstLine.phase : undefined,
+    ).toBe("finished");
+    expect(buffers.byId.get("reasoning-otid-split-1")).toBeUndefined();
+
+    expect(secondLine?.kind).toBe("reasoning");
+    expect(secondLine && "text" in secondLine ? secondLine.text : "").toBe(
+      "**Interpreting math notations**\n\nSecond section. More detail.",
+    );
+  });
+
+  test("starts a new assistant line when a new otid arrives for the same message id", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-msg-split",
+      otid: "assistant-otid-split-1",
+      content: [{ type: "text", text: "First block." }],
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-msg-split",
+      otid: "assistant-otid-split-2",
+      content: [{ type: "text", text: "Second block." }],
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-msg-split",
+      content: [{ type: "text", text: " More detail." }],
+    } as unknown as LettaStreamingResponse);
+
+    const firstLine = buffers.byId.get("assistant-msg-split");
+    const secondLine = buffers.byId.get("assistant-otid-split-2");
+
+    expect(firstLine?.kind).toBe("assistant");
+    expect(firstLine && "text" in firstLine ? firstLine.text : "").toBe(
+      "First block.",
+    );
+    expect(
+      firstLine && "phase" in firstLine ? firstLine.phase : undefined,
+    ).toBe("finished");
+    expect(buffers.byId.get("assistant-otid-split-1")).toBeUndefined();
+
+    expect(secondLine?.kind).toBe("assistant");
+    expect(secondLine && "text" in secondLine ? secondLine.text : "").toBe(
+      "Second block. More detail.",
+    );
+  });
+
+  test("inserts a blank line before a streamed reasoning section heading in the same otid", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-heading",
+      otid: "reasoning-otid-heading",
+      reasoning: "**Calculating math problems**\n\nFirst section.",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-heading",
+      otid: "reasoning-otid-heading",
+      reasoning: "**Computing with Python**\n\nSecond section.",
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("reasoning-msg-heading");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe(
+      "**Calculating math problems**\n\nFirst section.\n\n**Computing with Python**\n\nSecond section.",
+    );
+  });
+
+  test("retrofits a blank line when a streamed reasoning heading spans multiple chunks", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-split-heading",
+      otid: "reasoning-otid-split-heading",
+      reasoning: "**Calculating math problems**\n\nFirst section.**Computing",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-split-heading",
+      otid: "reasoning-otid-split-heading",
+      reasoning: " with Python**\n\nSecond section.",
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("reasoning-msg-split-heading");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe(
+      "**Calculating math problems**\n\nFirst section.\n\n**Computing with Python**\n\nSecond section.",
+    );
   });
 
   test("reconciles optimistic user lines to the backend message id via otid", () => {

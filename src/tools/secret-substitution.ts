@@ -1,6 +1,5 @@
 /**
- * Secret substitution for tool arguments.
- * Replaces $SECRET_NAME patterns with actual values from the secrets store.
+ * Secret handling for shell tool arguments and output.
  */
 
 import { loadSecrets } from "../utils/secretsStore";
@@ -12,44 +11,51 @@ import { loadSecrets } from "../utils/secretsStore";
 const SECRET_PATTERN = /\$([A-Z_][A-Z0-9_]*)/g;
 
 /**
- * Substitute $SECRET_NAME patterns in a string with actual secret values.
- * If a secret is not found, the pattern is left unchanged.
+ * Scan a command string or command-argument array for `$SECRET_NAME`
+ * references and build an env map of matching secrets from the store.
+ * The shell will expand these vars natively, so secret values never get
+ * injected into the command string itself.
  */
-export function substituteSecretsInString(input: string): string {
-  const secrets = loadSecrets();
-  return input.replace(SECRET_PATTERN, (match, name) => {
-    const value = secrets[name];
-    return value !== undefined ? value : match;
-  });
-}
+export function extractSecretEnvFromCommand(
+  command: string | readonly string[],
+  agentId?: string,
+): Record<string, string> {
+  const secrets = loadSecrets(agentId);
+  const env: Record<string, string> = {};
 
-/**
- * Substitute secrets in tool arguments.
- * Only processes string values; other types are passed through unchanged.
- * Only applies to shell tools (checked by caller in manager.ts).
- */
-export function substituteSecretsInArgs(
-  args: Record<string, unknown>,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+  const scan = (text: string) => {
+    for (const match of text.matchAll(SECRET_PATTERN)) {
+      const name = match[1];
+      if (name !== undefined && secrets[name] !== undefined) {
+        env[name] = secrets[name];
+      }
+    }
+  };
 
-  for (const [key, value] of Object.entries(args)) {
-    if (typeof value === "string") {
-      result[key] = substituteSecretsInString(value);
-    } else {
-      result[key] = value;
+  if (typeof command === "string") {
+    scan(command);
+    return env;
+  }
+
+  for (const part of command) {
+    if (typeof part === "string") {
+      scan(part);
     }
   }
 
-  return result;
+  return env;
 }
 
 /**
- * Scrub secret values from a string, replacing them with $SECRET_NAME.
+ * Scrub secret values from a string, replacing them with an explicit
+ * placeholder that makes it unambiguous to the LLM that the value is hidden.
  * Used to prevent secret values from leaking into agent context via tool output.
  */
-export function scrubSecretsFromString(input: string): string {
-  const secrets = loadSecrets();
+export function scrubSecretsFromString(
+  input: string,
+  agentId?: string,
+): string {
+  const secrets = loadSecrets(agentId);
   let result = input;
   // Replace longer values first to avoid partial matches
   const entries = Object.entries(secrets).sort(
@@ -57,7 +63,7 @@ export function scrubSecretsFromString(input: string): string {
   );
   for (const [name, value] of entries) {
     if (value.length > 0) {
-      result = result.replaceAll(value, `$${name}`);
+      result = result.replaceAll(value, `${name}=<REDACTED>`);
     }
   }
   return result;

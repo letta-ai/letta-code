@@ -1,6 +1,5 @@
 import { parseArgs } from "node:util";
 import type { AgentListParams } from "@letta-ai/letta-client/resources/agents/agents";
-import { getClient } from "../../agent/client";
 import { type CreateAgentOptions, createAgent } from "../../agent/create";
 import {
   buildCreateAgentOptionsForPersonality,
@@ -8,6 +7,7 @@ import {
   enableMemfsForCreatedAgent,
   resolvePersonalityId,
 } from "../../agent/personality";
+import { getBackend } from "../../backend";
 import { settingsManager } from "../../settings-manager";
 
 function printUsage(): void {
@@ -176,9 +176,8 @@ async function runCreateAction(
       settingsManager.pinGlobal(agentId);
     }
 
-    // Re-fetch agent to get updated tags in output
-    const client = await getClient();
-    const updatedAgent = await client.agents.retrieve(agentId);
+    // Re-fetch agent through the active backend to get updated output.
+    const updatedAgent = await getBackend().retrieveAgent(agentId);
 
     console.log(JSON.stringify(updatedAgent, null, 2));
     return 0;
@@ -218,8 +217,7 @@ async function runListAction(
   }
 
   try {
-    const client = await getClient();
-    const result = await client.agents.list(params);
+    const result = await getBackend().listAgents(params);
     console.log(JSON.stringify(result, null, 2));
     return 0;
   } catch (error) {

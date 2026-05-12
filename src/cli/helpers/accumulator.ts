@@ -326,6 +326,60 @@ function ensure<T extends Line>(b: Buffers, id: string, make: () => T): T {
   return created;
 }
 
+function numericEventDataValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function stringEventDataValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function formatRetryDelay(delayMs: number): string {
+  if (delayMs < 1000) return `${Math.max(0, Math.round(delayMs))}ms`;
+  return `${Math.round(delayMs / 1000)}s`;
+}
+
+function formatRetryEventStatusLines(
+  eventData: Record<string, unknown>,
+): string[] {
+  const attempt = numericEventDataValue(eventData.attempt);
+  const maxAttempts = numericEventDataValue(eventData.max_attempts);
+  const delayMs = numericEventDataValue(eventData.delay_ms);
+  const message = stringEventDataValue(eventData.message);
+
+  const metadata: string[] = [];
+  if (attempt !== undefined) {
+    metadata.push(
+      maxAttempts !== undefined
+        ? `attempt ${attempt}/${maxAttempts}`
+        : `attempt ${attempt}`,
+    );
+  }
+  if (delayMs !== undefined) {
+    metadata.push(`in ${formatRetryDelay(delayMs)}`);
+  }
+
+  return [
+    `Provider stream error, retrying${
+      metadata.length > 0 ? ` (${metadata.join(", ")})` : ""
+    }${message ? `: ${message}` : ""}`,
+  ];
+}
+
+function upsertStatusLine(b: Buffers, id: string, lines: string[]): void {
+  const existing = b.byId.get(id);
+  if (existing?.kind === "status") {
+    existing.lines = lines;
+    return;
+  }
+  b.byId.set(id, { kind: "status", id, lines });
+  if (!existing) b.order.push(id);
+}
+
 // Mark a line as finished if it has a phase (immutable update)
 function markAsFinished(b: Buffers, id: string) {
   const line = b.byId.get(id);
@@ -491,6 +545,19 @@ function resolveLineIdForKind(
   return `${kind}:${canonicalId}`;
 }
 
+function hasExistingOtidAlias(
+  aliasMap: Map<string, string>,
+  canonical: string,
+  nextOtid?: string,
+): boolean {
+  for (const [mappedOtid, mappedCanonical] of aliasMap.entries()) {
+    if (mappedCanonical === canonical && mappedOtid !== nextOtid) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function resolveAssistantLineId(
   b: Buffers,
   chunk: LettaStreamingResponse & { id?: string; otid?: string },
@@ -521,11 +588,16 @@ function resolveAssistantLineId(
       "assistant",
     );
     const existingLine = b.byId.get(existingLineId);
+    const hasPriorOtidAlias = hasExistingOtidAlias(
+      b.assistantCanonicalByOtid,
+      canonicalFromMessageId,
+      otid,
+    );
     if (
       existingLine &&
       existingLine.kind === "assistant" &&
       "phase" in existingLine &&
-      existingLine.phase === "finished"
+      (existingLine.phase === "finished" || hasPriorOtidAlias)
     ) {
       canonical = otid;
     }
@@ -597,11 +669,16 @@ function resolveReasoningLineId(
       "reasoning",
     );
     const existingLine = b.byId.get(existingLineId);
+    const hasPriorOtidAlias = hasExistingOtidAlias(
+      b.reasoningCanonicalByOtid,
+      canonicalFromMessageId,
+      otid,
+    );
     if (
       existingLine &&
       existingLine.kind === "reasoning" &&
       "phase" in existingLine &&
-      existingLine.phase === "finished"
+      (existingLine.phase === "finished" || hasPriorOtidAlias)
     ) {
       canonical = otid;
     }
@@ -707,6 +784,13 @@ function trySplitContent(
   return true;
 }
 
+// OpenAI reasoning summaries can start a new `**Section Title**\n\n` block inside the
+// same otid without a leading separator. Insert the missing blank line so markdown
+// renders the title as a new paragraph instead of gluing it to the previous sentence.
+function normalizeReasoningSectionBoundaries(text: string): string {
+  return text.replace(/([^\n])(\*\*[^*\n]+\*\*\n\n)/g, "$1\n\n$2");
+}
+
 // Feed one SDK chunk; mutate buffers in place.
 export function onChunk(
   b: Buffers,
@@ -752,7 +836,7 @@ export function onChunk(
         messageId,
       }));
       if (delta) {
-        const newText = line.text + delta;
+        const newText = normalizeReasoningSectionBoundaries(line.text + delta);
         b.tokenCount += Buffer.byteLength(delta, "utf8");
 
         // Try to split at paragraph boundary (only if streaming enabled)
@@ -1223,22 +1307,35 @@ export function onChunk(
         const eventChunk = chunk as LettaStreamingResponse & {
           id?: string;
           otid?: string;
+          run_id?: string;
+          seq_id?: number;
           event_type?: string;
           event_data?: Record<string, unknown>;
         };
-        const id = eventChunk.otid || eventChunk.id;
+        const eventType = eventChunk.event_type || "unknown";
+        const eventData = eventChunk.event_data || {};
+        const id =
+          eventChunk.otid ||
+          eventChunk.id ||
+          (eventType === "retry" && eventChunk.run_id && eventChunk.seq_id
+            ? `${eventChunk.run_id}-retry-${eventChunk.seq_id}`
+            : undefined);
         if (!id) break;
 
         // Handle otid transition (mark previous line as finished)
         handleOtidTransition(b, id);
 
-        const eventType = eventChunk.event_type || "unknown";
+        if (eventType === "retry") {
+          upsertStatusLine(b, id, formatRetryEventStatusLines(eventData));
+          break;
+        }
+
         ensure(b, id, () => ({
           kind: "event",
           id,
           eventType,
-          eventData: eventChunk.event_data || {},
-          phase: "running",
+          eventData,
+          phase: eventType === "compaction" ? "running" : "finished",
         }));
 
         // Fire PreCompact hooks when server-side auto-compaction starts

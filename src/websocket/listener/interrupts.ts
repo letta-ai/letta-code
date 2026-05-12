@@ -1,4 +1,3 @@
-import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { normalizeApprovalResultsForPersistence } from "../../agent/approval-result-normalization";
 import { INTERRUPTED_BY_USER } from "../../constants";
@@ -14,6 +13,7 @@ import {
   emitCanonicalMessageDelta,
 } from "./protocol-outbound";
 import { clearRecoveredApprovalState } from "./runtime";
+import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   InterruptPopulateInput,
@@ -24,6 +24,24 @@ import type {
 const INTERRUPT_TOOL_RETURN_MAX_CHARS = LIMITS.BASH_OUTPUT_CHARS;
 
 const STREAMING_TOOL_OUTPUT_MAX_CHARS = LIMITS.BASH_OUTPUT_CHARS;
+const STREAMING_TOOL_OUTPUT_EMIT_INTERVAL_MS = 100;
+
+export type ToolExecutionOutputEmitter = ((
+  toolCallId: string,
+  chunk: string,
+  isStderr?: boolean,
+) => void) & {
+  flush: () => void;
+};
+
+type StreamingToolOutputState = {
+  messageId: string;
+  stdout: string;
+  stderr: string;
+  dirty: boolean;
+  lastEmittedAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+};
 
 function truncateInterruptToolReturn(text: string): string {
   const { content } = truncateByChars(
@@ -310,7 +328,7 @@ export function extractInterruptToolReturns(
 }
 
 export function emitInterruptToolReturnMessage(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   approvals: ApprovalResult[] | null,
   runId?: string | null,
@@ -354,7 +372,7 @@ export function emitInterruptToolReturnMessage(
 }
 
 export function emitToolExecutionStartedEvents(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     toolCallIds: string[];
@@ -376,7 +394,7 @@ export function emitToolExecutionStartedEvents(
 }
 
 export function emitToolExecutionFinishedEvents(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     approvals: ApprovalResult[] | null;
@@ -400,48 +418,26 @@ export function emitToolExecutionFinishedEvents(
 }
 
 export function createToolExecutionOutputEmitter(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     runId?: string | null;
     agentId?: string;
     conversationId?: string;
   },
-): (toolCallId: string, chunk: string, isStderr?: boolean) => void {
-  const outputByToolCallId = new Map<
-    string,
-    {
-      messageId: string;
-      stdout: string;
-      stderr: string;
-    }
-  >();
+): ToolExecutionOutputEmitter {
+  const outputByToolCallId = new Map<string, StreamingToolOutputState>();
 
-  return (toolCallId: string, chunk: string, isStderr: boolean = false) => {
-    if (!toolCallId || chunk.length === 0) {
+  const emitToolOutput = (
+    toolCallId: string,
+    outputState: StreamingToolOutputState,
+  ) => {
+    if (!outputState.dirty) {
       return;
     }
 
-    const existing = outputByToolCallId.get(toolCallId);
-    const outputState = existing ?? {
-      messageId: `message-tool-return-stream-${toolCallId}`,
-      stdout: "",
-      stderr: "",
-    };
-
-    if (isStderr) {
-      outputState.stderr = appendStreamingOutputWithCap(
-        outputState.stderr,
-        chunk,
-      );
-    } else {
-      outputState.stdout = appendStreamingOutputWithCap(
-        outputState.stdout,
-        chunk,
-      );
-    }
-
-    outputByToolCallId.set(toolCallId, outputState);
+    outputState.dirty = false;
+    outputState.lastEmittedAt = Date.now();
 
     const stdout = normalizeStreamingOutputLines(outputState.stdout);
     const stderr = normalizeStreamingOutputLines(outputState.stderr);
@@ -479,6 +475,74 @@ export function createToolExecutionOutputEmitter(
       },
     );
   };
+
+  const flushToolOutput = (
+    toolCallId: string,
+    outputState: StreamingToolOutputState,
+  ) => {
+    if (outputState.timer) {
+      clearTimeout(outputState.timer);
+      outputState.timer = null;
+    }
+    emitToolOutput(toolCallId, outputState);
+  };
+
+  const emitter = ((
+    toolCallId: string,
+    chunk: string,
+    isStderr: boolean = false,
+  ) => {
+    if (!toolCallId || chunk.length === 0) {
+      return;
+    }
+
+    const existing = outputByToolCallId.get(toolCallId);
+    const outputState = existing ?? {
+      messageId: `message-tool-return-stream-${toolCallId}`,
+      stdout: "",
+      stderr: "",
+      dirty: false,
+      lastEmittedAt: 0,
+      timer: null,
+    };
+
+    if (isStderr) {
+      outputState.stderr = appendStreamingOutputWithCap(
+        outputState.stderr,
+        chunk,
+      );
+    } else {
+      outputState.stdout = appendStreamingOutputWithCap(
+        outputState.stdout,
+        chunk,
+      );
+    }
+
+    outputByToolCallId.set(toolCallId, outputState);
+    outputState.dirty = true;
+
+    const now = Date.now();
+    const elapsed = now - outputState.lastEmittedAt;
+    if (elapsed >= STREAMING_TOOL_OUTPUT_EMIT_INTERVAL_MS) {
+      flushToolOutput(toolCallId, outputState);
+      return;
+    }
+
+    if (!outputState.timer) {
+      outputState.timer = setTimeout(() => {
+        outputState.timer = null;
+        emitToolOutput(toolCallId, outputState);
+      }, STREAMING_TOOL_OUTPUT_EMIT_INTERVAL_MS - elapsed);
+    }
+  }) as ToolExecutionOutputEmitter;
+
+  emitter.flush = () => {
+    for (const [toolCallId, outputState] of outputByToolCallId.entries()) {
+      flushToolOutput(toolCallId, outputState);
+    }
+  };
+
+  return emitter;
 }
 
 export function getInterruptApprovalsForEmission(

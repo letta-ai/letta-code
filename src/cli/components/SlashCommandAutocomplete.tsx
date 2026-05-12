@@ -61,6 +61,7 @@ export function SlashCommandAutocomplete({
 }: AutocompleteProps) {
   const columns = useTerminalWidth();
   const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
+  const [skillCommands, setSkillCommands] = useState<CommandMatch[]>([]);
 
   // Load custom commands once on mount
   useEffect(() => {
@@ -76,6 +77,40 @@ export function SlashCommandAutocomplete({
       });
     });
   }, []);
+
+  // Load user-invocable skills for slash-command autocomplete.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { discoverClientSideSkills } = await import(
+          "../../agent/clientSkills"
+        );
+        const { getSkillSources } = await import("../../agent/context");
+        const { isUserInvocableSkill } = await import("../../agent/skills");
+        const discovery = await discoverClientSideSkills({
+          agentId,
+          skillSources: getSkillSources(),
+        });
+        if (cancelled) return;
+        const matches: CommandMatch[] = discovery.skills
+          .filter(isUserInvocableSkill)
+          .map((skill) => ({
+            cmd: `/${skill.id}`,
+            desc: `${skill.description}${skill.argumentHint ? ` ${skill.argumentHint}` : ""} (${skill.source} skill)`,
+            order: 300,
+          }));
+        setSkillCommands(matches);
+      } catch {
+        if (!cancelled) {
+          setSkillCommands([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId]);
 
   // Check pin status to conditionally show/hide pin/unpin commands, merge with custom commands
   const allCommands = useMemo(() => {
@@ -109,11 +144,19 @@ export function SlashCommandAutocomplete({
       }
     }
 
+    const reservedCommands = new Set([
+      ...builtins.map((cmd) => cmd.cmd),
+      ...customCommands.map((cmd) => cmd.cmd),
+    ]);
+    const visibleSkillCommands = skillCommands.filter(
+      (cmd) => !reservedCommands.has(cmd.cmd),
+    );
+
     // Merge with custom commands and sort by order
-    return [...builtins, ...customCommands].sort(
+    return [...builtins, ...customCommands, ...visibleSkillCommands].sort(
       (a, b) => (a.order ?? 100) - (b.order ?? 100),
     );
-  }, [agentId, workingDirectory, customCommands]);
+  }, [agentId, workingDirectory, customCommands, skillCommands]);
 
   const queryInfo = useMemo(
     () => extractSearchQuery(currentInput, cursorPosition),

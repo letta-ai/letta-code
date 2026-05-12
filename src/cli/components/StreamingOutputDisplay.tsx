@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import { memo, useEffect, useState } from "react";
 import type { StreamingState } from "../helpers/accumulator";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { Text } from "./Text";
 
@@ -46,16 +47,16 @@ export const StreamingOutputDisplay = memo(
         <Box>
           <Text
             dimColor
-          >{`  ⎿  Running... (${elapsed}s)${interruptHint}`}</Text>
+          >{`  ${CLI_GLYPHS.result}  Running... (${elapsed}s)${interruptHint}`}</Text>
         </Box>
       );
     }
 
     return (
       <Box flexDirection="column">
-        {/* L-bracket on first line - matches ToolCallMessageRich format "  ⎿  " */}
+        {/* L-bracket on first line - matches ToolCallMessageRich result prefix */}
         <Box>
-          <Text dimColor>{"  ⎿  "}</Text>
+          <Text dimColor>{`  ${CLI_GLYPHS.result}  `}</Text>
           <Text
             dimColor={!firstLine.isStderr}
             color={firstLine.isStderr ? "red" : undefined}

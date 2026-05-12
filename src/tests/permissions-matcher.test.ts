@@ -290,6 +290,22 @@ test("Bash pattern: wildcard rules match wrapped shell launchers", () => {
   ).toBe(true);
 });
 
+test("Bash pattern: wildcard rules match export setup plus curl lookups", () => {
+  expect(
+    matchesBashPattern(
+      'Bash(export EXAMPLE_API_KEY=$(grep -E "^EXAMPLE_API_KEY=" .env | cut -d= -f2) && curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001" | jq -r "{id, email, name, description}")',
+      "Bash(curl:*)",
+    ),
+  ).toBe(true);
+
+  expect(
+    matchesBashPattern(
+      'Bash(export EXAMPLE_API_KEY=$(grep -E "^EXAMPLE_API_KEY=" .env | cut -d= -f2) && curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0002" | jq -r "{id, email, name, description}")',
+      "Bash(curl:*)",
+    ),
+  ).toBe(true);
+});
+
 // ============================================================================
 // Tool Pattern Matching Tests
 // ============================================================================

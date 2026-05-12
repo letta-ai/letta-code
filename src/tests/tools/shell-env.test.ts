@@ -2,6 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { configureBackendMode } from "../../backend";
+import {
+  getLocalBackendMemoryFilesystemRoot,
+  LOCAL_BACKEND_NO_MEMFS_ENV,
+} from "../../backend/local/paths";
 import { runWithRuntimeContext } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import {
@@ -30,6 +35,35 @@ function withTemporaryAgentEnv<T>(agentId: string, fn: () => T): T {
       delete process.env.LETTA_AGENT_ID;
     } else {
       process.env.LETTA_AGENT_ID = originalLettaAgentId;
+    }
+  }
+}
+
+function withTemporaryEnv<T>(
+  updates: Record<string, string | undefined>,
+  fn: () => T,
+): T {
+  const original = Object.fromEntries(
+    Object.keys(updates).map((key) => [key, process.env[key]]),
+  ) as Record<string, string | undefined>;
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
   }
 }
@@ -321,6 +355,44 @@ test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", ()
   });
 });
 
+test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
+  const parentAgentId = `agent-parent-${Date.now()}`;
+  const childAgentId = `agent-child-${Date.now()}`;
+  const parentMemoryDir = getMemoryFilesystemRoot(parentAgentId);
+
+  withTemporaryAgentEnv(childAgentId, () => {
+    withTemporaryEnv(
+      {
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_PARENT_AGENT_ID: parentAgentId,
+        MEMORY_DIR: parentMemoryDir,
+        LETTA_MEMORY_DIR: parentMemoryDir,
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBe(parentMemoryDir);
+          expect(env.LETTA_MEMORY_DIR).toBe(parentMemoryDir);
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
 test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
   withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
     const original = settingsManager.isMemfsEnabled.bind(settingsManager);
@@ -343,4 +415,112 @@ test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
       ).isMemfsEnabled = original;
     }
   });
+});
+
+test("getShellEnv injects local backend MemFS path for --backend local", () => {
+  const agentId = `agent-local-shell-env-${Date.now()}`;
+  configureBackendMode("local");
+  try {
+    withTemporaryAgentEnv(agentId, () => {
+      const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+      (
+        settingsManager as unknown as {
+          isMemfsEnabled: (id: string) => boolean;
+        }
+      ).isMemfsEnabled = () => false;
+
+      try {
+        const env = getShellEnv();
+        const expectedMemoryDir = getLocalBackendMemoryFilesystemRoot(agentId);
+        expect(env.LETTA_MEMORY_DIR).toBe(expectedMemoryDir);
+        expect(env.MEMORY_DIR).toBe(expectedMemoryDir);
+      } finally {
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = original;
+      }
+    });
+  } finally {
+    configureBackendMode("api");
+  }
+});
+
+test("getShellEnv does not inject local backend MemFS path when local --no-memfs is active", () => {
+  const agentId = `agent-local-no-memfs-shell-env-${Date.now()}`;
+  configureBackendMode("local");
+  try {
+    withTemporaryEnv({ [LOCAL_BACKEND_NO_MEMFS_ENV]: "1" }, () => {
+      withTemporaryAgentEnv(agentId, () => {
+        const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => true;
+
+        try {
+          const env = getShellEnv();
+          expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+          expect(env.MEMORY_DIR).toBeUndefined();
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = original;
+        }
+      });
+    });
+  } finally {
+    configureBackendMode("api");
+  }
+});
+
+test("getShellEnv injects transient MemFS git proxy config for Desktop Bash commands", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_BASE_URL: "http://localhost:57294",
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: "http://localhost:57294",
+      GIT_CONFIG_COUNT: undefined,
+      GIT_CONFIG_KEY_0: undefined,
+      GIT_CONFIG_VALUE_0: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBe("1");
+  expect(env.GIT_CONFIG_KEY_0).toBe(
+    "url.http://localhost:57294/v1/git/.insteadOf",
+  );
+  expect(env.GIT_CONFIG_VALUE_0).toBe("https://api.letta.com/v1/git/");
+  expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+  expect(env.GCM_INTERACTIVE).toBe("never");
+  expect(env.GIT_ASKPASS).toBe("");
+  expect(env.SSH_ASKPASS).toBe("");
+});
+
+test("getShellEnv appends MemFS git proxy config without clobbering existing git config env", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: "http://localhost:57294",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "safe.directory",
+      GIT_CONFIG_VALUE_0: "*",
+      GIT_CONFIG_KEY_1: undefined,
+      GIT_CONFIG_VALUE_1: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBe("2");
+  expect(env.GIT_CONFIG_KEY_0).toBe("safe.directory");
+  expect(env.GIT_CONFIG_VALUE_0).toBe("*");
+  expect(env.GIT_CONFIG_KEY_1).toBe(
+    "url.http://localhost:57294/v1/git/.insteadOf",
+  );
+  expect(env.GIT_CONFIG_VALUE_1).toBe("https://api.letta.com/v1/git/");
 });

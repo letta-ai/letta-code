@@ -14,9 +14,8 @@ import type { ListenerRuntime } from "./types";
  * Core sync logic — fetches agent, checks tag, clones/pulls repo.
  */
 async function syncMemfsForAgent(agentId: string): Promise<void> {
-  const { getClient } = await import("../../agent/client");
-  const client = await getClient();
-  const agent = await client.agents.retrieve(agentId);
+  const { getBackend } = await import("../../backend");
+  const agent = await getBackend().retrieveAgent(agentId);
 
   const { GIT_MEMORY_ENABLED_TAG } = await import("../../agent/memoryGit");
   if (!agent.tags?.includes(GIT_MEMORY_ENABLED_TAG)) {

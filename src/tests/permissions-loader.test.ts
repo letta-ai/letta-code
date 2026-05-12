@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   getUserSettingsPaths,
   loadPermissions,
+  resetPermissionLoaderCacheForTests,
   savePermissionRule,
 } from "../permissions/loader";
 
@@ -16,6 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  resetPermissionLoaderCacheForTests();
   // Clean up test directory
   await rm(testDir, { recursive: true, force: true });
 });
@@ -72,6 +74,71 @@ test("Load permissions from local settings", async () => {
 
   // Should include local rule (may also include user settings from real home dir)
   expect(permissions.allow).toContain("Bash(git push:*)");
+});
+
+test("Load permissions picks up external project settings edits without restart", async () => {
+  const projectDir = join(testDir, "project-hot-reload");
+  const projectSettingsPath = join(projectDir, ".letta", "settings.json");
+
+  await Bun.write(
+    projectSettingsPath,
+    JSON.stringify({
+      permissions: {
+        allow: ["Bash(letta-permission-watch-initial)"],
+      },
+    }),
+  );
+
+  const initial = await loadPermissions(projectDir);
+  expect(initial.allow).toContain("Bash(letta-permission-watch-initial)");
+
+  await Bun.write(
+    projectSettingsPath,
+    JSON.stringify({
+      permissions: {
+        allow: ["Bash(letta-permission-watch-updated)"],
+      },
+    }),
+  );
+
+  const updated = await loadPermissions(projectDir);
+  expect(updated.allow).toContain("Bash(letta-permission-watch-updated)");
+});
+
+test("Load permissions picks up newly-created local settings after cached miss", async () => {
+  const projectDir = join(testDir, "project-create-local");
+
+  const initial = await loadPermissions(projectDir);
+  expect(initial.allow).not.toContain("Bash(letta-permission-watch-created)");
+
+  await Bun.write(
+    join(projectDir, ".letta", "settings.local.json"),
+    JSON.stringify({
+      permissions: {
+        allow: ["Bash(letta-permission-watch-created)"],
+      },
+    }),
+  );
+
+  const updated = await loadPermissions(projectDir);
+  expect(updated.allow).toContain("Bash(letta-permission-watch-created)");
+});
+
+test("Saved permission rules are visible immediately", async () => {
+  const projectDir = join(testDir, "project-save-invalidates");
+
+  const initial = await loadPermissions(projectDir);
+  expect(initial.allow).not.toContain("Bash(letta-permission-watch-saved)");
+
+  await savePermissionRule(
+    "Bash(letta-permission-watch-saved)",
+    "allow",
+    "project",
+    projectDir,
+  );
+
+  const updated = await loadPermissions(projectDir);
+  expect(updated.allow).toContain("Bash(letta-permission-watch-saved)");
 });
 
 // ============================================================================

@@ -13,5 +13,6 @@ export {
   requestApprovalOverWS,
   resolvePendingApprovalResolver,
   startListenerClient,
+  startLocalChannelListener,
   stopListenerClient,
 } from "./listener/client";

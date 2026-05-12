@@ -9,8 +9,15 @@ import {
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  __testOverrideLoadChannelAccounts,
+  __testOverrideSaveChannelAccounts,
+  clearChannelAccountStores,
+  upsertChannelAccount,
+} from "../../channels/accounts";
 import { clearDynamicMessageChannelToolCache } from "../../channels/messageTool";
 import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
+import { setRouteInMemory } from "../../channels/routing";
 import type { ChannelAdapter } from "../../channels/types";
 import { runWithRuntimeContext } from "../../runtime-context";
 import {
@@ -26,7 +33,9 @@ import {
   prepareToolExecutionContextForModel,
   prepareToolExecutionContextForSpecificTools,
   refreshDynamicChannelToolsInLoadedRegistry,
+  registerExternalTools,
 } from "../../tools/manager";
+import { resolveConversationChannelToolScope } from "../../tools/toolset";
 
 function asText(
   toolReturn: Awaited<ReturnType<typeof executeTool>>["toolReturn"],
@@ -67,7 +76,16 @@ describe("tool execution context snapshot", () => {
     }
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
+    clearExternalTools();
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
   });
+
+  function installChannelAccountTestOverrides(): void {
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+  }
 
   afterAll(async () => {
     clearExternalTools();
@@ -137,6 +155,106 @@ describe("tool execution context snapshot", () => {
     );
 
     expect(withPreparedContext.status).toBe("success");
+  });
+
+  test("Gemini models use the default Claude-style auto toolset", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "google_ai/gemini-2.5-pro",
+    );
+
+    expect(prepared.loadedToolNames).toContain("Read");
+    expect(prepared.loadedToolNames).toContain("Write");
+    expect(prepared.loadedToolNames).toContain("Bash");
+    expect(prepared.loadedToolNames).not.toContain("ReadFileGemini");
+    expect(prepared.loadedToolNames).not.toContain("WriteFileGemini");
+    expect(prepared.loadedToolNames).not.toContain("RunShellCommand");
+  });
+
+  test("filters model-derived client tools by request-scoped allowlist", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["Read", "Grep", "Glob"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual(["Glob", "Grep", "Read"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "Glob",
+      "Grep",
+      "Read",
+    ]);
+    expect(prepared.loadedToolNames).not.toContain("Bash");
+
+    const denied = await executeTool(
+      "Bash",
+      { command: "echo no", description: "Print no" },
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: Bash");
+  });
+
+  test("empty request-scoped allowlist disables client tools", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: [] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools).toEqual([]);
+  });
+
+  test("request-scoped allowlist accepts server-facing Agent alias", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["Agent"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual(["Task"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Agent"]);
+  });
+
+  test("request-scoped allowlist filters external tools by name", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "Allowed external tool",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+      {
+        name: "RemoteBar",
+        description: "Filtered external tool",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["Read", "RemoteFoo"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual(["Read"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "Read",
+      "RemoteFoo",
+    ]);
+  });
+
+  test("empty request-scoped allowlist disables external tools too", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "External tool",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: [] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools).toEqual([]);
   });
 
   test("prepares current tool snapshots with fresh MessageChannel discovery", async () => {
@@ -293,5 +411,126 @@ describe("tool execution context snapshot", () => {
         >
       ).channel?.enum,
     ).toEqual(["slack"]);
+  });
+
+  test("does not leak MessageChannel into conversations that only share an agent-level Slack account", async () => {
+    installChannelAccountTestOverrides();
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+
+    upsertChannelAccount("slack", {
+      channel: "slack",
+      accountId: "acct-slack",
+      displayName: "DocsBot Slack",
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+      mode: "socket",
+      botToken: "xoxb-test-token",
+      appToken: "xapp-test-token",
+      agentId: "agent-1",
+      defaultPermissionMode: "standard",
+    });
+
+    const scope = resolveConversationChannelToolScope("agent-1", "default");
+    expect(scope).toEqual({ channels: [] });
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+      {
+        channelToolScope: scope,
+      },
+    );
+
+    expect(prepared.loadedToolNames).not.toContain("MessageChannel");
+  });
+
+  test("includes MessageChannel in scoped snapshots when the conversation has a Slack route", async () => {
+    installChannelAccountTestOverrides();
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+
+    upsertChannelAccount("slack", {
+      channel: "slack",
+      accountId: "acct-slack",
+      displayName: "DocsBot Slack",
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+      mode: "socket",
+      botToken: "xoxb-test-token",
+      appToken: "xapp-test-token",
+      agentId: "agent-1",
+      defaultPermissionMode: "standard",
+    });
+    setRouteInMemory("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const scope = resolveConversationChannelToolScope("agent-1", "default");
+    expect(scope).toEqual({
+      channels: [{ channelId: "slack", accountId: "acct-slack" }],
+    });
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+      {
+        channelToolScope: scope,
+      },
+    );
+
+    expect(prepared.loadedToolNames).toContain("MessageChannel");
+  });
+
+  test("does not grant proactive MessageChannel scope for Telegram-only accounts", async () => {
+    installChannelAccountTestOverrides();
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("telegram", "acct-telegram"));
+
+    upsertChannelAccount("telegram", {
+      channel: "telegram",
+      accountId: "acct-telegram",
+      displayName: "Telegram Bot",
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+      token: "telegram-token",
+      binding: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    const scope = resolveConversationChannelToolScope("agent-1", "default");
+    expect(scope).toEqual({ channels: [] });
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+      {
+        channelToolScope: scope,
+      },
+    );
+
+    expect(prepared.loadedToolNames).not.toContain("MessageChannel");
   });
 });

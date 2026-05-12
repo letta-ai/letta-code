@@ -30,7 +30,7 @@ import type {
 
 const createConversation = mock(async () => ({ id: "conv-discord" }));
 
-mock.module("../../agent/client", () => ({
+mock.module("../../backend/api/client", () => ({
   getClient: async () => ({
     conversations: {
       create: createConversation,
@@ -72,7 +72,9 @@ describe("discord channel registry", () => {
     };
   }
 
-  function createAdapter(): ChannelAdapter {
+  function createAdapter(
+    replies: Array<{ chatId: string; text: string }> = [],
+  ): ChannelAdapter {
     return {
       id: "discord:discord-bot",
       channelId: "discord",
@@ -82,7 +84,9 @@ describe("discord channel registry", () => {
       stop: async () => {},
       isRunning: () => true,
       sendMessage: async () => ({ messageId: "outbound-1" }),
-      sendDirectReply: async () => {},
+      sendDirectReply: async (chatId, text) => {
+        replies.push({ chatId, text });
+      },
     };
   }
 
@@ -95,6 +99,7 @@ describe("discord channel registry", () => {
         enabled: true,
         token: "discord-token",
         agentId: "agent-1",
+        defaultPermissionMode: "standard",
         dmPolicy: "pairing",
         allowedUsers: [],
         createdAt: "2026-04-11T00:00:00.000Z",
@@ -166,5 +171,185 @@ describe("discord channel registry", () => {
       null,
     );
     expect(deliveries).toHaveLength(1);
+  });
+
+  test("auto-creates a direct-message route for bound open Discord accounts", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "standard",
+        dmPolicy: "open",
+        allowedUsers: [],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("../../channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "dm-1",
+        threadId: null,
+        chatType: "direct",
+        isMention: false,
+        messageId: "dm-msg-1",
+      }),
+    );
+
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(createConversation).toHaveBeenCalledWith({
+      agent_id: "agent-1",
+      isolated_block_labels: expect.any(Array),
+      summary: "[Discord] DM with Cameron",
+    });
+    expect(getRoute("discord", "dm-1", "discord-bot")).toMatchObject({
+      accountId: "discord-bot",
+      chatId: "dm-1",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-discord",
+    });
+    expect(deliveries).toHaveLength(1);
+  });
+
+  test("emits default permission mode when Discord creates a conversation", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "open",
+        allowedUsers: [],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("../../channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+    const events: unknown[] = [];
+    registry.setEventHandler((event) => events.push(event));
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "dm-1",
+        threadId: null,
+        chatType: "direct",
+        isMention: false,
+        messageId: "dm-msg-1",
+      }),
+    );
+
+    expect(events).toContainEqual({
+      type: "discord_conversation_created",
+      channelId: "discord",
+      accountId: "discord-bot",
+      agentId: "agent-1",
+      conversationId: "conv-discord",
+      defaultPermissionMode: "unrestricted",
+    });
+  });
+
+  test("rejects direct messages from users outside a Discord allowlist", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "standard",
+        dmPolicy: "allowlist",
+        allowedUsers: ["user-2"],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("../../channels/registry");
+    const registry = new ChannelRegistry();
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "dm-1",
+        threadId: null,
+        chatType: "direct",
+        isMention: false,
+        messageId: "dm-msg-1",
+      }),
+    );
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(getRoute("discord", "dm-1", "discord-bot")).toBe(null);
+    expect(deliveries).toHaveLength(0);
+    expect(replies).toEqual([
+      {
+        chatId: "dm-1",
+        text: "You are not on the allowed users list for this Discord bot.",
+      },
+    ]);
+  });
+
+  test("keeps explicit Discord pairing DMs on the pairing flow", async () => {
+    const { ChannelRegistry } = await import("../../channels/registry");
+    const registry = new ChannelRegistry();
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "dm-1",
+        threadId: null,
+        chatType: "direct",
+        isMention: false,
+        messageId: "dm-msg-1",
+      }),
+    );
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(getRoute("discord", "dm-1", "discord-bot")).toBe(null);
+    expect(deliveries).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.text).toContain("Pairing code:");
   });
 });

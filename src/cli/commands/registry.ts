@@ -1,6 +1,7 @@
 // src/cli/commands/registry.ts
 // Registry of available CLI commands
 
+import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
 type CommandHandler = (args: string[]) => Promise<string> | string;
@@ -57,6 +58,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to trigger memory update
       return "Processing memory request...";
+    },
+  },
+  "/goal": {
+    desc: "Manage goal: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
+    args: "[status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
+    order: 14,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing conversation goal...";
     },
   },
   "/reflect": {
@@ -218,7 +228,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/rename": {
-    desc: "Rename agent or conversation (/rename agent|convo <name>)",
+    desc: "Rename agent or conversation (/rename agent [name]|convo [name])",
     order: 24,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
@@ -249,6 +259,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";
+    },
+  },
+  "/experiments": {
+    desc: "Toggle experiments",
+    order: 27.1,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open experiments selector
+      return "Opening experiments selector...";
     },
   },
   "/ade": {
@@ -303,6 +322,15 @@ export const commands: Record<string, Command> = {
     args: "<set|list|unset> [key] [value]",
     handler: async (args: string[]) => {
       const result = await handleSecretCommand(args);
+      return result.output;
+    },
+  },
+  "/memory-repository": {
+    desc: "Push this agent's memory repo to an additional git remote",
+    order: 33.1,
+    args: "<set|unset|status|push> [url]",
+    handler: async (args: string[]) => {
+      const result = await handleMemoryRepositoryCommand(args);
       return result.output;
     },
   },
@@ -533,6 +561,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access client and agent ID
       return "Compacting conversation...";
+    },
+  },
+  "/set-max-context": {
+    desc: "Set or reset the max context window",
+    args: "[tokens] [--override]",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Setting max context window...";
     },
   },
   "/link": {

@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import { memo } from "react";
 import { COMPACTION_SUMMARY_HEADER } from "../../constants";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { CompactingAnimation } from "./CompactingAnimation";
@@ -39,7 +40,7 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
     return (
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
-          <Text color={colors.tool.completed}>●</Text>
+          <Text color={colors.tool.completed}>{CLI_GLYPHS.bullet}</Text>
         </Box>
         <Box flexGrow={1} width={rightWidth}>
           <Text bold>{summary}</Text>
@@ -68,7 +69,7 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
   const dotElement = isRunning ? (
     <BlinkDot color={colors.tool.running} />
   ) : (
-    <Text color={colors.tool.completed}>●</Text>
+    <Text color={colors.tool.completed}>{CLI_GLYPHS.bullet}</Text>
   );
 
   // Format the args display (message count or fallback)
@@ -111,7 +112,7 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
             {/* Header line with L-bracket */}
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
-                <Text dimColor>{"  ⎿  "}</Text>
+                <Text dimColor>{`  ${CLI_GLYPHS.result}  `}</Text>
               </Box>
               <Box flexGrow={1} width={Math.max(0, rightWidth - 3)}>
                 <Text dimColor>{COMPACTION_SUMMARY_HEADER}</Text>

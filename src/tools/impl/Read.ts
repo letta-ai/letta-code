@@ -33,6 +33,8 @@ const IMAGE_EXTENSIONS = new Set([
   ".gif",
   ".webp",
   ".bmp",
+  ".heic",
+  ".heif",
 ]);
 
 function isImageFile(filePath: string): boolean {
@@ -48,6 +50,8 @@ function getMediaType(ext: string): string {
     ".gif": "image/gif",
     ".webp": "image/webp",
     ".bmp": "image/png", // Convert BMP to PNG
+    ".heic": "image/heic",
+    ".heif": "image/heif",
   };
   return types[ext] || "image/png";
 }
@@ -60,7 +64,13 @@ async function readImageFile(
   const mediaType = getMediaType(ext);
 
   // Use shared image resize utility
-  const result = await resizeImageIfNeeded(buffer, mediaType);
+  let result: Awaited<ReturnType<typeof resizeImageIfNeeded>>;
+  try {
+    result = await resizeImageIfNeeded(buffer, mediaType);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read image file: ${filePath} (${detail})`);
+  }
 
   return [
     {

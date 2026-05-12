@@ -1,22 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("resize redraw wiring", () => {
   test("does not define lossy static-item resize cap", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     expect(source).not.toContain("MAX_STATIC_ITEMS_ON_RESIZE");
   });
 
   test("clearAndRemount redraws without mutating staticItems", () => {
-    const appPath = fileURLToPath(
-      new URL("../../cli/App.tsx", import.meta.url),
-    );
-    const source = readFileSync(appPath, "utf-8");
+    const source = readInteractiveAppSource();
 
     const anchor = "const clearAndRemount = useCallback(";
     const start = source.indexOf(anchor);

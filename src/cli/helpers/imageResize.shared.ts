@@ -7,12 +7,47 @@ export const MAX_IMAGE_HEIGHT = 2000;
 // We enforce this in the client to avoid provider-side API errors.
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
+// Match OpenClaw's decompression-bomb guard to fail closed on pathological
+// images before the shared resize path spends significant work decoding them.
+export const MAX_IMAGE_INPUT_PIXELS = 25_000_000;
+
 export interface ResizeResult {
   data: string; // base64 encoded
   mediaType: string;
   width: number;
   height: number;
   resized: boolean;
+}
+
+export function isHeicMediaType(mediaType?: string | null): boolean {
+  const normalized = mediaType?.trim().toLowerCase();
+  return normalized === "image/heic" || normalized === "image/heif";
+}
+
+export function mediaTypeForDecodedImageFormat(
+  format?: string | null,
+): string | null {
+  const normalized = format?.trim().toLowerCase();
+  switch (normalized) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    default:
+      return null;
+  }
+}
+
+export function canonicalizeOutputMediaType(
+  decodedFormat: string | null | undefined,
+  fallbackMediaType: string,
+): string {
+  return mediaTypeForDecodedImageFormat(decodedFormat) ?? fallbackMediaType;
 }
 
 export function assertImageHasDimensions(

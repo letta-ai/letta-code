@@ -9,12 +9,12 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { getClient } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
 import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
 import {
   assertMemoryRepoReadyForWrite,
   commitAndSyncMemoryWrite,
+  type MemoryWriteSyncMode,
 } from "../../agent/memoryGit";
 import { validateRequiredParams } from "./validation";
 
@@ -38,6 +38,11 @@ interface MemoryArgs {
   insert_text?: string;
   description?: string;
   file_text?: string;
+}
+
+async function getMemoryWriteSyncMode(): Promise<MemoryWriteSyncMode> {
+  const { getBackend } = await import("../../backend");
+  return getBackend().capabilities.localMemfs ? "local" : "remote";
 }
 
 async function getAgentIdentity(): Promise<{
@@ -64,8 +69,8 @@ async function getAgentIdentity(): Promise<{
 
   let agentName = "";
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const { getBackend } = await import("../../backend");
+    const agent = await getBackend().retrieveAgent(agentId);
     agentName = (agent.name || "").trim();
   } catch {
     // Keep best-effort fallback below
@@ -105,7 +110,9 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   const memoryDir = resolveMemoryDir();
   ensureMemoryRepo(memoryDir);
 
-  await assertMemoryRepoReadyForWrite(memoryDir);
+  const { agentId, agentName } = await getAgentIdentity();
+  const syncMode = await getMemoryWriteSyncMode();
+  await assertMemoryRepoReadyForWrite(memoryDir, agentId, { syncMode });
 
   const affectedPaths = await applyMemoryCommand(memoryDir, args);
   if (affectedPaths.length === 0) {
@@ -114,7 +121,6 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     };
   }
 
-  const { agentId, agentName } = await getAgentIdentity();
   const commitResult = await commitAndSyncMemoryWrite({
     memoryDir,
     pathspecs: affectedPaths,
@@ -124,12 +130,16 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       authorName: agentName.trim() || agentId,
       authorEmail: `${agentId}@letta.com`,
     },
+    syncMode,
     replay: async () =>
       applyMemoryCommand(memoryDir, args, { replaying: true }),
   });
   if (!commitResult.committed) {
     return {
-      message: `Memory ${args.command} made no effective changes; skipped commit and push.`,
+      message:
+        syncMode === "local"
+          ? `Memory ${args.command} made no effective changes; skipped commit.`
+          : `Memory ${args.command} made no effective changes; skipped commit and push.`,
     };
   }
 
@@ -149,7 +159,10 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   }
 
   return {
-    message: `Memory ${args.command} applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+    message:
+      syncMode === "local"
+        ? `Memory ${args.command} committed locally (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`
+        : `Memory ${args.command} applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
   };
 }
 

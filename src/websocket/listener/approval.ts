@@ -1,4 +1,3 @@
-import WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import type {
   ApprovalResponseBody,
@@ -10,6 +9,7 @@ import {
   setLoopStatus,
 } from "./protocol-outbound";
 import { evictConversationRuntimeIfIdle } from "./runtime";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { ConversationRuntime } from "./types";
 
 export function rememberPendingApprovalBatchIds(
@@ -240,11 +240,11 @@ export function rejectPendingApprovalResolvers(
 
 export function requestApprovalOverWS(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   requestId: string,
   controlRequest: ControlRequest,
 ): Promise<ApprovalResponseBody> {
-  if (socket.readyState !== WebSocket.OPEN) {
+  if (!isListenerTransportOpen(socket)) {
     return Promise.reject(new Error("WebSocket not open"));
   }
 

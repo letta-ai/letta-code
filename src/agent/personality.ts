@@ -2,10 +2,11 @@ import { execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { getBackend } from "../backend";
 import { settingsManager } from "../settings-manager";
-import { getClient } from "./client";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
+import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
 import {
   commitAndSyncMemoryWrite,
   GIT_MEMORY_ENABLED_TAG,
@@ -408,7 +409,7 @@ export async function enableMemfsForCreatedAgent(params: {
   const { agentId, agentTags } = params;
 
   try {
-    const { getClient } = await import("./client");
+    const { getClient } = await import("../backend/api/client");
     const client = await getClient();
     const tags = agentTags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
@@ -495,8 +496,7 @@ async function getMemoryCommitAuthor(agentId: string): Promise<{
   let authorName = agentId;
 
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await getBackend().retrieveAgent(agentId);
     if (agent.name?.trim()) {
       authorName = agent.name.trim();
     }
@@ -558,7 +558,10 @@ export async function applyPersonalityToMemory(
   const personality = getPersonalityOption(params.personalityId);
   const blockDefinitions = getPersonalityBlockDefinitions(params.personalityId);
 
-  const repoDir = getMemoryRepoDir(params.agentId);
+  const isLocalMemfs = getBackend().capabilities.localMemfs;
+  const repoDir = isLocalMemfs
+    ? getScopedMemoryFilesystemRoot(params.agentId)
+    : getMemoryRepoDir(params.agentId);
 
   // Fail early if the memory repo has uncommitted changes
   const statusResult = await execFile("git", ["status", "--porcelain"], {
@@ -571,7 +574,9 @@ export async function applyPersonalityToMemory(
     );
   }
 
-  await pullMemory(params.agentId);
+  if (!isLocalMemfs) {
+    await pullMemory(params.agentId);
+  }
 
   const personaRelativePath = getPersonaRelativePathForRepo(repoDir);
   const humanRelativePath = getHumanRelativePathForRepo(repoDir);
@@ -616,6 +621,7 @@ export async function applyPersonalityToMemory(
     pathspecs: changedPaths,
     reason: commitMessage,
     author,
+    syncMode: isLocalMemfs ? "local" : "remote",
     replay: async () => applyPersonalityFiles(filesToUpdate),
   });
 

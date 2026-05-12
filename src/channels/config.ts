@@ -8,8 +8,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { migratePermissionMode } from "../permissions/mode";
 import type {
   ChannelConfig,
+  ChannelDefaultPermissionMode,
   DiscordChannelConfig,
   DmPolicy,
   SlackChannelConfig,
@@ -19,13 +21,14 @@ import type {
 // ── Paths ─────────────────────────────────────────────────────────
 
 const CHANNELS_ROOT = join(homedir(), ".letta", "channels");
+let channelsRootOverride: string | null = null;
 
 export function getChannelsRoot(): string {
-  return CHANNELS_ROOT;
+  return channelsRootOverride ?? CHANNELS_ROOT;
 }
 
 export function getChannelDir(channelId: string): string {
-  return join(CHANNELS_ROOT, channelId);
+  return join(getChannelsRoot(), channelId);
 }
 
 export function getChannelConfigPath(channelId: string): string {
@@ -50,6 +53,10 @@ export function getChannelTargetsPath(channelId: string): string {
 
 export function getPendingChannelControlRequestsPath(): string {
   return join(getChannelsRoot(), "pending-control-requests.json");
+}
+
+export function __testOverrideChannelsRoot(root: string | null): void {
+  channelsRootOverride = root;
 }
 
 // ── YAML helpers ──────────────────────────────────────────────────
@@ -156,14 +163,33 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
   },
 };
 
+function parseDefaultPermissionMode(
+  value: unknown,
+): ChannelDefaultPermissionMode {
+  if (typeof value !== "string") return "standard";
+  const migrated = migratePermissionMode(value);
+  return migrated === "standard" ||
+    migrated === "acceptEdits" ||
+    migrated === "unrestricted"
+    ? migrated
+    : "standard";
+}
+
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
   parse(parsed) {
+    const rawAllowedChannels = parsed.allowed_channels;
     return {
       channel: "discord",
       enabled: parsed.enabled !== false,
       token: String(parsed.token ?? ""),
+      defaultPermissionMode: parseDefaultPermissionMode(
+        parsed.default_permission_mode,
+      ),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      allowedChannels: Array.isArray(rawAllowedChannels)
+        ? (rawAllowedChannels as string[])
+        : undefined,
     };
   },
 };

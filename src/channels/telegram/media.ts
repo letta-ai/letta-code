@@ -136,6 +136,11 @@ function isVideoMimeType(mimeType?: string): boolean {
   return normalizeTelegramMimeType(mimeType)?.startsWith("video/") ?? false;
 }
 
+function isGenericTelegramMimeType(mimeType?: string): boolean {
+  const normalized = normalizeTelegramMimeType(mimeType);
+  return !normalized || normalized === "application/octet-stream";
+}
+
 function inferAttachmentKind(params: {
   mimeType?: string;
   fileName?: string;
@@ -573,10 +578,11 @@ async function downloadTelegramAttachment(params: {
     remotePath,
     responseMimeType,
   });
+  const candidateMimeType = normalizeTelegramMimeType(candidate.mimeType);
   const mimeType =
-    responseMimeType ??
-    normalizeTelegramMimeType(candidate.mimeType) ??
-    inferMimeTypeFromName(fileName);
+    (isGenericTelegramMimeType(responseMimeType)
+      ? candidateMimeType
+      : responseMimeType) ?? inferMimeTypeFromName(fileName);
   const kind = inferAttachmentKind({
     mimeType,
     fileName,

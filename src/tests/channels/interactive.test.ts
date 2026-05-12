@@ -45,11 +45,73 @@ function createEvent(
   };
 }
 
+function createApproachEnvEvent(): ChannelControlRequestEvent {
+  return createEvent({
+    input: {
+      questions: [
+        {
+          question: "Which approach should we use?",
+          header: "Approach",
+          options: [
+            {
+              label: "Fast path",
+              description: "Ship the smallest safe patch",
+            },
+            {
+              label: "Deep refactor",
+              description: "Restructure the code more thoroughly",
+            },
+          ],
+          multiSelect: false,
+        },
+        {
+          question: "Which environment should we test in?",
+          header: "Env",
+          options: [
+            {
+              label: "Staging",
+              description: "Safer rollout path",
+            },
+            {
+              label: "Production",
+              description: "Use the live environment directly",
+            },
+          ],
+          multiSelect: false,
+        },
+      ],
+    },
+  });
+}
+
+function expectAllowAnswers(
+  parsed: ReturnType<typeof parseChannelControlRequestResponse>,
+  expectedAnswers: Record<string, string>,
+): void {
+  expect(parsed.type).toBe("response");
+  if (parsed.type !== "response") {
+    throw new Error("Expected response");
+  }
+  expect("decision" in parsed.response).toBe(true);
+  if (!("decision" in parsed.response)) {
+    throw new Error("Expected approval response decision");
+  }
+  const { decision } = parsed.response;
+  expect(decision.behavior).toBe("allow");
+  if (decision.behavior !== "allow") {
+    throw new Error("Expected allow decision");
+  }
+  expect(decision.updated_input?.answers).toEqual(expectedAnswers);
+}
+
 describe("channel interactive prompts", () => {
   test("formats AskUserQuestion prompts with options and reply instructions", () => {
     const prompt = formatChannelControlRequestPrompt(createEvent());
 
-    expect(prompt).toContain(
+    expect(
+      prompt.startsWith("SYSTEM MESSAGE — reply required to continue"),
+    ).toBe(true);
+    expect(prompt).not.toContain(
       "The agent needs an answer before it can continue.",
     );
     expect(prompt).toContain("1. Which approach should we use?");
@@ -194,37 +256,61 @@ describe("channel interactive prompts", () => {
     });
   });
 
-  test("requires numbered lines for multi-question replies", () => {
+  test("accepts freeform multi-question replies without requiring numbered lines", () => {
+    const parsed = parseChannelControlRequestResponse(
+      createApproachEnvEvent(),
+      "deep refactor please",
+    );
+
+    expectAllowAnswers(parsed, {
+      "Which approach should we use?": "Deep refactor",
+      "Which environment should we test in?":
+        "Not specified. Full user reply: deep refactor please",
+    });
+  });
+
+  test("passes ambiguous multi-question replies through instead of blocking", () => {
+    const rawReply =
+      "I'll add a token. Fill out everything but the token and I'll add it manually.";
     const parsed = parseChannelControlRequestResponse(
       createEvent({
         input: {
           questions: [
             {
-              question: "Which approach should we use?",
-              header: "Approach",
+              question:
+                "Does the existing $DISCORD_BOT_TOKEN already belong to a Discord application?",
+              header: "Bot token",
               options: [
                 {
-                  label: "Fast path",
-                  description: "Ship the smallest safe patch",
+                  label: "Yes, all set up",
+                  description: "Bot app exists and is already invited",
                 },
                 {
-                  label: "Deep refactor",
-                  description: "Restructure the code more thoroughly",
+                  label: "Bot exists, not invited yet",
+                  description: "Token is real but not yet in any server",
+                },
+                {
+                  label: "Need to create from scratch",
+                  description: "Token may be stale or the bot does not exist",
                 },
               ],
               multiSelect: false,
             },
             {
-              question: "Which environment should we test in?",
-              header: "Env",
+              question: "DM policy for who can message the bot?",
+              header: "DM policy",
               options: [
                 {
-                  label: "Staging",
-                  description: "Safer rollout path",
+                  label: "Pairing (Recommended)",
+                  description: "Require a pairing code",
                 },
                 {
-                  label: "Production",
-                  description: "Use the live environment directly",
+                  label: "Allowlist",
+                  description: "Only your Discord user ID can DM the bot",
+                },
+                {
+                  label: "Open",
+                  description: "Anyone who can DM the bot can talk to it",
                 },
               ],
               multiSelect: false,
@@ -232,13 +318,25 @@ describe("channel interactive prompts", () => {
           ],
         },
       }),
-      "deep refactor please",
+      rawReply,
     );
 
-    expect(parsed).toEqual({
-      type: "reprompt",
-      message:
-        "Please answer with numbered lines so I can map each reply to the right question.\nExample:\n1: your answer\n2: your answer",
+    expectAllowAnswers(parsed, {
+      "Does the existing $DISCORD_BOT_TOKEN already belong to a Discord application?":
+        rawReply,
+      "DM policy for who can message the bot?": rawReply,
+    });
+  });
+
+  test("maps compact multi-question option-number replies by position", () => {
+    const parsed = parseChannelControlRequestResponse(
+      createApproachEnvEvent(),
+      "2, 1",
+    );
+
+    expectAllowAnswers(parsed, {
+      "Which approach should we use?": "Deep refactor",
+      "Which environment should we test in?": "Staging",
     });
   });
 

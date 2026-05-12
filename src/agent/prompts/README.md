@@ -4,11 +4,13 @@ All prompt files are imported as text via `promptAssets.ts` (or `create.ts` for 
 
 ## System prompts
 
-Selectable via the `/system` command. Each is a complete system prompt that gets a memory addon appended at build time.
+Selectable via the `/system` command. Each preset is a complete system prompt. Presets that need different standard vs memfs instructions keep separate full prompt files rather than appending memory sections at build time.
 
 | File | Used | Description |
 |------|------|-------------|
-| `letta.md` | Default for all agents | Letta-tuned system prompt |
+| `letta_no_memfs.md` | Default for non-memfs agents | Letta-tuned system prompt for standard memory blocks |
+| `letta.md` | Default for memfs agents | Letta-tuned system prompt for git-backed MemFS memory |
+| `letta_local_memfs.md` | Default for local backend memfs agents | Letta-tuned system prompt for local-only git-backed MemFS memory |
 | `source_claude.md` | `/system source-claude` | Near-verbatim Claude Code prompt for benchmarking |
 | `source_codex.md` | `/system source-codex` | Near-verbatim OpenAI Codex prompt for benchmarking |
 | `source_gemini.md` | `/system source-gemini` | Near-verbatim Gemini CLI prompt for benchmarking |
@@ -20,14 +22,14 @@ Selectable via the `/system` command. Each is a complete system prompt that gets
 - **Source:** Claude Code (Anthropic)
 - **Version:** ~v2.1.50 (Feb 2026) — assembled from modular prompt files
 - **Reference:** https://github.com/Piebald-AI/claude-code-system-prompts
-- **Notes:** Since v2.1.20 the prompt is composed from ~110 atomic files at runtime. This is the rendered assembly for a default session (no custom output style, standard tools, TodoWrite present, Explore subagent available).
+- **Notes:** Since v2.1.20 the prompt is composed from ~110 atomic files at runtime. This is the rendered assembly for a default session (no custom output style, standard tools, TodoWrite present, Task subagents available).
 
 #### source_codex.md
 
-- **Source:** OpenAI Codex CLI (gpt-5.3-codex model)
-- **Version:** Extracted from codex-rs/core/models.json, base_instructions for gpt-5.3-codex
+- **Source:** OpenAI Codex CLI (gpt-5.5 model)
+- **Version:** Extracted from `codex-rs/models-manager/models.json` @ openai/codex `main` (May 2026)
 - **Reference:** https://github.com/openai/codex
-- **Notes:** gpt-5.3-codex is the latest model. Its prompt differs significantly from the older gpt-5.1-codex-max_prompt.md file: adds Personality section, commentary/final channels, intermediary updates, and removes the Plan tool section.
+- **Notes:** gpt-5.5 uses `model_messages.instructions_template` with a `{{ personality }}` placeholder; this snapshot renders the template substituted with `personality_pragmatic` (the default). Major drift from the prior gpt-5.3-codex snapshot: new senior-engineer framing, expanded engineering judgment guidance, substantially expanded frontend guidance, softer dirty-worktree handling, updated autonomy/compaction instructions, revised formatting/file-link rules, and new anti-creature-language guidance.
 
 #### source_gemini.md
 
@@ -35,15 +37,6 @@ Selectable via the `/system` command. Each is a complete system prompt that gets
 - **Version:** snippets.ts (Feb 2026, copyright 2026 Google LLC)
 - **Reference:** https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/prompts/snippets.ts
 - **Notes:** Rendered for interactive mode, git repo present, outside sandbox, standard tools, no sub-agents, no skills, no YOLO mode, no approved plan. Tool name variables resolved. Conditional sections (YOLO mode, Plan mode, sandbox, GEMINI.md) noted but not inlined.
-
-## Memory addons
-
-Appended to the system prompt at build time based on the agent's memory mode. Exactly one is used per agent.
-
-| File | Used | Description |
-|------|------|-------------|
-| `system_prompt_blocks.md` | Standard memory mode | Describes the virtual memory block system |
-| `system_prompt_memfs.md` | Memfs memory mode | Describes the git-backed memory filesystem |
 
 ## Memory blocks (`.mdx`)
 
