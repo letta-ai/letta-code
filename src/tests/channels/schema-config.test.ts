@@ -318,12 +318,13 @@ describe("validateConfigAgainstSchema", () => {
   });
 });
 
-// Reserved JSON-bucket keys that redactConfigForSnapshot always emits,
-// regardless of whether the schema declares them.
+// Reserved keys that redactConfigForSnapshot always emits, regardless of
+// whether the schema declares them.
 const RESERVED_BASE = {
   accounts_json: "",
   configs_json: "",
   metadata_json: "",
+  agent_id: null as string | null,
 };
 
 describe("redactConfigForSnapshot", () => {
