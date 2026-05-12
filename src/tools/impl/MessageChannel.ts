@@ -409,7 +409,7 @@ function normalizeSlackBlockFormatting(text: string): string {
 
       const bulletMatch = line.match(/^(\s*)[-+*]\s+(.+)$/);
       if (bulletMatch) {
-        return `${bulletMatch[1] ?? ""}• ${bulletMatch[2] ?? ""}`;
+        return `${bulletMatch[1] ?? ""}- ${bulletMatch[2] ?? ""}`;
       }
 
       return line;
