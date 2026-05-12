@@ -79,6 +79,7 @@ describe("customAccountConfigAdapter.toAccountConfig", () => {
       agent_id: "agent-123",
       accounts_json: "[1,2,3]",
       configs_json: '{"a":1}',
+      metadata_json: "",
     });
   });
 

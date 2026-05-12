@@ -50,6 +50,11 @@ export const CUSTOM_CHANNEL_CONFIG_SCHEMA: ChannelConfigSchema = {
       key: "configs_json",
       label: "Config (JSON)",
     },
+    {
+      type: "text",
+      key: "metadata_json",
+      label: "Metadata (JSON)",
+    },
   ],
 };
 
