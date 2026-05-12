@@ -59,6 +59,14 @@ jobs:
         id: eyes_reaction
         if: steps.lint_wait.outputs.skipped != 'true'
         run: |
+          # Clear any existing rocket from a previous LGTM run on this PR
+          EXISTING_ROCKET=$(gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
+            --jq '.[] | select(.content == "rocket" and .user.login == "github-actions[bot]") | .id' | head -1)
+          if [ -n "$EXISTING_ROCKET" ]; then
+            echo "Clearing previous rocket reaction: $EXISTING_ROCKET"
+            gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions/$EXISTING_ROCKET -X DELETE || true
+          fi
+          # Add eyes to signal review in progress
           REACTION_ID=$(gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
             -X POST -f content="eyes" --jq '.id')
           echo "Eyes reaction ID: $REACTION_ID"
@@ -67,6 +75,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: letta-ai/letta-code-action@daa80f29e345315623ff759f5ecf5018946bbc15
+        id: letta_review
         if: steps.lint_wait.outputs.skipped != 'true'
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
@@ -129,15 +138,25 @@ jobs:
             - ✅ `show_full_output: "true"` leaks tool output (potentially secrets) into CI logs.
             - ❌ The `track_progress` option is set to "true" in this workflow, but the letta-code-action's `validateTrackProgressEvent` function explicitly rejects the `workflow_dispatch` event type when track_progress is enabled. This means every manual dispatch will throw an error. You should either remove track_progress and handle tracking yourself in the prompt, or split into two jobs — one for pull_request (with track_progress) and one for workflow_dispatch (without it).
 
-      - name: React with rocket (review complete)
-        if: always() && steps.lint_wait.outputs.skipped != 'true'
+      - name: React based on review outcome
+        if: steps.lint_wait.outputs.skipped != 'true' && steps.letta_review.outputs.execution_file != ''
         run: |
-          # Delete eyes reaction if we have its ID
-          if [ -n "${{ steps.eyes_reaction.outputs.reaction_id }}" ]; then
-            gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions/${{ steps.eyes_reaction.outputs.reaction_id }} \
-              -X DELETE || true
+          # Parse the agent's final response from the execution file
+          RESULT=$(cat "${{ steps.letta_review.outputs.execution_file }}" \
+            | jq -r '[.[] | select(.type == "result") | .result] | last // ""')
+          echo "Review result: $RESULT"
+
+          if echo "$RESULT" | grep -qi "LGTM"; then
+            # LGTM — delete eyes, add rocket
+            if [ -n "${{ steps.eyes_reaction.outputs.reaction_id }}" ]; then
+              gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions/${{ steps.eyes_reaction.outputs.reaction_id }} \
+                -X DELETE || true
+            fi
+            gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
+              -X POST -f content="rocket"
+          else
+            # Comments left — keep eyes, no rocket
+            echo "Comments left — keeping eyes reaction"
           fi
-          gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
-            -X POST -f content="rocket"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
