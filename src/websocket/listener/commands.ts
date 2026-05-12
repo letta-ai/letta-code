@@ -6,7 +6,9 @@ import {
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { REMEMBER_PROMPT } from "../../agent/promptAssets";
+import type { ConversationMessageCompactBody } from "../../backend";
 import { getBackend } from "../../backend";
+import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
 import {
   buildGoalContinuationPrompt,
   formatGoalSummary,
@@ -21,7 +23,12 @@ import {
   buildInitMessage,
   gatherInitGitContext,
 } from "../../cli/helpers/initCommand";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import {
+  DEFAULT_SUMMARIZATION_MODEL,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../constants";
+import { runPreCompactHooks } from "../../hooks";
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { trackBoundaryError } from "../../telemetry/errorReporting";
@@ -56,6 +63,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "init",
   "remember",
   "goal",
+  "compact",
   "set-max-context",
   "channels",
   "toolset",
@@ -138,6 +146,10 @@ export async function handleExecuteCommand(
         );
         break;
 
+      case "compact":
+        output = await handleCompactCommand(conversationRuntime, trimmedArgs);
+        break;
+
       case "set-max-context":
         output = await handleSetMaxContextCommand(
           conversationRuntime,
@@ -205,6 +217,121 @@ function emitSlashCommandEnd(
     ...fields,
   };
   emitCanonicalMessageDelta(socket, runtime, endDelta as StreamDelta, scope);
+}
+
+type CompactMode =
+  | "all"
+  | "sliding_window"
+  | "self_compact_all"
+  | "self_compact_sliding_window";
+
+const VALID_COMPACT_MODES = new Set<CompactMode>([
+  "all",
+  "sliding_window",
+  "self_compact_all",
+  "self_compact_sliding_window",
+]);
+
+function compactHelpOutput(): string {
+  return [
+    "/compact help",
+    "",
+    "Summarize conversation history (compaction).",
+    "",
+    "USAGE",
+    "  /compact                   — compact with default mode",
+    "  /compact all               — compact all messages",
+    "  /compact sliding_window    — compact with sliding window",
+    "  /compact self_compact_all  — compact with self compact all",
+    "  /compact self_compact_sliding_window  — compact with self compact sliding window",
+    "  /compact help              — show this help",
+  ].join("\n");
+}
+
+/** /compact — Summarize conversation history through the active Backend. */
+async function handleCompactCommand(
+  conversationRuntime: ConversationRuntime,
+  args: string | undefined,
+): Promise<string> {
+  const agentId = conversationRuntime.agentId;
+  if (!agentId) {
+    throw new Error("No agent ID available for /compact command");
+  }
+
+  const rawModeArg = args?.trim().split(/\s+/)[0];
+  if (rawModeArg === "help") {
+    return compactHelpOutput();
+  }
+
+  const modeArg = rawModeArg as CompactMode | undefined;
+  if (modeArg && !VALID_COMPACT_MODES.has(modeArg)) {
+    throw new Error(`Invalid mode "${modeArg}". Run /compact help for usage.`);
+  }
+
+  const preCompactResult = await runPreCompactHooks(
+    undefined,
+    undefined,
+    agentId,
+    conversationRuntime.conversationId,
+  );
+  if (preCompactResult.blocked) {
+    const feedback = preCompactResult.feedback.join("\n") || "Blocked by hook";
+    throw new Error(`Compact blocked: ${feedback}`);
+  }
+
+  const backend = getBackend();
+  const modeDisplay = modeArg ? ` (mode: ${modeArg})` : "";
+
+  try {
+    let compactParams: ConversationMessageCompactBody | undefined;
+    if (modeArg) {
+      const agent = await backend.retrieveAgent(agentId);
+      compactParams = {
+        compaction_settings: {
+          mode: modeArg,
+          model:
+            agent.compaction_settings?.model?.trim() ||
+            DEFAULT_SUMMARIZATION_MODEL,
+        },
+      } as ConversationMessageCompactBody;
+    }
+
+    const compactBody =
+      conversationRuntime.conversationId === "default"
+        ? ({
+            agent_id: agentId,
+            ...(compactParams ?? {}),
+          } as ConversationMessageCompactBody)
+        : compactParams;
+
+    const result = await backend.compactConversationMessages(
+      conversationRuntime.conversationId,
+      compactBody,
+    );
+
+    conversationRuntime.contextTracker.pendingReflectionTrigger = true;
+
+    return [
+      `Compaction completed${modeDisplay}. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
+      "",
+      `Summary: ${result.summary}`,
+    ].join("\n");
+  } catch (error) {
+    const apiError = error as {
+      status?: number;
+      error?: { detail?: string };
+    };
+    const detail = apiError?.error?.detail;
+    if (
+      apiError?.status === 400 &&
+      detail?.includes("Summarization failed to reduce the number of messages")
+    ) {
+      conversationRuntime.contextTracker.pendingReflectionTrigger = true;
+      return "Compaction run, but the number of messages is the same";
+    }
+
+    throw new Error(formatErrorDetails(error, agentId));
+  }
 }
 
 /**
