@@ -66,8 +66,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # TODO: replace with SHA before merging to main
-      - uses: letta-ai/letta-code-action@feat/conversation-lookup-via-api
+      - uses: letta-ai/letta-code-action@0ec0ec9ae27ae7533cd297ec070e61465e7d17e2
         if: steps.lint_wait.outputs.skipped != 'true'
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
