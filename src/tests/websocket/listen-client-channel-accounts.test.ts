@@ -183,7 +183,7 @@ describe("channel account list responses", () => {
           patch: {
             config: {
               agent_id: "agent-2",
-              default_permission_mode: "bypassPermissions",
+              default_permission_mode: "unrestricted",
               allowed_channels: ["channel-2"],
             },
           },
@@ -253,7 +253,7 @@ describe("channel account list responses", () => {
           config: {
             has_token: true,
             agent_id: "agent-2",
-            default_permission_mode: "bypassPermissions",
+            default_permission_mode: "unrestricted",
             allowed_channels: ["channel-2"],
           },
         },
@@ -267,7 +267,7 @@ describe("channel account list responses", () => {
             config: {
               has_token: true,
               agent_id: "agent-2",
-              default_permission_mode: "bypassPermissions",
+              default_permission_mode: "unrestricted",
               allowed_channels: ["channel-2"],
             },
           },
@@ -281,7 +281,7 @@ describe("channel account list responses", () => {
           config: {
             has_token: true,
             agent_id: "agent-2",
-            default_permission_mode: "bypassPermissions",
+            default_permission_mode: "unrestricted",
             allowed_channels: ["channel-2"],
           },
         },
