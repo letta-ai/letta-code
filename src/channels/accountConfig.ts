@@ -135,11 +135,16 @@ export function getChannelAccountConfigAdapter(
       customChannelAccountConfigAdapter
     );
   }
-  // User-installed plugin: prefer schema-driven adapter when a schema exists.
-  const metadata = getChannelPluginMetadata(channelId);
-  if (metadata.configSchema) {
-    return buildSchemaAdapter(metadata.configSchema);
-  }
+  // MVP: user-installed plugins (e.g. bluesky, my-webhook-app) all share
+  // the 'custom' channel's account-config shape and are managed through
+  // the same desktop dialog. Per-plugin schema-driven adapters are wired
+  // but not yet routed here — the dialog always sends the custom shape,
+  // so validating against a plugin-specific schema would reject the
+  // save (timeouts) until the dialog opts a plugin in.
+  //
+  // Schema-driven adapter retained for future use:
+  //   const metadata = getChannelPluginMetadata(channelId);
+  //   if (metadata.configSchema) return buildSchemaAdapter(metadata.configSchema);
   return customChannelAccountConfigAdapter;
 }
 
