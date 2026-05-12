@@ -54,8 +54,9 @@ test("preserves existing Slack angle-bracket tokens", () => {
   ).toBe("hi <@U123> see <https://example.com|docs> and <!here>");
 });
 
-test("renders bullet lists for Slack", () => {
-  expect(markdownToSlackMrkdwn("- one\n- two")).toBe("• one\n• two");
+test("keeps Slack bullet lists ASCII-safe", () => {
+  expect(markdownToSlackMrkdwn("- one\n- two")).toBe("- one\n- two");
+  expect(markdownToSlackMrkdwn("+ one\n* two")).toBe("- one\n- two");
 });
 
 test("renders headings as bold text for Slack", () => {
