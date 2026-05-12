@@ -269,12 +269,7 @@ export const ToolCallMessage = memo(
           const truncatedDisplay = needsTruncation
             ? `${normalizedDisplay.slice(0, maxArgsChars - 1)}…`
             : normalizedDisplay;
-          if (rawName.toLowerCase() === "taskoutput") {
-            const separator = truncatedDisplay.startsWith("(") ? "" : " ";
-            args = colorizeArgs(separator + truncatedDisplay);
-          } else {
-            args = colorizeArgs(` ${truncatedDisplay}`);
-          }
+          args = colorizeArgs(truncatedDisplay);
         }
       }
 
@@ -950,13 +945,13 @@ export const ToolCallMessage = memo(
                   {isMemoryTool(rawName) ? (
                     <>
                       <Text bold color={colors.tool.memoryName}>
-                        {displayName}
+                        {displayName}{" "}
                       </Text>
                       {args}
                     </>
                   ) : (
                     <>
-                      <Text bold>{displayName}</Text>
+                      <Text bold>{displayName} </Text>
                       {args}
                     </>
                   )}
@@ -969,7 +964,7 @@ export const ToolCallMessage = memo(
                       isMemoryTool(rawName) ? colors.tool.memoryName : undefined
                     }
                   >
-                    {displayName}
+                    {displayName}{" "}
                   </Text>
                   {shellFirstLineSpans ? (
                     <Box
@@ -977,14 +972,13 @@ export const ToolCallMessage = memo(
                       width={Math.max(0, rightWidth - displayName.length - 1)}
                     >
                       <Text color={colors.shellSyntax.text}>
-                        {" "}
                         {renderSpans(shellFirstLineSpans)}
                       </Text>
                     </Box>
                   ) : args ? (
                     <Box
                       flexGrow={1}
-                      width={Math.max(0, rightWidth - displayName.length)}
+                      width={Math.max(0, rightWidth - displayName.length - 1)}
                     >
                       <Text wrap="wrap">{args}</Text>
                     </Box>
