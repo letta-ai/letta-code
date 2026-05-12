@@ -12,6 +12,7 @@ import type { CustomChannelAccount } from "../types";
  *   agent_id       — agent this app is bound to
  *   accounts_json  — user-supplied JSON describing accounts on the remote service
  *   configs_json   — user-supplied JSON of arbitrary configuration values
+ *   metadata_json  — user-supplied JSON scratchpad (notes, secret-manager refs, etc.)
  *
  * Tokens never round-trip back to the client; snapshots only expose
  * `has_bot_token` / `has_auth` boolean flags.
@@ -23,6 +24,7 @@ const CUSTOM_CONFIG_KEYS = new Set([
   "agent_id",
   "accounts_json",
   "configs_json",
+  "metadata_json",
 ]);
 
 function isString(value: unknown): value is string {
@@ -61,7 +63,8 @@ export const customAccountConfigAdapter: ChannelAccountConfigAdapter<CustomChann
         (config.agent_id === undefined || isNullableString(config.agent_id)) &&
         (config.accounts_json === undefined ||
           isString(config.accounts_json)) &&
-        (config.configs_json === undefined || isString(config.configs_json))
+        (config.configs_json === undefined || isString(config.configs_json)) &&
+        (config.metadata_json === undefined || isString(config.metadata_json))
       );
     },
 
@@ -82,6 +85,7 @@ export const customAccountConfigAdapter: ChannelAccountConfigAdapter<CustomChann
         agent_id: readNullableString(account, "agent_id"),
         accounts_json: readString(account, "accounts_json"),
         configs_json: readString(account, "configs_json"),
+        metadata_json: readString(account, "metadata_json"),
       };
     },
 
