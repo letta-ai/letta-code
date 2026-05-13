@@ -118,6 +118,16 @@ export function buildUnboundRouteInstructions(
   );
 }
 
+export function buildChannelHelpMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return [
+    `${displayName} is connected to Letta Code.`,
+    "Send a normal message here and the connected agent will reply in this chat.",
+    "Use MessageChannel-supported actions by asking naturally, for example: send a message, react, or upload a file when available.",
+    "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
+  ].join("\n\n");
+}
+
 function buildSlackAppSetupInstructions(): string {
   return (
     "This Slack app isn't connected to a Letta agent yet.\n\n" +
@@ -796,6 +806,16 @@ export class ChannelRegistry {
     if (await this.tryHandlePendingControlRequest(adapter, msg)) {
       return;
     }
+
+    if (msg.text.trim().toLowerCase() === "/help") {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        buildChannelHelpMessage(msg.channel),
+        msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+      );
+      return;
+    }
+
     const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
