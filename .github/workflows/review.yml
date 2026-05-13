@@ -138,6 +138,54 @@ jobs:
             - ✅ `show_full_output: "true"` leaks tool output (potentially secrets) into CI logs.
             - ❌ The `track_progress` option is set to "true" in this workflow, but the letta-code-action's `validateTrackProgressEvent` function explicitly rejects the `workflow_dispatch` event type when track_progress is enabled. This means every manual dispatch will throw an error. You should either remove track_progress and handle tracking yourself in the prompt, or split into two jobs — one for pull_request (with track_progress) and one for workflow_dispatch (without it).
 
+            ## Suggested patches
+
+            For high-confidence, surgical fixes (wrong operator, wrong fallback value, missing guard, clear typo), include a suggested patch directly in the comment body using GitHub's suggestion syntax. The author can apply it in one click.
+
+            **When to use suggestions:** The fix is unambiguous, confined to the flagged lines, and you are certain it is correct. Do NOT suggest if the fix requires broader context, multiple files, or architectural judgment.
+
+            **Before writing a suggestion:** Read the current file content at the flagged path to get the exact lines. The suggestion block must contain the complete replacement for the covered lines — GitHub diffs it against the original automatically.
+
+            **Single-line suggestion:**
+            ```bash
+            gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
+              -X POST \
+              -f event="COMMENT" \
+              -f body="" \
+              -f 'comments[][path]=<file>' \
+              -f 'comments[][line]=<line-number>' \
+              -f 'comments[][body]=<one sentence stating the risk>
+
+            ```suggestion
+            <replacement line>
+            ```'
+            ```
+
+            **Multi-line suggestion** (add `start_line` to cover a range):
+            ```bash
+            gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
+              -X POST \
+              -f event="COMMENT" \
+              -f body="" \
+              -f 'comments[][path]=<file>' \
+              -f 'comments[][start_line]=<first-line>' \
+              -f 'comments[][line]=<last-line>' \
+              -f 'comments[][body]=<one sentence stating the risk>
+
+            ```suggestion
+            <replacement lines>
+            ```'
+            ```
+
+            Example — wrong operator on a single line:
+            ```
+            `&&` should be `||` — requires both vars set, breaking `LETTA_DEBUG=1` alone.
+
+            ```suggestion
+              return lettaDebug === "1" || lettaDebug === "true" || legacyDebug === "1" || legacyDebug === "true";
+            ```
+            ```
+
       - name: React based on review outcome
         if: steps.lint_wait.outputs.skipped != 'true' && steps.letta_review.outputs.execution_file != ''
         run: |
