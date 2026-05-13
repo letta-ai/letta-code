@@ -8,6 +8,7 @@ import {
   getPersonalityBlockValues,
   getPersonalityContent,
   getPersonalityHumanContent,
+  ONBOARDING_PERSONALITIES,
   PERSONALITY_OPTIONS,
   replaceBodyPreservingFrontmatter,
   resolvePersonalityId,
@@ -96,6 +97,37 @@ describe("personality helpers", () => {
       });
       expect(personaBlock?.value).toBe(definitions.persona.value);
       expect(humanBlock?.value).toBe(definitions.human.value);
+    }
+  });
+
+  test("linus and kawaii include onboarding memory by default", async () => {
+    expect(ONBOARDING_PERSONALITIES).toEqual(["linus", "kawaii"]);
+
+    for (const personality of ["linus", "kawaii"] as const) {
+      const options = await buildCreateAgentOptionsForPersonality({
+        personalityId: personality,
+      });
+      const onboardingBlock = options.memoryBlocks?.find(
+        (block): block is { label: string; value: string } =>
+          "label" in block && block.label === "onboarding",
+      );
+
+      expect(onboardingBlock?.value).toContain(
+        "The person you are working with is new to Letta Code.",
+      );
+    }
+  });
+
+  test("letta-code and vanilla source personalities do not include onboarding", async () => {
+    for (const personality of ["memo", "claude", "codex"] as const) {
+      const options = await buildCreateAgentOptionsForPersonality({
+        personalityId: personality,
+      });
+      expect(
+        options.memoryBlocks?.some(
+          (block) => "label" in block && block.label === "onboarding",
+        ),
+      ).toBe(false);
     }
   });
 

@@ -96,6 +96,19 @@ export interface PersonalityBlockDefinition {
   templatePromptAssetName: string;
 }
 
+export const ONBOARDING_PERSONALITIES = [
+  "linus",
+  "kawaii",
+] as const satisfies readonly PersonalityId[];
+
+export function supportsOnboardingBlock(
+  personalityId: PersonalityId,
+): personalityId is (typeof ONBOARDING_PERSONALITIES)[number] {
+  return (ONBOARDING_PERSONALITIES as readonly PersonalityId[]).includes(
+    personalityId,
+  );
+}
+
 const FRONTMATTER_REGEX = /^(---\n[\s\S]*?\n---)\n*/;
 const EDITABLE_FRONTMATTER_KEYS = [
   "description",
@@ -318,6 +331,7 @@ export function getPersonalityBlockValues(personalityId: PersonalityId): {
 export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
   persona: PersonalityBlockDefinition;
   human: PersonalityBlockDefinition;
+  onboarding?: PersonalityBlockDefinition;
 } {
   const personaTemplatePromptAssetName =
     personalityId === "memo"
@@ -349,6 +363,16 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
         .description,
       templatePromptAssetName: humanTemplatePromptAssetName,
     },
+    ...(supportsOnboardingBlock(personalityId)
+      ? {
+          onboarding: {
+            value: getPromptBody("onboarding.mdx"),
+            description:
+              getEditablePromptFrontmatter("onboarding.mdx").description,
+            templatePromptAssetName: "onboarding.mdx",
+          },
+        }
+      : {}),
   };
 }
 
@@ -364,41 +388,49 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   const blockDefinitions = getPersonalityBlockDefinitions(personalityId);
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
 
+  const memoryBlocks = defaultMemoryBlocks.map((block) => {
+    if (block.label === "persona") {
+      return {
+        label: block.label,
+        value: blockDefinitions.persona.value,
+        description:
+          blockDefinitions.persona.description ??
+          block.description ??
+          undefined,
+      };
+    }
+
+    if (block.label === "human") {
+      return {
+        label: block.label,
+        value: blockDefinitions.human.value,
+        description:
+          blockDefinitions.human.description ?? block.description ?? undefined,
+      };
+    }
+
+    return {
+      label: block.label,
+      value: block.value,
+      description: block.description ?? undefined,
+    };
+  });
+
+  if (blockDefinitions.onboarding) {
+    memoryBlocks.push({
+      label: "onboarding",
+      value: blockDefinitions.onboarding.value,
+      description: blockDefinitions.onboarding.description,
+    });
+  }
+
   return {
     name: name ?? personality.label,
     description: description ?? personality.description,
     model: model ?? personality.defaultModel,
     tags,
     memoryPromptMode: "memfs",
-    memoryBlocks: defaultMemoryBlocks.map((block) => {
-      if (block.label === "persona") {
-        return {
-          label: block.label,
-          value: blockDefinitions.persona.value,
-          description:
-            blockDefinitions.persona.description ??
-            block.description ??
-            undefined,
-        };
-      }
-
-      if (block.label === "human") {
-        return {
-          label: block.label,
-          value: blockDefinitions.human.value,
-          description:
-            blockDefinitions.human.description ??
-            block.description ??
-            undefined,
-        };
-      }
-
-      return {
-        label: block.label,
-        value: block.value,
-        description: block.description ?? undefined,
-      };
-    }),
+    memoryBlocks,
   };
 }
 
