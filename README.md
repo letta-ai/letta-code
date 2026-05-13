@@ -20,6 +20,14 @@ Navigate to your project directory and run `letta` (see various command-line opt
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, zAI coding plan, etc.), and use `/model` to swap models.
 
+For slow local inference servers, configure a provider-level timeout when connecting. For example, LM Studio-compatible llama-server backends that need up to 10 minutes for large-context compaction can use:
+
+```bash
+letta --backend local connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
+```
+
+Timeouts are stored per local provider in milliseconds; pass `--no-timeout` or `--timeout false` to disable the provider timeout.
+
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
 
 ## Philosophy 

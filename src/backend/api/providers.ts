@@ -8,6 +8,7 @@ export interface ProviderResponse {
   provider_category?: "base" | "byok" | null;
   api_key?: string;
   base_url?: string;
+  timeout?: number | false;
   access_key?: string;
   region?: string;
 }
