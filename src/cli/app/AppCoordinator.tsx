@@ -39,7 +39,6 @@ import {
   readCronFile,
   shouldFireTask,
   updateTask,
-  wrapCronPrompt,
 } from "../../cron";
 import { experimentManager } from "../../experiments/manager";
 import { runSessionEndHooks, runSessionStartHooks } from "../../hooks";
@@ -1242,7 +1241,17 @@ export default function App({
             const freshTask = getTask(taskId);
             if (!freshTask || freshTask.status !== "active") return;
 
-            const text = wrapCronPrompt(freshTask);
+            // Format as plain text for the TUI — no <system-reminder> wrapper
+            // (the WS scheduler uses wrapCronPrompt with XML, but the TUI
+            // renders user messages as-is, so XML shows up raw)
+            const text = [
+              `⏰ Scheduled task "${freshTask.name}" is firing.`,
+              freshTask.recurring
+                ? `This is fire #${freshTask.fire_count + 1} (cron: ${freshTask.cron}).`
+                : `This is a one-off scheduled task.`,
+              "",
+              freshTask.prompt,
+            ].join("\n");
             addToMessageQueue({
               kind: "user",
               text,
