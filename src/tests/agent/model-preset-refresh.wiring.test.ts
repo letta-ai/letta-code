@@ -122,6 +122,9 @@ describe("model preset refresh wiring", () => {
     expect(segment).toContain("updateConversationLLMConfig(");
     expect(segment).toContain("preserveContextWindow: true");
     expect(segment).toContain(
+      "updateArgs.context_window = currentLlmConfig.context_window",
+    );
+    expect(segment).toContain(
       "Failed to carry over active model to new conversation",
     );
   });
