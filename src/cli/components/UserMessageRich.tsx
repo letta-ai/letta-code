@@ -226,10 +226,7 @@ export function renderBlock(
 export const UserMessage = memo(
   ({ line, prompt }: { line: UserLine; prompt?: string }) => {
     const trackedColumns = useTerminalWidth();
-    const columns = Math.max(
-      trackedColumns,
-      getCurrentStdoutColumns() ?? trackedColumns,
-    );
+    const columns = getCurrentStdoutColumns() ?? trackedColumns;
     const promptPrefix = `${prompt || CLI_GLYPHS.prompt} `;
     const prefixWidth = inkStringWidth(promptPrefix);
     const continuationPrefix = " ".repeat(prefixWidth);
