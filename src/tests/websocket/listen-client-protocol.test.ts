@@ -943,6 +943,7 @@ describe("listen-client parseServerMessage", () => {
   test("advertises and parses remote set-max-context execute_command", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("set-max-context");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
 
     const command = parseServerMessage(
       Buffer.from(
@@ -961,6 +962,127 @@ describe("listen-client parseServerMessage", () => {
       command_id: "set-max-context",
       args: "10000 --override",
     });
+  });
+
+  test("runs remote compact execute_command against backend", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-compact-"));
+    try {
+      class CompactRecordingBackend extends LocalBackend {
+        compactCalls: Parameters<
+          LocalBackend["compactConversationMessages"]
+        >[] = [];
+
+        override async compactConversationMessages(
+          ...args: Parameters<LocalBackend["compactConversationMessages"]>
+        ): ReturnType<LocalBackend["compactConversationMessages"]> {
+          this.compactCalls.push(args);
+          return {
+            num_messages_before: 7,
+            num_messages_after: 2,
+            summary: "compacted summary",
+          } as Awaited<ReturnType<LocalBackend["compactConversationMessages"]>>;
+        }
+      }
+
+      const backend = new CompactRecordingBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "WS Compact Agent",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "compact",
+          request_id: "compact-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "default" },
+          args: "sliding_window",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      expect(backend.compactCalls).toHaveLength(1);
+      expect(backend.compactCalls[0]?.[0]).toBe("default");
+      expect(backend.compactCalls[0]?.[1]).toMatchObject({
+        agent_id: agent.id,
+        compaction_settings: {
+          mode: "sliding_window",
+        },
+      });
+      expect(runtime.contextTracker.pendingReflectionTrigger).toBe(true);
+      expect(socket.sentPayloads.join("\n")).toContain(
+        "Compaction completed (mode: sliding_window). Message buffer length reduced from 7 to 2.",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("remote compact does not trigger reflection when compaction changes nothing", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-compact-same-"));
+    try {
+      class NoopCompactBackend extends LocalBackend {
+        override async compactConversationMessages(
+          ..._args: Parameters<LocalBackend["compactConversationMessages"]>
+        ): ReturnType<LocalBackend["compactConversationMessages"]> {
+          throw {
+            status: 400,
+            error: {
+              detail: "Summarization failed to reduce the number of messages",
+            },
+          };
+        }
+      }
+
+      const backend = new NoopCompactBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "WS Noop Compact Agent",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "compact",
+          request_id: "compact-noop-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "default" },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      expect(runtime.contextTracker.pendingReflectionTrigger).toBe(false);
+      expect(socket.sentPayloads.join("\n")).toContain(
+        "Compaction run, but the number of messages is the same",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("runs remote set-max-context execute_command", async () => {
