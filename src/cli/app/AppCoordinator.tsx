@@ -2845,6 +2845,9 @@ export default function App({
       ) {
         updateArgs.enable_reasoner = enableReasoner;
       }
+      if (typeof currentLlmConfig?.context_window === "number") {
+        updateArgs.context_window = currentLlmConfig.context_window;
+      }
 
       try {
         const { updateConversationLLMConfig } = await import(
