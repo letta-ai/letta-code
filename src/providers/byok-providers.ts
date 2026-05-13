@@ -339,6 +339,7 @@ export async function createProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  baseUrl?: string,
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
     return createOrUpdateLocalProvider({
@@ -348,6 +349,7 @@ export async function createProvider(
       accessKey,
       region,
       profile,
+      baseUrl,
     });
   }
   return createProviderRequest(
@@ -369,9 +371,17 @@ export async function updateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  baseUrl?: string,
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
-    return updateLocalProvider(providerId, apiKey, accessKey, region, profile);
+    return updateLocalProvider(
+      providerId,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+      baseUrl,
+    );
   }
   return updateProviderRequest(providerId, apiKey, accessKey, region, profile);
 }
@@ -398,6 +408,7 @@ export async function createOrUpdateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  baseUrl?: string,
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
     return createOrUpdateLocalProvider({
@@ -407,6 +418,7 @@ export async function createOrUpdateProvider(
       accessKey,
       region,
       profile,
+      baseUrl,
     });
   }
   return createOrUpdateProviderRequest(

@@ -55,6 +55,10 @@ describe("connect subcommand", () => {
       "anthropic",
       "lc-anthropic",
       "sk-ant-123",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
     );
   });
 
@@ -97,6 +101,49 @@ describe("connect subcommand", () => {
       "ollama",
       "lc-ollama",
       "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+  });
+
+  test("connects LM Studio with a custom base URL", async () => {
+    const { deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(
+      ["lmstudio", "--base-url", "http://127.0.0.1:1234/v1/"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.promptSecret).not.toHaveBeenCalled();
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "lmstudio",
+      "not-needed",
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "lmstudio",
+      "lc-lmstudio",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      "http://127.0.0.1:1234/v1",
+    );
+  });
+
+  test("rejects base URL for providers that do not support it", async () => {
+    const { stderr, deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(
+      ["anthropic", "--base-url", "http://localhost:1234/v1"],
+      deps,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain(
+      "--base-url is not supported for anthropic",
     );
   });
 

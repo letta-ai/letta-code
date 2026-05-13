@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LanguageModel } from "ai";
 import {
   createAISDKModelFactory,
@@ -8,6 +11,7 @@ import {
   resolveAISDKProvider,
   resolveAISDKProviderFromAgent,
 } from "../../backend/dev/AISDKModelFactory";
+import { createOrUpdateLocalProvider } from "../../backend/local";
 
 function withAISDKEnv<T>(
   env: {
@@ -148,6 +152,39 @@ describe("AISDKModelFactory", () => {
 
     expect(factory()).toBe(model);
     expect(capturedAnthropicModel).toBe("claude-dev");
+  });
+
+  test("uses saved LM Studio base URL for local provider factories", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "lmstudio-base-url-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "lmstudio",
+        providerName: "lc-lmstudio",
+        apiKey: "not-needed",
+        baseUrl: "http://localhost:3210/v1",
+      });
+
+      let capturedBaseURL: string | undefined;
+      let capturedProviderName: string | undefined;
+      const model = {} as LanguageModel;
+      const factory = createAISDKModelFactory({
+        provider: "lmstudio",
+        model: "google/gemma-3n-e4b",
+        localProviderAuthStorageDir: storageDir,
+        createOpenAICompatibleModel: (_model, options) => {
+          capturedBaseURL = options.baseURL;
+          capturedProviderName = options.providerName;
+          return model;
+        },
+      });
+
+      expect(factory()).toBe(model);
+      expect(capturedProviderName).toBe("lmstudio");
+      expect(capturedBaseURL).toBe("http://localhost:3210/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("rejects unknown providers", () => {

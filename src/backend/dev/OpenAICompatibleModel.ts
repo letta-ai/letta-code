@@ -7,7 +7,15 @@ export interface OpenAICompatibleModelFactoryOptions {
   baseURL: string;
   providerName: string;
   headers?: Record<string, string>;
-  createModel?: (model: string) => LanguageModel;
+  createModel?: (
+    model: string,
+    options: {
+      apiKey?: string;
+      baseURL: string;
+      providerName: string;
+      headers?: Record<string, string>;
+    },
+  ) => LanguageModel;
 }
 
 function createDefaultOpenAICompatibleModel(options: {
@@ -48,5 +56,11 @@ export function createOpenAICompatibleModelFactory(
         providerName: options.providerName,
         headers: options.headers,
       }));
-  return () => createModel(model);
+  return () =>
+    createModel(model, {
+      apiKey: options.apiKey,
+      baseURL: options.baseURL,
+      providerName: options.providerName,
+      headers: options.headers,
+    });
 }

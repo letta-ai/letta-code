@@ -16,7 +16,9 @@ import {
   isConnectZaiBaseProvider,
   listConnectProvidersForHelp,
   listConnectProviderTokens,
+  normalizeConnectBaseUrl,
   resolveConnectProvider,
+  supportsConnectBaseUrl,
 } from "../commands/connect-normalize";
 import {
   type ChatGPTOAuthFlowCallbacks,
@@ -32,6 +34,7 @@ const CONNECT_OPTIONS = {
   "secret-key": { type: "string" },
   region: { type: "string" },
   profile: { type: "string" },
+  "base-url": { type: "string" },
 } as const;
 
 interface ConnectSubcommandDeps {
@@ -54,6 +57,7 @@ interface ConnectSubcommandDeps {
     accessKey?: string,
     region?: string,
     profile?: string,
+    baseUrl?: string,
   ) => Promise<unknown>;
   isChatGPTOAuthConnected: () => Promise<boolean>;
   runChatGPTOAuthConnectFlow: (
@@ -95,6 +99,7 @@ function formatUsage(): string {
     "  letta connect codex",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
+    "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1",
     "  letta connect bedrock --method iam --access-key <id> --secret-key <key> --region <region>",
     "  letta connect bedrock --method profile --profile <name> --region <region>",
   ].join("\n");
@@ -269,6 +274,20 @@ export async function runConnectSubcommand(
   if (isConnectApiKeyProvider(provider)) {
     let apiKey =
       readStringOption(parsed.values["api-key"]) ?? restPositionals[0] ?? "";
+    let baseUrl: string | undefined;
+    const baseUrlOption = readStringOption(parsed.values["base-url"]);
+    if (baseUrlOption !== undefined) {
+      if (!supportsConnectBaseUrl(provider)) {
+        io.stderr(`--base-url is not supported for ${provider.canonical}.`);
+        return 1;
+      }
+      try {
+        baseUrl = normalizeConnectBaseUrl(baseUrlOption);
+      } catch (error) {
+        io.stderr(getErrorMessage(error));
+        return 1;
+      }
+    }
     apiKey ||= defaultConnectApiKey(provider) ?? "";
     if (!apiKey && isConnectZaiBaseProvider(provider)) {
       io.stdout(
@@ -304,6 +323,10 @@ export async function runConnectSubcommand(
         provider.byokProvider.providerType,
         provider.byokProvider.providerName,
         apiKey,
+        undefined,
+        undefined,
+        undefined,
+        baseUrl,
       );
 
       io.stdout(

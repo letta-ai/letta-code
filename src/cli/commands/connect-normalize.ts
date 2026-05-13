@@ -152,3 +152,29 @@ export function isConnectZaiBaseProvider(
 ): boolean {
   return provider.canonical === "zai";
 }
+
+export function supportsConnectBaseUrl(
+  provider: ResolvedConnectProvider,
+): boolean {
+  return provider.canonical === "ollama" || provider.canonical === "lmstudio";
+}
+
+export function normalizeConnectBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("Base URL cannot be empty.");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`Invalid base URL: ${value}`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Base URL must start with http:// or https://.");
+  }
+
+  return trimmed.replace(/\/+$/, "");
+}

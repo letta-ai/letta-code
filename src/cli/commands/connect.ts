@@ -25,8 +25,10 @@ import {
   isConnectZaiBaseProvider,
   listConnectProvidersForHelp,
   listConnectProviderTokens,
+  normalizeConnectBaseUrl,
   type ResolvedConnectProvider,
   resolveConnectProvider,
+  supportsConnectBaseUrl,
 } from "./connect-normalize";
 import {
   isChatGPTOAuthConnected,
@@ -121,6 +123,7 @@ function formatConnectUsage(): string {
     "  /connect codex",
     "  /connect anthropic <api_key>",
     "  /connect openai <api_key>",
+    "  /connect lmstudio --base-url http://127.0.0.1:1234/v1",
     "  /connect bedrock iam --access-key <id> --secret-key <key> --region <region>",
     "  /connect bedrock profile --profile <name> --region <region>",
   ].join("\n");
@@ -206,7 +209,7 @@ function formatBedrockUsage(): string {
 function formatApiKeyUsage(provider: ResolvedConnectProvider): string {
   if (defaultConnectApiKey(provider)) {
     return [
-      `Usage: /connect ${provider.canonical} [api_key]`,
+      `Usage: /connect ${provider.canonical} [api_key]${supportsConnectBaseUrl(provider) ? " [--base-url <url>]" : ""}`,
       "",
       `Connect to ${provider.byokProvider.displayName}. API key is optional for this local provider.`,
     ].join("\n");
@@ -216,6 +219,51 @@ function formatApiKeyUsage(provider: ResolvedConnectProvider): string {
     "",
     `Connect to ${provider.byokProvider.displayName} by providing your API key.`,
   ].join("\n");
+}
+
+function parseApiKeyFlags(
+  args: string[],
+  provider: ResolvedConnectProvider,
+): { apiKey: string; baseUrl?: string; error?: string } {
+  const positionals: string[] = [];
+  let baseUrl: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index] ?? "";
+    if (!token.startsWith("--")) {
+      positionals.push(token);
+      continue;
+    }
+
+    if (token !== "--base-url") {
+      return { apiKey: "", error: `Unexpected option: ${token}` };
+    }
+
+    if (!supportsConnectBaseUrl(provider)) {
+      return {
+        apiKey: "",
+        error: `--base-url is not supported for ${provider.canonical}.`,
+      };
+    }
+
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      return { apiKey: "", error: "Missing value for --base-url" };
+    }
+
+    try {
+      baseUrl = normalizeConnectBaseUrl(value);
+    } catch (error) {
+      return { apiKey: "", error: getErrorMessage(error) };
+    }
+    index += 1;
+  }
+
+  if (positionals.length > 1) {
+    return { apiKey: "", error: `Unexpected argument: ${positionals[1]}` };
+  }
+
+  return { apiKey: positionals[0] ?? "", baseUrl };
 }
 
 function formatZaiCodingPlanPrompt(apiKey?: string): string {
@@ -305,6 +353,7 @@ async function handleConnectApiKeyProvider(
   msg: string,
   provider: ResolvedConnectProvider,
   apiKey: string,
+  baseUrl?: string,
 ): Promise<void> {
   const cmdId = addCommandResult(
     ctx.buffersRef,
@@ -334,6 +383,10 @@ async function handleConnectApiKeyProvider(
       provider.byokProvider.providerType,
       provider.byokProvider.providerName,
       apiKey,
+      undefined,
+      undefined,
+      undefined,
+      baseUrl,
     );
 
     updateCommandResult(
@@ -521,7 +574,19 @@ export async function handleConnect(
   }
 
   if (isConnectApiKeyProvider(provider)) {
-    const apiKey = parts.slice(2).join("") || defaultConnectApiKey(provider);
+    const parsed = parseApiKeyFlags(parts.slice(2), provider);
+    if (parsed.error) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        `${parsed.error}\n\n${formatApiKeyUsage(provider)}`,
+        false,
+      );
+      return;
+    }
+
+    const apiKey = parsed.apiKey || defaultConnectApiKey(provider);
     if (!apiKey) {
       if (isConnectZaiBaseProvider(provider)) {
         addCommandResult(
@@ -542,7 +607,13 @@ export async function handleConnect(
       }
       return;
     }
-    await handleConnectApiKeyProvider(ctx, msg, provider, apiKey);
+    await handleConnectApiKeyProvider(
+      ctx,
+      msg,
+      provider,
+      apiKey,
+      parsed.baseUrl,
+    );
   }
 }
 

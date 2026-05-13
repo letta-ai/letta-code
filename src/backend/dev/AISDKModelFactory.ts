@@ -1,5 +1,8 @@
 import type { LanguageModel } from "ai";
-import { getLocalProviderApiKeyByName } from "../local/LocalProviderAuthStore";
+import {
+  getLocalProviderApiKeyByName,
+  getLocalProviderBaseUrlByName,
+} from "../local/LocalProviderAuthStore";
 import {
   type AISDKProvider,
   expectedAISDKProviderList,
@@ -26,7 +29,15 @@ export interface AISDKModelFactoryOptions {
   model?: string;
   createOpenAIResponsesModel?: (model: string) => LanguageModel;
   createAnthropicModel?: (model: string) => LanguageModel;
-  createOpenAICompatibleModel?: (model: string) => LanguageModel;
+  createOpenAICompatibleModel?: (
+    model: string,
+    options: {
+      apiKey?: string;
+      baseURL: string;
+      providerName: string;
+      headers?: Record<string, string>;
+    },
+  ) => LanguageModel;
   createChatGPTOAuthModel?: (model: string) => LanguageModel;
   createGoogleModel?: (model: string) => LanguageModel;
   createBedrockModel?: (model: string) => LanguageModel;
@@ -89,6 +100,18 @@ function localProviderApiKey(
   for (const providerName of providerNames) {
     const key = getLocalProviderApiKeyByName(providerName, storageDir);
     if (key) return key;
+  }
+  return envValue;
+}
+
+function localProviderBaseURL(
+  providerNames: readonly string[],
+  envValue: string | undefined,
+  storageDir?: string,
+): string | undefined {
+  for (const providerName of providerNames) {
+    const baseURL = getLocalProviderBaseUrlByName(providerName, storageDir);
+    if (baseURL) return baseURL;
   }
   return envValue;
 }
@@ -164,6 +187,11 @@ export function createAISDKModelFactory(
     spec.apiKeyEnv?.() ?? spec.fallbackApiKey,
     storageDir,
   );
+  const baseURL = localProviderBaseURL(
+    spec.localProviderNames,
+    spec.baseURL?.(),
+    storageDir,
+  );
 
   switch (spec.sdk) {
     case "openai-responses":
@@ -176,7 +204,7 @@ export function createAISDKModelFactory(
       return createAnthropicModelFactory({
         model,
         providerName: spec.providerName,
-        baseURL: spec.baseURL?.(),
+        baseURL,
         apiKey,
         createModel: options.createAnthropicModel,
       });
@@ -197,7 +225,7 @@ export function createAISDKModelFactory(
       return createOpenAICompatibleModelFactory({
         model,
         providerName: spec.providerName ?? provider,
-        baseURL: spec.baseURL?.() ?? "",
+        baseURL: baseURL ?? "",
         apiKey,
         headers: spec.headers?.(),
         createModel: options.createOpenAICompatibleModel,
@@ -207,7 +235,7 @@ export function createAISDKModelFactory(
       return createGoogleModelFactory({
         model,
         apiKey,
-        baseURL: spec.baseURL?.(),
+        baseURL,
         createModel: options.createGoogleModel,
       });
     case "bedrock":

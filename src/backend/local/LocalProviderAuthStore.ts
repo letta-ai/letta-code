@@ -167,6 +167,7 @@ export async function createOrUpdateLocalProvider(input: {
   accessKey?: string;
   region?: string;
   profile?: string;
+  baseUrl?: string;
   storageDir?: string;
 }): Promise<ProviderResponse> {
   if (!isLocalProviderTypeSupported(input.providerType)) {
@@ -191,6 +192,7 @@ export async function createOrUpdateLocalProvider(input: {
     ...(input.accessKey ? { access_key: input.accessKey } : {}),
     ...(input.region ? { region: input.region } : {}),
     ...(input.profile ? { profile: input.profile } : {}),
+    ...(input.baseUrl ? { base_url: input.baseUrl } : {}),
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
@@ -205,6 +207,7 @@ export async function updateLocalProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  baseUrl?: string,
   storageDir?: string,
 ): Promise<ProviderResponse> {
   const existing = listLocalProviderRecords(storageDir).find(
@@ -220,6 +223,7 @@ export async function updateLocalProvider(
     accessKey,
     region,
     profile,
+    baseUrl,
     storageDir,
   });
 }
@@ -253,6 +257,14 @@ export function getLocalProviderApiKeyByName(
 ): string | undefined {
   const record = getLocalProviderRecordByName(providerName, storageDir);
   return record?.auth.type === "api" ? record.auth.key : undefined;
+}
+
+export function getLocalProviderBaseUrlByName(
+  providerName: string,
+  storageDir?: string,
+): string | undefined {
+  const record = getLocalProviderRecordByName(providerName, storageDir);
+  return record?.base_url;
 }
 
 export function getLocalProviderApiKeyByType(
