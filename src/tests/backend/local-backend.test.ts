@@ -870,20 +870,77 @@ describe("LocalBackend", () => {
     }
   });
 
+  test("passes an explicit timeout to local AI SDK turns", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-turn-timeout-"),
+    );
+    try {
+      let capturedTimeout: unknown;
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        turnTimeoutMs: 60_000,
+        streamText: (options) => {
+          capturedTimeout = options.timeout;
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: "timeout-text",
+                text: "timeout response",
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: "assistant-timeout",
+              role: "assistant",
+              parts: [{ type: "text", text: "timeout response" }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Turn Timeout Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("hello timeout", agent.id),
+        ),
+      );
+
+      expect(capturedTimeout).toBe(60_000);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("compacts local conversation history with the backend all-compaction prompt", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-compact-"));
     try {
       let capturedSystem: string | undefined;
       let capturedPrompt: string | undefined;
+      let capturedTimeout: unknown;
       const backend = new LocalBackend({
         storageDir,
         executionMode: "deterministic",
         generateText: (async (options: {
           system?: string;
           prompt?: string;
+          timeout?: unknown;
         }) => {
           capturedSystem = options.system;
           capturedPrompt = options.prompt;
+          capturedTimeout = options.timeout;
           return { text: "manual local summary" } as never;
         }) as never,
       });
@@ -925,6 +982,7 @@ describe("LocalBackend", () => {
         summary: "manual local summary",
       });
       expect(capturedSystem).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+      expect(capturedTimeout).toBe(20 * 60 * 1000);
       expect(capturedPrompt).toContain("first request");
       expect(capturedPrompt).toContain("second request");
 
@@ -1404,6 +1462,94 @@ describe("LocalBackend", () => {
       expect(
         page.getPaginatedItems().map((message) => message.message_type),
       ).toEqual(["summary_message", "assistant_message"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("passes a dedicated timeout to local compaction after context overflow", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-auto-compact-timeout-"),
+    );
+    try {
+      let streamCalls = 0;
+      let summaryTimeout: unknown;
+      const overflow = new APICallError({
+        message: "context_length_exceeded: maximum context length exceeded",
+        url: "https://example.invalid/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: "maximum context length exceeded",
+        isRetryable: false,
+      });
+      const backend = new LocalBackend({
+        storageDir,
+        createModel: () => ({}) as LanguageModel,
+        compactionTimeoutMs: 60_000,
+        generateText: (async (options: { timeout?: unknown }) => {
+          summaryTimeout = options.timeout;
+          return { text: "overflow local summary" } as never;
+        }) as never,
+        streamText: () => {
+          streamCalls += 1;
+          if (streamCalls === 2) {
+            return {
+              fullStream: (async function* () {
+                yield {
+                  type: "error",
+                  error: overflow,
+                } as TextStreamPart<ToolSet>;
+              })(),
+            };
+          }
+
+          const text =
+            streamCalls === 1 ? "first response" : "after compaction";
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "text-delta",
+                id: `text-${streamCalls}`,
+                text,
+              } as TextStreamPart<ToolSet>;
+              yield {
+                type: "finish",
+                finishReason: "stop",
+              } as TextStreamPart<ToolSet>;
+            })(),
+            toUIMessageStream: uiMessageStreamWithFinish([], {
+              id: `assistant-${streamCalls}`,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            } as LocalMessage),
+          };
+        },
+      });
+
+      const agent = await backend.createAgent({
+        name: "Auto Compact Timeout Agent",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("first request", agent.id),
+        ),
+      );
+
+      await drainStream(
+        await backend.createConversationMessageStream(
+          conversation.id,
+          createBody("overflowing request", agent.id),
+        ),
+      );
+
+      expect(streamCalls).toBe(3);
+      expect(summaryTimeout).toBe(60_000);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

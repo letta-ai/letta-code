@@ -106,6 +106,7 @@ export type LocalGenerateTextFunction = (options: {
   providerOptions?: Parameters<typeof generateText>[0]["providerOptions"];
   maxRetries: number;
   abortSignal?: AbortSignal;
+  timeout?: Parameters<typeof generateText>[0]["timeout"];
 }) => ReturnType<typeof generateText>;
 
 export interface LocalAllCompactionInput {
@@ -116,6 +117,7 @@ export interface LocalAllCompactionInput {
   prompt?: string | null;
   clipChars?: number | null;
   abortSignal?: AbortSignal;
+  timeout?: Parameters<typeof generateText>[0]["timeout"];
   localProviderAuthStorageDir?: string;
 }
 
@@ -402,6 +404,7 @@ async function runGenerateText(
       providerOptions,
       maxRetries: 0,
       abortSignal: input.abortSignal,
+      timeout: input.timeout,
     });
     return { text: result.text };
   } catch (error) {
@@ -423,6 +426,7 @@ async function runGenerateText(
       providerOptions,
       maxRetries: 0,
       abortSignal: input.abortSignal,
+      timeout: input.timeout,
       // Compaction handles stream error parts directly below.
       onError: () => {},
     });

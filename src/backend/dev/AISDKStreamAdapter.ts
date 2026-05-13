@@ -37,6 +37,7 @@ import {
 } from "./ProviderTurnExecutor";
 
 type AISDKProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
+type AISDKTimeout = Parameters<typeof streamText>[0]["timeout"];
 type InputModality = "text" | "image" | "audio" | "video" | "pdf";
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
 const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
@@ -56,6 +57,7 @@ export type AISDKStreamTextFunction = (options: {
   providerOptions?: AISDKProviderOptions;
   maxRetries: number;
   abortSignal?: AbortSignal;
+  timeout?: AISDKTimeout;
   onError?: (event: { error: unknown }) => void;
 }) => {
   fullStream: AsyncIterable<TextStreamPart<ToolSet>>;
@@ -71,6 +73,7 @@ export type AISDKStreamTextFunction = (options: {
 export interface AISDKStreamAdapterOptions {
   createModel?: () => LanguageModel;
   abortSignal?: AbortSignal;
+  timeout?: AISDKTimeout;
   streamText?: AISDKStreamTextFunction;
   localProviderAuthStorageDir?: string;
   onContextWindowOverflow?: (
@@ -656,6 +659,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
   private readonly createModel?: () => LanguageModel;
   private readonly runStreamText: AISDKStreamTextFunction;
   private readonly abortSignal?: AbortSignal;
+  private readonly timeout?: AISDKTimeout;
   private readonly localProviderAuthStorageDir?: string;
   private readonly onContextWindowOverflow?: AISDKStreamAdapterOptions["onContextWindowOverflow"];
   private readonly onContextUsage?: AISDKStreamAdapterOptions["onContextUsage"];
@@ -664,6 +668,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
     this.createModel = options.createModel;
     this.runStreamText = options.streamText ?? defaultStreamText;
     this.abortSignal = options.abortSignal;
+    this.timeout = options.timeout;
     this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
     this.onContextUsage = options.onContextUsage;
@@ -727,6 +732,7 @@ export class AISDKStreamAdapter implements ProviderStreamAdapter {
       ),
       maxRetries: 0,
       abortSignal: this.abortSignal,
+      timeout: this.timeout,
       // We classify and handle stream errors in this adapter; suppress AI SDK's
       // default console.error logging for each error chunk.
       onError: () => {},

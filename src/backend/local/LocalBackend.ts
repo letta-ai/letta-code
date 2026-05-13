@@ -60,6 +60,9 @@ import {
 
 export type LocalBackendExecutionMode = "ai-sdk" | "deterministic";
 
+const LOCAL_TURN_TIMEOUT_MS = 10 * 60 * 1000;
+const LOCAL_COMPACTION_TIMEOUT_MS = 20 * 60 * 1000;
+
 export interface LocalBackendOptions {
   storageDir: string;
   defaultAgentId?: string;
@@ -68,6 +71,8 @@ export interface LocalBackendOptions {
   createModel?: () => LanguageModel;
   streamText?: AISDKStreamTextFunction;
   generateText?: LocalGenerateTextFunction;
+  turnTimeoutMs?: number;
+  compactionTimeoutMs?: number;
   memoryDir?: string;
   memfsEnabled?: boolean;
 }
@@ -194,6 +199,12 @@ function localCompactionSettingsForStorage(
   return { ...settings };
 }
 
+function localTimeoutMs(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : fallback;
+}
+
 function contextTokensFromUsage(usage: LanguageModelUsage): number | undefined {
   const inputTokens =
     typeof usage.inputTokens === "number" ? usage.inputTokens : undefined;
@@ -236,6 +247,7 @@ function createLocalExecutor(
     new AISDKStreamAdapter({
       createModel: options.createModel,
       streamText: options.streamText,
+      timeout: localTimeoutMs(options.turnTimeoutMs, LOCAL_TURN_TIMEOUT_MS),
       localProviderAuthStorageDir: options.storageDir,
       onContextWindowOverflow,
       onContextUsage,
@@ -259,6 +271,7 @@ export class LocalBackend extends HeadlessBackend {
   private readonly storageDir: string;
   private readonly createModel?: () => LanguageModel;
   private readonly generateText?: LocalGenerateTextFunction;
+  private readonly compactionTimeoutMs: number;
   private readonly memfsEnabledOverride?: boolean;
 
   constructor(options: LocalBackendOptions) {
@@ -299,6 +312,10 @@ export class LocalBackend extends HeadlessBackend {
     this.memoryDir = options.memoryDir;
     this.createModel = options.createModel;
     this.generateText = options.generateText;
+    this.compactionTimeoutMs = localTimeoutMs(
+      options.compactionTimeoutMs,
+      LOCAL_COMPACTION_TIMEOUT_MS,
+    );
     this.memfsEnabledOverride = options.memfsEnabled;
   }
 
@@ -676,6 +693,7 @@ export class LocalBackend extends HeadlessBackend {
       generateText: this.generateText,
       prompt: settings.prompt,
       clipChars: settings.clipChars,
+      timeout: this.compactionTimeoutMs,
       localProviderAuthStorageDir: this.storageDir,
     });
     const stats: LocalCompactionStats = {
@@ -729,6 +747,7 @@ export class LocalBackend extends HeadlessBackend {
       generateText: this.generateText,
       prompt: settings.prompt,
       clipChars: settings.clipChars,
+      timeout: this.compactionTimeoutMs,
       localProviderAuthStorageDir: this.storageDir,
     });
     const contextTokensAfter =
