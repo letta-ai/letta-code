@@ -6,7 +6,7 @@ describe("summarizeShellDisplay", () => {
     expect(summarizeShellDisplay('rg -n "TODO" src')).toMatchObject({
       kind: "search",
       label: "Search",
-      summary: 'query: "TODO", path: src',
+      summary: '"TODO" in src',
     });
   });
 
@@ -16,7 +16,7 @@ describe("summarizeShellDisplay", () => {
     ).toMatchObject({
       kind: "list",
       label: "List",
-      summary: "path: src/channels, limit: 50",
+      summary: "src/channels, limit: 50",
     });
   });
 
@@ -26,7 +26,7 @@ describe("summarizeShellDisplay", () => {
     ).toMatchObject({
       kind: "list",
       label: "List",
-      summary: "path: webview/src",
+      summary: "webview/src",
     });
   });
 
@@ -36,7 +36,7 @@ describe("summarizeShellDisplay", () => {
     ).toMatchObject({
       kind: "list",
       label: "List",
-      summary: "path: src/channels, limit: 20",
+      summary: "src/channels, limit: 20",
     });
   });
 
@@ -44,7 +44,7 @@ describe("summarizeShellDisplay", () => {
     expect(summarizeShellDisplay("find . -name '*.rs'")).toMatchObject({
       kind: "list",
       label: "List",
-      summary: "path: .",
+      summary: ".",
     });
   });
 
@@ -52,7 +52,7 @@ describe("summarizeShellDisplay", () => {
     expect(summarizeShellDisplay("exa -I target .")).toMatchObject({
       kind: "list",
       label: "List",
-      summary: "path: .",
+      summary: ".",
     });
   });
 
@@ -60,7 +60,7 @@ describe("summarizeShellDisplay", () => {
     expect(summarizeShellDisplay("sed -n '1,120p' src/foo.ts")).toMatchObject({
       kind: "read",
       label: "Read",
-      summary: "path: src/foo.ts, lines: 1-120",
+      summary: "src/foo.ts, lines: 1-120",
     });
   });
 
@@ -68,7 +68,7 @@ describe("summarizeShellDisplay", () => {
     expect(summarizeShellDisplay("head -n 80 src/foo.ts")).toMatchObject({
       kind: "read",
       label: "Read",
-      summary: "path: src/foo.ts, lines: 1-80",
+      summary: "src/foo.ts, lines: 1-80",
     });
   });
 
@@ -76,7 +76,7 @@ describe("summarizeShellDisplay", () => {
     expect(summarizeShellDisplay("tail -n 40 src/foo.ts")).toMatchObject({
       kind: "read",
       label: "Read",
-      summary: "path: src/foo.ts, last: 40 lines",
+      summary: "src/foo.ts, last: 40 lines",
     });
   });
 
@@ -86,7 +86,7 @@ describe("summarizeShellDisplay", () => {
     ).toMatchObject({
       kind: "search",
       label: "Search",
-      summary: 'query: "queue", path: src/websocket',
+      summary: '"queue" in src/websocket',
       rawCommand: "git grep queue src/websocket",
     });
   });
@@ -95,7 +95,7 @@ describe("summarizeShellDisplay", () => {
     expect(summarizeShellDisplay("cd app && rg --files")).toMatchObject({
       kind: "list",
       label: "List",
-      summary: "path: app",
+      summary: "app",
     });
   });
 
@@ -132,7 +132,6 @@ describe("summarizeShellDisplay", () => {
       label: "List",
       rawCommand: command,
     });
-    expect(summary.summary).toContain("path: .");
     expect(summary.summary).toContain("filter:");
     expect(summary.summary).toContain("apps/code-desktop");
     expect(summary.summary).toContain("pnpm-workspace");
@@ -145,7 +144,7 @@ describe("summarizeShellDisplay", () => {
       kind: "read",
       label: "Read",
       rawCommand: command,
-      summary: "path: apps/desktop-ui/vite.config.ts, lines: 1-240",
+      summary: "apps/desktop-ui/vite.config.ts, lines: 1-240",
     });
   });
 
@@ -158,7 +157,7 @@ describe("summarizeShellDisplay", () => {
       label: "List",
       rawCommand: command,
     });
-    expect(summary.summary).toContain("path: apps/code-desktop/ui");
+    expect(summary.summary).toContain("apps/code-desktop/ui");
     expect(summary.summary).toContain("filter:");
     expect(summary.summary).toContain("vite");
     expect(summary.summary).toContain("project");
@@ -173,7 +172,7 @@ describe("summarizeShellDisplay", () => {
       label: "List",
       rawCommand: command,
     });
-    expect(summary.summary).toContain("path: apps/code-desktop");
+    expect(summary.summary).toContain("apps/code-desktop");
     expect(summary.summary).toContain("filter:");
     expect(summary.summary).toContain("electron-builder");
   });
@@ -187,7 +186,7 @@ describe("summarizeShellDisplay", () => {
       label: "List",
       rawCommand: command,
     });
-    expect(summary.summary).toContain("path: apps/code-desktop/dist/assets");
+    expect(summary.summary).toContain("apps/code-desktop/dist/assets");
   });
 
   test("keeps the exact node heredoc capture on the run path", () => {
