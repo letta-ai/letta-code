@@ -8,6 +8,7 @@ import type { SlackChannelAccount } from "../types";
 import { createSlackWebApiClient } from "./webApiClient";
 
 const SLACK_CHANNEL_ID_PATTERN = /^[CG][A-Z0-9]+$/;
+const SLACK_USER_ID_PATTERN = /^[UW][A-Z0-9]+$/;
 const SLACK_CHANNEL_TYPES = "public_channel,private_channel";
 const SLACK_LIST_LIMIT = 200;
 
@@ -35,7 +36,22 @@ type SlackReadClient = {
         next_cursor?: string;
       };
     }>;
+    open: (args: { users: string }) => Promise<{
+      ok?: boolean;
+      error?: string;
+      channel?: {
+        id?: string;
+      };
+    }>;
   };
+};
+
+type SlackListClient = {
+  conversations: Pick<SlackReadClient["conversations"], "list">;
+};
+
+type SlackOpenClient = {
+  conversations: Pick<SlackReadClient["conversations"], "open">;
 };
 
 type NormalizedSlackTarget =
@@ -48,6 +64,11 @@ type NormalizedSlackTarget =
       kind: "name";
       raw: string;
       name: string;
+    }
+  | {
+      kind: "user";
+      raw: string;
+      userId: string;
     };
 
 function normalizeSlackChannelName(value: string): string {
@@ -84,9 +105,14 @@ function normalizeSlackTarget(
       return normalizeSlackTarget(value);
     }
     if (prefix === "user") {
-      return 'Error: Slack proactive MessageChannel currently supports channel targets only. Use a channel target like "#general" or "channel:C123".';
+      return normalizeSlackUserTarget(value, trimmed);
     }
     return `Error: Unsupported Slack MessageChannel target prefix "${prefix}".`;
+  }
+
+  const normalizedUser = normalizeSlackUserTarget(trimmed, trimmed);
+  if (typeof normalizedUser !== "string") {
+    return normalizedUser;
   }
 
   if (SLACK_CHANNEL_ID_PATTERN.test(trimmed)) {
@@ -109,6 +135,27 @@ function normalizeSlackTarget(
   };
 }
 
+function normalizeSlackUserTarget(
+  rawUserTarget: string,
+  rawTarget: string,
+): Extract<NormalizedSlackTarget, { kind: "user" }> | string {
+  const userId = rawUserTarget
+    .trim()
+    .replace(/^<@/, "")
+    .replace(/>$/, "")
+    .trim();
+
+  if (!SLACK_USER_ID_PATTERN.test(userId)) {
+    return 'Error: Slack user targets must be Slack user IDs like "user:U12345678".';
+  }
+
+  return {
+    kind: "user",
+    raw: rawTarget,
+    userId,
+  };
+}
+
 function findCachedSlackTarget(params: {
   accountId: string;
   normalizedTarget: NormalizedSlackTarget;
@@ -118,6 +165,9 @@ function findCachedSlackTarget(params: {
 
   const matches = targets.filter((target) => {
     const normalizedTarget = params.normalizedTarget;
+    if (normalizedTarget.kind === "user") {
+      return false;
+    }
     if (normalizedTarget.kind === "id") {
       return (
         target.targetId === normalizedTarget.chatId ||
@@ -144,7 +194,7 @@ function findCachedSlackTarget(params: {
 
 export async function listSlackChannels(
   account: SlackChannelAccount,
-  existingClient?: SlackReadClient,
+  existingClient?: SlackListClient,
 ): Promise<SlackConversationRecord[]> {
   const client =
     existingClient ??
@@ -188,11 +238,47 @@ export async function listSlackChannels(
   return channels;
 }
 
+export async function openSlackDirectMessage(
+  account: SlackChannelAccount,
+  userId: string,
+  existingClient?: SlackOpenClient,
+): Promise<SlackConversationRecord> {
+  const client =
+    existingClient ??
+    (await createSlackWebApiClient<SlackReadClient>(account.botToken, {
+      retryConfig: {
+        retries: 0,
+      },
+    }));
+
+  const response = await client.conversations.open({ users: userId });
+  if (!response.ok) {
+    throw new Error(
+      `Failed to open Slack DM with ${userId}: ${response.error ?? "unknown error"}`,
+    );
+  }
+
+  const channelId = response.channel?.id;
+  if (!channelId) {
+    throw new Error(
+      `Failed to open Slack DM with ${userId}: missing channel id`,
+    );
+  }
+
+  return {
+    id: channelId,
+    name: userId,
+  };
+}
+
 function findSlackChannelByTarget(params: {
   channels: SlackConversationRecord[];
   normalizedTarget: NormalizedSlackTarget;
 }): SlackConversationRecord | string | null {
   const normalizedTarget = params.normalizedTarget;
+  if (normalizedTarget.kind === "user") {
+    return null;
+  }
   if (normalizedTarget.kind === "id") {
     return (
       params.channels.find(
@@ -236,10 +322,26 @@ export async function resolveSlackMessageTarget(params: {
   lookupChannels?: (
     account: SlackChannelAccount,
   ) => Promise<SlackConversationRecord[]>;
+  openDirectMessage?: (
+    account: SlackChannelAccount,
+    userId: string,
+  ) => Promise<SlackConversationRecord>;
 }): Promise<ChannelResolvedMessageTarget> {
   const normalizedTarget = normalizeSlackTarget(params.target);
   if (typeof normalizedTarget === "string") {
     throw new Error(normalizedTarget);
+  }
+
+  if (normalizedTarget.kind === "user") {
+    const dm = await (params.openDirectMessage ?? openSlackDirectMessage)(
+      params.account,
+      normalizedTarget.userId,
+    );
+    return {
+      chatId: dm.id,
+      chatType: "direct",
+      label: `@${normalizedTarget.userId}`,
+    };
   }
 
   const cachedTarget = findCachedSlackTarget({

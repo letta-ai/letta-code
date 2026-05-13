@@ -15,7 +15,7 @@
     },
     "target": {
       "type": "string",
-      "description": "Explicit outbound target for proactive sends on supported channels (for example, a Slack channel like '#general' or 'channel:C12345678')."
+      "description": "Explicit outbound target for proactive sends on supported channels (for example, a Slack channel like '#general' or 'channel:C12345678', or a Slack user DM like 'user:U12345678')."
     },
     "accountId": {
       "type": "string",

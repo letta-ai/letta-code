@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import {
   listSlackChannels,
+  openSlackDirectMessage,
   resolveSlackMessageTarget,
 } from "../../channels/slack/targetResolution";
 import {
@@ -141,14 +142,83 @@ describe("Slack MessageChannel target resolution", () => {
     });
   });
 
-  test("rejects unsupported Slack user targets in proactive mode", async () => {
+  test("opens Slack DMs for explicit user targets", async () => {
+    const openDirectMessage = mock(async () => ({
+      id: "D12345678",
+      name: "U12345678",
+    }));
+
+    const resolved = await resolveSlackMessageTarget({
+      account: makeSlackAccount("docsbot"),
+      target: "user:U12345678",
+      openDirectMessage,
+    });
+
+    expect(resolved).toEqual({
+      chatId: "D12345678",
+      chatType: "direct",
+      label: "@U12345678",
+    });
+    expect(openDirectMessage).toHaveBeenCalledWith(
+      makeSlackAccount("docsbot"),
+      "U12345678",
+    );
+  });
+
+  test("treats raw Slack user ids as direct-message targets", async () => {
+    const lookupChannels = mock(async () => {
+      throw new Error("user targets should not list channels");
+    });
+    const openDirectMessage = mock(async () => ({
+      id: "D87654321",
+      name: "U87654321",
+    }));
+
+    const resolved = await resolveSlackMessageTarget({
+      account: makeSlackAccount("docsbot"),
+      target: "U87654321",
+      lookupChannels,
+      openDirectMessage,
+    });
+
+    expect(resolved).toEqual({
+      chatId: "D87654321",
+      chatType: "direct",
+      label: "@U87654321",
+    });
+    expect(lookupChannels).not.toHaveBeenCalled();
+    expect(openDirectMessage).toHaveBeenCalledWith(
+      makeSlackAccount("docsbot"),
+      "U87654321",
+    );
+  });
+
+  test("opens Slack DMs through conversations.open", async () => {
+    const open = mock(async () => ({
+      ok: true,
+      channel: { id: "D12345678" },
+    }));
+
+    const resolved = await openSlackDirectMessage(
+      makeSlackAccount("docsbot"),
+      "U12345678",
+      {
+        conversations: { open },
+      },
+    );
+
+    expect(resolved).toEqual({ id: "D12345678", name: "U12345678" });
+    expect(open).toHaveBeenCalledWith({ users: "U12345678" });
+  });
+
+  test("rejects malformed Slack user targets", async () => {
     await expect(
       resolveSlackMessageTarget({
         account: makeSlackAccount("docsbot"),
-        target: "user:U12345678",
+        target: "user:cameron",
       }),
     ).rejects.toThrow(
-      'Error: Slack proactive MessageChannel currently supports channel targets only. Use a channel target like "#general" or "channel:C123".',
+      'Error: Slack user targets must be Slack user IDs like "user:U12345678".',
     );
   });
 });
