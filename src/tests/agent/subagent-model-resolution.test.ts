@@ -360,6 +360,46 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-system-info-reminder");
     expect(args).not.toContain("--no-skills");
   });
+
+  test.each([["reflection"], ["memory"], ["history-analyzer"], ["init"]])(
+    "injects --base-tools none for %s subagents",
+    (type) => {
+      const args = buildSubagentArgs(
+        type,
+        { ...baseConfig, name: type },
+        null,
+        "hello",
+      );
+
+      const idx = args.indexOf("--base-tools");
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(args[idx + 1]).toBe("none");
+    },
+  );
+
+  test("does not inject --base-tools for general-purpose subagents", () => {
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      "hello",
+    );
+
+    expect(args).not.toContain("--base-tools");
+  });
+
+  test("does not inject --base-tools when deploying an existing reflection agent", () => {
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection" },
+      null,
+      "hello",
+      "agent-existing-reflection",
+    );
+
+    // --base-tools requires --new and only applies to fresh agent creation.
+    expect(args).not.toContain("--base-tools");
+  });
 });
 
 describe("getModelHandleFromAgent", () => {
