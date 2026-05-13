@@ -1,10 +1,13 @@
 import { expect, mock, test } from "bun:test";
-import {
-  resolveSlackChannelHistory,
-  resolveSlackThreadStarter,
-} from "../../channels/slack/media";
+
+async function loadSlackMediaModule() {
+  return import(
+    `../../channels/slack/media.ts?slack-media-test=${Date.now()}-${Math.random()}`
+  );
+}
 
 test("resolveSlackThreadStarter falls back to forwarded Slack attachment text", async () => {
+  const { resolveSlackThreadStarter } = await loadSlackMediaModule();
   const client = {
     conversations: {
       history: mock(async () => ({ messages: [] })),
@@ -42,6 +45,7 @@ test("resolveSlackThreadStarter falls back to forwarded Slack attachment text", 
 });
 
 test("resolveSlackChannelHistory retains forwarded Slack attachment text", async () => {
+  const { resolveSlackChannelHistory } = await loadSlackMediaModule();
   const client = {
     conversations: {
       history: mock(async () => ({
