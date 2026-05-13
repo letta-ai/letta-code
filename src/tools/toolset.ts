@@ -1,23 +1,22 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
+import { getBackend } from "../backend";
+import { getClient } from "../backend/api/client";
 import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
+import { getSupportedChannelIds } from "../channels/pluginRegistry";
 import { getChannelRegistry } from "../channels/registry";
 import { getRoutesForChannel, loadRoutes } from "../channels/routing";
-import {
-  SUPPORTED_CHANNEL_IDS,
-  type SupportedChannelId,
-} from "../channels/types";
+import type { SupportedChannelId } from "../channels/types";
 import type { RuntimeContextSnapshot } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
 import { toolFilter } from "./filter";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
   clearToolsWithLock,
+  filterBuiltInToolNamesByClientAllowlist,
   GEMINI_DEFAULT_TOOLS,
   GEMINI_PASCAL_TOOLS,
   getToolNames,
-  isGeminiModel,
   isOpenAIModel,
   loadSpecificTools,
   loadTools,
@@ -56,13 +55,9 @@ export type ToolsetPreference = ToolsetName | "auto";
 
 export function deriveToolsetFromModel(
   modelIdentifier: string,
-): "codex" | "gemini" | "default" {
+): "codex" | "default" {
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
-  return isOpenAIModel(resolvedModel)
-    ? "codex"
-    : isGeminiModel(resolvedModel)
-      ? "gemini"
-      : "default";
+  return isOpenAIModel(resolvedModel) ? "codex" : "default";
 }
 
 type ScopeModelCarrier = Pick<AgentState, "model" | "llm_config">;
@@ -72,6 +67,7 @@ export type PreparedScopeToolContext = {
   toolset: ToolsetName;
   toolsetPreference: ToolsetPreference;
   effectiveModel: string | null;
+  agent: AgentState | null;
 };
 
 function buildModelHandleFromLlmConfig(
@@ -138,10 +134,59 @@ function getToolNamesForToolset(
   return tools;
 }
 
+export function getGoalToolNamesForToolset(
+  toolsetName: ToolsetName,
+): ToolName[] {
+  switch (toolsetName) {
+    case "codex_snake":
+    case "gemini_snake":
+      return ["get_goal", "create_goal", "update_goal"];
+    case "codex":
+    case "gemini":
+    case "default":
+      return ["GetGoal", "CreateGoal", "UpdateGoal"];
+    case "none":
+      return [];
+  }
+}
+
+function appendUniqueTools(
+  toolNames: ToolName[],
+  additions: ToolName[],
+): ToolName[] {
+  if (additions.length === 0) return toolNames;
+  const result = [...toolNames];
+  const seen = new Set(result);
+  for (const toolName of additions) {
+    if (!seen.has(toolName)) {
+      result.push(toolName);
+      seen.add(toolName);
+    }
+  }
+  return result;
+}
+
+function areGoalToolsEnabledForScope(params: {
+  conversationId?: string | null;
+  workingDirectory?: string;
+}): boolean {
+  if (!params.conversationId) return false;
+  try {
+    return settingsManager.areConversationGoalToolsEnabled(
+      params.conversationId,
+      params.workingDirectory,
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function prepareToolExecutionContextForResolvedTarget(params: {
   modelIdentifier?: string | null;
+  conversationId?: string | null;
   toolsetPreference: ToolsetPreference;
   exclude?: ToolName[];
+  clientToolAllowlist?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -149,8 +194,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
+    conversationId,
     toolsetPreference,
     exclude,
+    clientToolAllowlist,
     workingDirectory,
     permissionModeState,
     channelToolScope,
@@ -162,10 +209,20 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       : null;
 
   if (toolsetPreference === "auto") {
+    const derivedToolset = effectiveModel
+      ? deriveToolsetFromModel(effectiveModel)
+      : "default";
     const preparedToolContext = await prepareToolExecutionContextForModel(
       effectiveModel ?? undefined,
       {
         exclude,
+        include: areGoalToolsEnabledForScope({
+          conversationId,
+          workingDirectory,
+        })
+          ? getGoalToolNamesForToolset(derivedToolset)
+          : undefined,
+        clientToolAllowlist,
         workingDirectory,
         permissionModeState,
         channelToolScope,
@@ -175,19 +232,27 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
     return {
       preparedToolContext,
-      toolset: effectiveModel
-        ? deriveToolsetFromModel(effectiveModel)
-        : "default",
+      toolset: derivedToolset,
       toolsetPreference,
       effectiveModel,
+      agent: null,
     };
   }
 
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
-    getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
-      (toolName) => (exclude ? !exclude.includes(toolName) : true),
+    filterBuiltInToolNamesByClientAllowlist(
+      appendUniqueTools(
+        getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
+          (toolName) => (exclude ? !exclude.includes(toolName) : true),
+        ),
+        areGoalToolsEnabledForScope({ conversationId, workingDirectory })
+          ? getGoalToolNamesForToolset(toolsetPreference)
+          : [],
+      ),
+      clientToolAllowlist,
     ),
     {
+      clientToolAllowlist,
       workingDirectory,
       permissionModeState,
       channelToolScope,
@@ -200,10 +265,11 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolset: toolsetPreference,
     toolsetPreference,
     effectiveModel,
+    agent: null,
   };
 }
 
-function resolveConversationChannelToolScope(
+export function resolveConversationChannelToolScope(
   agentId: string,
   conversationId: string,
 ): MessageChannelToolDiscoveryScope {
@@ -218,7 +284,7 @@ function resolveConversationChannelToolScope(
   }> = [];
   const seen = new Set<string>();
 
-  for (const channelId of SUPPORTED_CHANNEL_IDS) {
+  for (const channelId of getSupportedChannelIds()) {
     loadRoutes(channelId);
     for (const route of getRoutesForChannel(channelId)) {
       if (
@@ -245,7 +311,6 @@ function resolveConversationChannelToolScope(
       });
     }
   }
-
   return { channels };
 }
 
@@ -253,31 +318,46 @@ export async function prepareToolExecutionContextForScope(params: {
   agentId: string;
   conversationId?: string | null;
   overrideModel?: string | null;
+  cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
+  clientToolAllowlist?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
+  cachedAgent?: AgentState | null;
 }): Promise<PreparedScopeToolContext> {
   const {
     agentId,
     conversationId,
     overrideModel,
+    cachedEffectiveModel,
     exclude,
+    clientToolAllowlist,
     workingDirectory,
     permissionModeState,
+    cachedAgent,
   } = params;
 
-  const client = await getClient();
-  const agent = (await client.agents.retrieve(agentId)) as ScopeModelCarrier;
+  const backend = getBackend();
+  const agent = (cachedAgent ??
+    (await backend.retrieveAgent(agentId))) as ScopeModelCarrier;
   let effectiveModel =
     overrideModel && overrideModel.length > 0
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
 
+  if (
+    !effectiveModel &&
+    cachedEffectiveModel &&
+    cachedEffectiveModel.length > 0
+  ) {
+    effectiveModel = resolveModel(cachedEffectiveModel) ?? cachedEffectiveModel;
+  }
+
   if (!effectiveModel && conversationId && conversationId !== "default") {
-    const conversation = await client.conversations.retrieve(conversationId);
+    const conversation = await backend.retrieveConversation(conversationId);
     const conversationModel = (conversation as { model?: string | null }).model;
     if (typeof conversationModel === "string" && conversationModel.length > 0) {
-      effectiveModel = conversationModel;
+      effectiveModel = resolveModel(conversationModel) ?? conversationModel;
     }
   }
 
@@ -293,10 +373,12 @@ export async function prepareToolExecutionContextForScope(params: {
     }
   })();
 
-  return prepareToolExecutionContextForResolvedTarget({
+  const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
+    conversationId: conversationId ?? undefined,
     toolsetPreference,
     exclude,
+    clientToolAllowlist,
     workingDirectory,
     permissionModeState,
     runtimeContext: {
@@ -309,6 +391,7 @@ export async function prepareToolExecutionContextForScope(params: {
       conversationId ?? "default",
     ),
   });
+  return { ...result, agent: agent as AgentState };
 }
 
 /**
@@ -328,6 +411,9 @@ export async function ensureCorrectMemoryTool(
 ): Promise<void> {
   void resolveModel(modelIdentifier);
   void useMemoryPatch;
+  if (!getBackend().capabilities.serverSideToolManagement) {
+    return;
+  }
   const client = await getClient();
 
   try {
@@ -403,6 +489,9 @@ export async function ensureCorrectMemoryTool(
  * @returns true if any tools were detached
  */
 export async function detachMemoryTools(agentId: string): Promise<boolean> {
+  if (!getBackend().capabilities.serverSideToolManagement) {
+    return false;
+  }
   const client = await getClient();
 
   try {
@@ -443,6 +532,9 @@ export async function reattachMemoryTool(
   modelIdentifier: string,
 ): Promise<void> {
   void resolveModel(modelIdentifier);
+  if (!getBackend().capabilities.serverSideToolManagement) {
+    return;
+  }
   const client = await getClient();
 
   try {
@@ -495,19 +587,21 @@ export function shouldClearPersistedToolRules(
 
 export async function clearPersistedClientToolRules(
   agentId: string,
+  cachedAgent?: AgentState | null,
 ): Promise<{ removedToolNames: string[] } | null> {
-  const client = await getClient();
+  const backend = getBackend();
 
   try {
-    const agentWithTools = (await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    })) as AgentWithToolsAndRules;
+    const agentWithTools = (cachedAgent ??
+      (await backend.retrieveAgent(agentId, {
+        include: ["agent.tools"],
+      }))) as AgentWithToolsAndRules;
     if (!shouldClearPersistedToolRules(agentWithTools)) {
       return null;
     }
     const existingRules = agentWithTools.tool_rules || [];
 
-    await client.agents.update(agentId, {
+    await backend.updateAgent(agentId, {
       tool_rules: [],
     });
 

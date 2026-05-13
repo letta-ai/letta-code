@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["complete"],
+      "description": "Required. Set to complete only when the objective is achieved and no required work remains."
+    }
+  },
+  "required": ["status"],
+  "additionalProperties": false
+}

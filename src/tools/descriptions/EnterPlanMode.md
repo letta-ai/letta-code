@@ -40,7 +40,7 @@ Only skip EnterPlanMode for simple tasks:
 - Single-line or few-line fixes (typos, obvious bugs, small tweaks)
 - Adding a single function with clear requirements
 - Tasks where the user has given very specific, detailed instructions
-- Pure research/exploration tasks (use the Task tool with explore agent instead)
+- Pure research/exploration tasks (use the Task tool instead)
 
 ## What Happens in Plan Mode
 

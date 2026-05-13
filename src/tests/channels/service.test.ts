@@ -171,14 +171,14 @@ describe("channel service", () => {
         configured: true,
         hasBotToken: true,
         hasAppToken: true,
-        defaultPermissionMode: "default",
+        defaultPermissionMode: "standard",
       }),
     );
 
     const updated = updateChannelAccountLive("slack", "docsbot", {
       displayName: "DocsBot Support",
       enabled: true,
-      defaultPermissionMode: "bypassPermissions",
+      defaultPermissionMode: "unrestricted",
     });
     expect(updated.displayName).toBe("DocsBot Support");
     expect(updated.enabled).toBe(true);
@@ -186,7 +186,7 @@ describe("channel service", () => {
     if (updated.channelId !== "slack") {
       throw new Error("Expected Slack account snapshot");
     }
-    expect(updated.defaultPermissionMode).toBe("bypassPermissions");
+    expect(updated.defaultPermissionMode).toBe("unrestricted");
 
     const bound = bindChannelAccountLive(
       "slack",
@@ -205,7 +205,7 @@ describe("channel service", () => {
         accountId: "docsbot",
         displayName: "DocsBot Support",
         agentId: "agent-docs",
-        defaultPermissionMode: "bypassPermissions",
+        defaultPermissionMode: "unrestricted",
       }),
     );
 
@@ -356,7 +356,7 @@ describe("channel service", () => {
         dmPolicy: "pairing",
         allowedUsers: [],
         agentId: null,
-        defaultPermissionMode: "default",
+        defaultPermissionMode: "standard",
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T00:00:00.000Z",
       },
@@ -367,7 +367,7 @@ describe("channel service", () => {
     expect(snapshot?.displayName).toBeUndefined();
     expect(snapshot?.channelId).toBe("slack");
     if (snapshot?.channelId === "slack") {
-      expect(snapshot.defaultPermissionMode).toBe("default");
+      expect(snapshot.defaultPermissionMode).toBe("standard");
     }
   });
 
@@ -420,7 +420,7 @@ describe("channel service", () => {
     });
 
     expect(snapshot.accountId).not.toBe(LEGACY_CHANNEL_ACCOUNT_ID);
-    expect(snapshot.accountId).not.toBe("default");
+    expect(snapshot.accountId).not.toBe("standard");
     expect(snapshot.displayName).toBeUndefined();
 
     expect(getChannelConfigSnapshot("telegram")).toEqual(snapshot);
@@ -461,6 +461,12 @@ describe("channel service", () => {
           agentId: "agent-telegram",
           conversationId: "conv-telegram",
         },
+        config: expect.objectContaining({
+          binding: {
+            agent_id: "agent-telegram",
+            conversation_id: "conv-telegram",
+          },
+        }),
       }),
     );
   });

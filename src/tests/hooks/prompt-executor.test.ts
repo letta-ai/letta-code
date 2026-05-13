@@ -24,9 +24,9 @@ interface GenerateOpts {
   timeout?: number;
 }
 
-// Mock getClient to avoid real API calls
+// Mock generate seam to avoid real API calls
 const mockPost = mock(
-  (_path: string, _opts: GenerateOpts) =>
+  (_agentId: string, _body: GenerateOpts["body"], _timeout: number) =>
     Promise.resolve({
       content: '{"ok": true}',
       model: "test-model",
@@ -37,10 +37,9 @@ const mockPost = mock(
       },
     }) as Promise<Record<string, unknown>>,
 );
-const mockGetClient = mock(() => Promise.resolve({ post: mockPost }));
 
-mock.module("../../agent/client", () => ({
-  getClient: mockGetClient,
+mock.module("../../backend/api/generate", () => ({
+  generateAgentResponse: mockPost,
 }));
 
 const { executePromptHook } = await import("../../hooks/prompt-executor");
@@ -50,13 +49,13 @@ function firstPostCall(): [string, GenerateOpts] {
   const calls = mockPost.mock.calls;
   const call = calls[0];
   if (!call) throw new Error("mockPost was not called");
-  return call;
+  const [agentId, body, timeout] = call;
+  return [`/v1/agents/${agentId}/generate`, { body, timeout }];
 }
 
 describe("Prompt Hook Executor", () => {
   beforeEach(() => {
     mockPost.mockClear();
-    mockGetClient.mockClear();
 
     // Default: allow
     mockPost.mockResolvedValue({
@@ -97,7 +96,6 @@ describe("Prompt Hook Executor", () => {
 
       expect(result.exitCode).toBe(HookExitCode.ALLOW);
       expect(result.timedOut).toBe(false);
-      expect(mockGetClient).toHaveBeenCalledTimes(1);
       expect(mockPost).toHaveBeenCalledTimes(1);
 
       // Verify the correct path and body were sent

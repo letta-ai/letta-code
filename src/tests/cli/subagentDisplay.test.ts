@@ -32,7 +32,7 @@ describe("getSubagentModelDisplay", () => {
   test("marks chatgpt-plus-pro handles as BYOK", () => {
     const display = getSubagentModelDisplay("chatgpt-plus-pro/gpt-5.2-codex");
     expect(display).toEqual({
-      label: "GPT-5.2 Codex",
+      label: "gpt-5.2-codex",
       isByokProvider: true,
       isOpenAICodexProvider: true,
     });

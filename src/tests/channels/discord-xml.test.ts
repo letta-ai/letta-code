@@ -3,7 +3,6 @@ import type { InboundChannelMessage } from "../../channels/types";
 import {
   buildChannelNotificationXml,
   buildChannelReminderText,
-  formatChannelNotification,
 } from "../../channels/xml";
 
 describe("discord xml", () => {

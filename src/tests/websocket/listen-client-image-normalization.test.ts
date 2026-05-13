@@ -117,4 +117,96 @@ describe("listen-client inbound image normalization", () => {
     expect(metadata.width).toBeLessThanOrEqual(MAX_IMAGE_WIDTH);
     expect(metadata.height).toBeLessThanOrEqual(MAX_IMAGE_HEIGHT);
   });
+
+  test("canonicalizes unsupported declared media types from decoded image bytes", async () => {
+    const pngBuffer = await sharp({
+      create: {
+        width: 64,
+        height: 48,
+        channels: 3,
+        background: { r: 20, g: 80, b: 200 },
+      },
+    })
+      .png()
+      .toBuffer();
+
+    const normalized = await __listenClientTestUtils.normalizeInboundMessages([
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "text", text: "check this screenshot" },
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/tiff",
+              data: pngBuffer.toString("base64"),
+            },
+          },
+        ],
+        client_message_id: "cm-image-tiff-label",
+      },
+    ]);
+
+    const message = normalized[0];
+    if (
+      !message ||
+      !("content" in message) ||
+      typeof message.content === "string"
+    ) {
+      throw new Error("Expected normalized multimodal message");
+    }
+
+    const imagePart = message.content[1];
+    if (
+      !imagePart ||
+      imagePart.type !== "image" ||
+      imagePart.source.type !== "base64"
+    ) {
+      throw new Error("Expected normalized base64 image content");
+    }
+
+    expect(imagePart.source.media_type).toBe("image/png");
+  });
+
+  test("drops inbound image parts when best-effort normalization fails", async () => {
+    const normalized = await __listenClientTestUtils.normalizeInboundMessages(
+      [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "text", text: "channel reminder" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/heic",
+                data: "raw-base64-image",
+              },
+            },
+            { type: "text", text: "<channel-notification />" },
+          ],
+          client_message_id: "cm-image-drop-on-failure",
+        },
+      ],
+      async () => {
+        throw new Error("codec unavailable");
+      },
+      { imageFailureMode: "drop" },
+    );
+
+    expect(normalized).toEqual([
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "text", text: "channel reminder" },
+          { type: "text", text: "<channel-notification />" },
+        ],
+        client_message_id: "cm-image-drop-on-failure",
+      },
+    ]);
+  });
 });

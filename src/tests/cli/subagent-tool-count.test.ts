@@ -20,7 +20,13 @@ describe("subagent tool count stability", () => {
   });
 
   test("tool count remains monotonic even if toolCalls array is overwritten with fewer entries", () => {
-    registerSubagent("sub-1", "explore", "Find symbols", "tc-task", false);
+    registerSubagent(
+      "sub-1",
+      "general-purpose",
+      "Find symbols",
+      "tc-task",
+      false,
+    );
     addToolCall("sub-1", "tc-read", "Read", "{}");
     addToolCall("sub-1", "tc-grep", "Grep", "{}");
 
@@ -51,7 +57,13 @@ describe("subagent tool count stability", () => {
   });
 
   test("static subagent grouping uses monotonic tool count", () => {
-    registerSubagent("sub-1", "explore", "Find symbols", "tc-task", false);
+    registerSubagent(
+      "sub-1",
+      "general-purpose",
+      "Find symbols",
+      "tc-task",
+      false,
+    );
     addToolCall("sub-1", "tc-read", "Read", "{}");
     addToolCall("sub-1", "tc-grep", "Grep", "{}");
     completeSubagent("sub-1", { success: true, totalTokens: 42 });

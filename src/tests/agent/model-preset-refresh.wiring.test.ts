@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 describe("model preset refresh wiring", () => {
   test("model.ts exports preset refresh helper", () => {
@@ -69,10 +70,10 @@ describe("model preset refresh wiring", () => {
       "buildModelSettings(modelHandle, updateArgs)",
     );
     expect(updateSegment).toContain(
-      "Parameters<typeof client.conversations.update>[1]",
+      "Parameters<typeof backend.updateConversation>[1]",
     );
     expect(updateSegment).toContain(
-      "client.conversations.update(conversationId, payload)",
+      "backend.updateConversation(conversationId, payload)",
     );
     expect(updateSegment).toContain("model: modelHandle");
     expect(updateSegment).toContain("options?: UpdateAgentLLMConfigOptions");
@@ -83,8 +84,7 @@ describe("model preset refresh wiring", () => {
   });
 
   test("/model handler updates conversation model (default updates agent)", () => {
-    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-    const source = readFileSync(path, "utf-8");
+    const source = readInteractiveAppSource();
 
     const start = source.indexOf("const handleModelSelect = useCallback(");
     const end = source.indexOf(
@@ -103,8 +103,7 @@ describe("model preset refresh wiring", () => {
   });
 
   test("App defines helper to carry over active conversation model", () => {
-    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-    const source = readFileSync(path, "utf-8");
+    const source = readInteractiveAppSource();
 
     const start = source.indexOf(
       "const maybeCarryOverActiveConversationModel = useCallback(",
@@ -123,13 +122,15 @@ describe("model preset refresh wiring", () => {
     expect(segment).toContain("updateConversationLLMConfig(");
     expect(segment).toContain("preserveContextWindow: true");
     expect(segment).toContain(
+      "updateArgs.context_window = currentLlmConfig.context_window",
+    );
+    expect(segment).toContain(
       "Failed to carry over active model to new conversation",
     );
   });
 
   test("conversation model override flag is synced for async callbacks", () => {
-    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-    const source = readFileSync(path, "utf-8");
+    const source = readInteractiveAppSource();
 
     // The override flag must be safe to read inside async callbacks (e.g. the
     // first streamed chunk sync) without waiting for a render/effect.
@@ -139,8 +140,7 @@ describe("model preset refresh wiring", () => {
   });
 
   test("reasoning tier prefers conversation override model_settings", () => {
-    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-    const source = readFileSync(path, "utf-8");
+    const source = readInteractiveAppSource();
 
     // When a conversation override is active, prefer the conversation model_settings
     // snapshot when deriving reasoning effort (not the base agent llm_config).
@@ -150,8 +150,7 @@ describe("model preset refresh wiring", () => {
   });
 
   test("App derives effective context window from active conversation override", () => {
-    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-    const source = readFileSync(path, "utf-8");
+    const source = readInteractiveAppSource();
 
     expect(source).toContain("conversationOverrideContextWindowLimit");
     expect(source).toContain("setConversationOverrideContextWindowLimit(");
@@ -172,8 +171,7 @@ describe("model preset refresh wiring", () => {
   });
 
   test("new conversation flows reapply active conversation model before switching", () => {
-    const path = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-    const source = readFileSync(path, "utf-8");
+    const source = readInteractiveAppSource();
 
     const carryOverCalls =
       source.match(
@@ -191,7 +189,7 @@ describe("model preset refresh wiring", () => {
 
     const clearAnchor = source.indexOf('if (msg.trim() === "/clear")');
     expect(clearAnchor).toBeGreaterThanOrEqual(0);
-    const clearWindow = source.slice(clearAnchor, clearAnchor + 2000);
+    const clearWindow = source.slice(clearAnchor, clearAnchor + 3000);
     expect(clearWindow).toContain(
       "await maybeCarryOverActiveConversationModel(conversation.id);",
     );

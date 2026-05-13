@@ -69,7 +69,6 @@ type Props = {
   ) => void;
   onDeny: (reason: string) => void;
   onCancel?: () => void;
-  onConsumeDraft?: () => void;
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
@@ -95,8 +94,6 @@ type Props = {
   planContent?: string;
   planFilePath?: string;
   agentName?: string;
-  // Draft text from input buffer when approval appeared
-  initialDraft?: string;
 };
 
 // Parse bash info from approval args
@@ -215,7 +212,12 @@ function getMemoryInfo(approval: ApprovalRequest): MemoryInfo | null {
     return {
       command,
       reason: typeof args.reason === "string" ? args.reason : undefined,
-      path: typeof args.path === "string" ? args.path : undefined,
+      path:
+        typeof args.file_path === "string"
+          ? args.file_path
+          : typeof args.path === "string"
+            ? args.path
+            : undefined,
       oldPath: typeof args.old_path === "string" ? args.old_path : undefined,
       newPath: typeof args.new_path === "string" ? args.new_path : undefined,
       oldString:
@@ -268,7 +270,12 @@ function getMemoryFileEditInfo(
     }
 
     const command = typeof args.command === "string" ? args.command : "";
-    const relPath = typeof args.path === "string" ? args.path : "";
+    const relPath =
+      typeof args.file_path === "string"
+        ? args.file_path
+        : typeof args.path === "string"
+          ? args.path
+          : "";
     const absPath = memoryDir && relPath ? `${memoryDir}/${relPath}` : relPath;
     const display = memoryDisplayPath(relPath);
 
@@ -345,7 +352,6 @@ export const ApprovalSwitch = memo(
     onApproveAlways,
     onDeny,
     onCancel,
-    onConsumeDraft,
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
@@ -361,7 +367,6 @@ export const ApprovalSwitch = memo(
     planContent,
     planFilePath,
     agentName,
-    initialDraft,
   }: Props) => {
     const toolName = approval.toolName;
 
@@ -369,20 +374,18 @@ export const ApprovalSwitch = memo(
     if (toolName === "ExitPlanMode" && onPlanApprove && onPlanKeepPlanning) {
       const showAcceptEditsOption =
         permissionMode.getMode() === "plan" &&
-        permissionMode.getModeBeforePlan() !== "bypassPermissions";
+        permissionMode.getModeBeforePlan() !== "unrestricted";
       return (
         <StaticPlanApproval
           onApprove={() => onPlanApprove(false)}
           onApproveAndAcceptEdits={() => onPlanApprove(true)}
           onKeepPlanning={onPlanKeepPlanning}
           onCancel={onCancel ?? (() => {})}
-          onConsumeDraft={onConsumeDraft}
           showAcceptEditsOption={showAcceptEditsOption}
           isFocused={isFocused}
           planContent={planContent}
           planFilePath={planFilePath}
           agentName={agentName}
-          initialDraft={initialDraft}
         />
       );
     }
@@ -461,9 +464,7 @@ export const ApprovalSwitch = memo(
             questions={questions}
             onSubmit={onQuestionSubmit}
             onCancel={onCancel}
-            onConsumeDraft={onConsumeDraft}
             isFocused={isFocused}
-            initialDraft={initialDraft}
           />
         );
       }

@@ -21,8 +21,10 @@ When memfs is enabled, the Letta Code CLI automatically:
 2. Clones the repo into `~/.letta/agents/<agent-id>/memory/` (git root is the memory directory)
 3. Configures a **local** credential helper in `memory/.git/config` (so `git push`/`git pull` work without auth ceremony)
 4. Installs a **pre-commit hook** that validates frontmatter before each commit (see below)
-5. On subsequent startups: pulls latest changes, reconfigures credentials and hook (self-healing)
-6. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
+5. Installs a **post-commit hook** that pushes commits to an optional additional remote (see "Additional memory-repository remote" below)
+6. Sets canonical local git identity (`letta.agentId`, `user.name`, `user.email`) so direct `git commit` from the agent's shell attributes correctly to the agent — not the operator's global git identity
+7. On subsequent startups: pulls latest changes, reconfigures credentials, hooks, and identity (self-healing)
+8. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
 
 If any of these steps fail, you can replicate them manually using the sections below.
 
@@ -82,6 +84,33 @@ Block content goes here.
 ```
 
 If the hook rejects a commit, read the error message — it tells you exactly which file and which rule was violated. Fix the file and retry.
+
+## Additional Memory-Repository Remote
+
+In addition to pushing to the Letta server, you can push every commit to a second git remote — e.g. a private GitHub repo — so you have a backup or a copy you can browse with regular tools.
+
+**Via the slash command (recommended):**
+```
+/memory-repository set git@github.com:you/my-memory.git
+/memory-repository status
+/memory-repository push        # force a push now, e.g. after a network failure
+/memory-repository unset       # stop pushing
+```
+
+**How it works:**
+- `/memory-repository set <url>` writes the URL to `letta.memoryRepository.url` in the memfs repo's local `.git/config` and installs a `post-commit` hook.
+- After every commit, the hook reads `letta.memoryRepository.url` and asynchronously pushes to it in the background. Commits are never blocked by push failures.
+- Push output and exit codes are appended to `.git/memory-repository-push.log` — visible via `/memory-repository status`.
+- The setting is **per-repo**, so each agent on a machine has its own independent configuration.
+
+**Auth:** uses your existing git credentials — SSH keys, credential helpers, or tokens in the URL. Letta does not store tokens for this feature. If you're pushing to GitHub, SSH is easiest.
+
+**Manual equivalent (without the slash command):**
+```bash
+cd ~/.letta/agents/<agent-id>/memory
+git config --local letta.memoryRepository.url git@github.com:you/my-memory.git
+# Hook is installed automatically by the CLI on startup; no manual install needed.
+```
 
 ## Clone Agent Memory
 

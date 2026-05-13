@@ -20,6 +20,7 @@ import {
   runUserPromptSubmitHooks,
 } from "../../hooks";
 import { checkPermissionWithHooks } from "../../permissions/checker";
+import { permissionMode } from "../../permissions/mode";
 import { settingsManager } from "../../settings-manager";
 
 // Skip on Windows - test commands use bash syntax (&&, >&2, etc.)
@@ -32,6 +33,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
   let originalHome: string | undefined;
 
   beforeEach(async () => {
+    permissionMode.setMode("standard");
     // Reset settings manager FIRST before changing HOME
     await settingsManager.reset();
 
@@ -765,7 +767,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       });
 
       const result = await runSubagentStopHooks(
-        "explore",
+        "general-purpose",
         "subagent-123",
         true,
         undefined,
@@ -788,7 +790,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       });
 
       const result = await runSubagentStopHooks(
-        "explore",
+        "general-purpose",
         "subagent-abc",
         false,
         "Task failed",
@@ -798,7 +800,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       );
 
       const parsed = JSON.parse(result.results[0]?.stdout || "{}");
-      expect(parsed.subagent_type).toBe("explore");
+      expect(parsed.subagent_type).toBe("general-purpose");
       expect(parsed.subagent_id).toBe("subagent-abc");
       expect(parsed.success).toBe(false);
       expect(parsed.error).toBe("Task failed");

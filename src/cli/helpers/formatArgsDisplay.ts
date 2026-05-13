@@ -10,8 +10,11 @@ import {
   isFileEditTool,
   isFileReadTool,
   isFileWriteTool,
+  isGlobTool,
+  isMemoryTool,
   isPatchTool,
   isPlanTool,
+  isSearchTool,
   isShellTool,
   isTodoTool,
 } from "./toolNameMapping.js";
@@ -267,7 +270,13 @@ export function formatArgsDisplay(
             // Collect other non-hidden args
             const otherArgs: string[] = [];
             for (const [k, v] of Object.entries(parsed)) {
-              if (k === "file_path" || k === "path") continue;
+              if (
+                k === "file_path" ||
+                k === "path" ||
+                k === "offset" ||
+                k === "limit"
+              )
+                continue;
               if (v === undefined || v === null) continue;
               if (typeof v === "boolean" || typeof v === "number") {
                 otherArgs.push(`${k}: ${v}`);
@@ -280,6 +289,60 @@ export function formatArgsDisplay(
               display = `${relativePath}, ${otherArgs.join(", ")}`;
             } else {
               display = relativePath;
+            }
+            return { display, parsed };
+          }
+
+          // Search/Grep tools: show "query in path" instead of "query: ..., path: ..."
+          if (isSearchTool(toolName)) {
+            const query = String(parsed.query ?? parsed.pattern ?? "");
+            const rawPath = parsed.path
+              ? String(parsed.path)
+              : parsed.file_path
+                ? String(parsed.file_path)
+                : null;
+            // formatDisplayPath returns "" when path is cwd — skip "in" in that case
+            const displayPath = rawPath ? formatDisplayPath(rawPath) : null;
+            if (query && displayPath) {
+              display = `"${query}" in ${displayPath}`;
+            } else if (query) {
+              display = `"${query}"`;
+            } else if (displayPath) {
+              display = displayPath;
+            }
+            return { display, parsed };
+          }
+
+          // Glob tools: show "pattern in path" instead of "pattern: ..., path: ..."
+          if (isGlobTool(toolName)) {
+            const pattern = String(parsed.pattern ?? "");
+            const rawPath = parsed.path
+              ? String(parsed.path)
+              : parsed.file_path
+                ? String(parsed.file_path)
+                : null;
+            // formatDisplayPath returns "" when path is cwd — skip "in" in that case
+            const displayPath = rawPath ? formatDisplayPath(rawPath) : null;
+            if (pattern && displayPath) {
+              display = `${pattern} in ${displayPath}`;
+            } else if (pattern) {
+              display = pattern;
+            } else if (displayPath) {
+              display = displayPath;
+            }
+            return { display, parsed };
+          }
+
+          // Memory tools: show "reason" in file_path
+          if (isMemoryTool(toolName)) {
+            const reason = String(parsed.reason ?? "");
+            const filePath = parsed.file_path ? String(parsed.file_path) : null;
+            if (reason && filePath) {
+              display = `"${reason}" in ${formatDisplayPath(filePath)}`;
+            } else if (reason) {
+              display = `"${reason}"`;
+            } else if (filePath) {
+              display = formatDisplayPath(filePath);
             }
             return { display, parsed };
           }

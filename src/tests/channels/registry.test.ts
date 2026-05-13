@@ -417,7 +417,7 @@ describe("pending channel control requests", () => {
     });
   });
 
-  test("invalid multi-question channel replies reprompt instead of approving", async () => {
+  test("freeform multi-question channel replies approve instead of reprompting", async () => {
     const replies: Array<{
       chatId: string;
       text: string;
@@ -427,9 +427,9 @@ describe("pending channel control requests", () => {
     const adapter = createAdapter(replies);
     registry.registerAdapter(adapter);
 
-    let approvalCalls = 0;
-    registry.setApprovalResponseHandler(async () => {
-      approvalCalls += 1;
+    const approvalResponses: unknown[] = [];
+    registry.setApprovalResponseHandler(async ({ response }) => {
+      approvalResponses.push(response);
       return true;
     });
 
@@ -473,13 +473,45 @@ describe("pending channel control requests", () => {
 
     await adapter.onMessage?.(createInboundMessage("deep refactor please"));
 
-    expect(approvalCalls).toBe(0);
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toEqual({
-      chatId: "C123",
-      text: "Please answer with numbered lines so I can map each reply to the right question.\nExample:\n1: your answer\n2: your answer",
-      replyToMessageId: "1712790000.000050",
-    });
+    expect(replies).toHaveLength(0);
+    expect(approvalResponses).toEqual([
+      {
+        request_id: "req-ask-2",
+        decision: {
+          behavior: "allow",
+          updated_input: {
+            questions: [
+              {
+                question: "Which approach should we use?",
+                header: "Approach",
+                options: [
+                  { label: "Fast path", description: "Ship quickly" },
+                  { label: "Deep refactor", description: "Refactor more" },
+                ],
+                multiSelect: false,
+              },
+              {
+                question: "Which environment should we test in?",
+                header: "Env",
+                options: [
+                  { label: "Staging", description: "Safer rollout path" },
+                  {
+                    label: "Production",
+                    description: "Use the live environment",
+                  },
+                ],
+                multiSelect: false,
+              },
+            ],
+            answers: {
+              "Which approach should we use?": "Deep refactor",
+              "Which environment should we test in?":
+                "Not specified. Full user reply: deep refactor please",
+            },
+          },
+        },
+      },
+    ]);
   });
 
   test("bootstrapped persisted control requests intercept replies before the listener finishes reconnecting", async () => {

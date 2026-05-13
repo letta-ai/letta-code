@@ -1,7 +1,7 @@
 // src/cli/commands/profile.ts
 // Profile command handlers for managing local agent profiles
 
-import { getClient } from "../../agent/client";
+import { getBackend } from "../../backend";
 import { settingsManager } from "../../settings-manager";
 import type { Buffers, Line } from "../helpers/accumulator";
 import { formatErrorDetails } from "../helpers/errorFormatter";
@@ -174,9 +174,8 @@ export async function handleProfileSave(
   ctx.setCommandRunning(true);
 
   try {
-    const client = await getClient();
-    // Update agent name via API
-    await client.agents.update(ctx.agentId, { name: profileName });
+    // Update agent name through the active backend.
+    await getBackend().updateAgent(ctx.agentId, { name: profileName });
     ctx.updateAgentName(profileName);
 
     // Save profile to BOTH local and global settings
@@ -343,9 +342,7 @@ export async function handlePin(
   // If user provided a name, rename the agent first
   if (name && name !== ctx.agentName) {
     try {
-      const { getClient } = await import("../../agent/client");
-      const client = await getClient();
-      await client.agents.update(ctx.agentId, { name });
+      await getBackend().updateAgent(ctx.agentId, { name });
       ctx.updateAgentName(name);
     } catch (error) {
       addCommandResult(

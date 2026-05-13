@@ -5,7 +5,6 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import WebSocket from "ws";
 import {
   type ApprovalResult,
   executeApprovalBatch,
@@ -52,11 +51,13 @@ import {
 import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { debugLogApprovalResumeState } from "./recovery";
+import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import {
   markAwaitingAcceptedApprovalContinuationRunId,
   sendApprovalContinuationWithRetry,
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { ConversationRuntime } from "./types";
 
 type Decision =
@@ -152,7 +153,7 @@ export async function handleApprovalStop(params: {
     toolArgs: string;
   }>;
   runtime: ConversationRuntime;
-  socket: WebSocket;
+  socket: ListenerTransport;
   agentId: string;
   conversationId: string;
   turnWorkingDirectory: string;
@@ -483,7 +484,7 @@ export async function handleApprovalStop(params: {
   // Broadcast new file content to web clients when a file-mutating tool
   // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
-    if (socket.readyState === WebSocket.OPEN) {
+    if (isListenerTransportOpen(socket)) {
       socket.send(
         JSON.stringify({
           type: "file_ops",
@@ -497,15 +498,24 @@ export async function handleApprovalStop(params: {
     }
   };
 
-  const executionResults = await executeApprovalBatch(decisions, undefined, {
-    toolContextId: turnToolContextId ?? undefined,
-    abortSignal: abortController.signal,
-    onStreamingOutput: emitToolExecutionOutput,
-    workingDirectory: turnWorkingDirectory,
-    parentScope:
-      agentId && conversationId ? { agentId, conversationId } : undefined,
-    onFileWrite,
-  });
+  let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
+  try {
+    if (agentId) {
+      await ensureSecretsHydratedForAgent(runtime.listener, agentId);
+    }
+    executionResults = await executeApprovalBatch(decisions, undefined, {
+      toolContextId: turnToolContextId ?? undefined,
+      abortSignal: abortController.signal,
+      onStreamingOutput: emitToolExecutionOutput,
+      workingDirectory: turnWorkingDirectory,
+      parentScope:
+        agentId && conversationId ? { agentId, conversationId } : undefined,
+      channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
+      onFileWrite,
+    });
+  } finally {
+    emitToolExecutionOutput.flush();
+  }
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
     executionResults,
@@ -545,6 +555,7 @@ export async function handleApprovalStop(params: {
     {
       type: "approval",
       approvals: persistedExecutionResults,
+      otid: crypto.randomUUID(),
     },
   ];
   let continuationBatchId = dequeuedBatchId;

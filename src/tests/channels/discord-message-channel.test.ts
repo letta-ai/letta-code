@@ -104,7 +104,7 @@ describe("message_channel (discord)", () => {
 
     expect(result).toContain("discord");
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    const call = (sendMessage.mock.calls as unknown[][])[0]![0] as Record<
+    const call = (sendMessage.mock.calls as unknown[][])[0]?.[0] as Record<
       string,
       unknown
     >;
@@ -153,7 +153,7 @@ describe("message_channel (discord)", () => {
 
     expect(result).toContain("discord");
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    const call = (sendMessage.mock.calls as unknown[][])[0]![0] as Record<
+    const call = (sendMessage.mock.calls as unknown[][])[0]?.[0] as Record<
       string,
       unknown
     >;
@@ -200,7 +200,7 @@ describe("message_channel (discord)", () => {
     });
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    const call = (sendMessage.mock.calls as unknown[][])[0]![0] as Record<
+    const call = (sendMessage.mock.calls as unknown[][])[0]?.[0] as Record<
       string,
       unknown
     >;

@@ -14,6 +14,7 @@ import {
   isRetryableProviderErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
   shouldAttemptApprovalRecovery,
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
@@ -185,6 +186,11 @@ describe("provider detail retry helpers", () => {
         "Connection error during streaming: incomplete chunked read",
       ),
     ).toBe(true);
+    expect(
+      isRetryableProviderErrorDetail(
+        "INTERNAL_SERVER_ERROR: Connection error during OpenRouter streaming: peer closed connection without sending complete message body (incomplete chunked read)",
+      ),
+    ).toBe(true);
   });
 
   test("detects non-retryable auth patterns", () => {
@@ -219,6 +225,17 @@ describe("provider detail retry helpers", () => {
         "You've reached your hosted model usage limit.",
       ),
     ).toBe(false);
+  });
+
+  test("OpenRouter streaming incomplete chunked reads are retryable", () => {
+    const detail =
+      "INTERNAL_SERVER_ERROR: Connection error during OpenRouter streaming: peer closed connection without sending complete message body (incomplete chunked read)";
+
+    expect(shouldRetryRunMetadataError("internal_error", detail)).toBe(true);
+    expect(shouldRetryRunMetadataError(undefined, detail)).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({ status: undefined, detail }),
+    ).toBe(true);
   });
 
   test("ChatGPT usage_limit_reached is non-retryable", () => {
@@ -476,6 +493,31 @@ describe("rebuildInputWithFreshDenials", () => {
     role: "user" as const,
     content: "hello",
   };
+
+  test("refreshInputOtidsForNewRequest replaces OTIDs for every item", () => {
+    const input = [
+      {
+        type: "approval" as const,
+        approvals: [] as never[],
+        otid: "approval-old",
+      },
+      {
+        ...userMsg,
+        otid: "message-old",
+      },
+    ];
+
+    const result = refreshInputOtidsForNewRequest(input);
+
+    expect(result).toHaveLength(2);
+    expect(result).not.toBe(input);
+    expect(result[0]).not.toBe(input[0]);
+    expect(result[1]).not.toBe(input[1]);
+    expect(result[0]?.type).toBe("approval");
+    expect(result[1]?.type).toBe("message");
+    expect(result[0]?.otid).not.toBe("approval-old");
+    expect(result[1]?.otid).not.toBe("message-old");
+  });
 
   test("strips stale + prepends fresh denials", () => {
     const input = [

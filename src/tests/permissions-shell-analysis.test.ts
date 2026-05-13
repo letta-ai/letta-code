@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-
+import { extractPrimaryShellCommand } from "../permissions/shell-command-normalization";
 import {
   parseShellAnalysis,
   splitShellSegments,
+  splitShellSegmentsAllowCommandSubstitution,
 } from "../permissions/shellAnalysis";
 
 describe("shellAnalysis", () => {
@@ -68,5 +69,33 @@ describe("shellAnalysis", () => {
   test("rejects unsafe substitutions and redirects", () => {
     expect(parseShellAnalysis("echo $(rm file)")).toBeNull();
     expect(parseShellAnalysis("sed -n '1,20p' file > out.txt")).toBeNull();
+  });
+
+  test("command-substitution-aware splitter preserves outer separators", () => {
+    const command =
+      'export EXAMPLE_API_KEY=$(grep -E "^EXAMPLE_API_KEY=" .env | cut -d= -f2) && curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001" | jq -r "{id, email, name, description}"';
+
+    expect(splitShellSegmentsAllowCommandSubstitution(command)).toEqual([
+      'export EXAMPLE_API_KEY=$(grep -E "^EXAMPLE_API_KEY=" .env | cut -d= -f2)',
+      'curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001"',
+      'jq -r "{id, email, name, description}"',
+    ]);
+  });
+
+  test("command-substitution-aware splitter still rejects unsafe redirects", () => {
+    expect(
+      splitShellSegmentsAllowCommandSubstitution(
+        'export EXAMPLE_API_KEY=$(grep -E "^EXAMPLE_API_KEY=" .env | cut -d= -f2) && curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001" > out.json',
+      ),
+    ).toBeNull();
+  });
+
+  test("extractPrimaryShellCommand skips export setup segments", () => {
+    const command =
+      'export EXAMPLE_API_KEY=$(grep -E "^EXAMPLE_API_KEY=" .env | cut -d= -f2) && curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001" | jq -r "{id, email, name, description}"';
+
+    expect(extractPrimaryShellCommand(command)).toBe(
+      'curl -s -u "$EXAMPLE_API_KEY:" "https://api.stripe.com/v1/customers/cus_examplecustomer0001"',
+    );
   });
 });

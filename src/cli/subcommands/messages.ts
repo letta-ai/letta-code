@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { getClient } from "../../agent/client";
+import { getBackend } from "../../backend";
+import { searchMessagesForBackend } from "../../backend/messageSearch";
 import { settingsManager } from "../../settings-manager";
 
 type SearchMode = "vector" | "fts" | "hybrid";
@@ -106,6 +107,23 @@ function getAgentId(agentFromArgs?: string, agentIdFromArgs?: string): string {
   return agentFromArgs || agentIdFromArgs || process.env.LETTA_AGENT_ID || "";
 }
 
+function pageItems<T>(page: unknown): T[] {
+  if (Array.isArray(page)) return page as T[];
+  if (page && typeof page === "object") {
+    const maybePage = page as {
+      getPaginatedItems?: () => T[];
+      items?: T[];
+    };
+    if (typeof maybePage.getPaginatedItems === "function") {
+      return maybePage.getPaginatedItems();
+    }
+    if (Array.isArray(maybePage.items)) {
+      return maybePage.items;
+    }
+  }
+  return [];
+}
+
 const MESSAGES_OPTIONS = {
   help: { type: "boolean", short: "h" },
   query: { type: "string" },
@@ -154,7 +172,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
 
   try {
     await settingsManager.initialize();
-    const client = await getClient();
+    const backend = getBackend();
 
     const renderText = (value: unknown): string => {
       if (typeof value === "string") return value;
@@ -274,7 +292,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
       let cursorBefore: string | undefined;
 
       for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-        const page = await client.conversations.messages.list(conversationId, {
+        const page = await backend.listConversationMessages(conversationId, {
           limit: pageLimit,
           order: "desc",
           ...(conversationId === "default" && agentIdForDefault
@@ -283,7 +301,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
           ...(cursorBefore ? { before: cursorBefore } : {}),
         });
 
-        const items = page.getPaginatedItems() as TranscriptMessage[];
+        const items = pageItems<TranscriptMessage>(page);
         if (items.length === 0) {
           break;
         }
@@ -328,7 +346,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
 
-      const result = await client.messages.search({
+      const result = await searchMessagesForBackend({
         query,
         agent_id: allAgents ? undefined : agentId,
         search_mode: parseMode(parsed.values.mode) ?? "hybrid",
@@ -360,7 +378,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
 
-      const response = await client.agents.messages.list(agentId, {
+      const response = await backend.listAgentMessages(agentId, {
         conversation_id: "default",
         limit: parseLimit(parsed.values.limit, 20),
         after: parsed.values.after,
@@ -368,7 +386,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         order,
       });
 
-      const messages = response.getPaginatedItems() ?? [];
+      const messages = pageItems<TranscriptMessage>(response);
       const startDate = parsed.values["start-date"];
       const endDate = parsed.values["end-date"];
 

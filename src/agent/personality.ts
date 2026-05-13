@@ -2,10 +2,11 @@ import { execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { getBackend } from "../backend";
 import { settingsManager } from "../settings-manager";
-import { getClient } from "./client";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
+import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
 import {
   commitAndSyncMemoryWrite,
   GIT_MEMORY_ENABLED_TAG,
@@ -93,6 +94,19 @@ export interface PersonalityBlockDefinition {
   value: string;
   description?: string;
   templatePromptAssetName: string;
+}
+
+export const ONBOARDING_PERSONALITIES = [
+  "linus",
+  "kawaii",
+] as const satisfies readonly PersonalityId[];
+
+export function supportsOnboardingBlock(
+  personalityId: PersonalityId,
+): personalityId is (typeof ONBOARDING_PERSONALITIES)[number] {
+  return (ONBOARDING_PERSONALITIES as readonly PersonalityId[]).includes(
+    personalityId,
+  );
 }
 
 const FRONTMATTER_REGEX = /^(---\n[\s\S]*?\n---)\n*/;
@@ -317,6 +331,7 @@ export function getPersonalityBlockValues(personalityId: PersonalityId): {
 export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
   persona: PersonalityBlockDefinition;
   human: PersonalityBlockDefinition;
+  onboarding?: PersonalityBlockDefinition;
 } {
   const personaTemplatePromptAssetName =
     personalityId === "memo"
@@ -348,6 +363,16 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
         .description,
       templatePromptAssetName: humanTemplatePromptAssetName,
     },
+    ...(supportsOnboardingBlock(personalityId)
+      ? {
+          onboarding: {
+            value: getPromptBody("onboarding.mdx"),
+            description:
+              getEditablePromptFrontmatter("onboarding.mdx").description,
+            templatePromptAssetName: "onboarding.mdx",
+          },
+        }
+      : {}),
   };
 }
 
@@ -363,41 +388,49 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   const blockDefinitions = getPersonalityBlockDefinitions(personalityId);
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
 
+  const memoryBlocks = defaultMemoryBlocks.map((block) => {
+    if (block.label === "persona") {
+      return {
+        label: block.label,
+        value: blockDefinitions.persona.value,
+        description:
+          blockDefinitions.persona.description ??
+          block.description ??
+          undefined,
+      };
+    }
+
+    if (block.label === "human") {
+      return {
+        label: block.label,
+        value: blockDefinitions.human.value,
+        description:
+          blockDefinitions.human.description ?? block.description ?? undefined,
+      };
+    }
+
+    return {
+      label: block.label,
+      value: block.value,
+      description: block.description ?? undefined,
+    };
+  });
+
+  if (blockDefinitions.onboarding) {
+    memoryBlocks.push({
+      label: "onboarding",
+      value: blockDefinitions.onboarding.value,
+      description: blockDefinitions.onboarding.description,
+    });
+  }
+
   return {
     name: name ?? personality.label,
     description: description ?? personality.description,
     model: model ?? personality.defaultModel,
     tags,
     memoryPromptMode: "memfs",
-    memoryBlocks: defaultMemoryBlocks.map((block) => {
-      if (block.label === "persona") {
-        return {
-          label: block.label,
-          value: blockDefinitions.persona.value,
-          description:
-            blockDefinitions.persona.description ??
-            block.description ??
-            undefined,
-        };
-      }
-
-      if (block.label === "human") {
-        return {
-          label: block.label,
-          value: blockDefinitions.human.value,
-          description:
-            blockDefinitions.human.description ??
-            block.description ??
-            undefined,
-        };
-      }
-
-      return {
-        label: block.label,
-        value: block.value,
-        description: block.description ?? undefined,
-      };
-    }),
+    memoryBlocks,
   };
 }
 
@@ -408,7 +441,7 @@ export async function enableMemfsForCreatedAgent(params: {
   const { agentId, agentTags } = params;
 
   try {
-    const { getClient } = await import("./client");
+    const { getClient } = await import("../backend/api/client");
     const client = await getClient();
     const tags = agentTags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
@@ -495,8 +528,7 @@ async function getMemoryCommitAuthor(agentId: string): Promise<{
   let authorName = agentId;
 
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await getBackend().retrieveAgent(agentId);
     if (agent.name?.trim()) {
       authorName = agent.name.trim();
     }
@@ -558,7 +590,10 @@ export async function applyPersonalityToMemory(
   const personality = getPersonalityOption(params.personalityId);
   const blockDefinitions = getPersonalityBlockDefinitions(params.personalityId);
 
-  const repoDir = getMemoryRepoDir(params.agentId);
+  const isLocalMemfs = getBackend().capabilities.localMemfs;
+  const repoDir = isLocalMemfs
+    ? getScopedMemoryFilesystemRoot(params.agentId)
+    : getMemoryRepoDir(params.agentId);
 
   // Fail early if the memory repo has uncommitted changes
   const statusResult = await execFile("git", ["status", "--porcelain"], {
@@ -571,7 +606,9 @@ export async function applyPersonalityToMemory(
     );
   }
 
-  await pullMemory(params.agentId);
+  if (!isLocalMemfs) {
+    await pullMemory(params.agentId);
+  }
 
   const personaRelativePath = getPersonaRelativePathForRepo(repoDir);
   const humanRelativePath = getHumanRelativePathForRepo(repoDir);
@@ -616,6 +653,7 @@ export async function applyPersonalityToMemory(
     pathspecs: changedPaths,
     reason: commitMessage,
     author,
+    syncMode: isLocalMemfs ? "local" : "remote",
     replay: async () => applyPersonalityFiles(filesToUpdate),
   });
 

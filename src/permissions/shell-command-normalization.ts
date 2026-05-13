@@ -1,4 +1,11 @@
+import {
+  splitShellSegmentsAllowCommandSubstitution,
+  tokenizeShellWords,
+} from "./shellAnalysis";
+
 const SHELL_EXECUTORS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+
+const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 function trimMatchingQuotes(value: string): string {
   const trimmed = value.trim();
@@ -96,6 +103,64 @@ function tokenizeShell(input: string): string[] {
   return tokens;
 }
 
+function extractCommandAfterEnvPrefixes(segment: string): string | null {
+  const trimmed = segment.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed === "cd" || trimmed.startsWith("cd ")) {
+    return null;
+  }
+
+  if (trimmed === "export" || trimmed.startsWith("export ")) {
+    return null;
+  }
+
+  const tokens = tokenizeShellWords(trimmed);
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  let index = 0;
+
+  if (normalizeExecutableToken(tokens[0] ?? "") === "env") {
+    index += 1;
+    while (index < tokens.length) {
+      const token = tokens[index] ?? "";
+      if (!token) {
+        index += 1;
+        continue;
+      }
+
+      if (/^-[A-Za-z]+$/.test(token) || ENV_ASSIGNMENT_PATTERN.test(token)) {
+        index += 1;
+        continue;
+      }
+
+      break;
+    }
+  }
+
+  while (index < tokens.length) {
+    const token = tokens[index] ?? "";
+    if (!token || !ENV_ASSIGNMENT_PATTERN.test(token)) {
+      break;
+    }
+    index += 1;
+  }
+
+  if (index >= tokens.length) {
+    return null;
+  }
+
+  if (index === 0) {
+    return trimmed;
+  }
+
+  return tokens.slice(index).join(" ").trim() || null;
+}
+
 function isDashCFlag(token: string): boolean {
   return token === "-c" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(token);
 }
@@ -172,6 +237,22 @@ export function unwrapShellLauncherCommand(command: string): string {
     current = inner.trim();
   }
   return current;
+}
+
+export function extractPrimaryShellCommand(command: string): string {
+  const unwrapped = unwrapShellLauncherCommand(command);
+  const segments = splitShellSegmentsAllowCommandSubstitution(unwrapped) ?? [
+    unwrapped,
+  ];
+
+  for (const segment of segments) {
+    const primary = extractCommandAfterEnvPrefixes(segment);
+    if (primary) {
+      return primary;
+    }
+  }
+
+  return unwrapped.trim();
 }
 
 export function normalizeBashRulePayload(payload: string): string {

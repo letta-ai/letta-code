@@ -1,13 +1,17 @@
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
+import { parseLocalProviderTimeout } from "../../backend/local/LocalProviderTimeout";
 import {
   checkProviderApiKey,
   createOrUpdateProvider,
+  type ProviderConnectionOptions,
+  providerStorageTargetLabel,
 } from "../../providers/byok-providers";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import {
+  defaultConnectApiKey,
   isConnectApiKeyProvider,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
@@ -30,6 +34,9 @@ const CONNECT_OPTIONS = {
   "secret-key": { type: "string" },
   region: { type: "string" },
   profile: { type: "string" },
+  "base-url": { type: "string" },
+  timeout: { type: "string" },
+  "no-timeout": { type: "boolean" },
 } as const;
 
 interface ConnectSubcommandDeps {
@@ -52,6 +59,7 @@ interface ConnectSubcommandDeps {
     accessKey?: string,
     region?: string,
     profile?: string,
+    options?: ProviderConnectionOptions,
   ) => Promise<unknown>;
   isChatGPTOAuthConnected: () => Promise<boolean>;
   runChatGPTOAuthConnectFlow: (
@@ -93,9 +101,30 @@ function formatUsage(): string {
     "  letta connect codex",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
+    "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  letta connect bedrock --method iam --access-key <id> --secret-key <key> --region <region>",
     "  letta connect bedrock --method profile --profile <name> --region <region>",
   ].join("\n");
+}
+
+function connectionOptionsFromArgs(
+  values: ReturnType<typeof parseArgs>["values"],
+): ProviderConnectionOptions {
+  const baseURL = readStringOption(values["base-url"]);
+  const timeoutValue = readStringOption(values.timeout);
+  const noTimeout = values["no-timeout"] === true;
+  return {
+    ...(baseURL ? { baseURL } : {}),
+    ...(noTimeout
+      ? { timeout: false as const }
+      : timeoutValue !== undefined
+        ? { timeout: parseLocalProviderTimeout(timeoutValue) }
+        : {}),
+  };
+}
+
+function hasConnectionOptions(options: ProviderConnectionOptions): boolean {
+  return options.baseURL !== undefined || options.timeout !== undefined;
 }
 
 function formatBedrockUsage(): string {
@@ -213,6 +242,13 @@ export async function runConnectSubcommand(
     const secretKey = readStringOption(parsed.values["secret-key"]) ?? "";
     const region = readStringOption(parsed.values.region) ?? "";
     const profile = readStringOption(parsed.values.profile) ?? "";
+    let connectionOptions: ProviderConnectionOptions;
+    try {
+      connectionOptions = connectionOptionsFromArgs(parsed.values);
+    } catch (error) {
+      io.stderr(getErrorMessage(error));
+      return 1;
+    }
 
     if (!method || (method !== "iam" && method !== "profile")) {
       io.stderr("Bedrock method must be `iam` or `profile`.");
@@ -245,17 +281,29 @@ export async function runConnectSubcommand(
       );
 
       io.stdout("Saving provider...");
-      await io.createOrUpdateProvider(
-        provider.byokProvider.providerType,
-        provider.byokProvider.providerName,
-        method === "iam" ? secretKey : "",
-        method === "iam" ? accessKey : undefined,
-        region,
-        method === "profile" ? profile : undefined,
-      );
+      if (hasConnectionOptions(connectionOptions)) {
+        await io.createOrUpdateProvider(
+          provider.byokProvider.providerType,
+          provider.byokProvider.providerName,
+          method === "iam" ? secretKey : "",
+          method === "iam" ? accessKey : undefined,
+          region,
+          method === "profile" ? profile : undefined,
+          connectionOptions,
+        );
+      } else {
+        await io.createOrUpdateProvider(
+          provider.byokProvider.providerType,
+          provider.byokProvider.providerName,
+          method === "iam" ? secretKey : "",
+          method === "iam" ? accessKey : undefined,
+          region,
+          method === "profile" ? profile : undefined,
+        );
+      }
 
       io.stdout(
-        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}).`,
+        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${providerStorageTargetLabel()}.`,
       );
       return 0;
     } catch (error) {
@@ -267,6 +315,14 @@ export async function runConnectSubcommand(
   if (isConnectApiKeyProvider(provider)) {
     let apiKey =
       readStringOption(parsed.values["api-key"]) ?? restPositionals[0] ?? "";
+    let connectionOptions: ProviderConnectionOptions;
+    try {
+      connectionOptions = connectionOptionsFromArgs(parsed.values);
+    } catch (error) {
+      io.stderr(getErrorMessage(error));
+      return 1;
+    }
+    apiKey ||= defaultConnectApiKey(provider) ?? "";
     if (!apiKey && isConnectZaiBaseProvider(provider)) {
       io.stdout(
         "Do you have a Z.ai Coding plan?\n" +
@@ -297,14 +353,26 @@ export async function runConnectSubcommand(
       await io.checkProviderApiKey(provider.byokProvider.providerType, apiKey);
 
       io.stdout("Saving provider...");
-      await io.createOrUpdateProvider(
-        provider.byokProvider.providerType,
-        provider.byokProvider.providerName,
-        apiKey,
-      );
+      if (hasConnectionOptions(connectionOptions)) {
+        await io.createOrUpdateProvider(
+          provider.byokProvider.providerType,
+          provider.byokProvider.providerName,
+          apiKey,
+          undefined,
+          undefined,
+          undefined,
+          connectionOptions,
+        );
+      } else {
+        await io.createOrUpdateProvider(
+          provider.byokProvider.providerType,
+          provider.byokProvider.providerName,
+          apiKey,
+        );
+      }
 
       io.stdout(
-        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}).`,
+        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${providerStorageTargetLabel()}.`,
       );
       return 0;
     } catch (error) {

@@ -17,6 +17,7 @@ export type MessageChannelToolDiscoveryScope = {
 
 type ResolvedMessageChannelToolDiscovery = {
   activeChannels: SupportedChannelId[];
+  accountIds: string[];
   actions: string[];
   schemaContributions: ChannelMessageToolSchemaContribution[];
 };
@@ -103,6 +104,10 @@ function buildDynamicMessageChannelSchemaFromDiscovery(
     properties.channel.enum = [...discovery.activeChannels];
   }
 
+  if (properties.accountId && discovery.accountIds.length > 0) {
+    properties.accountId.enum = [...discovery.accountIds];
+  }
+
   if (properties.action) {
     properties.action.enum = [...discovery.actions];
   }
@@ -113,6 +118,7 @@ function buildDynamicMessageChannelSchemaFromDiscovery(
 function buildDynamicMessageChannelDescriptionFromDiscovery(
   baseDescription: string,
   discovery: ResolvedMessageChannelToolDiscovery,
+  scope?: MessageChannelToolDiscoveryScope | null,
 ): string {
   const description = baseDescription.trim();
   if (discovery.activeChannels.length === 0) {
@@ -124,7 +130,12 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
     .join(", ");
   const actionList = discovery.actions.join(", ");
 
-  return `${description}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
+  const scopedReplyContract =
+    scope && scope.channels.length > 0
+      ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. For the user-visible reply, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply.'
+      : "";
+
+  return `${description}${scopedReplyContract}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
 }
 
 export async function resolveMessageChannelToolDiscovery(
@@ -140,6 +151,13 @@ export async function resolveMessageChannelToolDiscovery(
         }));
   const activeChannels = Array.from(
     new Set(discoveryTargets.map(({ channelId }) => channelId)),
+  );
+  const accountIds = Array.from(
+    new Set(
+      discoveryTargets
+        .map(({ accountId }) => accountId?.trim())
+        .filter((accountId): accountId is string => Boolean(accountId)),
+    ),
   );
   const actions = new Set<string>(["send"]);
   const schemaContributions: ChannelMessageToolSchemaContribution[] = [];
@@ -162,6 +180,7 @@ export async function resolveMessageChannelToolDiscovery(
 
   return {
     activeChannels,
+    accountIds,
     actions: Array.from(actions),
     schemaContributions,
   };
@@ -185,6 +204,7 @@ export async function buildDynamicMessageChannelToolDefinition(
     description: buildDynamicMessageChannelDescriptionFromDiscovery(
       baseDescription,
       discovery,
+      scope,
     ),
     schema: buildDynamicMessageChannelSchemaFromDiscovery(
       baseSchema,

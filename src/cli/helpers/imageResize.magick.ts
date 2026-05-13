@@ -8,6 +8,7 @@ import {
   assertImageHasDimensions,
   assertImageWithinBounds,
   buildResizeResult,
+  canonicalizeOutputMediaType,
   MAX_IMAGE_BYTES,
   MAX_IMAGE_HEIGHT,
   MAX_IMAGE_WIDTH,
@@ -56,9 +57,15 @@ async function buildVerifiedResizeResult(
   resized: boolean,
   context: string,
 ): Promise<ResizeResult> {
-  const { width, height } = await getImageDimensions(buffer);
+  const { width, height, format } = await getImageDimensions(buffer);
   assertImageWithinBounds(width, height, context);
-  return buildResizeResult(buffer, mediaType, width, height, resized);
+  return buildResizeResult(
+    buffer,
+    canonicalizeOutputMediaType(format, mediaType),
+    width,
+    height,
+    resized,
+  );
 }
 
 /**

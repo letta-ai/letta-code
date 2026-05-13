@@ -135,6 +135,12 @@ describe("buildDynamicMessageChannelSchema", () => {
       { enum?: string[] }
     >;
     expect(resolved.description).toContain("Currently active channels: Slack.");
+    expect(resolved.description).toContain(
+      "Plain assistant text is not delivered to that external user.",
+    );
+    expect(resolved.description).toContain(
+      "final action for the turn must be one MessageChannel call",
+    );
     expect(resolved.description).not.toContain("Telegram");
     expect(properties.channel?.enum).toEqual(["slack"]);
     expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);

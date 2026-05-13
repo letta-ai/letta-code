@@ -7,9 +7,12 @@ import {
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
   getBundledSkills,
+  getFrontmatterBoolean,
+  getFrontmatterStringList,
   SKILLS_DIR,
 } from "../../agent/skills";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { parseFrontmatter } from "../../utils/frontmatter";
 import { queueSkillContent } from "./skillContentRegistry";
 import { validateRequiredParams } from "./validation.js";
 
@@ -74,7 +77,7 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
  * 4. Global skills (~/.letta/skills/)
  * 5. Bundled skills
  */
-async function readSkillContent(
+export async function readSkillContent(
   skillId: string,
   skillsDir: string,
   agentId?: string,
@@ -151,7 +154,7 @@ async function readSkillContent(
 /**
  * Get skills directory, trying multiple sources
  */
-async function getResolvedSkillsDir(): Promise<string> {
+export async function getResolvedSkillsDir(): Promise<string> {
   const skillsDir = getSkillsDirectory();
 
   if (skillsDir) {
@@ -174,6 +177,128 @@ function getResolvedAgentId(args: SkillArgs): string | undefined {
   }
 }
 
+function splitSkillArguments(args: string): string[] {
+  const parts: string[] = [];
+  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|\S+/g;
+  for (const match of args.matchAll(pattern)) {
+    const raw = match[1] ?? match[2] ?? match[0];
+    parts.push(raw.replace(/\\(["'\\])/g, "$1"));
+  }
+  return parts;
+}
+
+function substituteSkillArguments(
+  content: string,
+  args: string | undefined,
+  argumentNames: string[] | undefined,
+): string {
+  const rawArgs = args?.trim() ?? "";
+  if (!rawArgs) {
+    return content;
+  }
+
+  const argParts = splitSkillArguments(rawArgs);
+  let result = content;
+  let substituted = false;
+
+  result = result.replace(/\$ARGUMENTS\[(\d+)\]/g, (_match, index) => {
+    substituted = true;
+    return argParts[Number(index)] ?? "";
+  });
+
+  result = result.replace(/\$ARGUMENTS/g, () => {
+    substituted = true;
+    return rawArgs;
+  });
+
+  result = result.replace(/\$(\d+)\b/g, (_match, index) => {
+    substituted = true;
+    return argParts[Number(index)] ?? "";
+  });
+
+  for (const [index, name] of (argumentNames ?? []).entries()) {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const namePattern = new RegExp(`\\$${escapedName}\\b`, "g");
+    result = result.replace(namePattern, () => {
+      substituted = true;
+      return argParts[index] ?? "";
+    });
+  }
+
+  if (!substituted) {
+    result = `${result.trimEnd()}\n\nARGUMENTS: ${rawArgs}`;
+  }
+
+  return result;
+}
+
+export interface RenderSkillContentOptions {
+  args?: string;
+  allowDisabledModelInvocation?: boolean;
+}
+
+export function renderSkillContent(
+  skillName: string,
+  skillContent: string,
+  skillPath: string,
+  options: RenderSkillContentOptions = {},
+): string {
+  const { frontmatter } = parseFrontmatter(skillContent);
+  if (
+    !options.allowDisabledModelInvocation &&
+    getFrontmatterBoolean(frontmatter, "disable-model-invocation") === true
+  ) {
+    throw new Error(
+      `Skill "${skillName}" is marked disable-model-invocation and can only be invoked directly by the user.`,
+    );
+  }
+
+  const skillDir = dirname(skillPath);
+  const hasExtras = hasAdditionalFiles(skillPath);
+  const argumentNames = getFrontmatterStringList(frontmatter, "arguments");
+  const withSkillDir = skillContent
+    .replace(/<SKILL_DIR>/g, skillDir)
+    .replace(/\$\{CLAUDE_SKILL_DIR\}/g, skillDir);
+  const withArguments = substituteSkillArguments(
+    withSkillDir,
+    options.args,
+    argumentNames,
+  );
+  const dirHeader = hasExtras ? `# Skill Directory: ${skillDir}\n\n` : "";
+  return `${dirHeader}${withArguments}`;
+}
+
+export async function loadRenderedSkillContent(
+  skillName: string,
+  options: RenderSkillContentOptions & {
+    agentId?: string;
+    skillsDir?: string;
+  } = {},
+): Promise<string> {
+  const skillsDir = options.skillsDir ?? (await getResolvedSkillsDir());
+  const { content: skillContent, path: skillPath } = await readSkillContent(
+    skillName,
+    skillsDir,
+    options.agentId,
+  );
+  return renderSkillContent(skillName, skillContent, skillPath, options);
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+export function wrapSkillContent(skillName: string, content: string): string {
+  if (/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(skillName)) {
+    return `<${skillName}>\n${content}\n</${skillName}>`;
+  }
+  return `<skill name="${escapeXmlAttribute(skillName)}">\n${content}\n</skill>`;
+}
+
 export async function skill(args: SkillArgs): Promise<SkillResult> {
   validateRequiredParams(args, ["skill"], "Skill");
   const { skill: skillName, toolCallId } = args;
@@ -188,31 +313,16 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const agentId = getResolvedAgentId(args);
     const skillsDir = await getResolvedSkillsDir();
 
-    // Read the SKILL.md content
-    const { content: skillContent, path: skillPath } = await readSkillContent(
-      skillName,
-      skillsDir,
+    const fullContent = await loadRenderedSkillContent(skillName, {
       agentId,
-    );
-
-    // Process the content: replace <SKILL_DIR> placeholder if skill has additional files
-    const skillDir = dirname(skillPath);
-    const hasExtras = hasAdditionalFiles(skillPath);
-    const processedContent = hasExtras
-      ? skillContent.replace(/<SKILL_DIR>/g, skillDir)
-      : skillContent;
-
-    // Build the full content with skill directory info if applicable
-    const dirHeader = hasExtras ? `# Skill Directory: ${skillDir}\n\n` : "";
-    const fullContent = `${dirHeader}${processedContent}`;
+      skillsDir,
+      args: args.args,
+    });
 
     // Queue the skill content for harness-level injection as a user message part
     // Wrap in <skill-name> XML tags so the agent can detect already-loaded skills
     if (toolCallId) {
-      queueSkillContent(
-        toolCallId,
-        `<${skillName}>\n${fullContent}\n</${skillName}>`,
-      );
+      queueSkillContent(toolCallId, wrapSkillContent(skillName, fullContent));
     }
 
     return { message: `Launching skill: ${skillName}` };

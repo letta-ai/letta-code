@@ -1,5 +1,5 @@
-import { debugWarn } from "../utils/debug";
-import { getClient } from "./client";
+import { getBackend } from "../backend";
+import { refreshByokProviders } from "../backend/api/providers";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -54,62 +54,8 @@ export function getCachedModelHandles(): Set<string> | null {
   return new Set(cache.handles);
 }
 
-/**
- * Provider response from /v1/providers/ endpoint
- */
-type Provider = {
-  id: string;
-  name: string;
-  provider_type: string;
-  provider_category?: "base" | "byok" | null;
-};
-
-/**
- * Refresh BYOK providers to get the latest models from their APIs.
- * This calls PATCH /v1/providers/{provider_id}/refresh for each BYOK provider.
- * Errors are logged but don't fail the overall refresh (best-effort).
- */
-async function refreshByokProviders(): Promise<void> {
-  const client = await getClient();
-
-  try {
-    // List all providers
-    const providers = await client.get<Provider[]>("/v1/providers/");
-
-    // Filter to BYOK providers only
-    const byokProviders = providers.filter(
-      (p) => p.provider_category === "byok",
-    );
-
-    // Refresh each BYOK provider in parallel (best-effort, don't fail on errors)
-    await Promise.allSettled(
-      byokProviders.map(async (provider) => {
-        try {
-          await client.patch<Provider>(`/v1/providers/${provider.id}/refresh`);
-        } catch (error) {
-          // Log but don't throw - refresh is best-effort
-          debugWarn(
-            "available-models",
-            `Failed to refresh provider ${provider.name} (${provider.id}):`,
-            error,
-          );
-        }
-      }),
-    );
-  } catch (error) {
-    // If we can't list providers, just log and continue
-    // This might happen on self-hosted servers without the providers endpoint
-    debugWarn(
-      "available-models",
-      "Failed to list providers for refresh:",
-      error,
-    );
-  }
-}
-
 async function fetchFromNetwork(): Promise<CacheEntry> {
-  const client = await getClient();
-  const modelsList = await client.models.list();
+  const modelsList = await getBackend().listModels();
   const handles = new Set(
     modelsList.map((m) => m.handle).filter((h): h is string => !!h),
   );
@@ -148,7 +94,8 @@ export async function getAvailableModelHandles(options?: {
 
   // When forceRefresh is true, first refresh BYOK providers to get latest models
   // This matches the behavior in ADE (letta-cloud) where refresh is called before listing models
-  if (forceRefresh) {
+  const backend = getBackend();
+  if (forceRefresh && backend.capabilities.byokProviderRefresh) {
     await refreshByokProviders();
   }
 

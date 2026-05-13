@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { getRuntimeContext } from "./runtime-context";
@@ -38,7 +39,7 @@ export interface StatusLineConfig {
   debounceMs?: number; // Debounce for event-driven refreshes (default 300)
   refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
   disabled?: boolean; // Disable at this level
-  prompt?: string; // Custom input prompt character (default ">")
+  prompt?: string; // Custom input prompt character (default "›")
 }
 
 /**
@@ -61,6 +62,17 @@ export interface AgentSettings {
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
 }
 
+export interface ConversationGoal {
+  objective: string;
+  status: "active" | "paused" | "complete" | "budget_limited";
+  createdAt: string;
+  updatedAt: string;
+  activeStartedAt?: string | null;
+  activeTimeSeconds: number;
+  tokensUsed: number;
+  tokenBudget?: number | null;
+}
+
 export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
@@ -81,7 +93,6 @@ export interface Settings {
     }
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
-  globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
@@ -89,6 +100,7 @@ export interface Settings {
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
   statusLine?: StatusLineConfig; // Configurable status line command
   env?: Record<string, string>;
+  experiments?: Partial<Record<ExperimentId, boolean>>;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
   pinnedAgentsByServer?: Record<string, string[]>; // DEPRECATED: use agents array
@@ -111,7 +123,6 @@ export interface Settings {
 }
 
 export interface ProjectSettings {
-  localSharedBlockIds: Record<string, string>;
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   statusLine?: StatusLineConfig; // Project-specific status line command
 }
@@ -138,6 +149,8 @@ export interface LocalProjectSettings {
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
+  conversationGoalsByServer?: Record<string, Record<string, ConversationGoal>>;
+  conversationGoalToolsByServer?: Record<string, Record<string, boolean>>;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -152,12 +165,9 @@ const DEFAULT_SETTINGS: Settings = {
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
-  globalSharedBlockIds: {},
 };
 
-const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
-  localSharedBlockIds: {},
-};
+const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {};
 
 const DEFAULT_LOCAL_PROJECT_SETTINGS: LocalProjectSettings = {
   lastAgent: null,
@@ -200,6 +210,20 @@ function getCurrentServerKey(settings?: Settings | null): string {
   const baseUrl =
     process.env.LETTA_BASE_URL ||
     settings?.env?.LETTA_BASE_URL ||
+    DEFAULT_LETTA_API_URL;
+  return normalizeBaseUrl(baseUrl);
+}
+
+/**
+ * Get the current memfs server key for memfs-related agent settings.
+ * Uses LETTA_MEMFS_BASE_URL and falls back to api.letta.com.
+ * @param settings - Optional settings object to check for env overrides
+ * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
+ */
+function getCurrentMemfsServerKey(settings?: Settings | null): string {
+  const baseUrl =
+    process.env.LETTA_MEMFS_BASE_URL ||
+    settings?.env?.LETTA_MEMFS_BASE_URL ||
     DEFAULT_LETTA_API_URL;
   return normalizeBaseUrl(baseUrl);
 }
@@ -691,8 +715,6 @@ class SettingsManager {
       const rawSettings = JSON.parse(content) as Record<string, unknown>;
 
       const projectSettings: ProjectSettings = {
-        localSharedBlockIds:
-          (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
         hooks: rawSettings.hooks as HooksConfig | undefined,
         statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
       };
@@ -1227,6 +1249,196 @@ class SettingsManager {
     this.setGlobalLastSession(session);
   }
 
+  areConversationGoalToolsEnabled(
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): boolean {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    return (
+      localSettings.conversationGoalToolsByServer?.[serverKey]?.[
+        conversationId
+      ] === true
+    );
+  }
+
+  setConversationGoalToolsEnabled(
+    conversationId: string,
+    enabled: boolean,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const serverGoalTools = {
+      ...(localSettings.conversationGoalToolsByServer?.[serverKey] ?? {}),
+    };
+    if (enabled) {
+      serverGoalTools[conversationId] = true;
+    } else {
+      delete serverGoalTools[conversationId];
+    }
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalToolsByServer: {
+          ...localSettings.conversationGoalToolsByServer,
+          [serverKey]: serverGoalTools,
+        },
+      },
+      workingDirectory,
+    );
+  }
+
+  getConversationGoal(
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): ConversationGoal | null {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    return (
+      localSettings.conversationGoalsByServer?.[serverKey]?.[conversationId] ??
+      null
+    );
+  }
+
+  setConversationGoal(
+    conversationId: string,
+    objective: string,
+    workingDirectory: string = process.cwd(),
+    tokenBudget: number | null = null,
+    resetUsage: boolean = true,
+  ): ConversationGoal {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const now = new Date().toISOString();
+    const previous =
+      localSettings.conversationGoalsByServer?.[serverKey]?.[conversationId];
+    const goal: ConversationGoal = {
+      objective,
+      status: "active",
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+      activeStartedAt: now,
+      activeTimeSeconds: resetUsage ? 0 : (previous?.activeTimeSeconds ?? 0),
+      tokensUsed: resetUsage ? 0 : (previous?.tokensUsed ?? 0),
+      tokenBudget,
+    };
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalsByServer: {
+          ...localSettings.conversationGoalsByServer,
+          [serverKey]: {
+            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
+            [conversationId]: goal,
+          },
+        },
+      },
+      workingDirectory,
+    );
+    return goal;
+  }
+
+  updateConversationGoalStatus(
+    conversationId: string,
+    status: ConversationGoal["status"],
+    workingDirectory: string = process.cwd(),
+  ): ConversationGoal | null {
+    const existing = this.getConversationGoal(conversationId, workingDirectory);
+    if (!existing) return null;
+
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const now = new Date().toISOString();
+    const accruedSeconds =
+      existing.status === "active" && existing.activeStartedAt
+        ? Math.max(
+            0,
+            Math.floor(
+              (Date.parse(now) - Date.parse(existing.activeStartedAt)) / 1000,
+            ),
+          )
+        : 0;
+    const goal: ConversationGoal = {
+      ...existing,
+      status,
+      activeTimeSeconds: existing.activeTimeSeconds + accruedSeconds,
+      activeStartedAt: status === "active" ? now : null,
+      updatedAt: now,
+    };
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalsByServer: {
+          ...localSettings.conversationGoalsByServer,
+          [serverKey]: {
+            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
+            [conversationId]: goal,
+          },
+        },
+      },
+      workingDirectory,
+    );
+    return goal;
+  }
+
+  accountConversationGoalUsage(
+    conversationId: string,
+    tokenDelta: number,
+    workingDirectory: string = process.cwd(),
+  ): ConversationGoal | null {
+    const existing = this.getConversationGoal(conversationId, workingDirectory);
+    if (!existing) return null;
+
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const goal: ConversationGoal = {
+      ...existing,
+      tokensUsed: Math.max(0, existing.tokensUsed + Math.max(0, tokenDelta)),
+      updatedAt: new Date().toISOString(),
+    };
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalsByServer: {
+          ...localSettings.conversationGoalsByServer,
+          [serverKey]: {
+            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
+            [conversationId]: goal,
+          },
+        },
+      },
+      workingDirectory,
+    );
+    return goal;
+  }
+
+  clearConversationGoal(
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): boolean {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const serverGoals = {
+      ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
+    };
+    const hadGoal = Object.hasOwn(serverGoals, conversationId);
+    delete serverGoals[conversationId];
+    this.updateLocalProjectSettings(
+      {
+        conversationGoalsByServer: {
+          ...localSettings.conversationGoalsByServer,
+          [serverKey]: serverGoals,
+        },
+      },
+      workingDirectory,
+    );
+    return hadGoal;
+  }
+
   // =====================================================================
   // Profile Management Helpers
   // =====================================================================
@@ -1550,9 +1762,12 @@ class SettingsManager {
    * Get settings for a specific agent on the current server.
    * Returns undefined if agent not found in settings.
    */
-  private getAgentSettings(agentId: string): AgentSettings | undefined {
+  private getAgentSettings(
+    agentId: string,
+    serverKeyOverride?: string,
+  ): AgentSettings | undefined {
     const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
+    const serverKey = serverKeyOverride ?? getCurrentServerKey(settings);
     const normalizedBaseUrl =
       serverKey === "api.letta.com" ? undefined : serverKey;
 
@@ -1568,9 +1783,10 @@ class SettingsManager {
   private upsertAgentSettings(
     agentId: string,
     updates: Partial<Omit<AgentSettings, "agentId" | "baseUrl">>,
+    serverKeyOverride?: string,
   ): void {
     const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
+    const serverKey = serverKeyOverride ?? getCurrentServerKey(settings);
     const normalizedBaseUrl =
       serverKey === "api.letta.com" ? undefined : serverKey;
 
@@ -1631,14 +1847,18 @@ class SettingsManager {
    * Check if memory filesystem is enabled for an agent on the current server.
    */
   isMemfsEnabled(agentId: string): boolean {
-    return this.getAgentSettings(agentId)?.memfs === true;
+    const settings = this.getSettings();
+    const memfsServerKey = getCurrentMemfsServerKey(settings);
+    return this.getAgentSettings(agentId, memfsServerKey)?.memfs === true;
   }
 
   /**
    * Enable or disable memory filesystem for an agent on the current server.
    */
   setMemfsEnabled(agentId: string, enabled: boolean): void {
-    this.upsertAgentSettings(agentId, { memfs: enabled });
+    const settings = this.getSettings();
+    const memfsServerKey = getCurrentMemfsServerKey(settings);
+    this.upsertAgentSettings(agentId, { memfs: enabled }, memfsServerKey);
   }
 
   /**

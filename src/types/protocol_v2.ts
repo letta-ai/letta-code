@@ -9,12 +9,9 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type {
-  DmPolicy,
-  SlackChannelMode,
-  SlackDefaultPermissionMode,
-} from "../channels/types";
+import type { DmPolicy } from "../channels/types";
 import type { CronTask } from "../cron";
+import type { ExperimentId, ExperimentSnapshot } from "../experiments/types";
 
 /**
  * Runtime identity for all state and delta events.
@@ -35,11 +32,11 @@ export interface RuntimeEnvelope {
 }
 
 export type DevicePermissionMode =
-  | "default"
+  | "standard"
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "bypassPermissions";
+  | "unrestricted";
 
 export type ToolsetName =
   | "codex"
@@ -141,7 +138,9 @@ export interface ReflectionSettingsSnapshot {
   step_count: number;
 }
 
-export type ChannelId = "telegram" | "slack" | "discord";
+export type ChannelId = string;
+
+export type ChannelPluginConfig = Record<string, unknown>;
 
 export interface ChannelSummary {
   channel_id: ChannelId;
@@ -155,86 +154,31 @@ export interface ChannelSummary {
   routes_count: number;
 }
 
-export type ChannelConfigSnapshot =
-  | {
-      channel_id: "telegram";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_token: boolean;
-    }
-  | {
-      channel_id: "slack";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      mode: SlackChannelMode;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_bot_token: boolean;
-      has_app_token: boolean;
-    }
-  | {
-      channel_id: "discord";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_token: boolean;
-    };
+export interface ChannelConfigSnapshot {
+  channel_id: ChannelId;
+  account_id: string;
+  display_name?: string;
+  enabled: boolean;
+  dm_policy: DmPolicy;
+  allowed_users: string[];
+  /** Plugin-owned redacted config/settings payload. */
+  config: ChannelPluginConfig;
+}
 
-export type ChannelAccountSnapshot =
-  | {
-      channel_id: "telegram";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_token: boolean;
-      binding: {
-        agent_id: string | null;
-        conversation_id: string | null;
-      };
-      created_at: string;
-      updated_at: string;
-    }
-  | {
-      channel_id: "slack";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      mode: SlackChannelMode;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_bot_token: boolean;
-      has_app_token: boolean;
-      agent_id: string | null;
-      default_permission_mode: SlackDefaultPermissionMode;
-      created_at: string;
-      updated_at: string;
-    }
-  | {
-      channel_id: "discord";
-      account_id: string;
-      display_name?: string;
-      enabled: boolean;
-      configured: boolean;
-      running: boolean;
-      dm_policy: DmPolicy;
-      allowed_users: string[];
-      has_token: boolean;
-      agent_id: string | null;
-      created_at: string;
-      updated_at: string;
-    };
+export interface ChannelAccountSnapshot {
+  channel_id: ChannelId;
+  account_id: string;
+  display_name?: string;
+  enabled: boolean;
+  configured: boolean;
+  running: boolean;
+  dm_policy: DmPolicy;
+  allowed_users: string[];
+  /** Plugin-owned redacted config/settings payload. */
+  config: ChannelPluginConfig;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface ChannelPendingPairing {
   account_id: string;
@@ -300,7 +244,9 @@ export interface DeviceStatus {
   current_available_skills: AvailableSkillSummary[];
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
+  experiments: ExperimentSnapshot[];
   memory_directory: string | null;
+  should_doctor?: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
   /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
   supported_commands: string[];
@@ -538,6 +484,12 @@ export type ApprovalResponseBody =
 export interface InputCreateMessagePayload {
   kind: "create_message";
   messages: Array<MessageCreate & { client_message_id?: string }>;
+  /**
+   * Optional request-scoped allowlist for locally executed client tools.
+   * Undefined preserves the listener's normal toolset; an empty array means no
+   * client tools for this turn.
+   */
+  client_tool_allowlist?: string[];
 }
 
 export type InputApprovalResponsePayload = {
@@ -577,6 +529,12 @@ export interface AbortMessageCommand {
 export interface SyncCommand {
   type: "sync";
   runtime: RuntimeScope;
+  /**
+   * Whether the device should probe backend state for stale pending approvals.
+   * Defaults to true for older clients. Lightweight status/recovery syncs should
+   * set this false and only replay in-memory listener state.
+   */
+  recover_approvals?: boolean;
 }
 
 export interface TerminalSpawnCommand {
@@ -794,6 +752,58 @@ export interface MemoryFileAtRefCommand {
   ref: string;
 }
 
+/** Read a file from the agent's MemFS working tree. Use base64 for binary. */
+export interface ReadMemoryFileCommand {
+  type: "read_memory_file";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to read. */
+  agent_id: string;
+  /** Relative to the memory root. */
+  path: string;
+  /** Defaults to "utf8". */
+  encoding?: "utf8" | "base64";
+}
+
+/**
+ * Write a file into the agent's MemFS and commit + push.
+ *
+ * Use for agent memory writes (e.g. profile images). Path is
+ * relative to the memory root and is rejected if it escapes the root.
+ */
+export interface WriteMemoryFileCommand {
+  type: "write_memory_file";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to write to. */
+  agent_id: string;
+  /** Relative path within the memory directory (e.g. "profile.png"). */
+  path: string;
+  /** Content to write — utf8 string or base64-encoded bytes. */
+  content: string;
+  /** Encoding of `content`. Defaults to "utf8". */
+  encoding?: "utf8" | "base64";
+  /** Optional commit message; defaults to a sensible fallback. */
+  commit_message?: string;
+}
+
+/**
+ * Delete a single file from the agent's MemFS working tree and commit
+ * the deletion. Idempotent: if the file is already absent, the handler
+ * returns success without producing a commit.
+ */
+export interface DeleteMemoryFileCommand {
+  type: "delete_memory_file";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to delete from. */
+  agent_id: string;
+  /** Relative path within the memory directory. */
+  path: string;
+  /** Optional commit message; defaults to a sensible fallback. */
+  commit_message?: string;
+}
+
 export interface MemoryCommitDiffCommand {
   type: "memory_commit_diff";
   /** Echoed back in the response for request correlation. */
@@ -983,6 +993,18 @@ export interface SetReflectionSettingsCommand {
   scope?: ReflectionSettingsScope;
 }
 
+export interface GetExperimentsCommand {
+  type: "get_experiments";
+  request_id: string;
+}
+
+export interface SetExperimentCommand {
+  type: "set_experiment";
+  request_id: string;
+  experiment_id: ExperimentId;
+  enabled: boolean;
+}
+
 export interface ChannelsListCommand {
   type: "channels_list";
   request_id: string;
@@ -994,27 +1016,15 @@ export interface ChannelAccountsListCommand {
   channel_id: ChannelId;
 }
 
-export type ChannelAccountCreatePayload =
-  | {
-      account_id?: string;
-      display_name?: string;
-      enabled?: boolean;
-      token?: string;
-      dm_policy?: DmPolicy;
-      allowed_users?: string[];
-    }
-  | {
-      account_id?: string;
-      display_name?: string;
-      enabled?: boolean;
-      bot_token?: string;
-      app_token?: string;
-      mode?: SlackChannelMode;
-      agent_id?: string | null;
-      default_permission_mode?: SlackDefaultPermissionMode;
-      dm_policy?: DmPolicy;
-      allowed_users?: string[];
-    };
+export interface ChannelAccountCreatePayload {
+  account_id?: string;
+  display_name?: string;
+  enabled?: boolean;
+  dm_policy?: DmPolicy;
+  allowed_users?: string[];
+  /** Plugin-owned account config. New fields should be added here, not centrally. */
+  config?: ChannelPluginConfig;
+}
 
 export interface ChannelAccountCreateCommand {
   type: "channel_account_create";
@@ -1028,25 +1038,7 @@ export interface ChannelAccountUpdateCommand {
   request_id: string;
   channel_id: ChannelId;
   account_id: string;
-  patch:
-    | {
-        display_name?: string;
-        enabled?: boolean;
-        token?: string;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      }
-    | {
-        display_name?: string;
-        enabled?: boolean;
-        bot_token?: string;
-        app_token?: string;
-        mode?: SlackChannelMode;
-        agent_id?: string | null;
-        default_permission_mode?: SlackDefaultPermissionMode;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      };
+  patch: Omit<ChannelAccountCreatePayload, "account_id">;
 }
 
 export interface ChannelAccountBindCommand {
@@ -1097,19 +1089,11 @@ export interface ChannelSetConfigCommand {
   request_id: string;
   channel_id: ChannelId;
   account_id?: string;
-  config:
-    | {
-        token?: string;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      }
-    | {
-        bot_token?: string;
-        app_token?: string;
-        mode?: SlackChannelMode;
-        dm_policy?: DmPolicy;
-        allowed_users?: string[];
-      };
+  config: {
+    dm_policy?: DmPolicy;
+    allowed_users?: string[];
+    plugin_config?: ChannelPluginConfig;
+  };
 }
 
 export interface ChannelStartCommand {
@@ -1258,6 +1242,22 @@ export interface SetReflectionSettingsResponseMessage {
   success: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
   scope: ReflectionSettingsScope;
+  error?: string;
+}
+
+export interface GetExperimentsResponseMessage {
+  type: "get_experiments_response";
+  request_id: string;
+  success: boolean;
+  experiments: ExperimentSnapshot[];
+  error?: string;
+}
+
+export interface SetExperimentResponseMessage {
+  type: "set_experiment_response";
+  request_id: string;
+  success: boolean;
+  experiments: ExperimentSnapshot[];
   error?: string;
 }
 
@@ -1543,6 +1543,67 @@ export interface CheckoutBranchResponse {
   error?: string;
 }
 
+// ─────────────────────────────────────────────────
+//  Secrets management (modal + CLI source of truth)
+//
+//  letta-code owns the secrets cache. All reads and writes go through these
+//  three commands so the in-memory cache stays consistent. Per-turn
+//  hydration is one-shot — these commands are the only paths that re-touch
+//  core after the initial fetch.
+// ─────────────────────────────────────────────────
+
+/**
+ * Refresh the local secrets cache from core and return the available
+ * secrets. The modal needs the plaintext values to populate the form, so
+ * this command intentionally exposes them. The CLI's `/secret list` uses a
+ * separate code path that returns names only.
+ */
+export interface SecretListCommand {
+  type: "secret_list";
+  request_id: string;
+  /** Agent whose secrets to list. */
+  agent_id: string;
+}
+
+export interface SecretListResponse {
+  type: "secret_list_response";
+  request_id: string;
+  success: boolean;
+  /** Sorted secret entries (key + plaintext value). Empty on failure. */
+  secrets: Array<{ key: string; value: string }>;
+  error?: string;
+}
+
+/**
+ * Apply a batch of secret mutations atomically. The device computes the
+ * resulting map (current ∪ set) ∖ unset and PATCHes core in a single call,
+ * eliminating the read-modify-write race that would plague parallel
+ * per-key calls. This is the only WS-surfaced write — single-key set/unset
+ * are CLI-only via `setSecretOnServer` / `deleteSecretOnServer`.
+ *
+ * Keys provided in `set` override any existing values; `unset` keys are
+ * removed from the final map. Keys appearing in both lists resolve to
+ * `unset` (defensive — clients shouldn't send both).
+ */
+export interface SecretApplyCommand {
+  type: "secret_apply";
+  request_id: string;
+  agent_id: string;
+  /** Keys to add or replace, with their plaintext values. */
+  set: Record<string, string>;
+  /** Keys to remove. Normalized to uppercase server-side. */
+  unset: string[];
+}
+
+export interface SecretApplyResponse {
+  type: "secret_apply_response";
+  request_id: string;
+  success: boolean;
+  /** Sorted secret names after the apply. Empty on failure. */
+  names: string[];
+  error?: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -1566,6 +1627,9 @@ export type WsProtocolCommand =
   | MemoryHistoryCommand
   | MemoryFileAtRefCommand
   | MemoryCommitDiffCommand
+  | ReadMemoryFileCommand
+  | WriteMemoryFileCommand
+  | DeleteMemoryFileCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand
@@ -1580,6 +1644,8 @@ export type WsProtocolCommand =
   | CreateAgentCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
+  | GetExperimentsCommand
+  | SetExperimentCommand
   | ChannelsListCommand
   | ChannelAccountsListCommand
   | ChannelAccountCreateCommand
@@ -1602,7 +1668,9 @@ export type WsProtocolCommand =
   | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
   | SearchBranchesCommand
-  | CheckoutBranchCommand;
+  | CheckoutBranchCommand
+  | SecretListCommand
+  | SecretApplyCommand;
 
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
@@ -1613,6 +1681,8 @@ export type WsProtocolMessage =
   | ListModelsResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
+  | GetExperimentsResponseMessage
+  | SetExperimentResponseMessage
   | ChannelsListResponseMessage
   | ChannelAccountsListResponseMessage
   | ChannelAccountCreateResponseMessage
@@ -1637,6 +1707,8 @@ export type WsProtocolMessage =
   | ChannelAccountsUpdatedMessage
   | ChannelPairingsUpdatedMessage
   | ChannelRoutesUpdatedMessage
-  | ChannelTargetsUpdatedMessage;
+  | ChannelTargetsUpdatedMessage
+  | SecretListResponse
+  | SecretApplyResponse;
 
 export type { StopReasonType };

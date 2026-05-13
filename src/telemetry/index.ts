@@ -1,5 +1,6 @@
-import { getServerUrl } from "../agent/client";
-import { getLettaCodeHeaders } from "../agent/http-headers";
+import { getServerUrl } from "../backend/api/client";
+import { getServerHealth } from "../backend/api/health";
+import { submitTelemetryMetadata } from "../backend/api/metadata";
 import { settingsManager } from "../settings-manager";
 import { debugLogFile } from "../utils/debug";
 import { getVersion } from "../version";
@@ -86,6 +87,28 @@ export interface ReflectionEndData {
   subagent_id?: string;
   conversation_id?: string;
   error?: string;
+}
+
+/**
+ * Returns true for error messages that are non-actionable noise:
+ * - Billing/plan limit responses (premium-unavailable, usage-exceeded, not-enough-credits)
+ * - User-initiated actions (cancelled, Ctrl+Z)
+ * - Transient connection errors (DNS, SSL, socket hang up) — NOT Cloudflare 521/520 (filtered in PostHog)
+ * - Environment issues (git/npm not installed)
+ * - Expected concurrency (409 CONFLICT)
+ * - Placeholder agent names (@author/agent)
+ */
+function isNonActionableError(message: string): boolean {
+  return (
+    /premium-unavailable|not-enough-credits|usage-exceeded/i.test(message) ||
+    /Cancelled by user|SIGTSTP/i.test(message) ||
+    /ENOTFOUND|EAI_AGAIN|ECONNRESET|socket hang up|EPROTO/i.test(message) ||
+    /Connection error\./i.test(message) ||
+    /\{"isTrusted":\s*true\}/.test(message) ||
+    /spawn (git|npm) ENOENT/.test(message) ||
+    /\bCONFLICT\b/.test(message) ||
+    /@author\/agent not found/.test(message)
+  );
 }
 
 class TelemetryManager {
@@ -217,9 +240,12 @@ class TelemetryManager {
 
     process.on("uncaughtException", (error) => {
       try {
+        const msg = error instanceof Error ? error.message : String(error);
+        // Broken pipe/TTY — not actionable (e.g. terminal closed while writing)
+        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
         this.trackError(
           "uncaught_exception",
-          error instanceof Error ? error.message : String(error),
+          msg,
           "process_uncaught_exception",
         );
         this.flush().catch(() => {
@@ -232,9 +258,14 @@ class TelemetryManager {
 
     process.on("unhandledRejection", (reason) => {
       try {
+        const msg = reason instanceof Error ? reason.message : String(reason);
+        // Broken pipe/TTY — not actionable
+        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
+        // Rate limits surfacing as unhandled rejections — expected under load
+        if (/\b429\b/.test(msg) && /rate.?limit/i.test(msg)) return;
         this.trackError(
           "unhandled_rejection",
-          reason instanceof Error ? reason.message : String(reason),
+          msg,
           "process_unhandled_rejection",
         );
         this.flush().catch(() => {
@@ -312,19 +343,12 @@ class TelemetryManager {
    */
   async fetchServerVersion(): Promise<void> {
     try {
-      const baseURL = getServerUrl();
-      const settings = await settingsManager.getSettingsWithSecureTokens();
-      const apiKey =
-        process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "";
-      const res = await fetch(`${baseURL}/v1/health`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      const data = await getServerHealth({
+        baseUrl: getServerUrl(),
         signal: AbortSignal.timeout(3000),
       });
-      if (res.ok) {
-        const data = (await res.json()) as { version?: string };
-        if (data.version) {
-          this.serverVersion = data.version;
-        }
+      if (data.version) {
+        this.serverVersion = data.version;
       }
     } catch {
       // Best-effort — don't let this affect startup
@@ -507,6 +531,11 @@ class TelemetryManager {
       return;
     }
 
+    // Skip non-actionable errors that create noise
+    if (isNonActionableError(errorMessage)) {
+      return;
+    }
+
     const data: ErrorData = {
       error_type: errorType,
       error_message: errorMessage,
@@ -598,35 +627,16 @@ class TelemetryManager {
     const apiKey = await this.resolveTelemetryApiKey();
 
     try {
-      // Add 5 second timeout to prevent telemetry from blocking shutdown
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Telemetry request timeout")), 5000),
-      );
-
-      const fetchPromise = fetch(
-        "https://api.letta.com/v1/metadata/telemetry",
+      await submitTelemetryMetadata(
+        apiKey,
+        this.deviceId || "",
         {
-          method: "POST",
-          headers: {
-            ...getLettaCodeHeaders(apiKey),
-            "X-Letta-Code-Device-ID": this.deviceId || "",
-          },
-          body: JSON.stringify({
-            service: "letta-code",
-            server_version: this.serverVersion || undefined,
-            events: eventsToSend,
-          }),
+          service: "letta-code",
+          server_version: this.serverVersion || undefined,
+          events: eventsToSend,
         },
+        { signal: AbortSignal.timeout(5000) },
       );
-
-      const response = (await Promise.race([
-        fetchPromise,
-        timeoutPromise,
-      ])) as Response;
-
-      if (!response.ok) {
-        throw new Error(`Telemetry flush failed: ${response.status}`);
-      }
     } catch {
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);

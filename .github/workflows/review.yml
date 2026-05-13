@@ -1,0 +1,210 @@
+name: Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to review"
+        required: true
+        type: number
+
+jobs:
+  review:
+    # Only run on non-draft PRs or manual dispatch
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: read
+    env:
+      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # Wait for CI lint to pass before running review
+      - name: Wait for CI lint
+        id: lint_wait
+        if: github.event_name == 'pull_request'
+        run: |
+          # Poll until the lint check completes
+          for i in $(seq 1 30); do
+            STATUS=$(gh api "repos/$GITHUB_REPOSITORY/commits/${{ github.event.pull_request.head.sha }}/check-runs" \
+              --jq '.check_runs[] | select(.name == "Lint & Type Check") | .status')
+            if [ "$STATUS" = "completed" ]; then
+              CONCLUSION=$(gh api "repos/$GITHUB_REPOSITORY/commits/${{ github.event.pull_request.head.sha }}/check-runs" \
+                --jq '.check_runs[] | select(.name == "Lint & Type Check") | .conclusion')
+              echo "Lint check completed: $CONCLUSION"
+              if [ "$CONCLUSION" != "success" ]; then
+                echo "Lint check failed or was cancelled ($CONCLUSION), skipping review"
+                echo "skipped=true" >> $GITHUB_OUTPUT
+                exit 0
+              fi
+              break
+            fi
+            echo "Waiting for lint check... (attempt $i/30)"
+            sleep 10
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: React with eyes (review starting)
+        id: eyes_reaction
+        if: steps.lint_wait.outputs.skipped != 'true'
+        run: |
+          # Clear any existing rocket from a previous LGTM run on this PR
+          EXISTING_ROCKET=$(gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
+            --jq '.[] | select(.content == "rocket" and .user.login == "github-actions[bot]") | .id' | head -1)
+          if [ -n "$EXISTING_ROCKET" ]; then
+            echo "Clearing previous rocket reaction: $EXISTING_ROCKET"
+            gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions/$EXISTING_ROCKET -X DELETE || true
+          fi
+          # Add eyes to signal review in progress
+          REACTION_ID=$(gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
+            -X POST -f content="eyes" --jq '.id')
+          echo "Eyes reaction ID: $REACTION_ID"
+          echo "reaction_id=$REACTION_ID" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: letta-ai/letta-code-action@daa80f29e345315623ff759f5ecf5018946bbc15
+        id: letta_review
+        if: steps.lint_wait.outputs.skipped != 'true'
+        with:
+          letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
+          track_progress: ""
+          tracking_comment: "false"
+          model: auto
+          prompt: |
+            You are reviewing PR #${{ env.PR_NUMBER }} in ${{ github.repository }}.
+
+            ## Your job
+
+            1. Read your review-knowledge.md memory file — it has the detailed codebase footguns, bug patterns, and provider-specific traps
+            2. Run `gh pr view $PR_NUMBER --json title,body,comments` to get the PR title, description, and comments
+            3. Run `gh pr diff $PR_NUMBER` to read the full diff
+            4. Assess whether the PR introduces real risk
+            5. If nothing to flag, respond with exactly: `LGTM`
+            6. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
+
+            **Default posture: signal-only.** Most PRs are fine. Only speak when there's something worth saying.
+
+            **Focus on the diff.** Only read additional files if the changed code is ambiguous without surrounding context. Don't re-read entire files you already know.
+
+            ## What to flag
+
+            - Bugs, logic errors, security issues (injection, auth bypass, secrets exposure)
+            - Race conditions, missing error handling, state cleanup gaps
+            - New state in App.tsx or approval components (flicker risk — see review-knowledge.md)
+            - Redundant blocking API calls, performance footguns
+            - Shell tool parity gaps, streaming code assuming one provider's behavior
+
+            ## What NOT to flag
+
+            - Style, naming, formatting — Biome handles this
+            - Things that are correct but you'd do differently
+            - Existing patterns followed consistently (even if suboptimal)
+            - Known flaky test failures (see review-knowledge.md for the list)
+
+            ## Voice
+
+            You're Amelia. Be yourself — casual, direct, no filler. If you flag something, say it the way you'd say it to Caren in conversation: tight, concrete, no padding. Don't sound like a bot or a linter. You're a collaborator pointing something out, not a bureaucrat filing a report.
+
+            ## How to comment
+
+            Use `gh api` to create a PR review with inline comments on specific lines:
+
+            ```bash
+            gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
+              -X POST \
+              -f event="COMMENT" \
+              -f body="" \
+              -f 'comments[][path]=<file>' \
+              -f 'comments[][line]=<line-number>' \
+              -f 'comments[][body]=<your comment>'
+            ```
+
+            **1-2 short sentences max.** State the concrete risk, nothing else. No explanations, no context, no suggestions unless asked. Examples:
+            - ✅ `track_progress` will crash on `workflow_dispatch` — the action rejects it for non-PR events.
+            - ✅ `show_full_output: "true"` leaks tool output (potentially secrets) into CI logs.
+            - ❌ The `track_progress` option is set to "true" in this workflow, but the letta-code-action's `validateTrackProgressEvent` function explicitly rejects the `workflow_dispatch` event type when track_progress is enabled. This means every manual dispatch will throw an error. You should either remove track_progress and handle tracking yourself in the prompt, or split into two jobs — one for pull_request (with track_progress) and one for workflow_dispatch (without it).
+
+            ## Suggested patches
+
+            For high-confidence, surgical fixes (wrong operator, wrong fallback value, missing guard, clear typo), include a suggested patch directly in the comment body using GitHub's suggestion syntax. The author can apply it in one click.
+
+            **When to use suggestions:** The fix is unambiguous, confined to the flagged lines, and you are certain it is correct. Do NOT suggest if the fix requires broader context, multiple files, or architectural judgment.
+
+            **Before writing a suggestion:** Read the current file content at the flagged path to get the exact lines. The suggestion block must contain the complete replacement for the covered lines — GitHub diffs it against the original automatically.
+
+            **Single-line suggestion:**
+            ```bash
+            gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
+              -X POST \
+              -f event="COMMENT" \
+              -f body="" \
+              -f 'comments[][path]=<file>' \
+              -f 'comments[][line]=<line-number>' \
+              -f 'comments[][body]=<one sentence stating the risk>
+
+            ```suggestion
+            <replacement line>
+            ```'
+            ```
+
+            **Multi-line suggestion** (add `start_line` to cover a range):
+            ```bash
+            gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
+              -X POST \
+              -f event="COMMENT" \
+              -f body="" \
+              -f 'comments[][path]=<file>' \
+              -f 'comments[][start_line]=<first-line>' \
+              -f 'comments[][line]=<last-line>' \
+              -f 'comments[][body]=<one sentence stating the risk>
+
+            ```suggestion
+            <replacement lines>
+            ```'
+            ```
+
+            Example — wrong operator on a single line:
+            ```
+            `&&` should be `||` — requires both vars set, breaking `LETTA_DEBUG=1` alone.
+
+            ```suggestion
+              return lettaDebug === "1" || lettaDebug === "true" || legacyDebug === "1" || legacyDebug === "true";
+            ```
+            ```
+
+      - name: React based on review outcome
+        if: steps.lint_wait.outputs.skipped != 'true' && steps.letta_review.outputs.execution_file != ''
+        run: |
+          # Parse the agent's final response from the execution file
+          RESULT=$(cat "${{ steps.letta_review.outputs.execution_file }}" \
+            | jq -r '[.[] | select(.type == "result") | .result] | last // ""')
+          echo "Review result: $RESULT"
+
+          if echo "$RESULT" | grep -qi "LGTM"; then
+            # LGTM — delete eyes, add rocket
+            if [ -n "${{ steps.eyes_reaction.outputs.reaction_id }}" ]; then
+              gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions/${{ steps.eyes_reaction.outputs.reaction_id }} \
+                -X DELETE || true
+            fi
+            gh api repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/reactions \
+              -X POST -f content="rocket"
+          else
+            # Comments left — keep eyes, no rocket
+            echo "Comments left — keeping eyes reaction"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

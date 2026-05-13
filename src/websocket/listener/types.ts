@@ -24,10 +24,12 @@ import type {
   RuntimeScope,
   WsProtocolCommand,
 } from "../../types/protocol_v2";
+import type { ListenerTransport } from "./transport";
 
 export interface StartListenerOptions {
   connectionId: string;
   wsUrl: string;
+  supportsSplitStatusChannels?: boolean;
   deviceId: string;
   connectionName: string;
   onConnected: (connectionId: string) => void;
@@ -56,13 +58,19 @@ export interface IncomingMessage {
   agentId?: string;
   conversationId?: string;
   channelTurnSources?: ChannelTurnSource[];
+  clientToolAllowlist?: string[];
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
 }
 
+export type ProcessQueuedTurn = (
+  queuedTurn: IncomingMessage,
+  dequeuedBatch: DequeuedBatch,
+) => Promise<void>;
+
 export interface ModeChangePayload {
-  mode: "default" | "acceptEdits" | "plan" | "memory" | "bypassPermissions";
+  mode: "standard" | "acceptEdits" | "plan" | "memory" | "unrestricted";
 }
 
 export interface ChangeCwdMessage {
@@ -117,8 +125,11 @@ export type ConversationRuntime = {
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
   lastStopReason: string | null;
+  lastTerminalLoopErrorMessage: string | null;
   isProcessing: boolean;
   activeWorkingDirectory: string | null;
+  expectedWorktreePath: string | null;
+  expectedWorktreeExpiresAt: number | null;
   activeRunId: string | null;
   activeRunStartedAt: string | null;
   activeAbortController: AbortController | null;
@@ -151,6 +162,9 @@ export type ConversationRuntime = {
 
 export type ListenerRuntime = {
   socket: WebSocket | null;
+  transport?: ListenerTransport | null;
+  streamSocket?: WebSocket | null;
+  streamTransport?: ListenerTransport | null;
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
   intentionallyClosed: boolean;
@@ -192,6 +206,25 @@ export type ListenerRuntime = {
   >;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
   memfsSyncedAgents: Map<string, Promise<void>>;
+  /** Agent IDs with an in-flight secrets refresh. Concurrent callers coalesce on the same promise. */
+  secretsHydrationByAgent: Map<string, Promise<void>>;
+  /** Per-agent timestamp of the last successful secrets hydration. Used for freshness-based caching. */
+  secretsHydrationFreshnessByAgent: Map<string, number>;
+  /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
+  secretsDirtyAgents: Set<string>;
+  /**
+   * Agent metadata warmups for listen-mode reminders. The cached promise is
+   * reused while the listener stays connected so first-turn reminders can join
+   * an in-flight sync warmup instead of fetching agent info again.
+   */
+  agentMetadataByAgent: Map<
+    string,
+    Promise<{
+      name: string | null;
+      description: string | null;
+      lastRunAt: string | null;
+    } | null>
+  >;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
   /** Unsubscribe from subagent state store (set on socket open, cleared on close). */
   _unsubscribeSubagentState?: (() => void) | undefined;

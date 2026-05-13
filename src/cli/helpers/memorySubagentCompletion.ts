@@ -1,4 +1,8 @@
 import { recompileAgentSystemPrompt } from "../../agent/modify";
+import {
+  estimateSystemTokens,
+  setSystemPromptDoctorState,
+} from "./systemPromptWarning";
 
 export type MemorySubagentType = "init" | "reflection";
 
@@ -44,7 +48,14 @@ export async function handleMemorySubagentCompletion(
         inFlight = (async () => {
           do {
             deps.recompileQueuedByConversation.delete(conversationId);
-            await recompileAgentSystemPromptFn(conversationId, agentId);
+            const compiledSystemPrompt = await recompileAgentSystemPromptFn(
+              conversationId,
+              agentId,
+            );
+            setSystemPromptDoctorState(
+              agentId,
+              estimateSystemTokens(compiledSystemPrompt),
+            );
           } while (deps.recompileQueuedByConversation.has(conversationId));
         })().finally(() => {
           // Cleanup runs only after the shared promise settles, so every

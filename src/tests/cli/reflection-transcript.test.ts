@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import {
+  estimateStartupContextTokens,
+  REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "../../agent/subagents/contextBudget";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
@@ -65,6 +70,9 @@ describe("reflectionTranscript helper", () => {
     expect(payload.endMessageId).toBe("a1");
 
     expect(payload.payloadPath.endsWith(".json")).toBe(true);
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    expect(payload.payloadPath.startsWith(paths.rootDir)).toBe(true);
+    expect(dirname(payload.payloadPath)).toBe(paths.rootDir);
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
@@ -82,7 +90,6 @@ describe("reflectionTranscript helper", () => {
 
     expect(existsSync(payload.payloadPath)).toBe(true);
 
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
     const stateRaw = await readFile(paths.statePath, "utf-8");
     const state = JSON.parse(stateRaw) as { auto_cursor_line: number };
     expect(state.auto_cursor_line).toBe(payload.endSnapshotLine);
@@ -291,19 +298,58 @@ describe("reflectionTranscript helper", () => {
     expect(snapshot).not.toContain("user_09.md");
   });
 
+  test("buildParentMemorySnapshot truncates large system memory previews", async () => {
+    const memoryDir = join(testRoot, "memory-large-system");
+    const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");
+    await mkdir(join(memoryDir, "system"), { recursive: true });
+
+    const largeContent = `---\ndescription: Large system memory\n---\nSTART\n${"x".repeat(60_000)}\nEND_SHOULD_BE_TRUNCATED\n`;
+    await writeFile(
+      join(memoryDir, "system", "large.md"),
+      largeContent,
+      "utf-8",
+    );
+    await writeFile(
+      join(memoryDir, "system", "small.md"),
+      "---\ndescription: Small system memory\n---\nsmall content\n",
+      "utf-8",
+    );
+
+    const snapshot = await buildParentMemorySnapshot(memoryDir);
+
+    expect(snapshot.length).toBeLessThanOrEqual(
+      REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
+    );
+    expect(estimateStartupContextTokens(snapshot)).toBeLessThanOrEqual(
+      REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+    );
+    expect(snapshot).toContain("<memory_filesystem>");
+    expect(snapshot).toContain("large.md");
+    expect(snapshot).toContain(
+      `<path>${normalizedMemoryDir}/system/large.md</path>`,
+    );
+    expect(snapshot).toContain("START");
+    expect(snapshot).toContain("Memory preview truncated");
+    expect(snapshot).not.toContain("END_SHOULD_BE_TRUNCATED");
+    expect(snapshot).toContain("</parent_memory>");
+  });
+
   test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {
     const prompt = buildReflectionSubagentPrompt({
-      transcriptPath: "/tmp/transcript.json",
       memoryDir: "/tmp/memory",
-      cwd: "/tmp/work",
       parentMemory: "<parent_memory>snapshot</parent_memory>",
     });
 
     expect(prompt).toContain("Review the conversation transcript");
-    expect(prompt).toContain("Your current working directory is: /tmp/work");
+    expect(prompt).not.toContain("Your current working directory is:");
     expect(prompt).toContain(
-      "The current conversation transcript has been saved",
+      "The current conversation transcript path is available as the",
     );
+    // Prompt references the $TRANSCRIPT_PATH env var (resolved via Bash),
+    // not a literal absolute path.
+    expect(prompt).toContain("$TRANSCRIPT_PATH");
+    expect(prompt).toContain("cat $TRANSCRIPT_PATH");
+    expect(prompt).not.toContain("/tmp/transcript");
     expect(prompt).toContain(
       "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below.",
     );

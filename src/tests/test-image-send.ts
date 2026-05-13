@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { getClient } from "../agent/client";
 import { createAgent } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
+import { getClient } from "../backend/api/client";
 
 async function main() {
   // Create a simple test image (1x1 red PNG)

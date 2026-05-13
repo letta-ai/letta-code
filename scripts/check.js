@@ -15,7 +15,7 @@ try {
 } catch (error) {
   console.error("❌ Mock isolation check failed\n");
   console.error(
-    "Add a top-level mock.restore() teardown hook to any test file using mock.module(), or remove the module mock.\n",
+    "Fix the unsafe mock.module() usage above. Prefer explicit test override helpers or scoped mocks with afterEach(mock.restore).\n",
   );
   failed = true;
 }

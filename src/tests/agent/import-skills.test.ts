@@ -190,7 +190,8 @@ describe("skills extraction from .af files", () => {
     expect(extracted).toEqual([]);
   });
 
-  test.skipIf(process.env.CI === "true")(
+  // This reaches GitHub, so keep it out of the normal local/unit suite.
+  test.skipIf(process.env.LETTA_RUN_NETWORK_TESTS !== "true")(
     "fetches skill from remote source_url (integration)",
     async () => {
       const afContent = {
@@ -201,8 +202,8 @@ describe("skills extraction from .af files", () => {
         mcp_servers: [],
         skills: [
           {
-            name: "imessage",
-            source_url: "letta-ai/skills/main/tools/imessage",
+            name: "imsg",
+            source_url: "letta-ai/skills/main/tools/imsg",
           },
         ],
       };
@@ -211,8 +212,8 @@ describe("skills extraction from .af files", () => {
 
       const extracted = await extractSkillsFromAf(afPath, skillsDir);
 
-      expect(extracted).toEqual(["imessage"]);
-      expect(existsSync(join(skillsDir, "imessage", "SKILL.md"))).toBe(true);
+      expect(extracted).toEqual(["imsg"]);
+      expect(existsSync(join(skillsDir, "imsg", "SKILL.md"))).toBe(true);
     },
   );
 });

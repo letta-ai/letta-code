@@ -6,11 +6,12 @@ import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
+import { getBackend } from "../backend";
+import { getClient } from "../backend/api/client";
+import { apiRequest, getApiRequestConfig } from "../backend/api/request";
 import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "../constants";
 import { settingsManager } from "../settings-manager";
 import { getModelContextWindow } from "./available-models";
-import { getClient, getServerUrl } from "./client";
-import { getLettaCodeHeaders } from "./http-headers";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
   formatAvailableModels,
@@ -23,9 +24,7 @@ import {
   isKnownPreset,
   type MemoryPromptMode,
   resolveAndBuildSystemPrompt,
-  resolveSystemPrompt,
   SLEEPTIME_MEMORY_PERSONA,
-  swapMemoryAddon,
 } from "./promptAssets";
 
 /**
@@ -65,8 +64,7 @@ function isToolsNotFoundError(err: unknown): boolean {
 }
 
 export async function addBaseToolsToServer(): Promise<boolean> {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const { apiKey } = await getApiRequestConfig();
 
   if (!apiKey) {
     console.warn(
@@ -76,19 +74,7 @@ export async function addBaseToolsToServer(): Promise<boolean> {
   }
 
   try {
-    const response = await fetch(`${getServerUrl()}/v1/tools/add-base-tools`, {
-      method: "POST",
-      headers: getLettaCodeHeaders(apiKey),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.warn(
-        `Failed to add base tools via /v1/tools/add-base-tools (${response.status}): ${body || response.statusText}`,
-      );
-      return false;
-    }
-
+    await apiRequest<void>("POST", "/v1/tools/add-base-tools");
     return true;
   } catch (err) {
     console.warn(
@@ -217,7 +203,7 @@ export async function createAgent(
     modelHandle = getDefaultModel();
   }
 
-  const client = await getClient();
+  const backend = getBackend();
 
   // Only attach server-side tools to the agent.
   // Client-side tools (Read, Write, Bash, etc.) are passed via client_tools at runtime,
@@ -323,14 +309,9 @@ export async function createAgent(
 
   // Resolve system prompt content
   const memMode: MemoryPromptMode = options.memoryPromptMode ?? "standard";
-  const disableManagedMemoryPrompt =
-    Array.isArray(options.initBlocks) && options.initBlocks.length === 0;
-  const systemPromptContent = disableManagedMemoryPrompt
-    ? (options.systemPromptCustom ??
-      (await resolveSystemPrompt(options.systemPromptPreset)))
-    : options.systemPromptCustom
-      ? swapMemoryAddon(options.systemPromptCustom, memMode)
-      : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
+  const systemPromptContent = options.systemPromptCustom
+    ? options.systemPromptCustom
+    : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
@@ -374,7 +355,7 @@ export async function createAgent(
   };
 
   const createWithTools = (tools: string[]) =>
-    client.agents.create({
+    backend.createAgent({
       ...createAgentRequestBase,
       tools,
     });
@@ -399,12 +380,13 @@ export async function createAgent(
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
-  const fullAgent = await client.agents.retrieve(agent.id, {
+  const fullAgent = await backend.retrieveAgent(agent.id, {
     include: ["agent.managed_group"],
   });
 
   // Update persona block for sleeptime agent
   if (enableSleeptimeVal && fullAgent.managed_group) {
+    const client = await getClient();
     // Find the sleeptime agent in the managed group by checking agent_type
     for (const groupAgentId of fullAgent.managed_group.agent_ids) {
       try {

@@ -65,7 +65,7 @@ describe("queuedMessageParts", () => {
     const notificationXml = formatTaskNotification({
       taskId: "task_2",
       status: "completed",
-      summary: 'Agent "Explore" completed',
+      summary: 'Agent "General-purpose" completed',
       result: "Done",
       outputFile: "/tmp/task_2.log",
     });
@@ -76,7 +76,7 @@ describe("queuedMessageParts", () => {
     ];
 
     expect(getQueuedNotificationSummaries(queued)).toEqual([
-      'Agent "Explore" completed',
+      'Agent "General-purpose" completed',
     ]);
   });
 });

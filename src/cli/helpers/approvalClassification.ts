@@ -53,6 +53,18 @@ export async function getMissingRequiredArgs(
   );
 }
 
+function formatMissingRequiredArgsReason(
+  toolName: string,
+  parsedArgs: Record<string, unknown>,
+  missingRequiredArgs: string[],
+): string {
+  const received = Object.keys(parsedArgs).join(", ");
+  return (
+    `${toolName} tool missing required parameter${missingRequiredArgs.length > 1 ? "s" : ""}: ` +
+    `${missingRequiredArgs.join(", ")}. Received parameters: ${received}`
+  );
+}
+
 export async function classifyApprovals<TContext = ApprovalContext | null>(
   approvals: ApprovalRequest[],
   opts: ClassifyApprovalsOptions<TContext> = {},
@@ -82,6 +94,32 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       approval.toolArgs || "{}",
       {},
     );
+
+    if (opts.requireArgsForAutoApprove) {
+      const missingRequiredArgs = await getMissingRequiredArgs(
+        toolName,
+        parsedArgs,
+      );
+      if (missingRequiredArgs.length > 0) {
+        const denyReason = opts.missingArgsReason
+          ? opts.missingArgsReason(missingRequiredArgs)
+          : formatMissingRequiredArgsReason(
+              toolName,
+              parsedArgs,
+              missingRequiredArgs,
+            );
+        autoDenied.push({
+          approval,
+          permission: { decision: "deny", reason: denyReason },
+          context: null,
+          parsedArgs,
+          missingRequiredArgs,
+          denyReason,
+        });
+        continue;
+      }
+    }
+
     const permission = await checkToolPermission(
       toolName,
       parsedArgs,
@@ -107,27 +145,6 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
         denyReason: denyReasonForAsk,
       });
       continue;
-    }
-
-    if (decision === "allow" && opts.requireArgsForAutoApprove) {
-      const missingRequiredArgs = await getMissingRequiredArgs(
-        toolName,
-        parsedArgs,
-      );
-      if (missingRequiredArgs.length > 0) {
-        const denyReason = opts.missingArgsReason
-          ? opts.missingArgsReason(missingRequiredArgs)
-          : `Missing required parameter${missingRequiredArgs.length > 1 ? "s" : ""}: ${missingRequiredArgs.join(", ")}`;
-        autoDenied.push({
-          approval,
-          permission,
-          context,
-          parsedArgs,
-          missingRequiredArgs,
-          denyReason,
-        });
-        continue;
-      }
     }
 
     const entry: ClassifiedApproval<TContext> = {

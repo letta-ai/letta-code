@@ -8,7 +8,14 @@
  */
 
 import { spawn } from "node:child_process";
-import { buildChatUrl } from "../../cli/helpers/appUrls";
+import {
+  type BackendMode,
+  getBackend,
+  getLocalBackendStorageDir,
+} from "../../backend";
+import { getBillingTier } from "../../backend/api/metadata";
+import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
+import { buildAgentReference } from "../../cli/helpers/appUrls";
 import {
   addToolCall,
   emitStreamEvent,
@@ -34,12 +41,35 @@ import {
 } from "../../tools/impl/shellEnv";
 import { getErrorMessage } from "../../utils/error";
 import { getAvailableModelHandles } from "../available-models";
-import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
 import { getDefaultModelForTier, resolveModel } from "../model";
 import recallSubagentPrompt from "../prompts/recall_subagent.md";
-
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
+import {
+  estimateStartupContextTokens,
+  REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
+  REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
+} from "./contextBudget";
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Subagent types that don't need server-side base tools (web_search,
+ * fetch_webpage). These agents operate on local memory/git state and have
+ * no use for internet access. Spawning them with `--base-tools none`
+ * keeps their tool list minimal.
+ *
+ * fork/recall are excluded because they deploy the parent agent and
+ * never trigger fresh agent creation, so base tools are out of scope.
+ */
+const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
+  "reflection",
+  "memory",
+  "history-analyzer",
+  "init",
+]);
 
 // ============================================================================
 // Types
@@ -78,38 +108,41 @@ interface ExecutionState {
  * Get the primary agent's model ID
  * Fetches from API and resolves to a known model ID
  */
-function getModelHandleFromAgent(agent: {
+export function getModelHandleFromAgent(agent: {
+  model?: string | null;
   llm_config?: { model_endpoint_type?: string | null; model?: string | null };
 }): string | null {
+  const directModel = agent.model;
+  if (directModel?.includes("/")) {
+    return directModel;
+  }
   const endpoint = agent.llm_config?.model_endpoint_type;
   const model = agent.llm_config?.model;
   if (endpoint && model) {
     return `${endpoint}/${model}`;
   }
-  return model || null;
+  return directModel || model || null;
 }
 
-async function getPrimaryAgentModelHandle(): Promise<string | null> {
+async function getPrimaryAgentModelHandle(): Promise<{
+  handle: string | null;
+  agent: {
+    model?: string | null;
+    name?: string | null;
+    llm_config?: { model_endpoint_type?: string | null; model?: string | null };
+  } | null;
+}> {
   try {
     const agentId = getCurrentAgentId();
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
-    return getModelHandleFromAgent(agent);
+    const agent = await getBackend().retrieveAgent(agentId);
+    return { handle: getModelHandleFromAgent(agent), agent };
   } catch {
-    return null;
+    return { handle: null, agent: null };
   }
 }
 
 async function getCurrentBillingTier(): Promise<string | null> {
-  try {
-    const client = await getClient();
-    const balance = await client.get<{ billing_tier?: string }>(
-      "/v1/metadata/balance",
-    );
-    return balance.billing_tier ?? null;
-  } catch {
-    return null;
-  }
+  return getBillingTier();
 }
 
 /**
@@ -157,12 +190,6 @@ function swapProviderPrefix(
   return `${parentProvider}/${modelPortion}`;
 }
 
-function isEnvFlagEnabled(name: string): boolean {
-  const value = process.env[name]?.trim();
-  if (!value) return false;
-  return value === "1" || value.toLowerCase() === "true";
-}
-
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
@@ -177,10 +204,14 @@ export async function resolveSubagentModel(options: {
 
   if (userModel) return userModel;
 
-  if (
-    options.subagentType === "reflection" &&
-    isEnvFlagEnabled("AUTO_MEMORY")
-  ) {
+  if (options.subagentType === "reflection") {
+    if (recommendedModel && recommendedModel !== "inherit") {
+      const recommendedHandle = resolveModel(recommendedModel);
+      if (recommendedHandle) {
+        return recommendedHandle;
+      }
+    }
+
     return "letta/auto-memory";
   }
 
@@ -290,7 +321,7 @@ function handleInitEvent(
 ): void {
   if (event.agent_id) {
     state.agentId = event.agent_id;
-    const agentURL = buildChatUrl(event.agent_id, {
+    const agentURL = buildAgentReference(event.agent_id, {
       conversationId: event.conversation_id,
     });
     updateSubagent(subagentId, { agentId: event.agent_id, agentURL });
@@ -497,7 +528,20 @@ interface SubagentLauncher {
 export function resolveSubagentWorkingDirectory(
   env: NodeJS.ProcessEnv = process.env,
   fallbackCwd: string = getCurrentWorkingDirectory(),
+  options: {
+    subagentType?: string;
+    permissionMode?: string;
+    inheritedPrimaryRoot?: string | null;
+  } = {},
 ): string {
+  if (
+    options.subagentType === "reflection" &&
+    options.permissionMode === "memory" &&
+    options.inheritedPrimaryRoot
+  ) {
+    return options.inheritedPrimaryRoot;
+  }
+
   return env.USER_CWD || fallbackCwd;
 }
 
@@ -554,6 +598,10 @@ export function resolveSubagentLauncher(
 export interface ComposeSubagentChildEnvOptions {
   /** The env of the process spawning the subagent (parent). */
   parentProcessEnv: NodeJS.ProcessEnv;
+  /** Active backend mode to force in the child CLI process. */
+  backendMode?: BackendMode;
+  /** Local backend flatfile root to forward when backendMode="local". */
+  localBackendStorageDir?: string | null;
   /** Parent agent ID. When present, authorizes the subagent to touch the
    * parent's memory via the cross-agent guard and sets LETTA_PARENT_AGENT_ID
    * so prompts / scripts that reference it resolve correctly. */
@@ -569,6 +617,11 @@ export interface ComposeSubagentChildEnvOptions {
   inheritedApiKey?: string | null;
   /** Forwarded base URL to avoid per-subagent settings lookups. */
   inheritedBaseUrl?: string | null;
+  /** Optional path to a transcript payload file, exposed to the child as
+   * the TRANSCRIPT_PATH env var. Used by reflection subagents so the prompt
+   * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
+   * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
+  transcriptPath?: string | null;
 }
 
 /**
@@ -581,7 +634,7 @@ export interface ComposeSubagentChildEnvOptions {
  *     (env LETTA_MEMORY_SCOPE plus CLI --memory-scope) and also includes the
  *     immediate parent agent ID when one is known. Subagents should never
  *     lose explicit cross-agent access that the parent process already had.
- *     This applies to explore/general-purpose/recall etc. — not just
+ *     This applies to general-purpose/recall etc. — not just
  *     memory-writing subagents.
  *
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
@@ -597,11 +650,14 @@ export function composeSubagentChildEnv(
 ): NodeJS.ProcessEnv {
   const {
     parentProcessEnv,
+    backendMode,
+    localBackendStorageDir,
     parentAgentId,
     permissionMode,
     inheritedPrimaryRoot,
     inheritedApiKey,
     inheritedBaseUrl,
+    transcriptPath,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -610,7 +666,17 @@ export function composeSubagentChildEnv(
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
+    ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
+
+  if (backendMode === "local") {
+    childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    if (localBackendStorageDir) {
+      childEnv.LETTA_LOCAL_BACKEND_DIR = localBackendStorageDir;
+    }
+  } else if (backendMode === "api") {
+    childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "0";
+  }
 
   const nextScope = new Set<string>([
     ...parseScopeList(parentProcessEnv.LETTA_MEMORY_SCOPE),
@@ -647,9 +713,109 @@ export function composeSubagentChildEnv(
   return childEnv;
 }
 
+export function resolveSubagentInheritedPrimaryRoot(options: {
+  backendMode: BackendMode;
+  parentAgentId: string | undefined;
+  inheritedPrimaryRoot: string | null;
+  localBackendStorageDir?: string | null;
+}): string | null {
+  if (options.backendMode === "local" && options.parentAgentId) {
+    return getLocalBackendMemoryFilesystemRoot(
+      options.parentAgentId,
+      options.localBackendStorageDir ?? getLocalBackendStorageDir(),
+    );
+  }
+  return options.inheritedPrimaryRoot;
+}
+
 // ============================================================================
 // Core Functions
 // ============================================================================
+
+function getReflectionStartupNotice(): string {
+  return `[Reflection startup context truncated: system prompt + initial message are capped at ~${REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT.toLocaleString()} estimated tokens. Some parent memory preview content was omitted; read files directly from MEMORY_DIR if needed.]`;
+}
+
+function buildMinimalParentMemorySection(maxChars: number): string {
+  const notice = getReflectionStartupNotice();
+  const section = `<parent_memory>\n${notice}\n</parent_memory>`;
+  if (section.length <= maxChars) {
+    return section;
+  }
+  return section.slice(0, Math.max(0, maxChars));
+}
+
+function shrinkParentMemorySection(section: string, maxChars: number): string {
+  const notice = getReflectionStartupNotice();
+  const treeMatch = section.match(
+    /<memory_filesystem>[\s\S]*?<\/memory_filesystem>/,
+  );
+  const prefix = "<parent_memory>\n";
+  const suffix = "\n</parent_memory>";
+
+  const tree = treeMatch?.[0];
+  if (tree) {
+    const candidate = `${prefix}${tree}\n${notice}${suffix}`;
+    if (candidate.length <= maxChars) {
+      return candidate;
+    }
+  }
+
+  return buildMinimalParentMemorySection(maxChars);
+}
+
+function hardTruncateReflectionPrompt(
+  prompt: string,
+  maxChars: number,
+): string {
+  const notice = `\n${getReflectionStartupNotice()}`;
+  if (maxChars <= notice.length) {
+    return notice.slice(0, Math.max(0, maxChars));
+  }
+  return `${prompt.slice(0, maxChars - notice.length).trimEnd()}${notice}`;
+}
+
+function capReflectionStartupPrompt(
+  type: string,
+  systemPrompt: string,
+  userPrompt: string,
+): string {
+  if (type !== "reflection") {
+    return userPrompt;
+  }
+
+  const estimatedTokens = estimateStartupContextTokens(
+    `${systemPrompt}\n${userPrompt}`,
+  );
+  if (estimatedTokens <= REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT) {
+    return userPrompt;
+  }
+
+  const allowedPromptChars = Math.max(
+    0,
+    REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT - systemPrompt.length - 1,
+  );
+  const parentMemoryMatch = userPrompt.match(
+    /<parent_memory>[\s\S]*?<\/parent_memory>/,
+  );
+
+  if (parentMemoryMatch?.index !== undefined) {
+    const start = parentMemoryMatch.index;
+    const end = start + parentMemoryMatch[0].length;
+    const outsideChars = userPrompt.length - parentMemoryMatch[0].length;
+    const parentMemoryBudget = Math.max(0, allowedPromptChars - outsideChars);
+    const replacement = shrinkParentMemorySection(
+      parentMemoryMatch[0],
+      parentMemoryBudget,
+    );
+    const candidate = `${userPrompt.slice(0, start)}${replacement}${userPrompt.slice(end)}`;
+    if (candidate.length <= allowedPromptChars) {
+      return candidate;
+    }
+  }
+
+  return hardTruncateReflectionPrompt(userPrompt, allowedPromptChars);
+}
 
 /**
  * Build CLI arguments for spawning a subagent
@@ -662,11 +828,16 @@ export function buildSubagentArgs(
   existingAgentId?: string,
   existingConversationId?: string,
   maxTurns?: number,
+  options: { backendMode?: BackendMode } = {},
 ): string[] {
   const args: string[] = [];
   const isDeployingExisting = Boolean(
     existingAgentId || existingConversationId,
   );
+
+  if (options.backendMode) {
+    args.push("--backend", options.backendMode);
+  }
 
   if (isDeployingExisting) {
     // Deploy existing agent/conversation
@@ -690,9 +861,28 @@ export function buildSubagentArgs(
     if (model) {
       args.push("--model", model);
     }
+
+    // Reflection-specific startup flags: match the memory_reflection training
+    // env so the trained policy sees identical prompt suffixes and skill
+    // availability at inference time as it did during training.
+    if (type === "reflection") {
+      args.push("--no-system-info-reminder");
+      args.push("--no-skills");
+    }
+
+    // Skip server-side base tools (web_search, fetch_webpage) for subagents
+    // that operate purely on local memory/git state.
+    if (NO_BASE_TOOL_SUBAGENT_TYPES.has(type)) {
+      args.push("--base-tools", "none");
+    }
   }
 
-  args.push("-p", userPrompt);
+  const boundedUserPrompt = capReflectionStartupPrompt(
+    type,
+    config.systemPrompt,
+    userPrompt,
+  );
+  args.push("-p", boundedUserPrompt);
   args.push("--output-format", "stream-json");
 
   // Use subagent's configured permission mode, or inherit from parent
@@ -774,6 +964,7 @@ async function executeSubagent(
   existingConversationId?: string,
   maxTurns?: number,
   parentAgentIdOverride?: string,
+  transcriptPath?: string,
 ): Promise<SubagentResult> {
   // Check if already aborted before starting
   if (signal?.aborted) {
@@ -791,6 +982,10 @@ async function executeSubagent(
   }
 
   try {
+    const activeBackend = getBackend();
+    const backendMode: BackendMode = activeBackend.capabilities.localMemfs
+      ? "local"
+      : "api";
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -799,6 +994,7 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       maxTurns,
+      { backendMode },
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
@@ -822,20 +1018,39 @@ async function executeSubagent(
       process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
-    const subagentWorkingDirectory = resolveSubagentWorkingDirectory();
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
       currentAgentId: parentAgentId ?? null,
     });
+    const localBackendStorageDir =
+      backendMode === "local" ? getLocalBackendStorageDir() : null;
+    const inheritedPrimaryRoot = resolveSubagentInheritedPrimaryRoot({
+      backendMode,
+      parentAgentId,
+      inheritedPrimaryRoot: inheritedMemoryRoots.primaryRoot,
+      localBackendStorageDir,
+    });
+    const subagentWorkingDirectory = resolveSubagentWorkingDirectory(
+      process.env,
+      getCurrentWorkingDirectory(),
+      {
+        subagentType: type,
+        permissionMode: config.permissionMode,
+        inheritedPrimaryRoot,
+      },
+    );
     const childEnv = composeSubagentChildEnv({
       parentProcessEnv: {
         ...process.env,
         USER_CWD: subagentWorkingDirectory,
       },
+      backendMode,
+      localBackendStorageDir,
       parentAgentId,
       permissionMode: config.permissionMode,
-      inheritedPrimaryRoot: inheritedMemoryRoots.primaryRoot,
+      inheritedPrimaryRoot,
       inheritedApiKey,
       inheritedBaseUrl,
+      transcriptPath,
     });
 
     const proc = spawn(launcher.command, launcher.args, {
@@ -924,7 +1139,7 @@ async function executeSubagent(
     if (exitCode !== 0) {
       // Check if this is a provider-not-supported error and we haven't retried yet
       if (!isRetry && isProviderNotSupportedError(stderr)) {
-        const primaryModel = await getPrimaryAgentModelHandle();
+        const { handle: primaryModel } = await getPrimaryAgentModelHandle();
         if (primaryModel) {
           // Retry with the primary agent's model
           return executeSubagent(
@@ -940,6 +1155,7 @@ async function executeSubagent(
             undefined, // existingConversationId
             maxTurns,
             parentAgentIdOverride,
+            transcriptPath,
           );
         }
       }
@@ -1018,16 +1234,10 @@ function getBaseURL(): string {
 function buildDeploySystemReminder(
   senderAgentName: string,
   senderAgentId: string,
-  subagentType: string,
 ): string {
-  const toolDescription =
-    subagentType === "explore"
-      ? "read-only tools (Read, Bash)"
-      : "local tools (Bash, Read, Write, Edit, etc.)";
-
   return `${SYSTEM_REMINDER_OPEN}
 This task is from "${senderAgentName}" (agent ID: ${senderAgentId}), which deployed you as a subagent inside the Letta Code CLI (docs.letta.com/letta-code).
-You have access to ${toolDescription} in their codebase.
+You have access to local tools (Bash, Read, Write, Edit, etc.) in their codebase.
 Your final message will be returned to the caller.
 ${SYSTEM_REMINDER_CLOSE}
 
@@ -1069,7 +1279,7 @@ ${SYSTEM_REMINDER_CLOSE}
 /**
  * Spawn a subagent and execute it autonomously
  *
- * @param type - Subagent type (e.g., "code-reviewer", "explore")
+ * @param type - Subagent type (e.g., "code-reviewer", "general-purpose")
  * @param prompt - The task prompt for the subagent
  * @param userModel - Optional model override from the parent agent
  * @param subagentId - ID for tracking in the state store (registered by Task tool)
@@ -1092,6 +1302,7 @@ export async function spawnSubagent(
   maxTurns?: number,
   forkedContext?: boolean,
   parentAgentId?: string,
+  transcriptPath?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -1109,7 +1320,8 @@ export async function spawnSubagent(
     existingAgentId || existingConversationId,
   );
 
-  const parentModelHandle = await getPrimaryAgentModelHandle();
+  const { handle: parentModelHandle, agent: parentAgent } =
+    await getPrimaryAgentModelHandle();
   const billingTier = await getCurrentBillingTier();
 
   // For existing agents, don't override model; for new agents, use provided or config default
@@ -1140,16 +1352,16 @@ export async function spawnSubagent(
   let finalPrompt = prompt;
   if (isDeployingExisting && resolvedParentAgentId) {
     try {
-      const client = await getClient();
-      const parentAgent = await client.agents.retrieve(resolvedParentAgentId);
+      const cachedParent =
+        parentAgent ??
+        (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
         const systemReminder = buildForkSystemReminder(type);
         finalPrompt = systemReminder + prompt;
       } else {
         const systemReminder = buildDeploySystemReminder(
-          parentAgent.name,
+          cachedParent.name ?? "",
           resolvedParentAgentId,
-          type,
         );
         finalPrompt = systemReminder + prompt;
       }
@@ -1172,6 +1384,7 @@ export async function spawnSubagent(
     existingConversationId,
     maxTurns,
     resolvedParentAgentId,
+    transcriptPath,
   );
 
   return result;
