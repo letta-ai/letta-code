@@ -78,6 +78,14 @@ export interface SpawnBackgroundSubagentTaskArgs {
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
   /**
+   * Optional path to a transcript/payload file the subagent should read.
+   * Exposed to the child process as the `TRANSCRIPT_PATH` env var so
+   * prompts can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead
+   * of interpolating an absolute path. Currently used by reflection
+   * subagents.
+   */
+  transcriptPath?: string;
+  /**
    * When true, skip injecting the completion notification into the primary
    * agent's message queue and hide from SubagentGroupDisplay.
    * Use `onComplete` to show a user-facing notification without leaking
@@ -319,6 +327,7 @@ export function spawnBackgroundSubagentTask(
     emitCompletionNotification,
     completionSummary,
     onComplete,
+    transcriptPath,
     deps,
   } = args;
   const shouldEmitCompletionNotification =
@@ -388,6 +397,7 @@ export function spawnBackgroundSubagentTask(
     maxTurns,
     forkedContext,
     parentAgentIdForSpawn,
+    transcriptPath,
   )
     .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";

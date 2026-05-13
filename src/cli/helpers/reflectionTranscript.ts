@@ -57,7 +57,6 @@ export interface AutoReflectionPayload {
 }
 
 export interface ReflectionPromptInput {
-  transcriptPath: string;
   memoryDir: string;
   parentMemory?: string;
 }
@@ -68,7 +67,7 @@ export function buildReflectionSubagentPrompt(
   const lines: string[] = [];
 
   lines.push(
-    `Review the conversation transcript and update memory files. The current conversation transcript has been saved to: ${input.transcriptPath}`,
+    "Review the conversation transcript and update memory files. The current conversation transcript path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit/Read/Write `file_path` is literal and does NOT expand env vars.",
     "",
     `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
     "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",

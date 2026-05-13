@@ -125,6 +125,41 @@ describe("composeSubagentChildEnv", () => {
     expect(env.LETTA_MEMORY_DIR).toBe(PARENT_MEMORY_DIR);
   });
 
+  test("transcriptPath is forwarded as TRANSCRIPT_PATH env var when set", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { HOME: "/home/user" },
+      parentAgentId: PARENT_ID,
+      permissionMode: "memory",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+      transcriptPath: "/tmp/payload-auto-abc123.json",
+    });
+
+    expect(env.TRANSCRIPT_PATH).toBe("/tmp/payload-auto-abc123.json");
+  });
+
+  test("TRANSCRIPT_PATH not set when transcriptPath omitted", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { HOME: "/home/user" },
+      parentAgentId: PARENT_ID,
+      permissionMode: "memory",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+
+    expect(env.TRANSCRIPT_PATH).toBeUndefined();
+  });
+
+  test("TRANSCRIPT_PATH not set when transcriptPath is null", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { HOME: "/home/user" },
+      parentAgentId: PARENT_ID,
+      permissionMode: "memory",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+      transcriptPath: null,
+    });
+
+    expect(env.TRANSCRIPT_PATH).toBeUndefined();
+  });
+
   test("API key + base URL forwarded when provided", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },

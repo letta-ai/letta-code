@@ -617,6 +617,11 @@ export interface ComposeSubagentChildEnvOptions {
   inheritedApiKey?: string | null;
   /** Forwarded base URL to avoid per-subagent settings lookups. */
   inheritedBaseUrl?: string | null;
+  /** Optional path to a transcript payload file, exposed to the child as
+   * the TRANSCRIPT_PATH env var. Used by reflection subagents so the prompt
+   * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
+   * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
+  transcriptPath?: string | null;
 }
 
 /**
@@ -652,6 +657,7 @@ export function composeSubagentChildEnv(
     inheritedPrimaryRoot,
     inheritedApiKey,
     inheritedBaseUrl,
+    transcriptPath,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -660,6 +666,7 @@ export function composeSubagentChildEnv(
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
+    ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
 
   if (backendMode === "local") {
@@ -957,6 +964,7 @@ async function executeSubagent(
   existingConversationId?: string,
   maxTurns?: number,
   parentAgentIdOverride?: string,
+  transcriptPath?: string,
 ): Promise<SubagentResult> {
   // Check if already aborted before starting
   if (signal?.aborted) {
@@ -1042,6 +1050,7 @@ async function executeSubagent(
       inheritedPrimaryRoot,
       inheritedApiKey,
       inheritedBaseUrl,
+      transcriptPath,
     });
 
     const proc = spawn(launcher.command, launcher.args, {
@@ -1146,6 +1155,7 @@ async function executeSubagent(
             undefined, // existingConversationId
             maxTurns,
             parentAgentIdOverride,
+            transcriptPath,
           );
         }
       }
@@ -1292,6 +1302,7 @@ export async function spawnSubagent(
   maxTurns?: number,
   forkedContext?: boolean,
   parentAgentId?: string,
+  transcriptPath?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -1373,6 +1384,7 @@ export async function spawnSubagent(
     existingConversationId,
     maxTurns,
     resolvedParentAgentId,
+    transcriptPath,
   );
 
   return result;
