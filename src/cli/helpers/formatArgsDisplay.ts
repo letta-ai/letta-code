@@ -296,17 +296,19 @@ export function formatArgsDisplay(
           // Search/Grep tools: show "query in path" instead of "query: ..., path: ..."
           if (isSearchTool(toolName)) {
             const query = String(parsed.query ?? parsed.pattern ?? "");
-            const path = parsed.path
+            const rawPath = parsed.path
               ? String(parsed.path)
               : parsed.file_path
                 ? String(parsed.file_path)
                 : null;
-            if (query && path) {
-              display = `"${query}" in ${formatDisplayPath(path)}`;
+            // formatDisplayPath returns "" when path is cwd — skip "in" in that case
+            const displayPath = rawPath ? formatDisplayPath(rawPath) : null;
+            if (query && displayPath) {
+              display = `"${query}" in ${displayPath}`;
             } else if (query) {
               display = `"${query}"`;
-            } else if (path) {
-              display = formatDisplayPath(path);
+            } else if (displayPath) {
+              display = displayPath;
             }
             return { display, parsed };
           }
@@ -314,17 +316,19 @@ export function formatArgsDisplay(
           // Glob tools: show "pattern in path" instead of "pattern: ..., path: ..."
           if (isGlobTool(toolName)) {
             const pattern = String(parsed.pattern ?? "");
-            const path = parsed.path
+            const rawPath = parsed.path
               ? String(parsed.path)
               : parsed.file_path
                 ? String(parsed.file_path)
                 : null;
-            if (pattern && path) {
-              display = `${pattern} in ${formatDisplayPath(path)}`;
+            // formatDisplayPath returns "" when path is cwd — skip "in" in that case
+            const displayPath = rawPath ? formatDisplayPath(rawPath) : null;
+            if (pattern && displayPath) {
+              display = `${pattern} in ${displayPath}`;
             } else if (pattern) {
               display = pattern;
-            } else if (path) {
-              display = formatDisplayPath(path);
+            } else if (displayPath) {
+              display = displayPath;
             }
             return { display, parsed };
           }
