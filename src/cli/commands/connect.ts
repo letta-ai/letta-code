@@ -2,6 +2,11 @@
 // Command handlers for provider connection management in TUI slash commands
 
 import {
+  formatLocalProviderTimeout,
+  type LocalProviderTimeout,
+  parseLocalProviderTimeout,
+} from "../../backend/local/LocalProviderTimeout";
+import {
   checkProviderApiKey,
   createOrUpdateProvider,
   getProviderByName,
@@ -121,6 +126,7 @@ function formatConnectUsage(): string {
     "  /connect codex",
     "  /connect anthropic <api_key>",
     "  /connect openai <api_key>",
+    "  /connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  /connect bedrock iam --access-key <id> --secret-key <key> --region <region>",
     "  /connect bedrock profile --profile <name> --region <region>",
   ].join("\n");
@@ -209,13 +215,116 @@ function formatApiKeyUsage(provider: ResolvedConnectProvider): string {
       `Usage: /connect ${provider.canonical} [api_key]`,
       "",
       `Connect to ${provider.byokProvider.displayName}. API key is optional for this local provider.`,
+      "Optional: --base-url <url> --timeout <ms|duration|false>",
     ].join("\n");
   }
   return [
     `Usage: /connect ${provider.canonical} <api_key>`,
     "",
     `Connect to ${provider.byokProvider.displayName} by providing your API key.`,
+    "Optional: --base-url <url> --timeout <ms|duration|false>",
   ].join("\n");
+}
+
+function readFlagValue(
+  args: string[],
+  index: number,
+  flag: string,
+): { value?: string; nextIndex: number; error?: string } {
+  const token = args[index] ?? "";
+  const equalsPrefix = `${flag}=`;
+  if (token.startsWith(equalsPrefix)) {
+    const value = token.slice(equalsPrefix.length);
+    return value
+      ? { value, nextIndex: index }
+      : { nextIndex: index, error: `Missing value for ${flag}` };
+  }
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    return { nextIndex: index, error: `Missing value for ${flag}` };
+  }
+  return { value, nextIndex: index + 1 };
+}
+
+function parseApiProviderArgs(args: string[]): {
+  apiKey?: string;
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
+  error?: string;
+} {
+  const positionals: string[] = [];
+  let apiKey: string | undefined;
+  let baseURL: string | undefined;
+  let timeout: LocalProviderTimeout | undefined;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i] ?? "";
+    if (token === "--no-timeout") {
+      timeout = false;
+      continue;
+    }
+
+    if (token === "--api-key" || token.startsWith("--api-key=")) {
+      const parsed = readFlagValue(args, i, "--api-key");
+      if (parsed.error) return { error: parsed.error };
+      apiKey = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+
+    if (token === "--base-url" || token.startsWith("--base-url=")) {
+      const parsed = readFlagValue(args, i, "--base-url");
+      if (parsed.error) return { error: parsed.error };
+      baseURL = parsed.value;
+      i = parsed.nextIndex;
+      continue;
+    }
+
+    if (token === "--timeout" || token.startsWith("--timeout=")) {
+      const parsed = readFlagValue(args, i, "--timeout");
+      if (parsed.error) return { error: parsed.error };
+      try {
+        timeout = parseLocalProviderTimeout(parsed.value);
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      i = parsed.nextIndex;
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      return { error: `Unknown option: ${token}` };
+    }
+
+    positionals.push(token);
+  }
+
+  return {
+    apiKey: apiKey ?? positionals.join(""),
+    baseURL,
+    timeout,
+  };
+}
+
+function providerOptionsSummary(options: {
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
+}): string {
+  const lines: string[] = [];
+  if (options.baseURL) lines.push(`Base URL: ${options.baseURL}`);
+  if (options.timeout !== undefined) {
+    lines.push(`Timeout: ${formatLocalProviderTimeout(options.timeout)}`);
+  }
+  return lines.length ? `\n${lines.join("\n")}` : "";
+}
+
+function hasProviderOptions(options: {
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
+}): boolean {
+  return options.baseURL !== undefined || options.timeout !== undefined;
 }
 
 function formatZaiCodingPlanPrompt(apiKey?: string): string {
@@ -305,6 +414,7 @@ async function handleConnectApiKeyProvider(
   msg: string,
   provider: ResolvedConnectProvider,
   apiKey: string,
+  options: { baseURL?: string; timeout?: LocalProviderTimeout } = {},
 ): Promise<void> {
   const cmdId = addCommandResult(
     ctx.buffersRef,
@@ -330,11 +440,23 @@ async function handleConnectApiKeyProvider(
       "running",
     );
 
-    await createOrUpdateProvider(
-      provider.byokProvider.providerType,
-      provider.byokProvider.providerName,
-      apiKey,
-    );
+    if (hasProviderOptions(options)) {
+      await createOrUpdateProvider(
+        provider.byokProvider.providerType,
+        provider.byokProvider.providerName,
+        apiKey,
+        undefined,
+        undefined,
+        undefined,
+        options,
+      );
+    } else {
+      await createOrUpdateProvider(
+        provider.byokProvider.providerType,
+        provider.byokProvider.providerName,
+        apiKey,
+      );
+    }
 
     updateCommandResult(
       ctx.buffersRef,
@@ -342,7 +464,8 @@ async function handleConnectApiKeyProvider(
       cmdId,
       msg,
       `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
-        `Provider '${provider.byokProvider.providerName}' saved in ${providerStorageTargetLabel()}.`,
+        `Provider '${provider.byokProvider.providerName}' saved in ${providerStorageTargetLabel()}.` +
+        providerOptionsSummary(options),
       true,
       "finished",
     );
@@ -521,7 +644,18 @@ export async function handleConnect(
   }
 
   if (isConnectApiKeyProvider(provider)) {
-    const apiKey = parts.slice(2).join("") || defaultConnectApiKey(provider);
+    const parsed = parseApiProviderArgs(parts.slice(2));
+    if (parsed.error) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        `${parsed.error}\n\n${formatApiKeyUsage(provider)}`,
+        false,
+      );
+      return;
+    }
+    const apiKey = parsed.apiKey || defaultConnectApiKey(provider);
     if (!apiKey) {
       if (isConnectZaiBaseProvider(provider)) {
         addCommandResult(
@@ -542,7 +676,10 @@ export async function handleConnect(
       }
       return;
     }
-    await handleConnectApiKeyProvider(ctx, msg, provider, apiKey);
+    await handleConnectApiKeyProvider(ctx, msg, provider, apiKey, {
+      baseURL: parsed.baseURL,
+      timeout: parsed.timeout,
+    });
   }
 }
 

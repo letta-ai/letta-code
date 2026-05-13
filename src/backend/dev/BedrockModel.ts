@@ -2,11 +2,17 @@ import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import type { LanguageModel } from "ai";
 import { getAwsProfile } from "../../utils/aws-credentials";
 import { getLocalProviderRecordByName } from "../local/LocalProviderAuthStore";
+import {
+  createLocalProviderFetch,
+  type LocalProviderTimeout,
+} from "../local/LocalProviderTimeout";
 
 export interface BedrockModelFactoryOptions {
   model?: string;
   storageDir?: string;
   providerName: string;
+  fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
   createModel?: (model: string) => LanguageModel;
 }
 
@@ -28,6 +34,8 @@ function createDefaultBedrockModel(options: {
   model: string;
   storageDir?: string;
   providerName: string;
+  fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
 }): LanguageModel {
   const record = getLocalProviderRecordByName(
     options.providerName,
@@ -41,6 +49,10 @@ function createDefaultBedrockModel(options: {
 
   const provider = createAmazonBedrock({
     region,
+    fetch: createLocalProviderFetch({
+      fetch: options.fetch,
+      timeout: options.timeout ?? record?.timeout,
+    }),
     ...(accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : {}),
     ...(profile && !accessKeyId && !secretAccessKey
       ? { credentialProvider: () => resolveProfileCredentials(profile) }
@@ -63,6 +75,8 @@ export function createBedrockModelFactory(
         model,
         storageDir: options.storageDir,
         providerName: options.providerName,
+        fetch: options.fetch,
+        timeout: options.timeout,
       }));
   return () => createModel(model);
 }

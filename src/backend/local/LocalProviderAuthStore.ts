@@ -11,6 +11,7 @@ import {
   LOCAL_CHATGPT_PROVIDER_NAME,
   SUPPORTED_LOCAL_PROVIDER_TYPES,
 } from "../dev/AISDKProviderRegistry";
+import type { LocalProviderTimeout } from "./LocalProviderTimeout";
 import { getLocalBackendStorageDir } from "./paths";
 
 export {
@@ -58,6 +59,7 @@ export interface LocalProviderRecord {
   region?: string;
   profile?: string;
   base_url?: string;
+  timeout?: LocalProviderTimeout;
   created_at: string;
   updated_at: string;
 }
@@ -117,6 +119,7 @@ function providerResponse(record: LocalProviderRecord): ProviderResponse {
     provider_type: record.provider_type,
     provider_category: record.provider_category,
     ...(record.base_url ? { base_url: record.base_url } : {}),
+    ...(record.timeout !== undefined ? { timeout: record.timeout } : {}),
     ...(record.access_key ? { access_key: record.access_key } : {}),
     ...(record.region ? { region: record.region } : {}),
   };
@@ -167,6 +170,8 @@ export async function createOrUpdateLocalProvider(input: {
   accessKey?: string;
   region?: string;
   profile?: string;
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
   storageDir?: string;
 }): Promise<ProviderResponse> {
   if (!isLocalProviderTypeSupported(input.providerType)) {
@@ -191,6 +196,14 @@ export async function createOrUpdateLocalProvider(input: {
     ...(input.accessKey ? { access_key: input.accessKey } : {}),
     ...(input.region ? { region: input.region } : {}),
     ...(input.profile ? { profile: input.profile } : {}),
+    ...((input.baseURL ?? existing?.base_url)
+      ? { base_url: input.baseURL ?? existing?.base_url }
+      : {}),
+    ...(input.timeout !== undefined
+      ? { timeout: input.timeout }
+      : existing?.timeout !== undefined
+        ? { timeout: existing.timeout }
+        : {}),
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
@@ -206,6 +219,7 @@ export async function updateLocalProvider(
   region?: string,
   profile?: string,
   storageDir?: string,
+  options: { baseURL?: string; timeout?: LocalProviderTimeout } = {},
 ): Promise<ProviderResponse> {
   const existing = listLocalProviderRecords(storageDir).find(
     (provider) => provider.id === providerIdValue,
@@ -221,6 +235,8 @@ export async function updateLocalProvider(
     region,
     profile,
     storageDir,
+    baseURL: options.baseURL,
+    timeout: options.timeout,
   });
 }
 

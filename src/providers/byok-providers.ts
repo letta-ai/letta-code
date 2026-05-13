@@ -25,8 +25,14 @@ import {
   removeLocalProviderByName,
   updateLocalProvider,
 } from "../backend/local/LocalProviderAuthStore";
+import type { LocalProviderTimeout } from "../backend/local/LocalProviderTimeout";
 
 export type { ProviderResponse } from "../backend/api/providers";
+
+export interface ProviderConnectionOptions {
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
+}
 
 // Field definition for multi-field providers (like Bedrock)
 export interface ProviderField {
@@ -339,6 +345,7 @@ export async function createProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  options: ProviderConnectionOptions = {},
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
     return createOrUpdateLocalProvider({
@@ -348,6 +355,8 @@ export async function createProvider(
       accessKey,
       region,
       profile,
+      baseURL: options.baseURL,
+      timeout: options.timeout,
     });
   }
   return createProviderRequest(
@@ -369,9 +378,18 @@ export async function updateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  options: ProviderConnectionOptions = {},
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
-    return updateLocalProvider(providerId, apiKey, accessKey, region, profile);
+    return updateLocalProvider(
+      providerId,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+      undefined,
+      options,
+    );
   }
   return updateProviderRequest(providerId, apiKey, accessKey, region, profile);
 }
@@ -398,6 +416,7 @@ export async function createOrUpdateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  options: ProviderConnectionOptions = {},
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
     return createOrUpdateLocalProvider({
@@ -407,6 +426,8 @@ export async function createOrUpdateProvider(
       accessKey,
       region,
       profile,
+      baseURL: options.baseURL,
+      timeout: options.timeout,
     });
   }
   return createOrUpdateProviderRequest(

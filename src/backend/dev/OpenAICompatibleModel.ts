@@ -1,5 +1,9 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
+import {
+  createLocalProviderFetch,
+  type LocalProviderTimeout,
+} from "../local/LocalProviderTimeout";
 
 export interface OpenAICompatibleModelFactoryOptions {
   model?: string;
@@ -7,6 +11,8 @@ export interface OpenAICompatibleModelFactoryOptions {
   baseURL: string;
   providerName: string;
   headers?: Record<string, string>;
+  fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
   createModel?: (model: string) => LanguageModel;
 }
 
@@ -16,12 +22,18 @@ function createDefaultOpenAICompatibleModel(options: {
   baseURL: string;
   providerName: string;
   headers?: Record<string, string>;
+  fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
 }): LanguageModel {
   const provider = createOpenAI({
     name: options.providerName,
     apiKey: options.apiKey,
     baseURL: options.baseURL,
     headers: options.headers,
+    fetch: createLocalProviderFetch({
+      fetch: options.fetch,
+      timeout: options.timeout,
+    }),
   });
   return provider.chat(options.model);
 }
@@ -47,6 +59,8 @@ export function createOpenAICompatibleModelFactory(
         baseURL: options.baseURL,
         providerName: options.providerName,
         headers: options.headers,
+        fetch: options.fetch,
+        timeout: options.timeout,
       }));
   return () => createModel(model);
 }

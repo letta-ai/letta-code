@@ -10,6 +10,10 @@ import {
   type LocalProviderOAuthAuth,
   setLocalChatGPTOAuth,
 } from "../local/LocalProviderAuthStore";
+import {
+  createLocalProviderFetch,
+  type LocalProviderTimeout,
+} from "../local/LocalProviderTimeout";
 
 const OAUTH_DUMMY_KEY = "chatgpt-oauth";
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
@@ -19,6 +23,7 @@ export interface ChatGPTOAuthModelFactoryOptions {
   model?: string;
   storageDir?: string;
   fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
   createModel?: (model: string) => LanguageModel;
 }
 
@@ -99,8 +104,12 @@ async function getFreshAuth(
 function createChatGPTFetch(options: {
   storageDir?: string;
   fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
 }): typeof fetch {
-  const baseFetch = options.fetch ?? fetch;
+  const baseFetch = createLocalProviderFetch({
+    fetch: options.fetch,
+    timeout: options.timeout,
+  });
   return (async (input, init) => {
     const request =
       input instanceof Request
@@ -128,12 +137,14 @@ function createDefaultChatGPTOAuthModel(options: {
   model: string;
   storageDir?: string;
   fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
 }): LanguageModel {
   const provider = createOpenAI({
     apiKey: OAUTH_DUMMY_KEY,
     fetch: createChatGPTFetch({
       storageDir: options.storageDir,
       fetch: options.fetch,
+      timeout: options.timeout,
     }),
   });
   return provider.responses(options.model);
@@ -153,6 +164,7 @@ export function createChatGPTOAuthModelFactory(
         model,
         storageDir: options.storageDir,
         fetch: options.fetch,
+        timeout: options.timeout,
       }));
   return () => createModel(model);
 }

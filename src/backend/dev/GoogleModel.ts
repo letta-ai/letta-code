@@ -1,10 +1,16 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { LanguageModel } from "ai";
+import {
+  createLocalProviderFetch,
+  type LocalProviderTimeout,
+} from "../local/LocalProviderTimeout";
 
 export interface GoogleModelFactoryOptions {
   model?: string;
   apiKey?: string;
   baseURL?: string;
+  fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
   createModel?: (model: string) => LanguageModel;
 }
 
@@ -12,6 +18,8 @@ function createDefaultGoogleModel(options: {
   model: string;
   apiKey?: string;
   baseURL?: string;
+  fetch?: typeof fetch;
+  timeout?: LocalProviderTimeout;
 }): LanguageModel {
   const provider = createGoogleGenerativeAI({
     apiKey:
@@ -20,6 +28,10 @@ function createDefaultGoogleModel(options: {
       process.env.GEMINI_API_KEY,
     baseURL: options.baseURL,
     name: "google-ai",
+    fetch: createLocalProviderFetch({
+      fetch: options.fetch,
+      timeout: options.timeout,
+    }),
   });
   return provider(options.model);
 }
@@ -38,6 +50,8 @@ export function createGoogleModelFactory(
         model,
         apiKey: options.apiKey,
         baseURL: options.baseURL,
+        fetch: options.fetch,
+        timeout: options.timeout,
       }));
   return () => createModel(model);
 }
