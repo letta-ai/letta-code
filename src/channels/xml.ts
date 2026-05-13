@@ -193,6 +193,33 @@ function buildThreadContextXml(msg: InboundChannelMessage): string | null {
   return [`<thread-context${attrs}>`, ...parts, "</thread-context>"].join("\n");
 }
 
+function buildChannelContinuityContextXml(msg: InboundChannelMessage): string {
+  const lines = [
+    `This turn originated from external ${msg.channel}. Plain assistant text is not delivered to the user.`,
+    `The user-visible reply must be sent with MessageChannel action="send", channel="${msg.channel}", chat_id="${msg.chatId}".`,
+  ];
+
+  if (
+    msg.channel === "slack" &&
+    msg.chatType === "channel" &&
+    (msg.threadId ?? msg.messageId)?.trim()
+  ) {
+    lines.push(
+      "Replies sent with MessageChannel stay in the same Slack thread automatically.",
+    );
+  }
+
+  if (msg.accountId) {
+    lines.push(`Channel account_id is "${msg.accountId}".`);
+  }
+
+  return [
+    '<channel-continuity-context preserve_across_compaction="true">',
+    escapeXmlText(lines.join("\n")),
+    "</channel-continuity-context>",
+  ].join("\n");
+}
+
 /**
  * Format an inbound channel message as XML for the agent.
  *
@@ -230,10 +257,17 @@ export function buildChannelNotificationXml(
 
   const attrString = attrs.join(" ");
   const escapedText = msg.text ? escapeXmlText(msg.text) : "";
+  const continuityContextXml = buildChannelContinuityContextXml(msg);
   const reactionXml = buildReactionXml(msg);
   const threadContextXml = buildThreadContextXml(msg);
   const attachmentXml = (msg.attachments ?? []).map(buildAttachmentXml);
-  const body = [threadContextXml, reactionXml, ...attachmentXml, escapedText]
+  const body = [
+    continuityContextXml,
+    threadContextXml,
+    reactionXml,
+    ...attachmentXml,
+    escapedText,
+  ]
     .filter(Boolean)
     .join("\n");
 

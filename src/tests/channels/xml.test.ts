@@ -44,6 +44,12 @@ describe("formatChannelNotification", () => {
     expect(notificationPart.text).toContain('sender_id="67890"');
     expect(notificationPart.text).toContain('sender_name="John"');
     expect(notificationPart.text).toContain('message_id="msg-42"');
+    expect(notificationPart.text).toContain(
+      '<channel-continuity-context preserve_across_compaction="true">',
+    );
+    expect(notificationPart.text).toContain(
+      'MessageChannel action="send", channel="telegram", chat_id="12345"',
+    );
     expect(notificationPart.text).toContain("Hello from Telegram!");
     expect(notificationPart.text).toContain("</channel-notification>");
   });
@@ -91,6 +97,7 @@ describe("formatChannelNotification", () => {
     );
     expect(reminder).not.toContain('accountId="account-1"');
     expect(xml).toContain('account_id="account-1"');
+    expect(xml).toContain('Channel account_id is "account-1".');
   });
 
   test("mentions toolset-dependent local file/image inspection for attachment paths", () => {
@@ -131,9 +138,41 @@ describe("formatChannelNotification", () => {
     };
 
     const reminder = buildChannelReminderText(msg);
+    const xml = buildChannelNotificationXml(msg);
 
     expect(reminder).toContain("stay in the same Slack thread automatically");
     expect(reminder).not.toContain("reply_to_message_id");
+    expect(xml).toContain(
+      "Replies sent with MessageChannel stay in the same Slack thread automatically.",
+    );
+  });
+
+  test("embeds compaction-survivable channel reply context in notification XML", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "please proceed",
+      timestamp: Date.now(),
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain(
+      '<channel-continuity-context preserve_across_compaction="true">',
+    );
+    expect(xml).toContain(
+      "This turn originated from external slack. Plain assistant text is not delivered to the user.",
+    );
+    expect(xml).toContain(
+      'The user-visible reply must be sent with MessageChannel action="send", channel="slack", chat_id="C123".',
+    );
+    expect(xml).toContain('Channel account_id is "acct-slack".');
+    expect(xml).toContain("please proceed");
   });
 
   test("escapes XML special characters in notification text without over-escaping quotes", () => {
