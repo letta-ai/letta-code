@@ -13,7 +13,7 @@
  *   bun run src/tests/headless-windows.ts --model haiku
  */
 
-import { createIsolatedCliTestEnv } from "./testProcessEnv";
+import { createAuthenticatedCliTestEnv } from "./testProcessEnv";
 
 type Args = {
   model: string;
@@ -74,7 +74,7 @@ async function runCLI(
   const proc = Bun.spawn(cmd, {
     stdout: "pipe",
     stderr: "pipe",
-    env: createIsolatedCliTestEnv(),
+    env: createAuthenticatedCliTestEnv(),
   });
   const out = await new Response(proc.stdout).text();
   const err = await new Response(proc.stderr).text();

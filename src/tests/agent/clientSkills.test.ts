@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import type {
   SkillDiscoveryResult,
   SkillSource,
 } from "../../agent/skills";
+import { isolateAmbientLettaTestEnv } from "../testProcessEnv";
 
 /** Normalize path separators so assertions work on Windows too. */
 const normalize = (p: string): string => p.replace(/\\/g, "/");
@@ -22,6 +23,19 @@ const baseSkill: Skill = {
   path: "/tmp/base/SKILL.md",
   source: "project",
 };
+
+let restoreAmbientEnv: (() => void) | undefined;
+
+beforeEach(() => {
+  restoreAmbientEnv = isolateAmbientLettaTestEnv();
+  invalidateClientSkillsPayloadCache();
+});
+
+afterEach(() => {
+  invalidateClientSkillsPayloadCache();
+  restoreAmbientEnv?.();
+  restoreAmbientEnv = undefined;
+});
 
 describe("buildClientSkillsPayload", () => {
   test("returns deterministically sorted client skills and path map", async () => {

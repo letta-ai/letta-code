@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { createAuthenticatedCliTestEnv } from "../tests/testProcessEnv";
 import {
   formatCapturedOutput,
   summarizeRecentMessages,
@@ -61,7 +61,7 @@ async function startPendingApprovalSession(
       ],
       {
         cwd: process.cwd(),
-        env: createIsolatedCliTestEnv(),
+        env: createAuthenticatedCliTestEnv(),
       },
     );
 
@@ -227,7 +227,7 @@ async function runOneShotAgainstConversation(
       ],
       {
         cwd: process.cwd(),
-        env: createIsolatedCliTestEnv(),
+        env: createAuthenticatedCliTestEnv(),
       },
     );
 

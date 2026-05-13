@@ -19,7 +19,10 @@ import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
 } from "../integration-tests/processDiagnostics";
-import { createIsolatedCliTestEnv } from "./testProcessEnv";
+import {
+  createAuthenticatedCliTestEnv,
+  createIsolatedCliTestEnv,
+} from "./testProcessEnv";
 
 const execFile = promisify(execFileCb);
 
@@ -150,20 +153,14 @@ async function runCLI(args: Args): Promise<RunResult> {
       ? await mkdtemp(join(tmpdir(), "lc-local-headless-scenario-"))
       : undefined;
   const provider = args.provider ?? inferLocalProvider(args.model);
-  const env = createIsolatedCliTestEnv(
+  const env =
     args.backend === "local"
-      ? {
+      ? createIsolatedCliTestEnv({
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: localStorageDir,
           LETTA_CODE_DEV_AI_SDK_PROVIDER: providerEnvValue(provider),
-        }
-      : {},
-  );
-  if (args.backend === "local") {
-    delete env.LETTA_API_KEY;
-    delete env.LETTA_BASE_URL;
-    delete env.LETTA_API_BASE;
-  }
+        })
+      : createAuthenticatedCliTestEnv();
 
   const cliArgs = [
     "run",

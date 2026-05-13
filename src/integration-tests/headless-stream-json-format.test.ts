@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { createAuthenticatedCliTestEnv } from "../tests/testProcessEnv";
 import type {
   ResultMessage,
   StreamEvent,
@@ -44,7 +44,7 @@ async function runHeadlessCommandOnce(
       ],
       {
         cwd: process.cwd(),
-        env: createIsolatedCliTestEnv(),
+        env: createAuthenticatedCliTestEnv(),
       },
     );
 

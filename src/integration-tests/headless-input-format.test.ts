@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { createAuthenticatedCliTestEnv } from "../tests/testProcessEnv";
 import type {
   ControlResponse,
   ErrorMessage,
@@ -57,7 +57,7 @@ async function runBidirectionalOnce(
       ],
       {
         cwd: process.cwd(),
-        env: createIsolatedCliTestEnv(extraEnv),
+        env: createAuthenticatedCliTestEnv(extraEnv),
       },
     );
 

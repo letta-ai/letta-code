@@ -3,9 +3,11 @@ import { createAgent } from "../../agent/create";
 import { updateAgentSystemPromptMemfs } from "../../agent/modify";
 import { getClient } from "../../backend/api/client";
 
-const describeIntegration = process.env.LETTA_API_KEY
-  ? describe
-  : describe.skip;
+const describeIntegration =
+  process.env.LETTA_RUN_API_INTEGRATION_TESTS === "true" &&
+  process.env.LETTA_API_KEY
+    ? describe
+    : describe.skip;
 
 describeIntegration("memory prompt integration", () => {
   const createdAgentIds: string[] = [];
