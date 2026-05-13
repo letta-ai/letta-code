@@ -30,6 +30,7 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 - **Version:** Extracted from `codex-rs/models-manager/models.json` @ openai/codex `main` (May 2026)
 - **Reference:** https://github.com/openai/codex
 - **Notes:** gpt-5.5 uses `model_messages.instructions_template` with a `{{ personality }}` placeholder; this snapshot renders the template substituted with `personality_pragmatic` (the default). Major drift from the prior gpt-5.3-codex snapshot: new senior-engineer framing, expanded engineering judgment guidance, substantially expanded frontend guidance, softer dirty-worktree handling, updated autonomy/compaction instructions, revised formatting/file-link rules, and new anti-creature-language guidance.
+- **Automation:** `.github/workflows/codex-release-watch.yml` polls stable `openai/codex` releases and files a `codex-watch` issue when upstream tool/schema fields or tool implementation paths change.
 
 #### source_gemini.md
 
