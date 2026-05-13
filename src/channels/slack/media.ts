@@ -22,6 +22,11 @@ type SlackFileLike = {
 };
 
 type SlackAttachmentLike = {
+  text?: string;
+  fallback?: string;
+  pretext?: string;
+  author_name?: string;
+  title?: string;
   image_url?: string;
   files?: SlackFileLike[];
 };
@@ -50,6 +55,7 @@ type SlackRepliesPageMessage = {
   bot_id?: string;
   ts?: string;
   files?: unknown[];
+  attachments?: unknown[];
 };
 
 type SlackRepliesPage = {
@@ -120,11 +126,46 @@ function normalizeSlackAttachmentLike(
     : undefined;
 
   return {
+    text: isNonEmptyString(record.text) ? record.text : undefined,
+    fallback: isNonEmptyString(record.fallback) ? record.fallback : undefined,
+    pretext: isNonEmptyString(record.pretext) ? record.pretext : undefined,
+    author_name: isNonEmptyString(record.author_name)
+      ? record.author_name
+      : undefined,
+    title: isNonEmptyString(record.title) ? record.title : undefined,
     image_url: isNonEmptyString(record.image_url)
       ? record.image_url
       : undefined,
     files,
   };
+}
+
+function uniqueNonEmptyStrings(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const value of values) {
+    const text = value?.trim();
+    if (!text || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    normalized.push(text);
+  }
+
+  return normalized;
+}
+
+function resolveSlackAttachmentText(attachment: SlackAttachmentLike): string {
+  const parts = uniqueNonEmptyStrings([
+    attachment.pretext,
+    attachment.author_name,
+    attachment.title,
+    attachment.text,
+    attachment.fallback,
+  ]);
+
+  return parts.join("\n");
 }
 
 function resolveSlackThreadMessageText(
@@ -133,6 +174,18 @@ function resolveSlackThreadMessageText(
   const text = typeof message.text === "string" ? message.text.trim() : "";
   if (text) {
     return text;
+  }
+
+  const attachmentTexts = Array.isArray(message.attachments)
+    ? message.attachments
+        .map((entry) => normalizeSlackAttachmentLike(entry))
+        .filter((entry): entry is SlackAttachmentLike => Boolean(entry))
+        .map((attachment) => resolveSlackAttachmentText(attachment))
+        .filter(isNonEmptyString)
+    : [];
+
+  if (attachmentTexts.length > 0) {
+    return attachmentTexts.join("\n\n");
   }
 
   const files = Array.isArray(message.files)
