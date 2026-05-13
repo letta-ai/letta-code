@@ -44,7 +44,7 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
 
     const formatted = formatArgsDisplay(args, "Bash");
     expect(formatted.display).toBe(
-      "path: src/cli/helpers/formatArgsDisplay.ts, lines: 1-80",
+      "src/cli/helpers/formatArgsDisplay.ts, lines: 1-80",
     );
     expect(formatted.shellSemantic).toMatchObject({
       kind: "read",
