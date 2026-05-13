@@ -637,8 +637,8 @@ export class LocalBackend extends HeadlessBackend {
         ) {
           return result;
         }
-      } catch (error) {
-        if (!isLocalSlidingWindowCompactionPlanningError(error)) throw error;
+      } catch {
+        // sliding window failed, fall through to full compaction
       }
     }
     return this.compactLocalConversationAll(
