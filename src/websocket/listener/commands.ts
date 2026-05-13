@@ -326,7 +326,6 @@ async function handleCompactCommand(
       apiError?.status === 400 &&
       detail?.includes("Summarization failed to reduce the number of messages")
     ) {
-      conversationRuntime.contextTracker.pendingReflectionTrigger = true;
       return "Compaction run, but the number of messages is the same";
     }
 

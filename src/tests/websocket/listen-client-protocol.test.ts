@@ -1031,6 +1031,60 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
+  test("remote compact does not trigger reflection when compaction changes nothing", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-compact-same-"));
+    try {
+      class NoopCompactBackend extends LocalBackend {
+        override async compactConversationMessages(
+          ..._args: Parameters<LocalBackend["compactConversationMessages"]>
+        ): ReturnType<LocalBackend["compactConversationMessages"]> {
+          throw {
+            status: 400,
+            error: {
+              detail: "Summarization failed to reduce the number of messages",
+            },
+          };
+        }
+      }
+
+      const backend = new NoopCompactBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "WS Noop Compact Agent",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        "default",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "compact",
+          request_id: "compact-noop-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "default" },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      expect(runtime.contextTracker.pendingReflectionTrigger).toBe(false);
+      expect(socket.sentPayloads.join("\n")).toContain(
+        "Compaction run, but the number of messages is the same",
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("runs remote set-max-context execute_command", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "ws-max-context-"));
     try {
