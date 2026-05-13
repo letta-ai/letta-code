@@ -1,4 +1,4 @@
-export type ExperimentId = "conversation_titles" | "node";
+export type ExperimentId = "conversation_titles" | "node" | "tui_cron";
 
 export type ExperimentSource = "override" | "env" | "default";
 

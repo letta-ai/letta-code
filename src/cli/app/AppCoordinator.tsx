@@ -32,6 +32,15 @@ import { SessionStats } from "../../agent/stats";
 import { getBackend } from "../../backend";
 import { getClient } from "../../backend/api/client";
 import { getBillingTier } from "../../backend/api/metadata";
+import {
+  getTask,
+  handleMissedOneShot,
+  isProcessAlive,
+  readCronFile,
+  shouldFireTask,
+  updateTask,
+  wrapCronPrompt,
+} from "../../cron";
 import { experimentManager } from "../../experiments/manager";
 import { runSessionEndHooks, runSessionStartHooks } from "../../hooks";
 import type { ApprovalContext } from "../../permissions/analyzer";
@@ -97,6 +106,7 @@ import { setErrorContext } from "../helpers/errorContext";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
 import { getReflectionSettings } from "../helpers/memoryReminder";
 import {
+  addToMessageQueue,
   type QueuedMessage,
   setMessageQueueAdder,
 } from "../helpers/messageQueueBridge";
@@ -1169,6 +1179,112 @@ export default function App({
     });
     return () => setMessageQueueAdder(null);
   }, []);
+
+  // ── Shadow cron scheduler ──────────────────────────────────────────
+  // When the tui_cron experiment is enabled, run a lightweight scheduler
+  // that fires cron tasks when the desktop app (WS listener) isn't running.
+  // The TUI never claims the scheduler lease — it defers to any active
+  // lease holder (the desktop app always wins, even old versions).
+  useEffect(() => {
+    if (!experimentManager.isEnabled("tui_cron")) return;
+    if (!agentId || agentId === "loading") return;
+
+    const TICK_INTERVAL_MS = 60_000;
+    const firedThisMinute = new Set<string>();
+    let lastMinuteKey = "";
+
+    function tick(): void {
+      const now = new Date();
+      const currentMinuteKey = (() => {
+        const d = now;
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      })();
+
+      // Reset per-minute dedup when minute changes
+      if (currentMinuteKey !== lastMinuteKey) {
+        firedThisMinute.clear();
+        lastMinuteKey = currentMinuteKey;
+      }
+
+      // Check if another scheduler (desktop app) is active
+      const cronData = readCronFile();
+      if (cronData.scheduler_owner) {
+        const { pid } = cronData.scheduler_owner;
+        if (isProcessAlive(pid, cronData.scheduler_owner)) {
+          // Desktop app is running the scheduler — defer
+          return;
+        }
+      }
+
+      // No active scheduler — process tasks for this agent
+      const activeTasks = cronData.tasks.filter(
+        (t) => t.status === "active" && t.agent_id === agentIdRef.current,
+      );
+
+      for (const task of activeTasks) {
+        if (firedThisMinute.has(task.id)) continue;
+
+        // Handle missed one-shots
+        if (handleMissedOneShot(task, now)) continue;
+
+        if (shouldFireTask(task, now)) {
+          firedThisMinute.add(task.id);
+
+          // Apply jitter delay for recurring tasks (same as WS scheduler)
+          const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
+          const taskId = task.id;
+          const doFire = () => {
+            // Revalidate: task may have been deleted/cancelled during jitter
+            const freshTask = getTask(taskId);
+            if (!freshTask || freshTask.status !== "active") return;
+
+            const text = wrapCronPrompt(freshTask);
+            addToMessageQueue({
+              kind: "user",
+              text,
+              agentId: freshTask.agent_id,
+              conversationId: freshTask.conversation_id,
+            });
+
+            // Update task state
+            const nowIso = new Date().toISOString();
+            if (freshTask.recurring) {
+              updateTask(freshTask.id, (t) => {
+                t.last_fired_at = nowIso;
+                t.fire_count += 1;
+              });
+            } else {
+              updateTask(freshTask.id, (t) => {
+                t.status = "fired";
+                t.fired_at = nowIso;
+                t.last_fired_at = nowIso;
+                t.fire_count = 1;
+              });
+            }
+
+            debugLog("cron", `TUI shadow scheduler fired task ${taskId}`);
+          };
+
+          if (jitterMs > 0) {
+            setTimeout(doFire, jitterMs);
+          } else {
+            doFire();
+          }
+        }
+      }
+    }
+
+    // Initial tick
+    tick();
+
+    const interval = setInterval(tick, TICK_INTERVAL_MS);
+    debugLog("cron", "TUI shadow scheduler started");
+
+    return () => {
+      clearInterval(interval);
+      debugLog("cron", "TUI shadow scheduler stopped");
+    };
+  }, [agentId]);
 
   const waitingForQueueCancelRef = useRef(false);
   const queueSnapshotRef = useRef<QueuedMessage[]>([]);

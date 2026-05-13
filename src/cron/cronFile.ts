@@ -204,7 +204,7 @@ function captureProcessIdentity(pid: number): {
   };
 }
 
-function isProcessAlive(
+export function isProcessAlive(
   pid: number,
   owner?: {
     process_start_ticks?: string | null;
