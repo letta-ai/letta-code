@@ -1245,7 +1245,7 @@ export default function App({
             // (the WS scheduler uses wrapCronPrompt with XML, but the TUI
             // renders user messages as-is, so XML shows up raw)
             const text = [
-              `⏰ Scheduled task "${freshTask.name}" is firing.`,
+              `Scheduled task "${freshTask.name}" is firing.`,
               freshTask.recurring
                 ? `This is fire #${freshTask.fire_count + 1} (cron: ${freshTask.cron}).`
                 : `This is a one-off scheduled task.`,
