@@ -7,6 +7,7 @@ import {
 } from "../../agent/subagents/contextBudget";
 import {
   buildSubagentArgs,
+  buildSubagentPrompt,
   getModelHandleFromAgent,
   resolveSubagentLauncher,
   resolveSubagentModel,
@@ -309,6 +310,43 @@ describe("buildSubagentArgs", () => {
     expect(promptArg).toContain("<memory_filesystem>");
     expect(promptArg).toContain("Reflection startup context truncated");
     expect(promptArg.length).toBeLessThan(userPrompt.length);
+  });
+
+  test("can pass subagent prompt by stdin without leaking prompt text into argv", () => {
+    const longPrompt = "prompt ".repeat(40_000);
+
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      longPrompt,
+      undefined,
+      undefined,
+      undefined,
+      { promptTransport: "stdin" },
+    );
+
+    expect(args).not.toContain("--prompt-file");
+    expect(args).not.toContain("-p");
+    expect(args).not.toContain(longPrompt);
+  });
+
+  test("buildSubagentPrompt preserves reflection startup budget before stdin transport", () => {
+    const systemPrompt = "system ".repeat(1_000);
+    const memoryPreview = `<parent_memory>\n<memory_filesystem>\n/memory/\n└── system/\n</memory_filesystem>\n${"memory ".repeat(40_000)}\n</parent_memory>`;
+    const userPrompt = `Review transcript via $TRANSCRIPT_PATH\n\n${memoryPreview}`;
+
+    const prompt = buildSubagentPrompt(
+      "reflection",
+      { ...baseConfig, name: "reflection", systemPrompt },
+      userPrompt,
+    );
+
+    expect(
+      estimateStartupContextTokens(`${systemPrompt}\n${prompt}`),
+    ).toBeLessThanOrEqual(REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT);
+    expect(prompt).toContain("Review transcript via $TRANSCRIPT_PATH");
+    expect(prompt).toContain("Reflection startup context truncated");
   });
 
   test("does not cap non-reflection initial messages", () => {
