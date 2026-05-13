@@ -286,8 +286,9 @@ export async function handleMcpAdd(
           mcp_server_type: 'stdio',
           command: args.command,
           args: args.args,
-          execution_mode: 'client', 
-        },
+          // `execution_mode` is a new server-side field not yet in the generated SDK types.
+          execution_mode: 'client',
+        } as any,
       });
       if (!server.id) {
         updateCommandResult(
@@ -350,15 +351,17 @@ export async function handleMcpAdd(
       );
 
      for (const tool of tools) {
+        // `name` and `source_type: 'client_executable'` are new server-side fields
+        // not yet present in the generated SDK types.
         await client.tools.create({
           name: tool.name,
           description: tool.description,
           json_schema: tool.inputSchema,
-          source_type: 'client_executable', // NEW: Mark as client-executable
+          source_type: 'client_executable',
           source_code: '# Client-side MCP tool',
-          tags: [`mcp_client:${args.name}`], // Track which MCP server
-          default_requires_approval: true, // Force approval
-          });
+          tags: [`mcp_client:${args.name}`],
+          default_requires_approval: true,
+          } as any);
       }
       // 6. Save MCP config locally for persistence
       const existingConfigs = await loadMCPConfigs();

@@ -17,7 +17,7 @@ import {
   type ToolExecutionResult,
   type ToolReturnContent,
 } from "../tools/manager";
-
+import { getToolMetadata } from '../tools/manager';
 import { getMCPManager } from '../mcp/manager';
 /**
  * Extract displayable text from tool return content (for UI display).
@@ -597,14 +597,12 @@ function extractMCPServerName(toolName: string): string | null {
     if (!metadata) {
       return null;
     }
-
     // Look for mcp_client:* tag
     const mcpTag = metadata.tags?.find((t: string) =>
       t.startsWith('mcp_client:'),
     );
-    if (mcpTag) {
-      return mcpTag.split(':')[1]; // Extract server name
-    }
-
+   if (mcpTag) {
+    return mcpTag.split(':')[1] ?? null; 
+   }
     return null;
 }
