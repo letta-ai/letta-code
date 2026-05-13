@@ -9,6 +9,7 @@
  */
 
 import { settingsManager } from "./settings-manager";
+import { compareSemver } from "./utils/version";
 import { getVersion } from "./version";
 
 // Map of base version → markdown string
@@ -43,17 +44,74 @@ export function getReleaseNotes(baseVersion: string): string | null {
  * Strip pre-release suffix from version string.
  * "0.13.0-next.5" → "0.13.0"
  */
-function getBaseVersion(version: string): string {
+export function getBaseVersion(version: string): string {
   return version.split("-")[0] ?? version;
+}
+
+function getOrderedReleaseNoteVersions(): string[] {
+  return Object.keys(releaseNotes).sort((a, b) => {
+    const comparison = compareSemver(a, b);
+    return comparison ?? a.localeCompare(b);
+  });
+}
+
+/**
+ * Return release note versions the user has not seen yet between their last
+ * seen checkpoint and the current version.
+ *
+ * If there is no checkpoint yet, only the current version's note is shown.
+ */
+export function getPendingReleaseNoteVersions(
+  currentVersion: string,
+  lastSeenVersion?: string,
+): string[] {
+  const currentBase = getBaseVersion(currentVersion);
+
+  if (!lastSeenVersion) {
+    return getReleaseNotes(currentBase) ? [currentBase] : [];
+  }
+
+  const lastSeenBase = getBaseVersion(lastSeenVersion);
+  if (lastSeenBase === currentBase) {
+    return [];
+  }
+
+  return getOrderedReleaseNoteVersions().filter((version) => {
+    const isAfterLastSeen = compareSemver(version, lastSeenBase);
+    const isAtOrBeforeCurrent = compareSemver(version, currentBase);
+    return (
+      isAfterLastSeen === 1 &&
+      (isAtOrBeforeCurrent === -1 || isAtOrBeforeCurrent === 0)
+    );
+  });
+}
+
+export function getPendingReleaseNotes(
+  currentVersion: string,
+  lastSeenVersion?: string,
+): string | null {
+  const versions = getPendingReleaseNoteVersions(
+    currentVersion,
+    lastSeenVersion,
+  );
+  if (versions.length === 0) {
+    return null;
+  }
+
+  return versions
+    .map((version) => releaseNotes[version])
+    .filter((note): note is string => typeof note === "string")
+    .join("\n\n");
 }
 
 /**
  * Check if there are release notes to display for the current version.
  * Returns the notes markdown string if:
- * - Notes exist for the current base version
- * - User hasn't seen them yet (tracked in settings)
+ * - Notes exist for the current base version or any skipped versions since the
+ *   user's last seen checkpoint
+ * - User hasn't already crossed this checkpoint (tracked in settings)
  *
- * Also updates settings to mark notes as seen.
+ * Also updates settings to mark notes as seen up to the current base version.
  *
  * Debug: Set LETTA_SHOW_RELEASE_NOTES=1 to force display.
  */
@@ -72,21 +130,13 @@ export async function checkReleaseNotes(): Promise<string | null> {
   }
 
   const settings = settingsManager.getSettings();
+  const notes = getPendingReleaseNotes(
+    currentVersion,
+    settings.lastSeenReleaseNotesVersion,
+  );
 
-  // Compare BASE versions so 0.13.0-next.5 → 0.13.0-next.6 doesn't re-show notes
-  // This ensures users on `next` channel only see notes once per major version
-  const lastSeenBase = settings.lastSeenReleaseNotesVersion
-    ? getBaseVersion(settings.lastSeenReleaseNotesVersion)
-    : undefined;
-
-  if (lastSeenBase === baseVersion) {
-    return null;
-  }
-
-  // Look up notes by base version (so 0.13.0-next.5 finds 0.13.0 notes)
-  const notes = getReleaseNotes(baseVersion);
   if (notes) {
-    // Store BASE version so future pre-releases of same version don't re-show
+    // Store current BASE version so skipped notes are not re-shown on the next run.
     await settingsManager.updateSettings({
       lastSeenReleaseNotesVersion: baseVersion,
     });
