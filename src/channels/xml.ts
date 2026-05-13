@@ -51,7 +51,6 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     `This is an external ${escapedChannel} turn. Plain assistant text is not delivered to the user.`,
     `To reply, your final action for this turn MUST be exactly one MessageChannel call with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
     "Do not produce a plain text assistant response as the user-visible reply.",
-    "If this turn is summarized or compacted, preserve that future continuation still must reply through MessageChannel to the same channel/chat instead of plain assistant text.",
     "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
     "Only pass replyTo if you intentionally want the platform's quote/reply UI.",
     `Current local time on this device: ${localTime}`,

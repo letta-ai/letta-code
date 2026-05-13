@@ -50,6 +50,7 @@ This summary should be thorough in capturing technical details, code patterns, a
 3. **Important details**: Enumerate specific files and code sections examined, modified, or created, as well as important plan files, GitHub issues/PR links, and Linear ticket IDs. For each item, include why it matters and any relevant names, data, configs, or facts discussed.
    - **Preserve identifiers verbatim** (plan filename/path, exact URL, issue/PR number, ticket ID); do not paraphrase or truncate.
    - **Preserve referenced identifiers unless explicitly resolved**: Keep exact URLs/IDs from the conversation unless there is clear evidence they are no longer relevant.
+   - **Preserve channel reply routing**: If the transcript includes a channel-notification XML tag or external channel reminder, preserve the source/channel, chat_id, sender_id, account_id, message_id/thread_id, and the fact that future user-visible replies must use MessageChannel rather than plain assistant text.
    - Do not omit details likely to be referenced later.
 
 4. **Errors and fixes**: List all errors that you ran into, and how you fixed them. Pay special attention to specific user feedback that you received and record verbatim if useful.
@@ -73,6 +74,7 @@ export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT = `The following messages ar
 3. **Important details**: Enumerate specific files and code sections examined, modified, or created, as well as important plan files, GitHub issues/PR links, and Linear ticket IDs. For each item, include why it matters and any relevant names, data, configs, or facts discussed.
    - **Preserve identifiers verbatim** (plan filename/path, exact URL, issue/PR number, ticket ID); do not paraphrase or truncate.
    - **Preserve referenced identifiers unless explicitly resolved**: Keep exact URLs/IDs from the conversation unless there is clear evidence they are no longer relevant.
+   - **Preserve channel reply routing**: If the transcript includes a channel-notification XML tag or external channel reminder, preserve the source/channel, chat_id, sender_id, account_id, message_id/thread_id, and the fact that future user-visible replies must use MessageChannel rather than plain assistant text.
    - Do not omit details likely to be referenced later.
 
 4. **Errors and fixes**: List all errors that you ran into, and how you fixed them. Pay special attention to specific user feedback that you received and record verbatim if useful.

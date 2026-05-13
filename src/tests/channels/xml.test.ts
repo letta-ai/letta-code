@@ -69,9 +69,6 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain(
       "Do not produce a plain text assistant response as the user-visible reply.",
     );
-    expect(reminder).toContain(
-      "If this turn is summarized or compacted, preserve that future continuation still must reply through MessageChannel",
-    );
     expect(reminder).toContain('action="react"');
     expect(reminder).toContain("Current local time on this device:");
   });

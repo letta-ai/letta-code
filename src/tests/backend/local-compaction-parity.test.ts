@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   formatLocalMessagesForSummary,
+  LOCAL_ALL_COMPACTION_PROMPT,
+  LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
   type LocalCompactionStats,
   packageLocalSummaryMessage,
 } from "../../backend/local/compaction";
@@ -11,6 +13,21 @@ function message(message: LocalMessage): LocalMessage {
 }
 
 describe("local compaction API parity", () => {
+  test("compaction prompts preserve channel reply routing", () => {
+    for (const prompt of [
+      LOCAL_ALL_COMPACTION_PROMPT,
+      LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
+    ]) {
+      expect(prompt).toContain("Preserve channel reply routing");
+      expect(prompt).toContain("channel-notification XML tag");
+      expect(prompt).toContain("chat_id");
+      expect(prompt).toContain("account_id");
+      expect(prompt).toContain("message_id/thread_id");
+      expect(prompt).toContain("MessageChannel");
+      expect(prompt).toContain("plain assistant text");
+    }
+  });
+
   test("formats local messages with the API simple_formatter transcript contract", () => {
     const transcript = formatLocalMessagesForSummary([
       message({
