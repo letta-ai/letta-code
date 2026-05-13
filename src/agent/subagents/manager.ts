@@ -52,6 +52,26 @@ import {
 } from "./contextBudget";
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Subagent types that don't need server-side base tools (web_search,
+ * fetch_webpage). These agents operate on local memory/git state and have
+ * no use for internet access. Spawning them with `--base-tools none`
+ * keeps their tool list minimal.
+ *
+ * fork/recall are excluded because they deploy the parent agent and
+ * never trigger fresh agent creation, so base tools are out of scope.
+ */
+const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
+  "reflection",
+  "memory",
+  "history-analyzer",
+  "init",
+]);
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -841,6 +861,12 @@ export function buildSubagentArgs(
     if (type === "reflection") {
       args.push("--no-system-info-reminder");
       args.push("--no-skills");
+    }
+
+    // Skip server-side base tools (web_search, fetch_webpage) for subagents
+    // that operate purely on local memory/git state.
+    if (NO_BASE_TOOL_SUBAGENT_TYPES.has(type)) {
+      args.push("--base-tools", "none");
     }
   }
 
