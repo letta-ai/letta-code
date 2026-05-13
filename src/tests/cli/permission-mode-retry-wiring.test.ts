@@ -92,7 +92,7 @@ describe("permission mode retry wiring", () => {
     const segment = source.slice(start, end);
     expect(segment).toContain("settingsManager.setPlanModeEnabled(enabled)");
     expect(segment).toContain("await settingsManager.flush()");
-    expect(segment).toContain('permissionMode.setMode("default")');
+    expect(segment).toContain('permissionMode.setMode("unrestricted")');
     expect(segment).toContain(
       "await forceToolsetSwitch(currentToolset, agentId)",
     );
