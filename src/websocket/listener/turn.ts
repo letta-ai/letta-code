@@ -226,7 +226,6 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const memoryDir = getMemoryFilesystemRoot(agentId);
       const parentMemory = await buildParentMemorySnapshot(memoryDir);
       const reflectionPrompt = buildReflectionSubagentPrompt({
-        transcriptPath: autoPayload.payloadPath,
         memoryDir,
         parentMemory,
       });
@@ -238,6 +237,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
         prompt: reflectionPrompt,
         description: AUTO_REFLECTION_DESCRIPTION,
         silentCompletion: true,
+        transcriptPath: autoPayload.payloadPath,
         parentScope: { agentId, conversationId },
         onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
           telemetry.trackReflectionEnd(triggerSource, success, {

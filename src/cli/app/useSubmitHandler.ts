@@ -2601,7 +2601,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const memoryDir = getScopedMemoryFilesystemRoot(agentId);
             const parentMemory = await buildParentMemorySnapshot(memoryDir);
             const reflectionPrompt = buildReflectionSubagentPrompt({
-              transcriptPath: autoPayload.payloadPath,
               memoryDir,
               parentMemory,
             });
@@ -2615,6 +2614,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               prompt: reflectionPrompt,
               description: "Reflecting on conversation",
               silentCompletion: true,
+              transcriptPath: autoPayload.payloadPath,
               parentScope: {
                 agentId,
                 conversationId: reflectionConversationId,
@@ -3163,7 +3163,6 @@ ${SYSTEM_REMINDER_CLOSE}
           const memoryDir = getScopedMemoryFilesystemRoot(agentId);
           const parentMemory = await buildParentMemorySnapshot(memoryDir);
           const reflectionPrompt = buildReflectionSubagentPrompt({
-            transcriptPath: autoPayload.payloadPath,
             memoryDir,
             parentMemory,
           });
@@ -3177,6 +3176,7 @@ ${SYSTEM_REMINDER_CLOSE}
             prompt: reflectionPrompt,
             description: AUTO_REFLECTION_DESCRIPTION,
             silentCompletion: true,
+            transcriptPath: autoPayload.payloadPath,
             parentScope: {
               agentId,
               conversationId: reflectionConversationId,

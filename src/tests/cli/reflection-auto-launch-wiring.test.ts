@@ -25,6 +25,15 @@ describe("reflection auto-launch wiring", () => {
     expect(reflectionPromptBlocks.some((block) => block.includes("cwd:"))).toBe(
       false,
     );
+    // Prompt blocks should no longer include a transcriptPath field — the
+    // transcript path is now passed via TRANSCRIPT_PATH env var on the
+    // spawned subagent's child process, not interpolated into the prompt.
+    expect(
+      reflectionPromptBlocks.some((block) => block.includes("transcriptPath:")),
+    ).toBe(false);
+    // ...but the spawn call should still receive the transcript path so it
+    // can be forwarded as $TRANSCRIPT_PATH to the subagent.
+    expect(appSource).toContain("transcriptPath: autoPayload.payloadPath");
     expect(appSource).toContain("maybeLaunchReflectionSubagent,");
 
     expect(engineSource).toContain(
