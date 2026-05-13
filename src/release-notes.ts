@@ -17,6 +17,11 @@ export const releaseNotes: Record<string, string> = {
   // Add release notes for new versions here.
   // Keep concise - 3-4 bullet points max.
   // Use → for bullets to match the command hints below.
+  "0.25.7": `🔐 **Permissions update in Letta Code 0.25.7**
+→ The default permission mode is now **unrestricted**, so Letta Code starts without approval prompts unless you change it
+→ Run **/permissions** and choose **standard** if you want the old request-approval behavior back
+→ You can also press **shift+tab** to cycle modes until you reach **standard**
+→ Read more: https://github.com/letta-ai/letta-code/pull/2197`,
   "0.13.4": `🔄 **Letta Code 0.13.4: Back to the OG experience**
 → Running **letta** now resumes your "default" conversation (instead of spawning a new one)
 → Use **letta --new** if you want to create a new conversation for concurrent sessions
