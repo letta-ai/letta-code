@@ -1185,8 +1185,9 @@ export default function App({
   // that fires cron tasks when the desktop app (WS listener) isn't running.
   // The TUI never claims the scheduler lease — it defers to any active
   // lease holder (the desktop app always wins, even old versions).
+  // The experiment check is inside tick() so toggling the experiment
+  // takes effect without restarting the TUI.
   useEffect(() => {
-    if (!experimentManager.isEnabled("tui_cron")) return;
     if (!agentId || agentId === "loading") return;
 
     const TICK_INTERVAL_MS = 60_000;
@@ -1194,6 +1195,9 @@ export default function App({
     let lastMinuteKey = "";
 
     function tick(): void {
+      // Check experiment gate on each tick so toggling takes effect immediately
+      if (!experimentManager.isEnabled("tui_cron")) return;
+
       const now = new Date();
       const currentMinuteKey = (() => {
         const d = now;
