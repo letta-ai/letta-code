@@ -19,6 +19,7 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "./accounts";
+import { tryHandleChannelSlashCommand } from "./commands";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
@@ -804,6 +805,11 @@ export class ChannelRegistry {
     if (await this.tryHandlePendingControlRequest(adapter, msg)) {
       return;
     }
+
+    if (await tryHandleChannelSlashCommand(adapter, msg)) {
+      return;
+    }
+
     const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 

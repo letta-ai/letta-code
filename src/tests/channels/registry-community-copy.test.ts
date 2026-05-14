@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildChannelHelpMessage } from "../../channels/commands";
 
 const { buildPairingInstructions, buildUnboundRouteInstructions } =
   await import("../../channels/registry");
@@ -42,6 +43,16 @@ describe("registry copy: first-party channels", () => {
     expect(buildPairingInstructions("telegram", "X")).not.toContain(
       "Letta Code agent",
     );
+  });
+
+  test("channel help explains how to use a connected Telegram chat", () => {
+    const text = buildChannelHelpMessage("telegram");
+    expect(text).toContain("Telegram is connected to Letta Code.");
+    expect(text).toContain("Send a normal message");
+    expect(text).toContain("connected agent will reply in this chat");
+    expect(text).toContain("react");
+    expect(text).toContain("upload a file");
+    expect(text).not.toContain("open Channels >");
   });
 });
 
