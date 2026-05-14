@@ -69,11 +69,11 @@ const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function minuteKey(date: Date): string {
+export function minuteKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-function wrapCronPrompt(task: CronTask): string {
+export function wrapCronPrompt(task: CronTask): string {
   const lines = [
     "<system-reminder>",
     `Scheduled task "${task.name}" is firing.`,
@@ -98,7 +98,7 @@ function refreshTaskCache(state: SchedulerState): void {
   }
 }
 
-function shouldFireTask(task: CronTask, now: Date): boolean {
+export function shouldFireTask(task: CronTask, now: Date): boolean {
   // One-shot: check if scheduled_for is now or past (jitter applied to scheduled time)
   if (!task.recurring && task.scheduled_for) {
     const scheduledMs =
@@ -168,7 +168,7 @@ function fireCronTask(
 }
 
 /** Returns true if the task was marked as missed (caller should skip firing). */
-function handleMissedOneShot(task: CronTask, now: Date): boolean {
+export function handleMissedOneShot(task: CronTask, now: Date): boolean {
   if (task.recurring || !task.scheduled_for) return false;
   // A one-shot is "missed" if it's been more than 5 minutes past scheduled time
   const scheduledMs = new Date(task.scheduled_for).getTime();

@@ -20,6 +20,12 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
     description: "Route API requests through the Letta Node / TS core path.",
     envVar: "LETTA_NODE",
   },
+  {
+    id: "tui_cron",
+    label: "TUI cron scheduler",
+    description:
+      "Fire scheduled tasks from the CLI when the desktop app isn't running.",
+  },
 ] as const;
 
 function isEnabledToggle(value: string | undefined): boolean {
