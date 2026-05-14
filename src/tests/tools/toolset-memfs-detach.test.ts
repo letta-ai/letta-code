@@ -43,11 +43,38 @@ const mockGetClient = mock(() =>
   }),
 );
 
+function getMockMemfsServerUrl(): string {
+  return process.env.LETTA_MEMFS_BASE_URL || "https://api.letta.com";
+}
+
+function getMockMemfsGitProxyRewriteConfig(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const rawProxyBaseUrl = env.LETTA_MEMFS_GIT_PROXY_BASE_URL?.trim();
+  const memfsBaseUrl = getMockMemfsServerUrl().replace(/\/+$/, "");
+  if (!rawProxyBaseUrl || !memfsBaseUrl.includes("api.letta.com")) {
+    return null;
+  }
+
+  const proxyBaseUrl = rawProxyBaseUrl.replace(/\/+$/, "");
+  const proxyPrefix = `${proxyBaseUrl}/v1/git/`;
+  const memfsPrefix = `${memfsBaseUrl}/v1/git/`;
+  return {
+    proxyBaseUrl,
+    memfsBaseUrl,
+    proxyPrefix,
+    memfsPrefix,
+    configKey: `url.${proxyPrefix}.insteadOf`,
+    configValue: memfsPrefix,
+  };
+}
+
 mock.module("../../backend/api/client", () => ({
   getClient: mockGetClient,
   getServerUrl: () => "http://localhost:8283",
-  getMemfsServerUrl: () => "http://localhost:8283",
-  getMemfsGitProxyRewriteConfig: () => null,
+  getMemfsServerUrl: getMockMemfsServerUrl,
+  getMemfsGitProxyRewriteConfig: getMockMemfsGitProxyRewriteConfig,
+  LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV: "LETTA_MEMFS_GIT_PROXY_BASE_URL",
 }));
 
 const { detachMemoryTools } = await import("../../tools/toolset");
