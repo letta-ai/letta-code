@@ -207,6 +207,7 @@ export default function App({
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
+  onReload,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -3678,6 +3679,7 @@ export default function App({
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
+    onReload,
   });
 
   const onSubmitRef = useRef(onSubmit);

@@ -2113,6 +2113,17 @@ class SettingsManager {
   }
 
   /**
+   * Clear in-memory caches so the next read re-loads from disk.
+   * Unlike reset(), this preserves the initialized state and pending writes.
+   * Used by /reload to pick up settings changes without a full restart.
+   */
+  clearCaches(): void {
+    this.localProjectSettings.clear();
+    this.projectSettings.clear();
+    this.clearSecureTokensCache();
+  }
+
+  /**
    * Reset the manager (mainly for testing).
    * Waits for pending writes to complete before resetting.
    */

@@ -304,6 +304,7 @@ type SubmitHandlerContext = {
     keepRunning?: boolean,
   ) => void;
   userCancelledRef: MutableRefObject<boolean>;
+  onReload?: (agentId: string, conversationId: string) => void;
 };
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
@@ -420,6 +421,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
+    onReload,
   } = ctx;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: moved from AppCoordinator; dependencies are preserved from the original callback.
@@ -721,6 +723,29 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             "Experiments dialog dismissed",
           );
           setActiveOverlay("experiment");
+          return { submitted: true };
+        }
+
+        if (trimmed === "/reload") {
+          if (onReload) {
+            const cmd = commandRunner.start(
+              "/reload",
+              "Reloading settings and restarting TUI effects...",
+            );
+            cmd.finish("Reloading...", true);
+            // Defer the reload to let the command UI render first
+            setTimeout(
+              () =>
+                onReload(
+                  agentIdRef.current,
+                  conversationIdRef.current ?? "default",
+                ),
+              0,
+            );
+          } else {
+            const cmd = commandRunner.start("/reload", "Reload not available");
+            cmd.fail("Reload is not available in this context");
+          }
           return { submitted: true };
         }
 

@@ -1096,7 +1096,7 @@ async function main(): Promise<void> {
   markMilestone("REACT_IMPORT_START");
   const React = await import("react");
   const { render } = await import("ink");
-  const { useState, useEffect } = React;
+  const { useState, useEffect, useCallback } = React;
   const AppModule = await import("./cli/App");
   const App = AppModule.default;
 
@@ -1145,6 +1145,8 @@ async function main(): Promise<void> {
     const [isResumingSession, setIsResumingSession] = useState(false);
     const [resumedExistingConversation, setResumedExistingConversation] =
       useState(false);
+    // Epoch counter: incrementing forces App to remount via React key
+    const [appReloadEpoch, setAppReloadEpoch] = useState(0);
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
@@ -1569,6 +1571,26 @@ async function main(): Promise<void> {
 
     // Main initialization effect - runs after profile selection
     const initStartedRef = React.useRef(false);
+
+    // Reload handler: re-triggers the startup path for the current agent/conversation,
+    // then remounts AppCoordinator via key change so all effects re-fire.
+    const handleReload = useCallback(
+      (currentAgentId: string, currentConversationId: string) => {
+        // Clear cached settings so the init path re-reads from disk
+        settingsManager.clearCaches();
+        initStartedRef.current = false;
+        setResumeData(null);
+        setAgentState(null);
+        setValidatedAgent(null);
+        setSelectedGlobalAgentId(currentAgentId);
+        setSelectedConversationId(currentConversationId);
+        setResumedExistingConversation(true);
+        setLoadingState("assembling");
+        setAppReloadEpoch((x) => x + 1);
+      },
+      [],
+    );
+
     useEffect(() => {
       if (loadingState !== "assembling") {
         // If init bounced back to a picker, allow the next user selection to
@@ -2302,6 +2324,7 @@ async function main(): Promise<void> {
     }
 
     return React.createElement(App, {
+      key: `${agentId}:${conversationId}:${appReloadEpoch}`,
       agentId,
       agentState,
       conversationId,
@@ -2318,6 +2341,7 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+      onReload: handleReload,
     });
   }
 

@@ -270,6 +270,15 @@ export const commands: Record<string, Command> = {
       return "Opening experiments selector...";
     },
   },
+  "/reload": {
+    desc: "Reload settings and restart TUI effects",
+    order: 27.2,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in AppCoordinator to trigger a soft restart
+      return "Reloading...";
+    },
+  },
   "/ade": {
     desc: "Open agent in ADE (browser)",
     order: 28,
