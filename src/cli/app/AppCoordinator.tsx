@@ -3999,6 +3999,13 @@ export default function App({
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
+      if (mode === "plan" && !settingsManager.isPlanModeEnabled()) {
+        permissionMode.setMode("unrestricted");
+        setUiPermissionMode("unrestricted");
+        triggerStatusLineRefresh();
+        return;
+      }
+
       // When entering plan mode via tab cycling, generate and set the plan file path
       if (mode === "plan") {
         const planPath = generatePlanFilePath();

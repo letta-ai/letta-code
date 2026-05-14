@@ -36,11 +36,17 @@ describe("permission mode retry wiring", () => {
 
     const slashPlanStart = source.indexOf('if (trimmed === "/plan") {');
     const slashPlanEnd = source.indexOf(
-      "return { submitted: true };",
+      "// Special handling for /init command",
       slashPlanStart,
     );
     expect(slashPlanStart).toBeGreaterThan(-1);
     expect(slashPlanEnd).toBeGreaterThan(slashPlanStart);
+    expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
+      "settingsManager.isPlanModeEnabled()",
+    );
+    expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
+      "Plan mode is disabled in user settings.",
+    );
     expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
       "cacheLastPlanFilePath(planPath);",
     );
@@ -53,6 +59,9 @@ describe("permission mode retry wiring", () => {
     );
     expect(modeChangeStart).toBeGreaterThan(-1);
     expect(modeChangeEnd).toBeGreaterThan(modeChangeStart);
+    expect(source.slice(modeChangeStart, modeChangeEnd)).toContain(
+      'if (mode === "plan" && !settingsManager.isPlanModeEnabled())',
+    );
     expect(source.slice(modeChangeStart, modeChangeEnd)).toContain(
       "cacheLastPlanFilePath(planPath);",
     );
@@ -68,6 +77,27 @@ describe("permission mode retry wiring", () => {
     expect(source.slice(enterPlanStart, enterPlanEnd)).toContain(
       "cacheLastPlanFilePath(planFilePath);",
     );
+  });
+
+  test("/plan-mode toggles setting and refreshes loaded tools", () => {
+    const source = readAppSource();
+
+    const start = source.indexOf(
+      'if (trimmed === "/plan-mode" || trimmed.startsWith("/plan-mode "))',
+    );
+    const end = source.indexOf("// Special handling for /init command", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("settingsManager.setPlanModeEnabled(enabled)");
+    expect(segment).toContain("await settingsManager.flush()");
+    expect(segment).toContain('permissionMode.setMode("unrestricted")');
+    expect(segment).toContain(
+      "await forceToolsetSwitch(currentToolset, agentId)",
+    );
+    expect(segment).toContain("await switchToolsetForModel(");
+    expect(segment).toContain("Usage: /plan-mode on|off");
   });
 
   test("pins submission permission mode and defines a restore helper", () => {

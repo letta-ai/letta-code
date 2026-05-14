@@ -62,6 +62,14 @@ import type {
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 
+function isPlanModeEnabled(): boolean {
+  try {
+    return settingsManager.isPlanModeEnabled();
+  } catch {
+    return false;
+  }
+}
+
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
 const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
@@ -379,6 +387,7 @@ export function buildDeviceStatus(
       is_online: false,
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
+      plan_mode_enabled: isPlanModeEnabled(),
       current_working_directory: fallbackCwd,
       git_context: getCachedDeviceGitContext(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
@@ -445,6 +454,7 @@ export function buildDeviceStatus(
     is_online: transport ? isListenerTransportOpen(transport) : false,
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
+    plan_mode_enabled: isPlanModeEnabled(),
     current_working_directory: resolvedCwd,
     git_context: getCachedDeviceGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,

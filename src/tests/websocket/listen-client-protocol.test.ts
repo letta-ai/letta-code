@@ -4111,7 +4111,10 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
-  test("mode changes emit fresh loop status plan_file_path on enter exit and re-enter", async () => {
+  test("mode changes reject plan mode when plan mode is disabled", async () => {
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
     const listener = __listenClientTestUtils.createListenerRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     listener.socket = socket as unknown as WebSocket;
@@ -4128,44 +4131,97 @@ describe("listen-client capability-gated approval flow", () => {
       scope,
     );
 
-    const firstPlanPath = (socket.sentPayloads
-      .map((payload) => JSON.parse(payload as string))
-      .findLast((payload) => payload.type === "update_loop_status")?.loop_status
-      ?.plan_file_path ?? null) as string | null;
-
-    expect(firstPlanPath).toBeTruthy();
-
-    __listenClientTestUtils.handleModeChange(
-      { mode: "standard" },
-      socket as unknown as WebSocket,
-      listener,
-      scope,
+    const outbound = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload as string),
+    );
+    const deviceStatus = outbound.findLast(
+      (payload) => payload.type === "update_device_status",
+    )?.device_status;
+    const loopStatus = outbound.findLast(
+      (payload) => payload.type === "update_loop_status",
+    )?.loop_status;
+    const notice = outbound.findLast(
+      (payload) =>
+        payload.type === "stream_delta" &&
+        payload.delta?.message_type === "loop_error",
     );
 
-    const afterExitLoopStatus = socket.sentPayloads
-      .map((payload) => JSON.parse(payload as string))
-      .findLast(
-        (payload) =>
-          payload.type === "update_loop_status" &&
-          payload.loop_status?.status === "WAITING_ON_INPUT",
+    expect(deviceStatus?.current_permission_mode).toBe("standard");
+    expect(deviceStatus?.plan_mode_enabled).toBe(false);
+    expect(loopStatus?.plan_file_path).toBeNull();
+    expect(notice?.delta?.message).toContain(
+      "Plan mode is disabled in user settings.",
+    );
+  });
+
+  test("mode changes emit fresh loop status plan_file_path on enter exit and re-enter", async () => {
+    const originalHome = process.env.HOME;
+    const testHomeDir = await mkdtemp(join(os.tmpdir(), "letta-plan-ws-"));
+    await settingsManager.reset();
+    process.env.HOME = testHomeDir;
+    await settingsManager.initialize();
+    settingsManager.setPlanModeEnabled(true);
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket(WebSocket.OPEN);
+    listener.socket = socket as unknown as WebSocket;
+
+    const scope = {
+      agent_id: "agent-1",
+      conversation_id: "default",
+    } as const;
+
+    try {
+      __listenClientTestUtils.handleModeChange(
+        { mode: "plan" },
+        socket as unknown as WebSocket,
+        listener,
+        scope,
       );
 
-    expect(afterExitLoopStatus?.loop_status?.plan_file_path).toBeNull();
+      const firstPlanPath = (socket.sentPayloads
+        .map((payload) => JSON.parse(payload as string))
+        .findLast((payload) => payload.type === "update_loop_status")
+        ?.loop_status?.plan_file_path ?? null) as string | null;
 
-    __listenClientTestUtils.handleModeChange(
-      { mode: "plan" },
-      socket as unknown as WebSocket,
-      listener,
-      scope,
-    );
+      expect(firstPlanPath).toBeTruthy();
 
-    const secondPlanPath = (socket.sentPayloads
-      .map((payload) => JSON.parse(payload as string))
-      .findLast((payload) => payload.type === "update_loop_status")?.loop_status
-      ?.plan_file_path ?? null) as string | null;
+      __listenClientTestUtils.handleModeChange(
+        { mode: "unrestricted" },
+        socket as unknown as WebSocket,
+        listener,
+        scope,
+      );
 
-    expect(secondPlanPath).toBeTruthy();
-    expect(secondPlanPath).not.toBe(firstPlanPath);
+      const afterExitLoopStatus = socket.sentPayloads
+        .map((payload) => JSON.parse(payload as string))
+        .findLast(
+          (payload) =>
+            payload.type === "update_loop_status" &&
+            payload.loop_status?.status === "WAITING_ON_INPUT",
+        );
+
+      expect(afterExitLoopStatus?.loop_status?.plan_file_path).toBeNull();
+
+      __listenClientTestUtils.handleModeChange(
+        { mode: "plan" },
+        socket as unknown as WebSocket,
+        listener,
+        scope,
+      );
+
+      const secondPlanPath = (socket.sentPayloads
+        .map((payload) => JSON.parse(payload as string))
+        .findLast((payload) => payload.type === "update_loop_status")
+        ?.loop_status?.plan_file_path ?? null) as string | null;
+
+      expect(secondPlanPath).toBeTruthy();
+      expect(secondPlanPath).not.toBe(firstPlanPath);
+    } finally {
+      await settingsManager.reset();
+      await rm(testHomeDir, { recursive: true, force: true });
+      process.env.HOME = originalHome;
+    }
   });
 
   test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {

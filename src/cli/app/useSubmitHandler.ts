@@ -2682,6 +2682,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Special handling for /plan command - enter plan mode
         if (trimmed === "/plan") {
+          const cmd = commandRunner.start("/plan", "Entering plan mode...");
+          if (!settingsManager.isPlanModeEnabled()) {
+            cmd.finish("Plan mode is disabled in user settings.", false);
+            return { submitted: true };
+          }
+
           // Generate plan file path and enter plan mode
           const planPath = generatePlanFilePath();
           permissionMode.setPlanFilePath(planPath);
@@ -2689,11 +2695,65 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
-          const cmd = commandRunner.start(
-            "/plan",
-            `Plan mode enabled. Plan file: ${planPath}`,
-          );
           cmd.finish(`Plan mode enabled. Plan file: ${planPath}`, true);
+
+          return { submitted: true };
+        }
+
+        if (trimmed === "/plan-mode" || trimmed.startsWith("/plan-mode ")) {
+          const cmd = commandRunner.start(
+            "/plan-mode",
+            "Updating plan mode setting...",
+          );
+          const arg = trimmed.split(/\s+/)[1]?.toLowerCase();
+          const enabled = (() => {
+            if (arg === "on" || arg === "true" || arg === "enable") {
+              return true;
+            }
+            if (arg === "off" || arg === "false" || arg === "disable") {
+              return false;
+            }
+            return null;
+          })();
+
+          if (enabled === null) {
+            cmd.fail("Usage: /plan-mode on|off");
+            return { submitted: true };
+          }
+
+          try {
+            settingsManager.setPlanModeEnabled(enabled);
+            await settingsManager.flush();
+
+            if (!enabled && permissionMode.getMode() === "plan") {
+              permissionMode.setMode("unrestricted");
+              setUiPermissionMode("unrestricted");
+            }
+
+            const { forceToolsetSwitch, switchToolsetForModel } = await import(
+              "../../tools/toolset"
+            );
+            if (currentToolset) {
+              await forceToolsetSwitch(currentToolset, agentId);
+            } else {
+              await switchToolsetForModel(
+                currentModelHandle ??
+                  currentModelId ??
+                  "anthropic/claude-sonnet-4",
+                agentId,
+              );
+            }
+
+            cmd.finish(
+              enabled
+                ? "Plan mode enabled. /plan and plan-mode tools are now available."
+                : "Plan mode disabled. /plan is disabled and plan-mode tools are hidden.",
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to update plan mode setting: ${errorDetails}`);
+          }
 
           return { submitted: true };
         }
