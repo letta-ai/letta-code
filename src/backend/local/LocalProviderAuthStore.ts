@@ -10,7 +10,7 @@ import type { ProviderResponse } from "../api/providers";
 import {
   LOCAL_CHATGPT_PROVIDER_NAME,
   SUPPORTED_LOCAL_PROVIDER_TYPES,
-} from "../dev/AISDKProviderRegistry";
+} from "../dev/PiProviderRegistry";
 import type { LocalProviderTimeout } from "./LocalProviderTimeout";
 import { getLocalBackendStorageDir } from "./paths";
 
@@ -29,7 +29,7 @@ export {
   LOCAL_OPENROUTER_PROVIDER_NAME,
   LOCAL_ZAI_CODING_PROVIDER_NAME,
   LOCAL_ZAI_PROVIDER_NAME,
-} from "../dev/AISDKProviderRegistry";
+} from "../dev/PiProviderRegistry";
 
 export type LocalProviderAuthType = "api" | "oauth";
 

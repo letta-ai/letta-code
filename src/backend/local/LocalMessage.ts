@@ -1,4 +1,16 @@
-import type { UIMessage } from "ai";
+import type {
+  Api,
+  AssistantMessage,
+  ImageContent,
+  Message as PiMessage,
+  Provider,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+  ToolResultMessage,
+  Usage,
+  UserMessage,
+} from "@earendil-works/pi-ai";
 
 export interface LocalMessageProviderMetadata {
   provider_id?: string;
@@ -28,4 +40,63 @@ export interface LocalMessageMetadata {
   };
 }
 
-export type LocalMessage = UIMessage<LocalMessageMetadata>;
+export interface LocalMessageBase {
+  id: string;
+  metadata?: LocalMessageMetadata;
+}
+
+export type LocalTextContent = TextContent;
+export type LocalThinkingContent = ThinkingContent;
+export type LocalImageContent = ImageContent;
+export type LocalToolCall = ToolCall;
+
+export interface LocalUserMessage
+  extends Omit<UserMessage, "timestamp">,
+    LocalMessageBase {
+  role: "user";
+  timestamp: number;
+}
+
+export interface LocalAssistantMessage
+  extends Omit<AssistantMessage, "timestamp" | "usage">,
+    LocalMessageBase {
+  role: "assistant";
+  content: (LocalTextContent | LocalThinkingContent | LocalToolCall)[];
+  api: Api;
+  provider: Provider;
+  model: string;
+  usage: Usage;
+  timestamp: number;
+}
+
+export interface LocalToolResultMessage
+  extends Omit<ToolResultMessage, "timestamp">,
+    LocalMessageBase {
+  role: "toolResult";
+  content: (LocalTextContent | LocalImageContent)[];
+  timestamp: number;
+}
+
+export type LocalMessage =
+  | LocalUserMessage
+  | LocalAssistantMessage
+  | LocalToolResultMessage;
+
+export type LocalPiMessage = PiMessage;
+
+export function emptyLocalUsage(): Usage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+    },
+  };
+}

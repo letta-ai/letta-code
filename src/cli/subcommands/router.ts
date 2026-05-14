@@ -3,6 +3,7 @@ import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runListenSubcommand } from "./listen.tsx";
+import { runLocalBackendSubcommand } from "./localBackend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 
@@ -40,6 +41,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runCronSubcommand(rest);
     case "channels":
       return runChannelsSubcommand(rest);
+    case "local-backend":
+      return runLocalBackendSubcommand(rest);
     default:
       return null;
   }

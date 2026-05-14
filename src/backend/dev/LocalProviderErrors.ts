@@ -1,4 +1,3 @@
-import { APICallError } from "ai";
 import {
   getRetryDelayMs,
   isQuotaLimitErrorDetail,
@@ -54,45 +53,16 @@ function fallbackErrorMessage(error: unknown): string {
   return "Unknown local provider error";
 }
 
-function retryHeaderValue(
-  headers: Record<string, string> | undefined,
-  headerName: string,
-): string | undefined {
-  if (!headers) return undefined;
-  const direct = headers[headerName];
-  if (direct !== undefined) return direct;
-  const lower = headerName.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === lower) return value;
-  }
-  return undefined;
-}
-
-function retryAfterMsFromHeaders(
-  headers: Record<string, string> | undefined,
-): number | null {
-  const retryAfterMs = retryHeaderValue(headers, "retry-after-ms");
-  if (retryAfterMs) {
-    const parsed = Number.parseFloat(retryAfterMs);
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      return Math.round(parsed);
-    }
-  }
-
-  return parseRetryAfterHeaderMs(retryHeaderValue(headers, "retry-after"));
-}
-
 export function localProviderErrorDetail(error: unknown): string {
   const parts: string[] = [];
-
   const message = fallbackErrorMessage(error);
   if (message) parts.push(message);
 
-  if (APICallError.isInstance(error)) {
-    const responseBody = stringValue(error.responseBody);
-    if (responseBody) parts.push(responseBody);
-    const data = stringifyValue(error.data);
-    if (data) parts.push(data);
+  if (isRecord(error)) {
+    for (const key of ["responseBody", "data", "body", "detail", "code"]) {
+      const value = stringifyValue(error[key]);
+      if (value) parts.push(value);
+    }
     const cause = error.cause;
     if (isRecord(cause)) {
       const code = stringValue(cause.code);
@@ -114,16 +84,14 @@ function parseRetryableJSONRecord(
   if (!trimmed) return null;
   const candidates = [trimmed];
   const jsonStart = trimmed.indexOf("{");
-  if (jsonStart > 0) {
-    candidates.push(trimmed.slice(jsonStart));
-  }
+  if (jsonStart > 0) candidates.push(trimmed.slice(jsonStart));
 
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate);
       if (isRecord(parsed)) return parsed;
     } catch {
-      // Try the next candidate.
+      // Try next candidate.
     }
   }
   return null;
@@ -153,35 +121,30 @@ function isRetryableRateLimitJSONDetail(detail: string): boolean {
       return true;
     }
   }
-
   return false;
+}
+
+function statusCode(error: unknown): number | undefined {
+  if (!isRecord(error)) return undefined;
+  const status = error.statusCode ?? error.status;
+  return typeof status === "number" ? status : undefined;
 }
 
 export function isRetryableLocalProviderError(error: unknown): boolean {
   if (isContextWindowOverflowError(error)) return false;
 
   const detail = localProviderErrorDetail(error);
-  if (APICallError.isInstance(error)) {
-    if (isQuotaLimitErrorDetail(detail)) return false;
-    if (error.isRetryable === true) return true;
-    const status = error.statusCode;
-    if (status !== undefined && status >= 500) return true;
-    if (status === undefined && isRetryableRateLimitJSONDetail(detail)) {
-      return true;
-    }
-    return shouldRetryPreStreamTransientError({ status, detail });
-  }
-
-  if (isRetryableRateLimitJSONDetail(detail)) return true;
-  return shouldRetryPreStreamTransientError({
-    status: undefined,
-    detail,
-  });
+  const status = statusCode(error);
+  if (isQuotaLimitErrorDetail(detail)) return false;
+  if (isRecord(error) && error.isRetryable === true) return true;
+  if (status !== undefined && status >= 500) return true;
+  if (status === undefined && isRetryableRateLimitJSONDetail(detail))
+    return true;
+  return shouldRetryPreStreamTransientError({ status, detail });
 }
 
 function isLikelyProviderError(error: unknown, retryable: boolean): boolean {
   if (retryable || isContextWindowOverflowError(error)) return true;
-  if (APICallError.isInstance(error)) return true;
   const detail = localProviderErrorDetail(error).toLowerCase();
   return (
     detail.includes("api") ||
@@ -215,14 +178,19 @@ export function localProviderRetryDelayMs(
   error: unknown,
   attempt: number,
 ): number {
-  const retryAfterMs = APICallError.isInstance(error)
-    ? retryAfterMsFromHeaders(error.responseHeaders)
-    : null;
+  const detail = localProviderErrorDetail(error);
+  const retryAfterMs =
+    detail
+      .split("\n")
+      .map((line) => line.match(/retry-after(?:-ms)?:\s*([^\s]+)/i)?.[1])
+      .filter((value): value is string => Boolean(value))
+      .map(parseRetryAfterHeaderMs)
+      .find((value) => value !== null) ?? null;
   return Math.min(
     getRetryDelayMs({
       category: "transient_provider",
       attempt,
-      detail: localProviderErrorDetail(error),
+      detail,
       retryAfterMs,
     }),
     LOCAL_PROVIDER_MAX_RETRY_DELAY_MS,
@@ -230,10 +198,6 @@ export function localProviderRetryDelayMs(
 }
 
 export function localProviderRetryMessage(error: unknown): string {
-  if (APICallError.isInstance(error)) {
-    const status =
-      error.statusCode !== undefined ? `HTTP ${error.statusCode}: ` : "";
-    return `${status}${fallbackErrorMessage(error)}`;
-  }
-  return fallbackErrorMessage(error);
+  const status = statusCode(error);
+  return `${status !== undefined ? `HTTP ${status}: ` : ""}${fallbackErrorMessage(error)}`;
 }

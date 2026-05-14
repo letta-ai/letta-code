@@ -1,6 +1,10 @@
-import modelsData from "../../models.json";
-import { DEFAULT_ANTHROPIC_MODEL } from "./AnthropicModel";
-import { DEFAULT_OPENAI_RESPONSES_MODEL } from "./OpenAIResponsesModel";
+import type {
+  Api,
+  KnownProvider,
+  Model,
+  Provider,
+} from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
@@ -41,26 +45,18 @@ const LMSTUDIO_LOCAL_MODELS = [
   "lmstudio/qwen/qwen3-coder-30b",
 ] as const;
 
-const MOONSHOT_MODELS = [
-  "moonshot/kimi-k2-thinking-turbo",
-  "moonshot/kimi-k2-turbo-preview",
-  "moonshot/kimi-k2.5",
-  "moonshot/kimi-k2-0711-preview",
-  "moonshot/kimi-k2-thinking",
-  "moonshot/kimi-k2-0905-preview",
-] as const;
-
 function hasEnvValue(value: string | undefined): boolean {
   return typeof value === "string" && value.length > 0;
 }
 
-export type AISDKProvider =
+export type PiProvider =
   | "openai-responses"
   | "anthropic"
   | "openrouter"
   | "zai"
   | "minimax"
   | "moonshot"
+  | "kimi-coding"
   | "google-ai"
   | "ollama"
   | "ollama-cloud"
@@ -68,89 +64,64 @@ export type AISDKProvider =
   | "bedrock"
   | "chatgpt-oauth";
 
-export type AISDKProviderKind = "anthropic" | "openai" | "unknown";
-
-export type AISDKProviderSDK =
-  | "openai-responses"
-  | "anthropic"
-  | "openai-compatible"
-  | "google"
-  | "bedrock"
-  | "chatgpt-oauth";
-
-export interface AISDKProviderSpec {
-  id: AISDKProvider;
-  sdk: AISDKProviderSDK;
-  providerName?: string;
+export interface PiProviderSpec {
+  id: PiProvider;
+  piProvider?: KnownProvider;
   providerTypes: readonly string[];
   handlePrefixes: readonly string[];
   localProviderNames: readonly string[];
   defaultModel: string;
-  baseURL?: () => string | undefined;
+  defaultBaseURL?: string;
   apiKeyEnv?: () => string | undefined;
   fallbackApiKey?: string;
   headers?: () => Record<string, string> | undefined;
-  catalogPrefixes?: readonly string[];
   staticModels?: readonly string[];
-  providerOptionsKind: AISDKProviderKind;
   envConfigured?: () => boolean;
-  catalogModelHandle?: (modelHandle: string) => string | undefined;
+  createCustomModel?: boolean;
+  catalogModelHandle?: (model: Model<Api>) => string | undefined;
 }
 
-function defaultCatalogModelHandle(
-  prefixes: readonly string[],
-): (modelHandle: string) => string | undefined {
-  return (modelHandle) =>
-    prefixes.some((prefix) => modelHandle.startsWith(prefix))
-      ? modelHandle
-      : undefined;
-}
+const prefixedCatalogModelHandle = (prefix: string) => (model: Model<Api>) =>
+  `${prefix}${model.id}`;
 
-export const AISDK_PROVIDER_SPECS = [
+export const PI_PROVIDER_SPECS = [
   {
     id: "openai-responses",
-    sdk: "openai-responses",
+    piProvider: "openai",
     providerTypes: ["openai", "openai-responses"],
     handlePrefixes: ["openai/", "openai-responses/"],
     localProviderNames: [LOCAL_OPENAI_PROVIDER_NAME],
-    defaultModel: DEFAULT_OPENAI_RESPONSES_MODEL,
-    catalogPrefixes: ["openai/"],
-    providerOptionsKind: "openai",
+    defaultModel: "openai/gpt-5.5",
     apiKeyEnv: () => process.env.OPENAI_API_KEY,
     envConfigured: () => hasEnvValue(process.env.OPENAI_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("openai/"),
   },
   {
     id: "anthropic",
-    sdk: "anthropic",
+    piProvider: "anthropic",
     providerTypes: ["anthropic"],
     handlePrefixes: ["anthropic/"],
     localProviderNames: [LOCAL_ANTHROPIC_PROVIDER_NAME],
-    defaultModel: DEFAULT_ANTHROPIC_MODEL,
-    catalogPrefixes: ["anthropic/"],
-    providerOptionsKind: "anthropic",
+    defaultModel: "anthropic/claude-sonnet-4-6",
     apiKeyEnv: () => process.env.ANTHROPIC_API_KEY,
     envConfigured: () => hasEnvValue(process.env.ANTHROPIC_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("anthropic/"),
   },
   {
     id: "openrouter",
-    sdk: "openai-compatible",
-    providerName: "openrouter",
+    piProvider: "openrouter",
     providerTypes: ["openrouter"],
     handlePrefixes: ["openrouter/"],
     localProviderNames: [LOCAL_OPENROUTER_PROVIDER_NAME],
     defaultModel: "openrouter/deepseek/deepseek-v4-pro",
-    catalogPrefixes: ["openrouter/"],
-    providerOptionsKind: "unknown",
-    baseURL: () =>
-      process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
     apiKeyEnv: () => process.env.OPENROUTER_API_KEY,
     headers: () => ({ "X-Title": "Letta Code" }),
     envConfigured: () => hasEnvValue(process.env.OPENROUTER_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("openrouter/"),
   },
   {
     id: "zai",
-    sdk: "openai-compatible",
-    providerName: "zai",
+    piProvider: "zai",
     providerTypes: ["zai", "zai_coding"],
     handlePrefixes: ["zai/"],
     localProviderNames: [
@@ -158,145 +129,131 @@ export const AISDK_PROVIDER_SPECS = [
       LOCAL_ZAI_CODING_PROVIDER_NAME,
     ],
     defaultModel: "zai/glm-5.1",
-    catalogPrefixes: ["zai/"],
-    providerOptionsKind: "unknown",
     envConfigured: () =>
       hasEnvValue(process.env.ZAI_API_KEY) ||
       hasEnvValue(process.env.ZHIPU_API_KEY) ||
       hasEnvValue(process.env.ZAI_CODING_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("zai/"),
   },
   {
     id: "minimax",
-    sdk: "anthropic",
-    providerName: "minimax",
+    piProvider: "minimax",
     providerTypes: ["minimax"],
     handlePrefixes: ["minimax/"],
     localProviderNames: [LOCAL_MINIMAX_PROVIDER_NAME],
     defaultModel: "minimax/MiniMax-M2.7",
-    catalogPrefixes: ["minimax/"],
-    providerOptionsKind: "unknown",
-    baseURL: () =>
-      process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io/anthropic/v1",
     apiKeyEnv: () => process.env.MINIMAX_API_KEY,
     envConfigured: () => hasEnvValue(process.env.MINIMAX_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("minimax/"),
   },
   {
     id: "moonshot",
-    sdk: "openai-compatible",
-    providerName: "moonshot",
-    providerTypes: ["moonshot", "moonshot_coding"],
-    handlePrefixes: ["moonshot/", "moonshot_coding/"],
-    localProviderNames: [
-      LOCAL_KIMI_CODE_PROVIDER_NAME,
-      LOCAL_MOONSHOT_PROVIDER_NAME,
-    ],
+    piProvider: "moonshotai",
+    providerTypes: ["moonshot"],
+    handlePrefixes: ["moonshot/"],
+    localProviderNames: [LOCAL_MOONSHOT_PROVIDER_NAME],
     defaultModel: "moonshot/kimi-k2.5",
-    staticModels: MOONSHOT_MODELS,
-    providerOptionsKind: "unknown",
-    baseURL: () =>
-      process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1",
     apiKeyEnv: () => process.env.MOONSHOT_API_KEY,
     envConfigured: () => hasEnvValue(process.env.MOONSHOT_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("moonshot/"),
+  },
+  {
+    id: "kimi-coding",
+    piProvider: "kimi-coding",
+    providerTypes: ["moonshot_coding"],
+    handlePrefixes: ["moonshot_coding/"],
+    localProviderNames: [LOCAL_KIMI_CODE_PROVIDER_NAME],
+    defaultModel: "moonshot_coding/kimi-for-coding",
+    apiKeyEnv: () => process.env.MOONSHOT_API_KEY,
+    envConfigured: () => hasEnvValue(process.env.MOONSHOT_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("moonshot_coding/"),
   },
   {
     id: "google-ai",
-    sdk: "google",
+    piProvider: "google",
     providerTypes: ["google_ai"],
     handlePrefixes: ["google_ai/"],
     localProviderNames: [LOCAL_GOOGLE_AI_PROVIDER_NAME],
     defaultModel: "google_ai/gemini-3.1-pro-preview",
-    catalogPrefixes: ["google_ai/"],
-    providerOptionsKind: "unknown",
-    baseURL: () => process.env.GOOGLE_GENERATIVE_AI_BASE_URL,
     apiKeyEnv: () =>
       process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? process.env.GEMINI_API_KEY,
     envConfigured: () =>
       hasEnvValue(process.env.GOOGLE_GENERATIVE_AI_API_KEY) ||
       hasEnvValue(process.env.GEMINI_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("google_ai/"),
   },
   {
     id: "bedrock",
-    sdk: "bedrock",
+    piProvider: "amazon-bedrock",
     providerTypes: ["bedrock"],
     handlePrefixes: ["bedrock/"],
     localProviderNames: [LOCAL_BEDROCK_PROVIDER_NAME],
     defaultModel: "bedrock/us.anthropic.claude-sonnet-4-6",
-    catalogPrefixes: ["bedrock/"],
-    providerOptionsKind: "unknown",
     envConfigured: () =>
       (hasEnvValue(process.env.AWS_ACCESS_KEY_ID) &&
         hasEnvValue(process.env.AWS_SECRET_ACCESS_KEY)) ||
       hasEnvValue(process.env.AWS_PROFILE) ||
       hasEnvValue(process.env.AWS_BEARER_TOKEN_BEDROCK),
+    catalogModelHandle: prefixedCatalogModelHandle("bedrock/"),
   },
   {
     id: "ollama",
-    sdk: "openai-compatible",
-    providerName: "ollama",
     providerTypes: ["ollama"],
     handlePrefixes: ["ollama/"],
     localProviderNames: [LOCAL_OLLAMA_PROVIDER_NAME],
     defaultModel: "ollama/llama2",
     staticModels: OLLAMA_LOCAL_MODELS,
-    providerOptionsKind: "unknown",
-    baseURL: () => process.env.OLLAMA_BASE_URL ?? "http://localhost:11434/v1",
+    defaultBaseURL: "http://localhost:11434/v1",
     apiKeyEnv: () => process.env.OLLAMA_LOCAL_API_KEY,
     fallbackApiKey: "not-needed",
+    createCustomModel: true,
   },
   {
     id: "ollama-cloud",
-    sdk: "openai-compatible",
-    providerName: "ollama-cloud",
     providerTypes: ["ollama_cloud"],
     handlePrefixes: ["ollama-cloud/"],
     localProviderNames: [LOCAL_OLLAMA_CLOUD_PROVIDER_NAME],
     defaultModel: "ollama-cloud/gpt-oss:20b",
     staticModels: OLLAMA_CLOUD_MODELS,
-    providerOptionsKind: "unknown",
-    baseURL: () => process.env.OLLAMA_CLOUD_BASE_URL ?? "https://ollama.com/v1",
+    defaultBaseURL: "https://ollama.com/v1",
     apiKeyEnv: () => process.env.OLLAMA_API_KEY,
     envConfigured: () => hasEnvValue(process.env.OLLAMA_API_KEY),
+    createCustomModel: true,
   },
   {
     id: "lmstudio",
-    sdk: "openai-compatible",
-    providerName: "lmstudio",
     providerTypes: ["lmstudio"],
     handlePrefixes: ["lmstudio/"],
     localProviderNames: [LOCAL_LMSTUDIO_PROVIDER_NAME],
     defaultModel: "lmstudio/google/gemma-3n-e4b",
     staticModels: LMSTUDIO_LOCAL_MODELS,
-    providerOptionsKind: "unknown",
-    baseURL: () => process.env.LMSTUDIO_BASE_URL ?? "http://127.0.0.1:1234/v1",
+    defaultBaseURL: "http://127.0.0.1:1234/v1",
     apiKeyEnv: () => process.env.LMSTUDIO_API_KEY,
     fallbackApiKey: "not-needed",
     envConfigured: () => hasEnvValue(process.env.LMSTUDIO_API_KEY),
+    createCustomModel: true,
   },
   {
     id: "chatgpt-oauth",
-    sdk: "chatgpt-oauth",
+    piProvider: "openai-codex",
     providerTypes: ["chatgpt_oauth"],
     handlePrefixes: ["chatgpt-plus-pro/"],
     localProviderNames: [LOCAL_CHATGPT_PROVIDER_NAME],
-    defaultModel: `chatgpt-plus-pro/${DEFAULT_OPENAI_RESPONSES_MODEL}`,
-    providerOptionsKind: "openai",
-    catalogModelHandle: (modelHandle) =>
-      modelHandle.startsWith("openai/")
-        ? `chatgpt-plus-pro/${modelHandle.slice("openai/".length)}`
-        : undefined,
+    defaultModel: "chatgpt-plus-pro/gpt-5.1-codex-max",
+    catalogModelHandle: prefixedCatalogModelHandle("chatgpt-plus-pro/"),
   },
-] as const satisfies readonly AISDKProviderSpec[];
+] as const satisfies readonly PiProviderSpec[];
 
 export const SUPPORTED_LOCAL_PROVIDER_TYPES: ReadonlySet<string> = new Set(
-  AISDK_PROVIDER_SPECS.flatMap((provider) => provider.providerTypes),
+  PI_PROVIDER_SPECS.flatMap((provider) => provider.providerTypes),
 );
 
-export const KNOWN_AISDK_PROVIDERS = new Set(
-  AISDK_PROVIDER_SPECS.map((provider) => provider.id),
+export const KNOWN_PI_PROVIDERS = new Set(
+  PI_PROVIDER_SPECS.map((provider) => provider.id),
 );
 
 export const PROVIDER_TYPE_TO_BASE_PROVIDER = Object.fromEntries(
-  AISDK_PROVIDER_SPECS.flatMap((provider) =>
+  PI_PROVIDER_SPECS.flatMap((provider) =>
     provider.providerTypes.map((providerType) => [
       providerType,
       provider.handlePrefixes[0]?.slice(0, -1) ?? provider.id,
@@ -304,97 +261,91 @@ export const PROVIDER_TYPE_TO_BASE_PROVIDER = Object.fromEntries(
   ),
 ) as Record<string, string>;
 
-export function getAISDKProviderSpec(
-  provider: AISDKProvider,
-): AISDKProviderSpec {
-  const spec = AISDK_PROVIDER_SPECS.find((entry) => entry.id === provider);
+export function getPiProviderSpec(provider: PiProvider): PiProviderSpec {
+  const spec = PI_PROVIDER_SPECS.find((entry) => entry.id === provider);
   if (!spec) {
-    throw new Error(`Unknown AI SDK provider "${provider}".`);
+    throw new Error(`Unknown pi provider "${provider}".`);
   }
   return spec;
 }
 
-export function isAISDKProvider(provider: string): provider is AISDKProvider {
-  return KNOWN_AISDK_PROVIDERS.has(provider as AISDKProvider);
+export function isPiProvider(provider: string): provider is PiProvider {
+  return KNOWN_PI_PROVIDERS.has(provider as PiProvider);
 }
 
-export function expectedAISDKProviderList(): string {
-  return AISDK_PROVIDER_SPECS.map((provider) => `"${provider.id}"`).join(", ");
+export function expectedPiProviderList(): string {
+  return PI_PROVIDER_SPECS.map((provider) => `"${provider.id}"`).join(", ");
 }
 
 export function resolveProviderFromModelHandle(
   model: string | undefined,
-): AISDKProvider | undefined {
+): PiProvider | undefined {
   if (!model) return undefined;
-  return AISDK_PROVIDER_SPECS.find((provider) =>
+  return PI_PROVIDER_SPECS.find((provider) =>
     provider.handlePrefixes.some((prefix) => model.startsWith(prefix)),
   )?.id;
 }
 
 export function resolveProviderFromProviderType(
   providerType: unknown,
-): AISDKProvider | undefined {
+): PiProvider | undefined {
   if (typeof providerType !== "string") return undefined;
-  return AISDK_PROVIDER_SPECS.find((provider) =>
+  return PI_PROVIDER_SPECS.find((provider) =>
     (provider.providerTypes as readonly string[]).includes(providerType),
   )?.id;
 }
 
 export function stripProviderHandlePrefix(
   model: string | undefined,
-  provider: AISDKProvider,
+  provider: PiProvider,
 ): string | undefined {
-  if (!model) return process.env.LETTA_CODE_DEV_AI_SDK_MODEL;
-  const spec = getAISDKProviderSpec(provider);
+  if (!model) return process.env.LETTA_CODE_DEV_PI_MODEL;
+  const spec = getPiProviderSpec(provider);
   const prefix = spec.handlePrefixes.find((prefix) => model.startsWith(prefix));
   return prefix ? model.slice(prefix.length) : model;
 }
 
 export function hasKnownProviderHandlePrefix(model: string): boolean {
-  return AISDK_PROVIDER_SPECS.some((provider) =>
+  return PI_PROVIDER_SPECS.some((provider) =>
     provider.handlePrefixes.some((prefix) => model.startsWith(prefix)),
   );
 }
 
-export function localProviderType(provider: AISDKProvider): string {
-  return getAISDKProviderSpec(provider).providerTypes[0] ?? "openai";
+export function localProviderType(provider: PiProvider): string {
+  return getPiProviderSpec(provider).providerTypes[0] ?? "openai";
 }
 
-export function localModelHandle(
-  provider: AISDKProvider,
-  model: string,
-): string {
+export function localModelHandle(provider: PiProvider, model: string): string {
   if (hasKnownProviderHandlePrefix(model)) return model;
-  const prefix = getAISDKProviderSpec(provider).handlePrefixes[0];
+  const prefix = getPiProviderSpec(provider).handlePrefixes[0];
   return prefix ? `${prefix}${model}` : model;
 }
 
-export function resolveLocalModel(provider: AISDKProvider): string {
-  return getAISDKProviderSpec(provider).defaultModel;
+export function resolveLocalModel(provider: PiProvider): string {
+  return getPiProviderSpec(provider).defaultModel;
 }
 
-export function isProviderConfigured(
-  provider: AISDKProviderSpec,
-  localProviderNames: Set<string>,
+function isProviderConfigured(
+  provider: PiProviderSpec,
+  localProviderNames: ReadonlySet<string>,
 ): boolean {
   return (
     provider.localProviderNames.some((name) => localProviderNames.has(name)) ||
-    Boolean(provider.envConfigured?.())
+    provider.envConfigured?.() === true ||
+    provider.fallbackApiKey !== undefined
   );
 }
 
-export function listConfiguredAISDKProviders(
-  localProviderNames: Set<string>,
-): AISDKProvider[] {
-  return AISDK_PROVIDER_SPECS.filter((provider) =>
+export function listConfiguredPiProviders(
+  localProviderNames: ReadonlySet<string>,
+): PiProvider[] {
+  return PI_PROVIDER_SPECS.filter((provider) =>
     isProviderConfigured(provider, localProviderNames),
   ).map((provider) => provider.id);
 }
 
-export function listCatalogModelsForProvider(
-  provider: AISDKProvider,
-): string[] {
-  const spec = getAISDKProviderSpec(provider);
+export function listCatalogModelsForProvider(provider: PiProvider): string[] {
+  const spec = getPiProviderSpec(provider);
   const seen = new Set<string>();
   const models: string[] = [];
   const add = (model: string | undefined) => {
@@ -404,14 +355,9 @@ export function listCatalogModelsForProvider(
   };
 
   add(spec.defaultModel);
-  const mapCatalogModel =
-    spec.catalogModelHandle ??
-    (spec.catalogPrefixes
-      ? defaultCatalogModelHandle(spec.catalogPrefixes)
-      : undefined);
-  if (mapCatalogModel) {
-    for (const model of modelsData.models) {
-      add(mapCatalogModel(model.handle));
+  if (spec.piProvider && spec.catalogModelHandle) {
+    for (const model of getModels(spec.piProvider)) {
+      add(spec.catalogModelHandle(model as Model<Api>));
     }
   }
   for (const model of spec.staticModels ?? []) {
@@ -421,19 +367,21 @@ export function listCatalogModelsForProvider(
   return models;
 }
 
-export function aiSDKProviderKindFromModel(
+export function piProviderFromModel(
   modelHandle: string,
   modelSettings: Record<string, unknown>,
-): AISDKProviderKind {
-  const providerFromModel = resolveProviderFromModelHandle(modelHandle);
-  if (providerFromModel) {
-    return getAISDKProviderSpec(providerFromModel).providerOptionsKind;
-  }
-  const providerFromSettings = resolveProviderFromProviderType(
-    modelSettings.provider_type,
+): PiProvider | undefined {
+  return (
+    resolveProviderFromModelHandle(modelHandle) ??
+    resolveProviderFromProviderType(modelSettings.provider_type)
   );
-  if (providerFromSettings) {
-    return getAISDKProviderSpec(providerFromSettings).providerOptionsKind;
-  }
-  return "unknown";
+}
+
+export function piProviderNameForModel(
+  modelHandle: string,
+  modelSettings: Record<string, unknown>,
+): Provider | undefined {
+  const provider = piProviderFromModel(modelHandle, modelSettings);
+  const spec = provider ? getPiProviderSpec(provider) : undefined;
+  return spec?.piProvider;
 }

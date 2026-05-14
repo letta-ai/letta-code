@@ -15,7 +15,7 @@ import {
   updateProvider as updateProviderRequest,
 } from "../backend/api/providers";
 import { getBackend } from "../backend/backend";
-import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "../backend/dev/AISDKProviderRegistry";
+import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "../backend/dev/PiProviderRegistry";
 import {
   createOrUpdateLocalProvider,
   deleteLocalProvider,

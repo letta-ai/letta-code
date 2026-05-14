@@ -1,7 +1,13 @@
-import { APICallError, generateText, type LanguageModel, streamText } from "ai";
-import { createAISDKModelFactoryFromAgent } from "../dev/AISDKModelFactory";
-import { buildAISDKProviderOptions } from "../dev/AISDKStreamAdapter";
+import {
+  type AssistantMessage,
+  type Context,
+  completeSimple,
+  isContextOverflow,
+  type Model,
+  type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
+import { resolvePiModelForAgent } from "../dev/PiModelFactory";
 import type { LocalMessage } from "./LocalMessage";
 import type { LocalAgentRecord } from "./LocalStore";
 
@@ -92,27 +98,16 @@ export interface LocalCompactionStats {
   messages_count_after?: number;
 }
 
-function isChatGPTOAuthModel(agent: LocalAgentRecord): boolean {
-  return (
-    agent.model.startsWith("chatgpt-plus-pro/") ||
-    agent.model_settings.provider_type === "chatgpt_oauth"
-  );
-}
-
-export type LocalGenerateTextFunction = (options: {
-  model: LanguageModel;
-  system?: string;
-  prompt?: string;
-  providerOptions?: Parameters<typeof generateText>[0]["providerOptions"];
-  maxRetries: number;
-  abortSignal?: AbortSignal;
-}) => ReturnType<typeof generateText>;
+export type LocalCompleteFunction = (
+  model: Model<string>,
+  context: Context,
+  options?: SimpleStreamOptions,
+) => Promise<AssistantMessage>;
 
 export interface LocalAllCompactionInput {
   agent: LocalAgentRecord;
   messages: LocalMessage[];
-  createModel?: () => LanguageModel;
-  generateText?: LocalGenerateTextFunction;
+  complete?: LocalCompleteFunction;
   prompt?: string | null;
   clipChars?: number | null;
   abortSignal?: AbortSignal;
@@ -180,29 +175,20 @@ type SummaryOpenAIMessage = {
   }>;
 };
 
-function textFromContentParts(
-  parts: LocalMessage["parts"],
+function textFromUserContent(
+  content: LocalMessage & { role: "user" },
 ): string | undefined {
+  const value = content.content;
+  if (typeof value === "string") return value || undefined;
   const textParts: string[] = [];
   let imageCount = 0;
-  for (const part of parts) {
-    if (!isRecord(part)) continue;
-    if (
-      (part.type === "text" || part.type === "reasoning") &&
-      typeof part.text === "string"
-    ) {
+  for (const part of value) {
+    if (part.type === "text") {
       textParts.push(part.text);
       continue;
     }
-    if (part.type === "file" && typeof part.mediaType === "string") {
-      if (part.mediaType.startsWith("image/")) imageCount += 1;
-      continue;
-    }
-    if (part.type === "source-url" || part.type === "source-document") {
-      textParts.push(stringifyUnknown(part));
-    }
+    if (part.type === "image") imageCount += 1;
   }
-
   let textContent = textParts.join("\n\n");
   if (imageCount > 0) {
     const placeholder =
@@ -212,35 +198,38 @@ function textFromContentParts(
   return textContent || undefined;
 }
 
-function toolNameFromPart(part: Record<string, unknown>): string {
-  return typeof part.type === "string" && part.type.startsWith("tool-")
-    ? part.type.slice("tool-".length)
-    : "?";
+function textFromAssistantContent(
+  message: LocalMessage & { role: "assistant" },
+): string | undefined {
+  const textParts: string[] = [];
+  for (const part of message.content) {
+    if (part.type === "text") {
+      textParts.push(part.text);
+      continue;
+    }
+    if (part.type === "thinking") {
+      textParts.push(part.thinking);
+    }
+  }
+  const textContent = textParts.join("\n\n");
+  return textContent || undefined;
 }
 
 function localToolCallArguments(input: unknown): string {
   return typeof input === "string" ? input : stringifyUnknown(input ?? {});
 }
 
-function toolReturnToText(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") return value;
-  if (!Array.isArray(value)) return stringifyUnknown(value);
-
+function toolReturnToText(
+  value: LocalMessage & { role: "toolResult" },
+): string | undefined {
   const textParts: string[] = [];
   let imageCount = 0;
-  for (const item of value) {
-    if (
-      isRecord(item) &&
-      item.type === "text" &&
-      typeof item.text === "string"
-    ) {
+  for (const item of value.content) {
+    if (item.type === "text") {
       textParts.push(item.text);
       continue;
     }
-    if (isRecord(item) && item.type === "image") {
-      imageCount += 1;
-    }
+    if (item.type === "image") imageCount += 1;
   }
   let result = textParts.join("\n");
   if (imageCount > 0) {
@@ -251,77 +240,56 @@ function toolReturnToText(value: unknown): string | undefined {
   return result || undefined;
 }
 
-function isLocalToolOutputState(state: unknown): boolean {
-  return (
-    state === "output-available" ||
-    state === "output-error" ||
-    state === "output-denied"
-  );
-}
-
 function localMessagesToSummaryOpenAIDicts(
   messages: LocalMessage[],
   options: { toolReturnTruncationChars?: number } = {},
 ): SummaryOpenAIMessage[] {
   const result: SummaryOpenAIMessage[] = [];
   for (const message of messages) {
-    if (message.role === "system") continue;
-
     const compactionSummary = message.metadata?.compaction?.summary;
     if (typeof compactionSummary === "string") {
       result.push({ role: "user", content: compactionSummary });
       continue;
     }
 
-    const toolParts: Record<string, unknown>[] = [];
-    for (const part of message.parts) {
-      if (
-        isRecord(part) &&
-        typeof part.type === "string" &&
-        part.type.startsWith("tool-")
-      ) {
-        toolParts.push(part);
-      }
-    }
-
     if (message.role === "assistant") {
-      const content = textFromContentParts(message.parts) ?? null;
-      if (content !== null || toolParts.length > 0) {
+      const toolCalls = message.content.filter(
+        (part) => part.type === "toolCall",
+      );
+      const content = textFromAssistantContent(message) ?? null;
+      if (content !== null || toolCalls.length > 0) {
         result.push({
           role: "assistant",
           content,
-          ...(toolParts.length > 0
+          ...(toolCalls.length > 0
             ? {
-                tool_calls: toolParts.map((part) => ({
+                tool_calls: toolCalls.map((toolCall) => ({
                   function: {
-                    name: toolNameFromPart(part),
-                    arguments: localToolCallArguments(part.input),
+                    name: toolCall.name,
+                    arguments: localToolCallArguments(toolCall.arguments),
                   },
                 })),
               }
             : {}),
         });
       }
-
-      for (const part of toolParts) {
-        if (!isLocalToolOutputState(part.state)) continue;
-        const returnText = toolReturnToText(part.output ?? part.errorText);
-        result.push({
-          role: "tool",
-          content: returnText
-            ? truncateToolReturn(returnText, options.toolReturnTruncationChars)
-            : null,
-        });
-      }
       continue;
     }
 
-    const content = textFromContentParts(message.parts);
-    if (content !== undefined) {
+    if (message.role === "toolResult") {
+      const returnText = toolReturnToText(message);
       result.push({
-        role: message.role === "user" ? "user" : "developer",
-        content,
+        role: "tool",
+        content: returnText
+          ? truncateToolReturn(returnText, options.toolReturnTruncationChars)
+          : null,
       });
+      continue;
+    }
+
+    const content = textFromUserContent(message);
+    if (content !== undefined) {
+      result.push({ role: "user", content });
     }
   }
   return result;
@@ -373,70 +341,52 @@ export function formatLocalMessagesForSummary(
     : transcript;
 }
 
+function assistantMessageText(message: AssistantMessage): string {
+  return message.content
+    .map((content) => (content.type === "text" ? content.text : ""))
+    .filter((text) => text.length > 0)
+    .join("\n");
+}
+
+async function defaultComplete(
+  model: Model<string>,
+  context: Context,
+  options?: SimpleStreamOptions,
+): Promise<AssistantMessage> {
+  return completeSimple(model, context, options);
+}
+
 async function runGenerateText(
   input: LocalAllCompactionInput,
   transcript: string,
   defaultPrompt: string,
 ): Promise<{ text: string }> {
   const systemPrompt = input.prompt ?? defaultPrompt;
-  const system =
-    isChatGPTOAuthModel(input.agent) === true ? undefined : systemPrompt;
-  const run = input.generateText ?? generateText;
-  const model =
-    input.createModel?.() ??
-    createAISDKModelFactoryFromAgent(
-      input.agent.model,
-      input.agent.model_settings,
-      { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
-    )();
-  const providerOptions = buildAISDKProviderOptions(
+  const resolved = resolvePiModelForAgent(
     input.agent.model,
     input.agent.model_settings,
-    { systemPrompt },
+    { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
   );
-  try {
-    const result = await run({
-      model,
-      system,
-      prompt: transcript,
-      providerOptions,
-      maxRetries: 0,
-      abortSignal: input.abortSignal,
-    });
-    return { text: result.text };
-  } catch (error) {
-    const detail = [
-      error instanceof Error ? error.message : "",
-      APICallError.isInstance(error) ? String(error.responseBody ?? "") : "",
-    ]
-      .join("\n")
-      .toLowerCase();
-    if (!detail.includes("stream must be set to true")) {
-      throw error;
-    }
-
-    let text = "";
-    const result = streamText({
-      model,
-      system,
-      prompt: transcript,
-      providerOptions,
-      maxRetries: 0,
-      abortSignal: input.abortSignal,
-      // Compaction handles stream error parts directly below.
-      onError: () => {},
-    });
-    for await (const part of result.fullStream) {
-      if (part.type === "text-delta") {
-        text += part.text;
-        continue;
-      }
-      if (part.type === "error") {
-        throw part.error;
-      }
-    }
-    return { text };
+  const run = input.complete ?? defaultComplete;
+  const context: Context = {
+    systemPrompt,
+    messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
+  };
+  const options: SimpleStreamOptions = {
+    ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
+    ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
+    ...(resolved.headers ? { headers: resolved.headers } : {}),
+    ...(input.abortSignal ? { signal: input.abortSignal } : {}),
+    maxRetries: 0,
+  };
+  const result = await run(resolved.model as Model<string>, context, options);
+  if (isContextOverflow(result, resolved.model.contextWindow)) {
+    throw new Error(result.errorMessage ?? "Context window exceeded");
   }
+  if (result.stopReason === "error" || result.stopReason === "aborted") {
+    throw new Error(result.errorMessage ?? "Local compaction failed");
+  }
+  return { text: assistantMessageText(result) };
 }
 
 async function summarizeLocalMessagesWithPrompt(
@@ -491,24 +441,11 @@ export async function summarizeLocalMessagesAll(
   return summarizeLocalMessagesWithPrompt(input, LOCAL_ALL_COMPACTION_PROMPT);
 }
 
-function isSettledLocalToolState(state: unknown): boolean {
+function hasPendingLocalToolCall(message: LocalMessage): boolean {
   return (
-    state === "output-available" ||
-    state === "output-error" ||
-    state === "output-denied"
+    message.role === "assistant" &&
+    message.content.some((part) => part.type === "toolCall")
   );
-}
-
-function hasPendingLocalToolPart(message: LocalMessage): boolean {
-  return message.parts.some((part) => {
-    if (!isRecord(part)) return false;
-    const partRecord: Record<string, unknown> = part;
-    return (
-      typeof partRecord.type === "string" &&
-      partRecord.type.startsWith("tool-") &&
-      !isSettledLocalToolState(partRecord.state)
-    );
-  });
 }
 
 function normalizedSlidingWindowPercentage(value: number | undefined): number {
@@ -546,7 +483,7 @@ export function planLocalSlidingWindowCompaction(
   );
   const lastMessage = messages.at(-1);
   const maximumCutoffIndex =
-    lastMessage && hasPendingLocalToolPart(lastMessage)
+    lastMessage && hasPendingLocalToolCall(lastMessage)
       ? messages.length - 2
       : messages.length - 1;
   const goalTokens =
@@ -603,7 +540,7 @@ export function planLocalAllCompaction(
   messages: LocalMessage[],
 ): LocalAllCompactionPlan {
   const lastMessage = messages.at(-1);
-  if (lastMessage && hasPendingLocalToolPart(lastMessage)) {
+  if (lastMessage && hasPendingLocalToolCall(lastMessage)) {
     return {
       messagesToSummarize: messages.slice(0, -1),
       messagesToKeep: [lastMessage],

@@ -155,7 +155,7 @@ async function runCLI(args: Args): Promise<RunResult> {
       ? {
           LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
           LETTA_LOCAL_BACKEND_DIR: localStorageDir,
-          LETTA_CODE_DEV_AI_SDK_PROVIDER: providerEnvValue(provider),
+          LETTA_CODE_DEV_PI_PROVIDER: providerEnvValue(provider),
         }
       : {},
   );

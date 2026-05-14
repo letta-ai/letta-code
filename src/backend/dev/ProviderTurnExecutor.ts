@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
+import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type { LanguageModelUsage } from "ai";
 import type { LocalMessage } from "../local/LocalMessage";
 import type { LocalAgentRecord, StoredMessage } from "../local/LocalStore";
 import {
-  attachLocalUIMessage,
+  attachLocalMessage,
   markLocalStateChunkOnly,
   type ProviderStreamPart,
 } from "../local/LocalStreamChunks";
@@ -29,19 +29,21 @@ export interface ProviderTurnInput {
 }
 
 export type ProviderStreamEvent =
-  | { type: "ai-sdk-part"; part: ProviderStreamPart }
-  | { type: "ai-sdk-ui-message"; message: LocalMessage }
+  | { type: "provider-part"; part: ProviderStreamPart }
+  | { type: "local-message"; message: LocalMessage }
   | { type: "letta-chunk"; chunk: LettaStreamingResponse }
   | { type: "error"; error: unknown };
 
 export function providerStreamPart(
   part: ProviderStreamPart,
 ): ProviderStreamEvent {
-  return { type: "ai-sdk-part", part };
+  return { type: "provider-part", part };
 }
 
-export function providerUIMessage(message: LocalMessage): ProviderStreamEvent {
-  return { type: "ai-sdk-ui-message", message };
+export function providerLocalMessage(
+  message: LocalMessage,
+): ProviderStreamEvent {
+  return { type: "local-message", message };
 }
 
 export function providerLettaChunk(
@@ -95,11 +97,11 @@ function stringifyToolInput(input: unknown): string {
   return JSON.stringify(input ?? {});
 }
 
-function createLocalUIMessageChunk(
+function createLocalMessageChunk(
   message: LocalMessage,
 ): LettaStreamingResponse {
   return markLocalStateChunkOnly(
-    attachLocalUIMessage({ message_type: "local_ui_message" }, message),
+    attachLocalMessage({ message_type: "local_message" }, message),
   ) as unknown as LettaStreamingResponse;
 }
 
@@ -120,39 +122,39 @@ function createProviderErrorChunks(error: unknown): LettaStreamingResponse[] {
   ];
 }
 
-function contextTokensFromUsage(usage: LanguageModelUsage): number | undefined {
-  const promptTokens =
-    typeof usage.inputTokens === "number" ? usage.inputTokens : undefined;
-  const completionTokens =
-    typeof usage.outputTokens === "number" ? usage.outputTokens : undefined;
-  const totalTokens =
-    typeof usage.totalTokens === "number" ? usage.totalTokens : undefined;
-
-  if (totalTokens !== undefined) return totalTokens;
-  if (promptTokens !== undefined || completionTokens !== undefined) {
-    return (promptTokens ?? 0) + (completionTokens ?? 0);
+function contextTokensFromUsage(usage: Usage): number | undefined {
+  if (typeof usage.totalTokens === "number") return usage.totalTokens;
+  const inputTokens = typeof usage.input === "number" ? usage.input : undefined;
+  const outputTokens =
+    typeof usage.output === "number" ? usage.output : undefined;
+  const cacheRead =
+    typeof usage.cacheRead === "number" ? usage.cacheRead : undefined;
+  if (
+    inputTokens !== undefined ||
+    outputTokens !== undefined ||
+    cacheRead !== undefined
+  ) {
+    return (inputTokens ?? 0) + (outputTokens ?? 0) + (cacheRead ?? 0);
   }
   return undefined;
 }
 
 function createUsageStatisticsChunk(
-  usage: LanguageModelUsage | undefined,
+  usage: Usage | undefined,
 ): LettaStreamingResponse | undefined {
   if (!usage) return undefined;
-  const promptTokens = usage.inputTokens;
-  const completionTokens = usage.outputTokens;
+  const promptTokens = usage.input;
+  const completionTokens = usage.output;
   const totalTokens = usage.totalTokens;
   const contextTokens = contextTokensFromUsage(usage);
-  const cachedInputTokens = usage.inputTokenDetails.cacheReadTokens;
-  const cacheWriteTokens = usage.inputTokenDetails.cacheWriteTokens;
-  const reasoningTokens = usage.outputTokenDetails.reasoningTokens;
+  const cachedInputTokens = usage.cacheRead;
+  const cacheWriteTokens = usage.cacheWrite;
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
     totalTokens === undefined &&
     cachedInputTokens === undefined &&
-    cacheWriteTokens === undefined &&
-    reasoningTokens === undefined
+    cacheWriteTokens === undefined
   ) {
     return undefined;
   }
@@ -169,11 +171,13 @@ function createUsageStatisticsChunk(
     ...(cacheWriteTokens !== undefined
       ? { cache_write_tokens: cacheWriteTokens }
       : {}),
-    ...(reasoningTokens !== undefined
-      ? { reasoning_tokens: reasoningTokens }
-      : {}),
     ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
   } as unknown as LettaStreamingResponse;
+}
+
+function errorFromAssistantEvent(part: AssistantMessageEvent): Error {
+  if (part.type !== "error") return new Error("Unknown provider stream error");
+  return new Error(part.error.errorMessage ?? "Unknown local provider error");
 }
 
 function createProviderLettaStream(
@@ -195,8 +199,8 @@ function createProviderLettaStream(
             return;
           }
 
-          if (event.type === "ai-sdk-ui-message") {
-            yield createLocalUIMessageChunk(event.message);
+          if (event.type === "local-message") {
+            yield createLocalMessageChunk(event.message);
             continue;
           }
 
@@ -206,49 +210,40 @@ function createProviderLettaStream(
           }
 
           const { part } = event;
-          if (part.type === "finish-step") {
-            const usageChunk = createUsageStatisticsChunk(part.usage);
-            if (usageChunk) {
-              sawUsageStatistics = true;
-              yield usageChunk;
-            }
-            continue;
-          }
-
-          if (part.type === "text-delta") {
+          if (part.type === "text_delta") {
             yield {
               message_type: "assistant_message",
               otid: assistantOtid,
-              content: [{ type: "text", text: part.text }],
+              content: [{ type: "text", text: part.delta }],
             } as LettaStreamingResponse;
             continue;
           }
 
-          if (part.type === "reasoning-delta") {
+          if (part.type === "thinking_delta") {
             yield {
               message_type: "reasoning_message",
               otid: reasoningOtid,
-              reasoning: part.text,
+              reasoning: part.delta,
             } as LettaStreamingResponse;
             continue;
           }
 
-          if (part.type === "tool-call") {
+          if (part.type === "toolcall_end") {
             sawToolCall = true;
             yield {
               message_type: "approval_request_message",
               tool_call: {
-                tool_call_id: part.toolCallId,
-                name: part.toolName,
-                arguments: stringifyToolInput(part.input),
+                tool_call_id: part.toolCall.id,
+                name: part.toolCall.name,
+                arguments: stringifyToolInput(part.toolCall.arguments),
               },
             } as LettaStreamingResponse;
             continue;
           }
 
-          if (part.type === "finish") {
+          if (part.type === "done") {
             if (!sawUsageStatistics) {
-              const usageChunk = createUsageStatisticsChunk(part.totalUsage);
+              const usageChunk = createUsageStatisticsChunk(part.message.usage);
               if (usageChunk) {
                 sawUsageStatistics = true;
                 yield usageChunk;
@@ -257,7 +252,7 @@ function createProviderLettaStream(
             pendingStopReason = {
               message_type: "stop_reason",
               stop_reason:
-                sawToolCall || part.finishReason === "tool-calls"
+                sawToolCall || part.reason === "toolUse"
                   ? "requires_approval"
                   : "end_turn",
             } as LettaStreamingResponse;
@@ -265,7 +260,7 @@ function createProviderLettaStream(
           }
 
           if (part.type === "error") {
-            yield* createProviderErrorChunks(part.error);
+            yield* createProviderErrorChunks(errorFromAssistantEvent(part));
             return;
           }
         }

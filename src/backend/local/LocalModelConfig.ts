@@ -1,18 +1,15 @@
-import {
-  type AISDKProvider,
-  DEFAULT_AI_SDK_PROVIDER,
-} from "../dev/AISDKModelFactory";
+import { DEFAULT_PI_PROVIDER, type PiProvider } from "../dev/PiModelFactory";
 import {
   listCatalogModelsForProvider,
-  listConfiguredAISDKProviders,
+  listConfiguredPiProviders,
   localModelHandle,
   localProviderType,
   resolveLocalModel,
-} from "../dev/AISDKProviderRegistry";
+} from "../dev/PiProviderRegistry";
 import { listLocalProviderRecords } from "./LocalProviderAuthStore";
 
 export interface LocalModelConfig {
-  provider: AISDKProvider;
+  provider: PiProvider;
   model: string;
   handle: string;
   modelSettings: Record<string, unknown>;
@@ -30,10 +27,10 @@ function localProviderNames(storageDir?: string): Set<string> {
   );
 }
 
-export function resolveLocalProvider(storageDir?: string): AISDKProvider {
+export function resolveLocalProvider(storageDir?: string): PiProvider {
   return (
-    listConfiguredAISDKProviders(localProviderNames(storageDir))[0] ??
-    DEFAULT_AI_SDK_PROVIDER
+    listConfiguredPiProviders(localProviderNames(storageDir))[0] ??
+    DEFAULT_PI_PROVIDER
   );
 }
 
@@ -53,7 +50,7 @@ export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
 export function listLocalModels(storageDir?: string) {
   const configured = resolveLocalModelConfig(storageDir);
   const models: LocalModelListEntry[] = [];
-  const addModel = (provider: AISDKProvider, model: string) => {
+  const addModel = (provider: PiProvider, model: string) => {
     const handle = localModelHandle(provider, model);
     if (models.some((entry) => entry.handle === handle)) return;
     models.push({
@@ -64,7 +61,7 @@ export function listLocalModels(storageDir?: string) {
   };
 
   addModel(configured.provider, configured.model);
-  for (const provider of listConfiguredAISDKProviders(
+  for (const provider of listConfiguredPiProviders(
     localProviderNames(storageDir),
   )) {
     for (const model of listCatalogModelsForProvider(provider)) {
