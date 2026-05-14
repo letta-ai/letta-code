@@ -46,7 +46,7 @@ export type AppProps = {
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;
   /** Callback to soft-restart the TUI (re-runs startup path, remounts App). */
-  onReload?: (agentId: string, conversationId: string) => void;
+  onReload?: (agentId: string, conversationId: string) => Promise<void>;
 };
 
 export type ActiveOverlay =

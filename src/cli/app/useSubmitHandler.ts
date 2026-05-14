@@ -304,7 +304,7 @@ type SubmitHandlerContext = {
     keepRunning?: boolean,
   ) => void;
   userCancelledRef: MutableRefObject<boolean>;
-  onReload?: (agentId: string, conversationId: string) => void;
+  onReload?: (agentId: string, conversationId: string) => Promise<void>;
 };
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {

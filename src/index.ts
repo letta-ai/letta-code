@@ -1575,9 +1575,13 @@ async function main(): Promise<void> {
     // Reload handler: re-triggers the startup path for the current agent/conversation,
     // then remounts AppCoordinator via key change so all effects re-fire.
     const handleReload = useCallback(
-      (currentAgentId: string, currentConversationId: string) => {
-        // Clear cached settings so the init path re-reads from disk
+      async (currentAgentId: string, currentConversationId: string) => {
+        // Clear cached settings and re-populate local project settings
+        // BEFORE triggering state updates. React components read local
+        // project settings synchronously during render (e.g. getConversationGoal),
+        // so the cache must be warm before the re-render cycle starts.
         settingsManager.clearCaches();
+        await settingsManager.loadLocalProjectSettings();
         initStartedRef.current = false;
         setResumeData(null);
         setAgentState(null);

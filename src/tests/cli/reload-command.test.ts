@@ -20,7 +20,7 @@ describe("/reload command", () => {
     const source = readFileSync(typesPath, "utf-8");
 
     expect(source).toContain(
-      "onReload?: (agentId: string, conversationId: string) => void",
+      "onReload?: (agentId: string, conversationId: string) => Promise<void>",
     );
   });
 
