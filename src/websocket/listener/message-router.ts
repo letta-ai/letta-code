@@ -389,6 +389,10 @@ export function createListenerMessageHandler(
                 `cm-submit-${crypto.randomUUID()}`,
               agentId: parsed.runtime.agent_id,
               conversationId: parsed.runtime.conversation_id || "default",
+              // Forwarded by cloud-api so we can attribute the
+              // outbound createMessage to the actual sender on
+              // multi-user sandboxes. Absent on self-hosted flows.
+              actingUserId: parsed.runtime.acting_user_id,
             } as Parameters<typeof scopedRuntime.queueRuntime.enqueue>[0]);
             if (enqueuedItem) {
               scopedRuntime.queuedMessagesByItemId.set(

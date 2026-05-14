@@ -21,6 +21,18 @@ type QueueItemBase = {
   agentId?: string;
   /** Optional conversation scope for listener-mode attribution. */
   conversationId?: string;
+  /**
+   * Cloud user id of the human who actually submitted this item,
+   * forwarded from cloud-api on the inbound `input` frame. The
+   * listener echoes this on the outbound createMessage HTTP call
+   * (X-Letta-Acting-User-Id header) so cloud attributes credits +
+   * rate limits to the actual sender — not the user whose API key
+   * spawned the sandbox / desktop runtime.
+   *
+   * Undefined for self-hosted, single-user, or pre-channel-split
+   * flows where cloud doesn't stamp the field.
+   */
+  actingUserId?: string;
   source: QueueItemSource;
   enqueuedAt: number;
 };
