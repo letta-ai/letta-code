@@ -3362,29 +3362,11 @@ ${SYSTEM_REMINDER_CLOSE}
       // Only do eager check when resuming a session (LET-7101) - otherwise lazy recovery handles it
       let eagerRecoveryDenials: ApprovalResult[] | null = null;
       if (needsEagerApprovalCheck && !queuedApprovalResults) {
-        // Log for debugging
-        const eagerStatusId = uid("status");
-        buffersRef.current.byId.set(eagerStatusId, {
-          kind: "status",
-          id: eagerStatusId,
-          lines: [
-            "[EAGER CHECK] Checking for pending approvals (resume mode)...",
-          ],
-        });
-        buffersRef.current.order.push(eagerStatusId);
-        refreshDerived();
-
         try {
           // Fetch fresh agent state to check for pending approvals with accurate in-context messages
           const agent = await getBackend().retrieveAgent(agentId);
           const { pendingApprovals: existingApprovals } =
             await getResumeDataFromBackend(agent, conversationIdRef.current);
-
-          // Remove eager check status
-          buffersRef.current.byId.delete(eagerStatusId);
-          buffersRef.current.order = buffersRef.current.order.filter(
-            (id: string) => id !== eagerStatusId,
-          );
 
           // Check if user cancelled while we were fetching approval state
           if (
