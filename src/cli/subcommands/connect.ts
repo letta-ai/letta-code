@@ -51,6 +51,7 @@ interface ConnectSubcommandDeps {
     accessKey?: string,
     region?: string,
     profile?: string,
+    options?: ProviderConnectionOptions,
   ) => Promise<void>;
   createOrUpdateProvider: (
     providerType: string,
@@ -350,7 +351,14 @@ export async function runConnectSubcommand(
 
     try {
       io.stdout(`Validating ${provider.byokProvider.displayName} API key...`);
-      await io.checkProviderApiKey(provider.byokProvider.providerType, apiKey);
+      await io.checkProviderApiKey(
+        provider.byokProvider.providerType,
+        apiKey,
+        undefined,
+        undefined,
+        undefined,
+        connectionOptions,
+      );
 
       io.stdout("Saving provider...");
       if (hasConnectionOptions(connectionOptions)) {

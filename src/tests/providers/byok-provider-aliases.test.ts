@@ -137,4 +137,26 @@ describe("checkProviderApiKey", () => {
       checkProviderApiKey("openrouter", "sk-or-v1-invalid"),
     ).rejects.toThrow("User not found.");
   });
+
+  test("passes configured timeout to OpenRouter validation", async () => {
+    const fetchMock = mock(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
+        return new Response(JSON.stringify({ data: { label: "test" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await checkProviderApiKey(
+      "openrouter",
+      "sk-or-v1-test",
+      undefined,
+      undefined,
+      undefined,
+      { timeout: 1_000 },
+    );
+  });
 });

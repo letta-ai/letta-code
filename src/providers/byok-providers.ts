@@ -323,13 +323,14 @@ export async function checkProviderApiKey(
   accessKey?: string,
   region?: string,
   profile?: string,
+  options: ProviderConnectionOptions = {},
 ): Promise<void> {
   if (isLocalProviderStoreEnabled()) {
     assertLocalProviderSupported(providerType);
     return;
   }
   if (providerType === "openrouter") {
-    await checkOpenRouterApiKey(apiKey);
+    await checkOpenRouterApiKey(apiKey, options.timeout);
     return;
   }
   await checkProviderApiKeyRequest(
@@ -341,9 +342,15 @@ export async function checkProviderApiKey(
   );
 }
 
-async function checkOpenRouterApiKey(apiKey: string): Promise<void> {
+async function checkOpenRouterApiKey(
+  apiKey: string,
+  timeout?: LocalProviderTimeout,
+): Promise<void> {
   const response = await fetch(`${OPENROUTER_BASE_URL}/key`, {
     headers: { Authorization: `Bearer ${apiKey}` },
+    ...(typeof timeout === "number"
+      ? { signal: AbortSignal.timeout(timeout) }
+      : {}),
   });
 
   if (response.ok) {

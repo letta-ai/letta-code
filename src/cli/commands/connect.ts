@@ -428,7 +428,14 @@ async function handleConnectApiKeyProvider(
   ctx.setCommandRunning(true);
 
   try {
-    await checkProviderApiKey(provider.byokProvider.providerType, apiKey);
+    await checkProviderApiKey(
+      provider.byokProvider.providerType,
+      apiKey,
+      undefined,
+      undefined,
+      undefined,
+      { timeout: options.timeout },
+    );
 
     updateCommandResult(
       ctx.buffersRef,
