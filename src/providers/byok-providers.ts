@@ -29,6 +29,8 @@ import type { LocalProviderTimeout } from "../backend/local/LocalProviderTimeout
 
 export type { ProviderResponse } from "../backend/api/providers";
 
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
 export interface ProviderConnectionOptions {
   baseURL?: string;
   timeout?: LocalProviderTimeout;
@@ -326,6 +328,10 @@ export async function checkProviderApiKey(
     assertLocalProviderSupported(providerType);
     return;
   }
+  if (providerType === "openrouter") {
+    await checkOpenRouterApiKey(apiKey);
+    return;
+  }
   await checkProviderApiKeyRequest(
     providerType,
     apiKey,
@@ -333,6 +339,37 @@ export async function checkProviderApiKey(
     region,
     profile,
   );
+}
+
+async function checkOpenRouterApiKey(apiKey: string): Promise<void> {
+  const response = await fetch(`${OPENROUTER_BASE_URL}/key`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+
+  if (response.ok) {
+    return;
+  }
+
+  let message = "Invalid OpenRouter API key";
+  try {
+    const body = (await response.json()) as {
+      error?: { message?: unknown };
+      message?: unknown;
+    };
+    const bodyMessage =
+      typeof body.error?.message === "string"
+        ? body.error.message
+        : typeof body.message === "string"
+          ? body.message
+          : undefined;
+    if (bodyMessage) {
+      message = bodyMessage;
+    }
+  } catch {
+    // Keep the generic validation error.
+  }
+
+  throw new Error(message);
 }
 
 /**

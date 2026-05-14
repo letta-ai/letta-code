@@ -1,9 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import {
   BYOK_PROVIDERS,
   buildByokProviderAliases,
+  checkProviderApiKey,
   isByokHandleForSelector,
 } from "../../providers/byok-providers";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 describe("buildByokProviderAliases", () => {
   test("derives default aliases from all built-in BYOK_PROVIDERS", () => {
@@ -94,5 +101,40 @@ describe("isByokHandleForSelector", () => {
 
   test("rejects handles without a slash", () => {
     expect(isByokHandleForSelector("somemodel", defaultAliases)).toBe(false);
+  });
+});
+
+describe("checkProviderApiKey", () => {
+  test("validates OpenRouter keys against OpenRouter directly", async () => {
+    const fetchMock = mock(async (url: string | URL | Request) => {
+      expect(String(url)).toBe("https://openrouter.ai/api/v1/key");
+      return new Response(JSON.stringify({ data: { label: "test" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      checkProviderApiKey("openrouter", "sk-or-v1-test"),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects invalid OpenRouter keys with the upstream message", async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response(
+          JSON.stringify({ error: { message: "User not found." } }),
+          {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+    ) as unknown as typeof fetch;
+
+    await expect(
+      checkProviderApiKey("openrouter", "sk-or-v1-invalid"),
+    ).rejects.toThrow("User not found.");
   });
 });
