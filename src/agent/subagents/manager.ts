@@ -817,6 +817,19 @@ function capReflectionStartupPrompt(
   return hardTruncateReflectionPrompt(userPrompt, allowedPromptChars);
 }
 
+export function buildSubagentPrompt(
+  type: string,
+  config: SubagentConfig,
+  userPrompt: string,
+): string {
+  return capReflectionStartupPrompt(type, config.systemPrompt, userPrompt);
+}
+
+interface BuildSubagentArgsOptions {
+  backendMode?: BackendMode;
+  promptTransport?: "argv" | "stdin";
+}
+
 /**
  * Build CLI arguments for spawning a subagent
  */
@@ -828,7 +841,7 @@ export function buildSubagentArgs(
   existingAgentId?: string,
   existingConversationId?: string,
   maxTurns?: number,
-  options: { backendMode?: BackendMode } = {},
+  options: BuildSubagentArgsOptions = {},
 ): string[] {
   const args: string[] = [];
   const isDeployingExisting = Boolean(
@@ -877,12 +890,9 @@ export function buildSubagentArgs(
     }
   }
 
-  const boundedUserPrompt = capReflectionStartupPrompt(
-    type,
-    config.systemPrompt,
-    userPrompt,
-  );
-  args.push("-p", boundedUserPrompt);
+  if (options.promptTransport !== "stdin") {
+    args.push("-p", buildSubagentPrompt(type, config, userPrompt));
+  }
   args.push("--output-format", "stream-json");
 
   // Use subagent's configured permission mode, or inherit from parent
@@ -986,6 +996,7 @@ async function executeSubagent(
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
       ? "local"
       : "api";
+    const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -994,7 +1005,7 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       maxTurns,
-      { backendMode },
+      { backendMode, promptTransport: "stdin" },
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
@@ -1057,6 +1068,8 @@ async function executeSubagent(
       cwd: subagentWorkingDirectory,
       env: childEnv,
     });
+    proc.stdin.on("error", () => {});
+    proc.stdin.end(boundedUserPrompt);
 
     // Consider execution "running" once the child process has successfully spawned.
     // This avoids waiting on subagent init events (e.g. agentURL) to reflect progress.
