@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModel, getModels } from "@earendil-works/pi-ai";
 import {
-  getLocalChatGPTOAuth,
+  getLocalChatGPTApiKey,
   getLocalProviderRecordByName,
   type LocalProviderRecord,
 } from "../local/LocalProviderAuthStore";
@@ -43,6 +43,32 @@ export interface ResolvedPiModel {
   apiKey?: string;
   timeout: LocalProviderTimeout;
   headers?: Record<string, string>;
+  providerOptions?: Record<string, unknown>;
+  envOverrides?: Record<string, string | undefined>;
+}
+
+export function applyPiEnvOverrides(
+  overrides: Record<string, string | undefined> | undefined,
+): () => void {
+  if (!overrides) return () => {};
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(overrides)) {
+    previous.set(key, process.env[key]);
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
 }
 
 function hasEnvValue(value: string | undefined): boolean {
@@ -112,6 +138,7 @@ function localProviderConnection(
   baseURL?: string;
   timeout: LocalProviderTimeout;
   headers?: Record<string, string>;
+  record?: LocalProviderRecord;
 } {
   const record = localProviderRecord(providerNames, storageDir);
   return {
@@ -121,6 +148,7 @@ function localProviderConnection(
       configuredTimeout: record?.timeout,
       providerIds: providerNames,
     }),
+    ...(record ? { record } : {}),
   };
 }
 
@@ -278,15 +306,44 @@ function envBaseURL(provider: PiProvider): string | undefined {
   }
 }
 
-function chatGPTToken(storageDir?: string): string | undefined {
-  return getLocalChatGPTOAuth(storageDir)?.access;
+function bedrockLocalProviderOptions(record: LocalProviderRecord | undefined): {
+  providerOptions?: Record<string, unknown>;
+  envOverrides?: Record<string, string | undefined>;
+} {
+  if (!record) return {};
+
+  const providerOptions: Record<string, unknown> = {};
+  const envOverrides: Record<string, string | undefined> = {};
+  if (record.region) {
+    providerOptions.region = record.region;
+    envOverrides.AWS_REGION = record.region;
+    envOverrides.AWS_DEFAULT_REGION = record.region;
+  }
+  if (record.profile) {
+    providerOptions.profile = record.profile;
+    envOverrides.AWS_PROFILE = record.profile;
+  }
+  if (record.auth.type === "api" && record.auth.key) {
+    if (record.access_key) {
+      envOverrides.AWS_ACCESS_KEY_ID = record.access_key;
+      envOverrides.AWS_SECRET_ACCESS_KEY = record.auth.key;
+    } else {
+      providerOptions.bearerToken = record.auth.key;
+      envOverrides.AWS_BEARER_TOKEN_BEDROCK = record.auth.key;
+    }
+  }
+
+  return {
+    ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
+    ...(Object.keys(envOverrides).length > 0 ? { envOverrides } : {}),
+  };
 }
 
-export function resolvePiModelForAgent(
+export async function resolvePiModelForAgent(
   modelHandle: string | undefined,
   modelSettings: PiModelSettings = {},
   options: PiModelFactoryOptions = {},
-): ResolvedPiModel {
+): Promise<ResolvedPiModel> {
   const provider = options.provider
     ? resolvePiProvider(options.provider)
     : resolvePiProviderFromAgent(modelHandle, modelSettings);
@@ -311,6 +368,8 @@ export function resolvePiModelForAgent(
   let baseURL =
     connection.baseURL ?? envBaseURL(provider) ?? spec.defaultBaseURL;
   const headers = spec.headers?.();
+  let providerOptions: Record<string, unknown> | undefined;
+  let envOverrides: Record<string, string | undefined> | undefined;
 
   if (provider === "zai") {
     const zai = resolveZaiConnection({
@@ -332,8 +391,14 @@ export function resolvePiModelForAgent(
   if (provider === "chatgpt-oauth") {
     connection = {
       ...connection,
-      apiKey: chatGPTToken(storageDir),
+      apiKey: await getLocalChatGPTApiKey(storageDir),
     };
+  }
+
+  if (provider === "bedrock") {
+    const bedrock = bedrockLocalProviderOptions(connection.record);
+    providerOptions = bedrock.providerOptions;
+    envOverrides = bedrock.envOverrides;
   }
 
   const contextWindow = numericSetting(modelSettings.context_window_limit);
@@ -379,5 +444,7 @@ export function resolvePiModelForAgent(
     apiKey: connection.apiKey,
     timeout: connection.timeout,
     headers,
+    providerOptions,
+    envOverrides,
   };
 }

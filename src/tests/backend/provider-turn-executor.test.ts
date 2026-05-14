@@ -117,6 +117,71 @@ describe("ProviderTurnExecutor", () => {
     ).toBe("requires_approval");
   });
 
+  test("uses pi contentIndex to keep interleaved live blocks separate", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        const message = assistantMessage();
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "first-a",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 2,
+            delta: "second",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "first-b",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "thinking_delta",
+            contentIndex: 1,
+            delta: "think-a",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "thinking_delta",
+            contentIndex: 3,
+            delta: "think-b",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    const assistantOtids = chunks
+      .filter((chunk) => chunk.message_type === "assistant_message")
+      .map((chunk) => (chunk as { otid?: string }).otid);
+    expect(assistantOtids[0]).toBe(assistantOtids[2]);
+    expect(assistantOtids[0]).not.toBe(assistantOtids[1]);
+
+    const reasoningOtids = chunks
+      .filter((chunk) => chunk.message_type === "reasoning_message")
+      .map((chunk) => (chunk as { otid?: string }).otid);
+    expect(reasoningOtids[0]).not.toBe(reasoningOtids[1]);
+  });
+
   test("emits final local assistant messages as state-only chunks before stop_reason", async () => {
     const finalMessage = assistantMessage();
     const adapter: ProviderStreamAdapter = {

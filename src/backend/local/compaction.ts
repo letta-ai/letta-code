@@ -1,13 +1,17 @@
 import {
   type AssistantMessage,
   type Context,
+  complete,
   completeSimple,
   isContextOverflow,
   type Model,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
-import { resolvePiModelForAgent } from "../dev/PiModelFactory";
+import {
+  applyPiEnvOverrides,
+  resolvePiModelForAgent,
+} from "../dev/PiModelFactory";
 import type { LocalMessage } from "./LocalMessage";
 import type { LocalAgentRecord } from "./LocalStore";
 
@@ -101,7 +105,7 @@ export interface LocalCompactionStats {
 export type LocalCompleteFunction = (
   model: Model<string>,
   context: Context,
-  options?: SimpleStreamOptions,
+  options?: SimpleStreamOptions & Record<string, unknown>,
 ) => Promise<AssistantMessage>;
 
 export interface LocalAllCompactionInput {
@@ -351,8 +355,11 @@ function assistantMessageText(message: AssistantMessage): string {
 async function defaultComplete(
   model: Model<string>,
   context: Context,
-  options?: SimpleStreamOptions,
+  options?: SimpleStreamOptions & Record<string, unknown>,
 ): Promise<AssistantMessage> {
+  if (model.api === "bedrock-converse-stream") {
+    return complete(model, context, options);
+  }
   return completeSimple(model, context, options);
 }
 
@@ -362,7 +369,7 @@ async function runGenerateText(
   defaultPrompt: string,
 ): Promise<{ text: string }> {
   const systemPrompt = input.prompt ?? defaultPrompt;
-  const resolved = resolvePiModelForAgent(
+  const resolved = await resolvePiModelForAgent(
     input.agent.model,
     input.agent.model_settings,
     { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
@@ -372,14 +379,21 @@ async function runGenerateText(
     systemPrompt,
     messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
   };
-  const options: SimpleStreamOptions = {
+  const options: SimpleStreamOptions & Record<string, unknown> = {
+    ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
     ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
     ...(resolved.headers ? { headers: resolved.headers } : {}),
     ...(input.abortSignal ? { signal: input.abortSignal } : {}),
     maxRetries: 0,
   };
-  const result = await run(resolved.model as Model<string>, context, options);
+  const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
+  let result: AssistantMessage;
+  try {
+    result = await run(resolved.model as Model<string>, context, options);
+  } finally {
+    restoreEnv();
+  }
   if (isContextOverflow(result, resolved.model.contextWindow)) {
     throw new Error(result.errorMessage ?? "Context window exceeded");
   }

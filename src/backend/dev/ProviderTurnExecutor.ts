@@ -180,6 +180,18 @@ function errorFromAssistantEvent(part: AssistantMessageEvent): Error {
   return new Error(part.error.errorMessage ?? "Unknown local provider error");
 }
 
+function otidForContentIndex(
+  otids: Map<number, string>,
+  prefix: string,
+  contentIndex: number,
+): string {
+  const existing = otids.get(contentIndex);
+  if (existing) return existing;
+  const otid = `${prefix}-${contentIndex}-${randomUUID()}`;
+  otids.set(contentIndex, otid);
+  return otid;
+}
+
 function createProviderLettaStream(
   events: AsyncIterable<ProviderStreamEvent>,
 ): Stream<LettaStreamingResponse> {
@@ -190,8 +202,8 @@ function createProviderLettaStream(
       let sawToolCall = false;
       let pendingStopReason: LettaStreamingResponse | undefined;
       let sawUsageStatistics = false;
-      const assistantOtid = `provider-assistant-${randomUUID()}`;
-      const reasoningOtid = `provider-reasoning-${randomUUID()}`;
+      const assistantOtids = new Map<number, string>();
+      const reasoningOtids = new Map<number, string>();
       try {
         for await (const event of events) {
           if (event.type === "error") {
@@ -213,7 +225,11 @@ function createProviderLettaStream(
           if (part.type === "text_delta") {
             yield {
               message_type: "assistant_message",
-              otid: assistantOtid,
+              otid: otidForContentIndex(
+                assistantOtids,
+                "provider-assistant",
+                part.contentIndex,
+              ),
               content: [{ type: "text", text: part.delta }],
             } as LettaStreamingResponse;
             continue;
@@ -222,7 +238,11 @@ function createProviderLettaStream(
           if (part.type === "thinking_delta") {
             yield {
               message_type: "reasoning_message",
-              otid: reasoningOtid,
+              otid: otidForContentIndex(
+                reasoningOtids,
+                "provider-reasoning",
+                part.contentIndex,
+              ),
               reasoning: part.delta,
             } as LettaStreamingResponse;
             continue;

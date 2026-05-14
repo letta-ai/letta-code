@@ -6,6 +6,7 @@ import {
   type Message,
   type Model,
   type SimpleStreamOptions,
+  stream,
   streamSimple,
   type ThinkingLevel,
   type Tool,
@@ -26,7 +27,7 @@ import {
   localProviderRetryDelayMs,
   localProviderRetryMessage,
 } from "./LocalProviderErrors";
-import { resolvePiModelForAgent } from "./PiModelFactory";
+import { applyPiEnvOverrides, resolvePiModelForAgent } from "./PiModelFactory";
 import type {
   ProviderStreamAdapter,
   ProviderStreamEvent,
@@ -44,7 +45,7 @@ const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 export type PiStreamFunction = (
   model: Model<string>,
   context: Context,
-  options?: SimpleStreamOptions,
+  options?: SimpleStreamOptions & Record<string, unknown>,
 ) => AsyncIterable<AssistantMessageEvent> & {
   result(): Promise<AssistantMessage>;
 };
@@ -273,8 +274,11 @@ function isOverflowError(error: unknown, contextWindow?: number): boolean {
 function defaultStream(
   model: Model<string>,
   context: Context,
-  options?: SimpleStreamOptions,
+  options?: SimpleStreamOptions & Record<string, unknown>,
 ) {
+  if (model.api === "bedrock-converse-stream") {
+    return stream(model, context, options);
+  }
   return streamSimple(model, context, options);
 }
 
@@ -314,7 +318,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     input: ProviderTurnInput,
   ): AsyncIterable<ProviderStreamEvent> {
     const tools = toPiTools(input.clientTools);
-    const resolved = resolvePiModelForAgent(
+    const resolved = await resolvePiModelForAgent(
       input.agent.model,
       input.agent.model_settings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
@@ -324,7 +328,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
-    const options: SimpleStreamOptions = {
+    const options: SimpleStreamOptions & Record<string, unknown> = {
+      ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
       ...(resolved.headers ? { headers: resolved.headers } : {}),
@@ -347,47 +352,52 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         : {}),
     };
 
-    const result = this.runStream(
-      resolved.model as Model<string>,
-      context,
-      options,
-    );
+    const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
+    try {
+      const result = this.runStream(
+        resolved.model as Model<string>,
+        context,
+        options,
+      );
 
-    let streamError: unknown;
-    let finalMessage: AssistantMessage | undefined;
-    for await (const part of result) {
-      if (part.type === "error") {
-        const error = new PiProviderError(part.error);
-        if (
-          isOverflowError(error, resolved.model.contextWindow) ||
-          isRetryableLocalProviderError(error)
-        ) {
-          streamError = error;
-          break;
+      let streamError: unknown;
+      let finalMessage: AssistantMessage | undefined;
+      for await (const part of result) {
+        if (part.type === "error") {
+          const error = new PiProviderError(part.error);
+          if (
+            isOverflowError(error, resolved.model.contextWindow) ||
+            isRetryableLocalProviderError(error)
+          ) {
+            streamError = error;
+            break;
+          }
+        }
+        if (part.type === "done") {
+          finalMessage = part.message;
+          yield providerLocalMessage(
+            toLocalAssistantMessage(part.message, input),
+          );
+        }
+        yield providerStreamPart(part);
+      }
+
+      if (streamError) throw streamError;
+      finalMessage ??= await result.result();
+      if (
+        finalMessage.stopReason === "error" ||
+        finalMessage.stopReason === "aborted"
+      ) {
+        throw new PiProviderError(finalMessage);
+      }
+      if (this.onContextUsage) {
+        const compaction = await this.onContextUsage(input, finalMessage.usage);
+        if (compaction) {
+          yield* this.emitCompactionChunks(compaction, "context_window_limit");
         }
       }
-      if (part.type === "done") {
-        finalMessage = part.message;
-        yield providerLocalMessage(
-          toLocalAssistantMessage(part.message, input),
-        );
-      }
-      yield providerStreamPart(part);
-    }
-
-    if (streamError) throw streamError;
-    finalMessage ??= await result.result();
-    if (
-      finalMessage.stopReason === "error" ||
-      finalMessage.stopReason === "aborted"
-    ) {
-      throw new PiProviderError(finalMessage);
-    }
-    if (this.onContextUsage) {
-      const compaction = await this.onContextUsage(input, finalMessage.usage);
-      if (compaction) {
-        yield* this.emitCompactionChunks(compaction, "context_window_limit");
-      }
+    } finally {
+      restoreEnv();
     }
   }
 

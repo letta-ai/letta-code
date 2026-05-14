@@ -164,8 +164,8 @@ export const PI_PROVIDER_SPECS = [
     handlePrefixes: ["moonshot_coding/"],
     localProviderNames: [LOCAL_KIMI_CODE_PROVIDER_NAME],
     defaultModel: "moonshot_coding/kimi-for-coding",
-    apiKeyEnv: () => process.env.MOONSHOT_API_KEY,
-    envConfigured: () => hasEnvValue(process.env.MOONSHOT_API_KEY),
+    apiKeyEnv: () => process.env.KIMI_API_KEY,
+    envConfigured: () => hasEnvValue(process.env.KIMI_API_KEY),
     catalogModelHandle: prefixedCatalogModelHandle("moonshot_coding/"),
   },
   {
