@@ -19,6 +19,7 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "./accounts";
+import { tryHandleChannelSlashCommand } from "./commands";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
@@ -116,16 +117,6 @@ export function buildUnboundRouteInstructions(
     `Open Channels > ${displayName} in Letta Code and connect this chat there.\n\n` +
     `Chat ID: ${chatId}`
   );
-}
-
-export function buildChannelHelpMessage(channelId: string): string {
-  const displayName = channelDisplayName(channelId);
-  return [
-    `${displayName} is connected to Letta Code.`,
-    "Send a normal message here and the connected agent will reply in this chat.",
-    "Use MessageChannel-supported actions by asking naturally, for example: send a message, react, or upload a file when available.",
-    "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
-  ].join("\n\n");
 }
 
 function buildSlackAppSetupInstructions(): string {
@@ -807,12 +798,7 @@ export class ChannelRegistry {
       return;
     }
 
-    if (msg.text.trim().toLowerCase() === "/help") {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        buildChannelHelpMessage(msg.channel),
-        msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
-      );
+    if (await tryHandleChannelSlashCommand(adapter, msg)) {
       return;
     }
 

@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { buildChannelHelpMessage } from "../../channels/commands";
 
-const {
-  buildChannelHelpMessage,
-  buildPairingInstructions,
-  buildUnboundRouteInstructions,
-} = await import("../../channels/registry");
+const { buildPairingInstructions, buildUnboundRouteInstructions } =
+  await import("../../channels/registry");
 
 describe("registry copy: first-party channels", () => {
   test("pairing instructions point at both desktop UI and CLI for telegram", () => {
