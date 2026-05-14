@@ -551,7 +551,8 @@ export class LocalTranscriptMigrationRequiredError extends Error {
 }
 
 export function localTranscriptMigrationCommand(storageDir: string): string {
-  return `letta local-backend migrate-transcripts --storage-dir ${JSON.stringify(storageDir)}`;
+  const quotedStorageDir = `"${storageDir.replace(/"/g, '\\"')}"`;
+  return `letta local-backend migrate-transcripts --storage-dir ${quotedStorageDir}`;
 }
 
 function transcriptManifestPath(conversationDir: string): string {
