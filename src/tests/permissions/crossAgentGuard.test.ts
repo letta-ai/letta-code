@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 
 import { checkPermission } from "../../permissions/checker";
 import { cliPermissions } from "../../permissions/cli";
@@ -620,38 +620,42 @@ cat "$TARGET/system/persona.md"`;
 // ---------------------------------------------------------------------------
 // Regression tests: memory-only scoping for Grep / Glob paths.
 //
-// The memory guard must only apply to concrete memory directories. It should
-// not become a broad `.letta/agents` filesystem guard.
+// The memory guard must not become a broad `.letta/agents` filesystem guard,
+// but recursive tools pointed at ancestors are still dangerous because they
+// would walk into every agent's memory directory.
 // ---------------------------------------------------------------------------
 
 describe("Grep/Glob memory-only scoping", () => {
   const agentsTreeRoot = join(HOME, ".letta", "agents");
 
-  test("Glob with path='<home>/.letta/agents' is outside the memory guard scope", () => {
+  test("Glob with path='<home>/.letta/agents' is denied because it recursively reaches memory", () => {
     const result = evaluateCrossAgentGuard(
       "Glob",
       { pattern: "**/*.md", path: agentsTreeRoot },
       "/tmp",
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
-  test("Grep with path='<home>/.letta/agents' is outside the memory guard scope", () => {
+  test("Grep with path='<home>/.letta/agents' is denied because it recursively reaches memory", () => {
     const result = evaluateCrossAgentGuard(
       "Grep",
       { pattern: "password|secret|token|api_key", path: agentsTreeRoot },
       "/tmp",
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
-  test("Glob pointed at a specific foreign agent's root (no /memory) is outside scope", () => {
+  test("Glob pointed at a specific foreign agent's root is denied because it recursively reaches memory", () => {
     const result = evaluateCrossAgentGuard(
       "Glob",
       { pattern: "**/*.md", path: join(agentsTreeRoot, OTHER) },
       "/tmp",
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
   test("Read pointed at a foreign agent's settings.json (no /memory) is outside scope", () => {
@@ -674,13 +678,25 @@ describe("Grep/Glob memory-only scoping", () => {
     expect(result).toBeNull();
   });
 
-  test("Glob with path=$HOME is outside the memory guard scope", () => {
+  test("Glob with path=$HOME is denied because a recursive walk would enter agent memory", () => {
     const result = evaluateCrossAgentGuard(
       "Glob",
       { pattern: "**/*.md", path: HOME },
       "/tmp",
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
+  });
+
+  test("Grep on the filesystem root is denied for the same reason", () => {
+    const fsRoot = parse(HOME).root;
+    const result = evaluateCrossAgentGuard(
+      "Grep",
+      { pattern: "secret", path: fsRoot },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
   test("Glob on self memory is allowed", () => {
@@ -693,14 +709,15 @@ describe("Grep/Glob memory-only scoping", () => {
     expect(result).toBeNull();
   });
 
-  test("Glob on self agent root (not under /memory) is allowed", () => {
+  test("Glob on self agent root is denied because recursive tools cannot prove the walk stays in-scope", () => {
     process.env.AGENT_ID = SELF;
     const result = evaluateCrossAgentGuard(
       "Glob",
       { pattern: "**/*", path: join(agentsTreeRoot, SELF) },
       "/tmp",
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
   test("Grep on a foreign agent is allowed when scoped via LETTA_MEMORY_SCOPE", () => {
@@ -730,12 +747,13 @@ describe("Grep/Glob memory-only scoping", () => {
     expect(result).toBeNull();
   });
 
-  test("ListDir on the agents tree is outside the memory guard scope", () => {
+  test("ListDir on the agents tree is denied because it recursively reaches memory", () => {
     const result = evaluateCrossAgentGuard(
       "ListDir",
       { path: agentsTreeRoot },
       "/tmp",
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 });

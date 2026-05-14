@@ -79,12 +79,20 @@ export interface CrossAgentTargets {
   /** Agent IDs extracted from any path references in the tool args. */
   agentIds: Set<string>;
   /**
-   * True iff at least one target path resolved under
-   * ~/.letta/agents/<id>/memory(-worktrees)?/... — the only case where
-   * the guard is concerned at all.
+   * True iff at least one target path can touch agent memory. This includes
+   * concrete memory roots and recursive-tool paths whose walk would enter
+   * agent memory from an ancestor.
    */
   anyAgentScoped: boolean;
 }
+
+/**
+ * Sentinel ID used when a target can touch agent memory but the guard cannot
+ * resolve it to a single concrete agent — for example, Grep over `$HOME`.
+ * The guard treats this as never allowed, because allowing it would let
+ * recursive tools walk into every agent memory directory on disk.
+ */
+const UNRESOLVED_AGENT_ID = "<unresolved>";
 
 /**
  * Escape a string for use inside a regex.
@@ -112,22 +120,28 @@ function normalizePathForCompare(path: string): string {
 }
 
 /**
- * Classification of a path relative to an agent memory directory:
- *  - `outside`         — path is not under an agent memory directory.
- *  - `memory`          — path is inside an agent memory directory. The `id`
- *                        is the agent ID component.
+ * Classification of a path relative to agent memory directories:
+ *  - `outside`  — path cannot reach agent memory.
+ *  - `memory`   — path is inside one concrete agent memory directory.
+ *  - `ancestor` — path is an ancestor of at least one memory directory;
+ *                 recursive tools would walk into agent memory from here.
  *
- * This guard intentionally ignores arbitrary agent directories (`skills`,
- * `settings.json`, the agent root, etc.). It is a memory guard, not a general
- * agents-tree guard, and must not fire on normal repo commands that merely
- * mention agent paths in strings.
+ * This guard intentionally ignores non-memory leaf paths under an agent
+ * directory (`skills`, `settings.json`, the agent root, etc.) for single-file
+ * tools. It is a memory guard, not a general agents-tree guard.
  */
 export type AgentMemoryPathClassification =
   | { kind: "outside" }
-  | { kind: "memory"; id: string };
+  | { kind: "memory"; id: string }
+  | { kind: "ancestor" };
 
 function isSameOrInside(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
+}
+
+function isAncestorOf(path: string, descendant: string): boolean {
+  const prefix = path === "/" ? "/" : `${path}/`;
+  return descendant.startsWith(prefix);
 }
 
 function isConcreteAgentId(value: string): boolean {
@@ -147,7 +161,11 @@ export function classifyAgentMemoryPath(
   if (normalized.startsWith(`${root}/`)) {
     const rest = normalized.slice(root.length + 1);
     const slash = rest.indexOf("/");
-    if (slash === -1) return { kind: "outside" };
+    if (slash === -1) {
+      return isConcreteAgentId(rest)
+        ? { kind: "ancestor" }
+        : { kind: "outside" };
+    }
 
     const id = rest.slice(0, slash);
     if (!isConcreteAgentId(id)) return { kind: "outside" };
@@ -160,9 +178,17 @@ export function classifyAgentMemoryPath(
       if (isSameOrInside(normalized, memoryRoot)) {
         return { kind: "memory", id };
       }
+      if (isAncestorOf(normalized, memoryRoot)) {
+        return { kind: "ancestor" };
+      }
     }
 
     return { kind: "outside" };
+  }
+
+  const possibleAgentMemoryRoot = `${root}/agent-`;
+  if (isAncestorOf(normalized, possibleAgentMemoryRoot)) {
+    return { kind: "ancestor" };
   }
 
   return { kind: "outside" };
@@ -436,7 +462,9 @@ function expandCommandVariables(
 }
 
 /**
- * Tools that accept path-like patterns in addition to a plain file path.
+ * Tools whose semantics imply a recursive walk from the given path. When one
+ * of these is pointed at an ancestor of agent memory, the walk would expose
+ * other agents' memory contents, so ancestor paths must be treated as hits.
  */
 const RECURSIVE_PATH_TOOLS = new Set<string>([
   "Grep",
@@ -481,6 +509,12 @@ export function extractTargetAgentPaths(
       case "memory":
         anyAgentScoped = true;
         agentIds.add(classification.id);
+        return;
+      case "ancestor":
+        if (recursive) {
+          anyAgentScoped = true;
+          agentIds.add(UNRESOLVED_AGENT_ID);
+        }
         return;
     }
   };
