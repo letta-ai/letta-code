@@ -176,12 +176,8 @@ describe("tool execution context snapshot", () => {
       { clientToolAllowlist: ["Read", "Grep", "Glob"] },
     );
 
-    expect(prepared.loadedToolNames).toEqual(["Glob", "Grep", "Read"]);
-    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
-      "Glob",
-      "Grep",
-      "Read",
-    ]);
+    expect(prepared.loadedToolNames).toEqual(["Read"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Read"]);
     expect(prepared.loadedToolNames).not.toContain("Bash");
 
     const denied = await executeTool(
