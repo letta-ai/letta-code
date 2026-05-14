@@ -93,9 +93,9 @@ describe("resolveSubagentLauncher", () => {
     expect(launcher).toEqual({
       command: execPath,
       args: [
-        "--loader:.md=text",
-        "--loader:.mdx=text",
-        "--loader:.txt=text",
+        "--loader=.md:text",
+        "--loader=.mdx:text",
+        "--loader=.txt:text",
         "run",
         expectedScriptPath,
         "--output-format",

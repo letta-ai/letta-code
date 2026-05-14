@@ -111,9 +111,9 @@ describe("shellEnv letta shim", () => {
     expect(invocation).toEqual({
       command: "/opt/homebrew/bin/bun",
       args: [
-        "--loader:.md=text",
-        "--loader:.mdx=text",
-        "--loader:.txt=text",
+        "--loader=.md:text",
+        "--loader=.mdx:text",
+        "--loader=.txt:text",
         "run",
         "/Users/example/dev/letta-code-prod/src/index.ts",
       ],
@@ -144,9 +144,9 @@ describe("shellEnv letta shim", () => {
     expect(invocation).toEqual({
       command: execPath,
       args: [
-        "--loader:.md=text",
-        "--loader:.mdx=text",
-        "--loader:.txt=text",
+        "--loader=.md:text",
+        "--loader=.mdx:text",
+        "--loader=.txt:text",
         "run",
         expectedScriptPath,
       ],
