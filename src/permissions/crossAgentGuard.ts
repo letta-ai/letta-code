@@ -79,19 +79,18 @@ export interface CrossAgentTargets {
   /** Agent IDs extracted from any path references in the tool args. */
   agentIds: Set<string>;
   /**
-   * True iff at least one target path resolved under
-   * ~/.letta/agents/<id>/memory(-worktrees)?/... — the only case where
-   * the guard is concerned at all.
+   * True iff at least one target path can touch agent memory. This includes
+   * concrete memory roots and recursive-tool paths whose walk would enter
+   * agent memory from an ancestor.
    */
   anyAgentScoped: boolean;
 }
 
 /**
- * Sentinel ID used when a path touches the agents tree but we can't
- * resolve it to a single agent — e.g. the bare agents-tree root (an
- * enumeration attempt) or a recursive-search root that would walk into
- * the tree. The guard treats this as never-allowed, so any such path
- * is denied unless upstream knew what agent to filter to.
+ * Sentinel ID used when a target can touch agent memory but the guard cannot
+ * resolve it to a single concrete agent — for example, Grep over `$HOME`.
+ * The guard treats this as never allowed, because allowing it would let
+ * recursive tools walk into every agent memory directory on disk.
  */
 const UNRESOLVED_AGENT_ID = "<unresolved>";
 
@@ -121,50 +120,74 @@ function normalizePathForCompare(path: string): string {
 }
 
 /**
- * Classification of a path relative to the agents tree:
- *  - `outside`     — path is unrelated to the agents tree.
- *  - `agents-root` — path is exactly `<home>/.letta/agents` (enumeration of
- *                    every agent on the machine).
- *  - `ancestor`    — path is an ancestor of the agents tree (e.g. `$HOME`,
- *                    `/`). Recursive tools (Grep/Glob) entering this path
- *                    would walk into other agents' directories.
- *  - `agent`       — path is inside a specific agent's directory (any
- *                    depth, including the bare agent dir, not just
- *                    `/memory`). The `id` is the agent ID component.
+ * Classification of a path relative to agent memory directories:
+ *  - `outside`  — path cannot reach agent memory.
+ *  - `memory`   — path is inside one concrete agent memory directory.
+ *  - `ancestor` — path is an ancestor of at least one memory directory;
+ *                 recursive tools would walk into agent memory from here.
+ *
+ * This guard intentionally ignores non-memory leaf paths under an agent
+ * directory (`skills`, `settings.json`, the agent root, etc.) for single-file
+ * tools. It is a memory guard, not a general agents-tree guard.
  */
-export type AgentsTreeClassification =
+export type AgentMemoryPathClassification =
   | { kind: "outside" }
-  | { kind: "agents-root" }
-  | { kind: "ancestor" }
-  | { kind: "agent"; id: string };
+  | { kind: "memory"; id: string }
+  | { kind: "ancestor" };
+
+function isSameOrInside(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+function isAncestorOf(path: string, descendant: string): boolean {
+  const prefix = path === "/" ? "/" : `${path}/`;
+  return descendant.startsWith(prefix);
+}
+
+function isConcreteAgentId(value: string): boolean {
+  return /^agent-[A-Za-z0-9_-]+$/.test(value);
+}
 
 /**
- * Classify a path relative to the agents tree. See
- * {@link AgentsTreeClassification} for the kinds.
+ * Classify a path relative to agent memory roots only.
  */
-export function classifyAgentsTreePath(
+export function classifyAgentMemoryPath(
   path: string,
   homeDir: string,
-): AgentsTreeClassification {
+): AgentMemoryPathClassification {
   const root = getAgentsTreeRoot(homeDir);
   const normalized = normalizePathForCompare(path);
-
-  if (normalized === root) {
-    return { kind: "agents-root" };
-  }
 
   if (normalized.startsWith(`${root}/`)) {
     const rest = normalized.slice(root.length + 1);
     const slash = rest.indexOf("/");
-    const id = slash === -1 ? rest : rest.slice(0, slash);
-    return { kind: "agent", id };
+    if (slash === -1) {
+      return isConcreteAgentId(rest)
+        ? { kind: "ancestor" }
+        : { kind: "outside" };
+    }
+
+    const id = rest.slice(0, slash);
+    if (!isConcreteAgentId(id)) return { kind: "outside" };
+    const memoryRoots = [
+      `${root}/${id}/memory`,
+      `${root}/${id}/memory-worktrees`,
+    ];
+
+    for (const memoryRoot of memoryRoots) {
+      if (isSameOrInside(normalized, memoryRoot)) {
+        return { kind: "memory", id };
+      }
+      if (isAncestorOf(normalized, memoryRoot)) {
+        return { kind: "ancestor" };
+      }
+    }
+
+    return { kind: "outside" };
   }
 
-  // Is `normalized` an ancestor of the agents-tree root?
-  // A recursive walk starting at `normalized` would eventually enter
-  // `<root>/`, exposing every agent on the machine.
-  const prefix = normalized === "/" ? "/" : `${normalized}/`;
-  if (root.startsWith(prefix)) {
+  const possibleAgentMemoryRoot = `${root}/agent-`;
+  if (isAncestorOf(normalized, possibleAgentMemoryRoot)) {
     return { kind: "ancestor" };
   }
 
@@ -354,39 +377,29 @@ function scanToken(
     const expanded = expandShellToken(value, env, homeDir);
     if (expanded === null) continue;
     const normalized = normalizeScopedPath(expanded);
-    const classification = classifyAgentsTreePath(normalized, homeDir);
-    if (classification.kind === "agent") {
+    const classification = classifyAgentMemoryPath(normalized, homeDir);
+    if (classification.kind === "memory") {
       out.set(value, classification.id);
-    } else if (classification.kind === "agents-root") {
-      // Bare agents-tree root in a shell token — enumeration.
-      out.set(value, UNRESOLVED_AGENT_ID);
     }
-    // "ancestor" is intentionally ignored for shell tokens: the Bash
-    // raw-command scan handles those cases, and most legitimate shell
-    // commands have tokens that are ancestors of the agents tree
-    // (e.g. `$HOME`, `/`) without being a threat by themselves.
   }
 }
 
 /**
- * Conservative scan of the raw shell command for any reference to the
- * agents tree. Complements the tokenizer by catching patterns that
- * static analysis can't resolve:
- *   - `ls ~/.letta/agents` (enumeration)
- *   - `find $HOME/.letta/agents -type d` (globbing)
- *   - `TARGET="$(find ~/.letta/agents ...)"; cat "$TARGET/..."` (command
- *     substitution — tokenizer can't follow)
- *   - assignment-then-use where the literal agent ID appears in the raw
- *     string even if our static expander can't trace the variable.
+ * Conservative scan of the raw shell command for concrete references to agent
+ * memory directories. Complements the tokenizer by catching patterns that
+ * static analysis can't resolve, such as assignment-then-use where the literal
+ * agent ID appears in the raw string even if our static expander can't trace
+ * the variable.
  *
  * The scan is home-anchored: only references to agent paths under the
  * current user's home dir trigger it. References to other homes (e.g.
  * test fixtures under `/Users/test/.letta/agents/...`) are ignored —
  * they can't possibly touch real data on this machine.
  *
- * Any occurrence of `<home>/.letta/agents/<id>` where `<id>` is not in
- * `allowedAgentIds` (or is empty / a shell variable / a glob) produces
- * an entry in the returned list. The guard then hard-denies.
+ * This deliberately requires `/memory` or `/memory-worktrees` after a concrete
+ * agent ID. That keeps the guard scoped to memory directories and prevents
+ * false positives from inert strings such as commit messages that mention
+ * `~/.letta/agents/{id}/skills`.
  */
 function scanRawCommandForUnresolvedAgentRefs(
   rawCommand: string,
@@ -399,27 +412,21 @@ function scanRawCommandForUnresolvedAgentRefs(
   // don't falsely trip the scan.
   const expanded = expandCommandVariables(rawCommand, env, homeDir);
 
-  // Home-anchored pattern: match only references rooted at the current
-  // user's agents tree. Group 1 is the agent-ID candidate (optional).
+  // Home-anchored pattern: match only concrete memory roots for agents under
+  // the current user's agents tree. Group 1 is the agent ID.
   //
-  // The terminator class includes `/`, whitespace, quotes, common shell
+  // The terminator class includes whitespace, quotes, common shell
   // syntax (`$`, `(`, `)`, `{`, `}`, `[`, `]`, `;`, `|`, `&`, `,`, `\``,
   // and `#`) so we stop at a word boundary.
   const escapedRoot = escapeRegex(getAgentsTreeRoot(homeDir));
   const pattern = new RegExp(
-    `${escapedRoot}(?:/([^/\\s"'\`$(){}\\[\\]|&;,#]*))?`,
+    `${escapedRoot}/(agent-[A-Za-z0-9_-]+)/(?:memory|memory-worktrees)(?=$|[/\\s"'\`$(){}\\[\\]|&;,#])`,
     "g",
   );
 
   const unresolved: string[] = [];
   for (const match of expanded.matchAll(pattern)) {
     const candidate = (match[1] ?? "").trim();
-    if (candidate.length === 0) {
-      // Bare `<home>/.letta/agents` or `.../agents/` — enumeration of
-      // the whole agents tree. Always suspicious.
-      unresolved.push(UNRESOLVED_AGENT_ID);
-      continue;
-    }
     if (!allowedAgentIds.has(candidate)) {
       unresolved.push(candidate);
     }
@@ -455,10 +462,9 @@ function expandCommandVariables(
 }
 
 /**
- * Tools whose semantics imply a recursive walk from the given path
- * (as opposed to touching a single file). When one of these is pointed
- * at an *ancestor* of the agents tree, the walk would expose every
- * agent on disk — so we treat ancestor paths as hits for these tools.
+ * Tools whose semantics imply a recursive walk from the given path. When one
+ * of these is pointed at an ancestor of agent memory, the walk would expose
+ * other agents' memory contents, so ancestor paths must be treated as hits.
  */
 const RECURSIVE_PATH_TOOLS = new Set<string>([
   "Grep",
@@ -496,27 +502,19 @@ export function extractTargetAgentPaths(
     if (!rawPath || typeof rawPath !== "string") return;
     const resolvedPath = resolveScopedTargetPath(rawPath, workingDirectory);
     if (!resolvedPath) return;
-    const classification = classifyAgentsTreePath(resolvedPath, homeDir);
+    const classification = classifyAgentMemoryPath(resolvedPath, homeDir);
     switch (classification.kind) {
       case "outside":
         return;
-      case "agents-root":
-        // Targeting the agents tree root itself — enumeration.
+      case "memory":
         anyAgentScoped = true;
-        agentIds.add(UNRESOLVED_AGENT_ID);
+        agentIds.add(classification.id);
         return;
       case "ancestor":
-        // Only dangerous for tools that recursively walk from the
-        // given path (Grep/Glob/ListDir). Single-file tools like Read
-        // can't escape their target.
         if (recursive) {
           anyAgentScoped = true;
           agentIds.add(UNRESOLVED_AGENT_ID);
         }
-        return;
-      case "agent":
-        anyAgentScoped = true;
-        agentIds.add(classification.id);
         return;
     }
   };

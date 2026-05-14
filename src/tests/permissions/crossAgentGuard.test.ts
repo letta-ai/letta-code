@@ -513,17 +513,16 @@ describe("checkPermission integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("shell bypass regression tests", () => {
-  test("enumeration: ls ~/.letta/agents is denied", () => {
+  test("agents-tree enumeration is outside the memory guard scope", () => {
     const result = evaluateCrossAgentGuard(
       "Bash",
       { command: "ls ~/.letta/agents" },
       "/tmp",
     );
-    expect(result).not.toBeNull();
-    expect(result?.matchedRule).toBe("cross-agent guard");
+    expect(result).toBeNull();
   });
 
-  test("enumeration: find over the whole agents tree is denied", () => {
+  test("find over the whole agents tree is outside the memory guard scope", () => {
     const result = evaluateCrossAgentGuard(
       "Bash",
       {
@@ -531,10 +530,10 @@ describe("shell bypass regression tests", () => {
       },
       "/tmp",
     );
-    expect(result).not.toBeNull();
+    expect(result).toBeNull();
   });
 
-  test("command substitution: assigning a computed target path is denied", () => {
+  test("computed agents-tree paths are outside the memory guard scope without a concrete memory root", () => {
     // Exploit variant 1 (finds another agent via dynamic path resolution).
     const command = [
       'CURRENT="$AGENT_ID"',
@@ -543,10 +542,10 @@ describe("shell bypass regression tests", () => {
       'cat "$TARGET/memory/system/persona.md"',
     ].join("\n");
     const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).not.toBeNull();
+    expect(result).toBeNull();
   });
 
-  test("command substitution variant 2 (find -name memory) is denied", () => {
+  test("computed memory directory discovery is outside the memory guard scope without a concrete memory root", () => {
     const command = [
       'CURRENT="$AGENT_ID"',
       `BASE="\${HOME}/.letta/agents"`,
@@ -554,7 +553,7 @@ describe("shell bypass regression tests", () => {
       'cat "$TARGET/system/persona.md"',
     ].join("\n");
     const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).not.toBeNull();
+    expect(result).toBeNull();
   });
 
   test("literal-but-unknown agent ID in quoted assignment is denied", () => {
@@ -610,60 +609,65 @@ cat "$TARGET/system/persona.md"`;
     );
     expect(result).toBeNull();
   });
+
+  test("commit message mentioning an agent skills path is outside the memory guard scope", () => {
+    const command = `git commit -m "getAgentSkillsDir pointed to \${HOME}/.letta/agents/{id}/skills/ but memfs skills live at ~/.letta/agents/{id}/memory/skills/"`;
+    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
+    expect(result).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Regression tests: Grep / Glob ancestor-path bypass.
+// Regression tests: memory-only scoping for Grep / Glob paths.
 //
-// The classifier used to require `<home>/.letta/agents/<id>/memory` to
-// match, so pointing Grep or Glob at `.letta/agents` (the tree root)
-// slipped through entirely — leaking file contents and enumerating every
-// agent on disk.
+// The memory guard must not become a broad `.letta/agents` filesystem guard,
+// but recursive tools pointed at ancestors are still dangerous because they
+// would walk into every agent's memory directory.
 // ---------------------------------------------------------------------------
 
-describe("Grep/Glob ancestor-path regression tests", () => {
+describe("Grep/Glob memory-only scoping", () => {
   const agentsTreeRoot = join(HOME, ".letta", "agents");
 
-  test("Glob with path='<home>/.letta/agents' is denied", () => {
+  test("Glob with path='<home>/.letta/agents' is denied because it recursively reaches memory", () => {
     const result = evaluateCrossAgentGuard(
       "Glob",
       { pattern: "**/*.md", path: agentsTreeRoot },
       "/tmp",
     );
     expect(result).not.toBeNull();
-    expect(result?.matchedRule).toBe("cross-agent guard");
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
-  test("Grep with path='<home>/.letta/agents' is denied", () => {
+  test("Grep with path='<home>/.letta/agents' is denied because it recursively reaches memory", () => {
     const result = evaluateCrossAgentGuard(
       "Grep",
       { pattern: "password|secret|token|api_key", path: agentsTreeRoot },
       "/tmp",
     );
     expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
-  test("Glob pointed at a specific foreign agent's root (no /memory) is denied", () => {
+  test("Glob pointed at a specific foreign agent's root is denied because it recursively reaches memory", () => {
     const result = evaluateCrossAgentGuard(
       "Glob",
       { pattern: "**/*.md", path: join(agentsTreeRoot, OTHER) },
       "/tmp",
     );
     expect(result).not.toBeNull();
-    expect(result?.offendingAgentIds).toContain(OTHER);
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
-  test("Glob pointed at a foreign agent's settings.json (no /memory) is denied", () => {
+  test("Read pointed at a foreign agent's settings.json (no /memory) is outside scope", () => {
     const result = evaluateCrossAgentGuard(
       "Read",
       { file_path: join(agentsTreeRoot, OTHER, "settings.json") },
       "/tmp",
     );
-    expect(result).not.toBeNull();
-    expect(result?.offendingAgentIds).toContain(OTHER);
+    expect(result).toBeNull();
   });
 
-  test("Grep with absolute pattern referencing the agents tree is denied", () => {
+  test("Glob with wildcard pattern referencing the agents tree is outside scope without a concrete memory root", () => {
     const result = evaluateCrossAgentGuard(
       "Glob",
       {
@@ -671,22 +675,20 @@ describe("Grep/Glob ancestor-path regression tests", () => {
       },
       "/tmp",
     );
-    expect(result).not.toBeNull();
+    expect(result).toBeNull();
   });
 
-  test("Glob with path=$HOME (ancestor of agents tree) is denied — recursive walk would enter it", () => {
+  test("Glob with path=$HOME is denied because a recursive walk would enter agent memory", () => {
     const result = evaluateCrossAgentGuard(
       "Glob",
       { pattern: "**/*.md", path: HOME },
       "/tmp",
     );
     expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
   test("Grep on the filesystem root is denied for the same reason", () => {
-    // Use the home drive's root so the test works on Windows (where `/`
-    // resolves to the current drive and may not be an ancestor of the
-    // home drive in CI).
     const fsRoot = parse(HOME).root;
     const result = evaluateCrossAgentGuard(
       "Grep",
@@ -694,6 +696,7 @@ describe("Grep/Glob ancestor-path regression tests", () => {
       "/tmp",
     );
     expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
   test("Glob on self memory is allowed", () => {
@@ -706,14 +709,15 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     expect(result).toBeNull();
   });
 
-  test("Glob on self agent root (not under /memory) is allowed", () => {
+  test("Glob on self agent root is denied because recursive tools cannot prove the walk stays in-scope", () => {
     process.env.AGENT_ID = SELF;
     const result = evaluateCrossAgentGuard(
       "Glob",
       { pattern: "**/*", path: join(agentsTreeRoot, SELF) },
       "/tmp",
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 
   test("Grep on a foreign agent is allowed when scoped via LETTA_MEMORY_SCOPE", () => {
@@ -743,12 +747,13 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     expect(result).toBeNull();
   });
 
-  test("ListDir on the agents tree is denied (ListDir is recursive-like for our purposes)", () => {
+  test("ListDir on the agents tree is denied because it recursively reaches memory", () => {
     const result = evaluateCrossAgentGuard(
       "ListDir",
       { path: agentsTreeRoot },
       "/tmp",
     );
     expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toEqual(["<unresolved>"]);
   });
 });
