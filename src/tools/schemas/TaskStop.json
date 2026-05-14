@@ -4,10 +4,6 @@
     "task_id": {
       "type": "string",
       "description": "The ID of the background task to stop"
-    },
-    "shell_id": {
-      "type": "string",
-      "description": "Deprecated: use task_id instead"
     }
   },
   "required": ["task_id"],
