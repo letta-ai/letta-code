@@ -285,6 +285,17 @@ function numericSetting(value: unknown): number | undefined {
     : undefined;
 }
 
+function normalizeLocalOpenAICompatibleBaseURL(
+  provider: PiProvider,
+  baseURL: string | undefined,
+): string | undefined {
+  if (!baseURL) return undefined;
+  if (!getPiProviderSpec(provider).localModelDiscovery) return baseURL;
+
+  const trimmed = baseURL.replace(/\/+$/, "");
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+}
+
 function bedrockLocalProviderOptions(record: LocalProviderRecord | undefined): {
   providerOptions?: Record<string, unknown>;
   envOverrides?: Record<string, string | undefined>;
@@ -387,7 +398,10 @@ export async function resolvePiModelForAgent(
     ? customOpenAICompatibleModel({
         provider,
         modelId,
-        baseURL: baseURL ?? spec.defaultBaseURL ?? "",
+        baseURL:
+          normalizeLocalOpenAICompatibleBaseURL(provider, baseURL) ??
+          spec.defaultBaseURL ??
+          "",
         contextWindow,
         maxTokens,
       })

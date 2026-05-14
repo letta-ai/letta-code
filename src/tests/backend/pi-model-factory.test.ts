@@ -143,6 +143,29 @@ describe("pi model factory", () => {
     }
   });
 
+  test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-llama-cpp-base-url-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "llama_cpp",
+        providerName: "lc-llama-cpp",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:8088/",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "llama.cpp/local-model",
+        { provider_type: "llama_cpp" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.model.baseUrl).toBe("http://localhost:8088/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("restores process env overrides", () => {
     const originalRegion = process.env.AWS_REGION;
     delete process.env.AWS_PROFILE;
