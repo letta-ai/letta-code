@@ -58,4 +58,24 @@ describe("renderBlock", () => {
 
     expect(lines).toEqual([{ text: "> system context", highlighted: false }]);
   });
+
+  test("hard-wraps long unbroken highlighted content with continuation indentation", () => {
+    const columns = 12;
+    const lines = renderBlock(
+      "https://example.com/abcdef",
+      10,
+      columns,
+      true,
+      "> ",
+      "  ",
+    );
+
+    expect(lines).toEqual([
+      { text: " ".repeat(columns), highlighted: true },
+      { text: "> https://ex", highlighted: true },
+      { text: "  ample.com/", highlighted: true },
+      { text: `  abcdef${" ".repeat(4)}`, highlighted: true },
+      { text: " ".repeat(columns), highlighted: true },
+    ]);
+  });
 });
