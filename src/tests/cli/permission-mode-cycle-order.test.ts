@@ -11,7 +11,7 @@ describe("permission mode cycle order", () => {
 
     expect(source).toContain("settingsManager.isPlanModeEnabled()");
     expect(source).toContain(
-      '["unrestricted", "plan", "acceptEdits", "standard"]',
+      '["unrestricted", "acceptEdits", "standard", "plan"]',
     );
     expect(source).toContain('["unrestricted", "acceptEdits", "standard"]');
   });
