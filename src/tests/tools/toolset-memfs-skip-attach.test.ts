@@ -1,8 +1,13 @@
-// Tests that ensureCorrectMemoryTool skips re-attaching when memfs is enabled
+// Tests that ensureCorrectMemoryTool skips server-side tool management when the
+// active backend does not support it (for example, local MemFS backends).
 
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { configureBackendMode } from "../../backend";
+import { __testOverrideGetClient } from "../../backend/api/client";
+import { ensureCorrectMemoryTool } from "../../tools/toolset";
 
-// Track whether the client was ever used (it shouldn't be when memfs is on)
+// Track whether the client was ever used (it shouldn't be when server-side tool
+// management is unavailable).
 const retrieveMock = mock((_agentId: string, _opts?: Record<string, unknown>) =>
   Promise.resolve({
     tools: [{ name: "memory", id: "tool-memory" }],
@@ -25,53 +30,36 @@ const mockGetClient = mock(() =>
   }),
 );
 
-const isMemfsEnabledMock = mock((_agentId: string) => false);
-
-mock.module("../../agent/client", () => ({
-  getClient: mockGetClient,
-}));
-
-mock.module("../../agent/model", () => ({
-  resolveModel: (_id: string) => "anthropic/claude-sonnet-4",
-}));
-
-mock.module("../../settings-manager", () => ({
-  settingsManager: {
-    isMemfsEnabled: isMemfsEnabledMock,
-  },
-}));
-
-const { ensureCorrectMemoryTool } = await import("../../tools/toolset");
-
 afterAll(() => {
+  __testOverrideGetClient(null);
+  configureBackendMode("api");
   mock.restore();
 });
 
 describe("ensureCorrectMemoryTool", () => {
   beforeEach(() => {
+    configureBackendMode("api");
+    __testOverrideGetClient(mockGetClient);
     retrieveMock.mockClear();
     updateMock.mockClear();
     mockGetClient.mockClear();
-    isMemfsEnabledMock.mockClear();
   });
 
-  test("skips attaching memory tool when memfs is enabled", async () => {
-    isMemfsEnabledMock.mockReturnValue(true);
+  test("skips attaching memory tool when backend has no server-side tool management", async () => {
+    configureBackendMode("local");
 
     await ensureCorrectMemoryTool("agent-123", "anthropic/claude-sonnet-4");
 
-    // Should bail out before ever calling getClient
+    // Should bail out before ever calling getClient.
     expect(mockGetClient).not.toHaveBeenCalled();
     expect(retrieveMock).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
   });
 
-  test("proceeds normally when memfs is disabled", async () => {
-    isMemfsEnabledMock.mockReturnValue(false);
-
+  test("proceeds normally when server-side tool management is available", async () => {
     await ensureCorrectMemoryTool("agent-123", "anthropic/claude-sonnet-4");
 
-    // Should have called getClient and retrieved the agent
+    // Should have called getClient and retrieved the agent.
     expect(mockGetClient).toHaveBeenCalled();
     expect(retrieveMock).toHaveBeenCalled();
   });
