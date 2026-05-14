@@ -4111,7 +4111,10 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
-  test("mode changes reject plan mode when plan mode is disabled", () => {
+  test("mode changes reject plan mode when plan mode is disabled", async () => {
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
     const listener = __listenClientTestUtils.createListenerRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     listener.socket = socket as unknown as WebSocket;
@@ -4143,7 +4146,7 @@ describe("listen-client capability-gated approval flow", () => {
         payload.delta?.message_type === "loop_error",
     );
 
-    expect(deviceStatus?.current_permission_mode).toBe("unrestricted");
+    expect(deviceStatus?.current_permission_mode).toBe("standard");
     expect(deviceStatus?.plan_mode_enabled).toBe(false);
     expect(loopStatus?.plan_file_path).toBeNull();
     expect(notice?.delta?.message).toContain(
