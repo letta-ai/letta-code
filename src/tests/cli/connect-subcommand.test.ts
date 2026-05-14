@@ -20,6 +20,7 @@ function createIoDeps() {
       runChatGPTOAuthConnectFlow: mock(() =>
         Promise.resolve({ providerName: "chatgpt-plus-pro" }),
       ),
+      providerStorageTargetLabel: () => "test storage",
     },
   };
 }
@@ -126,6 +127,26 @@ describe("connect subcommand", () => {
         baseURL: "http://127.0.0.1:1234/v1",
         timeout: 600_000,
       },
+    );
+  });
+
+  test("connects llama.cpp local provider alias", async () => {
+    const { deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(
+      ["llama.cpp", "--base-url", "http://localhost:8080/v1"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "llama_cpp",
+      "lc-llama-cpp",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "http://localhost:8080/v1" },
     );
   });
 

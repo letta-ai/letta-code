@@ -285,27 +285,6 @@ function numericSetting(value: unknown): number | undefined {
     : undefined;
 }
 
-function envBaseURL(provider: PiProvider): string | undefined {
-  switch (provider) {
-    case "openrouter":
-      return process.env.OPENROUTER_BASE_URL;
-    case "google-ai":
-      return process.env.GOOGLE_GENERATIVE_AI_BASE_URL;
-    case "minimax":
-      return process.env.MINIMAX_BASE_URL;
-    case "moonshot":
-      return process.env.MOONSHOT_BASE_URL;
-    case "ollama":
-      return process.env.OLLAMA_BASE_URL;
-    case "ollama-cloud":
-      return process.env.OLLAMA_CLOUD_BASE_URL;
-    case "lmstudio":
-      return process.env.LMSTUDIO_BASE_URL;
-    default:
-      return undefined;
-  }
-}
-
 function bedrockLocalProviderOptions(record: LocalProviderRecord | undefined): {
   providerOptions?: Record<string, unknown>;
   envOverrides?: Record<string, string | undefined>;
@@ -366,7 +345,7 @@ export async function resolvePiModelForAgent(
     storageDir,
   );
   let baseURL =
-    connection.baseURL ?? envBaseURL(provider) ?? spec.defaultBaseURL;
+    connection.baseURL ?? spec.baseUrlEnv?.() ?? spec.defaultBaseURL;
   const headers = spec.headers?.();
   let providerOptions: Record<string, unknown> | undefined;
   let envOverrides: Record<string, string | undefined> | undefined;

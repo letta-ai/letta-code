@@ -65,6 +65,7 @@ interface ConnectSubcommandDeps {
   runChatGPTOAuthConnectFlow: (
     callbacks: ChatGPTOAuthFlowCallbacks,
   ) => Promise<unknown>;
+  providerStorageTargetLabel: () => string;
 }
 
 function readStringOption(
@@ -86,6 +87,7 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   createOrUpdateProvider,
   isChatGPTOAuthConnected,
   runChatGPTOAuthConnectFlow,
+  providerStorageTargetLabel,
 };
 
 function formatUsage(): string {
@@ -102,6 +104,7 @@ function formatUsage(): string {
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
+    "  letta connect llama-cpp --base-url http://localhost:8080/v1",
     "  letta connect bedrock --method iam --access-key <id> --secret-key <key> --region <region>",
     "  letta connect bedrock --method profile --profile <name> --region <region>",
   ].join("\n");
@@ -303,7 +306,7 @@ export async function runConnectSubcommand(
       }
 
       io.stdout(
-        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${providerStorageTargetLabel()}.`,
+        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${io.providerStorageTargetLabel()}.`,
       );
       return 0;
     } catch (error) {
@@ -372,7 +375,7 @@ export async function runConnectSubcommand(
       }
 
       io.stdout(
-        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${providerStorageTargetLabel()}.`,
+        `Connected ${provider.byokProvider.displayName} (${provider.byokProvider.providerName}) in ${io.providerStorageTargetLabel()}.`,
       );
       return 0;
     } catch (error) {

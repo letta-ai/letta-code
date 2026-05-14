@@ -84,9 +84,81 @@ describe("local backend pi transcript", () => {
       storageDir,
     });
 
-    const handles = listLocalModels(storageDir).map((model) => model.handle);
+    const handles = (await listLocalModels(storageDir)).map(
+      (model) => model.handle,
+    );
     expect(handles).toContain("zai/glm-4.5-air");
     expect(handles).toContain("zai/glm-5.1");
+  });
+
+  test("does not list unconfigured local provider model guesses", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-unconfigured-local-"),
+    );
+
+    const handles = (await listLocalModels(storageDir)).map(
+      (model) => model.handle,
+    );
+    expect(handles.some((handle) => handle.startsWith("ollama/"))).toBe(false);
+    expect(handles.some((handle) => handle.startsWith("lmstudio/"))).toBe(
+      false,
+    );
+    expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
+      false,
+    );
+  });
+
+  test("discovers configured LM Studio models from OpenAI-compatible catalog", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-lmstudio-discovery-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      return new Response(
+        JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
+    expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
+    expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
+  });
+
+  test("discovers configured llama.cpp models from OpenAI-compatible catalog", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-llama-cpp-discovery-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "llama_cpp",
+      providerName: "lc-llama-cpp",
+      apiKey: "not-needed",
+      baseURL: "http://localhost:8080/v1",
+      storageDir,
+    });
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ data: [{ id: "local-model" }] }), {
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(handles).toContain("llama.cpp/local-model");
   });
 
   test("writes versioned pi transcript manifest for new local conversations", async () => {

@@ -149,6 +149,15 @@ export const BYOK_PROVIDERS = [
     defaultApiKey: "not-needed",
   },
   {
+    id: "llama-cpp",
+    displayName: "llama.cpp (local)",
+    description: "Connect local llama.cpp at http://localhost:8080/v1",
+    providerType: "llama_cpp",
+    providerName: "lc-llama-cpp",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
+  },
+  {
     id: "bedrock",
     displayName: "AWS Bedrock",
     description: "Connect to Claude on Amazon Bedrock",
