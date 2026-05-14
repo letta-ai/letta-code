@@ -355,7 +355,28 @@ export function resolvePiModelForAgent(
           maxTokens,
         })
       : withOverrides(
-          getModel(spec.piProvider ?? "openai", modelId as never) as Model<Api>,
+      : catalogModel
+        ? withOverrides(catalogModel, {
+            baseURL,
+            headers,
+            contextWindow,
+            maxTokens,
+          })
+        : (() => {
+            const fallback = getModel(spec.piProvider ?? "openai", modelId as never);
+            if (!fallback) {
+              throw new Error(
+                `Unknown model "${modelId}" for provider "${provider}". ` +
+                `Check the model handle or update the model catalog.`,
+              );
+            }
+            return withOverrides(fallback as Model<Api>, {
+              baseURL,
+              headers,
+              contextWindow,
+              maxTokens,
+            });
+          })()
           { baseURL, headers, contextWindow, maxTokens },
         );
 
