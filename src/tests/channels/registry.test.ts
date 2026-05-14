@@ -164,6 +164,59 @@ describe("ChannelRegistry", () => {
     });
     expect(replies[0]?.text).toContain("Telegram is connected to Letta Code");
   });
+
+  test("unsupported slash commands get direct channel guidance instead of agent delivery", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/compact now",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "77",
+    });
+    expect(replies[0]?.text).toContain(
+      "Telegram received /compact now, but that slash command is not supported in channels yet.",
+    );
+  });
 });
 
 describe("buildSlackConversationSummary", () => {
