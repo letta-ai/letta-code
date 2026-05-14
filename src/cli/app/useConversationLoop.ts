@@ -71,6 +71,7 @@ import {
   formatTelemetryErrorMessage,
   getRetryStatusMessage,
   isEncryptedContentError,
+  isProviderStreamDisconnectErrorText,
 } from "../helpers/errorFormatter";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
 import { buildGoalBudgetLimitPrompt } from "../helpers/goalCommand";
@@ -2621,7 +2622,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   ),
                 });
 
-                if (!isEncryptedContentError(errorObject)) {
+                if (
+                  !isEncryptedContentError(errorObject) &&
+                  !(
+                    serverErrorDetail &&
+                    isProviderStreamDisconnectErrorText(serverErrorDetail)
+                  )
+                ) {
                   // Show appropriate error hint based on stop reason
                   appendError(
                     getErrorHintForStopReason(
