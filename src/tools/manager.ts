@@ -276,8 +276,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Edit",
   "EnterPlanMode",
   "ExitPlanMode",
-  "Glob",
-  "Grep",
   "TaskStop",
   // "MultiEdit",
   // "LS",
