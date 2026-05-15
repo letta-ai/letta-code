@@ -69,7 +69,7 @@ export function toQueuedMsg(
           .filter((p): p is { type: "text"; text: string } => p.type === "text")
           .map((p) => p.text)
           .join("");
-  return { kind: "user", text };
+  return { kind: "user", text, queueItemId: item.id };
 }
 
 /**

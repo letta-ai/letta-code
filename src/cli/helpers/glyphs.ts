@@ -5,6 +5,8 @@
 export const CLI_GLYPHS = {
   /** User input prompt character */
   prompt: "›",
+  /** Focused queue item indicator */
+  focus: "▸",
   /** Bullet for assistant/tool/status messages */
   bullet: "•",
   /** Result continuation corner — aligns with continuation bar */
