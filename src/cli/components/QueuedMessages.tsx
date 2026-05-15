@@ -42,7 +42,6 @@ export const QueuedMessages = memo(({ messages }: QueuedMessagesProps) => {
           </Box>
         </Box>
       )}
-
     </Box>
   );
 });

@@ -1105,8 +1105,6 @@ export default function App({
   // Message queue state for queueing messages during streaming
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
 
-
-
   // QueueRuntime — authoritative queue. maxItems: Infinity disables drop limits
   // to match the previous unbounded array semantics. queueDisplay is a derived
   // UI state maintained by the onEnqueued/onDequeued/onCleared callbacks.
@@ -4422,7 +4420,6 @@ export default function App({
       precomputedDiffsRef={precomputedDiffsRef}
       profileConfirmPending={profileConfirmPending}
       queueDisplay={queueDisplay}
-
       queuedDecisions={queuedDecisions}
       queuedIds={queuedIds}
       reasoningTabCycleEnabled={reasoningTabCycleEnabled}

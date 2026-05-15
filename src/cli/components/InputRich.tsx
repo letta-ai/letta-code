@@ -1410,8 +1410,6 @@ export function Input({
     }
   });
 
-
-
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!interactionEnabled) return;
@@ -1933,8 +1931,8 @@ export function Input({
                 footerNotification={footerNotification}
                 goalStatusText={goalStatusText}
                 hasQueuedMessages={
-                  (messageQueue?.filter((m) => m.kind === "user").length ??
-                    0) > 0
+                  (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
+                  0
                 }
               />
             )}
