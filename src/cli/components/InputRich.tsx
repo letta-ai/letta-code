@@ -1457,12 +1457,13 @@ export function Input({
           return;
         }
 
-        // Check if we should load queued messages into input for editing
+        // Check if we should load queued messages into input for editing.
+        // Fire when already at position 0 (empty input or after first Up moved us here).
         if (
           messageQueue &&
           messageQueue.filter((m) => m.kind === "user").length > 0 &&
           onQueueEdit &&
-          atStartBoundary
+          (atStartBoundary || currentCursorPosition === 0)
         ) {
           setAtStartBoundary(false);
           const combined = onQueueEdit();
