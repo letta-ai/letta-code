@@ -99,6 +99,8 @@ export function filterModelsByAvailabilityForSelector<
 
 interface ModelSelectorProps {
   currentModelId?: string;
+  /** The current model's handle (e.g., "anthropic/claude-sonnet-4.6") for accurate current model highlighting */
+  currentModelHandle?: string | null;
   onSelect: (modelId: string) => void;
   onCancel: () => void;
   /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
@@ -115,6 +117,7 @@ interface ModelSelectorProps {
 
 export function ModelSelector({
   currentModelId,
+  currentModelHandle,
   onSelect,
   onCancel,
   filterProvider,
@@ -482,27 +485,26 @@ export function ModelSelector({
   // Recent models: models the user has recently selected (max 5)
   // Only includes models that are currently available
   const recentModels = useMemo(() => {
-    if (availableHandles === undefined || availableHandles === null) return [];
-    const recentIds = settingsManager.getRecentModels();
-    if (recentIds.length < 2) return []; // Don't show recents with < 2 items
+    if (availableHandles === undefined) return [];
+    const recentHandles = settingsManager.getRecentModels();
+    if (recentHandles.length < 2) return []; // Don't show recents with < 2 items
 
     const resolved: UiModel[] = [];
-    for (const modelId of recentIds) {
-      // Skip if not available
-      const handle = modelId.includes("/") ? modelId : modelId;
-      if (!availableHandles.has(handle)) continue;
+    for (const handle of recentHandles) {
+      // When availableHandles is non-null, skip unavailable models
+      if (availableHandles !== null && !availableHandles.has(handle)) continue;
 
       // Try to resolve to a static model with label/description
       const staticModel = pickPreferredStaticModel(handle);
       if (staticModel) {
         resolved.push({
           ...staticModel,
-          id: modelId,
+          id: handle,
           handle,
         });
       } else {
         resolved.push({
-          id: modelId,
+          id: handle,
           handle,
           label: handle,
           description: "",
@@ -822,7 +824,9 @@ export function ModelSelector({
         {visibleModels.map((model, index) => {
           const actualIndex = startIndex + index;
           const isSelected = actualIndex === selectedIndex;
-          const isCurrent = model.id === currentModelId;
+          const isCurrent =
+            model.id === currentModelId ||
+            model.handle === currentModelHandle;
           // Show lock for non-free models when on free tier (only for Letta API tabs)
           const showLock =
             isFreeTier &&
