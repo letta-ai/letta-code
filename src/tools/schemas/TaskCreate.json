@@ -16,7 +16,8 @@
     "metadata": {
       "type": "object",
       "description": "Free-form string-valued metadata bag attached to the task.",
-      "propertyNames": { "type": "string" }
+      "propertyNames": { "type": "string" },
+      "additionalProperties": { "type": "string" }
     }
   },
   "required": ["subject", "description"],
