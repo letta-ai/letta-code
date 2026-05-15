@@ -177,7 +177,7 @@ type AppViewProps = {
   handleDenyCurrent: (reason: string) => Promise<void>;
   handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
   handleEnterPlanModeReject: () => Promise<void>;
-  handleEnterQueueEditMode: () => void;
+  handleQueueEdit: () => string;
   handleExit: () => Promise<void>;
   handleExperimentSelect: (
     selection: { experimentId: ExperimentId; enabled: boolean },
@@ -340,7 +340,7 @@ export function AppView(props: AppViewProps) {
     handleDenyCurrent,
     handleEnterPlanModeApprove,
     handleEnterPlanModeReject,
-    handleEnterQueueEditMode,
+    handleQueueEdit,
     handleExit,
     handleExperimentSelect,
     handleFeedbackSubmit,
@@ -698,7 +698,7 @@ export function AppView(props: AppViewProps) {
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 messageQueue={queueDisplay}
-                onEnterQueueEditMode={handleEnterQueueEditMode}
+                onQueueEdit={handleQueueEdit}
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
