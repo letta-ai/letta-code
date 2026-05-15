@@ -34,6 +34,7 @@ const WATCHED_PATHS = [
   "codex-rs/core/src/tools",
   "codex-rs/apply-patch",
 ];
+const MAX_COMMITS_PER_PATH = 8;
 
 interface Release {
   tag_name: string;
@@ -203,7 +204,12 @@ function commitsForPath(
     ["log", "--format=%h %s", `${prevTag}..${currTag}`, "--", path],
     repoDir,
   );
-  return out.split("\n").filter(Boolean).slice(0, 12);
+  const commits = out.split("\n").filter(Boolean);
+  if (commits.length <= MAX_COMMITS_PER_PATH) return commits;
+  return [
+    ...commits.slice(0, MAX_COMMITS_PER_PATH),
+    `…and ${commits.length - MAX_COMMITS_PER_PATH} more commits`,
+  ];
 }
 
 function diffPreview(
