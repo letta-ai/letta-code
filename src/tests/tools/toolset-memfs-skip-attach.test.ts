@@ -3,8 +3,10 @@
 
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { configureBackendMode } from "../../backend";
-import { __testOverrideGetClient } from "../../backend/api/client";
-import { ensureCorrectMemoryTool } from "../../tools/toolset";
+import {
+  __testOverrideToolsetGetClient,
+  ensureCorrectMemoryTool,
+} from "../../tools/toolset";
 
 // Track whether the client was ever used (it shouldn't be when server-side tool
 // management is unavailable).
@@ -31,7 +33,7 @@ const mockGetClient = mock(() =>
 );
 
 afterAll(() => {
-  __testOverrideGetClient(null);
+  __testOverrideToolsetGetClient(null);
   configureBackendMode("api");
   mock.restore();
 });
@@ -39,7 +41,7 @@ afterAll(() => {
 describe("ensureCorrectMemoryTool", () => {
   beforeEach(() => {
     configureBackendMode("api");
-    __testOverrideGetClient(mockGetClient);
+    __testOverrideToolsetGetClient(mockGetClient);
     retrieveMock.mockClear();
     updateMock.mockClear();
     mockGetClient.mockClear();
@@ -58,10 +60,10 @@ describe("ensureCorrectMemoryTool", () => {
 
   test("proceeds normally when server-side tool management is available", async () => {
     // The full Bun suite shares backend singleton state across files. Force the
-    // expected backend immediately before exercising the function so another
-    // file cannot clobber beforeEach setup between tests.
+    // expected backend/client immediately before exercising the function so
+    // another file cannot clobber beforeEach setup between tests.
     configureBackendMode("api");
-    __testOverrideGetClient(mockGetClient);
+    __testOverrideToolsetGetClient(mockGetClient);
 
     await ensureCorrectMemoryTool("agent-123", "anthropic/claude-sonnet-4");
 

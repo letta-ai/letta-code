@@ -29,6 +29,17 @@ import {
 } from "./manager";
 import type { ToolName } from "./toolDefinitions";
 
+let getToolsetClient: () => Promise<Awaited<ReturnType<typeof getClient>>> =
+  getClient;
+
+export function __testOverrideToolsetGetClient(
+  factory: (() => Promise<unknown>) | null,
+): void {
+  getToolsetClient = factory
+    ? (factory as () => Promise<Awaited<ReturnType<typeof getClient>>>)
+    : getClient;
+}
+
 // Toolset definitions from manager.ts (single source of truth)
 // Keep these as direct references at call-sites (not top-level aliases) to avoid
 // temporal-dead-zone issues under circular import initialization.
@@ -414,7 +425,7 @@ export async function ensureCorrectMemoryTool(
   if (!getBackend().capabilities.serverSideToolManagement) {
     return;
   }
-  const client = await getClient();
+  const client = await getToolsetClient();
 
   try {
     // Need full agent state for tool_rules, so use retrieve with include
