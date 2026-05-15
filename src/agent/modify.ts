@@ -492,7 +492,11 @@ export async function updateAgentSystemPromptMemfs(
     const { settingsManager } = await import("../settings-manager");
     const { isKnownPreset, buildSystemPrompt } = await import("./promptAssets");
 
-    const newMode = enableMemfs ? "memfs" : "standard";
+    const newMode = enableMemfs
+      ? getBackend().capabilities.localMemfs
+        ? "local-memfs"
+        : "memfs"
+      : "standard";
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;

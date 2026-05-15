@@ -3,8 +3,8 @@
  * Uses same heuristic as context_doctor to estimate system prompt token count on startup
  */
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { settingsManager } from "../../settings-manager";
+import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
 import { debugWarn } from "../../utils/debug";
 import {
   estimateSystemPromptTokensFromMemoryDir,
@@ -53,8 +53,8 @@ export function refreshSystemPromptDoctorState(
   try {
     let estimatedSystemPromptTokens = 0;
 
-    if (settingsManager.isMemfsEnabled(agentId)) {
-      const memoryDir = getMemoryFilesystemRoot(agentId);
+    if (isActiveMemfsEnabled(agentId)) {
+      const memoryDir = getScopedMemoryFilesystemRoot(agentId);
       estimatedSystemPromptTokens =
         estimateSystemPromptTokensFromMemoryDir(memoryDir);
     } else {

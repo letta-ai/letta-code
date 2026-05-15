@@ -6,6 +6,7 @@ import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "../../agent/check-approval";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
+import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
 import type { ModelReasoningEffort } from "../../agent/model";
 import type { PersonalityId } from "../../agent/personality";
 import type { SessionStats } from "../../agent/stats";
@@ -762,7 +763,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "sleeptime" && (
               <SleeptimeSelector
                 initialSettings={getReflectionSettings(agentId)}
-                memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
+                memfsEnabled={isActiveMemfsEnabled(agentId)}
                 onSave={handleSleeptimeModeSelect}
                 onCancel={closeOverlay}
               />
@@ -1413,7 +1414,7 @@ export function AppView(props: AppViewProps) {
             {/* Memory Viewer - conditionally mounted as overlay */}
             {/* Use tree view for memfs-enabled agents, tab view otherwise */}
             {activeOverlay === "memory" &&
-              (settingsManager.isMemfsEnabled(agentId) ? (
+              (isActiveMemfsEnabled(agentId) ? (
                 <MemfsTreeViewer
                   agentId={agentId}
                   agentName={agentState?.name}
