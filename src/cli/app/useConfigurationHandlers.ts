@@ -409,6 +409,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           setCurrentModelId(modelId);
           setTempModelOverride(null);
 
+          // Record this model in the user's recent models list
+          settingsManager.addRecentModel(modelId);
+
           // Reset context token tracking since different models have different tokenizers
           resetContextHistory(contextTrackerRef.current);
           setCurrentModelHandle(modelHandle);

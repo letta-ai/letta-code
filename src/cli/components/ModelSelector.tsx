@@ -13,6 +13,7 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "../../providers/byok-providers";
+import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -23,6 +24,7 @@ const SOLID_LINE = "─";
 const VISIBLE_ITEMS = 8;
 
 type ModelCategory =
+  | "recents"
   | "supported"
   | "byok"
   | "byok-all"
@@ -43,15 +45,24 @@ export function usesBackendModelCatalog(
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
 // For Letta-hosted, keep ordering consistent across billing tiers.
+// "recents" is prepended when the user has >= 2 recently used models.
 export function getModelCategories(
   _billingTier?: string,
   isSelfHosted?: boolean,
   localModelCatalog?: boolean,
 ): ModelCategory[] {
   if (usesBackendModelCatalog(isSelfHosted, localModelCatalog)) {
-    return ["server-recommended", "server-all"];
+    const base: ModelCategory[] = ["server-recommended", "server-all"];
+    if (settingsManager.getRecentModels().length >= 2) {
+      return ["recents", ...base];
+    }
+    return base;
   }
-  return ["supported", "all", "byok", "byok-all"];
+  const base: ModelCategory[] = ["supported", "all", "byok", "byok-all"];
+  if (settingsManager.getRecentModels().length >= 2) {
+    return ["recents", ...base];
+  }
+  return base;
 }
 
 type UiModel = {
@@ -468,8 +479,44 @@ export function ModelSelector({
     return handles;
   }, [backendModelCatalog, allApiHandles, searchQuery]);
 
+  // Recent models: models the user has recently selected (max 5)
+  // Only includes models that are currently available
+  const recentModels = useMemo(() => {
+    if (availableHandles === undefined || availableHandles === null) return [];
+    const recentIds = settingsManager.getRecentModels();
+    if (recentIds.length < 2) return []; // Don't show recents with < 2 items
+
+    const resolved: UiModel[] = [];
+    for (const modelId of recentIds) {
+      // Skip if not available
+      const handle = modelId.includes("/") ? modelId : modelId;
+      if (!availableHandles.has(handle)) continue;
+
+      // Try to resolve to a static model with label/description
+      const staticModel = pickPreferredStaticModel(handle);
+      if (staticModel) {
+        resolved.push({
+          ...staticModel,
+          id: modelId,
+          handle,
+        });
+      } else {
+        resolved.push({
+          id: modelId,
+          handle,
+          label: handle,
+          description: "",
+        });
+      }
+    }
+    return resolved;
+  }, [availableHandles, pickPreferredStaticModel]);
+
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
+    if (category === "recents") {
+      return recentModels;
+    }
     if (category === "supported") {
       return supportedModels;
     }
@@ -500,6 +547,7 @@ export function ModelSelector({
     return allLettaModels;
   }, [
     category,
+    recentModels,
     supportedModels,
     byokModels,
     byokAllModels,
@@ -652,6 +700,7 @@ export function ModelSelector({
   );
 
   const getCategoryLabel = (cat: ModelCategory) => {
+    if (cat === "recents") return `Recents [${recentModels.length}]`;
     if (cat === "supported") return `Letta API [${supportedModels.length}]`;
     if (cat === "byok") return `BYOK [${byokModels.length}]`;
     if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
@@ -662,6 +711,9 @@ export function ModelSelector({
   };
 
   const getCategoryDescription = (cat: ModelCategory) => {
+    if (cat === "recents") {
+      return "Models you've recently used";
+    }
     if (cat === "server-recommended") {
       return "Recommended models currently available for this account";
     }
