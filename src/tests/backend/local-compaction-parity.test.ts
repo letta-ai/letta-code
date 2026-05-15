@@ -4,49 +4,75 @@ import {
   type LocalCompactionStats,
   packageLocalSummaryMessage,
 } from "../../backend/local/compaction";
-import type { LocalMessage } from "../../backend/local/LocalMessage";
+import {
+  emptyLocalUsage,
+  type LocalMessage,
+} from "../../backend/local/LocalMessage";
 
-function message(message: LocalMessage): LocalMessage {
-  return message;
+function user(
+  id: string,
+  content: Extract<LocalMessage, { role: "user" }>["content"],
+  metadata?: Extract<LocalMessage, { role: "user" }>["metadata"],
+): LocalMessage {
+  return {
+    id,
+    role: "user",
+    content,
+    timestamp: 1,
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function assistant(
+  id: string,
+  content: Extract<LocalMessage, { role: "assistant" }>["content"],
+): LocalMessage {
+  return {
+    id,
+    role: "assistant",
+    content,
+    api: "openai-responses",
+    provider: "openai",
+    model: "gpt-5.5",
+    usage: emptyLocalUsage(),
+    stopReason: "stop",
+    timestamp: 1,
+  };
+}
+
+function toolResult(
+  id: string,
+  content: Extract<LocalMessage, { role: "toolResult" }>["content"],
+): LocalMessage {
+  return {
+    id,
+    role: "toolResult",
+    toolCallId: "call-shell",
+    toolName: "ShellCommand",
+    content,
+    isError: false,
+    timestamp: 1,
+  };
 }
 
 describe("local compaction API parity", () => {
   test("formats local messages with the API simple_formatter transcript contract", () => {
     const transcript = formatLocalMessagesForSummary([
-      message({
-        id: "sys-1",
-        role: "system",
-        parts: [{ type: "text", text: "system prompt is excluded" }],
-      } as LocalMessage),
-      message({
-        id: "user-1",
-        role: "user",
-        parts: [
-          { type: "text", text: "Please inspect this screenshot." },
-          {
-            type: "file",
-            mediaType: "image/png",
-            url: "data:image/png;base64,aGVsbG8=",
-            filename: "screenshot.png",
-          },
-        ],
-      } as LocalMessage),
-      message({
-        id: "assistant-1",
-        role: "assistant",
-        parts: [
-          { type: "step-start" },
-          { type: "reasoning", text: "I should inspect the directory first." },
-          {
-            type: "tool-ShellCommand",
-            toolCallId: "call-shell",
-            state: "output-available",
-            input: { command: "ls", workdir: "/repo" },
-            output: "README.md\nsrc",
-          },
-          { type: "text", text: "The repo has source and docs." },
-        ],
-      } as LocalMessage),
+      user("user-1", [
+        { type: "text", text: "Please inspect this screenshot." },
+        { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+      ]),
+      assistant("assistant-1", [
+        { type: "thinking", thinking: "I should inspect the directory first." },
+        {
+          type: "toolCall",
+          id: "call-shell",
+          name: "ShellCommand",
+          arguments: { command: "ls", workdir: "/repo" },
+        },
+        { type: "text", text: "The repo has source and docs." },
+      ]),
+      toolResult("tool-1", [{ type: "text", text: "README.md\nsrc" }]),
     ]);
 
     expect(transcript).toBe(
@@ -60,19 +86,23 @@ describe("local compaction API parity", () => {
   test("uses API tool-return truncation semantics in fallback transcripts", () => {
     const transcript = formatLocalMessagesForSummary(
       [
-        message({
-          id: "assistant-tool",
-          role: "assistant",
-          parts: [
-            {
-              type: "tool-ShellCommand",
-              toolCallId: "call-big",
-              state: "output-available",
-              input: { command: "cat huge.log" },
-              output: `${"x".repeat(12)}END`,
-            },
-          ],
-        } as LocalMessage),
+        assistant("assistant-tool", [
+          {
+            type: "toolCall",
+            id: "call-big",
+            name: "ShellCommand",
+            arguments: { command: "cat huge.log" },
+          },
+        ]),
+        {
+          id: "tool-big",
+          role: "toolResult",
+          toolCallId: "call-big",
+          toolName: "ShellCommand",
+          content: [{ type: "text", text: `${"x".repeat(12)}END` }],
+          isError: false,
+          timestamp: 1,
+        },
       ],
       { truncationChars: 10 },
     );
@@ -91,16 +121,9 @@ describe("local compaction API parity", () => {
     });
 
     const transcript = formatLocalMessagesForSummary([
-      message({
-        id: "summary-1",
-        role: "user",
-        metadata: {
-          compaction: {
-            summary: "raw recursive summary",
-          },
-        },
-        parts: [{ type: "text", text: packedSummary }],
-      } as LocalMessage),
+      user("summary-1", [{ type: "text", text: packedSummary }], {
+        compaction: { summary: "raw recursive summary" },
+      }),
     ]);
 
     expect(transcript).toBe(
@@ -120,7 +143,6 @@ describe("local compaction API parity", () => {
     const packed = JSON.parse(
       packageLocalSummaryMessage("summary body", stats, "all"),
     ) as Record<string, unknown>;
-
     expect(packed.type).toBe("system_alert");
     expect(packed.message).toBe(
       "Note: prior messages have been hidden from view due to conversation memory constraints.\nThe following is a summary of the previous messages:\n summary body",
@@ -139,7 +161,6 @@ describe("local compaction API parity", () => {
     const packed = JSON.parse(
       packageLocalSummaryMessage("sliding body", stats, "sliding_window"),
     ) as Record<string, unknown>;
-
     expect(packed.type).toBe("system_alert");
     expect(packed.message).toBe(
       "Note: 6 messages from the beginning of the conversation have been hidden from view due to memory constraints.\nThe following is a summary of the previous messages:\n sliding body",

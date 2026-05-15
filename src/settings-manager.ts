@@ -4,6 +4,10 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  getLocalBackendStorageDir,
+  isLocalBackendEnvEnabled,
+} from "./backend/local/paths";
 import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
@@ -202,13 +206,23 @@ function normalizeBaseUrl(baseUrl: string): string {
   return normalized;
 }
 
+function getLocalBackendSettingsKey(): string {
+  return `local:${resolve(getLocalBackendStorageDir())}`;
+}
+
 /**
  * Get the current server key for indexing settings.
- * Uses LETTA_BASE_URL env var or settings.env.LETTA_BASE_URL, defaults to api.letta.com.
+ * Uses the local backend storage path when local backend mode is active,
+ * otherwise LETTA_BASE_URL env var or settings.env.LETTA_BASE_URL, defaulting
+ * to api.letta.com.
  * @param settings - Optional settings object to check for env overrides
- * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
+ * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283", "local:/path/to/store")
  */
 function getCurrentServerKey(settings?: Settings | null): string {
+  if (isLocalBackendEnvEnabled()) {
+    return getLocalBackendSettingsKey();
+  }
+
   const baseUrl =
     process.env.LETTA_BASE_URL ||
     settings?.env?.LETTA_BASE_URL ||
@@ -223,6 +237,10 @@ function getCurrentServerKey(settings?: Settings | null): string {
  * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
  */
 function getCurrentMemfsServerKey(settings?: Settings | null): string {
+  if (isLocalBackendEnvEnabled()) {
+    return getLocalBackendSettingsKey();
+  }
+
   const baseUrl =
     process.env.LETTA_MEMFS_BASE_URL ||
     settings?.env?.LETTA_MEMFS_BASE_URL ||

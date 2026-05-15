@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { CommandHookConfig, HookCommand } from "../hooks/types";
 import { runWithRuntimeContext } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
@@ -27,6 +27,8 @@ const keychainAvailablePrecompute = await isKeychainAvailable();
 
 // Store original HOME to restore after tests
 const originalHome = process.env.HOME;
+const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
 let testHomeDir: string;
 let testProjectDir: string;
 
@@ -43,6 +45,8 @@ beforeEach(async () => {
 
   // Override HOME for tests (must be done BEFORE initialize is called)
   process.env.HOME = testHomeDir;
+  delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  delete process.env.LETTA_LOCAL_BACKEND_DIR;
 });
 
 afterEach(async () => {
@@ -56,6 +60,16 @@ afterEach(async () => {
 
   // Restore original HOME AFTER reset completes
   process.env.HOME = originalHome;
+  if (originalLocalBackendFlag === undefined) {
+    delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  } else {
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
+  }
+  if (originalLocalBackendDir === undefined) {
+    delete process.env.LETTA_LOCAL_BACKEND_DIR;
+  } else {
+    process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+  }
 
   // Restore the real service name
   setServiceName("letta-code");
@@ -1275,6 +1289,27 @@ describe("Settings Manager - Agents Array Migration", () => {
         process.env.LETTA_MEMFS_BASE_URL = originalMemfsBaseUrl;
       }
     }
+  });
+
+  test("setMemfsEnabled stores local backend settings under the local storage key", async () => {
+    await settingsManager.initialize();
+
+    const storageDir = join(testHomeDir, "lc-local-backend");
+    const localKey = `local:${resolve(storageDir)}`;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+    settingsManager.setMemfsEnabled("agent-local-memfs-write", true);
+
+    const settings = settingsManager.getSettings();
+    expect(settings.agents).toContainEqual({
+      agentId: "agent-local-memfs-write",
+      baseUrl: localKey,
+      memfs: true,
+    });
+    expect(settingsManager.isMemfsEnabled("agent-local-memfs-write")).toBe(
+      true,
+    );
   });
 
   test("setMemfsEnabled persists to disk", async () => {

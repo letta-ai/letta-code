@@ -15,7 +15,7 @@ import {
   updateProvider as updateProviderRequest,
 } from "../backend/api/providers";
 import { getBackend } from "../backend/backend";
-import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "../backend/dev/AISDKProviderRegistry";
+import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "../backend/dev/PiProviderRegistry";
 import {
   createOrUpdateLocalProvider,
   deleteLocalProvider,
@@ -145,6 +145,15 @@ export const BYOK_PROVIDERS = [
     description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
     providerType: "lmstudio",
     providerName: "lc-lmstudio",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
+  },
+  {
+    id: "llama-cpp",
+    displayName: "llama.cpp (local)",
+    description: "Connect local llama.cpp at http://localhost:8080/v1",
+    providerType: "llama_cpp",
+    providerName: "lc-llama-cpp",
     requiresApiKey: false,
     defaultApiKey: "not-needed",
   },

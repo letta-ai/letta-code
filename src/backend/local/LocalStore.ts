@@ -28,18 +28,27 @@ import type {
   ConversationUpdateBody,
 } from "../backend";
 import type { LocalCompactionStats } from "./compaction";
-import type { LocalMessage } from "./LocalMessage";
+import {
+  emptyLocalUsage,
+  type LocalAssistantMessage,
+  type LocalImageContent,
+  type LocalMessage,
+  type LocalTextContent,
+  type LocalToolCall,
+  type LocalToolResultMessage,
+  type LocalUserMessage,
+} from "./LocalMessage";
 import {
   cloneLocalMessage,
-  isLocalToolPart,
-  mergeSnapshotPartsWithExistingTools,
+  isLocalToolCallContent,
+  mergeSnapshotContentWithExistingToolCalls,
   projectedMessageLookupKeys,
   projectLocalMessagesToStoredMessages,
   projectLocalMessageToStoredMessages,
   withProjectedMessageDates,
 } from "./LocalMessageProjection";
 import {
-  getAttachedLocalUIMessage,
+  getAttachedLocalMessage,
   isLocalStateChunkOnly,
 } from "./LocalStreamChunks";
 import type { LocalCompiledSystemPrompt } from "./systemPromptCompilation";
@@ -361,45 +370,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function localFilePartFromLegacyImage(
+function localImageContentFromLegacyImage(
   part: Record<string, unknown>,
-): LocalMessagePart | null {
-  if (part.type !== "image" || !isRecord(part.source)) {
-    return null;
-  }
-
+): LocalImageContent | null {
+  if (part.type !== "image" || !isRecord(part.source)) return null;
   const source = part.source;
-  if (source.type !== "base64") {
-    return null;
-  }
-
+  if (source.type !== "base64") return null;
   const mediaType = source.media_type;
   const data = source.data;
-  if (typeof mediaType !== "string" || typeof data !== "string") {
-    return null;
-  }
-
-  return {
-    type: "file",
-    mediaType,
-    url: `data:${mediaType};base64,${data}`,
-  } as LocalMessagePart;
+  if (typeof mediaType !== "string" || typeof data !== "string") return null;
+  return { type: "image", mimeType: mediaType, data };
 }
 
-function normalizeLocalMessageForAISDK(message: LocalMessage): LocalMessage {
-  let didChange = false;
-  const parts = message.parts.map((part) => {
-    if (isRecord(part)) {
-      const filePart = localFilePartFromLegacyImage(part);
-      if (filePart) {
-        didChange = true;
-        return filePart;
-      }
-    }
-    return part;
-  });
-
-  return didChange ? { ...message, parts } : message;
+function normalizeLocalMessageForPi(message: LocalMessage): LocalMessage {
+  return message;
 }
 
 function textFromContent(content: unknown): string {
@@ -504,30 +488,17 @@ export class LocalBackendNotFoundError extends Error {
   }
 }
 
-type LocalMessagePart = LocalMessage["parts"][number];
-type LocalToolPart = LocalMessagePart & {
-  type: `tool-${string}`;
-  toolCallId: string;
-};
-type LocalTextPart = LocalMessagePart & {
-  type: "text";
-  text: string;
-  state?: "streaming" | "done";
-  providerMetadata?: unknown;
-};
-type LocalReasoningPart = LocalMessagePart & {
-  type: "reasoning";
-  text: string;
-  state?: "streaming" | "done";
-  providerMetadata?: unknown;
-};
+type LocalContentPart = LocalTextContent | LocalImageContent;
+type LocalToolCallContent = LocalToolCall;
+function timestampFromIso(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
 
-function isSettledLocalToolState(state: unknown): boolean {
-  return (
-    state === "output-available" ||
-    state === "output-error" ||
-    state === "output-denied"
-  );
+function isoFromTimestamp(value: number | undefined): string | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? new Date(value).toISOString()
+    : undefined;
 }
 
 function encodePathSegment(value: string): string {
@@ -551,6 +522,107 @@ function readJsonlFile<T>(path: string): T[] {
     .map((line) => JSON.parse(line) as T);
 }
 
+export const LOCAL_TRANSCRIPT_SCHEMA_VERSION = 1;
+export const LOCAL_TRANSCRIPT_MESSAGE_FORMAT = "pi-ai-message-jsonl";
+export const LOCAL_TRANSCRIPT_PROVIDER_STACK = "pi-ai";
+
+export interface LocalTranscriptManifest {
+  schema_version: typeof LOCAL_TRANSCRIPT_SCHEMA_VERSION;
+  message_format: typeof LOCAL_TRANSCRIPT_MESSAGE_FORMAT;
+  provider_stack: typeof LOCAL_TRANSCRIPT_PROVIDER_STACK;
+  created_at: string;
+  migrated_from?: string;
+  migrated_at?: string;
+  backup_path?: string;
+}
+
+export class LocalTranscriptMigrationRequiredError extends Error {
+  constructor(storageDir: string) {
+    const command = localTranscriptMigrationCommand(storageDir);
+    super(
+      [
+        "Local backend found unversioned legacy transcripts that must be converted before use.",
+        `Run: ${command}`,
+        "The migration creates a backup of each old messages.jsonl before writing the converted transcript.",
+      ].join("\n"),
+    );
+    this.name = "LocalTranscriptMigrationRequiredError";
+  }
+}
+
+export function localTranscriptMigrationCommand(storageDir: string): string {
+  const quotedStorageDir = `"${storageDir.replace(/"/g, '\\"')}"`;
+  return `letta local-backend migrate-transcripts --storage-dir ${quotedStorageDir}`;
+}
+
+function transcriptManifestPath(conversationDir: string): string {
+  return join(conversationDir, "manifest.json");
+}
+
+function transcriptMessagesPath(conversationDir: string): string {
+  return join(conversationDir, "messages.jsonl");
+}
+
+function hasNonEmptyJsonl(path: string): boolean {
+  if (!existsSync(path)) return false;
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .some((line) => line.trim().length > 0);
+}
+
+function createLocalTranscriptManifest(
+  input: {
+    migratedFrom?: string;
+    migratedAt?: string;
+    backupPath?: string;
+  } = {},
+): LocalTranscriptManifest {
+  return {
+    schema_version: LOCAL_TRANSCRIPT_SCHEMA_VERSION,
+    message_format: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+    provider_stack: LOCAL_TRANSCRIPT_PROVIDER_STACK,
+    created_at: new Date().toISOString(),
+    ...(input.migratedFrom ? { migrated_from: input.migratedFrom } : {}),
+    ...(input.migratedAt ? { migrated_at: input.migratedAt } : {}),
+    ...(input.backupPath ? { backup_path: input.backupPath } : {}),
+  };
+}
+
+function validateLocalTranscriptManifest(
+  conversationDir: string,
+  storageDir: string,
+): LocalTranscriptManifest | undefined {
+  const manifest = readJsonFile<LocalTranscriptManifest>(
+    transcriptManifestPath(conversationDir),
+  );
+  if (!manifest) {
+    if (hasNonEmptyJsonl(transcriptMessagesPath(conversationDir))) {
+      throw new LocalTranscriptMigrationRequiredError(storageDir);
+    }
+    return undefined;
+  }
+  if (
+    manifest.schema_version !== LOCAL_TRANSCRIPT_SCHEMA_VERSION ||
+    manifest.message_format !== LOCAL_TRANSCRIPT_MESSAGE_FORMAT ||
+    manifest.provider_stack !== LOCAL_TRANSCRIPT_PROVIDER_STACK
+  ) {
+    throw new Error(
+      `Unsupported local transcript format in ${conversationDir}. Run ${localTranscriptMigrationCommand(storageDir)} or start a new local conversation.`,
+    );
+  }
+  return manifest;
+}
+
+function writeLocalTranscriptManifest(
+  conversationDir: string,
+  manifest = createLocalTranscriptManifest(),
+): void {
+  writeFileSync(
+    transcriptManifestPath(conversationDir),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+}
+
 function numericSuffix(value: string, prefix: string): number {
   return value.startsWith(prefix)
     ? Number.parseInt(value.slice(prefix.length), 10) || 0
@@ -558,9 +630,11 @@ function numericSuffix(value: string, prefix: string): number {
 }
 
 function createdAtForLocalMessage(message: LocalMessage): string | undefined {
-  return typeof message.metadata?.created_at === "string"
-    ? message.metadata.created_at
-    : undefined;
+  return (
+    (typeof message.metadata?.created_at === "string"
+      ? message.metadata.created_at
+      : undefined) ?? isoFromTimestamp(message.timestamp)
+  );
 }
 
 function localMessageDate(message: LocalMessage, fallbackDate: string): string {
@@ -1011,13 +1085,13 @@ export class LocalStore {
     agentId: string,
     chunk: LettaStreamingResponse,
   ): LettaStreamingResponse {
-    const localUIMessage = getAttachedLocalUIMessage(chunk);
+    const localMessageSnapshot = getAttachedLocalMessage(chunk);
     if (isLocalStateChunkOnly(chunk)) {
-      if (localUIMessage) {
-        this.applyFinalAssistantUIMessage(
+      if (localMessageSnapshot) {
+        this.applyFinalAssistantMessage(
           conversationId,
           agentId,
-          localUIMessage,
+          localMessageSnapshot,
         );
       }
       return chunk;
@@ -1190,7 +1264,8 @@ export class LocalStore {
           ...(input.stats ? { stats: input.stats } : {}),
         },
       },
-      parts: [{ type: "text", text: input.packedSummary } as LocalMessagePart],
+      content: [{ type: "text", text: input.packedSummary }],
+      timestamp: timestampFromIso(date),
     };
     const compactedMessages = [
       summaryMessage,
@@ -1229,7 +1304,10 @@ export class LocalStore {
         agent_id: agentId,
         conversation_id: conversation.id,
       },
-      parts: this.localPartsFromInputContent(normalizeContent(message.content)),
+      content: this.localContentFromInputContent(
+        normalizeContent(message.content),
+      ),
+      timestamp: timestampFromIso(date),
     };
     this.pushLocalMessage(conversation.id, agentId, localMessage);
     return localMessage;
@@ -1295,11 +1373,12 @@ export class LocalStore {
     }
   }
 
-  private applyFinalAssistantUIMessage(
+  private applyFinalAssistantMessage(
     conversationId: string,
     agentId: string,
     message: LocalMessage,
   ): void {
+    if (message.role !== "assistant") return;
     const conversation = this.ensureConversation(conversationId, agentId);
     const key = this.conversationKey(conversation.id, agentId);
     const localMessages = this.localMessagesByConversationKey.get(key) ?? [];
@@ -1308,14 +1387,14 @@ export class LocalStore {
     const id = existingAssistant?.id ?? this.nextLocalMessageId();
     const date =
       existingAssistant?.metadata?.created_at ?? this.currentLocalMessageDate();
-    const snapshot = cloneLocalMessage(message);
-    const localMessage: LocalMessage = {
+    const snapshot = cloneLocalMessage(message) as LocalAssistantMessage;
+    const localMessage: LocalAssistantMessage = {
       ...snapshot,
       id,
       role: "assistant",
-      parts: mergeSnapshotPartsWithExistingTools(
-        snapshot.parts,
-        existingAssistant?.parts ?? [],
+      content: mergeSnapshotContentWithExistingToolCalls(
+        snapshot.content,
+        existingAssistant?.content ?? [],
       ),
       metadata: {
         ...existingAssistant?.metadata,
@@ -1351,11 +1430,11 @@ export class LocalStore {
       agentId,
       storedChunk,
     );
-    const lastPart = message.parts.at(-1);
-    if (lastPart?.type === "text") {
-      (lastPart as LocalTextPart).text += text;
+    const lastContent = message.content.at(-1);
+    if (lastContent?.type === "text") {
+      lastContent.text += text;
     } else {
-      message.parts.push({ type: "text", text } as LocalMessagePart);
+      message.content.push({ type: "text", text });
     }
     this.touchLocalMessage(message, storedChunk);
   }
@@ -1371,11 +1450,11 @@ export class LocalStore {
       agentId,
       storedChunk,
     );
-    const lastPart = message.parts.at(-1);
-    if (lastPart?.type === "reasoning") {
-      (lastPart as LocalReasoningPart).text += text;
+    const lastContent = message.content.at(-1);
+    if (lastContent?.type === "thinking") {
+      lastContent.thinking += text;
     } else {
-      message.parts.push({ type: "reasoning", text } as LocalMessagePart);
+      message.content.push({ type: "thinking", thinking: text });
     }
     this.touchLocalMessage(message, storedChunk);
   }
@@ -1391,24 +1470,95 @@ export class LocalStore {
       agentId,
       storedChunk,
     );
-    const toolPart = {
-      type: `tool-${toolCall.toolName}`,
-      toolCallId: toolCall.toolCallId,
-      state: "approval-requested",
-      input: toolCall.input,
-      approval: { id: storedChunk.id },
-    } as LocalMessagePart;
-    const existing = this.findToolPart(
+    const nextToolCall: LocalToolCall = {
+      type: "toolCall",
+      id: toolCall.toolCallId,
+      name: toolCall.toolName,
+      arguments: isRecord(toolCall.input)
+        ? toolCall.input
+        : { input: toolCall.input },
+    };
+    const existing = this.findToolCall(
       conversationId,
       agentId,
       toolCall.toolCallId,
     );
     if (existing) {
-      Object.assign(existing.part, toolPart);
+      Object.assign(existing.content, nextToolCall);
     } else {
-      message.parts.push(toolPart);
+      message.content.push(nextToolCall);
     }
     this.touchLocalMessage(message, storedChunk);
+  }
+
+  private toolResultContentFromUnknown(
+    value: unknown,
+  ): LocalToolResultMessage["content"] {
+    if (Array.isArray(value)) {
+      const content: LocalToolResultMessage["content"] = [];
+      for (const part of value) {
+        if (!isRecord(part)) continue;
+        if (part.type === "text" && typeof part.text === "string") {
+          content.push({ type: "text", text: part.text });
+          continue;
+        }
+        const image = localImageContentFromLegacyImage(part);
+        if (image) content.push(image);
+      }
+      if (content.length > 0) return content;
+    }
+    return [{ type: "text", text: textFromContent(value) }];
+  }
+
+  private findToolResult(
+    conversationId: string,
+    agentId: string,
+    toolCallId: string,
+  ): LocalToolResultMessage | undefined {
+    return this.localMessagesForConversation(conversationId, agentId).find(
+      (message): message is LocalToolResultMessage =>
+        message.role === "toolResult" && message.toolCallId === toolCallId,
+    );
+  }
+
+  private appendToolResultMessage(input: {
+    conversationId: string;
+    agentId: string;
+    toolCall: LocalToolCall;
+    content: LocalToolResultMessage["content"];
+    isError: boolean;
+  }): void {
+    if (
+      this.findToolResult(
+        input.conversationId,
+        input.agentId,
+        input.toolCall.id,
+      )
+    ) {
+      return;
+    }
+    const conversation = this.ensureConversation(
+      input.conversationId,
+      input.agentId,
+    );
+    const id = this.nextLocalMessageId();
+    const date = this.currentLocalMessageDate();
+    const message: LocalToolResultMessage = {
+      id,
+      role: "toolResult",
+      toolCallId: input.toolCall.id,
+      toolName: input.toolCall.name,
+      content: input.content,
+      isError: input.isError,
+      timestamp: timestampFromIso(date),
+      metadata: {
+        created_at: date,
+        updated_at: date,
+        agent_id: input.agentId,
+        conversation_id: conversation.id,
+      },
+    };
+    this.pushLocalMessage(conversation.id, input.agentId, message);
   }
 
   private applyApprovalResults(
@@ -1416,42 +1566,41 @@ export class LocalStore {
     agentId: string,
     approvals: unknown[],
   ): void {
-    let touched = false;
     for (const approval of approvals) {
       if (!isRecord(approval)) continue;
       const toolCallId = approval.tool_call_id;
       if (typeof toolCallId !== "string") continue;
-      const match = this.findToolPart(conversationId, agentId, toolCallId);
+      const match = this.findToolCall(conversationId, agentId, toolCallId);
       if (!match) continue;
-      if (isSettledLocalToolState((match.part as { state?: unknown }).state)) {
-        continue;
-      }
+      if (this.findToolResult(conversationId, agentId, toolCallId)) continue;
 
       if (approval.type === "approval" && approval.approve === false) {
-        delete (match.part as { approval?: unknown }).approval;
-        Object.assign(match.part, {
-          state: "output-error",
-          errorText:
-            typeof approval.reason === "string"
-              ? approval.reason
-              : "Tool execution denied.",
+        this.appendToolResultMessage({
+          conversationId,
+          agentId,
+          toolCall: match.content,
+          content: [
+            {
+              type: "text",
+              text:
+                typeof approval.reason === "string"
+                  ? approval.reason
+                  : "Tool execution denied.",
+            },
+          ],
+          isError: true,
         });
-        this.touchLocalMessageForApproval(match.message);
-        touched = true;
         continue;
       }
 
       if (approval.type !== "tool") continue;
-      delete (match.part as { approval?: unknown }).approval;
-      Object.assign(match.part, {
-        state: "output-available",
-        output: approval.tool_return,
+      this.appendToolResultMessage({
+        conversationId,
+        agentId,
+        toolCall: match.content,
+        content: this.toolResultContentFromUnknown(approval.tool_return),
+        isError: false,
       });
-      this.touchLocalMessageForApproval(match.message);
-      touched = true;
-    }
-    if (touched) {
-      this.persistConversationState(conversationId, agentId);
     }
   }
 
@@ -1467,49 +1616,34 @@ export class LocalStore {
       conversation.id,
       agentId,
     );
-    const touchedMessages = new Set<LocalMessage>();
     let settledCount = 0;
-    for (const message of messages) {
+    for (const message of [...messages]) {
       if (message.role !== "assistant") continue;
-      for (const part of message.parts) {
-        if (!part || !isLocalToolPart(part)) continue;
-        const state = (part as { state?: unknown }).state;
-        if (isSettledLocalToolState(state)) continue;
-
-        const record = part as Record<string, unknown>;
-        delete record.approval;
-        Object.assign(record, {
-          state: "output-error",
-          input: Object.hasOwn(record, "input") ? record.input : {},
-          errorText:
-            typeof record.errorText === "string" && record.errorText.length > 0
-              ? record.errorText
-              : reason,
+      for (const content of message.content) {
+        if (!isLocalToolCallContent(content)) continue;
+        if (this.findToolResult(conversation.id, agentId, content.id)) continue;
+        this.appendToolResultMessage({
+          conversationId: conversation.id,
+          agentId,
+          toolCall: content,
+          content: [{ type: "text", text: reason }],
+          isError: true,
         });
-        touchedMessages.add(message);
         settledCount += 1;
       }
     }
 
-    if (settledCount > 0) {
-      for (const message of touchedMessages) {
-        this.touchLocalMessageForToolSettlement(
-          message,
-          conversation.id,
-          agentId,
-        );
-      }
-      this.persistConversationState(conversation.id, agentId);
-      this.rebuildMessageIndex();
-    }
+    if (settledCount > 0) this.rebuildMessageIndex();
     return settledCount;
   }
 
-  private findToolPart(
+  private findToolCall(
     conversationId: string,
     agentId: string,
     toolCallId: string,
-  ): { message: LocalMessage; part: LocalToolPart } | undefined {
+  ):
+    | { message: LocalAssistantMessage; content: LocalToolCallContent }
+    | undefined {
     const messages = this.localMessagesForConversation(conversationId, agentId);
     for (
       let messageIndex = messages.length - 1;
@@ -1519,13 +1653,17 @@ export class LocalStore {
       const message = messages[messageIndex];
       if (!message || message.role !== "assistant") continue;
       for (
-        let partIndex = message.parts.length - 1;
-        partIndex >= 0;
-        partIndex--
+        let contentIndex = message.content.length - 1;
+        contentIndex >= 0;
+        contentIndex--
       ) {
-        const part = message.parts[partIndex];
-        if (part && isLocalToolPart(part) && part.toolCallId === toolCallId) {
-          return { message, part };
+        const content = message.content[contentIndex];
+        if (
+          content &&
+          isLocalToolCallContent(content) &&
+          content.id === toolCallId
+        ) {
+          return { message, content };
         }
       }
     }
@@ -1536,7 +1674,7 @@ export class LocalStore {
     conversationId: string,
     agentId: string,
     _storedChunk: StoredMessage,
-  ): LocalMessage {
+  ): LocalAssistantMessage {
     const conversation = this.ensureConversation(conversationId, agentId);
     const key = this.conversationKey(conversation.id, agentId);
     const messages = this.localMessagesByConversationKey.get(key) ?? [];
@@ -1547,7 +1685,7 @@ export class LocalStore {
 
     const id = this.nextLocalMessageId();
     const date = this.currentLocalMessageDate();
-    const message: LocalMessage = {
+    const message: LocalAssistantMessage = {
       id,
       role: "assistant",
       metadata: {
@@ -1556,7 +1694,13 @@ export class LocalStore {
         agent_id: agentId,
         conversation_id: conversation.id,
       },
-      parts: [],
+      content: [],
+      api: "local",
+      provider: "local",
+      model: "local",
+      usage: emptyLocalUsage(),
+      stopReason: "stop",
+      timestamp: timestampFromIso(date),
     };
     messages.push(message);
     this.localMessagesByConversationKey.set(key, messages);
@@ -1583,40 +1727,6 @@ export class LocalStore {
       storedChunk.conversation_id,
       storedChunk.agent_id,
     );
-  }
-
-  private touchLocalMessageForApproval(message: LocalMessage): void {
-    const agentId =
-      typeof message.metadata?.agent_id === "string"
-        ? message.metadata.agent_id
-        : this.defaultAgentId;
-    const conversationId =
-      typeof message.metadata?.conversation_id === "string"
-        ? message.metadata.conversation_id
-        : "default";
-    const updatedAt = this.nextLocalMessageDate();
-    message.metadata = {
-      ...message.metadata,
-      updated_at: updatedAt,
-      agent_id: agentId,
-      conversation_id: conversationId,
-    };
-    this.touchConversationForLocalMessage(conversationId, agentId, message);
-  }
-
-  private touchLocalMessageForToolSettlement(
-    message: LocalMessage,
-    conversationId: string,
-    agentId: string,
-  ): void {
-    const updatedAt = this.nextLocalMessageDate();
-    message.metadata = {
-      ...message.metadata,
-      updated_at: updatedAt,
-      agent_id: agentId,
-      conversation_id: conversationId,
-    };
-    this.touchConversationForLocalMessage(conversationId, agentId, message);
   }
 
   private toolCallFromChunk(
@@ -1807,22 +1917,22 @@ export class LocalStore {
     };
   }
 
-  private localPartsFromInputContent(content: unknown): LocalMessagePart[] {
+  private localContentFromInputContent(
+    content: unknown,
+  ): LocalUserMessage["content"] {
     if (typeof content === "string") return [{ type: "text", text: content }];
     if (!Array.isArray(content)) return textContent(textFromContent(content));
-    const parts: LocalMessagePart[] = [];
+    const parts: LocalContentPart[] = [];
     for (const part of content) {
       if (!isRecord(part)) continue;
       if (part.type === "text" && typeof part.text === "string") {
-        parts.push({ type: "text", text: part.text } as LocalMessagePart);
+        parts.push({ type: "text", text: part.text });
         continue;
       }
-      const filePart = localFilePartFromLegacyImage(part);
-      if (filePart) {
-        parts.push(filePart);
-        continue;
+      const imagePart = localImageContentFromLegacyImage(part);
+      if (imagePart) {
+        parts.push(imagePart);
       }
-      parts.push(part as LocalMessagePart);
     }
     return parts.length > 0 ? parts : textContent(textFromContent(content));
   }
@@ -1866,13 +1976,14 @@ export class LocalStore {
         );
         if (!conversation?.id || !conversation.agent_id) continue;
 
+        validateLocalTranscriptManifest(conversationDir, this.storageDir);
         const key = this.conversationKey(
           conversation.id,
           conversation.agent_id,
         );
         const localMessages = readJsonlFile<LocalMessage>(
-          join(conversationDir, "messages.jsonl"),
-        ).map(normalizeLocalMessageForAISDK);
+          transcriptMessagesPath(conversationDir),
+        ).map(normalizeLocalMessageForPi);
         const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
           join(conversationDir, "system-prompt.json"),
         );
@@ -1961,8 +2072,11 @@ export class LocalStore {
       join(conversationDir, "conversation.json"),
       `${JSON.stringify(conversation, null, 2)}\n`,
     );
+    if (!existsSync(transcriptManifestPath(conversationDir))) {
+      writeLocalTranscriptManifest(conversationDir);
+    }
     writeFileSync(
-      join(conversationDir, "messages.jsonl"),
+      transcriptMessagesPath(conversationDir),
       jsonl(this.localMessagesByConversationKey.get(key) ?? []),
     );
     this.persistCompiledSystemPrompt(conversationId, agentId);

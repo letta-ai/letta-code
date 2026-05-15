@@ -20,6 +20,8 @@ function makeInput(
     localAgentExists: false,
     globalAgentId: null,
     globalAgentExists: false,
+    fallbackAgentId: null,
+    fallbackConversationId: null,
     mergedPinnedCount: 0,
     forceNew: false,
     needsModelPicker: false,
@@ -93,6 +95,42 @@ describe("resolveStartupTarget", () => {
     expect(result).toEqual({
       action: "resume",
       agentId: "agent-global-123",
+    });
+  });
+
+  test("invalid local/global + backend-store fallback → resumes fallback conversation", () => {
+    const result = resolveStartupTarget(
+      makeInput({
+        localAgentId: "agent-local-missing",
+        localConversationId: "conv-missing",
+        localAgentExists: false,
+        globalAgentId: "agent-global-missing",
+        globalAgentExists: false,
+        fallbackAgentId: "agent-local-valid",
+        fallbackConversationId: "conv-valid",
+      }),
+    );
+
+    expect(result).toEqual({
+      action: "resume",
+      agentId: "agent-local-valid",
+      conversationId: "conv-valid",
+    });
+  });
+
+  test("valid global LRU takes priority over backend-store fallback", () => {
+    const result = resolveStartupTarget(
+      makeInput({
+        globalAgentId: "agent-global-valid",
+        globalAgentExists: true,
+        fallbackAgentId: "agent-local-valid",
+        fallbackConversationId: "conv-valid",
+      }),
+    );
+
+    expect(result).toEqual({
+      action: "resume",
+      agentId: "agent-global-valid",
     });
   });
 

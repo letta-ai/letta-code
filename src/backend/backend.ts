@@ -446,7 +446,7 @@ function createExperimentalLocalBackend(): Backend {
     executionMode:
       process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "deterministic"
         ? "deterministic"
-        : "ai-sdk",
+        : "pi",
   });
 }
 
@@ -467,9 +467,10 @@ function createInitialBackend(): Backend {
   return createBackendForMode(resolveBackendMode());
 }
 
-let backend: Backend = createInitialBackend();
+let backend: Backend | null = null;
 
 export function getBackend(): Backend {
+  backend ??= createInitialBackend();
   return backend;
 }
 
@@ -487,13 +488,13 @@ function devBackendStoreOptions() {
   return { storageDir: process.env.LETTA_CODE_DEV_BACKEND_DIR };
 }
 
-async function createAISDKDevBackend(): Promise<Backend> {
+async function createPiDevBackend(): Promise<Backend> {
   const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-  const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
+  const { PiStreamAdapter } = await import("./dev/PiStreamAdapter");
   const { ProviderTurnExecutor } = await import("./dev/ProviderTurnExecutor");
   return new FakeHeadlessBackend(
     "agent-fake-headless",
-    new ProviderTurnExecutor(new AISDKStreamAdapter({})),
+    new ProviderTurnExecutor(new PiStreamAdapter({})),
     devBackendStoreOptions(),
   );
 }
@@ -533,8 +534,8 @@ export async function configureDevBackend(name: string): Promise<void> {
       );
       return;
     }
-    case "fake-headless-ai-sdk": {
-      backend = await createAISDKDevBackend();
+    case "fake-headless-pi": {
+      backend = await createPiDevBackend();
       return;
     }
     default:

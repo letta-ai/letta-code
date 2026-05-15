@@ -6,11 +6,15 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+  getOAuthApiKey,
+  type OAuthCredentials,
+} from "@earendil-works/pi-ai/oauth";
 import type { ProviderResponse } from "../api/providers";
 import {
   LOCAL_CHATGPT_PROVIDER_NAME,
   SUPPORTED_LOCAL_PROVIDER_TYPES,
-} from "../dev/AISDKProviderRegistry";
+} from "../dev/PiProviderRegistry";
 import type { LocalProviderTimeout } from "./LocalProviderTimeout";
 import { getLocalBackendStorageDir } from "./paths";
 
@@ -20,6 +24,7 @@ export {
   LOCAL_CHATGPT_PROVIDER_NAME,
   LOCAL_GOOGLE_AI_PROVIDER_NAME,
   LOCAL_KIMI_CODE_PROVIDER_NAME,
+  LOCAL_LLAMA_CPP_PROVIDER_NAME,
   LOCAL_LMSTUDIO_PROVIDER_NAME,
   LOCAL_MINIMAX_PROVIDER_NAME,
   LOCAL_MOONSHOT_PROVIDER_NAME,
@@ -29,7 +34,7 @@ export {
   LOCAL_OPENROUTER_PROVIDER_NAME,
   LOCAL_ZAI_CODING_PROVIDER_NAME,
   LOCAL_ZAI_PROVIDER_NAME,
-} from "../dev/AISDKProviderRegistry";
+} from "../dev/PiProviderRegistry";
 
 export type LocalProviderAuthType = "api" | "oauth";
 
@@ -306,6 +311,70 @@ export function setLocalChatGPTOAuth(
     updated_at: now,
   };
   writeAuthFile(file, storageDir);
+}
+
+function toPiOAuthCredentials(auth: LocalProviderOAuthAuth): OAuthCredentials {
+  return {
+    access: auth.access,
+    refresh: auth.refresh ?? "",
+    expires: auth.expires,
+    ...(auth.accountId ? { accountId: auth.accountId } : {}),
+    ...(auth.idToken ? { idToken: auth.idToken } : {}),
+  };
+}
+
+function toLocalChatGPTOAuth(
+  credentials: OAuthCredentials,
+  previous: LocalProviderOAuthAuth,
+): LocalProviderOAuthAuth {
+  const refresh = credentials.refresh || previous.refresh;
+  return {
+    type: "oauth",
+    access: credentials.access,
+    expires: credentials.expires,
+    ...(refresh ? { refresh } : {}),
+    ...(typeof credentials.accountId === "string"
+      ? { accountId: credentials.accountId }
+      : previous.accountId
+        ? { accountId: previous.accountId }
+        : {}),
+    ...(typeof credentials.idToken === "string"
+      ? { idToken: credentials.idToken }
+      : previous.idToken
+        ? { idToken: previous.idToken }
+        : {}),
+  };
+}
+
+function localChatGPTOAuthEquals(
+  left: LocalProviderOAuthAuth,
+  right: LocalProviderOAuthAuth,
+): boolean {
+  return (
+    left.access === right.access &&
+    left.refresh === right.refresh &&
+    left.idToken === right.idToken &&
+    left.expires === right.expires &&
+    left.accountId === right.accountId
+  );
+}
+
+export async function getLocalChatGPTApiKey(
+  storageDir?: string,
+): Promise<string | undefined> {
+  const auth = getLocalChatGPTOAuth(storageDir);
+  if (!auth) return undefined;
+
+  const result = await getOAuthApiKey("openai-codex", {
+    "openai-codex": toPiOAuthCredentials(auth),
+  });
+  if (!result) return undefined;
+
+  const nextAuth = toLocalChatGPTOAuth(result.newCredentials, auth);
+  if (!localChatGPTOAuthEquals(nextAuth, auth)) {
+    setLocalChatGPTOAuth(nextAuth, storageDir);
+  }
+  return result.apiKey;
 }
 
 function parseChatGPTOAuth(value: string): LocalProviderOAuthAuth {

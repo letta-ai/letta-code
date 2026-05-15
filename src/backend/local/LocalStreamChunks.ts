@@ -1,16 +1,16 @@
-import type { TextStreamPart, ToolSet } from "ai";
+import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { LocalMessage } from "./LocalMessage";
 
-export type ProviderStreamPart = TextStreamPart<ToolSet>;
+export type ProviderStreamPart = AssistantMessageEvent;
 
-const LOCAL_UI_MESSAGE = Symbol.for("@letta/local-ui-message");
+const LOCAL_MESSAGE = Symbol.for("@letta/local-provider-message");
 const LOCAL_STATE_CHUNK_ONLY = Symbol.for("@letta/local-state-chunk-only");
 
-export function attachLocalUIMessage<T extends object>(
+export function attachLocalMessage<T extends object>(
   target: T,
   message: LocalMessage,
 ): T {
-  Object.defineProperty(target, LOCAL_UI_MESSAGE, {
+  Object.defineProperty(target, LOCAL_MESSAGE, {
     value: message,
     enumerable: false,
     configurable: false,
@@ -18,11 +18,11 @@ export function attachLocalUIMessage<T extends object>(
   return target;
 }
 
-export function getAttachedLocalUIMessage(
+export function getAttachedLocalMessage(
   value: unknown,
 ): LocalMessage | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  return (value as Record<symbol, LocalMessage | undefined>)[LOCAL_UI_MESSAGE];
+  return (value as Record<symbol, LocalMessage | undefined>)[LOCAL_MESSAGE];
 }
 
 export function markLocalStateChunkOnly<T extends object>(target: T): T {

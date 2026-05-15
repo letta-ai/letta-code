@@ -578,9 +578,12 @@ export function ModelSelector({
         return;
       }
 
-      // Allow 'r' to refresh even while loading (but not while already refreshing)
-      if (input === "r" && !refreshing && !searchQuery) {
-        loadModels.current(true);
+      // Allow 'r' to refresh even while loading. If a refresh is already in
+      // flight, consume the key so repeated presses don't turn into search text.
+      if (input === "r" && !searchQuery) {
+        if (!refreshing) {
+          loadModels.current(true);
+        }
         return;
       }
 
@@ -629,7 +632,7 @@ export function ModelSelector({
       }
 
       // Disable navigation/selection while loading or no results
-      if (isLoading || refreshing || currentList.length === 0) {
+      if (isLoading || currentList.length === 0) {
         return;
       }
 
@@ -747,7 +750,7 @@ export function ModelSelector({
         </Box>
       )}
 
-      {!isLoading && !refreshing && visibleModels.length === 0 && (
+      {!isLoading && visibleModels.length === 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>
             {category === "supported"
@@ -764,51 +767,48 @@ export function ModelSelector({
         </Box>
       )}
       <Box flexDirection="column">
-        {!refreshing &&
-          visibleModels.map((model, index) => {
-            const actualIndex = startIndex + index;
-            const isSelected = actualIndex === selectedIndex;
-            const isCurrent = model.id === currentModelId;
-            // Show lock for non-free models when on free tier (only for Letta API tabs)
-            const showLock =
-              isFreeTier &&
-              !model.free &&
-              (category === "supported" || category === "all");
+        {visibleModels.map((model, index) => {
+          const actualIndex = startIndex + index;
+          const isSelected = actualIndex === selectedIndex;
+          const isCurrent = model.id === currentModelId;
+          // Show lock for non-free models when on free tier (only for Letta API tabs)
+          const showLock =
+            isFreeTier &&
+            !model.free &&
+            (category === "supported" || category === "all");
 
-            return (
-              <Box key={model.id} flexDirection="row">
-                <Text
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {isSelected ? "> " : "  "}
-                </Text>
-                {showLock && <Text dimColor>🔒 </Text>}
-                <Text
-                  bold={isSelected}
-                  color={
-                    isSelected
-                      ? colors.selector.itemHighlighted
-                      : isCurrent
-                        ? colors.selector.itemCurrent
-                        : undefined
-                  }
-                >
-                  {model.label}
-                  {isCurrent && <Text> (current)</Text>}
-                </Text>
-                {model.description && (
-                  <Text dimColor> · {model.description}</Text>
-                )}
-              </Box>
-            );
-          })}
-        {!refreshing && showScrollDown ? (
+          return (
+            <Box key={model.id} flexDirection="row">
+              <Text
+                color={isSelected ? colors.selector.itemHighlighted : undefined}
+              >
+                {isSelected ? "> " : "  "}
+              </Text>
+              {showLock && <Text dimColor>🔒 </Text>}
+              <Text
+                bold={isSelected}
+                color={
+                  isSelected
+                    ? colors.selector.itemHighlighted
+                    : isCurrent
+                      ? colors.selector.itemCurrent
+                      : undefined
+                }
+              >
+                {model.label}
+                {isCurrent && <Text> (current)</Text>}
+              </Text>
+              {model.description && (
+                <Text dimColor> · {model.description}</Text>
+              )}
+            </Box>
+          );
+        })}
+        {showScrollDown ? (
           <Text dimColor>
             {"  "}↓ {itemsBelow} more below
           </Text>
-        ) : !refreshing && currentList.length > visibleCount ? (
+        ) : currentList.length > visibleCount ? (
           <Text> </Text>
         ) : null}
       </Box>
@@ -818,8 +818,8 @@ export function ModelSelector({
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>
             {"  "}
-            {currentList.length} models{isCached ? " · cached" : ""} · R to
-            refresh list
+            {currentList.length} models{isCached ? " · cached" : ""}
+            {refreshing ? " · refreshing..." : " · R to refresh list"}
           </Text>
           <Text dimColor>
             {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel

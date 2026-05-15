@@ -1,4 +1,4 @@
-import type { LanguageModel, LanguageModelUsage } from "ai";
+import type { Usage } from "@earendil-works/pi-ai";
 import {
   getMemoryHeadRevision,
   type InitializeLocalMemoryRepoFile,
@@ -15,15 +15,12 @@ import type {
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "../backend";
-import {
-  AISDKStreamAdapter,
-  type AISDKStreamTextFunction,
-} from "../dev/AISDKStreamAdapter";
 import { HeadlessBackend } from "../dev/HeadlessBackend";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "../dev/HeadlessTurnExecutor";
+import { PiStreamAdapter, type PiStreamFunction } from "../dev/PiStreamAdapter";
 import type { ProviderTurnInput } from "../dev/ProviderTurnExecutor";
 import { ProviderTurnExecutor } from "../dev/ProviderTurnExecutor";
 import {
@@ -33,7 +30,7 @@ import {
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
   type LocalCompactionMode,
   type LocalCompactionStats,
-  type LocalGenerateTextFunction,
+  type LocalCompleteFunction,
   packageLocalSummaryMessage,
   planLocalAllCompaction,
   planLocalSlidingWindowCompaction,
@@ -58,16 +55,15 @@ import {
   type LocalCompiledSystemPrompt,
 } from "./systemPromptCompilation";
 
-export type LocalBackendExecutionMode = "ai-sdk" | "deterministic";
+export type LocalBackendExecutionMode = "pi" | "deterministic";
 
 export interface LocalBackendOptions {
   storageDir: string;
   defaultAgentId?: string;
   executionMode?: LocalBackendExecutionMode;
   executor?: HeadlessTurnExecutor;
-  createModel?: () => LanguageModel;
-  streamText?: AISDKStreamTextFunction;
-  generateText?: LocalGenerateTextFunction;
+  stream?: PiStreamFunction;
+  complete?: LocalCompleteFunction;
   memoryDir?: string;
   memfsEnabled?: boolean;
 }
@@ -194,19 +190,9 @@ function localCompactionSettingsForStorage(
   return { ...settings };
 }
 
-function contextTokensFromUsage(usage: LanguageModelUsage): number | undefined {
-  const inputTokens =
-    typeof usage.inputTokens === "number" ? usage.inputTokens : undefined;
-  const outputTokens =
-    typeof usage.outputTokens === "number" ? usage.outputTokens : undefined;
-  const totalTokens =
-    typeof usage.totalTokens === "number" ? usage.totalTokens : undefined;
-
-  if (totalTokens !== undefined) return totalTokens;
-  if (inputTokens !== undefined || outputTokens !== undefined) {
-    return (inputTokens ?? 0) + (outputTokens ?? 0);
-  }
-  return undefined;
+function contextTokensFromUsage(usage: Usage): number | undefined {
+  if (typeof usage.totalTokens === "number") return usage.totalTokens;
+  return (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0);
 }
 
 function createLocalExecutor(
@@ -221,7 +207,7 @@ function createLocalExecutor(
   } | null>,
   onContextUsage?: (
     input: ProviderTurnInput,
-    usage: LanguageModelUsage,
+    usage: Usage,
   ) => Promise<{
     uiMessages: LocalMessage[];
     summary: string;
@@ -233,9 +219,8 @@ function createLocalExecutor(
     return new DeterministicPongExecutor();
   }
   return new ProviderTurnExecutor(
-    new AISDKStreamAdapter({
-      createModel: options.createModel,
-      streamText: options.streamText,
+    new PiStreamAdapter({
+      stream: options.stream,
       localProviderAuthStorageDir: options.storageDir,
       onContextWindowOverflow,
       onContextUsage,
@@ -257,8 +242,7 @@ export class LocalBackend extends HeadlessBackend {
 
   private readonly memoryDir?: string;
   private readonly storageDir: string;
-  private readonly createModel?: () => LanguageModel;
-  private readonly generateText?: LocalGenerateTextFunction;
+  private readonly complete?: LocalCompleteFunction;
   private readonly memfsEnabledOverride?: boolean;
 
   constructor(options: LocalBackendOptions) {
@@ -297,8 +281,7 @@ export class LocalBackend extends HeadlessBackend {
     localBackendRef.current = this;
     this.storageDir = options.storageDir;
     this.memoryDir = options.memoryDir;
-    this.createModel = options.createModel;
-    this.generateText = options.generateText;
+    this.complete = options.complete;
     this.memfsEnabledOverride = options.memfsEnabled;
   }
 
@@ -489,7 +472,7 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compactAfterContextUsage(
     input: ProviderTurnInput,
-    usage: LanguageModelUsage,
+    usage: Usage,
   ): Promise<{
     uiMessages: LocalMessage[];
     summary: string;
@@ -672,8 +655,7 @@ export class LocalBackend extends HeadlessBackend {
     const summary = await summarizeLocalMessagesAll({
       agent,
       messages: plan.messagesToSummarize,
-      createModel: this.createModel,
-      generateText: this.generateText,
+      complete: this.complete,
       prompt: settings.prompt,
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
@@ -725,8 +707,7 @@ export class LocalBackend extends HeadlessBackend {
     const summary = await summarizeLocalMessagesSlidingWindow({
       agent,
       messages: plan.messagesToSummarize,
-      createModel: this.createModel,
-      generateText: this.generateText,
+      complete: this.complete,
       prompt: settings.prompt,
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,

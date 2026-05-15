@@ -59,11 +59,14 @@ describe("connect provider normalization", () => {
   test("supports API-key optional local providers", () => {
     const ollama = resolveConnectProvider("ollama");
     const lmstudio = resolveConnectProvider("lmstudio");
-    if (!ollama || !lmstudio) {
+    const llamaCpp = resolveConnectProvider("llama.cpp");
+    if (!ollama || !lmstudio || !llamaCpp) {
       throw new Error("Expected local providers to resolve");
     }
 
     expect(defaultConnectApiKey(ollama)).toBe("not-needed");
     expect(defaultConnectApiKey(lmstudio)).toBe("not-needed");
+    expect(defaultConnectApiKey(llamaCpp)).toBe("not-needed");
+    expect(llamaCpp.canonical).toBe("llama-cpp");
   });
 });

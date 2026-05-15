@@ -1,5 +1,3 @@
-import { APICallError } from "ai";
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -18,13 +16,6 @@ function contextOverflowHaystack(error: unknown): string {
     }
     if (value instanceof Error) {
       pieces.push(value.name, value.message);
-      if (APICallError.isInstance(value)) {
-        pieces.push(
-          String(value.statusCode ?? ""),
-          value.responseBody ?? "",
-          JSON.stringify(value.data ?? ""),
-        );
-      }
       for (const [key, item] of Object.entries(
         value as unknown as Record<string, unknown>,
       )) {
@@ -51,12 +42,7 @@ function contextOverflowHaystack(error: unknown): string {
 
 export function isContextWindowOverflowError(error: unknown): boolean {
   const haystack = contextOverflowHaystack(error);
-  const statusCode = APICallError.isInstance(error)
-    ? error.statusCode
-    : isRecord(error) && typeof error.statusCode === "number"
-      ? error.statusCode
-      : undefined;
-  const hasOverflowMarker = [
+  return [
     "context_length_exceeded",
     "context window",
     "maximum context length",
@@ -68,7 +54,7 @@ export function isContextWindowOverflowError(error: unknown): boolean {
     "exceeded the context",
     "reduce the length",
     "request too large",
+    "request_too_large",
+    "model_context_window_exceeded",
   ].some((marker) => haystack.includes(marker));
-  if (!hasOverflowMarker) return false;
-  return statusCode === undefined || statusCode === 400 || statusCode === 413;
 }
