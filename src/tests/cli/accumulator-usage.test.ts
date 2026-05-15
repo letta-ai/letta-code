@@ -510,6 +510,31 @@ describe("accumulator usage statistics", () => {
     );
   });
 
+  test("trims reasoning paragraph separator when promoting static split", () => {
+    const buffers = createBuffers();
+    buffers.tokenStreamingEnabled = true;
+
+    const firstParagraph = "A".repeat(1500);
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-static-split",
+      reasoning: `${firstParagraph}\n\nSecond paragraph`,
+    } as unknown as LettaStreamingResponse);
+
+    const committed = buffers.byId.get("reasoning-static-split-split-0");
+    const live = buffers.byId.get("reasoning-static-split");
+
+    expect(committed?.kind).toBe("reasoning");
+    expect(committed && "text" in committed ? committed.text : "").toBe(
+      firstParagraph,
+    );
+    expect(live?.kind).toBe("reasoning");
+    expect(live && "text" in live ? live.text : "").toBe("Second paragraph");
+    expect(live && "isContinuation" in live ? live.isContinuation : false).toBe(
+      true,
+    );
+  });
+
   test("reconciles optimistic user lines to the backend message id via otid", () => {
     const buffers = createBuffers();
     buffers.byId.set("user-local-1", {
