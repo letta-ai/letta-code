@@ -4112,46 +4112,55 @@ describe("listen-client capability-gated approval flow", () => {
   });
 
   test("mode changes reject plan mode when plan mode is disabled", async () => {
+    const originalHome = process.env.HOME;
+    const testHomeDir = await mkdtemp(join(os.tmpdir(), "letta-plan-disabled-"));
+    process.env.HOME = testHomeDir;
     await settingsManager.reset();
     await settingsManager.initialize();
 
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    listener.socket = socket as unknown as WebSocket;
+    try {
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const socket = new MockSocket(WebSocket.OPEN);
+      listener.socket = socket as unknown as WebSocket;
 
-    const scope = {
-      agent_id: "agent-1",
-      conversation_id: "default",
-    } as const;
+      const scope = {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      } as const;
 
-    __listenClientTestUtils.handleModeChange(
-      { mode: "plan" },
-      socket as unknown as WebSocket,
-      listener,
-      scope,
-    );
+      __listenClientTestUtils.handleModeChange(
+        { mode: "plan" },
+        socket as unknown as WebSocket,
+        listener,
+        scope,
+      );
 
-    const outbound = socket.sentPayloads.map((payload) =>
-      JSON.parse(payload as string),
-    );
-    const deviceStatus = outbound.findLast(
-      (payload) => payload.type === "update_device_status",
-    )?.device_status;
-    const loopStatus = outbound.findLast(
-      (payload) => payload.type === "update_loop_status",
-    )?.loop_status;
-    const notice = outbound.findLast(
-      (payload) =>
-        payload.type === "stream_delta" &&
-        payload.delta?.message_type === "loop_error",
-    );
+      const outbound = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      const deviceStatus = outbound.findLast(
+        (payload) => payload.type === "update_device_status",
+      )?.device_status;
+      const loopStatus = outbound.findLast(
+        (payload) => payload.type === "update_loop_status",
+      )?.loop_status;
+      const notice = outbound.findLast(
+        (payload) =>
+          payload.type === "stream_delta" &&
+          payload.delta?.message_type === "loop_error",
+      );
 
-    expect(deviceStatus?.current_permission_mode).toBe("standard");
-    expect(deviceStatus?.plan_mode_enabled).toBe(false);
-    expect(loopStatus?.plan_file_path).toBeNull();
-    expect(notice?.delta?.message).toContain(
-      "Plan mode is disabled in user settings.",
-    );
+      expect(deviceStatus?.current_permission_mode).toBe("standard");
+      expect(deviceStatus?.plan_mode_enabled).toBe(false);
+      expect(loopStatus?.plan_file_path).toBeNull();
+      expect(notice?.delta?.message).toContain(
+        "Plan mode is disabled in user settings.",
+      );
+    } finally {
+      process.env.HOME = originalHome;
+      await settingsManager.reset();
+      await rm(testHomeDir, { recursive: true, force: true });
+    }
   });
 
   test("mode changes emit fresh loop status plan_file_path on enter exit and re-enter", async () => {
