@@ -268,8 +268,10 @@ function analyzeEditApproval(
   if (pattern === "**") {
     return {
       recommendedRule: "Edit(**)",
-      ruleDescription: "accept edits mode (auto-approve file edits, approve commands) for this session",
-      approveAlwaysText: "Yes, switch to accept edits mode (auto-approve file edits, approve commands) for this session",
+      ruleDescription:
+        "accept edits mode (auto-approve file edits, approve commands) for this session",
+      approveAlwaysText:
+        "Yes, switch to accept edits mode (auto-approve file edits, approve commands) for this session",
       defaultScope: "session",
       allowPersistence: true,
       safetyLevel: "safe",

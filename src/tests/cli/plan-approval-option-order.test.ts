@@ -23,15 +23,15 @@ describe("plan approval option order", () => {
       /if \(input === "1"\)[\s\S]*?return;/,
     );
     expect(numberKeySection).not.toBeNull();
-    expect(numberKeySection![0]).toContain("onApprove()");
-    expect(numberKeySection![0]).not.toContain("onApproveAndAcceptEdits()");
+    expect(numberKeySection?.[0]).toContain("onApprove()");
+    expect(numberKeySection?.[0]).not.toContain("onApproveAndAcceptEdits()");
 
     // Number key 2 should call onApproveAndAcceptEdits
     const numberKey2Section = source.match(
       /if \(showAcceptEditsOption && input === "2"\)[\s\S]*?return;/,
     );
     expect(numberKey2Section).not.toBeNull();
-    expect(numberKey2Section![0]).toContain("onApproveAndAcceptEdits()");
+    expect(numberKey2Section?.[0]).toContain("onApproveAndAcceptEdits()");
   });
 
   test("option 1 label says 'Yes, proceed' not 'auto-accept edits'", () => {
@@ -54,9 +54,8 @@ describe("plan approval option order", () => {
 
     // Option 2 should clarify that acceptEdits auto-approves file edits but
     // still requires approval for commands
-    expect(source).toContain(
-      "auto-accept file edits (approve commands)",
-    );  });
+    expect(source).toContain("auto-accept file edits (approve commands)");
+  });
 
   test("acceptEdits mode label clarifies scope in InputRich", () => {
     const path = fileURLToPath(

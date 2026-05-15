@@ -153,7 +153,8 @@ async function buildPlanModeReminder(
 
 const PERMISSION_MODE_DESCRIPTIONS = {
   standard: "Normal approval flow.",
-  acceptEdits: "File edits auto-approved; shell commands still require approval.",
+  acceptEdits:
+    "File edits auto-approved; shell commands still require approval.",
   plan: "Read-only mode. Focus on exploration and planning.",
   memory:
     "Memory-scoped mode. Reads are broad; mutations are limited to allowed memory roots.",
