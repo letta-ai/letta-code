@@ -727,6 +727,14 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
 
         if (trimmed === "/reload") {
+          if (isAgentBusy()) {
+            const cmd = commandRunner.start(
+              "/reload",
+              "Cannot reload while the agent is running.",
+            );
+            cmd.fail("Wait for the current turn to finish and try again.");
+            return { submitted: true };
+          }
           if (onReload) {
             const cmd = commandRunner.start(
               "/reload",
