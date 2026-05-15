@@ -27,6 +27,7 @@ import type { MemoryPromptMode } from "./agent/promptAssets";
 import { resolveSkillSourcesSelection } from "./agent/skillSources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import {
+  type Backend,
   configureBackendMode,
   getBackend,
   isExperimentalLocalBackendEnabled,
@@ -388,6 +389,119 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
     }),
   );
   return agents;
+}
+
+type LocalStartupFallbackSession = {
+  agentId: string;
+  conversationId?: string;
+  lastActiveAt: string;
+};
+
+function paginatedItems<T>(page: unknown): T[] {
+  if (Array.isArray(page)) return page as T[];
+  if (page && typeof page === "object") {
+    const maybePage = page as {
+      getPaginatedItems?: () => T[];
+      items?: T[];
+    };
+    if (typeof maybePage.getPaginatedItems === "function") {
+      return maybePage.getPaginatedItems();
+    }
+    if (Array.isArray(maybePage.items)) {
+      return maybePage.items;
+    }
+  }
+  return [];
+}
+
+function timestampMs(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isBackendNotFoundError(error: unknown): boolean {
+  return (
+    (error instanceof APIError &&
+      (error.status === 404 || error.status === 422)) ||
+    (error instanceof Error && error.name === "LocalBackendNotFoundError")
+  );
+}
+
+async function getLocalBackendStartupFallbackSession(
+  backend: Backend,
+): Promise<LocalStartupFallbackSession | null> {
+  if (
+    !backend.capabilities.localModelCatalog &&
+    !backend.capabilities.localMemfs
+  ) {
+    return null;
+  }
+
+  const candidates: LocalStartupFallbackSession[] = [];
+
+  try {
+    const agentsPage = await backend.listAgents({ limit: 20 } as never);
+    for (const agent of paginatedItems<AgentState>(agentsPage)) {
+      const lastActiveAt =
+        (agent as { last_run_completion?: string | null })
+          .last_run_completion ?? "";
+      candidates.push({ agentId: agent.id, lastActiveAt });
+    }
+  } catch {
+    // Best-effort repair path. Startup will continue with the normal resolver.
+  }
+
+  try {
+    const conversationsPage = await backend.listConversations({
+      limit: 20,
+      order: "desc",
+      order_by: "last_run_completion",
+    } as never);
+    for (const conversation of paginatedItems<{
+      id: string;
+      agent_id?: string | null;
+      last_message_at?: string | null;
+      updated_at?: string | null;
+      created_at?: string | null;
+    }>(conversationsPage)) {
+      if (!conversation.agent_id) continue;
+      candidates.push({
+        agentId: conversation.agent_id,
+        ...(conversation.id !== "default"
+          ? { conversationId: conversation.id }
+          : {}),
+        lastActiveAt:
+          conversation.last_message_at ??
+          conversation.updated_at ??
+          conversation.created_at ??
+          "",
+      });
+    }
+  } catch {
+    // Best-effort repair path. Startup will continue with the normal resolver.
+  }
+
+  candidates.sort(
+    (a, b) => timestampMs(b.lastActiveAt) - timestampMs(a.lastActiveAt),
+  );
+
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = `${candidate.agentId}:${candidate.conversationId ?? "default"}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      await backend.retrieveAgent(candidate.agentId, {
+        include: ["agent.tags"],
+      });
+      return candidate;
+    } catch {
+      // Skip orphaned conversations/records.
+    }
+  }
+
+  return null;
 }
 
 async function main(): Promise<void> {
@@ -1356,10 +1470,7 @@ async function main(): Promise<void> {
             setLoadingState("assembling");
             return;
           } catch (error) {
-            if (
-              error instanceof APIError &&
-              (error.status === 404 || error.status === 422)
-            ) {
+            if (isBackendNotFoundError(error)) {
               console.error(
                 `Conversation ${specifiedConversationId} not found`,
               );
@@ -1506,6 +1617,14 @@ async function main(): Promise<void> {
         const mergedPinned = settingsManager.getMergedPinnedAgents(
           process.cwd(),
         );
+        const shouldRepairMissingLocalBackendLru = Boolean(
+          (localAgentId || globalAgentId) &&
+            !localAgentExists &&
+            !globalAgentExists,
+        );
+        const fallbackSession = shouldRepairMissingLocalBackendLru
+          ? await getLocalBackendStartupFallbackSession(backend)
+          : null;
         const { resolveStartupTarget } = await import(
           "./agent/resolve-startup-agent"
         );
@@ -1516,6 +1635,8 @@ async function main(): Promise<void> {
           localAgentExists,
           globalAgentId,
           globalAgentExists,
+          fallbackAgentId: fallbackSession?.agentId ?? null,
+          fallbackConversationId: fallbackSession?.conversationId ?? null,
           mergedPinnedCount: mergedPinned.length,
           forceNew: false, // forceNew short-circuited above
           needsModelPicker,
@@ -2049,10 +2170,7 @@ async function main(): Promise<void> {
             setResumeData(data);
           } catch (error) {
             // Only treat 404/422 as "not found", rethrow other errors
-            if (
-              error instanceof APIError &&
-              (error.status === 404 || error.status === 422)
-            ) {
+            if (isBackendNotFoundError(error)) {
               console.error(
                 `Conversation ${specifiedConversationId} not found`,
               );
@@ -2072,10 +2190,7 @@ async function main(): Promise<void> {
             setResumedExistingConversation(true);
             setResumeData(data);
           } catch (error) {
-            if (
-              error instanceof APIError &&
-              (error.status === 404 || error.status === 422)
-            ) {
+            if (isBackendNotFoundError(error)) {
               // Conversation no longer exists — fall back to default conversation
               console.warn(
                 `Previous conversation ${selectedConversationId} not found, falling back to default`,
