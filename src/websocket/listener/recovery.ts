@@ -25,6 +25,7 @@ import {
 import { getBackend } from "../../backend";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
+import { alwaysRequiresUserInput } from "../../cli/helpers/toolNameMapping";
 import { formatPermissionDenial } from "../../permissions/formatDenial";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
@@ -508,7 +509,7 @@ export async function resolveRecoveredApprovalResponse(
       const reclassified = await classifyApprovalsWithSuggestions(
         remainingRecoveredEntries.map((entry) => entry.approval),
         {
-          alwaysRequiresUserInput: isInteractiveApprovalTool,
+          alwaysRequiresUserInput,
           requireArgsForAutoApprove: true,
           missingNameReason: "Tool call incomplete - missing name",
           workingDirectory,

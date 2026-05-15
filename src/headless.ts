@@ -84,6 +84,7 @@ import {
   type DrainStreamHook,
   drainStreamWithResume,
 } from "./cli/helpers/stream";
+import { alwaysRequiresUserInput } from "./cli/helpers/toolNameMapping";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
@@ -2147,7 +2148,7 @@ ${SYSTEM_REMINDER_CLOSE}
             !autoApprovalEmitted.has(updatedApproval.toolCallId)
           ) {
             const { autoAllowed } = await classifyApprovals([updatedApproval], {
-              alwaysRequiresUserInput: isInteractiveApprovalTool,
+              alwaysRequiresUserInput,
               requireArgsForAutoApprove: true,
               missingNameReason: "Tool call incomplete - missing name",
             });
@@ -2291,7 +2292,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
         const { autoAllowed, autoDenied, needsUserInput } =
           await classifyApprovals(approvals, {
-            alwaysRequiresUserInput: isInteractiveApprovalTool,
+            alwaysRequiresUserInput,
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
           });
@@ -3979,7 +3980,7 @@ async function runBidirectionalMode(
 
             const { autoAllowed, autoDenied, needsUserInput } =
               await classifyApprovals(approvals, {
-                alwaysRequiresUserInput: isInteractiveApprovalTool,
+                alwaysRequiresUserInput,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
               });

@@ -3,6 +3,7 @@
  * Centralizes tool name remapping logic used across the UI.
  */
 
+import { permissionMode } from "../../permissions/mode";
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { MEMORY_TOOL_NAMES } from "../../tools/toolset";
 
@@ -133,12 +134,21 @@ export function isFancyUITool(name: string): boolean {
  * Checks if a tool always requires user interaction, even in unrestricted mode.
  * These are tools that fundamentally need user input to proceed:
  * - AskUserQuestion: needs user to answer questions
- * - EnterPlanMode: needs user to approve entering plan mode
  * - ExitPlanMode: needs user to approve the plan
+ *
+ * EnterPlanMode is exempted in unrestricted mode — the agent gets plan
+ * instructions but keeps full permissions (no code changes happen until
+ * ExitPlanMode is approved). ExitPlanMode always requires approval.
  *
  * Other tools (bash, file edits) should respect unrestricted mode and auto-approve.
  */
 export function alwaysRequiresUserInput(name: string): boolean {
+  if (
+    permissionMode.getMode() === "unrestricted" &&
+    (name === "EnterPlanMode" || name === "enter_plan_mode")
+  ) {
+    return false;
+  }
   return isInteractiveApprovalTool(name);
 }
 

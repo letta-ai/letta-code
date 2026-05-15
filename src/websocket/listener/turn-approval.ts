@@ -11,6 +11,7 @@ import {
 } from "../../agent/approval-execution";
 import { getChannelRegistry } from "../../channels/registry";
 import type { ChannelTurnSource } from "../../channels/types";
+import { alwaysRequiresUserInput } from "../../cli/helpers/toolNameMapping";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
 import { formatPermissionDenial } from "../../permissions/formatDenial";
 import {
@@ -231,7 +232,7 @@ export async function handleApprovalStop(params: {
 
   const { autoAllowed, autoDenied, needsUserInput } =
     await classifyApprovalsWithSuggestions(approvals, {
-      alwaysRequiresUserInput: isInteractiveApprovalTool,
+      alwaysRequiresUserInput,
       treatAskAsDeny: false,
       requireArgsForAutoApprove: true,
       missingNameReason: "Tool call incomplete - missing name",
@@ -394,7 +395,7 @@ export async function handleApprovalStop(params: {
             const reclassified = await classifyApprovalsWithSuggestions(
               pendingNeedsUserInput.map((entry) => entry.approval),
               {
-                alwaysRequiresUserInput: isInteractiveApprovalTool,
+                alwaysRequiresUserInput,
                 treatAskAsDeny: false,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
