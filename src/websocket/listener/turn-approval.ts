@@ -48,6 +48,7 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
+import type { ProviderFallbackState } from "./providerFallback";
 import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { debugLogApprovalResumeState } from "./recovery";
@@ -167,6 +168,7 @@ export async function handleApprovalStop(params: {
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
+  providerFallback?: ProviderFallbackState;
 }): Promise<ApprovalBranchResult> {
   const {
     approvals,
@@ -182,6 +184,7 @@ export async function handleApprovalStop(params: {
     currentInput,
     turnToolContextId,
     buildSendOptions,
+    providerFallback,
   } = params;
   const abortController = runtime.activeAbortController;
 
@@ -586,6 +589,7 @@ export async function handleApprovalStop(params: {
       socket,
       runtime,
       abortController.signal,
+      { providerFallback },
     );
   } catch (error) {
     if (shouldInterrupt()) {

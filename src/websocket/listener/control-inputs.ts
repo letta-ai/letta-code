@@ -110,7 +110,7 @@ export function handleModeChange(
     const incomingMode = migratePermissionMode(msg.mode) ?? msg.mode;
 
     // Reject plan mode if it's disabled in settings
-    if (incomingMode === "plan" && !settingsManager.isPlanModeEnabled()) {
+    if (incomingMode === "plan" && !isPlanModeEnabled()) {
       if (current.mode === "plan") {
         current.mode = "unrestricted";
         current.planFilePath = null;

@@ -111,6 +111,17 @@ describe("pi model factory", () => {
     }
   });
 
+  test("resolves Bedrock Opus 4.7 from the Pi model catalog", async () => {
+    const resolved = await resolvePiModelForAgent(
+      "bedrock/us.anthropic.claude-opus-4-7",
+      { provider_type: "bedrock" },
+    );
+
+    expect(resolved.provider).toBe("bedrock");
+    expect(resolved.model.id).toBe("us.anthropic.claude-opus-4-7");
+    expect(resolved.model.reasoning).toBe(true);
+  });
+
   test("maps local Bedrock profile records to pi provider options", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-bedrock-profile-"));
     try {
