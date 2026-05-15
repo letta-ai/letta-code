@@ -130,7 +130,7 @@ export const StaticPlanApproval = memo(
 
         // When on regular options
         if (key.return) {
-          if (showAcceptEditsOption && effectiveSelectedOption === 0) {
+          if (showAcceptEditsOption && effectiveSelectedOption === 1) {
             onApproveAndAcceptEdits();
           } else {
             onApprove();
@@ -143,16 +143,13 @@ export const StaticPlanApproval = memo(
         }
 
         // Number keys for quick selection (only for fixed options, not custom text input)
+        // Option 1 always restores previous mode; option 2 (when shown) enters acceptEdits.
         if (input === "1") {
-          if (showAcceptEditsOption) {
-            onApproveAndAcceptEdits();
-          } else {
-            onApprove();
-          }
+          onApprove();
           return;
         }
         if (showAcceptEditsOption && input === "2") {
-          onApprove();
+          onApproveAndAcceptEdits();
           return;
         }
       },
@@ -199,13 +196,13 @@ export const StaticPlanApproval = memo(
                 }
               >
                 {showAcceptEditsOption
-                  ? "Yes, and auto-accept edits"
+                  ? "Yes, proceed"
                   : "Yes, proceed (full access)"}
               </Text>
             </Box>
           </Box>
 
-          {/* Option 2: Yes, and manually approve edits */}
+          {/* Option 2: Yes, auto-accept file edits (approve commands) */}
           {showAcceptEditsOption && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
@@ -228,7 +225,7 @@ export const StaticPlanApproval = memo(
                       : undefined
                   }
                 >
-                  Yes, and manually approve edits
+                  Yes, auto-accept file edits (approve commands)
                 </Text>
               </Box>
             </Box>

@@ -789,7 +789,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
       if (rule === "Edit(**)" && actualScope === "session") {
         setUiPermissionMode("acceptEdits");
-        cmd.finish("Permission mode set to acceptEdits (session only)", true);
+        cmd.finish("Permission mode set to accept edits (auto-approve file edits; commands still require approval) (session only)", true);
       } else {
         // Save the permission rule
         try {

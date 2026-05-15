@@ -1758,7 +1758,7 @@ export function Input({
     // Fall through to permission modes
     switch (currentMode) {
       case "acceptEdits":
-        return { name: "accept edits", color: colors.status.processing };
+        return { name: "accept edits (approve commands)", color: colors.status.processing };
       case "standard":
         return {
           name: "standard (request approval) mode",
