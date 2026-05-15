@@ -30,11 +30,8 @@ import {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
 } from "../backend/api/memfs-git-proxy";
-import {
-  getLocalBackendMemoryFilesystemRoot,
-  isLocalBackendEnvEnabled,
-} from "../backend/local/paths";
 import { debugLog, debugWarn } from "../utils/debug";
+import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
 
 const execFile = promisify(execFileCb);
 
@@ -94,20 +91,8 @@ export function getMemoryRepoDir(agentId: string): string {
   return join(getAgentRootDir(agentId), "memory");
 }
 
-/**
- * Get the active memory repo directory for the current backend scope.
- *
- * API-backed MemFS uses ~/.letta/agents/{id}/memory, while local backend
- * MemFS uses ~/.letta/lc-local-backend/memfs/{id}/memory.
- */
-export function getScopedMemoryRepoDir(agentId: string): string {
-  return isLocalBackendEnvEnabled()
-    ? getLocalBackendMemoryFilesystemRoot(agentId)
-    : getMemoryRepoDir(agentId);
-}
-
 function getMemoryRepositoryRepoDir(agentId: string): string {
-  return getScopedMemoryRepoDir(agentId);
+  return getScopedMemoryFilesystemRoot(agentId);
 }
 
 /**
@@ -1531,7 +1516,7 @@ export async function commitAndSyncMemoryWrite(
 
 /** Check if the memory directory is a git repo */
 export function isGitRepo(agentId: string): boolean {
-  return existsSync(join(getScopedMemoryRepoDir(agentId), ".git"));
+  return existsSync(join(getScopedMemoryFilesystemRoot(agentId), ".git"));
 }
 
 export interface InitializeLocalMemoryRepoFile {
@@ -1824,7 +1809,7 @@ export interface MemoryGitStatus {
 export async function getMemoryGitStatus(
   agentId: string,
 ): Promise<MemoryGitStatus> {
-  const dir = getScopedMemoryRepoDir(agentId);
+  const dir = getScopedMemoryFilesystemRoot(agentId);
 
   // Check for uncommitted changes
   const { stdout: statusOut } = await runGit(dir, ["status", "--porcelain"]);

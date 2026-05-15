@@ -2,11 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  getMemoryRepoDir,
-  getScopedMemoryRepoDir,
-  isGitRepo,
-} from "../../agent/memoryGit";
+import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getMemoryRepoDir, isGitRepo } from "../../agent/memoryGit";
 import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
 
 function withTemporaryEnv<T>(
@@ -50,14 +47,14 @@ describe("memoryGit local backend scoping", () => {
           LETTA_LOCAL_BACKEND_DIR: storageDir,
         },
         () => {
-          expect(getScopedMemoryRepoDir(agentId)).toBe(
+          expect(getScopedMemoryFilesystemRoot(agentId)).toBe(
             getLocalBackendMemoryFilesystemRoot(agentId, storageDir),
           );
-          expect(getScopedMemoryRepoDir(agentId)).not.toBe(
+          expect(getScopedMemoryFilesystemRoot(agentId)).not.toBe(
             getMemoryRepoDir(agentId),
           );
 
-          const scopedDir = getScopedMemoryRepoDir(agentId);
+          const scopedDir = getScopedMemoryFilesystemRoot(agentId);
           mkdirSync(scopedDir, { recursive: true });
           Bun.spawnSync(["git", "init"], { cwd: scopedDir });
           expect(existsSync(join(scopedDir, ".git"))).toBe(true);

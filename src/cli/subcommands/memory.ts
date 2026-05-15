@@ -2,9 +2,9 @@ import { cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   getMemoryGitStatus,
-  getScopedMemoryRepoDir,
   isGitRepo,
   pullMemory,
 } from "../../agent/memoryGit";
@@ -70,7 +70,7 @@ function parseMemoryArgs(argv: string[]) {
 }
 
 function getMemoryRoot(agentId: string): string {
-  return getScopedMemoryRepoDir(agentId);
+  return getScopedMemoryFilesystemRoot(agentId);
 }
 
 function getAgentRoot(agentId: string): string {
@@ -185,7 +185,7 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFile = promisify(execFileCb);
-      const dir = getScopedMemoryRepoDir(agentId);
+      const dir = getScopedMemoryFilesystemRoot(agentId);
       const { stdout } = await execFile("git", ["diff"], { cwd: dir });
       if (stdout.trim()) {
         console.log(stdout);
