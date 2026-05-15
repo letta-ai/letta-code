@@ -195,7 +195,11 @@ describe("toQueuedMsg", () => {
       content: "hello",
       enqueuedAt: 0,
     };
-    expect(toQueuedMsg(item)).toEqual({ kind: "user", text: "hello", queueItemId: "item-1" });
+    expect(toQueuedMsg(item)).toEqual({
+      kind: "user",
+      text: "hello",
+      queueItemId: "item-1",
+    });
   });
 
   test("task_notification round-trips to QueuedMessage", async () => {
@@ -229,6 +233,10 @@ describe("toQueuedMsg", () => {
       ],
       enqueuedAt: 0,
     };
-    expect(toQueuedMsg(item)).toEqual({ kind: "user", text: "hello world", queueItemId: "item-3" });
+    expect(toQueuedMsg(item)).toEqual({
+      kind: "user",
+      text: "hello world",
+      queueItemId: "item-3",
+    });
   });
 });
