@@ -29,6 +29,7 @@ import {
 } from "../../cli/helpers/subagentState";
 import { setSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { DEFAULT_PERMISSION_MODE } from "../../permissions/mode";
 import type { MessageQueueItem } from "../../queue/queueRuntime";
 import type { LocalProjectSettings, Settings } from "../../settings-manager";
 import { settingsManager } from "../../settings-manager";
@@ -4146,7 +4147,7 @@ describe("listen-client capability-gated approval flow", () => {
         payload.delta?.message_type === "loop_error",
     );
 
-    expect(deviceStatus?.current_permission_mode).toBe("standard");
+    expect(deviceStatus?.current_permission_mode).toBe(DEFAULT_PERMISSION_MODE);
     expect(deviceStatus?.plan_mode_enabled).toBe(false);
     expect(loopStatus?.plan_file_path).toBeNull();
     expect(notice?.delta?.message).toContain(
