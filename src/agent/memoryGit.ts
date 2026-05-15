@@ -106,11 +106,6 @@ export function getScopedMemoryRepoDir(agentId: string): string {
     : getMemoryRepoDir(agentId);
 }
 
-/** Check if a specific directory is a git repo. */
-export function isGitRepoAtPath(memoryDir: string): boolean {
-  return existsSync(join(memoryDir, ".git"));
-}
-
 function getMemoryRepositoryRepoDir(agentId: string): string {
   return getScopedMemoryRepoDir(agentId);
 }
@@ -1536,7 +1531,7 @@ export async function commitAndSyncMemoryWrite(
 
 /** Check if the memory directory is a git repo */
 export function isGitRepo(agentId: string): boolean {
-  return isGitRepoAtPath(getScopedMemoryRepoDir(agentId));
+  return existsSync(join(getScopedMemoryRepoDir(agentId), ".git"));
 }
 
 export interface InitializeLocalMemoryRepoFile {

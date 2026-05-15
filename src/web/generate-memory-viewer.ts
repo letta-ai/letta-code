@@ -12,7 +12,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "../agent/memoryFilesystem";
-import { isGitRepoAtPath } from "../agent/memoryGit";
 import {
   getFileNodes,
   readFileContent,
@@ -481,7 +480,7 @@ export async function generateAndOpenMemoryViewer(
   const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
   const repoDir = memoryRoot;
 
-  if (!isGitRepoAtPath(repoDir)) {
+  if (!existsSync(join(repoDir, ".git"))) {
     throw new Error("Memory viewer requires memfs. Run /memfs enable first.");
   }
 
