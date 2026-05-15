@@ -43,12 +43,6 @@ export const QueuedMessages = memo(({ messages }: QueuedMessagesProps) => {
         </Box>
       )}
 
-      <Box flexDirection="row">
-        <Box width={2} flexShrink={0} />
-        <Box flexGrow={1}>
-          <Text dimColor>press ↑ to edit queued message</Text>
-        </Box>
-      </Box>
     </Box>
   );
 });

@@ -3412,12 +3412,15 @@ export default function App({
 
     const combinedText = userMessages.map((m) => m.text).join("\n");
 
-    // Remove each message from the runtime queue
+    // Remove each message from the runtime queue and clear display immediately.
+    // The onRemoved callback also updates display, but we clear directly here
+    // to ensure the display is gone on the same render cycle as the input update.
     for (const msg of userMessages) {
       if (msg.queueItemId) {
         tuiQueueRef.current?.removeItem(msg.queueItemId);
       }
     }
+    setQueueDisplay((prev) => prev.filter((m) => m.kind !== "user"));
 
     return combinedText;
   }, [queueDisplay]);

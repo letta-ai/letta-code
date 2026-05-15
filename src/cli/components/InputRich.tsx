@@ -454,6 +454,7 @@ const InputFooter = memo(function InputFooter({
   statusLinePadding,
   footerNotification,
   goalStatusText,
+  hasQueuedMessages = false,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -475,6 +476,7 @@ const InputFooter = memo(function InputFooter({
   statusLinePadding?: number;
   footerNotification?: string | null;
   goalStatusText?: string | null;
+  hasQueuedMessages?: boolean;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -639,6 +641,8 @@ const InputFooter = memo(function InputFooter({
           <Text color={colors.status.processingShimmer}>
             {footerNotification}
           </Text>
+        ) : hasQueuedMessages ? (
+          <Text dimColor>press ↑ to edit queued message</Text>
         ) : (
           <Text dimColor>Press / for commands</Text>
         )}
@@ -1928,6 +1932,10 @@ export function Input({
                 statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
                 goalStatusText={goalStatusText}
+                hasQueuedMessages={
+                  (messageQueue?.filter((m) => m.kind === "user").length ??
+                    0) > 0
+                }
               />
             )}
           </Box>
