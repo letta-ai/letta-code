@@ -1,6 +1,10 @@
 import { migratePermissionMode } from "../../permissions/mode";
 import type { ChannelAccountConfigAdapter } from "../pluginTypes";
-import type { SlackChannelAccount, SlackDefaultPermissionMode } from "../types";
+import {
+  DEFAULT_SLACK_PERMISSION_MODE,
+  type SlackChannelAccount,
+  type SlackDefaultPermissionMode,
+} from "../types";
 
 const SLACK_CONFIG_KEYS = new Set([
   "bot_token",
@@ -26,7 +30,7 @@ function isDefaultPermissionMode(
     value === "standard" ||
     value === "acceptEdits" ||
     value === "unrestricted" ||
-    value === "default" || // legacy → "standard"
+    value === "default" || // legacy → current product default
     value === "bypassPermissions" || // legacy → "unrestricted"
     value === "fullAccess" // legacy → "unrestricted"
   );
@@ -74,7 +78,8 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         has_bot_token: account.botToken.trim().length > 0,
         has_app_token: account.appToken.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "standard",
+        default_permission_mode:
+          account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
       };
     },
 
@@ -84,7 +89,8 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         has_bot_token: account.botToken.trim().length > 0,
         has_app_token: account.appToken.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "standard",
+        default_permission_mode:
+          account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
       };
     },
 

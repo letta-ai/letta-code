@@ -38,7 +38,7 @@ export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
 
 /**
  * Migrate legacy permission mode strings to their current equivalents.
- * - "default" → "standard" (renamed for clarity)
+ * - "default" → DEFAULT_PERMISSION_MODE (legacy name for the product default)
  * - "bypassPermissions" → "unrestricted" (renamed for clarity)
  * Returns null if the value is not a recognized mode (current or legacy).
  */
@@ -46,7 +46,7 @@ export function migratePermissionMode(value: string): PermissionMode | null {
   if (VALID_PERMISSION_MODES.includes(value as PermissionMode)) {
     return value as PermissionMode;
   }
-  if (value === "default") return "standard";
+  if (value === "default") return DEFAULT_PERMISSION_MODE;
   if (value === "bypassPermissions" || value === "fullAccess")
     return "unrestricted";
   return null;

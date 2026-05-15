@@ -25,6 +25,9 @@ export type SlackDefaultPermissionMode =
   | "acceptEdits"
   | "unrestricted";
 
+export const DEFAULT_SLACK_PERMISSION_MODE: SlackDefaultPermissionMode =
+  "unrestricted";
+
 export interface ChannelMessageAttachment {
   id?: string;
   name?: string;

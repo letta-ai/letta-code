@@ -3,7 +3,11 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { checkPermission } from "../permissions/checker";
 import { cliPermissions } from "../permissions/cli";
-import { permissionMode } from "../permissions/mode";
+import {
+  DEFAULT_PERMISSION_MODE,
+  migratePermissionMode,
+  permissionMode,
+} from "../permissions/mode";
 import type { PermissionRules } from "../permissions/types";
 
 // Clean up after each test
@@ -12,11 +16,16 @@ afterEach(() => {
   cliPermissions.clear();
 });
 
+test("legacy default permission mode migrates to the current product default", () => {
+  expect(DEFAULT_PERMISSION_MODE).toBe("unrestricted");
+  expect(migratePermissionMode("default")).toBe(DEFAULT_PERMISSION_MODE);
+});
+
 // ============================================================================
-// Permission Mode: default
+// Permission Mode: standard
 // ============================================================================
 
-test("default mode - no overrides", () => {
+test("standard mode - no overrides", () => {
   permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
@@ -37,7 +46,7 @@ test("default mode - no overrides", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("default mode - auto-allows memory", () => {
+test("standard mode - auto-allows memory", () => {
   permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
@@ -63,7 +72,7 @@ test("default mode - auto-allows memory", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("default mode - auto-allows memory_apply_patch", () => {
+test("standard mode - auto-allows memory_apply_patch", () => {
   permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {

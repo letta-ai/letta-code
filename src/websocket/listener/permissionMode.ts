@@ -171,7 +171,7 @@ export function loadPersistedPermissionModeMap(): Map<
       return map;
     }
     for (const [key, persisted] of Object.entries(settings.permissionModeMap)) {
-      // Migrate legacy mode values ("default" → "standard", "bypassPermissions" → "unrestricted").
+      // Migrate legacy mode values ("default" → product default, "bypassPermissions" → "unrestricted").
       const rawMode =
         migratePermissionMode(persisted.mode) ?? DEFAULT_PERMISSION_MODE;
       const rawModeBeforePlan = persisted.modeBeforePlan

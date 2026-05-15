@@ -40,8 +40,14 @@ import {
   clearTargetStores,
   upsertChannelTarget,
 } from "../../channels/targets";
+import { DEFAULT_SLACK_PERMISSION_MODE } from "../../channels/types";
+import { DEFAULT_PERMISSION_MODE } from "../../permissions/mode";
 
 describe("channel service", () => {
+  test("Slack channel default permission mode follows the product default", () => {
+    expect(DEFAULT_SLACK_PERMISSION_MODE).toBe(DEFAULT_PERMISSION_MODE);
+  });
+
   function upsertTargetForRouteTest(chatId: string): string {
     const targetId = `target-${chatId}`;
     upsertChannelTarget("slack", {
@@ -171,7 +177,7 @@ describe("channel service", () => {
         configured: true,
         hasBotToken: true,
         hasAppToken: true,
-        defaultPermissionMode: "standard",
+        defaultPermissionMode: "unrestricted",
       }),
     );
 
@@ -356,7 +362,7 @@ describe("channel service", () => {
         dmPolicy: "pairing",
         allowedUsers: [],
         agentId: null,
-        defaultPermissionMode: "standard",
+        defaultPermissionMode: "unrestricted",
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T00:00:00.000Z",
       },
@@ -367,7 +373,7 @@ describe("channel service", () => {
     expect(snapshot?.displayName).toBeUndefined();
     expect(snapshot?.channelId).toBe("slack");
     if (snapshot?.channelId === "slack") {
-      expect(snapshot.defaultPermissionMode).toBe("standard");
+      expect(snapshot.defaultPermissionMode).toBe("unrestricted");
     }
   });
 

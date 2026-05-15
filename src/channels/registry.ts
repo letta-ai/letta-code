@@ -237,6 +237,7 @@ export interface ChannelInboundDelivery {
   route: ChannelRoute;
   content: MessageCreate["content"];
   turnSources?: ChannelTurnSource[];
+  defaultPermissionMode?: SlackDefaultPermissionMode;
 }
 
 export type ChannelMessageHandler = (delivery: ChannelInboundDelivery) => void;
@@ -815,6 +816,7 @@ export class ChannelRegistry {
         turnSources: [
           buildChannelTurnSource(slackResult.route, preparedMessage),
         ],
+        defaultPermissionMode: config.defaultPermissionMode,
       });
       return;
     }
@@ -965,16 +967,14 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "standard") {
-      this.eventHandler?.({
-        type: "slack_conversation_created",
-        channelId: "slack",
-        accountId: config.accountId,
-        agentId: config.agentId,
-        conversationId,
-        defaultPermissionMode: config.defaultPermissionMode,
-      });
-    }
+    this.eventHandler?.({
+      type: "slack_conversation_created",
+      channelId: "slack",
+      accountId: config.accountId,
+      agentId: config.agentId,
+      conversationId,
+      defaultPermissionMode: config.defaultPermissionMode,
+    });
     return route;
   }
 

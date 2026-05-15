@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccount } from "../accounts";
-import type { DmPolicy, SlackChannelAccount } from "../types";
+import {
+  DEFAULT_SLACK_PERMISSION_MODE,
+  type DmPolicy,
+  type SlackChannelAccount,
+} from "../types";
 import { resolveSlackAccountDisplayName } from "./adapter";
 import { ensureSlackRuntimeInstalled } from "./runtime";
 
@@ -92,7 +96,7 @@ export async function runSlackSetup(): Promise<boolean> {
       botToken,
       appToken,
       agentId: null,
-      defaultPermissionMode: "standard",
+      defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
       dmPolicy: policy,
       allowedUsers,
       createdAt: now,
