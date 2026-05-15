@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildChannelHelpMessage,
+  buildChannelStatusMessage,
   buildUnsupportedChannelCommandMessage,
   listChannelSlashCommands,
   parseChannelSlashCommand,
@@ -24,10 +25,49 @@ describe("channel slash commands", () => {
     expect(listChannelSlashCommands()).toContainEqual(
       expect.objectContaining({ name: "help", kind: "direct" }),
     );
+    expect(listChannelSlashCommands()).toContainEqual(
+      expect.objectContaining({ name: "status", kind: "direct" }),
+    );
 
     const text = buildChannelHelpMessage("telegram");
     expect(text).toContain("Telegram is connected to Letta Code.");
-    expect(text).toContain("Supported slash commands here: /help.");
+    expect(text).toContain("Supported slash commands here: /help, /status.");
+  });
+
+  test("builds channel status for connected and unconnected chats", () => {
+    const msg = {
+      channel: "telegram",
+      chatId: "chat-1",
+      senderId: "user-1",
+      text: "/status",
+      timestamp: Date.now(),
+    };
+
+    expect(
+      buildChannelStatusMessage(msg, {
+        adapterRunning: true,
+        accountConfigured: true,
+        accountEnabled: true,
+        route: {
+          chatId: "chat-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enabled: true,
+          createdAt: "2026-05-15T00:00:00.000Z",
+        },
+      }),
+    ).toContain("Route: Connected to a Letta agent conversation.");
+
+    const unconnectedText = buildChannelStatusMessage(msg, {
+      adapterRunning: false,
+      accountConfigured: false,
+      route: null,
+    });
+    expect(unconnectedText).toContain(
+      "No channel account is configured for this receiver.",
+    );
+    expect(unconnectedText).toContain("Listener: stopped.");
+    expect(unconnectedText).toContain("No route is connected");
   });
 
   test("builds a useful unsupported-command response", () => {
@@ -40,7 +80,7 @@ describe("channel slash commands", () => {
     const text = buildUnsupportedChannelCommandMessage("telegram", command);
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
-    expect(text).toContain("Supported slash commands here: /help.");
+    expect(text).toContain("Supported slash commands here: /help, /status.");
     expect(text).toContain("without a leading slash");
   });
 });

@@ -1,5 +1,9 @@
 import { getChannelDisplayName } from "./pluginRegistry";
-import type { ChannelAdapter, InboundChannelMessage } from "./types";
+import type {
+  ChannelAdapter,
+  ChannelRoute,
+  InboundChannelMessage,
+} from "./types";
 
 export type ChannelSlashCommandKind = "direct" | "agent-scoped";
 
@@ -16,11 +20,23 @@ export type ChannelSlashCommandDefinition = {
   summary: string;
 };
 
+export type ChannelStatusContext = {
+  adapterRunning: boolean;
+  accountConfigured: boolean;
+  accountEnabled?: boolean;
+  route: ChannelRoute | null;
+};
+
 const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
   {
     name: "help",
     kind: "direct",
     summary: "Show channel usage guidance.",
+  },
+  {
+    name: "status",
+    kind: "direct",
+    summary: "Show this chat's channel connection status.",
   },
 ];
 
@@ -94,19 +110,72 @@ export function buildUnsupportedChannelCommandMessage(
   ].join("\n\n");
 }
 
+export function buildChannelStatusMessage(
+  msg: InboundChannelMessage,
+  context: ChannelStatusContext,
+): string {
+  const displayName = channelDisplayName(msg.channel);
+  const route = context.route;
+  const routeStatus = route
+    ? "Connected to a Letta agent conversation."
+    : "No route is connected for this chat yet.";
+  const accountStatus = !context.accountConfigured
+    ? "No channel account is configured for this receiver."
+    : context.accountEnabled === false
+      ? "Channel account is configured but disabled."
+      : "Channel account is configured and enabled.";
+
+  const lines = [
+    `${displayName} status`,
+    accountStatus,
+    `Listener: ${context.adapterRunning ? "running" : "stopped"}.`,
+    `Route: ${routeStatus}`,
+  ];
+
+  if (route) {
+    lines.push(`Agent: ${route.agentId}.`);
+    lines.push(`Conversation: ${route.conversationId}.`);
+    if (route.threadId) {
+      lines.push(`Thread: ${route.threadId}.`);
+    }
+  } else {
+    lines.push(
+      "Send a normal non-command message here to get pairing or connection instructions.",
+    );
+  }
+
+  return lines.join("\n");
+}
+
 export async function tryHandleChannelSlashCommand(
   adapter: ChannelAdapter,
   msg: InboundChannelMessage,
+  options: { statusContext?: ChannelStatusContext } = {},
 ): Promise<boolean> {
   const command = parseChannelSlashCommand(msg.text);
   if (!command) {
     return false;
   }
 
-  const text =
-    command.name === "help"
-      ? buildChannelHelpMessage(msg.channel)
-      : buildUnsupportedChannelCommandMessage(msg.channel, command);
+  let text: string;
+  switch (command.name) {
+    case "help":
+      text = buildChannelHelpMessage(msg.channel);
+      break;
+    case "status":
+      text = buildChannelStatusMessage(
+        msg,
+        options.statusContext ?? {
+          adapterRunning: adapter.isRunning(),
+          accountConfigured: false,
+          route: null,
+        },
+      );
+      break;
+    default:
+      text = buildUnsupportedChannelCommandMessage(msg.channel, command);
+      break;
+  }
 
   await adapter.sendDirectReply(
     msg.chatId,

@@ -806,11 +806,40 @@ export class ChannelRegistry {
       return;
     }
 
-    if (await tryHandleChannelSlashCommand(adapter, msg)) {
+    const config = getChannelAccount(msg.channel, accountId);
+
+    const getStatusRoute = (): ChannelRoute | null => {
+      let statusRoute = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        msg.threadId,
+      );
+      if (!statusRoute) {
+        loadRoutes(msg.channel);
+        statusRoute = getRouteFromStore(
+          msg.channel,
+          msg.chatId,
+          accountId,
+          msg.threadId,
+        );
+      }
+      return statusRoute;
+    };
+
+    if (
+      await tryHandleChannelSlashCommand(adapter, msg, {
+        statusContext: {
+          adapterRunning: adapter.isRunning(),
+          accountConfigured: !!config,
+          accountEnabled: config?.enabled,
+          route: getStatusRoute(),
+        },
+      })
+    ) {
       return;
     }
 
-    const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
     if (msg.channel === "slack" && isSlackChannelAccount(config)) {
