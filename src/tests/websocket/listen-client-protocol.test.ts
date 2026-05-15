@@ -63,6 +63,7 @@ import {
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
 } from "../../websocket/listener/recoverable-notices";
+import { resetRemoteSettingsCache } from "../../websocket/listener/remote-settings";
 
 class MockSocket {
   readyState: number;
@@ -4112,7 +4113,13 @@ describe("listen-client capability-gated approval flow", () => {
   });
 
   test("mode changes reject plan mode when plan mode is disabled", async () => {
+    const originalHome = process.env.HOME;
+    const testHomeDir = await mkdtemp(
+      join(os.tmpdir(), "letta-plan-disabled-"),
+    );
     await settingsManager.reset();
+    process.env.HOME = testHomeDir;
+    resetRemoteSettingsCache();
     await settingsManager.initialize();
 
     const listener = __listenClientTestUtils.createListenerRuntime();
@@ -4124,34 +4131,50 @@ describe("listen-client capability-gated approval flow", () => {
       conversation_id: "default",
     } as const;
 
-    __listenClientTestUtils.handleModeChange(
-      { mode: "plan" },
-      socket as unknown as WebSocket,
-      listener,
-      scope,
+    listener.permissionModeByConversation.set(
+      "agent:agent-1::conversation:default",
+      {
+        mode: "standard",
+        planFilePath: null,
+        modeBeforePlan: null,
+      },
     );
 
-    const outbound = socket.sentPayloads.map((payload) =>
-      JSON.parse(payload as string),
-    );
-    const deviceStatus = outbound.findLast(
-      (payload) => payload.type === "update_device_status",
-    )?.device_status;
-    const loopStatus = outbound.findLast(
-      (payload) => payload.type === "update_loop_status",
-    )?.loop_status;
-    const notice = outbound.findLast(
-      (payload) =>
-        payload.type === "stream_delta" &&
-        payload.delta?.message_type === "loop_error",
-    );
+    try {
+      __listenClientTestUtils.handleModeChange(
+        { mode: "plan" },
+        socket as unknown as WebSocket,
+        listener,
+        scope,
+      );
 
-    expect(deviceStatus?.current_permission_mode).toBe("standard");
-    expect(deviceStatus?.plan_mode_enabled).toBe(false);
-    expect(loopStatus?.plan_file_path).toBeNull();
-    expect(notice?.delta?.message).toContain(
-      "Plan mode is disabled in user settings.",
-    );
+      const outbound = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      const deviceStatus = outbound.findLast(
+        (payload) => payload.type === "update_device_status",
+      )?.device_status;
+      const loopStatus = outbound.findLast(
+        (payload) => payload.type === "update_loop_status",
+      )?.loop_status;
+      const notice = outbound.findLast(
+        (payload) =>
+          payload.type === "stream_delta" &&
+          payload.delta?.message_type === "loop_error",
+      );
+
+      expect(deviceStatus?.current_permission_mode).toBe("standard");
+      expect(deviceStatus?.plan_mode_enabled).toBe(false);
+      expect(loopStatus?.plan_file_path).toBeNull();
+      expect(notice?.delta?.message).toContain(
+        "Plan mode is disabled in user settings.",
+      );
+    } finally {
+      await settingsManager.reset();
+      await rm(testHomeDir, { recursive: true, force: true });
+      process.env.HOME = originalHome;
+      resetRemoteSettingsCache();
+    }
   });
 
   test("mode changes emit fresh loop status plan_file_path on enter exit and re-enter", async () => {
@@ -4159,6 +4182,7 @@ describe("listen-client capability-gated approval flow", () => {
     const testHomeDir = await mkdtemp(join(os.tmpdir(), "letta-plan-ws-"));
     await settingsManager.reset();
     process.env.HOME = testHomeDir;
+    resetRemoteSettingsCache();
     await settingsManager.initialize();
     settingsManager.setPlanModeEnabled(true);
 
@@ -4221,6 +4245,7 @@ describe("listen-client capability-gated approval flow", () => {
       await settingsManager.reset();
       await rm(testHomeDir, { recursive: true, force: true });
       process.env.HOME = originalHome;
+      resetRemoteSettingsCache();
     }
   });
 
