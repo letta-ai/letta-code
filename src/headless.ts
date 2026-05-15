@@ -112,10 +112,7 @@ import { writeWireMessage, writeWireMessageAsync } from "./streamJsonWriter";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/errorReporting";
 import { extractTelemetryInputText } from "./telemetry/input";
-import {
-  isHeadlessAutoAllowTool,
-  isInteractiveApprovalTool,
-} from "./tools/interactivePolicy";
+import { isHeadlessAutoAllowTool } from "./tools/interactivePolicy";
 import {
   type ExternalToolDefinition,
   registerExternalTools,

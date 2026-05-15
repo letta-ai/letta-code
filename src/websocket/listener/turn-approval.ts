@@ -14,10 +14,7 @@ import type { ChannelTurnSource } from "../../channels/types";
 import { alwaysRequiresUserInput } from "../../cli/helpers/toolNameMapping";
 import { computeDiffPreviews } from "../../helpers/diffPreview";
 import { formatPermissionDenial } from "../../permissions/formatDenial";
-import {
-  getInteractiveApprovalKind,
-  isInteractiveApprovalTool,
-} from "../../tools/interactivePolicy";
+import { getInteractiveApprovalKind } from "../../tools/interactivePolicy";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,

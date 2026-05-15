@@ -27,7 +27,6 @@ import { createBuffers } from "../../cli/helpers/accumulator";
 import { drainStreamWithResume } from "../../cli/helpers/stream";
 import { alwaysRequiresUserInput } from "../../cli/helpers/toolNameMapping";
 import { formatPermissionDenial } from "../../permissions/formatDenial";
-import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { prepareToolExecutionContextForScope } from "../../tools/toolset";
 import type {
   ApprovalResponseBody,
