@@ -177,10 +177,7 @@ type AppViewProps = {
   handleDenyCurrent: (reason: string) => Promise<void>;
   handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
   handleEnterPlanModeReject: () => Promise<void>;
-  handleQueueFocusChange: (index: number) => void;
-  handleQueueEdit: (focusIndex: number) => void;
-  handleQueueRemove: (focusIndex: number) => void;
-  handleQueueEscape: () => void;
+  handleQueueEdit: () => string;
   handleExit: () => Promise<void>;
   handleExperimentSelect: (
     selection: { experimentId: ExperimentId; enabled: boolean },
@@ -246,7 +243,6 @@ type AppViewProps = {
     cmdId: string;
   } | null;
   queueDisplay: QueuedMessage[];
-  queueFocusIndex: number;
   queuedDecisions: Map<string, QueuedApprovalDecision>;
   queuedIds: Set<string>;
   reasoningTabCycleEnabled: boolean;
@@ -344,10 +340,7 @@ export function AppView(props: AppViewProps) {
     handleDenyCurrent,
     handleEnterPlanModeApprove,
     handleEnterPlanModeReject,
-    handleQueueFocusChange,
     handleQueueEdit,
-    handleQueueRemove,
-    handleQueueEscape,
     handleExit,
     handleExperimentSelect,
     handleFeedbackSubmit,
@@ -388,7 +381,6 @@ export function AppView(props: AppViewProps) {
     precomputedDiffsRef,
     profileConfirmPending,
     queueDisplay,
-    queueFocusIndex,
     queuedDecisions,
     queuedIds,
     reasoningTabCycleEnabled,
@@ -706,11 +698,7 @@ export function AppView(props: AppViewProps) {
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 messageQueue={queueDisplay}
-                queueFocusIndex={queueFocusIndex}
-                onQueueFocusChange={handleQueueFocusChange}
                 onQueueEdit={handleQueueEdit}
-                onQueueRemove={handleQueueRemove}
-                onQueueEscape={handleQueueEscape}
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }

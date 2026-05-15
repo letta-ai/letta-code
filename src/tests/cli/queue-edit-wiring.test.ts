@@ -21,27 +21,27 @@ describe("queue edit wiring", () => {
     expect(source).toContain("queueItemId: item.id");
   });
 
-  test("QueuedMessages accepts focusIndex prop", () => {
+  test("QueuedMessages shows hint text and no focus UI", () => {
     const path = fileURLToPath(
       new URL("../../cli/components/QueuedMessages.tsx", import.meta.url),
     );
     const source = readFileSync(path, "utf-8");
 
-    expect(source).toContain("focusIndex");
-    expect(source).toContain("isFocused");
+    expect(source).toContain("press ↑ to edit queued message");
+    expect(source).not.toContain("focusIndex");
+    expect(source).not.toContain("isFocused");
   });
 
-  test("InputRich has queue focus props", () => {
+  test("InputRich has onQueueEdit prop for up-arrow edit", () => {
     const path = fileURLToPath(
       new URL("../../cli/components/InputRich.tsx", import.meta.url),
     );
     const source = readFileSync(path, "utf-8");
 
-    expect(source).toContain("queueFocusIndex");
-    expect(source).toContain("onQueueFocusChange");
     expect(source).toContain("onQueueEdit");
-    expect(source).toContain("onQueueRemove");
-    expect(source).toContain("onQueueEscape");
+    expect(source).not.toContain("onQueueFocusChange");
+    expect(source).not.toContain("onQueueRemove");
+    expect(source).not.toContain("onQueueEscape");
   });
 
   test("QueueRuntime has removeItem method", () => {
@@ -52,14 +52,5 @@ describe("queue edit wiring", () => {
 
     expect(source).toContain("removeItem(id: string)");
     expect(source).toContain("onRemoved");
-  });
-
-  test("CLI_GLYPHS has focus glyph", () => {
-    const path = fileURLToPath(
-      new URL("../../cli/helpers/glyphs.ts", import.meta.url),
-    );
-    const source = readFileSync(path, "utf-8");
-
-    expect(source).toContain("focus:");
   });
 });
