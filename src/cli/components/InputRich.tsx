@@ -972,7 +972,11 @@ export function Input({
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
   messageQueue,
-  onEnterQueueEditMode,
+  queueFocusIndex = -1,
+  onQueueFocusChange,
+  onQueueEdit,
+  onQueueRemove,
+  onQueueEscape,
   onEscapeCancel,
   inputDisabled = false,
   ralphActive = false,
@@ -1017,7 +1021,11 @@ export function Input({
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   messageQueue?: QueuedMessage[];
-  onEnterQueueEditMode?: () => void;
+  queueFocusIndex?: number;
+  onQueueFocusChange?: (index: number) => void;
+  onQueueEdit?: (focusIndex: number) => void;
+  onQueueRemove?: (focusIndex: number) => void;
+  onQueueEscape?: () => void;
   onEscapeCancel?: () => void;
   inputDisabled?: boolean;
   ralphActive?: boolean;
@@ -1290,6 +1298,9 @@ export function Input({
     if (onEscapeCancel) return;
 
     if (key.escape) {
+      // When queue is focused, let the queue handler manage escape
+      if (queueFocusIndex !== -1) return;
+
       // When bash command running, use Esc to interrupt (LET-7199)
       if (bashRunning && onBashInterrupt) {
         onBashInterrupt();
@@ -1406,6 +1417,75 @@ export function Input({
     }
   });
 
+  // Handle Ctrl+Up/Ctrl+Down for queue focus, and queue-focused actions
+  useInput((_input, key) => {
+    if (!interactionEnabled) return;
+    if (!messageQueue || messageQueue.length === 0) return;
+
+    const userMessages = messageQueue.filter((m) => m.kind === "user");
+    if (userMessages.length === 0) return;
+
+    // Ctrl+Up: focus previous queued message (or last if unfocused)
+    if (key.upArrow && key.ctrl) {
+      if (!onQueueFocusChange) return;
+      if (queueFocusIndex === -1) {
+        onQueueFocusChange(userMessages.length - 1);
+      } else if (queueFocusIndex > 0) {
+        onQueueFocusChange(queueFocusIndex - 1);
+      } else {
+        // Wrap to last
+        onQueueFocusChange(userMessages.length - 1);
+      }
+      return;
+    }
+
+    // Ctrl+Down: focus next queued message (or first if unfocused)
+    if (key.downArrow && key.ctrl) {
+      if (!onQueueFocusChange) return;
+      if (queueFocusIndex === -1) {
+        onQueueFocusChange(0);
+      } else if (queueFocusIndex < userMessages.length - 1) {
+        onQueueFocusChange(queueFocusIndex + 1);
+      } else {
+        // Wrap to first
+        onQueueFocusChange(0);
+      }
+      return;
+    }
+
+    // Queue-focused actions (only when a message is focused)
+    if (queueFocusIndex === -1) return;
+
+    // Enter: edit the focused message
+    if (key.return) {
+      if (onQueueEdit) {
+        onQueueEdit(queueFocusIndex);
+        // Load the focused message text into input
+        const msg = userMessages[queueFocusIndex];
+        if (msg && msg.kind === "user") {
+          setValue(msg.text);
+        }
+      }
+      return;
+    }
+
+    // Delete/Backspace: remove the focused message
+    if (key.delete || key.backspace) {
+      if (onQueueRemove) {
+        onQueueRemove(queueFocusIndex);
+      }
+      return;
+    }
+
+    // Escape: unfocus (or restore if editing)
+    if (key.escape) {
+      if (onQueueEscape) {
+        onQueueEscape();
+      }
+      return;
+    }
+  });
+
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!interactionEnabled) return;
@@ -1455,7 +1535,7 @@ export function Input({
           return;
         }
 
-        // Check if we should load queue (streaming with queued messages)
+        // Check if we should focus queue (streaming with queued messages)
         if (
           streaming &&
           messageQueue &&
@@ -1463,19 +1543,12 @@ export function Input({
           atStartBoundary
         ) {
           setAtStartBoundary(false);
-          // Clear the queue and load into input as one multi-line message
-          const queueText = messageQueue
-            .filter((item) => item.kind === "user")
-            .map((item) => item.text.trim())
-            .filter((msg) => msg.length > 0)
-            .join("\n");
-          if (!queueText) {
-            return;
-          }
-          setValue(queueText);
-          // Signal to App.tsx to clear the queue
-          if (onEnterQueueEditMode) {
-            onEnterQueueEditMode();
+          // Focus the last queued message
+          const userCount = messageQueue.filter(
+            (item) => item.kind === "user",
+          ).length;
+          if (userCount > 0 && onQueueFocusChange) {
+            onQueueFocusChange(userCount - 1);
           }
           return;
         }
@@ -1832,7 +1905,10 @@ export function Input({
       <>
         {/* Queue display - show whenever there are queued messages */}
         {messageQueue && messageQueue.length > 0 && (
-          <QueuedMessages messages={messageQueue} />
+          <QueuedMessages
+            messages={messageQueue}
+            focusIndex={queueFocusIndex}
+          />
         )}
 
         {interactionEnabled ? (
@@ -1987,6 +2063,7 @@ export function Input({
     promptChar,
     promptVisualWidth,
     suppressDividers,
+    queueFocusIndex,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state

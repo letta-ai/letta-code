@@ -128,6 +128,11 @@ export interface QueueCallbacks {
     reason: QueueItemDroppedReason,
     queueLen: number,
   ) => void;
+  /**
+   * Fired when an item is explicitly removed via removeItem().
+   * queueLen is the post-removal queue depth.
+   */
+  onRemoved?: (item: QueueItem, queueLen: number) => void;
 }
 
 // ── Options ──────────────────────────────────────────────────────
@@ -335,6 +340,24 @@ export class QueueRuntime {
   resetBlockedState(): void {
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
+  }
+
+  // ── Remove ──────────────────────────────────────────────────────
+
+  /**
+   * Remove a specific item by ID. Returns the removed item, or null
+   * if no item with that ID exists. Fires onRemoved callback.
+   */
+  removeItem(id: string): QueueItem | null {
+    const idx = this.store.findIndex((item) => item.id === id);
+    if (idx === -1) return null;
+    const removed = this.store.splice(idx, 1)[0];
+    if (!removed) return null;
+    if (this.store.length === 0) {
+      this.blockedEmittedForNonEmpty = false;
+    }
+    this.safeCallback("onRemoved", removed, this.store.length);
+    return removed;
   }
 
   // ── Clear ──────────────────────────────────────────────────────

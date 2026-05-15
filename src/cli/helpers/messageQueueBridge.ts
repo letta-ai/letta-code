@@ -15,6 +15,8 @@ export type QueuedMessage = {
   agentId?: string;
   /** Optional parent conversation scope for routing in listener mode. */
   conversationId?: string;
+  /** QueueRuntime-assigned ID for targeted remove/edit operations. */
+  queueItemId?: string;
 };
 
 type QueueAdder = (message: QueuedMessage) => void;

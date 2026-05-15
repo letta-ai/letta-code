@@ -1105,6 +1105,15 @@ export default function App({
   // Message queue state for queueing messages during streaming
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
 
+  // Queue focus: which queued message is selected for edit/remove (-1 = none)
+  const [queueFocusIndex, setQueueFocusIndex] = useState(-1);
+  // When editing a queued message, stores the original for ESC restore
+  const queueEditOriginalRef = useRef<{
+    id: string;
+    text: string;
+    index: number;
+  } | null>(null);
+
   // QueueRuntime — authoritative queue. maxItems: Infinity disables drop limits
   // to match the previous unbounded array semantics. queueDisplay is a derived
   // UI state maintained by the onEnqueued/onDequeued/onCleared callbacks.
@@ -1149,6 +1158,17 @@ export default function App({
             `cleared reason=${_reason} cleared_count=${_clearedCount}`,
           );
           setQueueDisplay([]);
+          setQueueFocusIndex(-1);
+        },
+        onRemoved: (item, queueLen) => {
+          debugLog(
+            "queue-lifecycle",
+            `removed item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
+          );
+          // Remove the matching display item by queueItemId
+          setQueueDisplay((prev) =>
+            prev.filter((msg) => msg.queueItemId !== item.id),
+          );
         },
       },
     });
@@ -3392,9 +3412,69 @@ export default function App({
     currentModelProvider,
   ]);
 
-  // Handler when user presses UP/ESC to load queue into input for editing
-  const handleEnterQueueEditMode = useCallback(() => {
-    tuiQueueRef.current?.clear("stale_generation");
+  // Queue focus: cycle through queued messages
+  const handleQueueFocusChange = useCallback((index: number) => {
+    setQueueFocusIndex(index);
+  }, []);
+
+  // Queue edit: load focused message into input for editing
+  const handleQueueEdit = useCallback(
+    (focusIndex: number) => {
+      const userMessages = queueDisplay.filter((m) => m.kind === "user");
+      const msg = userMessages[focusIndex];
+      if (!msg || msg.kind !== "user") return;
+
+      // Remove from queue and store original for ESC restore
+      if (msg.queueItemId) {
+        tuiQueueRef.current?.removeItem(msg.queueItemId);
+      }
+      queueEditOriginalRef.current = {
+        id: msg.queueItemId ?? "",
+        text: msg.text,
+        index: focusIndex,
+      };
+      setQueueFocusIndex(-1);
+      // The InputRich component will set its value from the onQueueEdit callback
+    },
+    [queueDisplay],
+  );
+
+  // Queue remove: delete focused message from queue
+  const handleQueueRemove = useCallback(
+    (focusIndex: number) => {
+      const userMessages = queueDisplay.filter((m) => m.kind === "user");
+      const msg = userMessages[focusIndex];
+      if (!msg || !msg.queueItemId) return;
+
+      tuiQueueRef.current?.removeItem(msg.queueItemId);
+
+      // Adjust focus: move to next, or last, or -1 if empty
+      const remaining = queueDisplay.filter(
+        (m) => m.kind === "user" && m.queueItemId !== msg.queueItemId,
+      );
+      if (remaining.length === 0) {
+        setQueueFocusIndex(-1);
+      } else if (focusIndex >= remaining.length) {
+        setQueueFocusIndex(remaining.length - 1);
+      }
+      // Otherwise keep same index (next item slides into position)
+    },
+    [queueDisplay],
+  );
+
+  // Queue escape: if editing, restore original; if focused, unfocus
+  const handleQueueEscape = useCallback(() => {
+    if (queueEditOriginalRef.current) {
+      // Restore original message to queue
+      const original = queueEditOriginalRef.current;
+      queueEditOriginalRef.current = null;
+      tuiQueueRef.current?.enqueue({
+        kind: "message",
+        content: original.text,
+        source: "user",
+      } as Parameters<typeof tuiQueueRef.current.enqueue>[0]);
+    }
+    setQueueFocusIndex(-1);
   }, []);
 
   // Handle paste errors (e.g., image too large)
@@ -3714,6 +3794,9 @@ export default function App({
       // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
       if (!batch) return;
+
+      // Reset queue focus since all items are being consumed
+      setQueueFocusIndex(-1);
 
       // Build concatenated text for lastDequeuedMessageRef (error restoration).
       const concatenatedMessage = batch.items
@@ -4340,7 +4423,10 @@ export default function App({
       handleDenyCurrent={handleDenyCurrent}
       handleEnterPlanModeApprove={handleEnterPlanModeApprove}
       handleEnterPlanModeReject={handleEnterPlanModeReject}
-      handleEnterQueueEditMode={handleEnterQueueEditMode}
+      handleQueueFocusChange={handleQueueFocusChange}
+      handleQueueEdit={handleQueueEdit}
+      handleQueueRemove={handleQueueRemove}
+      handleQueueEscape={handleQueueEscape}
       handleExit={handleExit}
       handleExperimentSelect={handleExperimentSelect}
       handleFeedbackSubmit={handleFeedbackSubmit}
@@ -4383,6 +4469,7 @@ export default function App({
       precomputedDiffsRef={precomputedDiffsRef}
       profileConfirmPending={profileConfirmPending}
       queueDisplay={queueDisplay}
+      queueFocusIndex={queueFocusIndex}
       queuedDecisions={queuedDecisions}
       queuedIds={queuedIds}
       reasoningTabCycleEnabled={reasoningTabCycleEnabled}

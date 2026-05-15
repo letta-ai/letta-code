@@ -558,3 +558,86 @@ describe("resetBlockedState", () => {
     expect(blocked).toHaveLength(0);
   });
 });
+
+// ── removeItem ─────────────────────────────────────────────────────
+
+describe("removeItem", () => {
+  test("removes item by ID and returns it", () => {
+    const q = new QueueRuntime();
+    const item = q.enqueue(makeMsg("first"));
+    q.enqueue(makeMsg("second"));
+    expect(q.length).toBe(2);
+    expect(item).not.toBeNull();
+
+    const removed = q.removeItem(item?.id ?? "");
+    expect(removed).not.toBeNull();
+    expect(removed?.id).toBe(item?.id);
+    expect((removed as MessageQueueItem).content).toBe("first");
+    expect(q.length).toBe(1);
+  });
+
+  test("returns null for nonexistent ID", () => {
+    const q = new QueueRuntime();
+    q.enqueue(makeMsg());
+    const removed = q.removeItem("q-999");
+    expect(removed).toBeNull();
+    expect(q.length).toBe(1);
+  });
+
+  test("fires onRemoved callback with item and new queue length", () => {
+    const removedItems: QueueItem[] = [];
+    const queueLengths: number[] = [];
+    const q = new QueueRuntime({
+      callbacks: {
+        onRemoved: (item, queueLen) => {
+          removedItems.push(item);
+          queueLengths.push(queueLen);
+        },
+      },
+    });
+    const item = q.enqueue(makeMsg());
+    q.enqueue(makeMsg());
+    q.removeItem(item?.id ?? "");
+
+    expect(removedItems).toHaveLength(1);
+    expect(removedItems[0]?.id).toBe(item?.id);
+    expect(queueLengths).toEqual([1]);
+  });
+
+  test("removes from middle of queue", () => {
+    const q = new QueueRuntime();
+    q.enqueue(makeMsg("first"));
+    const second = q.enqueue(makeMsg("second"));
+    q.enqueue(makeMsg("third"));
+
+    q.removeItem(second?.id ?? "");
+    expect(q.length).toBe(2);
+
+    // Verify order is preserved
+    const batch = q.consumeItems(2);
+    expect(batch?.items).toHaveLength(2);
+    expect((batch?.items[0] as MessageQueueItem).content).toBe("first");
+    expect((batch?.items[1] as MessageQueueItem).content).toBe("third");
+  });
+
+  test("resets blockedEmittedForNonEmpty when queue becomes empty", () => {
+    const blocked: string[] = [];
+    const q = new QueueRuntime({
+      callbacks: { onBlocked: (r) => blocked.push(r) },
+    });
+    const item = q.enqueue(makeMsg());
+
+    // Fire blocked once
+    q.tryDequeue("streaming");
+    expect(blocked).toHaveLength(1);
+
+    // Remove the item, making queue empty
+    q.removeItem(item?.id ?? "");
+    expect(q.length).toBe(0);
+
+    // Add new item and block again — should emit blocked
+    q.enqueue(makeMsg());
+    q.tryDequeue("streaming");
+    expect(blocked).toHaveLength(2);
+  });
+});
