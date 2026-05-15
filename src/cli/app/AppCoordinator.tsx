@@ -3410,19 +3410,30 @@ export default function App({
     const userMessages = queueDisplay.filter((m) => m.kind === "user");
     if (userMessages.length === 0) return "";
 
-    const combinedText = userMessages.map((m) => m.text).join("\n");
-
-    // Remove each message from the runtime queue and clear display immediately.
-    // The onRemoved callback also updates display, but we clear directly here
-    // to ensure the display is gone on the same render cycle as the input update.
+    // Try to remove each message from the runtime queue. Only include text
+    // from messages that were actually removed — if removeItem returns null,
+    // the item was already dequeued (race with auto-send) and should NOT be
+    // loaded into the input (it would cause a double-send).
+    const removedTexts: string[] = [];
     for (const msg of userMessages) {
       if (msg.queueItemId) {
-        tuiQueueRef.current?.removeItem(msg.queueItemId);
+        const removed = tuiQueueRef.current?.removeItem(msg.queueItemId);
+        if (removed) {
+          removedTexts.push(msg.text);
+        }
+        // If removed is null, item was already dequeued/sent — skip it
+      } else {
+        // No queueItemId (shouldn't happen for user messages), include anyway
+        removedTexts.push(msg.text);
       }
     }
+
+    if (removedTexts.length === 0) return ""; // All already dequeued/sent
+
+    // Clear display immediately — same render cycle as the input update
     setQueueDisplay((prev) => prev.filter((m) => m.kind !== "user"));
 
-    return combinedText;
+    return removedTexts.join("\n");
   }, [queueDisplay]);
 
   // Handle paste errors (e.g., image too large)
