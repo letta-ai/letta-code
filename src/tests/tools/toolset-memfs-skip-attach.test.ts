@@ -57,6 +57,12 @@ describe("ensureCorrectMemoryTool", () => {
   });
 
   test("proceeds normally when server-side tool management is available", async () => {
+    // The full Bun suite shares backend singleton state across files. Force the
+    // expected backend immediately before exercising the function so another
+    // file cannot clobber beforeEach setup between tests.
+    configureBackendMode("api");
+    __testOverrideGetClient(mockGetClient);
+
     await ensureCorrectMemoryTool("agent-123", "anthropic/claude-sonnet-4");
 
     // Should have called getClient and retrieved the agent.
