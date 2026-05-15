@@ -227,7 +227,12 @@ function createIssue(
   verdict: string,
 ): void {
   const labels = ["codex-watch", "automation"];
-  if (verdict === "tool-schema update needed") labels.push("priority/review");
+  if (
+    verdict === "tool-schema update needed" ||
+    verdict === "tool-surface review needed"
+  ) {
+    labels.push("priority/review");
+  }
   if (verdict === "no-op") labels.push("informational");
 
   ensureLabels(repo, labels);

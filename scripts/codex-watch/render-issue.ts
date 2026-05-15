@@ -29,16 +29,26 @@ const LOCAL_MIRRORS: Record<string, string[]> = {
   apply_patch_tool_type: [
     "src/agent/prompts/source_codex.md",
     "src/tools/impl/",
+    "src/tools/schemas/ApplyPatch.json",
+    "src/tools/descriptions/ApplyPatch.md",
   ],
-  web_search_tool_type: ["src/tools/impl/"],
-  shell_type: ["src/tools/impl/", "src/agent/prompts/source_codex.md"],
-  supports_search_tool: ["src/tools/impl/"],
+  web_search_tool_type: ["src/tools/toolDefinitions.ts", "src/tools/impl/"],
+  shell_type: [
+    "src/tools/toolDefinitions.ts",
+    "src/tools/schemas/ShellCommand.json",
+    "src/tools/descriptions/ShellCommand.md",
+    "src/tools/impl/",
+    "src/agent/prompts/source_codex.md",
+  ],
+  supports_search_tool: ["src/tools/filter.ts", "src/tools/toolDefinitions.ts"],
   supports_parallel_tool_calls: ["src/agent/prompts/source_codex.md"],
   experimental_supported_tools: [
     "src/tools/toolDefinitions.ts",
+    "src/tools/schemas/",
+    "src/tools/descriptions/",
     "src/tools/impl/",
   ],
-  input_modalities: ["src/tools/impl/"],
+  input_modalities: ["src/tools/toolDefinitions.ts", "src/tools/impl/"],
   truncation_policy: ["src/agent/prompts/source_codex.md"],
   prompt_tool_mentions: ["src/agent/prompts/source_codex.md"],
 };
@@ -129,6 +139,14 @@ export function renderBody(input: RenderInput): string {
     parts.push("");
   }
 
+  const impacts = potentialImpacts(input);
+  if (impacts.length > 0) {
+    parts.push(`## Potential letta-code impact`);
+    parts.push("");
+    for (const impact of impacts) parts.push(`- ${impact}`);
+    parts.push("");
+  }
+
   // Prompt diff preview
   if (input.prompt_md_changed && input.prompt_md_diff_preview) {
     parts.push(`## \`codex-rs/models-manager/prompt.md\` diff (preview)`);
@@ -172,10 +190,55 @@ function verdictRationale(input: RenderInput): string {
     case "prompt-only update":
       return "Prompt text or tool mentions changed. `src/agent/prompts/source_codex.md` should be re-extracted; no tool implementation changes needed.";
     case "tool-schema update needed":
-      return "Upstream changed tool-config fields in `models.json` and/or `codex-rs/core/src/tools/`. Letta-code's tool definitions may need to mirror the new shape.";
+      return "Upstream changed tool-config fields in `models.json`. Review the table below and update the matching letta-code tool schema, description, implementation, or prompt mirror if the new model contract diverges.";
+    case "tool-surface review needed":
+      return "No tool-config field deltas were detected in `models.json`, but upstream changed watched tool implementation paths. Review the commits below to decide whether letta-code needs matching tool schema, prompt, or behavior updates.";
     case "manual review required":
       return "Could not classify automatically (parse error or removed model). Please review the diff manually.";
   }
+}
+
+function hasPath(input: RenderInput, prefix: string): boolean {
+  return input.path_changes.some((p) => p.path.startsWith(prefix));
+}
+
+function potentialImpacts(input: RenderInput): string[] {
+  const out: string[] = [];
+
+  if (input.models_diff?.field_deltas.length) {
+    out.push(
+      "`models.json` changed tool-related model fields. Use the table above to update the listed local mirror paths if the field controls tool naming, availability, or prompt instructions in letta-code.",
+    );
+  }
+
+  if (hasPath(input, "codex-rs/core/src/tools")) {
+    out.push(
+      "`codex-rs/core/src/tools` changed. Check whether upstream changed built-in tool specs or runtime semantics, then compare against `src/tools/toolDefinitions.ts`, `src/tools/schemas/*.json`, `src/tools/descriptions/*.md`, `src/tools/impl/*`, and `src/tools/manager.ts`.",
+    );
+    out.push(
+      "Map commit subjects to local tools before editing: `view_image` maps to `ViewImage`, shell/exec changes map to `ShellCommand`/`Bash`, `apply_patch` changes map to `ApplyPatch`, and MCP/search/approval changes may be upstream-only if letta-code has no equivalent exposed tool.",
+    );
+  }
+
+  if (hasPath(input, "codex-rs/apply-patch")) {
+    out.push(
+      "`codex-rs/apply-patch` changed. Compare parser and failure semantics with `src/tools/impl/ApplyPatch.ts`, `src/tools/impl/MemoryApplyPatch.ts`, `src/tools/descriptions/ApplyPatch.md`, and the apply-patch tests.",
+    );
+  }
+
+  if (input.prompt_md_changed) {
+    out.push(
+      "`codex-rs/models-manager/prompt.md` changed. Re-extract or reconcile `src/agent/prompts/source_codex.md` and update `src/agent/prompts/README.md` provenance.",
+    );
+  }
+
+  if (input.verdict === "no-op") {
+    out.push(
+      "No watched tool surfaces changed. Skim release notes for untracked harness risks, then close if nothing applies.",
+    );
+  }
+
+  return out;
 }
 
 function suggestedActions(input: RenderInput): string[] {
@@ -192,10 +255,18 @@ function suggestedActions(input: RenderInput): string[] {
   }
   if (input.verdict === "tool-schema update needed") {
     out.push(
-      "Inspect changed fields above and update matching tool definitions under `src/tools/` if behavior diverges.",
+      "For each `models.json` row above, inspect the listed local mirror path and update letta-code only if the new field value changes the exposed tool contract.",
     );
     out.push(
-      "Check `src/tools/toolDefinitions.ts` for any tool whose schema should mirror an upstream change.",
+      "If a schema/description/implementation changes, add or update the matching test under `src/tests/tools/`.",
+    );
+  }
+  if (input.verdict === "tool-surface review needed") {
+    out.push(
+      "Review the upstream commits under watched paths and decide whether each one has a letta-code mirror or is upstream-only.",
+    );
+    out.push(
+      "If letta-code should mirror a change, update the relevant `src/tools/schemas`, `src/tools/descriptions`, `src/tools/impl`, prompt source, and tests together.",
     );
   }
   if (input.verdict === "manual review required") {

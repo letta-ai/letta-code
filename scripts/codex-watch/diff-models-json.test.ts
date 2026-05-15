@@ -89,7 +89,7 @@ describe("decideVerdict", () => {
     ).toBe("no-op");
   });
 
-  test("returns tool-schema update needed when tools dir changed", () => {
+  test("returns tool-surface review needed when tools dir changed", () => {
     const models_diff = diffModelsJson(
       models(model("gpt-5.5")),
       models(model("gpt-5.5")),
@@ -99,6 +99,22 @@ describe("decideVerdict", () => {
         models_diff,
         prompt_md_changed: false,
         tools_dir_changed: true,
+        apply_patch_dir_changed: false,
+        parse_error: false,
+      }),
+    ).toBe("tool-surface review needed");
+  });
+
+  test("returns tool-schema update needed for models.json schema fields", () => {
+    const models_diff = diffModelsJson(
+      models(model("gpt-5.5")),
+      models(model("gpt-5.5", { shell_type: "unified_exec" })),
+    );
+    expect(
+      decideVerdict({
+        models_diff,
+        prompt_md_changed: false,
+        tools_dir_changed: false,
         apply_patch_dir_changed: false,
         parse_error: false,
       }),

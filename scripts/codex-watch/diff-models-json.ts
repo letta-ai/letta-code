@@ -168,6 +168,7 @@ export type Verdict =
   | "no-op"
   | "prompt-only update"
   | "tool-schema update needed"
+  | "tool-surface review needed"
   | "manual review required";
 
 export interface VerdictInput {
@@ -186,12 +187,12 @@ export function decideVerdict(input: VerdictInput): Verdict {
   const removedModels = input.models_diff.removed_models.length > 0;
   if (removedModels) return "manual review required";
 
-  if (
-    input.models_diff.has_tool_schema_change ||
-    input.tools_dir_changed ||
-    input.apply_patch_dir_changed
-  ) {
+  if (input.models_diff.has_tool_schema_change) {
     return "tool-schema update needed";
+  }
+
+  if (input.tools_dir_changed || input.apply_patch_dir_changed) {
+    return "tool-surface review needed";
   }
 
   if (input.models_diff.has_prompt_tool_change || input.prompt_md_changed) {
