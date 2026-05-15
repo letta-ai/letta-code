@@ -27,7 +27,7 @@ test("/approve-always re-analyzes the current tool before saving", () => {
   );
   expect(segment).toContain('setUiPermissionMode("acceptEdits");');
   expect(segment).toContain(
-    'cmd.finish("Permission mode set to acceptEdits (session only)", true);',
+    '"Permission mode set to accept edits (auto-approve file edits; commands still require approval) (session only)',
   );
   expect(segment).not.toContain(
     "const rule = approvalContext.recommendedRule;",
