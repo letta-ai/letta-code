@@ -27,6 +27,7 @@ import {
 import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
+  PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
@@ -35,7 +36,12 @@ import {
   emitRetryDelta,
   setLoopStatus,
 } from "./protocol-outbound";
+import {
+  maybeApplyProviderFallback,
+  type ProviderFallbackState,
+} from "./providerFallback";
 import { consumeQueuedTurn } from "./queue";
+import { emitRecoverableRetryNotice } from "./recoverable-notices";
 import {
   drainRecoveryStreamWithEmission,
   finalizeHandledRecoveryTurn,
@@ -240,11 +246,15 @@ export async function sendMessageStreamWithRetry(
   socket: ListenerTransport,
   runtime: ConversationRuntime,
   abortSignal?: AbortSignal,
+  retryOptions: {
+    providerFallback?: ProviderFallbackState;
+  } = {},
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   let transientRetries = 0;
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
+  let currentOpts = opts;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -261,7 +271,7 @@ export async function sendMessageStreamWithRetry(
       return await sendMessageStream(
         conversationId,
         messages,
-        opts,
+        currentOpts,
         abortSignal
           ? { maxRetries: 0, signal: abortSignal }
           : { maxRetries: 0 },
@@ -329,6 +339,26 @@ export async function sendMessageStreamWithRetry(
           conversation_id: conversationId,
         });
         const attempt = transientRetries + 1;
+        transientRetries = attempt;
+        const fallbackHandle = maybeApplyProviderFallback(
+          retryOptions.providerFallback,
+          attempt,
+        );
+        if (fallbackHandle) {
+          currentOpts = { ...currentOpts, overrideModel: fallbackHandle };
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
+            message: PROVIDER_FALLBACK_NOTICE,
+            reason: "llm_api_error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs: 0,
+            agentId: runtime.agentId ?? undefined,
+            conversationId,
+          });
+          continue;
+        }
+
         const retryAfterMs =
           preStreamError instanceof APIError
             ? parseRetryAfterHeaderMs(
@@ -341,7 +371,6 @@ export async function sendMessageStreamWithRetry(
           detail: errorDetail,
           retryAfterMs,
         });
-        transientRetries = attempt;
 
         const retryMessage = getRetryStatusMessage(errorDetail);
         if (retryMessage) {
@@ -454,6 +483,7 @@ export async function sendApprovalContinuationWithRetry(
   abortSignal?: AbortSignal,
   retryOptions: {
     allowApprovalRecovery?: boolean;
+    providerFallback?: ProviderFallbackState;
   } = {},
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>> | null> {
   const allowApprovalRecovery = retryOptions.allowApprovalRecovery ?? true;
@@ -461,6 +491,7 @@ export async function sendApprovalContinuationWithRetry(
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
+  let currentOpts = opts;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -477,7 +508,7 @@ export async function sendApprovalContinuationWithRetry(
       return await sendMessageStream(
         conversationId,
         messages,
-        opts,
+        currentOpts,
         abortSignal
           ? { maxRetries: 0, signal: abortSignal }
           : { maxRetries: 0 },
@@ -557,6 +588,26 @@ export async function sendApprovalContinuationWithRetry(
           conversation_id: conversationId,
         });
         const attempt = transientRetries + 1;
+        transientRetries = attempt;
+        const fallbackHandle = maybeApplyProviderFallback(
+          retryOptions.providerFallback,
+          attempt,
+        );
+        if (fallbackHandle) {
+          currentOpts = { ...currentOpts, overrideModel: fallbackHandle };
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
+            message: PROVIDER_FALLBACK_NOTICE,
+            reason: "llm_api_error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs: 0,
+            agentId: runtime.agentId ?? undefined,
+            conversationId,
+          });
+          continue;
+        }
+
         const retryAfterMs =
           preStreamError instanceof APIError
             ? parseRetryAfterHeaderMs(
@@ -569,7 +620,6 @@ export async function sendApprovalContinuationWithRetry(
           detail: errorDetail,
           retryAfterMs,
         });
-        transientRetries = attempt;
 
         const retryMessage = getRetryStatusMessage(errorDetail);
         if (retryMessage) {
