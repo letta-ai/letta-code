@@ -61,6 +61,7 @@ import type {
   ChannelDefaultPermissionMode,
   ChannelRoute,
   CustomChannelAccount,
+  DiscordChannelMode,
   DmPolicy,
   PendingPairing,
   SlackChannelMode,
@@ -99,7 +100,8 @@ export interface ChannelConfigSnapshot {
   hasAppToken?: boolean;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
-  allowedChannels?: string[];
+  allowedChannels?: string[] | Record<string, DiscordChannelMode>;
+  autoThreadOnMention?: boolean;
 }
 
 export interface PendingPairingSnapshot {
@@ -163,7 +165,8 @@ export interface ChannelAccountSnapshot {
   };
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
-  allowedChannels?: string[];
+  allowedChannels?: string[] | Record<string, DiscordChannelMode>;
+  autoThreadOnMention?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -434,10 +437,15 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
       config: toChannelAccountProtocolConfig(account),
-      allowedChannels: [...(account.allowedChannels ?? [])],
+      allowedChannels: account.allowedChannels
+        ? Array.isArray(account.allowedChannels)
+          ? [...account.allowedChannels]
+          : { ...account.allowedChannels }
+        : [],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+      autoThreadOnMention: account.autoThreadOnMention ?? false,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -518,6 +526,7 @@ function createAccountFromPatch(
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
+      autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       createdAt: now,
       updatedAt: now,
     };
@@ -595,6 +604,9 @@ function mergeAccountPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       allowedChannels:
         normalizedPatch.allowedChannels ?? existing.allowedChannels,
+      autoThreadOnMention:
+        normalizedPatch.autoThreadOnMention ??
+        existing.autoThreadOnMention,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -717,10 +729,15 @@ export function getChannelConfigSnapshot(
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
       config: toChannelConfigSnapshotProtocolConfig(account),
-      allowedChannels: [...(account.allowedChannels ?? [])],
+      allowedChannels: account.allowedChannels
+        ? Array.isArray(account.allowedChannels)
+          ? [...account.allowedChannels]
+          : { ...account.allowedChannels }
+        : [],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+      autoThreadOnMention: account.autoThreadOnMention ?? false,
     };
   }
 
@@ -773,6 +790,7 @@ export async function setChannelConfigLive(
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
+      autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -793,6 +811,7 @@ export async function setChannelConfigLive(
         dmPolicy: normalizedPatch.dmPolicy,
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
+        autoThreadOnMention: normalizedPatch.autoThreadOnMention,
         transcribeVoice: normalizedPatch.transcribeVoice,
         config: normalizedPatch.config,
       },

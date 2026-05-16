@@ -7,7 +7,10 @@ import type {
   InboundChannelMessage,
   OutboundChannelMessage,
 } from "../types";
-import { isDiscordGuildChannelAllowed } from "./channelGating";
+import {
+  isDiscordGuildChannelAllowed,
+  resolveDiscordChannelMode,
+} from "./channelGating";
 import { formatDiscordDeliveryError } from "./errorReply";
 import {
   resolveDiscordInboundAttachments,
@@ -644,7 +647,7 @@ export function createDiscordAdapter(
         botUserId = client?.user?.id ?? null;
         const tag = client?.user?.tag ?? "(unknown)";
         console.log(
-          `[Discord] Bot logged in as ${tag} (dm_policy: ${config.dmPolicy})`,
+          `[Discord] Bot logged in as ${tag} (dm_policy: ${config.dmPolicy}, autoThreadOnMention: ${config.autoThreadOnMention ?? false})`,
         );
         running = true;
       });
@@ -699,19 +702,32 @@ export function createDiscordAdapter(
         }
 
         // ── Guild handling ────────────────────────────────────────
-        // Outside a thread: only process @mentions (auto-create thread).
         // Inside a thread: surface messages and let the registry decide whether
         // the thread is already routed, or whether a new mention is required.
-        if (!isThread && !wasMentioned) return;
+        // Outside a thread:
+        //   - "open" channels: process every non-bot message (no @mention needed)
+        //   - "mention-only" channels (or no gate): only process @mentions
+
+        const parentChannelId =
+          (message.channel as { parentId?: string | null }).parentId ?? null;
+        const channelMode = resolveDiscordChannelMode(
+          message.channelId,
+          parentChannelId,
+          isThread,
+          config.allowedChannels,
+        );
+
+        // For non-thread messages, check if the channel is in "open" mode
+        const isOpenChannel = channelMode === "open";
+
+        if (!isThread && !wasMentioned && !isOpenChannel) return;
 
         // Channel allowlist: when configured, only process guild messages whose
         // channel ID (or parent channel ID for thread messages) is allowed.
         if (
           !isDiscordGuildChannelAllowed({
             channelId: message.channelId,
-            parentChannelId:
-              (message.channel as { parentId?: string | null }).parentId ??
-              null,
+            parentChannelId,
             isThread,
             allowedChannels: config.allowedChannels,
           })
@@ -725,8 +741,9 @@ export function createDiscordAdapter(
           ? message.channelId
           : null;
 
-        // If mentioned outside a thread, create one
-        if (!isThread && wasMentioned) {
+        // If mentioned outside a thread and autoThreadOnMention is enabled,
+        // create a Discord thread for the conversation.
+        if (!isThread && wasMentioned && config.autoThreadOnMention !== false) {
           const createdThread = await createThreadForMention(message, content);
           if (!createdThread) return;
           effectiveChatId = createdThread.id;
@@ -758,7 +775,7 @@ export function createDiscordAdapter(
           messageId: message.id,
           threadId: effectiveThreadId,
           chatType: "channel",
-          isMention: wasMentioned,
+          isMention: wasMentioned || isOpenChannel,
           attachments,
           raw: message,
         };
@@ -805,18 +822,25 @@ export function createDiscordAdapter(
           typeof msg.channel.isThread === "function" &&
           msg.channel.isThread();
 
-        // In guilds, only react on messages in threads we're tracking
-        if (chatType === "channel" && !isThread) return;
+        // In guilds, only react on messages in threads or open channels
+        const reactionParentChannelId =
+          (msg.channel as { parentId?: string | null }).parentId ?? null;
+        const reactionChannelMode = resolveDiscordChannelMode(
+          channelId,
+          reactionParentChannelId,
+          isThread,
+          config.allowedChannels,
+        );
+        if (chatType === "channel" && !isThread && reactionChannelMode !== "open")
+          return;
 
-        // Apply channel allowlist gating in guilds (parent channel of the thread)
+        // Apply channel allowlist gating in guilds
         if (
           chatType === "channel" &&
-          isThread &&
           !isDiscordGuildChannelAllowed({
             channelId,
-            parentChannelId:
-              (msg.channel as { parentId?: string | null }).parentId ?? null,
-            isThread: true,
+            parentChannelId: reactionParentChannelId,
+            isThread,
             allowedChannels: config.allowedChannels,
           })
         )

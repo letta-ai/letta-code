@@ -13,6 +13,7 @@ import type {
   ChannelConfig,
   ChannelDefaultPermissionMode,
   DiscordChannelConfig,
+  DiscordChannelMode,
   DmPolicy,
   SlackChannelConfig,
   TelegramChannelConfig,
@@ -178,6 +179,17 @@ function parseDefaultPermissionMode(
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
   parse(parsed) {
     const rawAllowedChannels = parsed.allowed_channels;
+    let allowedChannels: DiscordChannelConfig["allowedChannels"] = undefined;
+    if (Array.isArray(rawAllowedChannels)) {
+      allowedChannels = rawAllowedChannels as string[];
+    } else if (
+      rawAllowedChannels &&
+      typeof rawAllowedChannels === "object" &&
+      !Array.isArray(rawAllowedChannels)
+    ) {
+      allowedChannels =
+        rawAllowedChannels as Record<string, DiscordChannelMode>;
+    }
     return {
       channel: "discord",
       enabled: parsed.enabled !== false,
@@ -187,9 +199,11 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
       ),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
-      allowedChannels: Array.isArray(rawAllowedChannels)
-        ? (rawAllowedChannels as string[])
-        : undefined,
+      allowedChannels,
+      autoThreadOnMention:
+        typeof parsed.auto_thread_on_mention === "boolean"
+          ? parsed.auto_thread_on_mention
+          : undefined,
     };
   },
 };

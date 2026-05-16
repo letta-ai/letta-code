@@ -1169,7 +1169,8 @@ export class ChannelRegistry {
       return { route, isFirstRouteTurn: false };
     }
 
-    // In guild channels, only create routes from explicit mentions.
+    // In guild channels, only create routes from explicit mentions or
+    // open-mode channels. The adapter sets isMention=true for open channels.
     // Existing routed threads continue above via the route lookup path.
     if (msg.chatType === "channel" && !msg.isMention) {
       return null;

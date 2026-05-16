@@ -48,9 +48,11 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
   }
 
   if (isDiscordChannelAccount(account) && account.allowedChannels) {
-    (cloned as DiscordChannelAccount).allowedChannels = [
-      ...account.allowedChannels,
-    ];
+    (cloned as DiscordChannelAccount).allowedChannels = Array.isArray(
+      account.allowedChannels,
+    )
+      ? [...account.allowedChannels]
+      : { ...account.allowedChannels };
   }
 
   if ("config" in account) {
@@ -143,8 +145,11 @@ function makeDefaultLegacyAccount(
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
       allowedChannels: config.allowedChannels
-        ? [...config.allowedChannels]
+        ? Array.isArray(config.allowedChannels)
+          ? [...config.allowedChannels]
+          : { ...config.allowedChannels }
         : undefined,
+      autoThreadOnMention: config.autoThreadOnMention,
       agentId: null,
       defaultPermissionMode: config.defaultPermissionMode ?? "standard",
       createdAt: now,
