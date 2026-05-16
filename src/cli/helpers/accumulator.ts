@@ -740,6 +740,8 @@ function trySplitContent(
 
   const beforeText = newText.substring(0, splitPoint);
   const afterText = newText.substring(splitPoint);
+  const committedText =
+    kind === "reasoning" ? beforeText.replace(/\n+$/g, "") : beforeText;
 
   // Get or initialize split counter for this original ID
   const counter = b.splitCounters.get(id) ?? 0;
@@ -752,7 +754,7 @@ function trySplitContent(
   const committedLine = {
     kind,
     id: commitId,
-    text: beforeText,
+    text: committedText,
     phase: "finished" as const,
     isContinuation: counter > 0, // First split shows bullet, subsequent don't
     messageId:
