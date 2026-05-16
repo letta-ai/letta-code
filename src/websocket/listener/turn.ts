@@ -62,6 +62,7 @@ import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
+  PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -86,6 +87,10 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
+import {
+  createProviderFallbackState,
+  maybeApplyProviderFallback,
+} from "./providerFallback";
 import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
@@ -586,6 +591,7 @@ export async function handleIncomingMessage(
     }
 
     let currentInput = messagesToSend;
+    const providerFallback = createProviderFallbackState(cachedAgent);
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
     ];
@@ -609,6 +615,9 @@ export async function handleIncomingMessage(
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
       skipImageNormalization: true,
+      ...(providerFallback.overrideModel
+        ? { overrideModel: providerFallback.overrideModel }
+        : {}),
       // Forward cloud-api's per-WS acting user id so the outbound
       // createMessage HTTP call carries X-Letta-Acting-User-Id and
       // cloud can attribute credits to the actual sender on
@@ -635,6 +644,7 @@ export async function handleIncomingMessage(
           socket,
           runtime,
           turnAbortSignal,
+          { providerFallback },
         )
       : await sendMessageStreamWithRetry(
           conversationId,
@@ -643,6 +653,7 @@ export async function handleIncomingMessage(
           socket,
           runtime,
           turnAbortSignal,
+          { providerFallback },
         );
     currentInput = currentInputWithSkillContent;
     if (!stream) {
@@ -868,6 +879,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -876,6 +888,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -953,6 +966,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -961,6 +975,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -986,14 +1001,21 @@ export async function handleIncomingMessage(
         if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           llmApiErrorRetries += 1;
           const attempt = llmApiErrorRetries;
-          const delayMs = getRetryDelayMs({
-            category: "transient_provider",
+          const fallbackHandle = maybeApplyProviderFallback(
+            providerFallback,
             attempt,
-            detail: errorDetail,
-          });
-          const retryMessage =
-            getRetryStatusMessage(errorDetail) ||
-            `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
+          );
+          const delayMs = fallbackHandle
+            ? 0
+            : getRetryDelayMs({
+                category: "transient_provider",
+                attempt,
+                detail: errorDetail,
+              });
+          const retryMessage = fallbackHandle
+            ? PROVIDER_FALLBACK_NOTICE
+            : getRetryStatusMessage(errorDetail) ||
+              `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
           emitRecoverableRetryNotice(socket, runtime, {
             kind: "transient_provider_retry",
             message: retryMessage,
@@ -1006,7 +1028,9 @@ export async function handleIncomingMessage(
             conversationId,
           });
 
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          if (!fallbackHandle) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
@@ -1028,6 +1052,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -1036,6 +1061,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -1111,6 +1137,7 @@ export async function handleIncomingMessage(
         pendingNormalizationInterruptedToolCallIds,
         turnToolContextId,
         buildSendOptions,
+        providerFallback,
       });
       if (approvalResult.terminated || !approvalResult.stream) {
         return;
