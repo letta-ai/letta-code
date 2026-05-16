@@ -7,6 +7,30 @@
 import { getCurrentAgentId } from "../agent/context";
 import { getBackend } from "../backend";
 
+type SecretsBackend = {
+  capabilities: { serverSecrets: boolean };
+  retrieveAgent: (
+    agentId: string,
+    options?: { include?: string[] },
+  ) => Promise<{ secrets?: Array<{ key?: string; value?: string }> | null }>;
+  updateAgent: (
+    agentId: string,
+    body: { secrets: Record<string, string> },
+  ) => Promise<unknown>;
+};
+
+let testBackendOverride: SecretsBackend | null = null;
+
+export function __testOverrideSecretsBackend(
+  backend: SecretsBackend | null,
+): void {
+  testBackendOverride = backend;
+}
+
+function getSecretsBackend(): SecretsBackend {
+  return testBackendOverride ?? (getBackend() as SecretsBackend);
+}
+
 /** In-memory cache of secrets (populated on startup from server).
  *  Stored on globalThis via Symbol.for() to survive Bun bundle duplication. */
 const SECRETS_CACHE_KEY = Symbol.for("@letta/secretsCache");
@@ -58,13 +82,14 @@ export async function initSecretsFromServer(
   agentId: string,
   cachedAgent?: { secrets?: Array<{ key?: string; value?: string }> | null },
 ): Promise<void> {
-  if (!cachedAgent && !getBackend().capabilities.serverSecrets) {
+  const backend = getSecretsBackend();
+  if (!cachedAgent && !backend.capabilities.serverSecrets) {
     setCache(agentId, {});
     return;
   }
   const agent =
     cachedAgent ??
-    (await getBackend().retrieveAgent(agentId, {
+    (await backend.retrieveAgent(agentId, {
       include: ["agent.secrets"],
     }));
 
@@ -131,7 +156,8 @@ export async function applySecretBatch(
   },
   agentIdArg?: string,
 ): Promise<string[]> {
-  if (!getBackend().capabilities.serverSecrets) {
+  const backend = getSecretsBackend();
+  if (!backend.capabilities.serverSecrets) {
     throw new Error("Agent secrets are not supported by this backend yet");
   }
 
@@ -148,7 +174,7 @@ export async function applySecretBatch(
     delete next[rawKey.toUpperCase()];
   }
 
-  await getBackend().updateAgent(agentId, { secrets: next });
+  await backend.updateAgent(agentId, { secrets: next });
   setCache(agentId, next);
 
   return Object.keys(next).sort();
@@ -163,7 +189,8 @@ export async function setSecretOnServer(
   value: string,
   agentIdArg?: string,
 ): Promise<void> {
-  if (!getBackend().capabilities.serverSecrets) {
+  const backend = getSecretsBackend();
+  if (!backend.capabilities.serverSecrets) {
     throw new Error("Agent secrets are not supported by this backend yet");
   }
   const agentId = resolveSecretsAgentId(agentIdArg);
@@ -171,12 +198,14 @@ export async function setSecretOnServer(
     throw new Error("No agent context set. Agent ID is required.");
   }
 
+  await initSecretsFromServer(agentId);
+
   // Update cache first
   const secrets = { ...loadSecrets(agentId) };
   secrets[key] = value;
 
   // PATCH replaces entire map
-  await getBackend().updateAgent(agentId, { secrets });
+  await backend.updateAgent(agentId, { secrets });
 
   setCache(agentId, secrets);
 }
@@ -190,13 +219,17 @@ export async function deleteSecretOnServer(
   key: string,
   agentIdArg?: string,
 ): Promise<boolean> {
-  if (!getBackend().capabilities.serverSecrets) {
+  const backend = getSecretsBackend();
+  if (!backend.capabilities.serverSecrets) {
     throw new Error("Agent secrets are not supported by this backend yet");
   }
   const agentId = resolveSecretsAgentId(agentIdArg);
   if (!agentId) {
     throw new Error("No agent context set. Agent ID is required.");
   }
+
+  await initSecretsFromServer(agentId);
+
   const secrets = { ...loadSecrets(agentId) };
 
   if (!(key in secrets)) {
@@ -205,7 +238,7 @@ export async function deleteSecretOnServer(
 
   delete secrets[key];
 
-  await getBackend().updateAgent(agentId, { secrets });
+  await backend.updateAgent(agentId, { secrets });
 
   setCache(agentId, secrets);
   return true;
