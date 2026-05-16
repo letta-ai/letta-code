@@ -825,8 +825,7 @@ export function ModelSelector({
           const actualIndex = startIndex + index;
           const isSelected = actualIndex === selectedIndex;
           const isCurrent =
-            model.id === currentModelId ||
-            model.handle === currentModelHandle;
+            model.id === currentModelId || model.handle === currentModelHandle;
           // Show lock for non-free models when on free tier (only for Letta API tabs)
           const showLock =
             isFreeTier &&
