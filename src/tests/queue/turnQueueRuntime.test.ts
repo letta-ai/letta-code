@@ -53,6 +53,31 @@ describe("turnQueueRuntime", () => {
     expect(merged[1]).toEqual(content[1]);
   });
 
+  test("ignores null normalized content instead of spreading it", () => {
+    const queued: QueuedTurnInput<null>[] = [{ kind: "user", content: null }];
+
+    const merged = mergeQueuedTurnInput(queued, {
+      normalizeUserContent: () => null as unknown as MessageCreate["content"],
+    });
+
+    expect(merged).toBeNull();
+  });
+
+  test("stringifies unexpected normalized content instead of spreading it", () => {
+    const queued: QueuedTurnInput<Record<string, string>>[] = [
+      { kind: "user", content: { ref: "" } },
+    ];
+
+    const merged = mergeQueuedTurnInput(queued, {
+      normalizeUserContent: (content) =>
+        content as unknown as MessageCreate["content"],
+    });
+
+    expect(Array.isArray(merged)).toBe(true);
+    if (!Array.isArray(merged)) return;
+    expect(merged).toEqual([{ type: "text", text: '{"ref":""}' }]);
+  });
+
   test("returns null when no queued items exist", () => {
     expect(
       mergeQueuedTurnInput([], {
