@@ -12,6 +12,7 @@ const DISCORD_CONFIG_KEYS = new Set([
   "allowed_channels",
   "default_permission_mode",
   "auto_thread_on_mention",
+  "inbound_debounce_ms",
 ]);
 
 function isString(value: unknown): value is string {
@@ -100,7 +101,12 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           isDefaultPermissionMode(config.default_permission_mode)) &&
         (config.auto_thread_on_mention === undefined ||
           config.auto_thread_on_mention === true ||
-          config.auto_thread_on_mention === false)
+          config.auto_thread_on_mention === false) &&
+        (config.inbound_debounce_ms === undefined ||
+          (typeof config.inbound_debounce_ms === "number" &&
+            Number.isFinite(config.inbound_debounce_ms) &&
+            config.inbound_debounce_ms >= 0 &&
+            config.inbound_debounce_ms <= 10000))
       );
     },
 
@@ -129,6 +135,12 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           config.auto_thread_on_mention === false
             ? config.auto_thread_on_mention
             : undefined,
+        inboundDebounceMs:
+          typeof config.inbound_debounce_ms === "number" &&
+          Number.isFinite(config.inbound_debounce_ms) &&
+          config.inbound_debounce_ms >= 0
+            ? Math.trunc(Math.min(config.inbound_debounce_ms, 10000))
+            : undefined,
       };
     },
 
@@ -139,6 +151,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
+        inbound_debounce_ms: account.inboundDebounceMs ?? 0,
       };
     },
 
@@ -149,6 +162,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
+        inbound_debounce_ms: account.inboundDebounceMs ?? 0,
       };
     },
 

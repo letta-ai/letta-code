@@ -336,6 +336,16 @@ export interface DiscordChannelConfig {
    * directly in the parent channel. Default `false`.
    */
   autoThreadOnMention?: boolean;
+  /**
+   * Optional debounce window (ms) for inbound open-channel guild messages.
+   * When greater than `0`, short back-to-back messages from the same sender
+   * in the same channel/thread stack into a single combined dispatch
+   * (trailing edge). Default `0` (disabled). Only applies to open-channel
+   * messages; DMs, @mentions, attachments, and reactions always bypass.
+   * The env var `LETTA_DISCORD_INBOUND_DEBOUNCE_MS` takes precedence if set.
+   * Clamped to `0..10000`.
+   */
+  inboundDebounceMs?: number;
 }
 
 export type ChannelConfig =
@@ -393,6 +403,16 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * directly in the parent channel. Default `false`.
    */
   autoThreadOnMention?: boolean;
+  /**
+   * Optional debounce window (ms) for inbound open-channel guild messages.
+   * When greater than `0`, short back-to-back messages from the same sender
+   * in the same channel/thread stack into a single combined dispatch
+   * (trailing edge). Default `0` (disabled). Only applies to open-channel
+   * messages; DMs, @mentions, attachments, and reactions always bypass.
+   * The env var `LETTA_DISCORD_INBOUND_DEBOUNCE_MS` takes precedence if set.
+   * Clamped to `0..10000`.
+   */
+  inboundDebounceMs?: number;
 }
 
 export type ChannelAccount =

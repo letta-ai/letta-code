@@ -102,6 +102,7 @@ export interface ChannelConfigSnapshot {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
+  inboundDebounceMs?: number;
 }
 
 export interface PendingPairingSnapshot {
@@ -167,6 +168,7 @@ export interface ChannelAccountSnapshot {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
+  inboundDebounceMs?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -446,6 +448,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       autoThreadOnMention: account.autoThreadOnMention ?? false,
+      inboundDebounceMs: account.inboundDebounceMs ?? 0,
+      inboundDebounceMs: account.inboundDebounceMs ?? 0,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -527,6 +531,7 @@ function createAccountFromPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       createdAt: now,
       updatedAt: now,
     };
@@ -607,6 +612,9 @@ function mergeAccountPatch(
       autoThreadOnMention:
         normalizedPatch.autoThreadOnMention ??
         existing.autoThreadOnMention,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ??
+        existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -738,6 +746,7 @@ export function getChannelConfigSnapshot(
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       autoThreadOnMention: account.autoThreadOnMention ?? false,
+      inboundDebounceMs: account.inboundDebounceMs ?? 0,
     };
   }
 
@@ -791,6 +800,7 @@ export async function setChannelConfigLive(
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -812,6 +822,7 @@ export async function setChannelConfigLive(
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+        inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         transcribeVoice: normalizedPatch.transcribeVoice,
         config: normalizedPatch.config,
       },

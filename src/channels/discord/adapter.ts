@@ -8,9 +8,18 @@ import type {
   OutboundChannelMessage,
 } from "../types";
 import {
+  createInboundDebouncer,
+  type InboundDebouncer,
+} from "../inboundDebounce";
+import {
   isDiscordGuildChannelAllowed,
   resolveDiscordChannelMode,
 } from "./channelGating";
+import {
+  buildDiscordDebounceKey,
+  type DiscordDebounceRawInput,
+  resolveDiscordInboundDebounceMs,
+} from "./debounce";
 import { formatDiscordDeliveryError } from "./errorReply";
 import {
   resolveDiscordInboundAttachments,
@@ -344,6 +353,72 @@ export function createDiscordAdapter(
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
   const lifecycleErrorReplyKeys = new Map<string, number>();
 
+  // ── Inbound debounce (open-channel guild messages only) ──────────
+  const debounceMs = resolveDiscordInboundDebounceMs(config);
+
+  type DiscordDebounceEntry = {
+    inbound: InboundChannelMessage;
+    raw: DiscordDebounceRawInput;
+    isOpenChannel: boolean;
+  };
+
+  const debouncer: InboundDebouncer<DiscordDebounceEntry> =
+    createInboundDebouncer<DiscordDebounceEntry>({
+      debounceMs,
+      buildKey: ({ raw }) => buildDiscordDebounceKey(raw, config.accountId),
+      shouldDebounce: ({ inbound, isOpenChannel }) =>
+        isOpenChannel &&
+        !inbound.isMention &&
+        !inbound.attachments?.length &&
+        !inbound.reaction,
+      onFlush: async (entries) => {
+        if (entries.length === 0) return;
+        const last = entries[entries.length - 1];
+
+        // Merge text with sender labels if multiple senders
+        let combinedText: string;
+        if (entries.length === 1) {
+          combinedText = last.inbound.text;
+        } else {
+          const uniqueSenders = new Set(
+            entries.map((e) => e.inbound.senderId),
+          );
+          if (uniqueSenders.size > 1) {
+            combinedText = entries
+              .map((entry) => `[${entry.inbound.senderName ?? entry.inbound.senderId}]: ${entry.inbound.text}`)
+              .filter((text) => text && text.length > 0)
+              .join("\n");
+          } else {
+            combinedText = entries
+              .map((entry) => entry.inbound.text)
+              .filter((text) => text && text.length > 0)
+              .join("\n");
+          }
+        }
+
+        const merged: InboundChannelMessage = {
+          ...last.inbound,
+          text: combinedText,
+        };
+
+        if (!adapter.onMessage) return;
+        try {
+          await adapter.onMessage(merged);
+        } catch (error) {
+          console.error(
+            "[Discord] Error handling debounced inbound message:",
+            error,
+          );
+        }
+      },
+      onError: (err) => {
+        console.error(
+          "[Discord] Inbound debounce flush failed:",
+          err instanceof Error ? err.message : err,
+        );
+      },
+    });
+
   function pruneSeenIngressMessageKeys(now: number = Date.now()): void {
     for (const [key, expiresAt] of seenIngressMessageKeys) {
       if (expiresAt <= now) {
@@ -647,7 +722,7 @@ export function createDiscordAdapter(
         botUserId = client?.user?.id ?? null;
         const tag = client?.user?.tag ?? "(unknown)";
         console.log(
-          `[Discord] Bot logged in as ${tag} (dm_policy: ${config.dmPolicy}, autoThreadOnMention: ${config.autoThreadOnMention ?? false})`,
+          `[Discord] Bot logged in as ${tag} (dm_policy: ${config.dmPolicy}, autoThreadOnMention: ${config.autoThreadOnMention ?? false}, inboundDebounceMs: ${debounceMs})`,
         );
         running = true;
       });
@@ -781,7 +856,27 @@ export function createDiscordAdapter(
         };
 
         try {
-          await adapter.onMessage(inbound);
+          // Open-channel non-mention messages go through the debounce pipeline.
+          // Mentions, DMs, attachments, and reactions always bypass.
+          const shouldDebounce =
+            isOpenChannel &&
+            !wasMentioned &&
+            debounceMs > 0 &&
+            !attachments?.length;
+
+          if (shouldDebounce) {
+            await debouncer.enqueue({
+              inbound,
+              raw: {
+                channelId: effectiveChatId,
+                threadId: effectiveThreadId,
+                senderId: userId,
+              },
+              isOpenChannel,
+            });
+          } else {
+            await adapter.onMessage(inbound);
+          }
         } catch (error) {
           console.error("[Discord] Error handling guild message:", error);
           await notifyDiscordDeliveryError(message, error);

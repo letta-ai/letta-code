@@ -204,6 +204,14 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
         typeof parsed.auto_thread_on_mention === "boolean"
           ? parsed.auto_thread_on_mention
           : undefined,
+      inboundDebounceMs:
+        typeof parsed.inbound_debounce_ms === "number" &&
+        Number.isFinite(parsed.inbound_debounce_ms) &&
+        parsed.inbound_debounce_ms >= 0
+          ? Math.trunc(
+              Math.min(parsed.inbound_debounce_ms, 10000),
+            )
+          : undefined,
     };
   },
 };
