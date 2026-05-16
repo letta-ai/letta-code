@@ -50,16 +50,19 @@ export function getModelCategories(
   _billingTier?: string,
   isSelfHosted?: boolean,
   localModelCatalog?: boolean,
+  recentModelCount?: number,
 ): ModelCategory[] {
+  const showRecents =
+    (recentModelCount ?? settingsManager.getRecentModels().length) >= 2;
   if (usesBackendModelCatalog(isSelfHosted, localModelCatalog)) {
     const base: ModelCategory[] = ["server-recommended", "server-all"];
-    if (settingsManager.getRecentModels().length >= 2) {
+    if (showRecents) {
       return ["recents", ...base];
     }
     return base;
   }
   const base: ModelCategory[] = ["supported", "all", "byok", "byok-all"];
-  if (settingsManager.getRecentModels().length >= 2) {
+  if (showRecents) {
     return ["recents", ...base];
   }
   return base;

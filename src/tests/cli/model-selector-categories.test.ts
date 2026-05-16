@@ -7,14 +7,14 @@ import {
 
 describe("getModelCategories", () => {
   test("uses the same hosted category order for free and paid tiers", () => {
-    expect(getModelCategories("free", false)).toEqual([
+    expect(getModelCategories("free", false, undefined, 0)).toEqual([
       "supported",
       "all",
       "byok",
       "byok-all",
     ]);
 
-    expect(getModelCategories("pro", false)).toEqual([
+    expect(getModelCategories("pro", false, undefined, 0)).toEqual([
       "supported",
       "all",
       "byok",
@@ -23,16 +23,56 @@ describe("getModelCategories", () => {
   });
 
   test("keeps self-hosted categories unchanged", () => {
-    expect(getModelCategories("free", true)).toEqual([
+    expect(getModelCategories("free", true, undefined, 0)).toEqual([
       "server-recommended",
       "server-all",
     ]);
   });
 
   test("uses server-style categories for local backend model catalogs", () => {
-    expect(getModelCategories("pro", false, true)).toEqual([
+    expect(getModelCategories("pro", false, true, 0)).toEqual([
       "server-recommended",
       "server-all",
+    ]);
+  });
+
+  test("prepends recents when recentModelCount >= 2", () => {
+    expect(getModelCategories("free", false, undefined, 2)).toEqual([
+      "recents",
+      "supported",
+      "all",
+      "byok",
+      "byok-all",
+    ]);
+
+    expect(getModelCategories("pro", false, undefined, 5)).toEqual([
+      "recents",
+      "supported",
+      "all",
+      "byok",
+      "byok-all",
+    ]);
+
+    expect(getModelCategories("free", true, undefined, 3)).toEqual([
+      "recents",
+      "server-recommended",
+      "server-all",
+    ]);
+  });
+
+  test("does not prepend recents when recentModelCount < 2", () => {
+    expect(getModelCategories("free", false, undefined, 0)).toEqual([
+      "supported",
+      "all",
+      "byok",
+      "byok-all",
+    ]);
+
+    expect(getModelCategories("free", false, undefined, 1)).toEqual([
+      "supported",
+      "all",
+      "byok",
+      "byok-all",
     ]);
   });
 
