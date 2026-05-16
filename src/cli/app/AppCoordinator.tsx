@@ -19,6 +19,7 @@ import { prefetchAvailableModelHandles } from "../../agent/available-models";
 import { getResumeDataFromBackend } from "../../agent/check-approval";
 import { setCurrentAgentId } from "../../agent/context";
 import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
 import {
   getModelInfoForLlmConfig,
   getModelShortName,
@@ -1976,7 +1977,7 @@ export default function App({
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+  const memfsEnabled = isActiveMemfsEnabled(agentId);
   const _memfsDirectory =
     memfsEnabled && agentId && agentId !== "loading"
       ? getScopedMemoryFilesystemRoot(agentId)

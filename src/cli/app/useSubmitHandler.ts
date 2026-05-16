@@ -27,6 +27,11 @@ import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
 } from "../../agent/memoryFilesystem";
+import {
+  getActiveMemoryDirectory,
+  isActiveMemfsEnabled,
+  isLocalMemfsActive,
+} from "../../agent/memoryRuntime";
 import type { ModelReasoningEffort } from "../../agent/model";
 import {
   detectPersonalityFromPersonaFile,
@@ -806,7 +811,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             "Personality selector dismissed",
           );
 
-          if (settingsManager.isMemfsEnabled(agentId)) {
+          if (isActiveMemfsEnabled(agentId)) {
             try {
               const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
               const personaCandidates = [
@@ -867,7 +872,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             "Opening Memory Palace...",
           );
 
-          if (!settingsManager.isMemfsEnabled(agentId)) {
+          if (!isActiveMemfsEnabled(agentId)) {
             cmd.finish(
               "Memory Palace requires memfs. Run /memfs enable first.",
               false,
@@ -2194,7 +2199,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           if (subcommand === "status") {
             // Show status
-            const enabled = settingsManager.isMemfsEnabled(agentId);
+            const enabled = isActiveMemfsEnabled(agentId);
             let output: string;
             if (enabled) {
               const memoryDir = getScopedMemoryFilesystemRoot(agentId);
@@ -2246,7 +2251,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           if (subcommand === "sync") {
             // Check if memfs is enabled for this agent
-            if (!settingsManager.isMemfsEnabled(agentId)) {
+            if (!isActiveMemfsEnabled(agentId)) {
               cmd.fail(
                 "Memory filesystem is disabled. Run `/memfs enable` first.",
               );
@@ -2592,7 +2597,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         if (trimmed === "/reflect") {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
 
-          if (!settingsManager.isMemfsEnabled(agentId)) {
+          if (!isActiveMemfsEnabled(agentId)) {
             cmd.fail(
               "Memory filesystem is not enabled. Use /remember instead.",
             );
@@ -2813,9 +2818,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
 
             const { context: gitContext } = gatherInitGitContext();
-            const memoryDir = settingsManager.isMemfsEnabled(agentId)
-              ? getScopedMemoryFilesystemRoot(agentId)
-              : undefined;
+            const memoryDir = getActiveMemoryDirectory(agentId);
 
             const initMessage = buildInitMessage({
               gitContext,
@@ -2859,9 +2862,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
 
             const { context: gitContext } = gatherInitGitContext();
-            const memoryDir = settingsManager.isMemfsEnabled(agentId)
-              ? getScopedMemoryFilesystemRoot(agentId)
-              : undefined;
+            const memoryDir = getActiveMemoryDirectory(agentId);
 
             const doctorMessage = buildDoctorMessage({
               gitContext,
@@ -3178,24 +3179,23 @@ ${SYSTEM_REMINDER_CLOSE}
       }
 
       const reflectionSettings = getReflectionSettings(agentId);
-      const memfsEnabledForAgent = settingsManager.isMemfsEnabled(agentId);
+      const memfsEnabledForAgent = isActiveMemfsEnabled(agentId);
 
       // Build git memory sync reminder if uncommitted changes or unpushed commits
       let memoryGitReminder = "";
       const gitStatus = pendingGitReminderRef.current;
       if (gitStatus) {
+        const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+        const localMemfs = isLocalMemfsActive();
+        const syncInstructions = localMemfs
+          ? `Commit when convenient by running these commands:\n\`\`\`bash\ncd ${JSON.stringify(memoryDir)}\ngit add system/\ngit commit -m "<type>: <what changed>"\n\`\`\``
+          : `Sync when convenient by running these commands:\n\`\`\`bash\ncd ${JSON.stringify(memoryDir)}\ngit add system/\ngit commit -m "<type>: <what changed>"\ngit push\n\`\`\``;
         memoryGitReminder = `${SYSTEM_REMINDER_OPEN}
-MEMORY SYNC: Your memory directory has uncommitted changes or is ahead of the remote.
+${localMemfs ? "MEMORY COMMIT" : "MEMORY SYNC"}: Your memory directory has uncommitted changes${localMemfs ? "." : " or is ahead of the remote."}
 
 ${gitStatus.summary}
 
-Sync when convenient by running these commands:
-\`\`\`bash
-cd ~/.letta/agents/${agentId}/memory
-git add system/
-git commit -m "<type>: <what changed>"
-git push
-\`\`\`
+${syncInstructions}
 
 You should do this soon to avoid losing memory updates. It only takes a few seconds.
 ${SYSTEM_REMINDER_CLOSE}

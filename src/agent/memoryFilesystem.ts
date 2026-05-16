@@ -183,6 +183,16 @@ export async function isMemfsEnabledOnServer(
  * when the repo is missing.
  */
 export async function ensureLocalMemfsCheckout(agentId: string): Promise<void> {
+  if (isLocalBackendEnvEnabled()) {
+    const { initializeLocalMemoryRepo } = await import("./memoryGit");
+    await initializeLocalMemoryRepo({
+      memoryDir: getScopedMemoryFilesystemRoot(agentId),
+      agentId,
+      files: [],
+    });
+    return;
+  }
+
   const { isGitRepo, cloneMemoryRepo } = await import("./memoryGit");
   if (isGitRepo(agentId)) {
     return;
@@ -528,7 +538,7 @@ export async function applyMemfsFlags(
         : "unchanged";
   return {
     action,
-    memoryDir: isEnabled ? getMemoryFilesystemRoot(agentId) : undefined,
+    memoryDir: isEnabled ? getScopedMemoryFilesystemRoot(agentId) : undefined,
     pullSummary,
   };
 }
