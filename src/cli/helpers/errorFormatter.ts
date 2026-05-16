@@ -252,6 +252,82 @@ function findAndFormatCloudflareEdgeError(e: unknown): string | undefined {
   return undefined;
 }
 
+export function isProviderStreamDisconnectErrorText(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("connection error during streaming") ||
+    normalized.includes("incomplete chunked read") ||
+    normalized.includes(
+      "peer closed connection without sending complete message body",
+    ) ||
+    normalized.includes("remoteprotocolerror")
+  );
+}
+
+export function checkProviderStreamDisconnectError(
+  text: string,
+): string | undefined {
+  if (!isProviderStreamDisconnectErrorText(text)) return undefined;
+
+  const provider = getProviderDisplayName();
+  return `${provider} closed the streaming connection before completing the response. Letta Code retries this automatically when it is safe; if it keeps happening, retry or switch models with /model.`;
+}
+
+function findAndFormatProviderStreamDisconnectError(
+  e: unknown,
+): string | undefined {
+  if (typeof e === "string") return checkProviderStreamDisconnectError(e);
+
+  if (typeof e !== "object" || e === null) return undefined;
+
+  if (e instanceof Error) {
+    const msg = checkProviderStreamDisconnectError(e.message);
+    if (msg) return msg;
+  }
+
+  const obj = e as Record<string, unknown>;
+
+  if (typeof obj.detail === "string") {
+    const msg = checkProviderStreamDisconnectError(obj.detail);
+    if (msg) return msg;
+  }
+
+  if (typeof obj.message === "string") {
+    const msg = checkProviderStreamDisconnectError(obj.message);
+    if (msg) return msg;
+  }
+
+  if (obj.error && typeof obj.error === "object") {
+    const errObj = obj.error as Record<string, unknown>;
+
+    if (typeof errObj.detail === "string") {
+      const msg = checkProviderStreamDisconnectError(errObj.detail);
+      if (msg) return msg;
+    }
+
+    if (typeof errObj.message === "string") {
+      const msg = checkProviderStreamDisconnectError(errObj.message);
+      if (msg) return msg;
+    }
+
+    if (errObj.error && typeof errObj.error === "object") {
+      const inner = errObj.error as Record<string, unknown>;
+
+      if (typeof inner.detail === "string") {
+        const msg = checkProviderStreamDisconnectError(inner.detail);
+        if (msg) return msg;
+      }
+
+      if (typeof inner.message === "string") {
+        const msg = checkProviderStreamDisconnectError(inner.message);
+        if (msg) return msg;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Format a time duration in milliseconds to a human-readable string
  */
@@ -565,6 +641,10 @@ export function formatErrorDetails(
   const cloudflareEdgeMsg = findAndFormatCloudflareEdgeError(e);
   if (cloudflareEdgeMsg) return cloudflareEdgeMsg;
 
+  const providerStreamDisconnectMsg =
+    findAndFormatProviderStreamDisconnectError(e);
+  if (providerStreamDisconnectMsg) return providerStreamDisconnectMsg;
+
   // Check for Z.ai provider errors (wrapped in generic "OpenAI" messages)
   const errorText =
     e instanceof APIError
@@ -759,7 +839,7 @@ export function getRetryStatusMessage(
 const ENDPOINT_TYPE_DISPLAY_NAMES: Record<string, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
-  chatgpt_oauth: "ChatGPT",
+  chatgpt_oauth: "OpenAI",
   google_ai: "Google AI",
   google_vertex: "Google Vertex",
   bedrock: "AWS Bedrock",

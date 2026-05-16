@@ -10,6 +10,7 @@ import {
   formatErrorDetails,
   getRetryStatusMessage,
   isCloudflareEdge52xErrorText,
+  isProviderStreamDisconnectErrorText,
 } from "../../cli/helpers/errorFormatter";
 
 describe("formatErrorDetails", () => {
@@ -115,6 +116,40 @@ describe("formatErrorDetails", () => {
     );
     expect(message).not.toContain("not available on Free plan");
     expect(message).not.toContain("Selected hosted model");
+  });
+
+  test("formats OpenAI incomplete chunked streaming errors", () => {
+    setErrorContext({ modelEndpointType: "chatgpt_oauth" });
+    const errorObject = {
+      error: {
+        error: {
+          message_type: "error_message",
+          run_id: "run-c4dad6aa-e16a-4392-9c1a-a474ad84dd8c",
+          error_type: "internal_error",
+          message: "An error occurred during agent execution.",
+          detail:
+            "INTERNAL_SERVER_ERROR: Connection error during streaming: peer closed connection without sending complete message body (incomplete chunked read) [BYOK]",
+          seq_id: null,
+        },
+        run_id: "run-c4dad6aa-e16a-4392-9c1a-a474ad84dd8c",
+      },
+    };
+
+    const message = formatErrorDetails(errorObject);
+
+    expect(message).toContain("OpenAI closed the streaming connection");
+    expect(message).toContain("Letta Code retries this automatically");
+    expect(message).toContain("/model");
+    expect(message).not.toContain("INTERNAL_SERVER_ERROR");
+    expect(message).not.toContain('"message_type"');
+  });
+
+  test("detects provider stream disconnect text", () => {
+    expect(
+      isProviderStreamDisconnectErrorText(
+        "peer closed connection without sending complete message body (incomplete chunked read)",
+      ),
+    ).toBe(true);
   });
 
   test("handles nested reasons for credit exhaustion", () => {
