@@ -234,9 +234,46 @@ function applyTelegramInlineFormatting(text: string): string {
     .replace(/(^|[^\w_])_([^\s_](?:[\s\S]*?[^\s_])?)_(?!\w)/g, "$1<i>$2</i>");
 }
 
+function replaceTelegramBlockQuotes(
+  text: string,
+  placeholders: string[],
+): string {
+  const lines = text.split("\n");
+  const formattedLines: string[] = [];
+
+  for (let index = 0; index < lines.length; index++) {
+    const quoteMatch = lines[index]?.match(/^ {0,3}> ?(.*)$/);
+    if (!quoteMatch) {
+      formattedLines.push(lines[index] ?? "");
+      continue;
+    }
+
+    const quoteLines: string[] = [quoteMatch[1] ?? ""];
+    while (index + 1 < lines.length) {
+      const nextMatch = lines[index + 1]?.match(/^ {0,3}> ?(.*)$/);
+      if (!nextMatch) {
+        break;
+      }
+      quoteLines.push(nextMatch[1] ?? "");
+      index++;
+    }
+
+    formattedLines.push(
+      createTelegramPlaceholder(
+        placeholders,
+        `<blockquote>${formatTelegramText(quoteLines.join("\n"), {
+          enableBlockQuotes: false,
+        })}</blockquote>`,
+      ),
+    );
+  }
+
+  return formattedLines.join("\n");
+}
+
 function formatTelegramText(
   text: string,
-  options?: { enableLinks?: boolean },
+  options?: { enableBlockQuotes?: boolean; enableLinks?: boolean },
 ): string {
   const placeholders: string[] = [];
   let result = replaceFencedCodeBlocks(text, placeholders);
@@ -244,8 +281,15 @@ function formatTelegramText(
 
   if (options?.enableLinks !== false) {
     result = replaceMarkdownLinks(result, placeholders, (label) =>
-      formatTelegramText(label, { enableLinks: false }),
+      formatTelegramText(label, {
+        enableBlockQuotes: false,
+        enableLinks: false,
+      }),
     );
+  }
+
+  if (options?.enableBlockQuotes !== false) {
+    result = replaceTelegramBlockQuotes(result, placeholders);
   }
 
   result = escapeTelegramHtml(result);

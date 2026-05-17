@@ -81,6 +81,18 @@ test("renders markdown links with balanced parentheses and escaped attributes", 
   );
 });
 
+test("renders Telegram block quotes as HTML blockquote tags", () => {
+  expect(markdownToTelegramHtml("> quoted\n> **bold** & safe\n\nnormal")).toBe(
+    "<blockquote>quoted\n<b>bold</b> &amp; safe</blockquote>\n\nnormal",
+  );
+});
+
+test("does not render block quote markers inside Telegram code blocks", () => {
+  expect(markdownToTelegramHtml("```\n> quoted\n```")).toBe(
+    "<pre>&gt; quoted</pre>",
+  );
+});
+
 test("does not treat spaced arithmetic operators as italic markup", () => {
   expect(markdownToTelegramHtml("2 * 3 * 4")).toBe("2 * 3 * 4");
 });
