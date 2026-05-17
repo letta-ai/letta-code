@@ -15,7 +15,10 @@ import { createOrUpdateLocalProvider } from "../../backend/local";
 import { LocalBackend } from "../../backend/local/LocalBackend";
 import { emptyLocalUsage } from "../../backend/local/LocalMessage";
 import { listLocalModels } from "../../backend/local/LocalModelConfig";
-import { LocalTranscriptMigrationRequiredError } from "../../backend/local/LocalStore";
+import {
+  LocalTranscriptMigrationRequiredError,
+  LocalTranscriptRepairRequiredError,
+} from "../../backend/local/LocalStore";
 import { migrateLocalBackendTranscripts } from "../../backend/local/transcriptMigration";
 
 async function firstConversationDir(storageDir: string): Promise<string> {
@@ -375,6 +378,63 @@ describe("local backend pi transcript", () => {
     expect(() => new LocalBackend({ storageDir, memfsEnabled: false })).toThrow(
       `letta local-backend migrate-transcripts --storage-dir "${storageDir}"`,
     );
+  });
+
+  test("refuses to load versioned transcripts with legacy UI rows and repairs them with migrate-transcripts", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-repair-"),
+    );
+    const conversationDir = join(storageDir, "conversations", "mismatched");
+    await mkdir(conversationDir, { recursive: true });
+    await writeFile(
+      join(conversationDir, "conversation.json"),
+      JSON.stringify({
+        id: "local-conv-1",
+        agent_id: "agent-local-default",
+        in_context_message_ids: ["ui-msg-1"],
+      }),
+    );
+    await writeFile(
+      join(conversationDir, "manifest.json"),
+      `${JSON.stringify({
+        schema_version: 1,
+        message_format: "pi-ai-message-jsonl",
+        provider_stack: "pi-ai",
+        created_at: new Date().toISOString(),
+      })}\n`,
+    );
+    await writeFile(
+      join(conversationDir, "messages.jsonl"),
+      `${JSON.stringify({ id: "ui-msg-1", role: "user", parts: [{ type: "text", text: "legacy after manifest" }] })}\n`,
+    );
+
+    expect(() => new LocalBackend({ storageDir, memfsEnabled: false })).toThrow(
+      LocalTranscriptRepairRequiredError,
+    );
+    expect(() => new LocalBackend({ storageDir, memfsEnabled: false })).toThrow(
+      `letta local-backend migrate-transcripts --storage-dir "${storageDir}"`,
+    );
+
+    const result = migrateLocalBackendTranscripts({ storageDir });
+    expect(result.converted).toHaveLength(1);
+    const manifest = JSON.parse(
+      await readFile(join(conversationDir, "manifest.json"), "utf8"),
+    );
+    expect(manifest.migrated_from).toBe(
+      "versioned-pi-transcript-with-legacy-ui-message-rows",
+    );
+    const converted = JSON.parse(
+      (await readFile(join(conversationDir, "messages.jsonl"), "utf8")).trim(),
+    );
+    expect(converted).toMatchObject({
+      id: "ui-msg-1",
+      role: "user",
+      content: [{ type: "text", text: "legacy after manifest" }],
+    });
+    expect(converted.parts).toBeUndefined();
+    expect(
+      () => new LocalBackend({ storageDir, memfsEnabled: false }),
+    ).not.toThrow();
   });
 
   test("migrates unversioned transcripts with a backup", async () => {

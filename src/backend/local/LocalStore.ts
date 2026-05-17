@@ -550,6 +550,21 @@ export class LocalTranscriptMigrationRequiredError extends Error {
   }
 }
 
+export class LocalTranscriptRepairRequiredError extends Error {
+  constructor(storageDir: string, conversationDir: string) {
+    const command = localTranscriptMigrationCommand(storageDir);
+    super(
+      [
+        "Local backend found a versioned transcript that still contains legacy UI-message rows.",
+        `Transcript: ${conversationDir}`,
+        `Run: ${command}`,
+        "The migration will back up and repair mismatched messages.jsonl files before startup.",
+      ].join("\n"),
+    );
+    this.name = "LocalTranscriptRepairRequiredError";
+  }
+}
+
 export function localTranscriptMigrationCommand(storageDir: string): string {
   const quotedStorageDir = `"${storageDir.replace(/"/g, '\\"')}"`;
   return `letta local-backend migrate-transcripts --storage-dir ${quotedStorageDir}`;
@@ -568,6 +583,21 @@ function hasNonEmptyJsonl(path: string): boolean {
   return readFileSync(path, "utf8")
     .split("\n")
     .some((line) => line.trim().length > 0);
+}
+
+function hasLegacyUiMessageRows(path: string): boolean {
+  if (!existsSync(path)) return false;
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .some((line) => {
+      const message = JSON.parse(line) as unknown;
+      return (
+        isRecord(message) &&
+        Array.isArray(message.parts) &&
+        (!Object.hasOwn(message, "content") || message.content === null)
+      );
+    });
 }
 
 function createLocalTranscriptManifest(
@@ -609,6 +639,9 @@ function validateLocalTranscriptManifest(
     throw new Error(
       `Unsupported local transcript format in ${conversationDir}. Run ${localTranscriptMigrationCommand(storageDir)} or start a new local conversation.`,
     );
+  }
+  if (hasLegacyUiMessageRows(transcriptMessagesPath(conversationDir))) {
+    throw new LocalTranscriptRepairRequiredError(storageDir, conversationDir);
   }
   return manifest;
 }
