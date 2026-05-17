@@ -43,6 +43,25 @@ function readJsonl(path: string): unknown[] {
     .map((line) => JSON.parse(line));
 }
 
+function isLegacyUiMessage(value: unknown): value is Record<string, unknown> {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.parts) &&
+    (!Object.hasOwn(value, "content") || value.content === null)
+  );
+}
+
+function isPiLocalMessage(value: unknown): value is LocalMessage {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    (value.role === "user" ||
+      value.role === "assistant" ||
+      value.role === "toolResult") &&
+    Object.hasOwn(value, "content")
+  );
+}
+
 function writeJsonl(path: string, items: unknown[]): void {
   writeFileSync(
     path,
@@ -256,17 +275,35 @@ function timestampSuffix(date = new Date()): string {
   ].join("");
 }
 
-function manifest(input: { backupPath?: string }): LocalTranscriptManifest {
+function manifest(input: {
+  backupPath?: string;
+  migratedFrom?: string;
+}): LocalTranscriptManifest {
   const now = new Date().toISOString();
   return {
     schema_version: LOCAL_TRANSCRIPT_SCHEMA_VERSION,
     message_format: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
     provider_stack: LOCAL_TRANSCRIPT_PROVIDER_STACK,
     created_at: now,
-    migrated_from: "unversioned-legacy-local-message-jsonl",
+    migrated_from:
+      input.migratedFrom ?? "unversioned-legacy-local-message-jsonl",
     migrated_at: now,
     ...(input.backupPath ? { backup_path: input.backupPath } : {}),
   };
+}
+
+function convertMessages(
+  messages: unknown[],
+  mode: "legacy" | "repair-versioned",
+): LocalMessage[] {
+  if (mode === "legacy") {
+    return messages.flatMap(convertLegacyMessage);
+  }
+  return messages.flatMap((message) => {
+    if (isLegacyUiMessage(message)) return convertLegacyMessage(message);
+    if (isPiLocalMessage(message)) return [message];
+    return [];
+  });
 }
 
 export function migrateLocalBackendTranscripts(input: {
@@ -287,11 +324,13 @@ export function migrateLocalBackendTranscripts(input: {
     const conversationDir = join(conversationsDir, name);
     const messagesPath = join(conversationDir, "messages.jsonl");
     const manifestPath = join(conversationDir, "manifest.json");
-    if (existsSync(manifestPath)) {
+    const hasManifest = existsSync(manifestPath);
+    const legacyMessages = readJsonl(messagesPath);
+    const hasLegacyUiRows = legacyMessages.some(isLegacyUiMessage);
+    if (hasManifest && !hasLegacyUiRows) {
       result.skipped.push({ conversationDir, reason: "already-versioned" });
       continue;
     }
-    const legacyMessages = readJsonl(messagesPath);
     if (legacyMessages.length === 0) {
       result.skipped.push({ conversationDir, reason: "empty" });
       if (!input.dryRun) {
@@ -303,14 +342,27 @@ export function migrateLocalBackendTranscripts(input: {
       }
       continue;
     }
-    const converted = legacyMessages.flatMap(convertLegacyMessage);
+    const repairVersioned = hasManifest && hasLegacyUiRows;
+    const converted = convertMessages(
+      legacyMessages,
+      repairVersioned ? "repair-versioned" : "legacy",
+    );
     const backupPath = `${messagesPath}.pre-pi-backup-${timestampSuffix()}`;
     if (!input.dryRun) {
       copyFileSync(messagesPath, backupPath);
       writeJsonl(messagesPath, converted);
       writeFileSync(
         manifestPath,
-        `${JSON.stringify(manifest({ backupPath }), null, 2)}\n`,
+        `${JSON.stringify(
+          manifest({
+            backupPath,
+            migratedFrom: repairVersioned
+              ? "versioned-pi-transcript-with-legacy-ui-message-rows"
+              : undefined,
+          }),
+          null,
+          2,
+        )}\n`,
       );
     }
     result.converted.push({
