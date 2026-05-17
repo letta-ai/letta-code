@@ -216,6 +216,8 @@ export interface HookExecutionResult {
   feedback: string[];
   /** Individual results from each hook */
   results: HookResult[];
+  /** Rewritten tool input from a hook (PreToolUse updatedInput protocol) */
+  updatedInput?: Record<string, unknown>;
 }
 
 // ============================================================================
