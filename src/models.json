@@ -1387,6 +1387,26 @@
       }
     },
     {
+      "id": "deepseek-chat",
+      "handle": "deepseek/deepseek-chat",
+      "label": "DeepSeek Chat",
+      "description": "DeepSeek's chat model via the native DeepSeek API",
+      "updateArgs": {
+        "context_window": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "deepseek-reasoner",
+      "handle": "deepseek/deepseek-reasoner",
+      "label": "DeepSeek Reasoner",
+      "description": "DeepSeek's reasoning model via the native DeepSeek API",
+      "updateArgs": {
+        "context_window": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "glm-5.1",
       "handle": "zai/glm-5.1",
       "label": "GLM-5.1",

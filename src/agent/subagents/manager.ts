@@ -159,6 +159,7 @@ function isProviderNotSupportedError(errorOutput: string): boolean {
 const BYOK_PROVIDER_TO_BASE: Record<string, string> = {
   "lc-anthropic": "anthropic",
   "lc-openai": "openai",
+  "lc-deepseek": "deepseek",
   "lc-zai": "zai",
   "lc-gemini": "google_ai",
   "lc-openrouter": "openrouter",

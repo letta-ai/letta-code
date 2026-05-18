@@ -9,6 +9,7 @@ import { getModels } from "@earendil-works/pi-ai";
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
 export const LOCAL_ANTHROPIC_PROVIDER_NAME = "lc-anthropic";
+export const LOCAL_DEEPSEEK_PROVIDER_NAME = "lc-deepseek";
 export const LOCAL_OPENROUTER_PROVIDER_NAME = "lc-openrouter";
 export const LOCAL_OLLAMA_PROVIDER_NAME = "lc-ollama";
 export const LOCAL_OLLAMA_CLOUD_PROVIDER_NAME = "lc-ollama-cloud";
@@ -39,6 +40,7 @@ function hasEnvValue(value: string | undefined): boolean {
 export type PiProvider =
   | "openai-responses"
   | "anthropic"
+  | "deepseek"
   | "openrouter"
   | "zai"
   | "minimax"
@@ -96,6 +98,18 @@ export const PI_PROVIDER_SPECS = [
     apiKeyEnv: () => process.env.ANTHROPIC_API_KEY,
     envConfigured: () => hasEnvValue(process.env.ANTHROPIC_API_KEY),
     catalogModelHandle: prefixedCatalogModelHandle("anthropic/"),
+  },
+  {
+    id: "deepseek",
+    piProvider: "deepseek",
+    providerTypes: ["deepseek"],
+    handlePrefixes: ["deepseek/"],
+    localProviderNames: [LOCAL_DEEPSEEK_PROVIDER_NAME],
+    defaultModel: "deepseek/deepseek-chat",
+    apiKeyEnv: () => process.env.DEEPSEEK_API_KEY,
+    baseUrlEnv: () => process.env.DEEPSEEK_BASE_URL,
+    envConfigured: () => hasEnvValue(process.env.DEEPSEEK_API_KEY),
+    catalogModelHandle: prefixedCatalogModelHandle("deepseek/"),
   },
   {
     id: "openrouter",

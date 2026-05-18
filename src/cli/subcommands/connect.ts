@@ -212,10 +212,15 @@ export async function runConnectSubcommand(
     return 1;
   }
 
+  try {
+    await io.ensureSettingsReady();
+  } catch (error) {
+    io.stderr(`Failed to initialize settings: ${getErrorMessage(error)}`);
+    return 1;
+  }
+
   if (isConnectOAuthProvider(provider)) {
     try {
-      await io.ensureSettingsReady();
-
       if (await io.isChatGPTOAuthConnected()) {
         io.stdout(
           "Already connected to ChatGPT via OAuth. Disconnect first if you want to re-authenticate.",

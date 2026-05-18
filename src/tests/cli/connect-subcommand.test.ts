@@ -48,6 +48,7 @@ describe("connect subcommand", () => {
     );
 
     expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
     expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
       "anthropic",
       "sk-ant-123",
@@ -57,6 +58,41 @@ describe("connect subcommand", () => {
       "lc-anthropic",
       "sk-ant-123",
     );
+  });
+
+  test("connects DeepSeek API provider", async () => {
+    const { deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(
+      ["deepseek", "sk-deepseek-123"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "deepseek",
+      "sk-deepseek-123",
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "deepseek",
+      "lc-deepseek",
+      "sk-deepseek-123",
+    );
+  });
+
+  test("initializes settings before API-key provider validation", async () => {
+    const { stderr, deps } = createIoDeps();
+    deps.ensureSettingsReady.mockRejectedValueOnce(
+      new Error("Settings not initialized"),
+    );
+
+    const exitCode = await runConnectSubcommand(["openai", "sk-test"], deps);
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain("Failed to initialize settings");
+    expect(deps.checkProviderApiKey).not.toHaveBeenCalled();
+    expect(deps.createOrUpdateProvider).not.toHaveBeenCalled();
   });
 
   test("returns error for missing key in non-TTY mode", async () => {
@@ -159,6 +195,7 @@ describe("connect subcommand", () => {
     );
 
     expect(exitCode).toBe(1);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
     expect(stderr.join("\n")).toContain("Missing IAM fields");
   });
 });

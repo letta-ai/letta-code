@@ -75,6 +75,13 @@ export const BYOK_PROVIDERS = [
     providerName: "lc-openai",
   },
   {
+    id: "deepseek",
+    displayName: "DeepSeek API",
+    description: "Connect a DeepSeek API key",
+    providerType: "deepseek",
+    providerName: "lc-deepseek",
+  },
+  {
     id: "zai",
     displayName: "zAI API",
     description: "Connect a zAI API key",

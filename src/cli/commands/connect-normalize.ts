@@ -8,6 +8,7 @@ export type ConnectProviderCanonical =
   | "chatgpt"
   | "anthropic"
   | "openai"
+  | "deepseek"
   | "zai"
   | "zai-coding"
   | "minimax"
@@ -26,6 +27,7 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   codex: "chatgpt",
   anthropic: "anthropic",
   openai: "openai",
+  deepseek: "deepseek",
   zai: "zai",
   "zai-coding": "zai-coding",
   minimax: "minimax",
@@ -46,6 +48,7 @@ const CANONICAL_ORDER: ConnectProviderCanonical[] = [
   "chatgpt",
   "anthropic",
   "openai",
+  "deepseek",
   "zai",
   "zai-coding",
   "minimax",

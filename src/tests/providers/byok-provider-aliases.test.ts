@@ -20,6 +20,7 @@ describe("buildByokProviderAliases", () => {
 
     expect(aliases["lc-anthropic"]).toBe("anthropic");
     expect(aliases["lc-openai"]).toBe("openai");
+    expect(aliases["lc-deepseek"]).toBe("deepseek");
     expect(aliases["lc-zai"]).toBe("zai");
     expect(aliases["lc-gemini"]).toBe("google_ai");
     expect(aliases["lc-minimax"]).toBe("minimax");
