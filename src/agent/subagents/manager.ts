@@ -197,12 +197,21 @@ export async function resolveSubagentModel(options: {
   billingTier?: string | null;
   availableHandles?: Set<string>;
   subagentType?: string;
+  backendMode?: BackendMode;
 }): Promise<string | null> {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
   const isFreeTier = billingTier?.toLowerCase() === "free";
 
   if (userModel) return userModel;
+
+  // Local backend has no server-side auto router. If the parent agent is
+  // already running successfully on a local model, spawned subagents should use
+  // that exact model instead of resolving auto/auto-memory to a provider
+  // default that may not match the active session.
+  if (options.backendMode === "local" && parentModelHandle) {
+    return parentModelHandle;
+  }
 
   if (options.subagentType === "reflection") {
     if (recommendedModel && recommendedModel !== "inherit") {
@@ -1333,6 +1342,10 @@ export async function spawnSubagent(
     existingAgentId || existingConversationId,
   );
 
+  const activeBackend = getBackend();
+  const backendMode: BackendMode = activeBackend.capabilities.localMemfs
+    ? "local"
+    : "api";
   const { handle: parentModelHandle, agent: parentAgent } =
     await getPrimaryAgentModelHandle();
   const billingTier = await getCurrentBillingTier();
@@ -1346,6 +1359,7 @@ export async function spawnSubagent(
         parentModelHandle,
         billingTier,
         subagentType: type,
+        backendMode,
       });
   const baseURL = getBaseURL();
 

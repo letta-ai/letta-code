@@ -621,6 +621,43 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("letta/auto-memory");
   });
 
+  test("local backend subagents inherit the active parent model", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "inherit",
+      parentModelHandle: "chatgpt-plus-pro/gpt-5.3-codex",
+      backendMode: "local",
+      availableHandles: new Set(),
+    });
+
+    expect(result).toBe("chatgpt-plus-pro/gpt-5.3-codex");
+  });
+
+  test("local backend inherits parent model for non-reflection subagents", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "general-purpose",
+      recommendedModel: "anthropic/test-model",
+      parentModelHandle: "lmstudio/local-model",
+      backendMode: "local",
+      availableHandles: new Set(["anthropic/test-model"]),
+    });
+
+    expect(result).toBe("lmstudio/local-model");
+  });
+
+  test("explicit user model overrides local backend parent inheritance", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      userModel: "openai/gpt-5",
+      recommendedModel: "inherit",
+      parentModelHandle: "lmstudio/local-model",
+      backendMode: "local",
+      availableHandles: new Set(["openai/gpt-5"]),
+    });
+
+    expect(result).toBe("openai/gpt-5");
+  });
+
   test("uses letta/auto-memory for reflection subagents with no recommended model", async () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
