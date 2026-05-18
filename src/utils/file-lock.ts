@@ -1,4 +1,4 @@
-import { open, readFile, unlink } from "node:fs/promises";
+import { open, readFile, stat, unlink } from "node:fs/promises";
 
 export type FileLockOptions = {
   /** A lock file older than this is treated as abandoned and reaped. */
@@ -14,6 +14,8 @@ const DEFAULT_OPTIONS: Required<FileLockOptions> = {
   retryMs: 25,
   timeoutMs: 10_000,
 };
+
+const CORRUPT_LOCK_GRACE_MS = 100;
 
 /**
  * Cross-process critical section guarded by an O_EXCL lock file. The lock
@@ -48,8 +50,22 @@ async function acquireFileLock(
   while (true) {
     try {
       const handle = await open(lockPath, "wx");
-      await handle.writeFile(payload, "utf-8");
-      await handle.close();
+      try {
+        await handle.writeFile(payload, "utf-8");
+        await handle.close();
+      } catch (error) {
+        try {
+          await handle.close();
+        } catch {
+          // Ignore close failures while cleaning up a failed acquisition.
+        }
+        try {
+          await unlink(lockPath);
+        } catch {
+          // Best-effort cleanup; another process may have reaped it.
+        }
+        throw error;
+      }
       return async () => {
         try {
           await unlink(lockPath);
@@ -87,12 +103,34 @@ async function tryReapStaleLock(
     return true;
   }
   let acquiredAt: unknown;
+  let isCorrupt = false;
   try {
     acquiredAt = (JSON.parse(raw) as { acquiredAt?: unknown }).acquiredAt;
   } catch {
-    acquiredAt = undefined;
+    isCorrupt = true;
   }
-  if (typeof acquiredAt !== "number" || Date.now() - acquiredAt <= staleMs) {
+  if (isCorrupt || typeof acquiredAt !== "number") {
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await stat(lockPath)).mtimeMs;
+    } catch {
+      // Lock vanished between read and stat - retry immediately.
+      return true;
+    }
+    // `open("wx")` creates the file before `writeFile` fills it. Give a live
+    // writer a short grace period before treating corrupt/empty content as an
+    // abandoned acquisition.
+    if (Date.now() - mtimeMs <= CORRUPT_LOCK_GRACE_MS) {
+      return false;
+    }
+    try {
+      await unlink(lockPath);
+    } catch {
+      // Another reaper got there first.
+    }
+    return true;
+  }
+  if (Date.now() - acquiredAt <= staleMs) {
     return false;
   }
   try {

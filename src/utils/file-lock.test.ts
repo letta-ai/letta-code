@@ -74,6 +74,23 @@ describe("withFileLock", () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
+  test("reaps corrupt lock files left by crashed acquisitions", async () => {
+    const lockPath = join(tmpDir, "a.lock");
+    await writeFile(lockPath, "", "utf-8");
+
+    let entered = false;
+    await withFileLock(
+      lockPath,
+      async () => {
+        entered = true;
+      },
+      { staleMs: 60_000, retryMs: 5, timeoutMs: 1000 },
+    );
+
+    expect(entered).toBe(true);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   test("times out when the lock is held and not stale", async () => {
     const lockPath = join(tmpDir, "a.lock");
     await writeFile(
