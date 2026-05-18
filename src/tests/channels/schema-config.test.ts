@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelConfigSchema } from "../../channels/pluginTypes";
+import type {
+  ChannelConfigSchema,
+  ChannelConfigSelectField,
+  ChannelConfigTextField,
+} from "../../channels/pluginTypes";
 import {
   parseChannelConfigSchema,
   redactConfigForSnapshot,
@@ -57,7 +61,9 @@ describe("parseChannelConfigSchema", () => {
       label: "Token",
     });
     expect(result?.fields[2]?.type).toBe("select");
-    expect((result?.fields[2] as any).options).toHaveLength(2);
+    expect(
+      (result?.fields[2] as ChannelConfigSelectField).options,
+    ).toHaveLength(2);
     expect(result?.fields[3]).toEqual({
       type: "boolean",
       key: "enabled",
@@ -236,8 +242,12 @@ describe("parseChannelConfigSchema", () => {
       ],
     });
     expect(result).not.toBeNull();
-    expect((result?.fields[0] as any).placeholder).toBe("Enter name");
-    expect((result?.fields[1] as any).placeholder).toBe("Enter key");
+    expect((result?.fields[0] as ChannelConfigTextField).placeholder).toBe(
+      "Enter name",
+    );
+    expect((result?.fields[1] as ChannelConfigTextField).placeholder).toBe(
+      "Enter key",
+    );
   });
 });
 
@@ -965,7 +975,8 @@ describe("bluesky-shape schema (integration)", () => {
   });
 
   test("validates a realistic config", () => {
-    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON)!;
+    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON);
+    if (!parsed) throw new Error("Failed to parse BLUESKY_SCHEMA_JSON");
     const result = validateConfigAgainstSchema(parsed, {
       identifier: "shelley.bsky.social",
       password: "abcd-efgh-ijkl-mnop",
@@ -983,7 +994,8 @@ describe("bluesky-shape schema (integration)", () => {
   });
 
   test("redacts an empty stored config to schema defaults", () => {
-    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON)!;
+    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON);
+    if (!parsed) throw new Error("Failed to parse BLUESKY_SCHEMA_JSON");
     const snapshot = redactConfigForSnapshot(parsed, {});
     expect(snapshot).toEqual({
       ...RESERVED_BASE,
@@ -1002,7 +1014,8 @@ describe("bluesky-shape schema (integration)", () => {
   });
 
   test("redacts a populated stored config (with secret) correctly", () => {
-    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON)!;
+    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON);
+    if (!parsed) throw new Error("Failed to parse BLUESKY_SCHEMA_JSON");
     const snapshot = redactConfigForSnapshot(parsed, {
       identifier: "shelley.bsky.social",
       password: "secret-value",
