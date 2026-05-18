@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { APIError } from "@letta-ai/letta-client/core/error";
-import { getBackend } from "../backend";
 import { refreshDynamicChannelToolsInLoadedRegistry } from "../tools/manager";
 import {
   channelPluginConfigShouldRefreshDisplayName,
@@ -141,14 +139,6 @@ export interface ChannelTargetSnapshot {
 
 async function refreshLoadedMessageChannelTool(): Promise<void> {
   await refreshDynamicChannelToolsInLoadedRegistry();
-}
-
-function isBackendNotFoundError(error: unknown): boolean {
-  return (
-    (error instanceof APIError &&
-      (error.status === 404 || error.status === 422)) ||
-    (error instanceof Error && error.name === "LocalBackendNotFoundError")
-  );
 }
 
 export interface ChannelAccountSnapshot {
@@ -688,39 +678,6 @@ export function listChannelSummaries(): ChannelSummary[] {
       routesCount: getRoutesForChannel(channelId).length,
     };
   });
-}
-
-async function routeConversationIsActive(
-  route: ChannelRoute,
-): Promise<boolean> {
-  if (route.enabled === false) {
-    return false;
-  }
-
-  try {
-    await getBackend().retrieveConversation(route.conversationId);
-    return true;
-  } catch (error) {
-    if (isBackendNotFoundError(error)) {
-      return false;
-    }
-
-    // Fail open on transient backend/API errors so a temporary issue does not
-    // undercount conversations that may still be valid.
-    return true;
-  }
-}
-
-export async function countActiveChannelRoutes(
-  channelId: string,
-): Promise<number> {
-  assertSupportedChannelId(channelId);
-  loadRoutes(channelId);
-
-  const activeChecks = await Promise.all(
-    getRoutesForChannel(channelId).map(routeConversationIsActive),
-  );
-  return activeChecks.filter(Boolean).length;
 }
 
 export function listEnabledChannelIds(): SupportedChannelId[] {
