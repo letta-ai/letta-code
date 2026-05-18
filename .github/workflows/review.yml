@@ -53,7 +53,7 @@ jobs:
             sleep 10
           done
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
 
       - name: React with eyes (review starting)
         id: eyes_reaction
@@ -72,14 +72,14 @@ jobs:
           echo "Eyes reaction ID: $REACTION_ID"
           echo "reaction_id=$REACTION_ID" >> $GITHUB_OUTPUT
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
 
       - uses: letta-ai/letta-code-action@daa80f29e345315623ff759f5ecf5018946bbc15
         id: letta_review
         if: steps.lint_wait.outputs.skipped != 'true'
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
           track_progress: ""
           tracking_comment: "false"
@@ -207,4 +207,4 @@ jobs:
             echo "Comments left — keeping eyes reaction"
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
