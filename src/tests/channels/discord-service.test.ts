@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
-  isDiscordChannelAccount,
-} from "../../channels/types";
-import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
@@ -38,6 +35,7 @@ import {
   __testOverrideSaveTargetStore,
   clearTargetStores,
 } from "../../channels/targets";
+import { isDiscordChannelAccount } from "../../channels/types";
 
 describe("discord channel service", () => {
   function resetState(): void {
@@ -526,7 +524,9 @@ describe("discord channel service", () => {
 
     expect(savedAccounts).not.toBeNull();
     expect(savedAccounts).toHaveLength(1);
-    const saved = (savedAccounts as unknown as Array<Record<string, unknown>>)[0];
+    const saved = (
+      savedAccounts as unknown as Array<Record<string, unknown>>
+    )[0];
     expect(saved).toBeDefined();
     // Should have thread_policy_by_channel (snake_case)
     expect(saved?.thread_policy_by_channel).toEqual({ "channel-gamma": false });
