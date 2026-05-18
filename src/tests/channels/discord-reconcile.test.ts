@@ -1,6 +1,7 @@
 import {
   afterAll,
   afterEach,
+  beforeAll,
   beforeEach,
   describe,
   expect,
@@ -19,10 +20,6 @@ import {
   clearAllRoutes,
   getRoute,
 } from "../../channels/routing";
-
-mock.module("../../backend/api/client", () => ({
-  getClient: async () => ({}),
-}));
 
 // Helper to add a Discord guild channel route to the in-memory store,
 // mimicking routes created by the Discord adapter.
@@ -46,6 +43,15 @@ function addDiscordRoute(overrides: {
 }
 
 describe("Discord route reconciliation", () => {
+  beforeAll(() => {
+    mock.module("../../backend/api/client", () => ({
+      getClient: async () => ({}),
+    }));
+  });
+
+  afterAll(() => {
+    mock.restore();
+  });
   function resetState(): void {
     clearChannelAccountStores();
     clearAllRoutes();
@@ -108,7 +114,9 @@ describe("Discord route reconciliation", () => {
     expect(result.totalRoutesChecked).toBe(2);
     expect(result.staleRoutes).toHaveLength(1);
     expect(result.staleRoutes[0]?.route.chatId).toBe("channel-gamma");
-    expect(result.staleRoutes[0]?.reason).toContain("not in the allowed_channels");
+    expect(result.staleRoutes[0]?.reason).toContain(
+      "not in the allowed_channels",
+    );
     expect(result.staleRoutes[0]?.canResolve).toBe(true);
     expect(result.staleRoutes[0]?.resolvedGateChannelId).toBe("channel-gamma");
     expect(result.removedRoutes).toHaveLength(0);
@@ -199,7 +207,9 @@ describe("Discord route reconciliation", () => {
     expect(result.totalRoutesChecked).toBe(1);
     expect(result.staleRoutes).toHaveLength(1);
     expect(result.staleRoutes[0]?.canResolve).toBe(false);
-    expect(result.staleRoutes[0]?.reason).toContain("parent channel ID is not stored");
+    expect(result.staleRoutes[0]?.reason).toContain(
+      "parent channel ID is not stored",
+    );
     expect(result.staleRoutes[0]?.resolvedGateChannelId).toBe(null);
   });
 
@@ -240,7 +250,9 @@ describe("Discord route reconciliation", () => {
     expect(result.removedRoutes).toHaveLength(0);
     expect(result.skippedByPolicy).toHaveLength(1);
     expect(result.skippedByPolicy[0]?.route.chatId).toBe("channel-gamma");
-    expect(result.policyGateReason).toContain("remove_stale_conversations is false");
+    expect(result.policyGateReason).toContain(
+      "remove_stale_conversations is false",
+    );
 
     // Route should still exist
     expect(
@@ -331,9 +343,7 @@ describe("Discord route reconciliation", () => {
     ).not.toBeNull();
 
     // channel-beta should be removed
-    expect(
-      getRoute("discord", "channel-beta", "discord-bot", null),
-    ).toBeNull();
+    expect(getRoute("discord", "channel-beta", "discord-bot", null)).toBeNull();
 
     expect(result.removedRoutes).toHaveLength(1);
     expect(result.removedRoutes[0]?.chatId).toBe("channel-beta");
@@ -519,7 +529,7 @@ describe("Discord route reconciliation", () => {
       expect(logCall).toBeDefined();
 
       if (logCall) {
-        const payload = JSON.parse(logCall[1]);
+        const payload = JSON.parse((logCall as unknown as [string, string])[1]);
         expect(payload.accountId).toBe("discord-bot");
         expect(payload.chatId).toBe("channel-gamma");
         expect(payload.threadId).toBeNull();

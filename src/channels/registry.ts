@@ -20,6 +20,7 @@ import {
   loadChannelAccounts,
 } from "./accounts";
 import { tryHandleChannelSlashCommand } from "./commands";
+import { isDiscordGuildChannelAllowed } from "./discord/channelGating";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
@@ -63,7 +64,6 @@ import type {
   SlackChannelAccount,
 } from "./types";
 import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
-import { isDiscordGuildChannelAllowed } from "./discord/channelGating";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
@@ -849,10 +849,7 @@ export class ChannelRegistry {
 
       // Delivery-time re-check: if allowed_channels changed since route creation,
       // drop the message (but preserve the route unless removeStaleConversations is set).
-      if (
-        msg.chatType === "channel" &&
-        config.allowedChannels
-      ) {
+      if (msg.chatType === "channel" && config.allowedChannels) {
         const isAllowed = isDiscordGuildChannelAllowed({
           channelId: msg.chatId,
           parentChannelId: msg.parentChannelId ?? null,

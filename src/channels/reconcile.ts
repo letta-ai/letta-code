@@ -23,17 +23,8 @@
  */
 
 import { getChannelAccount, loadChannelAccounts } from "./accounts";
-import {
-  getRoutesForChannel,
-  loadRoutes,
-  removeRoute,
-} from "./routing";
-import { isDiscordChannelAccount } from "./types";
-import type {
-  ChannelAccount,
-  ChannelRoute,
-  DiscordChannelAccount,
-} from "./types";
+import { getRoutesForChannel, loadRoutes, removeRoute } from "./routing";
+import type { ChannelRoute, DiscordChannelAccount } from "./types";
 
 // ── Types ──────────────────────────────────────────────────────────
 
