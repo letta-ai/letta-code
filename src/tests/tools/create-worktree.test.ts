@@ -12,7 +12,15 @@ import {
   getCurrentWorkingDirectory,
   runWithRuntimeContext,
 } from "../../runtime-context";
+import { settingsManager } from "../../settings-manager";
 import { create_worktree } from "../../tools/impl/CreateWorktree";
+import {
+  clearToolsWithLock,
+  executeTool,
+  loadSpecificTools,
+  prepareCurrentToolExecutionContext,
+  releaseToolExecutionContext,
+} from "../../tools/manager";
 import { __listenClientTestUtils } from "../../websocket/listen-client";
 import { resetRemoteSettingsCache } from "../../websocket/listener/remote-settings";
 import { setActiveRuntime } from "../../websocket/listener/runtime";
@@ -43,23 +51,64 @@ async function createRepo(): Promise<string> {
   return await realpath(repo);
 }
 
+function toolReturnText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (
+          item &&
+          typeof item === "object" &&
+          "text" in item &&
+          typeof item.text === "string"
+        ) {
+          return item.text;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return JSON.stringify(value);
+}
+
 describe("CreateWorktree tool", () => {
   let tempDirs: string[] = [];
   let originalIndexRoot: string;
+  const originalCwd = process.cwd();
   const originalHome = process.env.HOME;
+  const originalUserCwd = process.env.USER_CWD;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tempDirs = [];
     originalIndexRoot = getIndexRoot();
+    clearToolsWithLock();
     resetRemoteSettingsCache();
     setActiveRuntime(null);
+    const fakeHome = await mkdtemp(
+      path.join(tmpdir(), "letta-create-worktree-home-"),
+    );
+    tempDirs.push(fakeHome);
+    process.env.HOME = fakeHome;
+    await settingsManager.reset();
+    await settingsManager.initialize();
   });
 
   afterEach(async () => {
     setActiveRuntime(null);
+    clearToolsWithLock();
     resetRemoteSettingsCache();
+    await settingsManager.reset();
     await ensureFileIndex().catch(() => undefined);
     setIndexRoot(originalIndexRoot);
+    process.chdir(originalCwd);
+    if (originalUserCwd === undefined) {
+      delete process.env.USER_CWD;
+    } else {
+      process.env.USER_CWD = originalUserCwd;
+    }
     if (originalHome === undefined) {
       delete process.env.HOME;
     } else {
@@ -166,7 +215,7 @@ describe("CreateWorktree tool", () => {
     ).toBe(repo);
   });
 
-  test("does not claim a persistent cwd switch outside listener mode", async () => {
+  test("switches the current session cwd outside listener mode", async () => {
     const repo = await trackRepo();
     setActiveRuntime(null);
 
@@ -177,17 +226,62 @@ describe("CreateWorktree tool", () => {
           name: "Plain CLI Feature",
           refresh_base: false,
         });
-        expect(getCurrentWorkingDirectory()).toBe(repo);
+        if (!toolResult.worktree_path) {
+          throw new Error("Expected CreateWorktree to return a worktree path");
+        }
+        expect(getCurrentWorkingDirectory()).toBe(toolResult.worktree_path);
         return toolResult;
       },
     );
 
     expect(result.status).toBe("success");
-    expect(result.worktree_path).toBeDefined();
-    expect(result.switched_cwd).toBe(false);
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    expect(result.switched_cwd).toBe(true);
+    expect(process.cwd()).toBe(result.worktree_path);
+    expect(process.env.USER_CWD).toBe(result.worktree_path);
     expect(result.content[0]?.text).toContain(
-      "The conversation working directory was left unchanged.",
+      "This conversation's working directory is now the new worktree.",
     );
+  });
+
+  test("updates the active tool context so same-turn tools use the new cwd", async () => {
+    const repo = await trackRepo();
+    setActiveRuntime(null);
+    await loadSpecificTools(["CreateWorktree", "Bash"]);
+
+    const prepared = await runWithRuntimeContext(
+      { workingDirectory: repo },
+      () => prepareCurrentToolExecutionContext({ workingDirectory: repo }),
+    );
+
+    try {
+      const createResult = await executeTool(
+        "CreateWorktree",
+        { name: "Same Turn Feature", refresh_base: false },
+        { toolContextId: prepared.contextId },
+      );
+      expect(createResult.status).toBe("success");
+      const createdText = toolReturnText(createResult.toolReturn);
+      const worktreePath = createdText.match(/^Path: (.+)$/m)?.[1];
+      if (!worktreePath) {
+        throw new Error(
+          `Expected worktree path in tool return: ${createdText}`,
+        );
+      }
+
+      const pwdResult = await executeTool(
+        "Bash",
+        { command: 'node -e "console.log(process.cwd())"' },
+        { toolContextId: prepared.contextId },
+      );
+
+      expect(pwdResult.status).toBe("success");
+      expect(toolReturnText(pwdResult.toolReturn).trim()).toBe(worktreePath);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
   });
 
   test("re-roots the file index when switching into a nested worktree", async () => {

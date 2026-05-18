@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { getRuntimeContext } from "../../runtime-context";
-import { switchConversationWorkingDirectory } from "../../websocket/listener/cwd-change";
+import {
+  switchConversationWorkingDirectory,
+  switchCurrentRuntimeWorkingDirectory,
+} from "../../websocket/listener/cwd-change";
 import { getActiveRuntime } from "../../websocket/listener/runtime";
 import { restartWorktreeWatcher } from "../../websocket/listener/worktree-watcher";
 import { getShellEnv } from "./shellEnv.js";
@@ -15,6 +18,7 @@ interface CreateWorktreeArgs {
   base_ref?: string;
   refresh_base?: boolean;
   switch_cwd?: boolean;
+  _executionContextId?: string;
 }
 
 interface CreateWorktreeResult {
@@ -403,6 +407,19 @@ export async function create_worktree(
           agentId: runtimeContext.agentId ?? null,
           conversationId: runtimeContext.conversationId,
         });
+      } else {
+        await switchCurrentRuntimeWorkingDirectory(normalizedWorktreePath);
+        const executionContextId = getStringArg(args, "_executionContextId");
+        if (executionContextId) {
+          const { updateToolExecutionContextWorkingDirectory } = await import(
+            "../manager"
+          );
+          updateToolExecutionContextWorkingDirectory(
+            executionContextId,
+            normalizedWorktreePath,
+          );
+        }
+        switchedCwd = true;
       }
     }
 

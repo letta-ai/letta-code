@@ -646,6 +646,20 @@ function getExecutionContextById(
   return getExecutionContexts().get(contextId);
 }
 
+export function updateToolExecutionContextWorkingDirectory(
+  contextId: string,
+  workingDirectory: string,
+): boolean {
+  const context = getExecutionContextById(contextId);
+  if (!context) {
+    return false;
+  }
+
+  context.workingDirectory = workingDirectory;
+  context.runtimeContext.workingDirectory = workingDirectory;
+  return true;
+}
+
 /**
  * Returns the mutable PermissionModeState for an execution context.
  * EnterPlanMode / ExitPlanMode use this to update the per-conversation
@@ -988,6 +1002,7 @@ function capturePreparedToolExecutionContext(
     ),
   };
   const contextId = saveExecutionContext(executionSnapshot);
+  executionSnapshot.runtimeContext.toolContextId = contextId;
 
   return {
     contextId,
@@ -1867,15 +1882,19 @@ export async function executeTool(
         }
       }
 
-      // Inject the execution context id for plan-mode tools so they can update
-      // the per-conversation PermissionModeState without touching the global singleton.
+      // Inject the execution context id for tools that need to mutate
+      // turn-scoped execution state without touching global singletons.
       const PLAN_MODE_TOOL_NAMES = new Set([
         "EnterPlanMode",
         "enter_plan_mode",
         "ExitPlanMode",
         "exit_plan_mode",
       ]);
-      if (PLAN_MODE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
+      if (
+        (PLAN_MODE_TOOL_NAMES.has(internalName) ||
+          WORKTREE_TOOL_NAMES.has(internalName as ToolName)) &&
+        options?.toolContextId
+      ) {
         enhancedArgs = {
           ...enhancedArgs,
           _executionContextId: options.toolContextId,

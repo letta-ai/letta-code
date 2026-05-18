@@ -42,6 +42,8 @@ async function refreshIndexForWorkingDirectory(
 export async function switchCurrentRuntimeWorkingDirectory(
   workingDirectory: string,
 ): Promise<void> {
+  process.chdir(workingDirectory);
+  process.env.USER_CWD = workingDirectory;
   updateRuntimeContext({ workingDirectory });
   await refreshIndexForWorkingDirectory(workingDirectory);
 }
