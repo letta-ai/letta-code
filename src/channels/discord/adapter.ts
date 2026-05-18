@@ -889,11 +889,11 @@ export function createDiscordAdapter(
         // If mentioned outside a thread and thread creation is enabled,
         // create a Discord thread for the conversation.
         // Resolution order: per-channel override → account-level
-        // autoThreadOnMention → enabled (default).
+        // autoThreadOnMention → disabled (default).
         const shouldAutoThread =
           config.threadPolicyByChannel?.[message.channelId] ??
           config.autoThreadOnMention ??
-          true;
+          false;
         if (!isThread && wasMentioned && shouldAutoThread) {
           const createdThread = await createThreadForMention(message, content);
           if (!createdThread) return;

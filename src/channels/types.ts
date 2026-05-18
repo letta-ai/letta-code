@@ -335,7 +335,7 @@ export interface DiscordChannelConfig {
   /**
    * When `true`, @mentions in non-thread guild channels auto-create a
    * Discord thread for the conversation. When `false`, the bot replies
-   * directly in the parent channel. Default `true`.
+   * directly in the parent channel. Default `false`.
    */
   autoThreadOnMention?: boolean;
   /**
@@ -343,7 +343,7 @@ export interface DiscordChannelConfig {
    * Key: guild channel ID. Value: `true` to auto-create a thread on
    * @mention in that channel, `false` to reply in-line.
    * Resolution order: per-channel override → account-level
-   * `autoThreadOnMention` → `true`.
+   * `autoThreadOnMention` → `false`.
    */
   threadPolicyByChannel?: Record<string, boolean>;
   /**
@@ -423,7 +423,7 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   /**
    * When `true`, @mentions in non-thread guild channels auto-create a
    * Discord thread for the conversation. When `false`, the bot replies
-   * directly in the parent channel. Default `true`.
+   * directly in the parent channel. Default `false`.
    */
   autoThreadOnMention?: boolean;
   /**
@@ -431,7 +431,7 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * Key: guild channel ID. Value: `true` to auto-create a thread on
    * @mention in that channel, `false` to reply in-line.
    * Resolution order: per-channel override → account-level
-   * `autoThreadOnMention` → `true`.
+   * `autoThreadOnMention` → `false`.
    */
   threadPolicyByChannel?: Record<string, boolean>;
   /**
