@@ -819,8 +819,14 @@ export default function App({
       modelDisplayName: currentModelDisplay ?? undefined,
       billingTier: billingTier ?? undefined,
       modelEndpointType: llmConfig?.model_endpoint_type ?? undefined,
+      modelLabel: currentModelLabel ?? undefined,
     });
-  }, [currentModelDisplay, billingTier, llmConfig?.model_endpoint_type]);
+  }, [
+    currentModelDisplay,
+    billingTier,
+    llmConfig?.model_endpoint_type,
+    currentModelLabel,
+  ]);
 
   // Fetch billing tier once on mount
   useEffect(() => {

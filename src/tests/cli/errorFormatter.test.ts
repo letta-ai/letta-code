@@ -280,6 +280,50 @@ describe("formatErrorDetails", () => {
     expect(message).toContain("/model");
   });
 
+  test("uses upgrade or purchase guidance for Letta-hosted quota plus credit exhaustion", () => {
+    setErrorContext({ billingTier: "team_pro", modelLabel: "letta/auto" });
+
+    const error = new APIError(
+      402,
+      {
+        agent_id: "agent-cd664b86-4d28-49b7-8ad6-60677eaff9be",
+        event_type: "rate_limit_hit",
+        organization_id: "cf5744c3-7513-4fef-acad-51e446bd02b9",
+        reasons: ["basic-usage-exceeded", "not-enough-credits"],
+        status_code: 402,
+        tier: "team_pro",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toContain("Upgrade your plan for more quota");
+    expect(message).toContain("purchase credits");
+    expect(message).not.toContain("Add your own API keys");
+  });
+
+  test("keeps generic credit guidance for non-Letta models", () => {
+    setErrorContext({ modelLabel: "anthropic/claude-sonnet-4-6" });
+
+    const error = new APIError(
+      402,
+      {
+        error: "Rate limited",
+        reasons: ["basic-usage-exceeded", "not-enough-credits"],
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toBe(
+      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+    );
+  });
+
   describe("ChatGPT usage_limit_reached", () => {
     const chatGptRateLimitDetail =
       'RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"team","resets_at":1772074086,"eligible_promo":null,"resets_in_seconds":3032}}';
