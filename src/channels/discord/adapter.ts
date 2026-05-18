@@ -88,6 +88,7 @@ interface DiscordChannelLike {
   isTextBased?: () => boolean;
   isThread?: () => boolean;
   send?: (options: string | Record<string, unknown>) => Promise<{ id: string }>;
+  sendTyping?: () => Promise<unknown>;
   messages?: {
     fetch: (id: string) => Promise<DiscordFetchedMessageLike>;
   };
@@ -403,7 +404,9 @@ export function createDiscordAdapter(
 
         if (!adapter.onMessage) return;
         try {
-          await adapter.onMessage(merged);
+          await withTypingIndicator(last.inbound.chatId, () =>
+            adapter.onMessage(merged),
+          );
         } catch (error) {
           console.error(
             "[Discord] Error handling debounced inbound message:",
@@ -418,6 +421,37 @@ export function createDiscordAdapter(
         );
       },
     });
+
+  const TYPING_INTERVAL_MS = 8_000;
+
+  /**
+   * Trigger Discord typing indicator in the given channel before executing
+   * `fn`, then re-trigger every ~8s (before Discord's 10s expiry) until
+   * `fn` resolves. Non-throwing — typing failures are silently swallowed.
+   */
+  async function withTypingIndicator(
+    chatId: string,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    if (!client) return fn();
+    let interval: ReturnType<typeof setInterval> | undefined;
+    try {
+      const channel = await client.channels.fetch(chatId);
+      if (channel?.sendTyping) {
+        await channel.sendTyping().catch(() => {});
+        interval = setInterval(() => {
+          channel.sendTyping?.().catch(() => {});
+        }, TYPING_INTERVAL_MS);
+      }
+    } catch {
+      // Typing is best-effort; never block message processing.
+    }
+    try {
+      await fn();
+    } finally {
+      if (interval) clearInterval(interval);
+    }
+  }
 
   function pruneSeenIngressMessageKeys(now: number = Date.now()): void {
     for (const [key, expiresAt] of seenIngressMessageKeys) {
@@ -768,7 +802,9 @@ export function createDiscordAdapter(
           };
 
           try {
-            await adapter.onMessage(inbound);
+            await withTypingIndicator(message.channelId, () =>
+              adapter.onMessage(inbound),
+            );
           } catch (error) {
             console.error("[Discord] Error handling DM:", error);
             await notifyDiscordDeliveryError(message, error);
@@ -875,7 +911,9 @@ export function createDiscordAdapter(
               isOpenChannel,
             });
           } else {
-            await adapter.onMessage(inbound);
+            await withTypingIndicator(effectiveChatId, () =>
+              adapter.onMessage(inbound),
+            );
           }
         } catch (error) {
           console.error("[Discord] Error handling guild message:", error);
