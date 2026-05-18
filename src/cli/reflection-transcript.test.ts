@@ -15,7 +15,6 @@ import {
   buildReflectionSubagentPrompt,
   filterSystemPromptForReflection,
   finalizeAutoReflectionPayload,
-  getReflectionTranscriptDerivedState,
   getReflectionTranscriptPaths,
   getReflectionTranscriptState,
   REFLECTION_STATE_SCHEMA_VERSION,
@@ -89,7 +88,6 @@ describe("reflectionTranscript helper", () => {
       payload.payloadPath,
       payload.endSnapshotLine,
       true,
-      "step-count",
     );
 
     expect(existsSync(payload.payloadPath)).toBe(true);
@@ -101,14 +99,12 @@ describe("reflectionTranscript helper", () => {
       total_completed_turns: number;
       reflected_completed_turns: number;
       turns_since_last_successful_reflection: number;
-      last_reflection_source?: string;
     };
     expect(state.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
     expect(state.reflected_through_message_id).toBe("a1");
     expect(state.total_completed_turns).toBe(1);
     expect(state.reflected_completed_turns).toBe(1);
     expect(state.turns_since_last_successful_reflection).toBe(0);
-    expect(state.last_reflection_source).toBe("step-count");
 
     const secondPayload = await buildAutoReflectionPayload(
       agentId,
@@ -262,15 +258,13 @@ describe("reflectionTranscript helper", () => {
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
     expect(payload).toBeNull();
 
-    const derived = await getReflectionTranscriptDerivedState(
-      agentId,
-      conversationId,
-    );
-    expect(derived.hasUnreflectedMessages).toBe(false);
-    expect(derived.unreflectedCompletedTurns).toBe(1);
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_turns).toBe(1);
+    expect(state.reflected_completed_turns).toBe(0);
+    expect(state.turns_since_last_successful_reflection).toBe(1);
   });
 
-  test("derived state uses message-id cursor existence checks", async () => {
+  test("message-id cursor controls whether new payloads are available", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "first", messageId: "u1" },
       {
@@ -291,28 +285,28 @@ describe("reflectionTranscript helper", () => {
       payload.payloadPath,
       payload.endSnapshotLine,
       true,
-      "compaction-event",
     );
 
-    let derived = await getReflectionTranscriptDerivedState(
-      agentId,
-      conversationId,
-    );
-    expect(derived.hasUnreflectedMessages).toBe(false);
-    expect(derived.unreflectedCompletedTurns).toBe(0);
-    expect(derived.state.last_reflection_source).toBe("compaction-event");
+    let state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.reflected_through_message_id).toBe("a1");
+    expect(state.turns_since_last_successful_reflection).toBe(0);
+    await expect(
+      buildAutoReflectionPayload(agentId, conversationId),
+    ).resolves.toBeNull();
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u2", text: "second", messageId: "u2" },
     ]);
 
-    derived = await getReflectionTranscriptDerivedState(
+    state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.turns_since_last_successful_reflection).toBe(1);
+    const secondPayload = await buildAutoReflectionPayload(
       agentId,
       conversationId,
     );
-    expect(derived.hasUnreflectedMessages).toBe(true);
-    expect(derived.unreflectedCompletedTurns).toBe(1);
-    expect(derived.state.turns_since_last_successful_reflection).toBe(1);
+    expect(secondPayload).not.toBeNull();
+    expect(secondPayload?.startMessageId).toBe("u2");
+    expect(secondPayload?.endMessageId).toBe("u2");
   });
 
   test("turns appended during reflection are preserved across finalize", async () => {
@@ -347,14 +341,11 @@ describe("reflectionTranscript helper", () => {
       true,
     );
 
-    const derived = await getReflectionTranscriptDerivedState(
-      agentId,
-      conversationId,
-    );
-    expect(derived.state.total_completed_turns).toBe(3);
-    expect(derived.state.reflected_completed_turns).toBe(1);
-    expect(derived.state.turns_since_last_successful_reflection).toBe(2);
-    expect(derived.state.reflected_through_message_id).toBe("a1");
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_turns).toBe(3);
+    expect(state.reflected_completed_turns).toBe(1);
+    expect(state.turns_since_last_successful_reflection).toBe(2);
+    expect(state.reflected_through_message_id).toBe("a1");
   });
 
   test("assistant-only delta does not advance completed-turn counter", async () => {
@@ -362,11 +353,8 @@ describe("reflectionTranscript helper", () => {
       { kind: "user", id: "u1", text: "hello", messageId: "u1" },
     ]);
 
-    let derived = await getReflectionTranscriptDerivedState(
-      agentId,
-      conversationId,
-    );
-    expect(derived.state.total_completed_turns).toBe(1);
+    let state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_turns).toBe(1);
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       {
@@ -378,11 +366,8 @@ describe("reflectionTranscript helper", () => {
       },
     ]);
 
-    derived = await getReflectionTranscriptDerivedState(
-      agentId,
-      conversationId,
-    );
-    expect(derived.state.total_completed_turns).toBe(1);
+    state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_turns).toBe(1);
   });
 
   test("concurrent append and finalize do not lose state updates", async () => {
@@ -417,14 +402,11 @@ describe("reflectionTranscript helper", () => {
       ]),
     ]);
 
-    const derived = await getReflectionTranscriptDerivedState(
-      agentId,
-      conversationId,
-    );
-    expect(derived.state.total_completed_turns).toBe(3);
-    expect(derived.state.reflected_completed_turns).toBe(1);
-    expect(derived.state.turns_since_last_successful_reflection).toBe(2);
-    expect(derived.state.reflected_through_message_id).toBe("a1");
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_turns).toBe(3);
+    expect(state.reflected_completed_turns).toBe(1);
+    expect(state.turns_since_last_successful_reflection).toBe(2);
+    expect(state.reflected_through_message_id).toBe("a1");
   });
 
   test("concurrent appends to the same conversation serialize via the state lock", async () => {

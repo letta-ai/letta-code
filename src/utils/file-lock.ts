@@ -10,7 +10,7 @@ export type FileLockOptions = {
 };
 
 const DEFAULT_OPTIONS: Required<FileLockOptions> = {
-  staleMs: 30_000,
+  staleMs: 90_000,
   retryMs: 25,
   timeoutMs: 10_000,
 };

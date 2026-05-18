@@ -20,26 +20,14 @@ const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
 export const REFLECTION_STATE_SCHEMA_VERSION = "v2_message_id" as const;
 
-export type ReflectionSource = "manual" | "step-count" | "compaction-event";
-
-export interface ReflectionHistoryEntry {
-  source: ReflectionSource;
-  start_message_id: string;
-  end_message_id: string;
-  succeeded_at: string;
-}
-
 export interface ReflectionTranscriptState {
   schema_version: typeof REFLECTION_STATE_SCHEMA_VERSION;
   reflected_through_message_id?: string;
   total_completed_turns: number;
   reflected_completed_turns: number;
   turns_since_last_successful_reflection: number;
-  last_transcript_appended_at?: string;
   last_reflection_started_at?: string;
   last_reflection_succeeded_at?: string;
-  last_reflection_source?: ReflectionSource;
-  last_reflection?: ReflectionHistoryEntry;
 }
 
 interface LegacyReflectionTranscriptState {
@@ -79,12 +67,6 @@ export interface AutoReflectionPayload {
   startMessageId?: string;
   endMessageId?: string;
   endSnapshotLine: number;
-}
-
-export interface ReflectionTranscriptDerivedState {
-  state: ReflectionTranscriptState;
-  hasUnreflectedMessages: boolean;
-  unreflectedCompletedTurns: number;
 }
 
 export interface ReflectionPromptInput {
@@ -708,16 +690,6 @@ function normalizeNonNegativeInteger(value: unknown, fallback = 0): number {
     : fallback;
 }
 
-function normalizeReflectionSource(
-  value: unknown,
-): ReflectionSource | undefined {
-  return value === "manual" ||
-    value === "step-count" ||
-    value === "compaction-event"
-    ? value
-    : undefined;
-}
-
 function normalizeV2State(
   parsed: Partial<ReflectionTranscriptState>,
 ): ReflectionTranscriptState {
@@ -732,30 +704,6 @@ function normalizeV2State(
     0,
     totalCompletedTurns - reflectedCompletedTurns,
   );
-  const lastReflectionSource = normalizeReflectionSource(
-    parsed.last_reflection?.source,
-  );
-  const lastReflectionStartMessageId = normalizeString(
-    parsed.last_reflection?.start_message_id,
-  );
-  const lastReflectionEndMessageId = normalizeString(
-    parsed.last_reflection?.end_message_id,
-  );
-  const lastReflectionSucceededAt = normalizeString(
-    parsed.last_reflection?.succeeded_at,
-  );
-  const lastReflection =
-    lastReflectionSource &&
-    lastReflectionStartMessageId &&
-    lastReflectionEndMessageId &&
-    lastReflectionSucceededAt
-      ? {
-          source: lastReflectionSource,
-          start_message_id: lastReflectionStartMessageId,
-          end_message_id: lastReflectionEndMessageId,
-          succeeded_at: lastReflectionSucceededAt,
-        }
-      : undefined;
 
   return {
     schema_version: REFLECTION_STATE_SCHEMA_VERSION,
@@ -765,19 +713,12 @@ function normalizeV2State(
     total_completed_turns: totalCompletedTurns,
     reflected_completed_turns: reflectedCompletedTurns,
     turns_since_last_successful_reflection: turnsSinceLastSuccessfulReflection,
-    last_transcript_appended_at: normalizeString(
-      parsed.last_transcript_appended_at,
-    ),
     last_reflection_started_at: normalizeString(
       parsed.last_reflection_started_at,
     ),
     last_reflection_succeeded_at: normalizeString(
       parsed.last_reflection_succeeded_at,
     ),
-    last_reflection_source: normalizeReflectionSource(
-      parsed.last_reflection_source,
-    ),
-    last_reflection: lastReflection,
   };
 }
 
@@ -923,7 +864,6 @@ export async function appendTranscriptDeltaJsonl(
     const payload = entries.map((entry) => JSON.stringify(entry)).join("\n");
     await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
     state.total_completed_turns += countUserRows(entries);
-    state.last_transcript_appended_at = new Date().toISOString();
     await writeState(paths, state);
     return entries.length;
   });
@@ -1014,22 +954,17 @@ function selectUnreflectedTranscriptRange(
   };
 }
 
-function buildDerivedState(
-  state: ReflectionTranscriptState,
+function entriesForSelection(
   rows: ParsedTranscriptRow[],
-): ReflectionTranscriptDerivedState {
-  return {
-    state,
-    hasUnreflectedMessages:
-      selectUnreflectedTranscriptRange(
-        rows,
-        state.reflected_through_message_id,
-      ) !== null,
-    unreflectedCompletedTurns: Math.max(
-      0,
-      state.total_completed_turns - state.reflected_completed_turns,
-    ),
-  };
+  selection: TranscriptSelection,
+): TranscriptEntry[] {
+  return rows
+    .filter(
+      (row) =>
+        row.lineIndex >= selection.startLineIndex &&
+        row.lineIndex <= selection.endLineIndex,
+    )
+    .map((row) => row.entry);
 }
 
 export async function getReflectionTranscriptState(
@@ -1040,19 +975,6 @@ export async function getReflectionTranscriptState(
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
     await ensurePaths(paths);
     return readState(paths);
-  });
-}
-
-export async function getReflectionTranscriptDerivedState(
-  agentId: string,
-  conversationId: string,
-): Promise<ReflectionTranscriptDerivedState> {
-  return withStateLock(agentId, conversationId, async () => {
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
-    await ensurePaths(paths);
-    const state = await readState(paths);
-    const lines = await readTranscriptLines(paths);
-    return buildDerivedState(state, parseTranscriptRows(lines));
   });
 }
 
@@ -1076,13 +998,7 @@ export async function buildAutoReflectionPayload(
       return null;
     }
 
-    const entries = rows
-      .filter(
-        (row) =>
-          row.lineIndex >= selection.startLineIndex &&
-          row.lineIndex <= selection.endLineIndex,
-      )
-      .map((row) => row.entry);
+    const entries = entriesForSelection(rows, selection);
     const filteredSystemPrompt = systemPrompt
       ? filterSystemPromptForReflection(systemPrompt) || undefined
       : undefined;
@@ -1112,7 +1028,6 @@ export async function finalizeAutoReflectionPayload(
   _payloadPath: string,
   endSnapshotLine: number,
   success: boolean,
-  triggerSource: ReflectionSource = "step-count",
 ): Promise<void> {
   return withStateLock(agentId, conversationId, async () => {
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
@@ -1137,13 +1052,6 @@ export async function finalizeAutoReflectionPayload(
         snapshotRows.map((row) => row.entry),
       );
       state.last_reflection_succeeded_at = nowIso;
-      state.last_reflection_source = triggerSource;
-      state.last_reflection = {
-        source: triggerSource,
-        start_message_id: selection.startMessageId,
-        end_message_id: selection.endMessageId,
-        succeeded_at: nowIso,
-      };
     }
     await writeState(paths, state);
   });
