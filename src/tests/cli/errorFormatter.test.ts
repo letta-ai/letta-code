@@ -281,7 +281,7 @@ describe("formatErrorDetails", () => {
   });
 
   test("uses upgrade or purchase guidance for Letta-hosted quota plus credit exhaustion", () => {
-    setErrorContext({ billingTier: "team_pro", modelLabel: "auto" });
+    setErrorContext({ billingTier: "team_pro", modelLabel: "letta/auto" });
 
     const error = new APIError(
       402,
