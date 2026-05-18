@@ -140,6 +140,7 @@ type AppViewProps = {
   currentApproval: ApprovalRequest | undefined;
   currentApprovalContext: ApprovalContext | undefined;
   currentModelDisplay: string | null;
+  currentModelHandle: string | null;
   currentModelId: string | null;
   currentModelProvider: string | null;
   currentPersonalityId: PersonalityId | null;
@@ -318,6 +319,7 @@ export function AppView(props: AppViewProps) {
     currentApproval,
     currentApprovalContext,
     currentModelDisplay,
+    currentModelHandle,
     currentModelId,
     currentModelProvider,
     currentPersonalityId,
@@ -741,6 +743,7 @@ export function AppView(props: AppViewProps) {
               ) : (
                 <ModelSelector
                   currentModelId={currentModelId ?? undefined}
+                  currentModelHandle={currentModelHandle}
                   onSelect={handleModelSelect}
                   onCancel={closeOverlay}
                   filterProvider={modelSelectorOptions.filterProvider}

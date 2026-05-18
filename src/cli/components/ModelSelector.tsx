@@ -13,6 +13,7 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "../../providers/byok-providers";
+import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -23,6 +24,7 @@ const SOLID_LINE = "─";
 const VISIBLE_ITEMS = 8;
 
 type ModelCategory =
+  | "recents"
   | "supported"
   | "byok"
   | "byok-all"
@@ -43,15 +45,27 @@ export function usesBackendModelCatalog(
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
 // For Letta-hosted, keep ordering consistent across billing tiers.
+// "recents" is prepended when the user has >= 2 recently used models.
 export function getModelCategories(
   _billingTier?: string,
   isSelfHosted?: boolean,
   localModelCatalog?: boolean,
+  recentModelCount?: number,
 ): ModelCategory[] {
+  const showRecents =
+    (recentModelCount ?? settingsManager.getRecentModels().length) >= 2;
   if (usesBackendModelCatalog(isSelfHosted, localModelCatalog)) {
-    return ["server-recommended", "server-all"];
+    const base: ModelCategory[] = ["server-recommended", "server-all"];
+    if (showRecents) {
+      return ["recents", ...base];
+    }
+    return base;
   }
-  return ["supported", "all", "byok", "byok-all"];
+  const base: ModelCategory[] = ["supported", "all", "byok", "byok-all"];
+  if (showRecents) {
+    return ["recents", ...base];
+  }
+  return base;
 }
 
 type UiModel = {
@@ -88,6 +102,8 @@ export function filterModelsByAvailabilityForSelector<
 
 interface ModelSelectorProps {
   currentModelId?: string;
+  /** The current model's handle (e.g., "anthropic/claude-sonnet-4.6") for accurate current model highlighting */
+  currentModelHandle?: string | null;
   onSelect: (modelId: string) => void;
   onCancel: () => void;
   /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
@@ -104,6 +120,7 @@ interface ModelSelectorProps {
 
 export function ModelSelector({
   currentModelId,
+  currentModelHandle,
   onSelect,
   onCancel,
   filterProvider,
@@ -468,8 +485,43 @@ export function ModelSelector({
     return handles;
   }, [backendModelCatalog, allApiHandles, searchQuery]);
 
+  // Recent models: models the user has recently selected (max 5)
+  // Only includes models that are currently available
+  const recentModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+    const recentHandles = settingsManager.getRecentModels();
+    if (recentHandles.length < 2) return []; // Don't show recents with < 2 items
+
+    const resolved: UiModel[] = [];
+    for (const handle of recentHandles) {
+      // When availableHandles is non-null, skip unavailable models
+      if (availableHandles !== null && !availableHandles.has(handle)) continue;
+
+      // Try to resolve to a static model with label/description
+      const staticModel = pickPreferredStaticModel(handle);
+      if (staticModel) {
+        resolved.push({
+          ...staticModel,
+          id: handle,
+          handle,
+        });
+      } else {
+        resolved.push({
+          id: handle,
+          handle,
+          label: handle,
+          description: "",
+        });
+      }
+    }
+    return resolved;
+  }, [availableHandles, pickPreferredStaticModel]);
+
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
+    if (category === "recents") {
+      return recentModels;
+    }
     if (category === "supported") {
       return supportedModels;
     }
@@ -500,6 +552,7 @@ export function ModelSelector({
     return allLettaModels;
   }, [
     category,
+    recentModels,
     supportedModels,
     byokModels,
     byokAllModels,
@@ -652,6 +705,7 @@ export function ModelSelector({
   );
 
   const getCategoryLabel = (cat: ModelCategory) => {
+    if (cat === "recents") return `Recents [${recentModels.length}]`;
     if (cat === "supported") return `Letta API [${supportedModels.length}]`;
     if (cat === "byok") return `BYOK [${byokModels.length}]`;
     if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
@@ -662,6 +716,9 @@ export function ModelSelector({
   };
 
   const getCategoryDescription = (cat: ModelCategory) => {
+    if (cat === "recents") {
+      return "Models you've recently used";
+    }
     if (cat === "server-recommended") {
       return "Recommended models currently available for this account";
     }
@@ -770,7 +827,8 @@ export function ModelSelector({
         {visibleModels.map((model, index) => {
           const actualIndex = startIndex + index;
           const isSelected = actualIndex === selectedIndex;
-          const isCurrent = model.id === currentModelId;
+          const isCurrent =
+            model.id === currentModelId || model.handle === currentModelHandle;
           // Show lock for non-free models when on free tier (only for Letta API tabs)
           const showLock =
             isFreeTier &&
