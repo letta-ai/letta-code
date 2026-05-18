@@ -1,6 +1,5 @@
 import { customAccountConfigAdapter } from "./custom/accountConfig";
 import { discordAccountConfigAdapter } from "./discord/accountConfig";
-import { getChannelPluginMetadata } from "./pluginRegistry";
 import type {
   ChannelAccountConfigAdapter,
   ChannelAccountPatch,
@@ -102,7 +101,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * {@link ChannelConfigSchema}. Used as a fallback for user-installed plugins
  * that don't ship a hand-written adapter.
  */
-function buildSchemaAdapter(
+function _buildSchemaAdapter(
   schema: ChannelConfigSchema,
 ): ChannelAccountConfigAdapter<ChannelAccount> {
   return {

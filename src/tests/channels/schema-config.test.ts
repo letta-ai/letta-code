@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelConfigSchema } from "../../channels/pluginTypes";
+import type {
+  ChannelConfigSchema,
+  ChannelConfigSelectField,
+  ChannelConfigTextField,
+} from "../../channels/pluginTypes";
 import {
   parseChannelConfigSchema,
   redactConfigForSnapshot,
@@ -45,20 +49,22 @@ describe("parseChannelConfigSchema", () => {
       ],
     });
     expect(result).not.toBeNull();
-    expect(result!.fields).toHaveLength(4);
-    expect(result!.fields[0]).toEqual({
+    expect(result?.fields).toHaveLength(4);
+    expect(result?.fields[0]).toEqual({
       type: "text",
       key: "name",
       label: "Name",
     });
-    expect(result!.fields[1]).toEqual({
+    expect(result?.fields[1]).toEqual({
       type: "secret",
       key: "token",
       label: "Token",
     });
-    expect(result!.fields[2]!.type).toBe("select");
-    expect((result!.fields[2] as any).options).toHaveLength(2);
-    expect(result!.fields[3]).toEqual({
+    expect(result?.fields[2]?.type).toBe("select");
+    expect(
+      (result?.fields[2] as ChannelConfigSelectField).options,
+    ).toHaveLength(2);
+    expect(result?.fields[3]).toEqual({
       type: "boolean",
       key: "enabled",
       label: "Enabled",
@@ -218,8 +224,8 @@ describe("parseChannelConfigSchema", () => {
       ],
     });
     expect(result).not.toBeNull();
-    expect(result!.fields[0]!.description).toBe("The endpoint URL");
-    expect(result!.fields[0]!.required).toBe(true);
+    expect(result?.fields[0]?.description).toBe("The endpoint URL");
+    expect(result?.fields[0]?.required).toBe(true);
   });
 
   test("accepts placeholder for text and secret", () => {
@@ -236,8 +242,12 @@ describe("parseChannelConfigSchema", () => {
       ],
     });
     expect(result).not.toBeNull();
-    expect((result!.fields[0] as any).placeholder).toBe("Enter name");
-    expect((result!.fields[1] as any).placeholder).toBe("Enter key");
+    expect((result?.fields[0] as ChannelConfigTextField).placeholder).toBe(
+      "Enter name",
+    );
+    expect((result?.fields[1] as ChannelConfigTextField).placeholder).toBe(
+      "Enter key",
+    );
   });
 });
 
@@ -428,7 +438,7 @@ describe("parseChannelConfigSchema > number field", () => {
       ],
     });
     expect(parsed).not.toBeNull();
-    expect(parsed!.fields[0]).toEqual({
+    expect(parsed?.fields[0]).toEqual({
       type: "number",
       key: "threshold",
       label: "Threshold",
@@ -540,7 +550,7 @@ describe("parseChannelConfigSchema > string-array field", () => {
       ],
     });
     expect(parsed).not.toBeNull();
-    expect(parsed!.fields[0]).toMatchObject({
+    expect(parsed?.fields[0]).toMatchObject({
       type: "string-array",
       key: "langs",
       default: ["en"],
@@ -598,7 +608,7 @@ describe("parseChannelConfigSchema > key-value-map field", () => {
       ],
     });
     expect(parsed).not.toBeNull();
-    expect(parsed!.fields[0]).toMatchObject({
+    expect(parsed?.fields[0]).toMatchObject({
       type: "key-value-map",
       valueType: "number",
       default: { "did:plc:abc": 1 },
@@ -685,7 +695,7 @@ describe("parseField > restartRequired metadata", () => {
       ],
     });
     expect(parsed).not.toBeNull();
-    expect(parsed!.fields[0]?.restartRequired).toBe(true);
+    expect(parsed?.fields[0]?.restartRequired).toBe(true);
   });
 
   test("rejects non-boolean restartRequired", () => {
@@ -943,8 +953,8 @@ describe("bluesky-shape schema (integration)", () => {
   test("parses cleanly", () => {
     const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON);
     expect(parsed).not.toBeNull();
-    expect(parsed!.fields).toHaveLength(11);
-    const fieldKeys = parsed!.fields.map((f) => f.key);
+    expect(parsed?.fields).toHaveLength(11);
+    const fieldKeys = parsed?.fields.map((f) => f.key);
     expect(fieldKeys).toEqual([
       "identifier",
       "password",
@@ -958,14 +968,15 @@ describe("bluesky-shape schema (integration)", () => {
       "batch_types",
       "entity_tiers",
     ]);
-    const alertPoll = parsed!.fields.find(
+    const alertPoll = parsed?.fields.find(
       (f) => f.key === "alert_poll_interval_ms",
     );
     expect(alertPoll?.restartRequired).toBe(true);
   });
 
   test("validates a realistic config", () => {
-    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON)!;
+    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON);
+    if (!parsed) throw new Error("Failed to parse BLUESKY_SCHEMA_JSON");
     const result = validateConfigAgainstSchema(parsed, {
       identifier: "shelley.bsky.social",
       password: "abcd-efgh-ijkl-mnop",
@@ -983,7 +994,8 @@ describe("bluesky-shape schema (integration)", () => {
   });
 
   test("redacts an empty stored config to schema defaults", () => {
-    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON)!;
+    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON);
+    if (!parsed) throw new Error("Failed to parse BLUESKY_SCHEMA_JSON");
     const snapshot = redactConfigForSnapshot(parsed, {});
     expect(snapshot).toEqual({
       ...RESERVED_BASE,
@@ -1002,7 +1014,8 @@ describe("bluesky-shape schema (integration)", () => {
   });
 
   test("redacts a populated stored config (with secret) correctly", () => {
-    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON)!;
+    const parsed = parseChannelConfigSchema(BLUESKY_SCHEMA_JSON);
+    if (!parsed) throw new Error("Failed to parse BLUESKY_SCHEMA_JSON");
     const snapshot = redactConfigForSnapshot(parsed, {
       identifier: "shelley.bsky.social",
       password: "secret-value",
