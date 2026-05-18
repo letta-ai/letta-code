@@ -878,14 +878,29 @@ export function createDiscordAdapter(
         let effectiveThreadId: string | null = isThread
           ? message.channelId
           : null;
+        // Track the true parent guild channel for delivery-time gating.
+        // For existing threads this is the thread's parentId; for newly
+        // created threads it is the original guild channel the mention
+        // arrived in.
+        let resolvedParentChannelId = isThread
+          ? parentChannelId
+          : message.channelId;
 
-        // If mentioned outside a thread and autoThreadOnMention is enabled,
+        // If mentioned outside a thread and thread creation is enabled,
         // create a Discord thread for the conversation.
-        if (!isThread && wasMentioned && config.autoThreadOnMention !== false) {
+        // Resolution order: per-channel override → account-level
+        // autoThreadOnMention → enabled (default).
+        const shouldAutoThread =
+          config.threadPolicyByChannel?.[message.channelId] ??
+          config.autoThreadOnMention ??
+          true;
+        if (!isThread && wasMentioned && shouldAutoThread) {
           const createdThread = await createThreadForMention(message, content);
           if (!createdThread) return;
           effectiveChatId = createdThread.id;
           effectiveThreadId = createdThread.id;
+          // The newly created thread's parent is the original guild channel
+          resolvedParentChannelId = message.channelId;
         }
 
         const attachments = await collectAttachments(
@@ -912,7 +927,7 @@ export function createDiscordAdapter(
           timestamp: message.createdTimestamp,
           messageId: message.id,
           threadId: effectiveThreadId,
-          parentChannelId: parentChannelId ?? undefined,
+          parentChannelId: resolvedParentChannelId ?? undefined,
           chatType: "channel",
           isMention: wasMentioned || isOpenChannel,
           attachments,

@@ -206,6 +206,11 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
         typeof parsed.auto_thread_on_mention === "boolean"
           ? parsed.auto_thread_on_mention
           : undefined,
+      threadPolicyByChannel:
+        typeof parsed.thread_policy_by_channel === "object" &&
+        !Array.isArray(parsed.thread_policy_by_channel)
+          ? (parsed.thread_policy_by_channel as Record<string, boolean>)
+          : undefined,
       acknowledgeMessageReaction:
         typeof parsed.acknowledge_message_reaction === "boolean"
           ? parsed.acknowledge_message_reaction

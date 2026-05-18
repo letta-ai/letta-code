@@ -335,9 +335,17 @@ export interface DiscordChannelConfig {
   /**
    * When `true`, @mentions in non-thread guild channels auto-create a
    * Discord thread for the conversation. When `false`, the bot replies
-   * directly in the parent channel. Default `false`.
+   * directly in the parent channel. Default `true`.
    */
   autoThreadOnMention?: boolean;
+  /**
+   * Per-channel override map for thread creation on @mention.
+   * Key: guild channel ID. Value: `true` to auto-create a thread on
+   * @mention in that channel, `false` to reply in-line.
+   * Resolution order: per-channel override → account-level
+   * `autoThreadOnMention` → `true`.
+   */
+  threadPolicyByChannel?: Record<string, boolean>;
   /**
    * When true, the bot sends lifecycle reaction acknowledgments on messages
    * (👀 on receipt, ✅ on completion). Default false — the typing indicator
@@ -415,9 +423,17 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   /**
    * When `true`, @mentions in non-thread guild channels auto-create a
    * Discord thread for the conversation. When `false`, the bot replies
-   * directly in the parent channel. Default `false`.
+   * directly in the parent channel. Default `true`.
    */
   autoThreadOnMention?: boolean;
+  /**
+   * Per-channel override map for thread creation on @mention.
+   * Key: guild channel ID. Value: `true` to auto-create a thread on
+   * @mention in that channel, `false` to reply in-line.
+   * Resolution order: per-channel override → account-level
+   * `autoThreadOnMention` → `true`.
+   */
+  threadPolicyByChannel?: Record<string, boolean>;
   /**
    * When true, the bot sends lifecycle reaction acknowledgments on messages
    * (👀 on receipt, ✅ on completion). Default false — the typing indicator

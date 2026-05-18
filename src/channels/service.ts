@@ -102,6 +102,7 @@ export interface ChannelConfigSnapshot {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
+  threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
   removeStaleConversations?: boolean;
   inboundDebounceMs?: number;
@@ -170,6 +171,7 @@ export interface ChannelAccountSnapshot {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
+  threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
   removeStaleConversations?: boolean;
   inboundDebounceMs?: number;
@@ -452,6 +454,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       autoThreadOnMention: account.autoThreadOnMention ?? false,
+      threadPolicyByChannel: account.threadPolicyByChannel ?? {},
       acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
       removeStaleConversations: account.removeStaleConversations ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
@@ -536,6 +539,7 @@ function createAccountFromPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+      threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       removeStaleConversations: normalizedPatch.removeStaleConversations,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
@@ -618,6 +622,8 @@ function mergeAccountPatch(
         normalizedPatch.allowedChannels ?? existing.allowedChannels,
       autoThreadOnMention:
         normalizedPatch.autoThreadOnMention ?? existing.autoThreadOnMention,
+      threadPolicyByChannel:
+        normalizedPatch.threadPolicyByChannel ?? existing.threadPolicyByChannel,
       acknowledgeMessageReaction:
         normalizedPatch.acknowledgeMessageReaction ??
         existing.acknowledgeMessageReaction,
@@ -757,6 +763,7 @@ export function getChannelConfigSnapshot(
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
       autoThreadOnMention: account.autoThreadOnMention ?? false,
+      threadPolicyByChannel: account.threadPolicyByChannel ?? {},
       acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
       removeStaleConversations: account.removeStaleConversations ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
@@ -813,6 +820,7 @@ export async function setChannelConfigLive(
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+      threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       removeStaleConversations: normalizedPatch.removeStaleConversations,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
@@ -837,6 +845,7 @@ export async function setChannelConfigLive(
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+        threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
         removeStaleConversations: normalizedPatch.removeStaleConversations,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,

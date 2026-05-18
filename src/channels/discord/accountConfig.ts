@@ -12,6 +12,7 @@ const DISCORD_CONFIG_KEYS = new Set([
   "allowed_channels",
   "default_permission_mode",
   "auto_thread_on_mention",
+  "thread_policy_by_channel",
   "acknowledge_message_reaction",
   "remove_stale_conversations",
   "inbound_debounce_ms",
@@ -104,6 +105,13 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         (config.auto_thread_on_mention === undefined ||
           config.auto_thread_on_mention === true ||
           config.auto_thread_on_mention === false) &&
+        (config.thread_policy_by_channel === undefined ||
+          (typeof config.thread_policy_by_channel === "object" &&
+            !Array.isArray(config.thread_policy_by_channel) &&
+            config.thread_policy_by_channel !== null &&
+            Object.values(
+              config.thread_policy_by_channel as Record<string, unknown>,
+            ).every((v: unknown) => v === true || v === false))) &&
         (config.acknowledge_message_reaction === undefined ||
           config.acknowledge_message_reaction === true ||
           config.acknowledge_message_reaction === false) &&
@@ -143,6 +151,11 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           config.auto_thread_on_mention === false
             ? config.auto_thread_on_mention
             : undefined,
+        threadPolicyByChannel:
+          typeof config.thread_policy_by_channel === "object" &&
+          !Array.isArray(config.thread_policy_by_channel)
+            ? { ...config.thread_policy_by_channel }
+            : undefined,
         inboundDebounceMs:
           typeof config.inbound_debounce_ms === "number" &&
           Number.isFinite(config.inbound_debounce_ms) &&
@@ -169,6 +182,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
+        thread_policy_by_channel: account.threadPolicyByChannel ?? {},
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
         remove_stale_conversations: account.removeStaleConversations ?? false,
@@ -183,6 +197,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
+        thread_policy_by_channel: account.threadPolicyByChannel ?? {},
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
         remove_stale_conversations: account.removeStaleConversations ?? false,

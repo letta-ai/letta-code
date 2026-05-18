@@ -283,4 +283,109 @@ describe("discord channel service", () => {
       null,
     );
   });
+
+  // ── threadPolicyByChannel ──────────────────────────────────
+
+  test("threadPolicyByChannel is set during creation and reflected in snapshot", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        dmPolicy: "pairing",
+        threadPolicyByChannel: { "channel-alpha": true, "channel-beta": false },
+      },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.threadPolicyByChannel).toEqual({
+      "channel-alpha": true,
+      "channel-beta": false,
+    });
+    expect(created.config.thread_policy_by_channel).toEqual({
+      "channel-alpha": true,
+      "channel-beta": false,
+    });
+
+    const snapshot = getChannelAccountSnapshot("discord", "discord-bot");
+    if (!snapshot || snapshot.channelId !== "discord")
+      throw new Error("wrong channel");
+    expect(snapshot.threadPolicyByChannel).toEqual({
+      "channel-alpha": true,
+      "channel-beta": false,
+    });
+  });
+
+  test("threadPolicyByChannel defaults to empty object when not provided", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      { token: "test-token", dmPolicy: "pairing" },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    // The snapshot normalizes undefined → {}
+    expect(created.threadPolicyByChannel).toEqual({});
+    expect(created.config.thread_policy_by_channel).toEqual({});
+  });
+
+  test("threadPolicyByChannel is preserved through updateChannelAccountLive", () => {
+    createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        dmPolicy: "pairing",
+        threadPolicyByChannel: { "channel-alpha": true },
+      },
+      { accountId: "discord-bot" },
+    );
+
+    const updated = updateChannelAccountLive("discord", "discord-bot", {
+      threadPolicyByChannel: {
+        "channel-alpha": false,
+        "channel-gamma": true,
+      },
+    });
+
+    if (updated.channelId !== "discord") throw new Error("wrong channel");
+    expect(updated.threadPolicyByChannel).toEqual({
+      "channel-alpha": false,
+      "channel-gamma": true,
+    });
+  });
+
+  test("threadPolicyByChannel is preserved through setChannelConfigLive", async () => {
+    const snapshot = await setChannelConfigLive("discord", {
+      token: "new-token",
+      dmPolicy: "pairing",
+      threadPolicyByChannel: { "channel-delta": false },
+    });
+
+    expect(snapshot).not.toBeNull();
+    if (snapshot.channelId !== "discord") throw new Error("wrong channel");
+    expect(snapshot.threadPolicyByChannel).toEqual({ "channel-delta": false });
+    expect(snapshot.config.thread_policy_by_channel).toEqual({
+      "channel-delta": false,
+    });
+  });
+
+  test("threadPolicyByChannel is merged through patch merge", async () => {
+    // Create with no threadPolicyByChannel
+    createChannelAccountLive(
+      "discord",
+      { token: "test-token", dmPolicy: "pairing" },
+      { accountId: "discord-bot" },
+    );
+
+    // Set config live with threadPolicyByChannel (should update existing)
+    const snapshot = await setChannelConfigLive("discord", {
+      token: "test-token",
+      dmPolicy: "pairing",
+      threadPolicyByChannel: { "channel-echo": true },
+    });
+
+    expect(snapshot).not.toBeNull();
+    if (snapshot.channelId !== "discord") throw new Error("wrong channel");
+    expect(snapshot.threadPolicyByChannel).toEqual({ "channel-echo": true });
+  });
 });
