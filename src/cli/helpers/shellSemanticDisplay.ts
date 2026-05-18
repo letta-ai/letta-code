@@ -13,15 +13,6 @@ type SequenceContext = {
   loopVariables: Map<string, string>;
 };
 
-function formatSummaryFields(
-  fields: Array<[label: string, value: string | number | undefined]>,
-): string {
-  return fields
-    .filter(([, value]) => value !== undefined && value !== "")
-    .map(([label, value]) => `${label}: ${String(value)}`)
-    .join(", ");
-}
-
 function quoteSummaryValue(value: string): string {
   return JSON.stringify(value);
 }

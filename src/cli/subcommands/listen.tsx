@@ -511,13 +511,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         startupMode.backend === "local"
           ? "local backend"
           : `self-hosted server ${startupMode.serverUrl}`;
-      sessionLog.log(
-        `Starting local channel listener for ${startupLabel}`,
-      );
+      sessionLog.log(`Starting local channel listener for ${startupLabel}`);
       sessionLog.log("Skipping environment registration");
-      console.log(
-        `Starting local channel listener for ${startupLabel}`,
-      );
+      console.log(`Starting local channel listener for ${startupLabel}`);
       console.log("Skipping environment registration. Press Ctrl+C to stop.\n");
 
       const { startLocalChannelListener } = await import(

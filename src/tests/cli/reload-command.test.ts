@@ -55,10 +55,11 @@ describe("/reload command", () => {
   test("LoadingApp passes onReload and key to App", () => {
     const indexPath = fileURLToPath(new URL("../../index.ts", import.meta.url));
     const source = readFileSync(indexPath, "utf-8");
+    const interpolationOpen = "$" + "{";
 
     expect(source).toContain("onReload: handleReload");
     expect(source).toContain(
-      "key: `${agentId}:${conversationId}:${appReloadEpoch}`",
+      `key: \`${interpolationOpen}agentId}:${interpolationOpen}conversationId}:${interpolationOpen}appReloadEpoch}\``,
     );
   });
 });
