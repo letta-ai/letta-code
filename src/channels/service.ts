@@ -973,10 +973,44 @@ export function updateChannelAccountLive(
     );
   }
 
-  const updated = upsertChannelAccount(
-    channelId,
-    mergeAccountPatch(existing, patch),
-  );
+  const nextAccount = mergeAccountPatch(existing, patch);
+  const shouldResetRoutes =
+    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(nextAccount) ||
+      isDiscordChannelAccount(nextAccount)) &&
+    typeof nextAccount.agentId === "string" &&
+    nextAccount.agentId !== existing.agentId;
+
+  const updated = upsertChannelAccount(channelId, nextAccount);
+
+  if (shouldResetRoutes) {
+    try {
+      loadRoutes(channelId);
+      removeRoutesForAccount(channelId, accountId);
+    } catch (error) {
+      try {
+        upsertChannelAccount(channelId, existing);
+      } catch (rollbackError) {
+        throw new Error(
+          `Failed to reset channel routes after updating account: ${getErrorMessage(
+            error,
+            "Failed to save routes",
+          )}. Failed to restore account: ${getErrorMessage(
+            rollbackError,
+            "Account rollback failed",
+          )}`,
+        );
+      }
+
+      throw new Error(
+        `Failed to reset channel routes after updating account: ${getErrorMessage(
+          error,
+          "Failed to save routes",
+        )}. Account changes were rolled back.`,
+      );
+    }
+  }
+
   return toAccountSnapshot(updated);
 }
 

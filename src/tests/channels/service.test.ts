@@ -15,6 +15,7 @@ import {
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
+  addRoute,
   clearAllRoutes,
   getRoute,
 } from "../../channels/routing";
@@ -88,6 +89,47 @@ describe("channel service", () => {
 
   afterEach(() => {
     resetState();
+  });
+
+  test("updating a Slack account agent resets existing routes", () => {
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "DocsBot Slack",
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-old",
+        dmPolicy: "open",
+      },
+      { accountId: "docsbot" },
+    );
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-existing",
+      chatType: "channel",
+      threadId: "1712790000.000100",
+      agentId: "agent-old",
+      conversationId: "conv-existing",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const updated = updateChannelAccountLive("slack", "docsbot", {
+      config: {
+        agent_id: "agent-new",
+      },
+    });
+
+    expect(updated.channelId).toBe("slack");
+    if (updated.channelId !== "slack") {
+      throw new Error("Expected Slack account snapshot");
+    }
+    expect(updated.agentId).toBe("agent-new");
+    expect(
+      getRoute("slack", "C-existing", "docsbot", "1712790000.000100"),
+    ).toBeNull();
   });
 
   test("bindChannelTarget rolls back the route and restores the target when route save fails", () => {
