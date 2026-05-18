@@ -968,6 +968,7 @@ export function Input({
   onPermissionModeChange,
   onExit,
   onInterrupt,
+  onCtrlO,
   interruptRequested = false,
   agentId,
   agentName,
@@ -1013,6 +1014,7 @@ export function Input({
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
   onInterrupt?: () => void;
+  onCtrlO?: () => void;
   interruptRequested?: boolean;
   agentId?: string;
   agentName?: string | null;
@@ -1329,6 +1331,12 @@ export function Input({
 
   useInput((input, key) => {
     if (!interactionEnabled) return;
+
+    // Handle CTRL-O to expand/collapse the last tool call output
+    if (input === "o" && key.ctrl) {
+      if (onCtrlO) onCtrlO();
+      return;
+    }
 
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode

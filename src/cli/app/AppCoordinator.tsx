@@ -136,6 +136,7 @@ import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
+  isShellOutputTool,
   isShellTool,
 } from "../helpers/toolNameMapping";
 import { isTaskTool } from "../helpers/toolNameMapping.js";
@@ -328,6 +329,11 @@ export default function App({
     permissionMode.getMode(),
   );
   const uiPermissionModeRef = useRef<PermissionMode>(uiPermissionMode);
+
+  // Track which tool call output is expanded (ctrl+o toggles last one)
+  const [expandedToolCallId, setExpandedToolCallId] = useState<string | null>(
+    null,
+  );
 
   // Store the last plan file path for post-approval rendering
   // (needed because plan mode is exited before rendering the result)
@@ -4036,6 +4042,40 @@ export default function App({
     }
   }, [setUiPermissionMode]);
 
+  // Toggle expand/collapse for a specific tool call ID
+  const handleToggleExpandedToolCall = useCallback((id: string) => {
+    setExpandedToolCallId((prev) => (prev === id ? null : id));
+  }, []);
+
+  // The ID of the last finished shell tool call — used for the ctrl+o hint and handler.
+  // lines is intentionally in the dep array to recompute when buffers change (buffersRef is a ref).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
+  const lastShellToolCallId = useMemo(() => {
+    const order = buffersRef.current.order;
+    for (let i = order.length - 1; i >= 0; i--) {
+      const id = order[i];
+      if (!id) continue;
+      const ln = buffersRef.current.byId.get(id);
+      if (
+        ln?.kind === "tool_call" &&
+        ln.phase === "finished" &&
+        ln.resultText &&
+        ln.name &&
+        isShellOutputTool(ln.name)
+      ) {
+        return id;
+      }
+    }
+    return null;
+  }, [lines]);
+
+  // ctrl+o toggles the last shell tool call output
+  const handleCtrlO = useCallback(() => {
+    if (lastShellToolCallId) {
+      handleToggleExpandedToolCall(lastShellToolCallId);
+    }
+  }, [lastShellToolCallId, handleToggleExpandedToolCall]);
+
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
@@ -4363,6 +4403,9 @@ export default function App({
       currentSystemPromptId={currentSystemPromptId}
       currentToolset={currentToolset}
       currentToolsetPreference={currentToolsetPreference}
+      expandedToolCallId={expandedToolCallId}
+      lastShellToolCallId={lastShellToolCallId}
+      handleCtrlO={handleCtrlO}
       emittedIdsRef={emittedIdsRef}
       feedbackPrefill={feedbackPrefill}
       footerUpdateText={footerUpdateText}

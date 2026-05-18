@@ -146,11 +146,15 @@ export const ToolCallMessage = memo(
     precomputedDiffs,
     lastPlanFilePath,
     isStreaming,
+    expandedToolCallId,
+    lastShellToolCallId,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     lastPlanFilePath?: string | null;
     isStreaming?: boolean;
+    expandedToolCallId?: string | null;
+    lastShellToolCallId?: string | null;
   }) => {
     const columns = useTerminalWidth();
     try {
@@ -1025,6 +1029,10 @@ export const ToolCallMessage = memo(
               <CollapsedOutputDisplay
                 output={extractMessageFromResult(line.resultText)}
                 maxChars={300}
+                expanded={
+                  expandedToolCallId != null && expandedToolCallId === line.id
+                }
+                isLast={lastShellToolCallId === line.id}
               />
             )}
 

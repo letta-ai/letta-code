@@ -149,6 +149,10 @@ type AppViewProps = {
   currentToolset: ToolsetName | null;
   currentToolsetPreference: ToolsetPreference;
   emittedIdsRef: RefObject<Set<string>>;
+  expandedToolCallId: string | null;
+  lastShellToolCallId: string | null;
+  handleCtrlO: () => void;
+
   feedbackPrefill: string;
   footerUpdateText: string | null;
   handleAgentSelect: (
@@ -328,6 +332,9 @@ export function AppView(props: AppViewProps) {
     currentToolset,
     currentToolsetPreference,
     emittedIdsRef,
+    expandedToolCallId,
+    lastShellToolCallId,
+    handleCtrlO,
     feedbackPrefill,
     footerUpdateText,
     handleAgentSelect,
@@ -435,6 +442,8 @@ export function AppView(props: AppViewProps) {
         showCompactionsEnabled={showCompactionsEnabled}
         precomputedDiffs={precomputedDiffsRef.current}
         lastPlanFilePath={lastPlanFilePathRef.current}
+        hiddenToolCallId={expandedToolCallId ?? undefined}
+        lastShellToolCallId={lastShellToolCallId ?? undefined}
       />
 
       <Box flexDirection="column">
@@ -577,6 +586,8 @@ export function AppView(props: AppViewProps) {
                             precomputedDiffs={precomputedDiffsRef.current}
                             lastPlanFilePath={lastPlanFilePathRef.current}
                             isStreaming={streaming}
+                            expandedToolCallId={expandedToolCallId}
+                            lastShellToolCallId={lastShellToolCallId}
                           />
                         ) : ln.kind === "error" ? (
                           <ErrorMessage line={ln} />
@@ -693,6 +704,7 @@ export function AppView(props: AppViewProps) {
                 }
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
+                onCtrlO={handleCtrlO}
                 interruptRequested={interruptRequested}
                 agentId={agentId}
                 agentName={agentName}
