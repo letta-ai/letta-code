@@ -258,6 +258,7 @@ const PLAN_MODE_TOOL_NAMES = new Set<ToolName>([
   "EnterPlanMode",
   "ExitPlanMode",
 ]);
+const WORKTREE_TOOL_NAMES = new Set<ToolName>(["CreateWorktree"]);
 
 function isPlanModeTool(toolName: string): boolean {
   return PLAN_MODE_TOOL_NAMES.has(toolName as ToolName);
@@ -271,12 +272,28 @@ function isPlanModeEnabled(): boolean {
   }
 }
 
+function shouldIncludeWorktreeTool(): boolean {
+  try {
+    return settingsManager.shouldIncludeWorktreeTool();
+  } catch {
+    return true;
+  }
+}
+
 function filterPlanModeTools(toolNames: ToolName[]): ToolName[] {
   if (isPlanModeEnabled()) {
     return toolNames;
   }
 
   return toolNames.filter((name) => !PLAN_MODE_TOOL_NAMES.has(name));
+}
+
+function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
+  if (shouldIncludeWorktreeTool()) {
+    return toolNames;
+  }
+
+  return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
 }
 
 function filterExternalToolsByClientAllowlist(
@@ -1224,6 +1241,12 @@ async function buildSpecificToolRegistry(
     }
 
     const internalName = getInternalToolName(name);
+    if (
+      !shouldIncludeWorktreeTool() &&
+      WORKTREE_TOOL_NAMES.has(internalName as ToolName)
+    ) {
+      continue;
+    }
     if (!isPlanModeEnabled() && isPlanModeTool(internalName)) {
       continue;
     }
@@ -1309,6 +1332,7 @@ async function resolveBaseToolNamesForModel(
   }
 
   baseToolNames = filterPlanModeTools(baseToolNames);
+  baseToolNames = filterWorktreeTools(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
