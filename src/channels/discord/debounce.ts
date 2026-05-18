@@ -33,21 +33,21 @@ export function resolveDiscordInboundDebounceMs(
 export type DiscordDebounceRawInput = {
   channelId: string;
   threadId: string | null;
-  senderId: string;
 };
 
 /**
  * Build the key used to group inbound Discord messages for debounced
- * stacking. Keyed by (accountId, effective chat/thread, sender) so that
- * different channels, threads, and senders never merge together.
+ * stacking. Keyed by (accountId, effective chat/thread) so that messages
+ * from different senders in the same channel merge together (with sender
+ * labels on flush). Different channels and threads never merge.
  */
 export function buildDiscordDebounceKey(
   rawMessage: DiscordDebounceRawInput,
   accountId: string,
 ): string | null {
-  if (!rawMessage.senderId) return null;
   const scope = rawMessage.threadId ?? rawMessage.channelId;
-  return `discord:${accountId}:${scope}:${rawMessage.senderId}`;
+  if (!scope) return null;
+  return `discord:${accountId}:${scope}`;
 }
 
 export { DISCORD_DEBOUNCE_DEFAULT_MS, DISCORD_DEBOUNCE_MAX_MS };

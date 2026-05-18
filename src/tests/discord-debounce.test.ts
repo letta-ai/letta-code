@@ -110,10 +110,10 @@ describe("resolveDiscordInboundDebounceMs", () => {
 // ── buildDiscordDebounceKey ───────────────────────────────────────────
 
 describe("buildDiscordDebounceKey", () => {
-  test("returns null when senderId is empty", () => {
+  test("returns null when scope is empty", () => {
     expect(
       buildDiscordDebounceKey(
-        { channelId: "ch-1", threadId: null, senderId: "" },
+        { channelId: "", threadId: null },
         "acct-1",
       ),
     ).toBe(null);
@@ -122,52 +122,63 @@ describe("buildDiscordDebounceKey", () => {
   test("keys by channelId when no thread", () => {
     expect(
       buildDiscordDebounceKey(
-        { channelId: "ch-1", threadId: null, senderId: "user-1" },
+        { channelId: "ch-1", threadId: null },
         "acct-1",
       ),
-    ).toBe("discord:acct-1:ch-1:user-1");
+    ).toBe("discord:acct-1:ch-1");
   });
 
   test("keys by threadId when thread is set", () => {
     expect(
       buildDiscordDebounceKey(
-        { channelId: "ch-1", threadId: "thread-1", senderId: "user-1" },
+        { channelId: "ch-1", threadId: "thread-1" },
         "acct-1",
       ),
-    ).toBe("discord:acct-1:thread-1:user-1");
+    ).toBe("discord:acct-1:thread-1");
   });
 
-  test("different accounts produce different keys", () => {
+  test("different accounts produce different keys for same channel", () => {
     const key1 = buildDiscordDebounceKey(
-      { channelId: "ch-1", threadId: null, senderId: "user-1" },
+      { channelId: "ch-1", threadId: null },
       "acct-1",
     );
     const key2 = buildDiscordDebounceKey(
-      { channelId: "ch-1", threadId: null, senderId: "user-1" },
+      { channelId: "ch-1", threadId: null },
       "acct-2",
     );
     expect(key1).not.toBe(key2);
   });
 
-  test("different senders produce different keys", () => {
+  test("same key for different senders in same channel (intentional merge)", () => {
+    // The key does not include senderId so that multi-sender bursts
+    // in the same channel merge into one LLM call with sender labels.
+    const input = { channelId: "ch-1", threadId: null };
+    expect(
+      buildDiscordDebounceKey(input, "acct-1"),
+    ).toBe(
+      buildDiscordDebounceKey(input, "acct-1"),
+    );
+  });
+
+  test("different threads produce different keys", () => {
     const key1 = buildDiscordDebounceKey(
-      { channelId: "ch-1", threadId: null, senderId: "user-1" },
+      { channelId: "ch-1", threadId: "thread-1" },
       "acct-1",
     );
     const key2 = buildDiscordDebounceKey(
-      { channelId: "ch-1", threadId: null, senderId: "user-2" },
+      { channelId: "ch-1", threadId: "thread-2" },
       "acct-1",
     );
     expect(key1).not.toBe(key2);
   });
 
-  test("different threads produce different keys", () => {
+  test("different channels produce different keys", () => {
     const key1 = buildDiscordDebounceKey(
-      { channelId: "ch-1", threadId: "thread-1", senderId: "user-1" },
+      { channelId: "ch-1", threadId: null },
       "acct-1",
     );
     const key2 = buildDiscordDebounceKey(
-      { channelId: "ch-1", threadId: "thread-2", senderId: "user-1" },
+      { channelId: "ch-2", threadId: null },
       "acct-1",
     );
     expect(key1).not.toBe(key2);

@@ -932,7 +932,6 @@ export function createDiscordAdapter(
               raw: {
                 channelId: effectiveChatId,
                 threadId: effectiveThreadId,
-                senderId: userId,
               },
               isOpenChannel,
             });
