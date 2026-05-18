@@ -947,7 +947,7 @@ function selectUnreflectedTranscriptRange(
   }
 
   return {
-    startLineIndex: startRow.lineIndex,
+    startLineIndex: afterLineIndex + 1,
     endLineIndex: endRow.lineIndex,
     startMessageId: startRow.entry.source_message_id,
     endMessageId: endRow.entry.source_message_id,
