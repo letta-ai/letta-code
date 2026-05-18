@@ -151,7 +151,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
-        inbound_debounce_ms: account.inboundDebounceMs ?? 0,
+        inbound_debounce_ms: account.inboundDebounceMs,
       };
     },
 
@@ -162,7 +162,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
-        inbound_debounce_ms: account.inboundDebounceMs ?? 0,
+        inbound_debounce_ms: account.inboundDebounceMs,
       };
     },
 
