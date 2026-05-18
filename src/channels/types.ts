@@ -13,6 +13,7 @@ export const FIRST_PARTY_CHANNEL_IDS = [
   "telegram",
   "slack",
   "discord",
+  "custom",
 ] as const;
 export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 /**
@@ -407,6 +408,11 @@ export function isDiscordChannelAccount(
 export function isCustomChannelAccount(
   account: ChannelAccount,
 ): account is CustomChannelAccount {
+  // The "custom" first-party channel and all user-installed channels share the
+  // same generic config-bag shape (no specific fields like `token`).
+  if (account.channel === "custom") {
+    return "config" in account;
+  }
   return !isFirstPartyChannelId(account.channel) && "config" in account;
 }
 

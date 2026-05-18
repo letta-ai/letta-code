@@ -1,11 +1,17 @@
+import { customAccountConfigAdapter } from "./custom/accountConfig";
 import { discordAccountConfigAdapter } from "./discord/accountConfig";
 import type {
   ChannelAccountConfigAdapter,
   ChannelAccountPatch,
   ChannelConfigPatch,
+  ChannelConfigSchema,
   ChannelPluginAccountPatch,
   ChannelProtocolConfig,
 } from "./pluginTypes";
+import {
+  redactConfigForSnapshot,
+  validateConfigAgainstSchema,
+} from "./schemaConfig";
 import { slackAccountConfigAdapter } from "./slack/accountConfig";
 import { telegramAccountConfigAdapter } from "./telegram/accountConfig";
 import type { ChannelAccount } from "./types";
@@ -21,7 +27,39 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
     slackAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
   discord:
     discordAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
+  custom:
+    customAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
 };
+
+/**
+ * Keys recognized as secrets across all user-installed plugins. These are
+ * never sent back to the client; only their `has_<key>` presence flag is
+ * exposed. Keep in sync with the secret-handling convention in
+ * `customAccountConfigAdapter` (which uses `bot_token` / `auth`).
+ */
+const KNOWN_SECRET_KEYS = new Set(["bot_token", "auth"]);
+
+/**
+ * Build a client-safe snapshot of a user-plugin account config when no
+ * schema is available. Surfaces every non-secret value from the stored
+ * config (so fields like `accounts_json` / `configs_json` / `agent_id`
+ * round-trip to the UI) while collapsing recognized secret keys to
+ * `has_<key>` booleans (Slack pattern).
+ */
+function redactSchemalessConfig(
+  storedConfig: Record<string, unknown>,
+): ChannelProtocolConfig {
+  const result: ChannelProtocolConfig = {};
+  for (const [key, value] of Object.entries(storedConfig)) {
+    if (KNOWN_SECRET_KEYS.has(key)) {
+      result[`has_${key}`] =
+        typeof value === "string" && value.trim().length > 0;
+      continue;
+    }
+    result[key] = value;
+  }
+  return result;
+}
 
 const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAccount> =
   {
@@ -36,6 +74,7 @@ const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAcco
         return {};
       }
       return {
+        ...redactSchemalessConfig(account.config),
         configured: Object.keys(account.config).length > 0,
       };
     },
@@ -44,6 +83,7 @@ const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAcco
         return {};
       }
       return {
+        ...redactSchemalessConfig(account.config),
         configured: Object.keys(account.config).length > 0,
       };
     },
@@ -56,13 +96,55 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * Build a {@link ChannelAccountConfigAdapter} from a declared
+ * {@link ChannelConfigSchema}. Used as a fallback for user-installed plugins
+ * that don't ship a hand-written adapter.
+ */
+function _buildSchemaAdapter(
+  schema: ChannelConfigSchema,
+): ChannelAccountConfigAdapter<ChannelAccount> {
+  return {
+    isValidConfig(config) {
+      return validateConfigAgainstSchema(schema, config).ok;
+    },
+    toAccountPatch() {
+      return {};
+    },
+    toAccountConfig(account) {
+      const config = isCustomChannelAccount(account) ? account.config : {};
+      return redactConfigForSnapshot(schema, config);
+    },
+    toConfigSnapshotConfig(account) {
+      const config = isCustomChannelAccount(account) ? account.config : {};
+      return redactConfigForSnapshot(schema, config);
+    },
+    shouldRefreshDisplayName() {
+      return false;
+    },
+  };
+}
+
 export function getChannelAccountConfigAdapter(
   channelId: string,
 ): ChannelAccountConfigAdapter<ChannelAccount> {
-  return isFirstPartyChannelId(channelId)
-    ? (CHANNEL_ACCOUNT_CONFIG_ADAPTERS[channelId] ??
-        customChannelAccountConfigAdapter)
-    : customChannelAccountConfigAdapter;
+  if (isFirstPartyChannelId(channelId)) {
+    return (
+      CHANNEL_ACCOUNT_CONFIG_ADAPTERS[channelId] ??
+      customChannelAccountConfigAdapter
+    );
+  }
+  // MVP: user-installed plugins (e.g. bluesky, my-webhook-app) all share
+  // the 'custom' channel's account-config shape and are managed through
+  // the same desktop dialog. Per-plugin schema-driven adapters are wired
+  // but not yet routed here — the dialog always sends the custom shape,
+  // so validating against a plugin-specific schema would reject the
+  // save (timeouts) until the dialog opts a plugin in.
+  //
+  // Schema-driven adapter retained for future use:
+  //   const metadata = getChannelPluginMetadata(channelId);
+  //   if (metadata.configSchema) return buildSchemaAdapter(metadata.configSchema);
+  return customChannelAccountConfigAdapter;
 }
 
 export function getChannelPluginConfig(
