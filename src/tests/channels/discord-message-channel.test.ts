@@ -51,7 +51,7 @@ describe("message_channel (discord)", () => {
       },
     });
 
-    expect(result).toContain("Message sent to discord");
+    expect(result).toContain("[Discord] Delivered to");
     expect(sendMessage).toHaveBeenCalledWith({
       channel: "discord",
       accountId: "discord-1",
