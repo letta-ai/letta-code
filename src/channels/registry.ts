@@ -860,12 +860,18 @@ export class ChannelRegistry {
           allowedChannels: config.allowedChannels,
         });
         if (!isAllowed) {
+          const resolvedParentId = msg.parentChannelId ?? null;
+          const isThread = !!(msg.threadId && msg.threadId === msg.chatId);
           console.log(
             "[Discord] Delivery blocked by allowed_channels policy:",
             JSON.stringify({
               accountId: msg.accountId ?? config.accountId,
               chatId: msg.chatId,
               threadId: msg.threadId,
+              resolvedParentId,
+              reason: isThread
+                ? `Thread "${msg.chatId}" parent channel "${resolvedParentId}" is not in allowed_channels`
+                : `Guild channel "${msg.chatId}" is not in allowed_channels`,
             }),
           );
           return;
