@@ -4,7 +4,7 @@
 
 Letta Code is a memory-first coding harness, designed for long-lived agents that can learn from experience.
 
-Instead of working in independent sessions, you work with a persisted agent whose memory is portable across models (Claude, GPT, Gemini, GLM, Kimi, and more).
+Instead of working in independent sessions, you work with a persisted agent whose memory is portable across models (Claude, GPT, Gemini, GLM, Kimi, and more) and environments. 
 
 Run Letta Code in the [**CLI**](https://docs.letta.com/letta-code/cli), or download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux.
 You can also access Letta Code via [your phone](https://docs.letta.com/letta-code/remote-mobile) and [Slack/Telegram/Discord](https://docs.letta.com/letta-code/channels).
@@ -34,7 +34,7 @@ Letta Code is built around long-lived agents that persist across sessions and im
 **Letta Code** (Agent-Based)
 - Same agent across sessions
 - Persistent memory and learning over time
-- `/clear` starts a new conversation (aka "thread" or "session"), but memory persists
+- `/new` starts a new conversation (aka "thread" or "session"), but memory persists
 - Relationship: Like having a coworker or mentee that learns and remembers
 
 ## Agent Memory & Learning
@@ -50,6 +50,16 @@ Over time, the agent will update its memory as it learns. To actively guide your
 Letta Code works with skills (reusable modules that teach your agent new capabilities in a `.skills` directory), but additionally supports [skill learning](https://www.letta.com/blog/skill-learning). You can ask your agent to learn a skill from its current trajectory with the command: 
 ```bash
 > /skill [optional instructions on what skill to learn]
+```
+
+## Remote environments
+Letta Code agents can work on 
+
+## Messaging Integrations
+Letta Code supports [channels](https://docs.letta.com/letta-code/channels). 
+```bash
+letta channels configure telegram
+letta server --channels telegram
 ```
 
 Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
