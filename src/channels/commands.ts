@@ -1,5 +1,10 @@
 import { getChannelDisplayName } from "./pluginRegistry";
-import type { ChannelAdapter, InboundChannelMessage } from "./types";
+import { addRoute, getRouteRaw, loadRoutes } from "./routing";
+import type {
+  ChannelAdapter,
+  ChannelRoute,
+  InboundChannelMessage,
+} from "./types";
 
 export type ChannelSlashCommandKind = "direct" | "agent-scoped";
 
@@ -21,6 +26,16 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "help",
     kind: "direct",
     summary: "Show channel usage guidance.",
+  },
+  {
+    name: "pause",
+    kind: "direct",
+    summary: "Pause agent routing for this chat.",
+  },
+  {
+    name: "resume",
+    kind: "direct",
+    summary: "Resume agent routing for this chat.",
   },
 ];
 
@@ -94,6 +109,94 @@ export function buildUnsupportedChannelCommandMessage(
   ].join("\n\n");
 }
 
+function findRawRouteForMessage(
+  msg: InboundChannelMessage,
+): ChannelRoute | null {
+  const route =
+    getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ??
+    (msg.threadId
+      ? getRouteRaw(msg.channel, msg.chatId, msg.accountId, null)
+      : undefined);
+  return route ?? null;
+}
+
+function loadAndFindRawRouteForMessage(
+  msg: InboundChannelMessage,
+): ChannelRoute | null {
+  const route = findRawRouteForMessage(msg);
+  if (route) {
+    return route;
+  }
+  loadRoutes(msg.channel);
+  return findRawRouteForMessage(msg);
+}
+
+function buildNoRouteMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return [
+    `${displayName} could not find an existing route for this chat.`,
+    "Send a normal message first and follow the pairing instructions, then try again.",
+  ].join("\n\n");
+}
+
+function buildPausedMessage(channelId: string, route: ChannelRoute): string {
+  const displayName = channelDisplayName(channelId);
+  const conversation = route.conversationId
+    ? ` Conversation: ${route.conversationId}.`
+    : "";
+  return `${displayName} paused agent routing for this chat.${conversation} Send /resume here to turn replies back on.`;
+}
+
+function buildAlreadyPausedMessage(channelId: string): string {
+  return `${channelDisplayName(channelId)} agent routing is already paused for this chat. Send /resume here to turn replies back on.`;
+}
+
+function buildResumedMessage(channelId: string, route: ChannelRoute): string {
+  const displayName = channelDisplayName(channelId);
+  const conversation = route.conversationId
+    ? ` Conversation: ${route.conversationId}.`
+    : "";
+  return `${displayName} resumed agent routing for this chat.${conversation} Normal messages here will go to the connected agent again.`;
+}
+
+function buildAlreadyActiveMessage(channelId: string): string {
+  return `${channelDisplayName(channelId)} agent routing is already active for this chat.`;
+}
+
+export function buildChannelPauseResumeMessage(
+  commandName: "pause" | "resume",
+  msg: InboundChannelMessage,
+): string {
+  const route = loadAndFindRawRouteForMessage(msg);
+  if (!route) {
+    return buildNoRouteMessage(msg.channel);
+  }
+
+  if (commandName === "pause") {
+    if (route.enabled === false) {
+      return buildAlreadyPausedMessage(msg.channel);
+    }
+    const updatedRoute: ChannelRoute = {
+      ...route,
+      enabled: false,
+      updatedAt: new Date().toISOString(),
+    };
+    addRoute(msg.channel, updatedRoute);
+    return buildPausedMessage(msg.channel, updatedRoute);
+  }
+
+  if (route.enabled !== false) {
+    return buildAlreadyActiveMessage(msg.channel);
+  }
+  const updatedRoute: ChannelRoute = {
+    ...route,
+    enabled: true,
+    updatedAt: new Date().toISOString(),
+  };
+  addRoute(msg.channel, updatedRoute);
+  return buildResumedMessage(msg.channel, updatedRoute);
+}
+
 export async function tryHandleChannelSlashCommand(
   adapter: ChannelAdapter,
   msg: InboundChannelMessage,
@@ -103,10 +206,17 @@ export async function tryHandleChannelSlashCommand(
     return false;
   }
 
-  const text =
-    command.name === "help"
-      ? buildChannelHelpMessage(msg.channel)
-      : buildUnsupportedChannelCommandMessage(msg.channel, command);
+  const text = (() => {
+    switch (command.name) {
+      case "help":
+        return buildChannelHelpMessage(msg.channel);
+      case "pause":
+      case "resume":
+        return buildChannelPauseResumeMessage(command.name, msg);
+      default:
+        return buildUnsupportedChannelCommandMessage(msg.channel, command);
+    }
+  })();
 
   await adapter.sendDirectReply(
     msg.chatId,

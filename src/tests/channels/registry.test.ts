@@ -217,6 +217,90 @@ describe("ChannelRegistry", () => {
       "Telegram received /compact now, but that slash command is not supported in channels yet.",
     );
   });
+
+  test("/pause and /resume update the current route without agent delivery", async () => {
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-18T00:00:00.000Z",
+      updatedAt: "2026-05-18T00:00:00.000Z",
+    });
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/pause",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies.at(-1)).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "77",
+    });
+    expect(replies.at(-1)?.text).toContain("paused agent routing");
+    expect(getRoute("telegram", "123", "acct-telegram")).toBeNull();
+
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/resume",
+      timestamp: Date.now(),
+      messageId: "78",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies.at(-1)).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "78",
+    });
+    expect(replies.at(-1)?.text).toContain("resumed agent routing");
+    expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
+      "conv-1",
+    );
+  });
 });
 
 describe("buildSlackConversationSummary", () => {
