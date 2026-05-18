@@ -1530,6 +1530,7 @@ describe("listen-client channels command handling", () => {
           routesCount: 4,
         },
       ],
+      countActiveChannelRoutes: async () => 4,
     }));
 
     try {

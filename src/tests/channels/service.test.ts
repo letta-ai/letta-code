@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { __testSetBackend, type Backend } from "../../backend";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -15,6 +16,7 @@ import {
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
+  addRoute,
   clearAllRoutes,
   getRoute,
 } from "../../channels/routing";
@@ -23,6 +25,7 @@ import {
   bindChannelAccountLive,
   bindChannelPairing,
   bindChannelTarget,
+  countActiveChannelRoutes,
   createChannelAccountLive,
   getChannelAccountSnapshot,
   getChannelConfigSnapshot,
@@ -71,6 +74,7 @@ describe("channel service", () => {
     __testOverrideLoadTargetStore(null);
     __testOverrideSaveTargetStore(null);
     __testOverrideResolveChannelAccountDisplayName(null);
+    __testSetBackend(null);
   }
 
   beforeEach(() => {
@@ -88,6 +92,125 @@ describe("channel service", () => {
 
   afterEach(() => {
     resetState();
+  });
+
+  test("countActiveChannelRoutes excludes disabled and deleted conversations", async () => {
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-live",
+      chatType: "channel",
+      threadId: "1712790000.000100",
+      agentId: "agent-1",
+      conversationId: "conv-live",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-deleted",
+      chatType: "channel",
+      threadId: "1712790000.000200",
+      agentId: "agent-1",
+      conversationId: "conv-deleted",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-disabled",
+      chatType: "channel",
+      threadId: "1712790000.000300",
+      agentId: "agent-1",
+      conversationId: "conv-disabled",
+      enabled: false,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-wrong-agent",
+      chatType: "channel",
+      threadId: "1712790000.000400",
+      agentId: "agent-1",
+      conversationId: "conv-wrong-agent",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-transient",
+      chatType: "channel",
+      threadId: "1712790000.000500",
+      agentId: "agent-1",
+      conversationId: "conv-transient-error",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    __testSetBackend({
+      retrieveConversation: async (conversationId: string) => {
+        if (conversationId === "conv-deleted") {
+          const error = new Error("Conversation not found");
+          error.name = "LocalBackendNotFoundError";
+          throw error;
+        }
+        if (conversationId === "conv-transient-error") {
+          throw new Error("temporary backend failure");
+        }
+        return {
+          id: conversationId,
+          agent_id:
+            conversationId === "conv-wrong-agent" ? "agent-2" : "agent-1",
+        };
+      },
+    } as unknown as Backend);
+
+    await expect(countActiveChannelRoutes("slack")).resolves.toBe(3);
+  });
+
+  test("updating a Slack account agent resets existing routes", () => {
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "DocsBot Slack",
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-old",
+        dmPolicy: "open",
+      },
+      { accountId: "docsbot" },
+    );
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-existing",
+      chatType: "channel",
+      threadId: "1712790000.000100",
+      agentId: "agent-old",
+      conversationId: "conv-existing",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const updated = updateChannelAccountLive("slack", "docsbot", {
+      config: {
+        agent_id: "agent-new",
+      },
+    });
+
+    expect(updated.channelId).toBe("slack");
+    if (updated.channelId !== "slack") {
+      throw new Error("Expected Slack account snapshot");
+    }
+    expect(updated.agentId).toBe("agent-new");
+    expect(
+      getRoute("slack", "C-existing", "docsbot", "1712790000.000100"),
+    ).toBeNull();
   });
 
   test("bindChannelTarget rolls back the route and restores the target when route save fails", () => {

@@ -257,6 +257,7 @@ export async function handleChannelsProtocolCommand(
     bindChannelPairing,
     bindChannelAccountLive,
     bindChannelTarget,
+    countActiveChannelRoutes,
     createChannelAccountLive,
     refreshChannelAccountDisplayNameLive,
     getChannelConfigSnapshot,
@@ -277,7 +278,7 @@ export async function handleChannelsProtocolCommand(
     updateChannelRouteLive,
   } = await loadChannelsService();
 
-  const mapChannelSummary = (
+  const mapChannelSummary = async (
     summary: ReturnType<typeof listChannelSummaries>[number],
   ) => {
     let configSchema:
@@ -298,7 +299,7 @@ export async function handleChannelsProtocolCommand(
       dm_policy: summary.dmPolicy,
       pending_pairings_count: summary.pendingPairingsCount,
       approved_users_count: summary.approvedUsersCount,
-      routes_count: summary.routesCount,
+      routes_count: await countActiveChannelRoutes(summary.channelId),
       config_schema: configSchema,
     };
   };
@@ -429,7 +430,9 @@ export async function handleChannelsProtocolCommand(
           type: "channels_list_response",
           request_id: parsed.request_id,
           success: true,
-          channels: listChannelSummaries().map(mapChannelSummary),
+          channels: await Promise.all(
+            listChannelSummaries().map(mapChannelSummary),
+          ),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1037,7 +1040,7 @@ export async function handleChannelsProtocolCommand(
           type: "channel_start_response",
           request_id: parsed.request_id,
           success: true,
-          channel: mapChannelSummary(summary),
+          channel: await mapChannelSummary(summary),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
@@ -1072,7 +1075,7 @@ export async function handleChannelsProtocolCommand(
           type: "channel_stop_response",
           request_id: parsed.request_id,
           success: true,
-          channel: mapChannelSummary(summary),
+          channel: await mapChannelSummary(summary),
         },
         "listener_channels_send_failed",
         "listener_channels_command",

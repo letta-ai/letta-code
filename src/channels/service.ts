@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { APIError } from "@letta-ai/letta-client/core/error";
+import { getBackend } from "../backend";
 import { refreshDynamicChannelToolsInLoadedRegistry } from "../tools/manager";
 import {
   channelPluginConfigShouldRefreshDisplayName,
@@ -139,6 +141,14 @@ export interface ChannelTargetSnapshot {
 
 async function refreshLoadedMessageChannelTool(): Promise<void> {
   await refreshDynamicChannelToolsInLoadedRegistry();
+}
+
+function isBackendNotFoundError(error: unknown): boolean {
+  return (
+    (error instanceof APIError &&
+      (error.status === 404 || error.status === 422)) ||
+    (error instanceof Error && error.name === "LocalBackendNotFoundError")
+  );
 }
 
 export interface ChannelAccountSnapshot {
@@ -680,6 +690,39 @@ export function listChannelSummaries(): ChannelSummary[] {
   });
 }
 
+async function routeConversationIsActive(
+  route: ChannelRoute,
+): Promise<boolean> {
+  if (route.enabled === false) {
+    return false;
+  }
+
+  try {
+    await getBackend().retrieveConversation(route.conversationId);
+    return true;
+  } catch (error) {
+    if (isBackendNotFoundError(error)) {
+      return false;
+    }
+
+    // Fail open on transient backend/API errors so a temporary issue does not
+    // undercount conversations that may still be valid.
+    return true;
+  }
+}
+
+export async function countActiveChannelRoutes(
+  channelId: string,
+): Promise<number> {
+  assertSupportedChannelId(channelId);
+  loadRoutes(channelId);
+
+  const activeChecks = await Promise.all(
+    getRoutesForChannel(channelId).map(routeConversationIsActive),
+  );
+  return activeChecks.filter(Boolean).length;
+}
+
 export function listEnabledChannelIds(): SupportedChannelId[] {
   return getSupportedChannelIds().filter((channelId) =>
     listChannelAccounts(channelId).some((account) => account.enabled),
@@ -973,10 +1016,44 @@ export function updateChannelAccountLive(
     );
   }
 
-  const updated = upsertChannelAccount(
-    channelId,
-    mergeAccountPatch(existing, patch),
-  );
+  const nextAccount = mergeAccountPatch(existing, patch);
+  const shouldResetRoutes =
+    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(nextAccount) ||
+      isDiscordChannelAccount(nextAccount)) &&
+    typeof nextAccount.agentId === "string" &&
+    nextAccount.agentId !== existing.agentId;
+
+  const updated = upsertChannelAccount(channelId, nextAccount);
+
+  if (shouldResetRoutes) {
+    try {
+      loadRoutes(channelId);
+      removeRoutesForAccount(channelId, accountId);
+    } catch (error) {
+      try {
+        upsertChannelAccount(channelId, existing);
+      } catch (rollbackError) {
+        throw new Error(
+          `Failed to reset channel routes after updating account: ${getErrorMessage(
+            error,
+            "Failed to save routes",
+          )}. Failed to restore account: ${getErrorMessage(
+            rollbackError,
+            "Account rollback failed",
+          )}`,
+        );
+      }
+
+      throw new Error(
+        `Failed to reset channel routes after updating account: ${getErrorMessage(
+          error,
+          "Failed to save routes",
+        )}. Account changes were rolled back.`,
+      );
+    }
+  }
+
   return toAccountSnapshot(updated);
 }
 
