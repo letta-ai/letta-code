@@ -632,6 +632,7 @@ export function createDiscordAdapter(
   ): Promise<void> | null {
     const key = getLifecycleMessageKey(source);
     if (!key) return null;
+    if (!config.acknowledgeMessageReaction) return null;
     const previous =
       lifecycleOperationByMessageKey.get(key) ?? Promise.resolve();
     const operation = previous

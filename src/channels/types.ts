@@ -337,6 +337,12 @@ export interface DiscordChannelConfig {
    */
   autoThreadOnMention?: boolean;
   /**
+   * When true, the bot sends lifecycle reaction acknowledgments on messages
+   * (👀 on receipt, ✅ on completion). Default false — the typing indicator
+   * is the primary UX for in-flight feedback.
+   */
+  acknowledgeMessageReaction?: boolean;
+  /**
    * Optional debounce window (ms) for inbound open-channel guild messages.
    * When greater than `0`, short back-to-back messages from the same sender
    * in the same channel/thread stack into a single combined dispatch
@@ -403,6 +409,12 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * directly in the parent channel. Default `false`.
    */
   autoThreadOnMention?: boolean;
+  /**
+   * When true, the bot sends lifecycle reaction acknowledgments on messages
+   * (👀 on receipt, ✅ on completion). Default false — the typing indicator
+   * is the primary UX for in-flight feedback.
+   */
+  acknowledgeMessageReaction?: boolean;
   /**
    * Optional debounce window (ms) for inbound open-channel guild messages.
    * When greater than `0`, short back-to-back messages from the same sender
