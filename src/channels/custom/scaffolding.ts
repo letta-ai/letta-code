@@ -197,15 +197,12 @@ export function removeUserPlugin(channelId: string): void {
   if (FIRST_PARTY_SET.has(channelId)) {
     return;
   }
-  const channelDir = getChannelDir(channelId);
-  if (!existsSync(channelDir)) {
+  // Reject channel IDs that could escape the channels root via path traversal.
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(channelId)) {
     return;
   }
-  // Only remove the folder if it lives directly under the channels root,
-  // to avoid path traversal accidents.
-  const channelsRoot = getChannelsRoot();
-  const resolved = join(channelsRoot, channelId);
-  if (channelDir !== resolved) {
+  const channelDir = getChannelDir(channelId);
+  if (!existsSync(channelDir)) {
     return;
   }
   try {
