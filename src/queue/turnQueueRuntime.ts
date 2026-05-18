@@ -21,6 +21,14 @@ type MergeQueuedTurnInputOptions<TUserContent> = {
   separatorText?: string;
 };
 
+function stringifyUnexpectedContent(content: unknown): string {
+  try {
+    return JSON.stringify(content) ?? String(content);
+  } catch {
+    return String(content);
+  }
+}
+
 function appendContentParts(
   target: MessageContentParts,
   content: MessageCreate["content"],
@@ -29,6 +37,13 @@ function appendContentParts(
     target.push({ type: "text", text: content });
     return;
   }
+
+  if (!Array.isArray(content)) {
+    if (content === null || content === undefined) return;
+    target.push({ type: "text", text: stringifyUnexpectedContent(content) });
+    return;
+  }
+
   target.push(...content);
 }
 

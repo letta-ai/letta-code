@@ -149,14 +149,19 @@ export function getErrorHintForStopReason(
       ? PROVIDER_STATUS_PAGES[modelEndpointType]
       : undefined;
 
-  // Build the /model swap suggestion -- mention Bedrock Opus if applicable
-  const isOpus46 = currentModelId?.startsWith("opus-4.6") ?? false;
-  const hasBedrockOpus =
-    isOpus46 &&
+  // Build the /model swap suggestion -- mention Bedrock Opus if applicable.
+  const bedrockOpusSuggestion =
     modelEndpointType === "anthropic" &&
-    getModelInfo("bedrock-opus-4.6");
-  const modelSwapSuffix = hasBedrockOpus
-    ? " (e.g. Opus 4.6 via Amazon Bedrock)"
+    (currentModelId === "opus" || currentModelId?.startsWith("opus-4.7")) &&
+    getModelInfo("bedrock-opus-4.7")
+      ? "Opus 4.7 via Amazon Bedrock"
+      : modelEndpointType === "anthropic" &&
+          currentModelId?.startsWith("opus-4.6") &&
+          getModelInfo("bedrock-opus-4.6")
+        ? "Opus 4.6 via Amazon Bedrock"
+        : null;
+  const modelSwapSuffix = bedrockOpusSuggestion
+    ? ` (e.g. ${bedrockOpusSuggestion})`
     : "";
 
   if (statusInfo) {

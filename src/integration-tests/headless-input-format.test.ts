@@ -656,6 +656,8 @@ describe("input-format stream-json", () => {
                 role: "user",
                 content:
                   "You MUST use the Agent tool with subagent_type='general-purpose' to recursively find all TypeScript files (*.ts) in the current working directory. " +
+                  "Use a recursive search pattern such as **/*.ts; a top-level-only search is incomplete. " +
+                  "The correct result includes both alpha.ts and nested/beta.ts. " +
                   "Return only the matching relative file paths, one per line, and do not mention any non-TypeScript files.",
               },
             }),

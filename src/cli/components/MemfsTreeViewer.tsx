@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { isGitRepo } from "../../agent/memoryGit";
+import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   getFileNodes,
   readFileContent,
@@ -66,9 +66,12 @@ export function MemfsTreeViewer({
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Get memory filesystem root
-  const memoryRoot = getMemoryFilesystemRoot(agentId);
+  const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
   const memoryExists = existsSync(memoryRoot);
-  const hasGitRepo = useMemo(() => isGitRepo(agentId), [agentId]);
+  const hasGitRepo = useMemo(
+    () => existsSync(join(memoryRoot, ".git")),
+    [memoryRoot],
+  );
 
   function showStatus(msg: string, durationMs: number) {
     if (statusTimerRef.current) clearTimeout(statusTimerRef.current);

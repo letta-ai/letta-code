@@ -118,6 +118,52 @@ describe("normalizeApprovalResultsForPersistence", () => {
     });
   });
 
+  test("coerces malformed null tool returns before adding approval comments", () => {
+    const approvals: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-null",
+        tool_return: null,
+        status: "success",
+        reason: "Approved",
+      } as unknown as ApprovalResult,
+    ];
+
+    const normalized = normalizeApprovalResultsForPersistence(approvals);
+
+    expect(normalized[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-null",
+      status: "success",
+      tool_return: [
+        {
+          type: "text",
+          text: 'The user approved the tool execution with the following comment: "Approved"',
+        },
+      ],
+    });
+  });
+
+  test("canonicalizes legacy approved approvals with null tool returns", () => {
+    const approvals: ApprovalResult[] = [
+      {
+        type: "approval",
+        tool_call_id: "call-legacy-null",
+        approve: true,
+        tool_return: null,
+      } as unknown as ApprovalResult,
+    ];
+
+    const normalized = normalizeApprovalResultsForPersistence(approvals);
+
+    expect(normalized[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-legacy-null",
+      tool_return: "",
+      status: "success",
+    });
+  });
+
   test("prepends verbose approval comment to structured tool returns", () => {
     const approvals: ApprovalResult[] = [
       {
@@ -198,5 +244,17 @@ describe("normalizeOutgoingApprovalMessages", () => {
       tool_call_id: "call-7",
       status: "error",
     });
+  });
+
+  test("normalizes null approvals arrays instead of forwarding them", () => {
+    const approvalMessage: ApprovalCreate = {
+      type: "approval",
+      approvals: null,
+    } as unknown as ApprovalCreate;
+
+    const messages = normalizeOutgoingApprovalMessages([approvalMessage]);
+    const normalizedApproval = messages[0] as ApprovalCreate;
+
+    expect(normalizedApproval.approvals).toEqual([]);
   });
 });

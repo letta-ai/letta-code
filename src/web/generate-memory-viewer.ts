@@ -11,8 +11,7 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { getMemoryFilesystemRoot } from "../agent/memoryFilesystem";
-import { getMemoryRepoDir, isGitRepo } from "../agent/memoryGit";
+import { getScopedMemoryFilesystemRoot } from "../agent/memoryFilesystem";
 import {
   getFileNodes,
   readFileContent,
@@ -21,6 +20,7 @@ import {
 import { getAgentContextOverview } from "../backend/api/agents";
 import { getClient, getServerUrl } from "../backend/api/client";
 import { apiRequest } from "../backend/api/request";
+import { collectLocalMemoryContextData } from "./local-memory-context";
 import memoryViewerTemplate from "./memory-viewer-template.txt";
 import type {
   ContextData,
@@ -345,98 +345,115 @@ async function collectMemoryData(
   let agentName = agentId;
   let context: ContextData | undefined;
   let messages: MessageInfo[] | undefined;
+  let conversations: ConversationInfo[] | undefined;
   let model = "unknown";
 
-  // Try SDK client for agent name + model info
   try {
-    const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
-    if (agent.name) agentName = agent.name;
-    model = agent.llm_config?.model ?? "unknown";
-
-    // Fetch context breakdown via API seam (not in SDK)
-    const contextWindow = agent.llm_config?.context_window ?? 0;
-    try {
-      const overview = await getAgentContextOverview<ContextOverviewResponse>(
-        agentId,
-        { signal: AbortSignal.timeout(5000) },
-      );
-      messages = messagesFromOverview(overview);
-      context = contextFromOverview(overview, model, contextWindow);
-    } catch {
-      // Context fetch failed - continue without it
-    }
+    const localData = await collectLocalMemoryContextData(
+      agentId,
+      conversationId,
+    );
+    if (localData.agentName) agentName = localData.agentName;
+    if (localData.model) model = localData.model;
+    context = localData.context;
+    messages = localData.messages;
+    conversations = localData.conversations;
   } catch {
-    // SDK client failed - try raw API with env key as fallback
+    // Local backend context collection failed - fall back to API paths below.
+  }
+
+  // Try SDK client for agent name + model info
+  if (!context) {
     try {
-      const apiKey = process.env.LETTA_API_KEY || "";
-      if (apiKey && serverUrl) {
-        // Fetch agent info + context in parallel
-        const [agentData, overview] = await Promise.all([
-          apiRequest<{
-            name?: string;
-            llm_config?: { model?: string; context_window?: number };
-          }>("GET", `/v1/agents/${agentId}`, undefined, {
-            baseUrl: serverUrl,
-            apiKey,
-            signal: AbortSignal.timeout(5000),
-          }).catch(() => null),
-          apiRequest<ContextOverviewResponse>(
-            "GET",
-            `/v1/agents/${agentId}/context`,
-            undefined,
-            {
+      const client = await getClient();
+      const agent = await client.agents.retrieve(agentId);
+      if (agent.name) agentName = agent.name;
+      model = agent.llm_config?.model ?? "unknown";
+
+      // Fetch context breakdown via API seam (not in SDK)
+      const contextWindow = agent.llm_config?.context_window ?? 0;
+      try {
+        const overview = await getAgentContextOverview<ContextOverviewResponse>(
+          agentId,
+          { signal: AbortSignal.timeout(5000) },
+        );
+        messages = messagesFromOverview(overview);
+        context = contextFromOverview(overview, model, contextWindow);
+      } catch {
+        // Context fetch failed - continue without it
+      }
+    } catch {
+      // SDK client failed - try raw API with env key as fallback
+      try {
+        const apiKey = process.env.LETTA_API_KEY || "";
+        if (apiKey && serverUrl) {
+          // Fetch agent info + context in parallel
+          const [agentData, overview] = await Promise.all([
+            apiRequest<{
+              name?: string;
+              llm_config?: { model?: string; context_window?: number };
+            }>("GET", `/v1/agents/${agentId}`, undefined, {
               baseUrl: serverUrl,
               apiKey,
               signal: AbortSignal.timeout(5000),
-            },
-          ).catch(() => null),
-        ]);
+            }).catch(() => null),
+            apiRequest<ContextOverviewResponse>(
+              "GET",
+              `/v1/agents/${agentId}/context`,
+              undefined,
+              {
+                baseUrl: serverUrl,
+                apiKey,
+                signal: AbortSignal.timeout(5000),
+              },
+            ).catch(() => null),
+          ]);
 
-        if (agentData?.name) agentName = agentData.name;
-        if (agentData?.llm_config?.model) model = agentData.llm_config.model;
+          if (agentData?.name) agentName = agentData.name;
+          if (agentData?.llm_config?.model) model = agentData.llm_config.model;
 
-        if (overview) {
-          messages = messagesFromOverview(overview);
-          context = contextFromOverview(
-            overview,
-            model,
-            agentData?.llm_config?.context_window,
-          );
+          if (overview) {
+            messages = messagesFromOverview(overview);
+            context = contextFromOverview(
+              overview,
+              model,
+              agentData?.llm_config?.context_window,
+            );
+          }
         }
+      } catch {
+        // All API calls failed - continue without context
       }
-    } catch {
-      // All API calls failed - continue without context
     }
   }
 
   // Fetch recent conversations (best-effort)
-  let conversations: ConversationInfo[] | undefined;
-
-  try {
-    const client = await getClient();
-    const convPage = await client.conversations.list({
-      agent_id: agentId,
-      limit: 10,
-      order: "desc",
-      order_by: "last_run_completion",
-    });
-    const convItems = convPage as ConversationListItem[];
-    conversations = convItems.flatMap((c) => {
-      if (!c.id || !c.created_at) {
-        return [];
-      }
-      return [
-        {
-          id: c.id,
-          created_at: c.created_at,
-          last_run_completion: c.last_run_completion ?? null,
-          label: c.label ?? null,
-        },
-      ];
-    });
-  } catch {
-    // Conversation fetch failed - continue without it
+  if (!conversations) {
+    try {
+      const client = await getClient();
+      const convPage = await client.conversations.list({
+        agent_id: agentId,
+        limit: 10,
+        order: "desc",
+        order_by: "last_run_completion",
+      });
+      const convItems = convPage as ConversationListItem[];
+      conversations = convItems.flatMap((c) => {
+        if (!c.id || !c.created_at) {
+          return [];
+        }
+        return [
+          {
+            id: c.id,
+            created_at: c.created_at,
+            last_run_completion: c.last_run_completion ?? null,
+            label: c.label ?? null,
+          },
+        ];
+      });
+    } catch {
+      // Conversation fetch failed - continue without it
+    }
   }
 
   return {
@@ -460,10 +477,10 @@ export async function generateAndOpenMemoryViewer(
   agentId: string,
   options?: { agentName?: string; conversationId?: string },
 ): Promise<GenerateResult> {
-  const repoDir = getMemoryRepoDir(agentId);
-  const memoryRoot = getMemoryFilesystemRoot(agentId);
+  const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
+  const repoDir = memoryRoot;
 
-  if (!isGitRepo(agentId)) {
+  if (!existsSync(join(repoDir, ".git"))) {
     throw new Error("Memory viewer requires memfs. Run /memfs enable first.");
   }
 

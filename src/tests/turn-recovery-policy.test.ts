@@ -238,6 +238,17 @@ describe("provider detail retry helpers", () => {
     ).toBe(true);
   });
 
+  test("OpenAI streaming incomplete chunked reads wrapped as internal errors are retryable", () => {
+    const detail =
+      "INTERNAL_SERVER_ERROR: Connection error during streaming: peer closed connection without sending complete message body (incomplete chunked read) [BYOK]";
+
+    expect(shouldRetryRunMetadataError("internal_error", detail)).toBe(true);
+    expect(shouldRetryRunMetadataError(undefined, detail)).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({ status: undefined, detail }),
+    ).toBe(true);
+  });
+
   test("ChatGPT usage_limit_reached is non-retryable", () => {
     const detail =
       'RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"team","resets_at":1772074086,"resets_in_seconds":3032}}';

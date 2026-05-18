@@ -6,6 +6,7 @@ import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "../../agent/check-approval";
 import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
+import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
 import type { ModelReasoningEffort } from "../../agent/model";
 import type { PersonalityId } from "../../agent/personality";
 import type { SessionStats } from "../../agent/stats";
@@ -139,6 +140,7 @@ type AppViewProps = {
   currentApproval: ApprovalRequest | undefined;
   currentApprovalContext: ApprovalContext | undefined;
   currentModelDisplay: string | null;
+  currentModelHandle: string | null;
   currentModelId: string | null;
   currentModelProvider: string | null;
   currentPersonalityId: PersonalityId | null;
@@ -177,7 +179,7 @@ type AppViewProps = {
   handleDenyCurrent: (reason: string) => Promise<void>;
   handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
   handleEnterPlanModeReject: () => Promise<void>;
-  handleEnterQueueEditMode: () => void;
+  handleQueueEdit: () => string;
   handleExit: () => Promise<void>;
   handleExperimentSelect: (
     selection: { experimentId: ExperimentId; enabled: boolean },
@@ -317,6 +319,7 @@ export function AppView(props: AppViewProps) {
     currentApproval,
     currentApprovalContext,
     currentModelDisplay,
+    currentModelHandle,
     currentModelId,
     currentModelProvider,
     currentPersonalityId,
@@ -340,7 +343,7 @@ export function AppView(props: AppViewProps) {
     handleDenyCurrent,
     handleEnterPlanModeApprove,
     handleEnterPlanModeReject,
-    handleEnterQueueEditMode,
+    handleQueueEdit,
     handleExit,
     handleExperimentSelect,
     handleFeedbackSubmit,
@@ -698,7 +701,7 @@ export function AppView(props: AppViewProps) {
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 messageQueue={queueDisplay}
-                onEnterQueueEditMode={handleEnterQueueEditMode}
+                onQueueEdit={handleQueueEdit}
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
@@ -740,6 +743,7 @@ export function AppView(props: AppViewProps) {
               ) : (
                 <ModelSelector
                   currentModelId={currentModelId ?? undefined}
+                  currentModelHandle={currentModelHandle}
                   onSelect={handleModelSelect}
                   onCancel={closeOverlay}
                   filterProvider={modelSelectorOptions.filterProvider}
@@ -762,7 +766,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "sleeptime" && (
               <SleeptimeSelector
                 initialSettings={getReflectionSettings(agentId)}
-                memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
+                memfsEnabled={isActiveMemfsEnabled(agentId)}
                 onSave={handleSleeptimeModeSelect}
                 onCancel={closeOverlay}
               />
@@ -1413,7 +1417,7 @@ export function AppView(props: AppViewProps) {
             {/* Memory Viewer - conditionally mounted as overlay */}
             {/* Use tree view for memfs-enabled agents, tab view otherwise */}
             {activeOverlay === "memory" &&
-              (settingsManager.isMemfsEnabled(agentId) ? (
+              (isActiveMemfsEnabled(agentId) ? (
                 <MemfsTreeViewer
                   agentId={agentId}
                   agentName={agentState?.name}

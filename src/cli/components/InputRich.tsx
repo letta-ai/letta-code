@@ -454,6 +454,7 @@ const InputFooter = memo(function InputFooter({
   statusLinePadding,
   footerNotification,
   goalStatusText,
+  hasQueuedMessages = false,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -475,6 +476,7 @@ const InputFooter = memo(function InputFooter({
   statusLinePadding?: number;
   footerNotification?: string | null;
   goalStatusText?: string | null;
+  hasQueuedMessages?: boolean;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -639,6 +641,8 @@ const InputFooter = memo(function InputFooter({
           <Text color={colors.status.processingShimmer}>
             {footerNotification}
           </Text>
+        ) : hasQueuedMessages ? (
+          <Text dimColor>press ↑ to edit queued message</Text>
         ) : (
           <Text dimColor>Press / for commands</Text>
         )}
@@ -972,7 +976,7 @@ export function Input({
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
   messageQueue,
-  onEnterQueueEditMode,
+  onQueueEdit,
   onEscapeCancel,
   inputDisabled = false,
   ralphActive = false,
@@ -1017,7 +1021,7 @@ export function Input({
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   messageQueue?: QueuedMessage[];
-  onEnterQueueEditMode?: () => void;
+  onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
   inputDisabled?: boolean;
   ralphActive?: boolean;
@@ -1455,27 +1459,19 @@ export function Input({
           return;
         }
 
-        // Check if we should load queue (streaming with queued messages)
+        // Check if we should load queued messages into input for editing.
+        // Fire when already at position 0 (empty input or after first Up moved us here).
         if (
-          streaming &&
           messageQueue &&
-          messageQueue.length > 0 &&
-          atStartBoundary
+          messageQueue.filter((m) => m.kind === "user").length > 0 &&
+          onQueueEdit &&
+          (atStartBoundary || currentCursorPosition === 0)
         ) {
           setAtStartBoundary(false);
-          // Clear the queue and load into input as one multi-line message
-          const queueText = messageQueue
-            .filter((item) => item.kind === "user")
-            .map((item) => item.text.trim())
-            .filter((msg) => msg.length > 0)
-            .join("\n");
-          if (!queueText) {
-            return;
-          }
-          setValue(queueText);
-          // Signal to App.tsx to clear the queue
-          if (onEnterQueueEditMode) {
-            onEnterQueueEditMode();
+          const combined = onQueueEdit();
+          if (combined) {
+            setValue(combined);
+            setCursorPos(combined.length);
           }
           return;
         }
@@ -1934,6 +1930,10 @@ export function Input({
                 statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
                 goalStatusText={goalStatusText}
+                hasQueuedMessages={
+                  (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
+                  0
+                }
               />
             )}
           </Box>

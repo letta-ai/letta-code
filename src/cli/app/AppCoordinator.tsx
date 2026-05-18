@@ -19,6 +19,7 @@ import { prefetchAvailableModelHandles } from "../../agent/available-models";
 import { getResumeDataFromBackend } from "../../agent/check-approval";
 import { setCurrentAgentId } from "../../agent/context";
 import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
 import {
   getModelInfoForLlmConfig,
   getModelShortName,
@@ -1150,6 +1151,16 @@ export default function App({
           );
           setQueueDisplay([]);
         },
+        onRemoved: (item, queueLen) => {
+          debugLog(
+            "queue-lifecycle",
+            `removed item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
+          );
+          // Remove the matching display item by queueItemId
+          setQueueDisplay((prev) =>
+            prev.filter((msg) => msg.queueItemId !== item.id),
+          );
+        },
       },
     });
   }
@@ -1966,7 +1977,7 @@ export default function App({
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+  const memfsEnabled = isActiveMemfsEnabled(agentId);
   const _memfsDirectory =
     memfsEnabled && agentId && agentId !== "loading"
       ? getScopedMemoryFilesystemRoot(agentId)
@@ -3392,10 +3403,37 @@ export default function App({
     currentModelProvider,
   ]);
 
-  // Handler when user presses UP/ESC to load queue into input for editing
-  const handleEnterQueueEditMode = useCallback(() => {
-    tuiQueueRef.current?.clear("stale_generation");
-  }, []);
+  // Queue edit: load all queued user messages into the input (joined with newlines),
+  // then clear them from the queue so the user can edit and re-submit as one message.
+  const handleQueueEdit = useCallback((): string => {
+    const userMessages = queueDisplay.filter((m) => m.kind === "user");
+    if (userMessages.length === 0) return "";
+
+    // Try to remove each message from the runtime queue. Only include text
+    // from messages that were actually removed — if removeItem returns null,
+    // the item was already dequeued (race with auto-send) and should NOT be
+    // loaded into the input (it would cause a double-send).
+    const removedTexts: string[] = [];
+    for (const msg of userMessages) {
+      if (msg.queueItemId) {
+        const removed = tuiQueueRef.current?.removeItem(msg.queueItemId);
+        if (removed) {
+          removedTexts.push(msg.text);
+        }
+        // If removed is null, item was already dequeued/sent — skip it
+      } else {
+        // No queueItemId (shouldn't happen for user messages), include anyway
+        removedTexts.push(msg.text);
+      }
+    }
+
+    if (removedTexts.length === 0) return ""; // All already dequeued/sent
+
+    // Clear display immediately — same render cycle as the input update
+    setQueueDisplay((prev) => prev.filter((m) => m.kind !== "user"));
+
+    return removedTexts.join("\n");
+  }, [queueDisplay]);
 
   // Handle paste errors (e.g., image too large)
   const handlePasteError = useCallback(
@@ -4317,6 +4355,7 @@ export default function App({
       currentApproval={currentApproval}
       currentApprovalContext={currentApprovalContext}
       currentModelDisplay={currentModelDisplay}
+      currentModelHandle={currentModelHandle}
       currentModelId={currentModelId}
       currentModelProvider={currentModelProvider}
       currentPersonalityId={currentPersonalityId}
@@ -4340,7 +4379,7 @@ export default function App({
       handleDenyCurrent={handleDenyCurrent}
       handleEnterPlanModeApprove={handleEnterPlanModeApprove}
       handleEnterPlanModeReject={handleEnterPlanModeReject}
-      handleEnterQueueEditMode={handleEnterQueueEditMode}
+      handleQueueEdit={handleQueueEdit}
       handleExit={handleExit}
       handleExperimentSelect={handleExperimentSelect}
       handleFeedbackSubmit={handleFeedbackSubmit}

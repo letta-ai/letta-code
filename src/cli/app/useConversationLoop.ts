@@ -71,6 +71,7 @@ import {
   formatTelemetryErrorMessage,
   getRetryStatusMessage,
   isEncryptedContentError,
+  isProviderStreamDisconnectErrorText,
 } from "../helpers/errorFormatter";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
 import { buildGoalBudgetLimitPrompt } from "../helpers/goalCommand";
@@ -491,9 +492,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       };
 
       // Copy so we can safely mutate for retry recovery flows
-      let currentInput = [...initialInput];
+      const inputList = Array.isArray(initialInput) ? initialInput : [];
+      let currentInput = [...inputList];
       const allowReentry = options?.allowReentry ?? false;
-      const hasApprovalInput = initialInput.some(
+      const hasApprovalInput = inputList.some(
         (item) => item.type === "approval",
       );
       const hasExplicitTranscriptStart =
@@ -593,7 +595,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       { type: "text" as const, text: INTERRUPT_RECOVERY_ALERT },
                       ...(typeof m.content === "string"
                         ? [{ type: "text" as const, text: m.content }]
-                        : m.content),
+                        : Array.isArray(m.content)
+                          ? m.content
+                          : []),
                     ],
                   }
                 : { ...m, otid: randomUUID() },
@@ -2621,7 +2625,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   ),
                 });
 
-                if (!isEncryptedContentError(errorObject)) {
+                if (
+                  !isEncryptedContentError(errorObject) &&
+                  !(
+                    serverErrorDetail &&
+                    isProviderStreamDisconnectErrorText(serverErrorDetail)
+                  )
+                ) {
                   // Show appropriate error hint based on stop reason
                   appendError(
                     getErrorHintForStopReason(
@@ -2722,6 +2732,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
       } catch (e) {
+        debugWarn(
+          "message_stream",
+          "Unhandled conversation error: %s",
+          e instanceof Error ? (e.stack ?? e.message) : String(e),
+        );
+
         // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
         markIncompleteToolsAsCancelled(
           buffersRef.current,
