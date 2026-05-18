@@ -4355,6 +4355,7 @@ export default function App({
       currentApproval={currentApproval}
       currentApprovalContext={currentApprovalContext}
       currentModelDisplay={currentModelDisplay}
+      currentModelHandle={currentModelHandle}
       currentModelId={currentModelId}
       currentModelProvider={currentModelProvider}
       currentPersonalityId={currentPersonalityId}
