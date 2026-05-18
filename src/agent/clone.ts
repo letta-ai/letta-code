@@ -4,7 +4,8 @@
 
 import { toFile } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getClient } from "./client";
+import { getBackend } from "../backend";
+import { getClient } from "../backend/api/client";
 
 export interface CloneAgentOptions {
   /** The ID of the agent to clone */
@@ -24,6 +25,9 @@ export interface CloneAgentResult {
 export async function cloneAgent(
   options: CloneAgentOptions,
 ): Promise<CloneAgentResult> {
+  if (!getBackend().capabilities.agentFileImportExport) {
+    throw new Error("Agent clone is not supported by this backend yet");
+  }
   const client = await getClient();
 
   // Step 1: Export the source agent

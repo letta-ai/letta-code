@@ -1,11 +1,14 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import WebSocket from "ws";
 import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { getGitContext } from "../../cli/helpers/gitContext";
 import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
 import { getSubagents } from "../../cli/helpers/subagentState";
 import { getSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
+import { experimentManager } from "../../experiments/manager";
 import { permissionMode } from "../../permissions/mode";
 import type { DequeuedBatch } from "../../queue/queueRuntime";
 import { settingsManager } from "../../settings-manager";
@@ -50,6 +53,7 @@ import {
   resolveScopedAgentId,
   resolveScopedConversationId,
 } from "./scope";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -58,8 +62,211 @@ import type {
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 
+function isPlanModeEnabled(): boolean {
+  try {
+    return settingsManager.isPlanModeEnabled();
+  } catch {
+    return false;
+  }
+}
+
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
+const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
+const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
+const PROTOCOL_PERF_ENABLED = PROTOCOL_PERF_ENV_VALUES.has(
+  (process.env.LETTA_LISTENER_PERF ?? "").toLowerCase(),
+);
+const PROTOCOL_PERF_FILE = process.env.LETTA_LISTENER_PERF_FILE?.trim() || null;
+
+type ProtocolPerfBucket = {
+  count: number;
+  bytes: number;
+  stringifyMs: number;
+  sendMs: number;
+  maxBufferedBefore: number;
+  maxBufferedAfter: number;
+};
+
+const protocolPerfBuckets = new Map<string, ProtocolPerfBucket>();
+let protocolPerfFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let protocolPerfWindowStartedAt = 0;
+let protocolPerfFileDirEnsured: string | null = null;
+let protocolPerfFileWarningEmitted = false;
+
+function getProtocolPerfKey(
+  message: Omit<
+    WsProtocolMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  >,
+): string {
+  if (message.type === "stream_delta" && "delta" in message) {
+    const delta = message.delta as { message_type?: unknown };
+    return `${message.type}:${String(delta.message_type ?? "unknown")}`;
+  }
+  return message.type;
+}
+
+function scheduleProtocolPerfFlush(): void {
+  if (protocolPerfFlushTimer) {
+    return;
+  }
+  protocolPerfFlushTimer = setTimeout(() => {
+    protocolPerfFlushTimer = null;
+    flushProtocolPerfTelemetry();
+  }, PROTOCOL_PERF_FLUSH_INTERVAL_MS);
+  const timerWithUnref = protocolPerfFlushTimer as ReturnType<
+    typeof setTimeout
+  > & {
+    unref?: () => void;
+  };
+  timerWithUnref.unref?.();
+}
+
+function recordProtocolPerfTelemetry(
+  key: string,
+  sample: {
+    bytes: number;
+    stringifyMs: number;
+    sendMs: number;
+    bufferedBefore: number;
+    bufferedAfter: number;
+  },
+): void {
+  if (protocolPerfWindowStartedAt === 0) {
+    protocolPerfWindowStartedAt = Date.now();
+  }
+  const bucket = protocolPerfBuckets.get(key) ?? {
+    count: 0,
+    bytes: 0,
+    stringifyMs: 0,
+    sendMs: 0,
+    maxBufferedBefore: 0,
+    maxBufferedAfter: 0,
+  };
+  bucket.count += 1;
+  bucket.bytes += sample.bytes;
+  bucket.stringifyMs += sample.stringifyMs;
+  bucket.sendMs += sample.sendMs;
+  bucket.maxBufferedBefore = Math.max(
+    bucket.maxBufferedBefore,
+    sample.bufferedBefore,
+  );
+  bucket.maxBufferedAfter = Math.max(
+    bucket.maxBufferedAfter,
+    sample.bufferedAfter,
+  );
+  protocolPerfBuckets.set(key, bucket);
+  scheduleProtocolPerfFlush();
+}
+
+function writeProtocolPerfFile(
+  record: {
+    ts: string;
+    event: "protocol_emit";
+    window_ms: number;
+    totals: ProtocolPerfBucket;
+    buckets: Record<
+      string,
+      ProtocolPerfBucket & {
+        avg_bytes: number;
+        avg_stringify_ms: number;
+        avg_send_ms: number;
+      }
+    >;
+  },
+  fallbackLine: string,
+): void {
+  const filePath = PROTOCOL_PERF_FILE;
+  if (!filePath) {
+    console.error(fallbackLine);
+    return;
+  }
+
+  try {
+    const dir = dirname(filePath);
+    if (protocolPerfFileDirEnsured !== dir) {
+      mkdirSync(dir, { recursive: true });
+      protocolPerfFileDirEnsured = dir;
+    }
+    appendFileSync(filePath, `${JSON.stringify(record)}\n`, {
+      encoding: "utf8",
+    });
+  } catch (error) {
+    if (!protocolPerfFileWarningEmitted) {
+      protocolPerfFileWarningEmitted = true;
+      console.error(
+        `[Listen Perf] Failed to write LETTA_LISTENER_PERF_FILE=${filePath}`,
+        error,
+      );
+    }
+    console.error(fallbackLine);
+  }
+}
+
+function flushProtocolPerfTelemetry(): void {
+  if (protocolPerfBuckets.size === 0) {
+    protocolPerfWindowStartedAt = 0;
+    return;
+  }
+  const windowMs = Math.max(1, Date.now() - protocolPerfWindowStartedAt);
+  const totals: ProtocolPerfBucket = {
+    count: 0,
+    bytes: 0,
+    stringifyMs: 0,
+    sendMs: 0,
+    maxBufferedBefore: 0,
+    maxBufferedAfter: 0,
+  };
+  const buckets: Record<
+    string,
+    ProtocolPerfBucket & {
+      avg_bytes: number;
+      avg_stringify_ms: number;
+      avg_send_ms: number;
+    }
+  > = {};
+  const parts = [...protocolPerfBuckets.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, bucket]) => {
+      totals.count += bucket.count;
+      totals.bytes += bucket.bytes;
+      totals.stringifyMs += bucket.stringifyMs;
+      totals.sendMs += bucket.sendMs;
+      totals.maxBufferedBefore = Math.max(
+        totals.maxBufferedBefore,
+        bucket.maxBufferedBefore,
+      );
+      totals.maxBufferedAfter = Math.max(
+        totals.maxBufferedAfter,
+        bucket.maxBufferedAfter,
+      );
+      buckets[key] = {
+        ...bucket,
+        avg_bytes: bucket.count > 0 ? bucket.bytes / bucket.count : 0,
+        avg_stringify_ms:
+          bucket.count > 0 ? bucket.stringifyMs / bucket.count : 0,
+        avg_send_ms: bucket.count > 0 ? bucket.sendMs / bucket.count : 0,
+      };
+
+      const stringifyMs = bucket.stringifyMs.toFixed(2);
+      const sendMs = bucket.sendMs.toFixed(2);
+      return `${key}{count=${bucket.count},bytes=${bucket.bytes},stringify_ms=${stringifyMs},send_ms=${sendMs},max_buffered_before=${bucket.maxBufferedBefore},max_buffered_after=${bucket.maxBufferedAfter}}`;
+    });
+  writeProtocolPerfFile(
+    {
+      ts: new Date().toISOString(),
+      event: "protocol_emit",
+      window_ms: windowMs,
+      totals,
+      buckets,
+    },
+    `[Listen Perf] protocol_emit window_ms=${windowMs} ${parts.join(" ")}`,
+  );
+  protocolPerfBuckets.clear();
+  protocolPerfWindowStartedAt = 0;
+}
+
 const gitContextCache = new Map<
   string,
   {
@@ -180,6 +387,7 @@ export function buildDeviceStatus(
       is_online: false,
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
+      plan_mode_enabled: isPlanModeEnabled(),
       current_working_directory: fallbackCwd,
       git_context: getCachedDeviceGitContext(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
@@ -189,6 +397,7 @@ export function buildDeviceStatus(
       current_available_skills: [],
       background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
+      experiments: experimentManager.list(),
       memory_directory: null,
       should_doctor: false,
       reflection_settings: null,
@@ -238,12 +447,14 @@ export function buildDeviceStatus(
   const systemPromptDoctorState = scopedAgentId
     ? getSystemPromptDoctorState(scopedAgentId)
     : null;
+  const transport = listener.transport ?? listener.socket;
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
-    is_online: listener.socket?.readyState === WebSocket.OPEN,
+    is_online: transport ? isListenerTransportOpen(transport) : false,
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
+    plan_mode_enabled: isPlanModeEnabled(),
     current_working_directory: resolvedCwd,
     git_context: getCachedDeviceGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
@@ -258,6 +469,7 @@ export function buildDeviceStatus(
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),
+    experiments: experimentManager.list(),
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
@@ -371,8 +583,23 @@ export function setLoopStatus(
   emitLoopStatusIfOpen(runtime, scope);
 }
 
+/** Message types that belong on the stream channel.
+ *  These are high-frequency runtime emissions that should be separated
+ *  from control/command-response traffic on the control channel. */
+const STREAM_CHANNEL_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  "stream_delta",
+  "update_device_status",
+  "update_loop_status",
+  "update_queue",
+  "update_subagent_state",
+]);
+
+function isStreamChannelMessage(type: string): boolean {
+  return STREAM_CHANNEL_MESSAGE_TYPES.has(type);
+}
+
 export function emitProtocolV2Message(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   message: Omit<
     WsProtocolMessage,
@@ -383,10 +610,20 @@ export function emitProtocolV2Message(
     conversation_id?: string | null;
   },
 ): void {
-  if (socket.readyState !== WebSocket.OPEN) {
+  const listener = getListenerRuntime(runtime);
+
+  // Route stream-type messages to the stream transport when available.
+  // Falls back to the control socket if the stream transport is not open.
+  let targetSocket: ListenerTransport = socket;
+  if (listener?.streamTransport && isStreamChannelMessage(message.type)) {
+    if (isListenerTransportOpen(listener.streamTransport)) {
+      targetSocket = listener.streamTransport;
+    }
+  }
+
+  if (!isListenerTransportOpen(targetSocket)) {
     return;
   }
-  const listener = getListenerRuntime(runtime);
   const runtimeScope = resolveRuntimeScope(
     listener,
     getScopeForRuntime(runtime, scope),
@@ -405,8 +642,26 @@ export function emitProtocolV2Message(
     emitted_at: new Date().toISOString(),
     idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
   } as WsProtocolMessage;
+  const perfEnabled = PROTOCOL_PERF_ENABLED;
+  const stringifyStartedAt = perfEnabled ? performance.now() : 0;
+  let payload: string;
   try {
-    socket.send(JSON.stringify(outbound));
+    payload = JSON.stringify(outbound);
+    const stringifyMs = perfEnabled
+      ? performance.now() - stringifyStartedAt
+      : 0;
+    const bufferedBefore = perfEnabled ? targetSocket.bufferedAmount : 0;
+    const sendStartedAt = perfEnabled ? performance.now() : 0;
+    targetSocket.send(payload);
+    if (perfEnabled) {
+      recordProtocolPerfTelemetry(getProtocolPerfKey(message), {
+        bytes: Buffer.byteLength(payload),
+        stringifyMs,
+        sendMs: performance.now() - sendStartedAt,
+        bufferedBefore,
+        bufferedAfter: targetSocket.bufferedAmount,
+      });
+    }
   } catch (error) {
     console.error(
       `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
@@ -427,7 +682,7 @@ export function emitProtocolV2Message(
 }
 
 export function emitDeviceStatusUpdate(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
@@ -445,7 +700,7 @@ export function emitDeviceStatusUpdate(
 }
 
 export function emitLoopStatusUpdate(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
@@ -470,8 +725,9 @@ export function emitLoopStatusIfOpen(
   },
 ): void {
   const listener = getListenerRuntime(runtime);
-  if (listener?.socket?.readyState === WebSocket.OPEN) {
-    emitLoopStatusUpdate(listener.socket, runtime, scope);
+  const transport = listener?.transport ?? listener?.socket;
+  if (transport && isListenerTransportOpen(transport)) {
+    emitLoopStatusUpdate(transport, runtime, scope);
   }
 }
 
@@ -483,13 +739,14 @@ export function emitDeviceStatusIfOpen(
   },
 ): void {
   const listener = getListenerRuntime(runtime);
-  if (listener?.socket?.readyState === WebSocket.OPEN) {
-    emitDeviceStatusUpdate(listener.socket, runtime, scope);
+  const transport = listener?.transport ?? listener?.socket;
+  if (transport && isListenerTransportOpen(transport)) {
+    emitDeviceStatusUpdate(transport, runtime, scope);
   }
 }
 
 export function emitQueueUpdate(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
@@ -530,7 +787,7 @@ export function isSystemReminderPart(part: unknown): boolean {
 }
 
 export function emitDequeuedUserMessage(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   incoming: IncomingMessage,
   batch: DequeuedBatch,
@@ -589,13 +846,14 @@ export function emitQueueUpdateIfOpen(
   },
 ): void {
   const listener = getListenerRuntime(runtime);
-  if (listener?.socket?.readyState === WebSocket.OPEN) {
-    emitQueueUpdate(listener.socket, runtime, scope);
+  const transport = listener?.transport ?? listener?.socket;
+  if (transport && isListenerTransportOpen(transport)) {
+    emitQueueUpdate(transport, runtime, scope);
   }
 }
 
 export function emitStateSync(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope: RuntimeScope,
 ): void {
@@ -672,7 +930,7 @@ export function buildSubagentSnapshot(
 }
 
 export function emitSubagentStateUpdate(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: {
     agent_id?: string | null;
@@ -697,8 +955,9 @@ export function emitSubagentStateIfOpen(
   },
 ): void {
   const listener = getListenerRuntime(runtime);
-  if (listener?.socket?.readyState === WebSocket.OPEN) {
-    emitSubagentStateUpdate(listener.socket, runtime, scope);
+  const transport = listener?.transport ?? listener?.socket;
+  if (transport && isListenerTransportOpen(transport)) {
+    emitSubagentStateUpdate(transport, runtime, scope);
   }
 }
 
@@ -740,7 +999,7 @@ export function createLifecycleMessageBase<TMessageType extends string>(
 }
 
 export function emitCanonicalMessageDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   delta: StreamDelta,
   scope?: {
@@ -752,7 +1011,7 @@ export function emitCanonicalMessageDelta(
 }
 
 export function emitLoopErrorDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   params: {
     message: string;
@@ -782,7 +1041,7 @@ export function emitLoopErrorDelta(
 }
 
 export function emitRetryDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   params: {
     message: string;
@@ -810,7 +1069,7 @@ export function emitRetryDelta(
 }
 
 export function emitStatusDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   params: {
     message: string;
@@ -832,7 +1091,7 @@ export function emitStatusDelta(
 }
 
 export function emitInterruptedStatusDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   params: {
     runId?: string | null;
@@ -850,7 +1109,7 @@ export function emitInterruptedStatusDelta(
 }
 
 export function emitStreamDelta(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: RuntimeCarrier,
   delta: StreamDelta,
   scope?: {

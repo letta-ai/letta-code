@@ -1,5 +1,6 @@
-import { getServerUrl } from "../agent/client";
-import { getLettaCodeHeaders } from "../agent/http-headers";
+import { getServerUrl } from "../backend/api/client";
+import { getServerHealth } from "../backend/api/health";
+import { submitTelemetryMetadata } from "../backend/api/metadata";
 import { settingsManager } from "../settings-manager";
 import { debugLogFile } from "../utils/debug";
 import { getVersion } from "../version";
@@ -342,19 +343,12 @@ class TelemetryManager {
    */
   async fetchServerVersion(): Promise<void> {
     try {
-      const baseURL = getServerUrl();
-      const settings = await settingsManager.getSettingsWithSecureTokens();
-      const apiKey =
-        process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || "";
-      const res = await fetch(`${baseURL}/v1/health`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      const data = await getServerHealth({
+        baseUrl: getServerUrl(),
         signal: AbortSignal.timeout(3000),
       });
-      if (res.ok) {
-        const data = (await res.json()) as { version?: string };
-        if (data.version) {
-          this.serverVersion = data.version;
-        }
+      if (data.version) {
+        this.serverVersion = data.version;
       }
     } catch {
       // Best-effort — don't let this affect startup
@@ -633,35 +627,16 @@ class TelemetryManager {
     const apiKey = await this.resolveTelemetryApiKey();
 
     try {
-      // Add 5 second timeout to prevent telemetry from blocking shutdown
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Telemetry request timeout")), 5000),
-      );
-
-      const fetchPromise = fetch(
-        "https://api.letta.com/v1/metadata/telemetry",
+      await submitTelemetryMetadata(
+        apiKey,
+        this.deviceId || "",
         {
-          method: "POST",
-          headers: {
-            ...getLettaCodeHeaders(apiKey),
-            "X-Letta-Code-Device-ID": this.deviceId || "",
-          },
-          body: JSON.stringify({
-            service: "letta-code",
-            server_version: this.serverVersion || undefined,
-            events: eventsToSend,
-          }),
+          service: "letta-code",
+          server_version: this.serverVersion || undefined,
+          events: eventsToSend,
         },
+        { signal: AbortSignal.timeout(5000) },
       );
-
-      const response = (await Promise.race([
-        fetchPromise,
-        timeoutPromise,
-      ])) as Response;
-
-      if (!response.ok) {
-        throw new Error(`Telemetry flush failed: ${response.status}`);
-      }
     } catch {
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);

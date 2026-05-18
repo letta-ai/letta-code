@@ -29,6 +29,10 @@ export interface StartupResolutionInput {
   /** Number of merged pinned agents (local + global) */
   mergedPinnedCount: number;
 
+  /** Backend-store fallback when settings LRU entries are missing/stale */
+  fallbackAgentId?: string | null;
+  fallbackConversationId?: string | null;
+
   /** --new-agent flag: skip all resume logic, create fresh */
   forceNew: boolean;
 
@@ -43,9 +47,10 @@ export interface StartupResolutionInput {
  * 1. forceNew → create
  * 2. local LRU valid → resume (with local conversation)
  * 3. global LRU valid → resume (no conversation — project-scoped)
- * 4. needsModelPicker → select
- * 5. pinned agents exist → select
- * 6. nothing → create
+ * 4. backend-store fallback → resume
+ * 5. needsModelPicker → select
+ * 6. pinned agents exist → select
+ * 7. nothing → create
  */
 export function resolveStartupTarget(
   input: StartupResolutionInput,
@@ -73,16 +78,26 @@ export function resolveStartupTarget(
     };
   }
 
-  // Step 3: Self-hosted model picker
+  if (input.fallbackAgentId) {
+    return {
+      action: "resume",
+      agentId: input.fallbackAgentId,
+      ...(input.fallbackConversationId
+        ? { conversationId: input.fallbackConversationId }
+        : {}),
+    };
+  }
+
+  // Step 5: Self-hosted model picker
   if (input.needsModelPicker) {
     return { action: "select" };
   }
 
-  // Step 4: Show selector if any pinned agents exist
+  // Step 6: Show selector if any pinned agents exist
   if (input.mergedPinnedCount > 0) {
     return { action: "select" };
   }
 
-  // Step 5: True fresh user — create default agent
+  // Step 7: True fresh user — create default agent
   return { action: "create" };
 }

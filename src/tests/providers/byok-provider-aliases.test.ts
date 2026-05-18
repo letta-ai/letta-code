@@ -24,6 +24,7 @@ describe("buildByokProviderAliases", () => {
     expect(aliases["lc-gemini"]).toBe("google_ai");
     expect(aliases["lc-minimax"]).toBe("minimax");
     expect(aliases["lc-openrouter"]).toBe("openrouter");
+    expect(aliases["lc-llama-cpp"]).toBe("llama.cpp");
     expect(aliases["lc-bedrock"]).toBe("bedrock");
     expect(aliases["chatgpt-plus-pro"]).toBe("chatgpt-plus-pro");
   });

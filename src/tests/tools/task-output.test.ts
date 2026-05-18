@@ -146,21 +146,14 @@ describe.skipIf(isWindows)("TaskOutput and TaskStop", () => {
     expect(backgroundProcesses.has(taskId)).toBe(false);
   });
 
-  test("TaskStop supports deprecated shell_id parameter", async () => {
-    // Start long-running process
-    const startResult = await bash({
-      command: "sleep 10",
-      description: "Process to kill",
-      run_in_background: true,
-    });
-
-    const match = startResult.content[0]?.text.match(/bash_(\d+)/);
-    const shellId = `bash_${match?.[1]}`;
-
-    // Kill using deprecated shell_id
-    const killResult = await task_stop({ shell_id: shellId });
-
-    expect(killResult.killed).toBe(true);
+  test("TaskStop rejects deprecated shell_id-only payloads", async () => {
+    // `shell_id` has been dropped from the TaskStop schema; payloads without
+    // `task_id` must now raise a validation error rather than silently falling
+    // back to the legacy alias.
+    await expect(
+      // biome-ignore lint/suspicious/noExplicitAny: intentionally malformed payload
+      task_stop({ shell_id: "bash_nonexistent" } as any),
+    ).rejects.toThrow(/TaskStop tool missing required parameter/);
   });
 
   test("TaskStop handles non-existent task_id", async () => {
@@ -169,25 +162,15 @@ describe.skipIf(isWindows)("TaskOutput and TaskStop", () => {
     expect(result.killed).toBe(false);
   });
 
-  test("TaskOutput defaults to block=true", async () => {
-    // Start a quick background process
-    const startResult = await bash({
-      command: "sleep 0.2 && echo 'default-block-test'",
-      description: "Default block test",
-      run_in_background: true,
-    });
+  test("TaskOutput requires block and timeout", async () => {
+    await expect(
+      // biome-ignore lint/suspicious/noExplicitAny: intentionally malformed payload
+      task_output({ task_id: "bash_whatever" } as any),
+    ).rejects.toThrow(/TaskOutput tool missing required parameters/);
 
-    const match = startResult.content[0]?.text.match(/bash_(\d+)/);
-    const taskId = `bash_${match?.[1]}`;
-
-    // Call without specifying block - should default to true
-    const result = await task_output({
-      task_id: taskId,
-      timeout: 5000,
-    });
-
-    // Should have waited and gotten the output
-    expect(result.message).toContain("default-block-test");
-    expect(result.status).toBe("completed");
+    await expect(
+      // biome-ignore lint/suspicious/noExplicitAny: intentionally malformed payload
+      task_output({ task_id: "bash_whatever", block: true } as any),
+    ).rejects.toThrow(/TaskOutput tool missing required parameter/);
   });
 });

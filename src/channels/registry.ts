@@ -10,8 +10,8 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getClient } from "../agent/client";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
+import { getClient } from "../backend/api/client";
 import type { ApprovalResponseBody } from "../types/protocol_v2";
 import {
   getChannelAccount,
@@ -19,6 +19,7 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "./accounts";
+import { tryHandleChannelSlashCommand } from "./commands";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
@@ -35,7 +36,11 @@ import {
   removePendingControlRequest as removePersistedPendingControlRequest,
   upsertPendingControlRequest as upsertPersistedPendingControlRequest,
 } from "./pendingControlRequests";
-import { loadChannelPlugin } from "./pluginRegistry";
+import {
+  getChannelDisplayName,
+  isFirstPartyChannelPlugin,
+  loadChannelPlugin,
+} from "./pluginRegistry";
 import {
   addRoute,
   getRoute as getRouteFromStore,
@@ -49,38 +54,66 @@ import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelDefaultPermissionMode,
   ChannelRoute,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   DiscordChannelAccount,
   InboundChannelMessage,
   SlackChannelAccount,
-  SlackDefaultPermissionMode,
 } from "./types";
+import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
-  if (channelId === "slack") return "Slack";
-  if (channelId === "discord") return "Discord";
-  return "Telegram";
+  try {
+    return getChannelDisplayName(channelId);
+  } catch {
+    return channelId;
+  }
 }
 
-function buildPairingInstructions(channelId: string, code: string): string {
+export function buildPairingInstructions(
+  channelId: string,
+  code: string,
+): string {
+  // First-party channels (telegram, slack, discord) have UI in the desktop
+  // app. Community plugins installed under ~/.letta/channels/<id>/ do not,
+  // so the user-facing copy needs to point at CLI commands instead.
   const displayName = channelDisplayName(channelId);
+  if (!isFirstPartyChannelPlugin(channelId)) {
+    return (
+      `This chat isn't connected to a Letta agent yet.\n\n` +
+      `Pairing code: ${code} (expires in 15 minutes)\n\n` +
+      `On the machine where your listener runs:\n\n` +
+      `letta channels pair --channel ${channelId} --code ${code} --agent <agent-id>\n\n` +
+      `Find your agent id with letta agents list.`
+    );
+  }
   return (
-    `To connect this chat to a Letta Code agent, open Channels > ${displayName} in Letta Code and finish connecting this chat there.\n\n` +
+    `To connect this chat to a Letta agent, either open Channels > ${displayName} in Letta Code and finish connecting this chat there, or run this on the machine where your listener runs:\n\n` +
+    `letta channels pair --channel ${channelId} --code ${code} --agent <agent-id>\n\n` +
+    `Find your agent id with letta agents list.\n\n` +
     `Pairing code: ${code}\n\n` +
     `This code expires in 15 minutes.`
   );
 }
 
-function buildUnboundRouteInstructions(
+export function buildUnboundRouteInstructions(
   channelId: string,
   chatId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
+  if (!isFirstPartyChannelPlugin(channelId)) {
+    return (
+      `This chat isn't connected to a Letta agent yet.\n\n` +
+      `On the machine where your listener runs:\n\n` +
+      `letta channels route add --channel ${channelId} --chat-id ${chatId} --agent <agent-id>\n\n` +
+      `Find your agent id with letta agents list.`
+    );
+  }
   return (
-    `This chat isn't bound to a Letta Code agent yet.\n\n` +
+    `This chat isn't connected to a Letta agent yet.\n\n` +
     `Open Channels > ${displayName} in Letta Code and connect this chat there.\n\n` +
     `Chat ID: ${chatId}`
   );
@@ -126,6 +159,27 @@ export function buildSlackConversationSummary(
   }
 
   return `[Slack] Thread${channelLabel || ` ${msg.chatId}`}`;
+}
+
+function buildDiscordConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Discord] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const preview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (preview) {
+    return `[Discord] Thread${channelLabel}: ${preview}`;
+  }
+
+  return `[Discord] Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
 function buildChannelTurnSource(
@@ -215,7 +269,15 @@ export type ChannelRegistryEvent =
       accountId: string;
       agentId: string;
       conversationId: string;
-      defaultPermissionMode: SlackDefaultPermissionMode;
+      defaultPermissionMode: ChannelDefaultPermissionMode;
+    }
+  | {
+      type: "discord_conversation_created";
+      channelId: "discord";
+      accountId: string;
+      agentId: string;
+      conversationId: string;
+      defaultPermissionMode: ChannelDefaultPermissionMode;
     };
 
 // ── Registry ──────────────────────────────────────────────────────
@@ -524,12 +586,17 @@ export class ChannelRegistry {
     chatId: string,
     agentId: string,
     conversationId: string,
+    accountId?: string,
   ): ChannelRoute | null {
+    const normalizedAccountId = accountId?.trim();
     const matches = getRoutesForChannel(channel).filter(
       (route) =>
         route.chatId === chatId &&
         route.agentId === agentId &&
         route.conversationId === conversationId &&
+        (!normalizedAccountId ||
+          (route.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) ===
+            normalizedAccountId) &&
         route.enabled,
     );
 
@@ -738,10 +805,15 @@ export class ChannelRegistry {
     if (await this.tryHandlePendingControlRequest(adapter, msg)) {
       return;
     }
+
+    if (await tryHandleChannelSlashCommand(adapter, msg)) {
+      return;
+    }
+
     const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
-    if (msg.channel === "slack" && config.channel === "slack") {
+    if (msg.channel === "slack" && isSlackChannelAccount(config)) {
       const slackResult = await this.ensureSlackRoute(adapter, msg, config);
       if (!slackResult) {
         return;
@@ -761,12 +833,13 @@ export class ChannelRegistry {
       return;
     }
 
-    // Discord guild messages use auto-routing (like Slack).
-    // DMs fall through to the standard pairing flow below.
+    // Discord guild messages and account-bound DMs use auto-routing (like
+    // Slack). DMs configured with explicit pairing fall through to the
+    // standard pairing flow below.
     if (
       msg.channel === "discord" &&
-      config.channel === "discord" &&
-      msg.chatType === "channel"
+      isDiscordChannelAccount(config) &&
+      (msg.chatType === "channel" || config.dmPolicy !== "pairing")
     ) {
       const discordResult = await this.ensureDiscordRoute(adapter, msg, config);
       if (!discordResult) {
@@ -906,7 +979,7 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "default") {
+    if (config.defaultPermissionMode !== "standard") {
       this.eventHandler?.({
         type: "slack_conversation_created",
         channelId: "slack",
@@ -1016,7 +1089,7 @@ export class ChannelRegistry {
 
     const conversationId = await this.createConversationForAgent(
       config.agentId,
-      `[Discord] Thread ${msg.chatLabel ?? msg.chatId}`,
+      buildDiscordConversationSummary(msg),
     );
     const now = new Date().toISOString();
     const route: ChannelRoute = {
@@ -1032,6 +1105,16 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
+    if (config.defaultPermissionMode !== "standard") {
+      this.eventHandler?.({
+        type: "discord_conversation_created",
+        channelId: "discord",
+        accountId: config.accountId,
+        agentId: config.agentId,
+        conversationId,
+        defaultPermissionMode: config.defaultPermissionMode,
+      });
+    }
     return route;
   }
 
@@ -1048,6 +1131,18 @@ export class ChannelRegistry {
         msg.chatId,
         "This Discord bot isn't connected to a Letta agent yet.\n\n" +
           "Open Channels > Discord in Letta Code, choose which agent this bot should represent, and try again.",
+      );
+      return null;
+    }
+
+    if (
+      msg.chatType === "direct" &&
+      config.dmPolicy === "allowlist" &&
+      !config.allowedUsers.includes(msg.senderId)
+    ) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "You are not on the allowed users list for this Discord bot.",
       );
       return null;
     }
@@ -1074,9 +1169,9 @@ export class ChannelRegistry {
       return { route, isFirstRouteTurn: false };
     }
 
-    // Only create routes from explicit mentions.
+    // In guild channels, only create routes from explicit mentions.
     // Existing routed threads continue above via the route lookup path.
-    if (!msg.isMention) {
+    if (msg.chatType === "channel" && !msg.isMention) {
       return null;
     }
 

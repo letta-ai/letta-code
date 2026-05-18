@@ -11,6 +11,7 @@ interface ShellArgs {
   workdir?: string;
   timeout_ms?: number;
   env_overrides?: NodeJS.ProcessEnv;
+  secretEnv?: Record<string, string>;
   with_escalated_permissions?: boolean;
   justification?: string;
   signal?: AbortSignal;
@@ -84,8 +85,15 @@ async function runProcess(context: SpawnContext): Promise<ShellResult> {
 export async function shell(args: ShellArgs): Promise<ShellResult> {
   validateRequiredParams(args, ["command"], "shell");
 
-  const { command, workdir, timeout_ms, env_overrides, signal, onOutput } =
-    args;
+  const {
+    command,
+    workdir,
+    timeout_ms,
+    env_overrides,
+    secretEnv,
+    signal,
+    onOutput,
+  } = args;
   if (!Array.isArray(command) || command.length === 0) {
     throw new Error("command must be a non-empty array of strings");
   }
@@ -99,6 +107,7 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
     env: {
       ...getShellEnv(),
       ...(env_overrides ?? {}),
+      ...(secretEnv ?? {}),
     },
     timeout,
     signal,

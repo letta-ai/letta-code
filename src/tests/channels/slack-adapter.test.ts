@@ -165,6 +165,9 @@ const resolveSlackChannelHistoryMock = mock(
 );
 
 mock.module("../../channels/slack/runtime", () => ({
+  ensureSlackRuntimeInstalled: async () => false,
+  installSlackRuntime: async () => {},
+  isSlackRuntimeInstalled: () => true,
   loadSlackBoltModule: async () => ({
     App: FakeSlackApp,
     default: {
@@ -194,7 +197,7 @@ const slackAccountDefaults = {
   accountId: "slack-test-account",
   displayName: "Test Workspace",
   agentId: null,
-  defaultPermissionMode: "default",
+  defaultPermissionMode: "standard",
   createdAt: "2026-04-11T00:00:00.000Z",
   updatedAt: "2026-04-11T00:00:00.000Z",
 } as const;

@@ -1,14 +1,15 @@
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentState,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type WebSocket from "ws";
 import type { ApprovalResult } from "../../agent/approval-execution";
 import { fetchRunErrorInfo } from "../../agent/approval-recovery";
-import { getResumeData } from "../../agent/check-approval";
-import { getClient } from "../../agent/client";
+import { getResumeDataFromBackend } from "../../agent/check-approval";
 import {
   getConversationId,
   getCurrentAgentId,
@@ -23,8 +24,11 @@ import {
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
+  normalizeStreamErrorTypeToStopReason,
   rebuildInputWithFreshDenials,
+  refreshInputOtidsForNewRequest,
 } from "../../agent/turn-recovery-policy";
+import { getBackend } from "../../backend";
 import { createBuffers, toLines } from "../../cli/helpers/accumulator";
 import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
 import {
@@ -58,6 +62,7 @@ import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
+  PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -83,11 +88,16 @@ import {
   setLoopStatus,
 } from "./protocol-outbound";
 import {
+  createProviderFallbackState,
+  maybeApplyProviderFallback,
+} from "./providerFallback";
+import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
 } from "./recoverable-notices";
 import {
+  getApprovalToolCallDesyncErrorText,
   isRetriablePostStopError,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
@@ -104,12 +114,14 @@ import {
   sendMessageStreamWithRetry,
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import type {
   ConversationRuntime,
   InboundMessagePayload,
   IncomingMessage,
 } from "./types";
+import { ensureListenerWarmStateForTurn } from "./warmup";
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
@@ -165,14 +177,14 @@ function escapeTaskNotificationSummary(summary: string): string {
 
 function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
-  socket: WebSocket;
+  socket: ListenerTransport;
   agentId: string;
   conversationId: string;
   workingDirectory: string;
+  cachedAgent?: AgentState | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, socket, agentId, conversationId, workingDirectory } =
-      params;
+    const { runtime, socket, agentId, conversationId, cachedAgent } = params;
 
     if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
       return false;
@@ -187,19 +199,20 @@ function buildMaybeLaunchReflectionSubagent(params: {
     }
 
     try {
-      // Fetch the agent's system prompt so the reflection payload includes
-      // the core behavioural instructions (filtered to strip dynamic content).
-      let systemPrompt: string | undefined;
-      try {
-        const client = await getClient();
-        const agent = await client.agents.retrieve(agentId);
-        systemPrompt = agent.system ?? undefined;
-      } catch {
-        // Non-fatal — the reflection payload will just omit the system prompt.
-        debugLog(
-          "memory",
-          "Failed to fetch agent system prompt for reflection payload",
-        );
+      // Reuse the cached agent snapshot when available so the reflection
+      // payload can include the current system prompt without another fetch.
+      let systemPrompt: string | undefined = cachedAgent?.system ?? undefined;
+      if (!systemPrompt) {
+        try {
+          const agent = await getBackend().retrieveAgent(agentId);
+          systemPrompt = agent.system ?? undefined;
+        } catch {
+          // Non-fatal — the reflection payload will just omit the system prompt.
+          debugLog(
+            "memory",
+            "Failed to fetch agent system prompt for reflection payload",
+          );
+        }
       }
 
       const autoPayload = await buildAutoReflectionPayload(
@@ -218,9 +231,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const memoryDir = getMemoryFilesystemRoot(agentId);
       const parentMemory = await buildParentMemorySnapshot(memoryDir);
       const reflectionPrompt = buildReflectionSubagentPrompt({
-        transcriptPath: autoPayload.payloadPath,
         memoryDir,
-        cwd: workingDirectory,
         parentMemory,
       });
 
@@ -231,6 +242,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
         prompt: reflectionPrompt,
         description: AUTO_REFLECTION_DESCRIPTION,
         silentCompletion: true,
+        transcriptPath: autoPayload.payloadPath,
         parentScope: { agentId, conversationId },
         onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
           telemetry.trackReflectionEnd(triggerSource, success, {
@@ -311,7 +323,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
 }
 
 function finalizeInterruptedTurn(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
     runId?: string | null;
@@ -347,7 +359,7 @@ function finalizeInterruptedTurn(
 
 export async function handleIncomingMessage(
   msg: IncomingMessage,
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
@@ -388,6 +400,8 @@ export async function handleIncomingMessage(
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
+  runtime.lastStopReason = null;
+  runtime.lastTerminalLoopErrorMessage = null;
   const turnAbortController = new AbortController();
   runtime.activeAbortController = turnAbortController;
   const turnAbortSignal = turnAbortController.signal;
@@ -423,9 +437,14 @@ export async function handleIncomingMessage(
       return;
     }
 
-    // Ensure memfs repo is cloned/pulled for this agent (lazy, once per session).
-    const { ensureMemfsSyncedForAgent } = await import("./memfs-sync");
-    await ensureMemfsSyncedForAgent(runtime.listener, agentId);
+    // Ensure local per-agent state is ready before reminders and tool execution.
+    let listenAgentMetadata = await ensureListenerWarmStateForTurn(
+      runtime.listener,
+      {
+        agentId,
+        conversationId,
+      },
+    );
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
@@ -490,32 +509,33 @@ export async function handleIncomingMessage(
       firstMessage.type === "approval" &&
       "approvals" in firstMessage;
 
+    let cachedAgent: AgentState | null = null;
+
     if (!isApprovalMessage) {
       try {
         syncReminderStateFromContextTracker(
           runtime.reminderState,
           runtime.contextTracker,
         );
-        let listenAgentMetadata: {
-          name: string | null;
-          description: string | null;
-          lastRunAt: string | null;
-        } | null = null;
-        if (!runtime.reminderState.hasSentAgentInfo && agentId) {
+        if (agentId) {
           try {
-            const client = await getClient();
-            const agent = await client.agents.retrieve(agentId);
-            listenAgentMetadata = {
-              name: agent.name ?? null,
-              description: agent.description ?? null,
-              lastRunAt:
-                (agent as { last_run_completion?: string | null })
-                  .last_run_completion ?? null,
-            };
+            cachedAgent = (await getBackend().retrieveAgent(
+              agentId,
+            )) as AgentState;
           } catch {
-            // Best-effort only. If the fetch fails, reminder building will
-            // fall back to the existing null/placeholder behavior.
+            // Best-effort only. If the fetch fails, reminder and tool prep
+            // will fall back to the existing null/placeholder behavior.
           }
+        }
+
+        if (!runtime.reminderState.hasSentAgentInfo && cachedAgent) {
+          listenAgentMetadata = {
+            name: cachedAgent.name ?? null,
+            description: cachedAgent.description ?? null,
+            lastRunAt:
+              (cachedAgent as { last_run_completion?: string | null })
+                .last_run_completion ?? null,
+          };
         }
         const reflectionSettings = getReflectionSettings(
           agentId || undefined,
@@ -537,6 +557,7 @@ export async function handleIncomingMessage(
                   agentId,
                   conversationId,
                   workingDirectory: turnWorkingDirectory,
+                  cachedAgent,
                 })
               : undefined,
             resolvePlanModeReminder: getPlanModeReminder,
@@ -570,14 +591,17 @@ export async function handleIncomingMessage(
     }
 
     let currentInput = messagesToSend;
+    const providerFallback = createProviderFallbackState(cachedAgent);
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
     ];
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
+      clientToolAllowlist: msg.clientToolAllowlist,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
+      cachedAgent,
     });
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
@@ -590,6 +614,15 @@ export async function handleIncomingMessage(
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
+      skipImageNormalization: true,
+      ...(providerFallback.overrideModel
+        ? { overrideModel: providerFallback.overrideModel }
+        : {}),
+      // Forward cloud-api's per-WS acting user id so the outbound
+      // createMessage HTTP call carries X-Letta-Acting-User-Id and
+      // cloud can attribute credits to the actual sender on
+      // multi-user sandboxes.
+      ...(msg.actingUserId ? { actingUserId: msg.actingUserId } : {}),
       ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
@@ -611,6 +644,7 @@ export async function handleIncomingMessage(
           socket,
           runtime,
           turnAbortSignal,
+          { providerFallback },
         )
       : await sendMessageStreamWithRetry(
           conversationId,
@@ -619,6 +653,7 @@ export async function handleIncomingMessage(
           socket,
           runtime,
           turnAbortSignal,
+          { providerFallback },
         );
     currentInput = currentInputWithSkillContent;
     if (!stream) {
@@ -669,18 +704,34 @@ export async function handleIncomingMessage(
           }
 
           if (errorInfo) {
-            latestErrorText = errorInfo.message || latestErrorText;
-            emitLoopErrorNotice(socket, runtime, {
-              message: errorInfo.message || "Stream error",
-              stopReason: (errorInfo.error_type as StopReasonType) || "error",
-              isTerminal: false,
-              runId: runId || errorInfo.run_id,
-              agentId,
-              conversationId,
-              errorInfo,
-              cancelRequested: runtime.cancelRequested,
-              abortSignal: turnAbortSignal,
-            });
+            const recoverableApprovalErrorText =
+              getApprovalToolCallDesyncErrorText(errorInfo);
+            latestErrorText =
+              recoverableApprovalErrorText ||
+              errorInfo.detail ||
+              errorInfo.message ||
+              latestErrorText;
+            if (!recoverableApprovalErrorText) {
+              emitLoopErrorNotice(socket, runtime, {
+                message: errorInfo.message || "Stream error",
+                stopReason: normalizeStreamErrorTypeToStopReason(
+                  errorInfo.error_type,
+                ),
+                isTerminal: false,
+                runId: runId || errorInfo.run_id,
+                agentId,
+                conversationId,
+                errorInfo,
+                cancelRequested: runtime.cancelRequested,
+                abortSignal: turnAbortSignal,
+              });
+            } else {
+              debugLog(
+                "recovery",
+                "Suppressing streamed approval conflict while post-stop recovery runs: %s",
+                recoverableApprovalErrorText,
+              );
+            }
           }
 
           if (shouldOutput) {
@@ -710,6 +761,7 @@ export async function handleIncomingMessage(
 
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
+      const fallbackError = result.fallbackError ?? null;
       lastApprovalContinuationAccepted = false;
 
       if (stopReason === "end_turn" && runtime.cancelRequested) {
@@ -774,6 +826,7 @@ export async function handleIncomingMessage(
           latestErrorText ||
           runErrorInfo?.detail ||
           runErrorInfo?.message ||
+          fallbackError ||
           null;
 
         if (
@@ -783,6 +836,7 @@ export async function handleIncomingMessage(
             retries: postStopApprovalRecoveryRetries,
             runErrorDetail: errorDetail,
             latestErrorText,
+            fallbackError,
           })
         ) {
           postStopApprovalRecoveryRetries += 1;
@@ -797,13 +851,9 @@ export async function handleIncomingMessage(
           });
 
           try {
-            const client = await getClient();
-            const agent = await client.agents.retrieve(agentId || "");
-            const { pendingApprovals: existingApprovals } = await getResumeData(
-              client,
-              agent,
-              requestedConversationId,
-            );
+            const agent = await getBackend().retrieveAgent(agentId || "");
+            const { pendingApprovals: existingApprovals } =
+              await getResumeDataFromBackend(agent, requestedConversationId);
             currentInput = rebuildInputWithFreshDenials(
               currentInput,
               existingApprovals ?? [],
@@ -829,6 +879,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -837,6 +888,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -896,6 +948,7 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
 
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,
@@ -913,6 +966,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -921,6 +975,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -946,14 +1001,21 @@ export async function handleIncomingMessage(
         if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           llmApiErrorRetries += 1;
           const attempt = llmApiErrorRetries;
-          const delayMs = getRetryDelayMs({
-            category: "transient_provider",
+          const fallbackHandle = maybeApplyProviderFallback(
+            providerFallback,
             attempt,
-            detail: errorDetail,
-          });
-          const retryMessage =
-            getRetryStatusMessage(errorDetail) ||
-            `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
+          );
+          const delayMs = fallbackHandle
+            ? 0
+            : getRetryDelayMs({
+                category: "transient_provider",
+                attempt,
+                detail: errorDetail,
+              });
+          const retryMessage = fallbackHandle
+            ? PROVIDER_FALLBACK_NOTICE
+            : getRetryStatusMessage(errorDetail) ||
+              `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
           emitRecoverableRetryNotice(socket, runtime, {
             kind: "transient_provider_retry",
             message: retryMessage,
@@ -966,10 +1028,13 @@ export async function handleIncomingMessage(
             conversationId,
           });
 
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          if (!fallbackHandle) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
 
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,
@@ -987,6 +1052,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -995,6 +1061,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -1040,7 +1107,7 @@ export async function handleIncomingMessage(
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
 
-        emitLoopErrorNotice(socket, runtime, {
+        const formattedError = emitLoopErrorNotice(socket, runtime, {
           message: errorMessage,
           stopReason: effectiveStopReason,
           isTerminal: true,
@@ -1051,6 +1118,7 @@ export async function handleIncomingMessage(
           cancelRequested: runtime.cancelRequested,
           abortSignal: turnAbortSignal,
         });
+        runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
         break;
       }
 
@@ -1069,6 +1137,7 @@ export async function handleIncomingMessage(
         pendingNormalizationInterruptedToolCallIds,
         turnToolContextId,
         buildSendOptions,
+        providerFallback,
       });
       if (approvalResult.terminated || !approvalResult.stream) {
         return;
@@ -1148,7 +1217,7 @@ export async function handleIncomingMessage(
     });
 
     const errorMessage = error instanceof Error ? error.message : String(error);
-    emitLoopErrorNotice(socket, runtime, {
+    const formattedError = emitLoopErrorNotice(socket, runtime, {
       message: errorMessage,
       stopReason: "error",
       isTerminal: true,
@@ -1158,6 +1227,7 @@ export async function handleIncomingMessage(
       cancelRequested: runtime.cancelRequested,
       abortSignal: turnAbortSignal,
     });
+    runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }

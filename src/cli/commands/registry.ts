@@ -60,6 +60,15 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
+  "/goal": {
+    desc: "Manage goal: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
+    args: "[status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
+    order: 14,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing conversation goal...";
+    },
+  },
   "/reflect": {
     desc: "Launch reflection (/reflect [transcript_file])",
     args: "[transcript_file]",
@@ -219,7 +228,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/rename": {
-    desc: "Rename agent or conversation (/rename agent|convo <name>)",
+    desc: "Rename agent or conversation (/rename agent [name]|convo [name])",
     order: 24,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
@@ -250,6 +259,24 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";
+    },
+  },
+  "/experiments": {
+    desc: "Toggle experiments",
+    order: 27.1,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx to open experiments selector
+      return "Opening experiments selector...";
+    },
+  },
+  "/reload": {
+    desc: "Reload settings and restart TUI effects",
+    order: 27.2,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in AppCoordinator to trigger a soft restart
+      return "Reloading...";
     },
   },
   "/ade": {
@@ -473,6 +500,14 @@ export const commands: Record<string, Command> = {
       return "Entering plan mode...";
     },
   },
+  "/plan-mode": {
+    desc: "Enable or disable plan mode (/plan-mode on|off)",
+    order: 40.5,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Updating plan mode setting...";
+    },
+  },
   "/disconnect": {
     desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
     order: 41,
@@ -543,6 +578,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access client and agent ID
       return "Compacting conversation...";
+    },
+  },
+  "/set-max-context": {
+    desc: "Set or reset the max context window",
+    args: "[tokens] [--override]",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Setting max context window...";
     },
   },
   "/link": {

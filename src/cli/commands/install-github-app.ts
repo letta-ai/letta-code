@@ -9,7 +9,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { buildChatUrl } from "../helpers/appUrls";
+import { createMinimalAgent } from "../../backend/api/agents";
+import { buildAgentReference } from "../helpers/appUrls";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/letta.yml";
 const ALTERNATE_WORKFLOW_PATH = ".github/workflows/letta-code.yml";
@@ -334,22 +335,7 @@ export async function createLettaAgent(
   apiKey: string,
   name: string,
 ): Promise<{ id: string; name: string }> {
-  const response = await fetch("https://api.letta.com/v1/agents", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ name }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Failed to create agent: ${response.status} ${text}`);
-  }
-
-  const data = (await response.json()) as { id: string; name: string };
-  return { id: data.id, name: data.name };
+  return createMinimalAgent(apiKey, name);
 }
 
 function cloneRepoToTemp(repo: string): { tempDir: string; repoDir: string } {
@@ -513,7 +499,7 @@ export async function installGithubApp(
         committed: false,
         secretAction: "set",
         agentId: resolvedAgentId,
-        agentUrl: resolvedAgentId ? buildChatUrl(resolvedAgentId) : null,
+        agentUrl: resolvedAgentId ? buildAgentReference(resolvedAgentId) : null,
       };
     }
 
@@ -539,7 +525,7 @@ export async function installGithubApp(
       committed: true,
       secretAction: "set",
       agentId: resolvedAgentId,
-      agentUrl: resolvedAgentId ? buildChatUrl(resolvedAgentId) : null,
+      agentUrl: resolvedAgentId ? buildAgentReference(resolvedAgentId) : null,
     };
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

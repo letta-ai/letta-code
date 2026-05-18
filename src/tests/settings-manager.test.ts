@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { CommandHookConfig, HookCommand } from "../hooks/types";
 import { runWithRuntimeContext } from "../runtime-context";
 import { settingsManager } from "../settings-manager";
@@ -27,6 +27,8 @@ const keychainAvailablePrecompute = await isKeychainAvailable();
 
 // Store original HOME to restore after tests
 const originalHome = process.env.HOME;
+const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
 let testHomeDir: string;
 let testProjectDir: string;
 
@@ -43,6 +45,8 @@ beforeEach(async () => {
 
   // Override HOME for tests (must be done BEFORE initialize is called)
   process.env.HOME = testHomeDir;
+  delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  delete process.env.LETTA_LOCAL_BACKEND_DIR;
 });
 
 afterEach(async () => {
@@ -56,6 +60,16 @@ afterEach(async () => {
 
   // Restore original HOME AFTER reset completes
   process.env.HOME = originalHome;
+  if (originalLocalBackendFlag === undefined) {
+    delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  } else {
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
+  }
+  if (originalLocalBackendDir === undefined) {
+    delete process.env.LETTA_LOCAL_BACKEND_DIR;
+  } else {
+    process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+  }
 
   // Restore the real service name
   setServiceName("letta-code");
@@ -73,8 +87,6 @@ describe("Settings Manager - Initialization", () => {
     const settings = settingsManager.getSettings();
     expect(settings).toBeDefined();
     expect(typeof settings.tokenStreaming).toBe("boolean");
-    expect(settings.globalSharedBlockIds).toBeDefined();
-    expect(typeof settings.globalSharedBlockIds).toBe("object");
   });
 
   test("Initialize loads existing settings from disk", async () => {
@@ -190,6 +202,19 @@ describe("Settings Manager - Global Settings", () => {
     expect(tokenStreaming).toBe(true);
   });
 
+  test("Plan mode defaults off and can be toggled", () => {
+    expect(settingsManager.getSetting("planModeEnabled")).toBe(false);
+    expect(settingsManager.isPlanModeEnabled()).toBe(false);
+
+    settingsManager.setPlanModeEnabled(true);
+    expect(settingsManager.getSetting("planModeEnabled")).toBe(true);
+    expect(settingsManager.isPlanModeEnabled()).toBe(true);
+
+    settingsManager.setPlanModeEnabled(false);
+    expect(settingsManager.getSetting("planModeEnabled")).toBe(false);
+    expect(settingsManager.isPlanModeEnabled()).toBe(false);
+  });
+
   test("Update single setting", () => {
     // Verify initial state first
     const initialSettings = settingsManager.getSettings();
@@ -213,21 +238,6 @@ describe("Settings Manager - Global Settings", () => {
     expect(settings.tokenStreaming).toBe(true);
     expect(settings.lastAgent).toBe("agent-456");
     expect(settings.enableSleeptime).toBe(true);
-  });
-
-  test("Update global shared block IDs", () => {
-    settingsManager.updateSettings({
-      globalSharedBlockIds: {
-        persona: "block-1",
-        human: "block-2",
-      },
-    });
-
-    const settings = settingsManager.getSettings();
-    expect(settings.globalSharedBlockIds).toEqual({
-      persona: "block-1",
-      human: "block-2",
-    });
   });
 
   test("Update env variables", () => {
@@ -351,7 +361,8 @@ describe("Settings Manager - Project Settings", () => {
     const projectSettings =
       await settingsManager.loadProjectSettings(testProjectDir);
 
-    expect(projectSettings.localSharedBlockIds).toEqual({});
+    expect(projectSettings.hooks).toBeUndefined();
+    expect(projectSettings.statusLine).toBeUndefined();
   });
 
   test("Get project settings returns cached value", async () => {
@@ -369,19 +380,13 @@ describe("Settings Manager - Project Settings", () => {
 
     settingsManager.updateProjectSettings(
       {
-        localSharedBlockIds: {
-          style: "block-style-1",
-          project: "block-project-1",
-        },
+        statusLine: { command: "echo test" },
       },
       testProjectDir,
     );
 
     const settings = settingsManager.getProjectSettings(testProjectDir);
-    expect(settings.localSharedBlockIds).toEqual({
-      style: "block-style-1",
-      project: "block-project-1",
-    });
+    expect(settings.statusLine?.command).toBe("echo test");
   });
 
   test("Project settings persist to disk", async () => {
@@ -389,9 +394,7 @@ describe("Settings Manager - Project Settings", () => {
 
     settingsManager.updateProjectSettings(
       {
-        localSharedBlockIds: {
-          test: "block-test-1",
-        },
+        statusLine: { command: "echo persist-test" },
       },
       testProjectDir,
     );
@@ -404,9 +407,7 @@ describe("Settings Manager - Project Settings", () => {
     await settingsManager.initialize();
     const reloaded = await settingsManager.loadProjectSettings(testProjectDir);
 
-    expect(reloaded.localSharedBlockIds).toEqual({
-      test: "block-test-1",
-    });
+    expect(reloaded.statusLine?.command).toBe("echo persist-test");
   });
 
   test("Throw error if accessing project settings before loading", async () => {
@@ -426,7 +427,7 @@ describe("Settings Manager - Project Settings", () => {
 
     const projectSettings =
       await settingsManager.loadProjectSettings(testHomeDir);
-    expect(projectSettings.localSharedBlockIds).toEqual({});
+    expect(projectSettings.hooks).toBeUndefined();
     expect(projectSettings.statusLine).toBeUndefined();
   });
 
@@ -628,19 +629,19 @@ describe("Settings Manager - Multiple Projects", () => {
     await settingsManager.loadProjectSettings(testProjectDir2);
 
     settingsManager.updateProjectSettings(
-      { localSharedBlockIds: { test: "block-1" } },
+      { statusLine: { command: "echo project-1" } },
       testProjectDir,
     );
     settingsManager.updateProjectSettings(
-      { localSharedBlockIds: { test: "block-2" } },
+      { statusLine: { command: "echo project-2" } },
       testProjectDir2,
     );
 
     const settings1 = settingsManager.getProjectSettings(testProjectDir);
     const settings2 = settingsManager.getProjectSettings(testProjectDir2);
 
-    expect(settings1.localSharedBlockIds.test).toBe("block-1");
-    expect(settings2.localSharedBlockIds.test).toBe("block-2");
+    expect(settings1.statusLine?.command).toBe("echo project-1");
+    expect(settings2.statusLine?.command).toBe("echo project-2");
   });
 });
 
@@ -929,17 +930,17 @@ describe("Settings Manager - Edge Cases", () => {
     await settingsManager.initialize();
     settingsManager.updateSettings({
       lastAgent: "agent-123",
-      globalSharedBlockIds: {},
+      tokenStreaming: true,
     });
 
     const settings = settingsManager.getSettings();
     settings.lastAgent = "modified-agent";
-    settings.globalSharedBlockIds = { modified: "block" };
+    settings.tokenStreaming = false;
 
     // Internal state should be unchanged
     const actualSettings = settingsManager.getSettings();
     expect(actualSettings.lastAgent).toBe("agent-123");
-    expect(actualSettings.globalSharedBlockIds).toEqual({});
+    expect(actualSettings.tokenStreaming).toBe(true);
   });
 
   test("Partial updates preserve existing values", async () => {
@@ -1290,6 +1291,27 @@ describe("Settings Manager - Agents Array Migration", () => {
     }
   });
 
+  test("setMemfsEnabled stores local backend settings under the local storage key", async () => {
+    await settingsManager.initialize();
+
+    const storageDir = join(testHomeDir, "lc-local-backend");
+    const localKey = `local:${resolve(storageDir)}`;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+    settingsManager.setMemfsEnabled("agent-local-memfs-write", true);
+
+    const settings = settingsManager.getSettings();
+    expect(settings.agents).toContainEqual({
+      agentId: "agent-local-memfs-write",
+      baseUrl: localKey,
+      memfs: true,
+    });
+    expect(settingsManager.isMemfsEnabled("agent-local-memfs-write")).toBe(
+      true,
+    );
+  });
+
   test("setMemfsEnabled persists to disk", async () => {
     await settingsManager.initialize();
 
@@ -1515,5 +1537,217 @@ describe("Settings Manager - Managed Keys Preservation", () => {
         "sk-fallback-test",
       );
     }
+  });
+});
+
+// ============================================================================
+// Conversation Goal Tests
+// ============================================================================
+
+describe("Settings Manager - Conversation Goals", () => {
+  async function initGoalTest() {
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+  }
+
+  test("setConversationGoal creates an active goal", async () => {
+    await initGoalTest();
+    const goal = settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    expect(goal.objective).toBe("fix the bug");
+    expect(goal.status).toBe("active");
+    expect(goal.tokensUsed).toBe(0);
+  });
+
+  test("getConversationGoal retrieves a goal", async () => {
+    await initGoalTest();
+    settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    const goal = settingsManager.getConversationGoal("conv-1", testProjectDir);
+    expect(goal).not.toBeNull();
+    expect(goal?.objective).toBe("fix the bug");
+  });
+
+  test("getConversationGoal returns null for missing conversation", async () => {
+    await initGoalTest();
+    const goal = settingsManager.getConversationGoal(
+      "nonexistent",
+      testProjectDir,
+    );
+    expect(goal).toBeNull();
+  });
+
+  test("updateConversationGoalStatus transitions active -> paused", async () => {
+    await initGoalTest();
+    settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    const updated = settingsManager.updateConversationGoalStatus(
+      "conv-1",
+      "paused",
+      testProjectDir,
+    );
+    expect(updated).not.toBeNull();
+    expect(updated?.status).toBe("paused");
+    expect(updated?.activeStartedAt).toBeNull();
+  });
+
+  test("updateConversationGoalStatus transitions paused -> active", async () => {
+    await initGoalTest();
+    settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    settingsManager.updateConversationGoalStatus(
+      "conv-1",
+      "paused",
+      testProjectDir,
+    );
+    const resumed = settingsManager.updateConversationGoalStatus(
+      "conv-1",
+      "active",
+      testProjectDir,
+    );
+    expect(resumed?.status).toBe("active");
+    expect(resumed?.activeStartedAt).not.toBeNull();
+  });
+
+  test("updateConversationGoalStatus returns null for missing conversation", async () => {
+    await initGoalTest();
+    const result = settingsManager.updateConversationGoalStatus(
+      "nonexistent",
+      "paused",
+      testProjectDir,
+    );
+    expect(result).toBeNull();
+  });
+
+  test("accountConversationGoalUsage adds tokens", async () => {
+    await initGoalTest();
+    settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    const updated = settingsManager.accountConversationGoalUsage(
+      "conv-1",
+      500,
+      testProjectDir,
+    );
+    expect(updated?.tokensUsed).toBe(500);
+  });
+
+  test("accountConversationGoalUsage accumulates across calls", async () => {
+    await initGoalTest();
+    settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    settingsManager.accountConversationGoalUsage("conv-1", 500, testProjectDir);
+    const updated = settingsManager.accountConversationGoalUsage(
+      "conv-1",
+      300,
+      testProjectDir,
+    );
+    expect(updated?.tokensUsed).toBe(800);
+  });
+
+  test("accountConversationGoalUsage returns null for missing conversation", async () => {
+    await initGoalTest();
+    const result = settingsManager.accountConversationGoalUsage(
+      "nonexistent",
+      500,
+      testProjectDir,
+    );
+    expect(result).toBeNull();
+  });
+
+  test("clearConversationGoal removes a goal", async () => {
+    await initGoalTest();
+    settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    const hadGoal = settingsManager.clearConversationGoal(
+      "conv-1",
+      testProjectDir,
+    );
+    expect(hadGoal).toBe(true);
+    expect(
+      settingsManager.getConversationGoal("conv-1", testProjectDir),
+    ).toBeNull();
+  });
+
+  test("clearConversationGoal returns false for missing conversation", async () => {
+    await initGoalTest();
+    const hadGoal = settingsManager.clearConversationGoal(
+      "nonexistent",
+      testProjectDir,
+    );
+    expect(hadGoal).toBe(false);
+  });
+
+  test("setConversationGoal with tokenBudget stores budget", async () => {
+    await initGoalTest();
+    const goal = settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+      50000,
+    );
+    expect(goal.tokenBudget).toBe(50000);
+  });
+
+  test("setConversationGoal preserves createdAt on replace", async () => {
+    await initGoalTest();
+    const first = settingsManager.setConversationGoal(
+      "conv-1",
+      "first objective",
+      testProjectDir,
+    );
+    const originalCreatedAt = first.createdAt;
+    const second = settingsManager.setConversationGoal(
+      "conv-1",
+      "second objective",
+      testProjectDir,
+    );
+    expect(second.createdAt).toBe(originalCreatedAt);
+    expect(second.objective).toBe("second objective");
+  });
+
+  test("goal tools enabled flag works", async () => {
+    await initGoalTest();
+    expect(
+      settingsManager.areConversationGoalToolsEnabled("conv-1", testProjectDir),
+    ).toBe(false);
+
+    settingsManager.setConversationGoalToolsEnabled(
+      "conv-1",
+      true,
+      testProjectDir,
+    );
+    expect(
+      settingsManager.areConversationGoalToolsEnabled("conv-1", testProjectDir),
+    ).toBe(true);
+
+    settingsManager.setConversationGoalToolsEnabled(
+      "conv-1",
+      false,
+      testProjectDir,
+    );
+    expect(
+      settingsManager.areConversationGoalToolsEnabled("conv-1", testProjectDir),
+    ).toBe(false);
   });
 });

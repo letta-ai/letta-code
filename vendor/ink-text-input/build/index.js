@@ -1,6 +1,13 @@
 import chalk from 'chalk';
-import { Text, useInput } from 'ink';
+import { Text, Transform, useInput } from 'ink';
 import React, { useEffect, useState } from 'react';
+
+// Use a private-use sentinel while Ink/wrap-ansi measure and wrap text.
+// wrap-ansi with trim:true strips inverse ASCII spaces at line boundaries, but
+// rendering an inverse NBSP can show a visible glyph in some terminals/fonts.
+// The Transform below converts this sentinel back to an inverse ASCII space
+// after wrapping has completed, before anything is written to the terminal.
+const CURSOR_SENTINEL = '\u{10FFFD}';
 
 /**
  * Determines if the input should be treated as a control sequence (not inserted as text).
@@ -70,21 +77,21 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
     let renderedValue = value;
     let renderedPlaceholder = placeholder ? chalk.grey(placeholder) : undefined;
     if (showCursor && focus) {
-        renderedPlaceholder = placeholder.length > 0 ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : chalk.inverse('\u00A0');
-        renderedValue = value.length > 0 ? '' : chalk.inverse('\u00A0');
+        renderedPlaceholder = placeholder.length > 0 ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : CURSOR_SENTINEL;
+        renderedValue = value.length > 0 ? '' : CURSOR_SENTINEL;
         let i = 0;
         for (const char of value) {
             const isCursorPosition = i >= cursorOffset - cursorActualWidth && i <= cursorOffset;
             if (isCursorPosition && char === '\n') {
                 // Newline at cursor: show inverted space (visible cursor) then the newline
-                renderedValue += chalk.inverse('\u00A0') + char;
+                renderedValue += CURSOR_SENTINEL + char;
             } else {
                 renderedValue += isCursorPosition ? chalk.inverse(char) : char;
             }
             i++;
         }
         if (value.length > 0 && cursorOffset === value.length) {
-            renderedValue += chalk.inverse('\u00A0');
+            renderedValue += CURSOR_SENTINEL;
         }
     }
     useInput((input, key) => {
@@ -173,7 +180,8 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             onChange(nextValue);
         }
     }, { isActive: focus });
-    return (React.createElement(Text, null, placeholder ? (value.length > 0 ? renderedValue : renderedPlaceholder) : renderedValue));
+    return (React.createElement(Transform, { transform: line => line.replaceAll(CURSOR_SENTINEL, chalk.inverse(' ')) },
+        React.createElement(Text, null, placeholder ? (value.length > 0 ? renderedValue : renderedPlaceholder) : renderedValue)));
 }
 export default TextInput;
 export function UncontrolledTextInput({ initialValue = '', ...props }) {

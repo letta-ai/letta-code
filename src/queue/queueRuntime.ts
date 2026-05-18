@@ -21,6 +21,18 @@ type QueueItemBase = {
   agentId?: string;
   /** Optional conversation scope for listener-mode attribution. */
   conversationId?: string;
+  /**
+   * Cloud user id of the human who actually submitted this item,
+   * forwarded from cloud-api on the inbound `input` frame. The
+   * listener echoes this on the outbound createMessage HTTP call
+   * (X-Letta-Acting-User-Id header) so cloud attributes credits +
+   * rate limits to the actual sender — not the user whose API key
+   * spawned the sandbox / desktop runtime.
+   *
+   * Undefined for self-hosted, single-user, or pre-channel-split
+   * flows where cloud doesn't stamp the field.
+   */
+  actingUserId?: string;
   source: QueueItemSource;
   enqueuedAt: number;
 };
@@ -116,6 +128,11 @@ export interface QueueCallbacks {
     reason: QueueItemDroppedReason,
     queueLen: number,
   ) => void;
+  /**
+   * Fired when an item is explicitly removed via removeItem().
+   * queueLen is the post-removal queue depth.
+   */
+  onRemoved?: (item: QueueItem, queueLen: number) => void;
 }
 
 // ── Options ──────────────────────────────────────────────────────
@@ -323,6 +340,24 @@ export class QueueRuntime {
   resetBlockedState(): void {
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
+  }
+
+  // ── Remove ──────────────────────────────────────────────────────
+
+  /**
+   * Remove a specific item by ID. Returns the removed item, or null
+   * if no item with that ID exists. Fires onRemoved callback.
+   */
+  removeItem(id: string): QueueItem | null {
+    const idx = this.store.findIndex((item) => item.id === id);
+    if (idx === -1) return null;
+    const removed = this.store.splice(idx, 1)[0];
+    if (!removed) return null;
+    if (this.store.length === 0) {
+      this.blockedEmittedForNonEmpty = false;
+    }
+    this.safeCallback("onRemoved", removed, this.store.length);
+    return removed;
   }
 
   // ── Clear ──────────────────────────────────────────────────────

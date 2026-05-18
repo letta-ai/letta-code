@@ -13,6 +13,7 @@ export {
   getActiveTasks,
   getCronFileMtime,
   getTask,
+  isProcessAlive,
   listTasks,
   readCronFile,
   releaseSchedulerLease,
@@ -31,3 +32,9 @@ export {
   parseAt,
   parseEvery,
 } from "./parseInterval";
+
+export {
+  handleMissedOneShot,
+  shouldFireTask,
+  wrapCronPrompt,
+} from "./scheduler";

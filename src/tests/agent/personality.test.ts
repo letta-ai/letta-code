@@ -8,6 +8,7 @@ import {
   getPersonalityBlockValues,
   getPersonalityContent,
   getPersonalityHumanContent,
+  ONBOARDING_PERSONALITIES,
   PERSONALITY_OPTIONS,
   replaceBodyPreservingFrontmatter,
   resolvePersonalityId,
@@ -63,9 +64,10 @@ describe("personality helpers", () => {
     expect(getPersonalityHumanContent("codex")).toBe(defaultHuman);
   });
 
-  test("default create-agent personalities are exactly memo, linus, and kawaii", () => {
+  test("default create-agent personalities are exactly memo, blank, linus, and kawaii", () => {
     expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
       "memo",
+      "blank",
       "linus",
       "kawaii",
     ]);
@@ -99,6 +101,37 @@ describe("personality helpers", () => {
     }
   });
 
+  test("linus and kawaii include onboarding memory by default", async () => {
+    expect(ONBOARDING_PERSONALITIES).toEqual(["linus", "kawaii"]);
+
+    for (const personality of ["linus", "kawaii"] as const) {
+      const options = await buildCreateAgentOptionsForPersonality({
+        personalityId: personality,
+      });
+      const onboardingBlock = options.memoryBlocks?.find(
+        (block): block is { label: string; value: string } =>
+          "label" in block && block.label === "onboarding",
+      );
+
+      expect(onboardingBlock?.value).toContain(
+        "The person you are working with is new to Letta Code.",
+      );
+    }
+  });
+
+  test("letta-code and vanilla source personalities do not include onboarding", async () => {
+    for (const personality of ["memo", "claude", "codex"] as const) {
+      const options = await buildCreateAgentOptionsForPersonality({
+        personalityId: personality,
+      });
+      expect(
+        options.memoryBlocks?.some(
+          (block) => "label" in block && block.label === "onboarding",
+        ),
+      ).toBe(false);
+    }
+  });
+
   test("buildCreateAgentOptionsForPersonality preserves caller-provided tags", async () => {
     const options = await buildCreateAgentOptionsForPersonality({
       personalityId: "memo",
@@ -112,5 +145,16 @@ describe("personality helpers", () => {
     const definitions = getPersonalityBlockDefinitions("kawaii");
     expect(definitions.persona.description).toContain("sparkly memory");
     expect(definitions.human.description).toContain("senpai");
+  });
+
+  test("blank personality uses persona_blank.mdx content", () => {
+    const content = getPersonalityContent("blank");
+    expect(content).toContain("blank starter personality");
+    expect(content).toContain("ask the user to provide a personality prompt");
+  });
+
+  test("blank personality uses the default human block", () => {
+    const defaultHuman = getDefaultHumanContent();
+    expect(getPersonalityHumanContent("blank")).toBe(defaultHuman);
   });
 });

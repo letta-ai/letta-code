@@ -20,6 +20,7 @@ function createIoDeps() {
       runChatGPTOAuthConnectFlow: mock(() =>
         Promise.resolve({ providerName: "chatgpt-plus-pro" }),
       ),
+      providerStorageTargetLabel: () => "test storage",
     },
   };
 }
@@ -79,6 +80,73 @@ describe("connect subcommand", () => {
     expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
       "google_ai",
       "prompted-key",
+    );
+  });
+
+  test("connects API-key optional local providers without prompting", async () => {
+    const { deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(["ollama"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(deps.promptSecret).not.toHaveBeenCalled();
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "ollama",
+      "not-needed",
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "ollama",
+      "lc-ollama",
+      "not-needed",
+    );
+  });
+
+  test("passes local provider base URL and timeout options", async () => {
+    const { deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(
+      [
+        "lmstudio",
+        "--base-url",
+        "http://127.0.0.1:1234/v1",
+        "--timeout",
+        "600s",
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "lmstudio",
+      "lc-lmstudio",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      {
+        baseURL: "http://127.0.0.1:1234/v1",
+        timeout: 600_000,
+      },
+    );
+  });
+
+  test("connects llama.cpp local provider alias", async () => {
+    const { deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(
+      ["llama.cpp", "--base-url", "http://localhost:8080/v1"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "llama_cpp",
+      "lc-llama-cpp",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "http://localhost:8080/v1" },
     );
   });
 

@@ -5,7 +5,6 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { getClient } from "../../agent/client";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
 import {
   clearSubagentConfigCache,
@@ -13,6 +12,7 @@ import {
   getAllSubagentConfigs,
 } from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagents/manager";
+import { getBackend } from "../../backend";
 import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge.js";
 import {
   completeSubagent,
@@ -77,6 +77,14 @@ export interface SpawnBackgroundSubagentTaskArgs {
   forkedContext?: boolean;
   /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
+  /**
+   * Optional path to a transcript/payload file the subagent should read.
+   * Exposed to the child process as the `TRANSCRIPT_PATH` env var so
+   * prompts can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead
+   * of interpolating an absolute path. Currently used by reflection
+   * subagents.
+   */
+  transcriptPath?: string;
   /**
    * When true, skip injecting the completion notification into the primary
    * agent's message queue and hide from SubagentGroupDisplay.
@@ -319,6 +327,7 @@ export function spawnBackgroundSubagentTask(
     emitCompletionNotification,
     completionSummary,
     onComplete,
+    transcriptPath,
     deps,
   } = args;
   const shouldEmitCompletionNotification =
@@ -388,6 +397,7 @@ export function spawnBackgroundSubagentTask(
     maxTurns,
     forkedContext,
     parentAgentIdForSpawn,
+    transcriptPath,
   )
     .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";
@@ -655,22 +665,16 @@ export async function task(args: TaskArgs): Promise<string> {
       return "Error: Subagent type with fork: true cannot be combined with agent_id or conversation_id";
     }
     try {
-      const client = await getClient();
       const parentAgentId = getCurrentAgentId();
       const parentConvId = getConversationId() ?? "default";
       // Mark the forked conversation as hidden so it doesn't clutter the
       // parent agent's conversation list in the ADE. The subagent still
       // reads/writes this conversation normally — only archive status is
       // affected.
-      const forkedConv = (await client.post(
-        `/v1/conversations/${encodeURIComponent(parentConvId)}/fork`,
-        {
-          query: {
-            ...(parentConvId === "default" ? { agent_id: parentAgentId } : {}),
-            hidden: true,
-          },
-        },
-      )) as { id: string };
+      const forkedConv = await getBackend().forkConversation(parentConvId, {
+        ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
+        hidden: true,
+      });
       effectiveAgentId = parentAgentId;
       effectiveConversationId = forkedConv.id;
     } catch (error) {

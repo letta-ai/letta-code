@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  __testOverrideLoadChannelAccounts,
+  __testOverrideSaveChannelAccounts,
+  clearChannelAccountStores,
+} from "../../channels/accounts";
+import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
   clearPairingStores,
@@ -58,10 +63,13 @@ describe("ChannelRegistry", () => {
     }
     clearAllRoutes();
     clearPairingStores();
+    clearChannelAccountStores();
     __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
     __testOverrideLoadPairingStore(null);
     __testOverrideSavePairingStore(null);
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
   });
 
   test("pause() stops delivery but keeps singleton alive", () => {
@@ -89,6 +97,125 @@ describe("ChannelRegistry", () => {
 
     await registry.stopAll();
     expect(getChannelRegistry()).toBeNull();
+  });
+
+  test("/help gets a direct channel reply instead of being delivered to the agent", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        enabled: true,
+        token: "test-token",
+        dmPolicy: "open",
+        allowedUsers: [],
+        binding: { agentId: null, conversationId: null },
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: " /HELP ",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "77",
+    });
+    expect(replies[0]?.text).toContain("Telegram is connected to Letta Code");
+  });
+
+  test("unsupported slash commands get direct channel guidance instead of agent delivery", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/compact now",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "77",
+    });
+    expect(replies[0]?.text).toContain(
+      "Telegram received /compact now, but that slash command is not supported in channels yet.",
+    );
   });
 });
 
@@ -417,7 +544,7 @@ describe("pending channel control requests", () => {
     });
   });
 
-  test("invalid multi-question channel replies reprompt instead of approving", async () => {
+  test("freeform multi-question channel replies approve instead of reprompting", async () => {
     const replies: Array<{
       chatId: string;
       text: string;
@@ -427,9 +554,9 @@ describe("pending channel control requests", () => {
     const adapter = createAdapter(replies);
     registry.registerAdapter(adapter);
 
-    let approvalCalls = 0;
-    registry.setApprovalResponseHandler(async () => {
-      approvalCalls += 1;
+    const approvalResponses: unknown[] = [];
+    registry.setApprovalResponseHandler(async ({ response }) => {
+      approvalResponses.push(response);
       return true;
     });
 
@@ -473,13 +600,45 @@ describe("pending channel control requests", () => {
 
     await adapter.onMessage?.(createInboundMessage("deep refactor please"));
 
-    expect(approvalCalls).toBe(0);
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toEqual({
-      chatId: "C123",
-      text: "Please answer with numbered lines so I can map each reply to the right question.\nExample:\n1: your answer\n2: your answer",
-      replyToMessageId: "1712790000.000050",
-    });
+    expect(replies).toHaveLength(0);
+    expect(approvalResponses).toEqual([
+      {
+        request_id: "req-ask-2",
+        decision: {
+          behavior: "allow",
+          updated_input: {
+            questions: [
+              {
+                question: "Which approach should we use?",
+                header: "Approach",
+                options: [
+                  { label: "Fast path", description: "Ship quickly" },
+                  { label: "Deep refactor", description: "Refactor more" },
+                ],
+                multiSelect: false,
+              },
+              {
+                question: "Which environment should we test in?",
+                header: "Env",
+                options: [
+                  { label: "Staging", description: "Safer rollout path" },
+                  {
+                    label: "Production",
+                    description: "Use the live environment",
+                  },
+                ],
+                multiSelect: false,
+              },
+            ],
+            answers: {
+              "Which approach should we use?": "Deep refactor",
+              "Which environment should we test in?":
+                "Not specified. Full user reply: deep refactor please",
+            },
+          },
+        },
+      },
+    ]);
   });
 
   test("bootstrapped persisted control requests intercept replies before the listener finishes reconnecting", async () => {

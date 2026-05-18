@@ -10,6 +10,7 @@ import {
   parsePatchInput,
   parsePatchOperations,
 } from "../helpers/formatArgsDisplay.js";
+import { CLI_GLYPHS } from "../helpers/glyphs";
 import { getSubagentByToolCallId } from "../helpers/subagentState.js";
 import {
   getDisplayToolName,
@@ -99,10 +100,23 @@ import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
 import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
-import { SyntaxHighlightedCommand } from "./SyntaxHighlightedCommand";
+import {
+  clipStyledSpans,
+  highlightCommand,
+  type StyledSpan,
+} from "./SyntaxHighlightedCommand";
 import { TodoRenderer } from "./TodoRenderer.js";
 
 const LIVE_SHELL_ARGS_MAX_LINES = 2;
+
+/** Render an array of StyledSpans as inline <Text> elements */
+function renderSpans(spans: StyledSpan[]): ReactNode {
+  return spans.map((span, i) => (
+    <Text key={`${i}:${span.color}`} color={span.color}>
+      {span.text}
+    </Text>
+  ));
+}
 
 type ToolCallLine = {
   kind: "tool_call";
@@ -124,7 +138,7 @@ type ToolCallLine = {
  * - Two-column layout for tool calls (2 chars for dot)
  * - Smart wrapping that keeps function name and args together when possible
  * - Blinking dots for pending/running states
- * - Result shown with ⎿ prefix underneath
+ * - Result shown with └ prefix underneath
  */
 export const ToolCallMessage = memo(
   ({
@@ -132,11 +146,15 @@ export const ToolCallMessage = memo(
     precomputedDiffs,
     lastPlanFilePath,
     isStreaming,
+    expandedToolCallId,
+    lastShellToolCallId,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     lastPlanFilePath?: string | null;
     isStreaming?: boolean;
+    expandedToolCallId?: string | null;
+    lastShellToolCallId?: string | null;
   }) => {
     const columns = useTerminalWidth();
     try {
@@ -255,12 +273,7 @@ export const ToolCallMessage = memo(
           const truncatedDisplay = needsTruncation
             ? `${normalizedDisplay.slice(0, maxArgsChars - 1)}…`
             : normalizedDisplay;
-          if (rawName.toLowerCase() === "taskoutput") {
-            const separator = truncatedDisplay.startsWith("(") ? "" : " ";
-            args = colorizeArgs(separator + truncatedDisplay);
-          } else {
-            args = colorizeArgs(`(${truncatedDisplay})`);
-          }
+          args = colorizeArgs(truncatedDisplay);
         }
       }
 
@@ -280,6 +293,26 @@ export const ToolCallMessage = memo(
         } catch {
           // Keep shellCommand null and fall back to plain args rendering.
         }
+      }
+
+      // Pre-compute shell command highlighting for first-line + continuation rendering
+      let shellFirstLineSpans: StyledSpan[] | null = null;
+      let shellContinuationLines: StyledSpan[][] = [];
+      if (shellCommand) {
+        const highlightedLines = highlightCommand(shellCommand);
+        const nameWidth = displayName.length + 1; // +1 for space separator
+        const commandMaxColumns = Math.max(10, rightWidth - nameWidth);
+        // Filter out empty lines (e.g. trailing newline from shiki tokenizer)
+        const nonEmptyLines = highlightedLines.filter((spans) =>
+          spans.some((s) => s.text.length > 0),
+        );
+        const visibleLines = nonEmptyLines.slice(0, LIVE_SHELL_ARGS_MAX_LINES);
+        const clippedFirstLine = clipStyledSpans(
+          visibleLines[0] ?? [],
+          commandMaxColumns,
+        );
+        shellFirstLineSpans = clippedFirstLine.spans;
+        shellContinuationLines = visibleLines.slice(1);
       }
 
       // If name exceeds available width, fall back to simple wrapped rendering
@@ -327,7 +360,7 @@ export const ToolCallMessage = memo(
         if (!line.resultText) return null;
 
         const extractedText = extractMessageFromResult(line.resultText);
-        const prefix = `  ⎿  `; // Match old format: 2 spaces, glyph, 2 spaces
+        const prefix = `  ${CLI_GLYPHS.result}  `; // 2 spaces, glyph, 2 spaces
         const prefixWidth = 5; // Total width of prefix
         const contentWidth = Math.max(0, columns - prefixWidth);
 
@@ -705,7 +738,7 @@ export const ToolCallMessage = memo(
                             <Box width={gutterWidth} flexShrink={0}>
                               <Text>
                                 {"  "}
-                                <Text dimColor>⎿</Text>
+                                <Text dimColor>{CLI_GLYPHS.result}</Text>
                               </Text>
                             </Box>
                             <Box flexGrow={1}>
@@ -916,13 +949,13 @@ export const ToolCallMessage = memo(
                   {isMemoryTool(rawName) ? (
                     <>
                       <Text bold color={colors.tool.memoryName}>
-                        {displayName}
+                        {displayName}{" "}
                       </Text>
                       {args}
                     </>
                   ) : (
                     <>
-                      <Text bold>{displayName}</Text>
+                      <Text bold>{displayName} </Text>
                       {args}
                     </>
                   )}
@@ -935,29 +968,21 @@ export const ToolCallMessage = memo(
                       isMemoryTool(rawName) ? colors.tool.memoryName : undefined
                     }
                   >
-                    {displayName}
+                    {displayName}{" "}
                   </Text>
-                  {shellCommand ? (
+                  {shellFirstLineSpans ? (
                     <Box
                       flexGrow={1}
-                      width={Math.max(0, rightWidth - displayName.length)}
+                      width={Math.max(0, rightWidth - displayName.length - 1)}
                     >
-                      <SyntaxHighlightedCommand
-                        command={shellCommand}
-                        showPrompt={false}
-                        prefix="("
-                        suffix=")"
-                        maxLines={LIVE_SHELL_ARGS_MAX_LINES}
-                        maxColumns={Math.max(
-                          10,
-                          rightWidth - displayName.length,
-                        )}
-                      />
+                      <Text color={colors.shellSyntax.text}>
+                        {renderSpans(shellFirstLineSpans)}
+                      </Text>
                     </Box>
                   ) : args ? (
                     <Box
                       flexGrow={1}
-                      width={Math.max(0, rightWidth - displayName.length)}
+                      width={Math.max(0, rightWidth - displayName.length - 1)}
                     >
                       <Text wrap="wrap">{args}</Text>
                     </Box>
@@ -966,6 +991,28 @@ export const ToolCallMessage = memo(
               )}
             </Box>
           </Box>
+
+          {/* Shell command continuation lines with │ prefix */}
+          {shellContinuationLines.map((spans) => {
+            const clipped = clipStyledSpans(spans, columns - 5);
+            const lineKey = spans.map((s) => s.text).join("");
+            return (
+              <Box key={lineKey} flexDirection="row">
+                <Box width={5} flexShrink={0}>
+                  <Text color={colors.shellSyntax.text}>
+                    {"  "}
+                    {CLI_GLYPHS.continuation}
+                    {"  "}
+                  </Text>
+                </Box>
+                <Box flexGrow={1}>
+                  <Text color={colors.shellSyntax.text}>
+                    {renderSpans(clipped.spans)}
+                  </Text>
+                </Box>
+              </Box>
+            );
+          })}
 
           {/* Streaming output for shell tools during execution */}
           {isShellOutputTool(rawName) &&
@@ -982,6 +1029,10 @@ export const ToolCallMessage = memo(
               <CollapsedOutputDisplay
                 output={extractMessageFromResult(line.resultText)}
                 maxChars={300}
+                expanded={
+                  expandedToolCallId != null && expandedToolCallId === line.id
+                }
+                isLast={lastShellToolCallId === line.id}
               />
             )}
 

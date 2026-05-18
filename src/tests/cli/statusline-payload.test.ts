@@ -25,7 +25,7 @@ describe("statusLinePayload", () => {
       reflectionStepCount: 10,
       memfsEnabled: true,
       memfsDirectory: "/Users/test/.letta/agents/agent-123/memory",
-      permissionMode: "default",
+      permissionMode: "standard",
       networkPhase: "download",
       terminalWidth: 120,
     });
@@ -45,7 +45,7 @@ describe("statusLinePayload", () => {
     expect(payload.memfs.memory_dir).toBe(
       "/Users/test/.letta/agents/agent-123/memory",
     );
-    expect(payload.permission_mode).toBe("default");
+    expect(payload.permission_mode).toBe("standard");
     expect(payload.network_phase).toBe("download");
     expect(payload.terminal_width).toBe(120);
   });

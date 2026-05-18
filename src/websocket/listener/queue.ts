@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type WebSocket from "ws";
 import { getChannelRegistry } from "../../channels/registry";
 import type {
   ChannelTurnOutcome,
@@ -28,6 +27,7 @@ import {
   getPendingControlRequestCount,
 } from "./runtime";
 import { resolveRuntimeScope } from "./scope";
+import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   InboundMessagePayload,
@@ -257,11 +257,30 @@ function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
   return null;
 }
 
+/**
+ * Picks an acting cloud user id to attribute the outbound
+ * createMessage to. When a batch coalesces messages from multiple
+ * users we use the **last enqueued** sender — matches user intuition
+ * ("whoever just hit send pays") and matches the seq order the queue
+ * already preserves. Returns undefined when no item in the batch
+ * carries an actingUserId (self-hosted / pre-channel-split flow).
+ */
+export function pickBatchActingUserId(items: QueueItem[]): string | undefined {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const actingUserId = items[i]?.actingUserId;
+    if (actingUserId) {
+      return actingUserId;
+    }
+  }
+  return undefined;
+}
+
 function buildQueuedTurnMessage(
   runtime: ConversationRuntime,
   batch: DequeuedBatch,
 ): IncomingMessage | null {
   const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
+  const actingUserId = pickBatchActingUserId(batch.items);
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
     // No user message in the batch — this is a notification-only batch.
@@ -282,6 +301,7 @@ function buildQueuedTurnMessage(
       agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
       ...(channelTurnSources ? { channelTurnSources } : {}),
+      ...(actingUserId ? { actingUserId } : {}),
       messages: [
         {
           role: "user",
@@ -325,12 +345,61 @@ function buildQueuedTurnMessage(
   return {
     ...template,
     ...(channelTurnSources ? { channelTurnSources } : {}),
+    ...(actingUserId ? { actingUserId } : {}),
     messages,
   };
 }
 
 export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
   return parsed.messages.some((payload) => "content" in payload);
+}
+
+export function shouldProcessInboundMessageDirectly(
+  runtime: ConversationRuntime,
+  parsed: IncomingMessage,
+): boolean {
+  if (!shouldQueueInboundMessage(parsed)) {
+    return false;
+  }
+
+  if (
+    runtime.queueRuntime.length > 0 ||
+    runtime.queuePumpActive ||
+    runtime.queuePumpScheduled ||
+    runtime.pendingTurns > 0 ||
+    runtime.queuedMessagesByItemId.size > 0 ||
+    runtime.isProcessing ||
+    runtime.isRecoveringApprovals ||
+    runtime.cancelRequested ||
+    runtime.pendingApprovalResolvers.size > 0 ||
+    runtime.pendingApprovalBatchByToolCallId.size > 0 ||
+    runtime.recoveredApprovalState !== null ||
+    runtime.pendingInterruptedResults !== null ||
+    runtime.pendingInterruptedContext !== null ||
+    runtime.activeExecutingToolCallIds.length > 0 ||
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
+    runtime.activeRunId !== null ||
+    runtime.activeRunStartedAt !== null ||
+    runtime.activeAbortController !== null
+  ) {
+    return false;
+  }
+
+  const activeScope = resolveRuntimeScope(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+  return (
+    getListenerBlockedReason({
+      loopStatus: runtime.loopStatus,
+      isProcessing: runtime.isProcessing,
+      pendingApprovalsLen: activeScope
+        ? getPendingControlRequestCount(runtime.listener, activeScope)
+        : 0,
+      cancelRequested: runtime.cancelRequested,
+      isRecoveringApprovals: runtime.isRecoveringApprovals,
+    }) === null
+  );
 }
 
 export function consumeQueuedTurn(runtime: ConversationRuntime): {
@@ -410,7 +479,7 @@ function computeListenerQueueBlockedReason(
 
 async function drainQueuedMessages(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: (
     queuedTurn: IncomingMessage,
@@ -478,12 +547,21 @@ async function drainQueuedMessages(
       } finally {
         runtime.activeChannelTurnSources = null;
         if (channelTurnSources.length > 0) {
+          const outcome = mapTurnLifecycleOutcome(
+            runtime.lastStopReason,
+            didThrow,
+          );
+          const lifecycleError =
+            turnError ??
+            (outcome === "error"
+              ? (runtime.lastTerminalLoopErrorMessage ?? undefined)
+              : undefined);
           await dispatchChannelTurnLifecycleEvent({
             type: "finished",
             batchId: dequeuedBatch.batchId,
             sources: channelTurnSources,
-            outcome: mapTurnLifecycleOutcome(runtime.lastStopReason, didThrow),
-            ...(turnError ? { error: turnError } : {}),
+            outcome,
+            ...(lifecycleError ? { error: lifecycleError } : {}),
           });
         }
       }
@@ -502,7 +580,7 @@ async function drainQueuedMessages(
 
 export function scheduleQueuePump(
   runtime: ConversationRuntime,
-  socket: WebSocket,
+  socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: (
     queuedTurn: IncomingMessage,

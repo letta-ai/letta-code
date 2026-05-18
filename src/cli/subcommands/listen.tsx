@@ -106,6 +106,47 @@ function getListenerServerUrl(settings: {
   );
 }
 
+type ListenerStartupMode =
+  | { kind: "remote"; serverUrl: string }
+  | { kind: "local-channels"; serverUrl: string }
+  | { kind: "unsupported-self-hosted"; serverUrl: string };
+
+function normalizeListenerBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function isCloudListenerServerUrl(serverUrl: string): boolean {
+  return (
+    normalizeListenerBaseUrl(serverUrl) ===
+    normalizeListenerBaseUrl(getListenerOAuthDeps().LETTA_CLOUD_API_URL)
+  );
+}
+
+async function resolveListenerStartupMode(
+  channelNames: string[],
+): Promise<ListenerStartupMode> {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const serverUrl = getListenerServerUrl(settings);
+
+  if (isCloudListenerServerUrl(serverUrl)) {
+    return { kind: "remote", serverUrl };
+  }
+
+  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
+  // the local proxy has a full environment server that expects device
+  // registration. Treat it as "remote" so the listener registers and connects
+  // via WebSocket, even when channels are active.
+  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
+    return { kind: "remote", serverUrl };
+  }
+
+  if (channelNames.length > 0) {
+    return { kind: "local-channels", serverUrl };
+  }
+
+  return { kind: "unsupported-self-hosted", serverUrl };
+}
+
 async function refreshListenerAccessToken(
   settings: Awaited<
     ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -198,7 +239,7 @@ async function resolveListenerRegistrationOptions(
 
   let apiKey = settings.env?.LETTA_API_KEY;
 
-  if (serverUrl === LETTA_CLOUD_API_URL) {
+  if (isCloudListenerServerUrl(serverUrl)) {
     const expiresAt = settings.tokenExpiresAt;
     if (settings.refreshToken && expiresAt) {
       const now = Date.now();
@@ -245,6 +286,7 @@ async function resolveListenerRegistrationOptions(
 export const __listenSubcommandTestUtils = {
   flushListenerTelemetryEnd,
   getListenerServerUrl,
+  resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
   setOAuthDepsForTests(overrides: Partial<ListenerOAuthDeps> | null) {
     listenerOAuthDepsOverride = overrides
@@ -430,6 +472,76 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
+    const startupMode = await resolveListenerStartupMode(channelNames);
+
+    if (
+      startupMode.kind === "unsupported-self-hosted" &&
+      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR !== "1"
+    ) {
+      console.error(
+        `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
+      );
+      console.error(
+        "Start with --channels to run local channel adapters, or unset LETTA_BASE_URL to use Letta API remote environments.",
+      );
+      await flushListenerTelemetryEnd("listener_self_hosted_no_channels");
+      return 1;
+    }
+
+    sessionLog.log(`Session started (debug=${debugMode})`);
+    sessionLog.log(`deviceId: ${deviceId}`);
+    sessionLog.log(`connectionName: ${connectionName}`);
+
+    if (startupMode.kind === "local-channels") {
+      const connectionId = `local-${deviceId}`;
+      sessionLog.log(
+        `Starting local channel listener for ${startupMode.serverUrl}`,
+      );
+      sessionLog.log("Skipping environment registration");
+      console.log(
+        `Starting local channel listener for self-hosted server ${startupMode.serverUrl}`,
+      );
+      console.log("Skipping environment registration. Press Ctrl+C to stop.\n");
+
+      const { startLocalChannelListener } = await import(
+        "../../websocket/listen-client"
+      );
+
+      await startLocalChannelListener({
+        connectionId,
+        deviceId,
+        connectionName,
+        onWsEvent:
+          process.env.LETTA_LOG_WS_EVENTS === "1"
+            ? (direction, label, event) => {
+                sessionLog.wsEvent(direction, label, event);
+              }
+            : undefined,
+        onStatusChange: (status) => {
+          sessionLog.log(`status: ${status}`);
+          if (debugMode) {
+            console.log(`[${formatTimestamp()}] status: ${status}`);
+          }
+        },
+        onConnected: () => {
+          sessionLog.log("Local channel listener ready.");
+          if (debugMode) {
+            console.log(`[${formatTimestamp()}] Local channel listener ready.`);
+            console.log("");
+          }
+        },
+        onError: (error: Error) => {
+          sessionLog.log(`Error: ${error.message}`);
+          console.error(`[${formatTimestamp()}] Error: ${error.message}`);
+          void exitWithTelemetry(1, "listener_error");
+        },
+      });
+
+      return new Promise<number>(() => {
+        // Never resolves - runs until Ctrl+C
+      });
+    }
+
     let registerOptions: RegisterOptions;
 
     try {
@@ -453,10 +565,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return 1;
     }
 
-    sessionLog.log(`Session started (debug=${debugMode})`);
-    sessionLog.log(`deviceId: ${deviceId}`);
-    sessionLog.log(`connectionName: ${connectionName}`);
-
     if (debugMode) {
       console.log(
         `[${formatTimestamp()}] Registering with ${registerOptions.serverUrl}/v1/environments/register`,
@@ -468,7 +576,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       `Registering with ${registerOptions.serverUrl}/v1/environments/register`,
     );
 
-    const { connectionId, wsUrl } = await registerWithCloud(registerOptions);
+    const { connectionId, wsUrl, supportsSplitStatusChannels } =
+      await registerWithCloud(registerOptions);
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -492,6 +601,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const reregister = async (): Promise<{
       connectionId: string;
       wsUrl: string;
+      supportsSplitStatusChannels: boolean;
     }> => {
       sessionLog.log("Re-registering with retry...");
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
@@ -540,10 +650,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const startDebugClient = async (
         connId: string,
         url: string,
+        nextSupportsSplitStatusChannels: boolean,
       ): Promise<void> => {
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
+          supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
           deviceId,
           connectionName,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
@@ -572,7 +684,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             );
             try {
               const result = await reregister();
-              await startDebugClient(result.connectionId, result.wsUrl);
+              await startDebugClient(
+                result.connectionId,
+                result.wsUrl,
+                result.supportsSplitStatusChannels,
+              );
             } catch (error) {
               const msg =
                 error instanceof Error ? error.message : String(error);
@@ -595,7 +711,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
         });
       };
-      await startDebugClient(connectionId, wsUrl);
+      await startDebugClient(connectionId, wsUrl, supportsSplitStatusChannels);
     } else {
       // Normal mode: interactive Ink UI
       console.clear();
@@ -623,10 +739,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const startNormalClient = async (
         connId: string,
         url: string,
+        nextSupportsSplitStatusChannels: boolean,
       ): Promise<void> => {
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
+          supportsSplitStatusChannels: nextSupportsSplitStatusChannels,
           deviceId,
           connectionName,
           onWsEvent: shouldLogWsEvents ? wsEventLogger : undefined,
@@ -650,7 +768,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log("Environment expired, re-registering...");
             try {
               const result = await reregister();
-              await startNormalClient(result.connectionId, result.wsUrl);
+              await startNormalClient(
+                result.connectionId,
+                result.wsUrl,
+                result.supportsSplitStatusChannels,
+              );
             } catch (error) {
               const msg =
                 error instanceof Error ? error.message : String(error);
@@ -675,7 +797,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
         });
       };
-      await startNormalClient(connectionId, wsUrl);
+      await startNormalClient(connectionId, wsUrl, supportsSplitStatusChannels);
     }
 
     // Keep process alive

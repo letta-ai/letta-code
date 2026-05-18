@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 function readAppSource(): string {
-  const appPath = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-  return readFileSync(appPath, "utf-8");
+  return readInteractiveAppSource();
 }
 
 describe("queue ordering wiring", () => {
@@ -95,6 +93,8 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("handleModelSelect(action.modelId");
     expect(segment).toContain('action.type === "switch_toolset"');
     expect(segment).toContain("handleToolsetSelect(action.toolsetId");
+    expect(segment).toContain('action.type === "set_experiment"');
+    expect(segment).toContain("handleExperimentSelect(");
   });
 
   test("busy model/toolset handlers enqueue overlay actions", () => {
@@ -123,5 +123,17 @@ describe("queue ordering wiring", () => {
     expect(toolsetWindow).toContain("if (isAgentBusy())");
     expect(toolsetWindow).toContain("setQueuedOverlayAction({");
     expect(toolsetWindow).toContain('type: "switch_toolset"');
+
+    const experimentAnchor = source.indexOf(
+      "Experiment toggle queued – will update after current task completes",
+    );
+    expect(experimentAnchor).toBeGreaterThan(-1);
+    const experimentWindow = source.slice(
+      Math.max(0, experimentAnchor - 700),
+      experimentAnchor + 700,
+    );
+    expect(experimentWindow).toContain("if (isAgentBusy())");
+    expect(experimentWindow).toContain("setQueuedOverlayAction({");
+    expect(experimentWindow).toContain('type: "set_experiment"');
   });
 });

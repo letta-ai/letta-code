@@ -1,23 +1,48 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import {
+  assertMemoryRepoReadyForWrite,
+  buildGitAuthArgs,
+  buildMemfsGitProxyArgs,
+  buildNonInteractiveGitEnv,
   formatGitCredentialHelperPath,
+  getAgentRootDir,
   getGitRemoteUrl,
+  getMemoryRepoDir,
   isMemfsRemoteUrlForAgent,
+  isRepairableMemfsRemoteUrl,
   maybeUpdateMemoryRemoteOrigin,
   normalizeCredentialBaseUrl,
+  pullMemory,
+  shouldConfigurePersistentMemfsCredentialHelper,
 } from "../../agent/memoryGit";
+import {
+  __testOverrideGetClient,
+  getMemfsServerUrl,
+} from "../../backend/api/client";
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;
+const ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL =
+  process.env.LETTA_DESKTOP_DEBUG_PANEL;
+const ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL =
+  process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
+const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
 
 let tempDirs: string[] = [];
 
 afterEach(() => {
+  __testOverrideGetClient(null);
+
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -34,6 +59,25 @@ afterEach(() => {
   } else {
     process.env.LETTA_MEMFS_BASE_URL = ORIGINAL_LETTA_MEMFS_BASE_URL;
   }
+
+  if (ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL === undefined) {
+    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  } else {
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL;
+  }
+
+  if (ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL === undefined) {
+    delete process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
+  } else {
+    process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL =
+      ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL;
+  }
+
+  if (ORIGINAL_LETTA_API_KEY === undefined) {
+    delete process.env.LETTA_API_KEY;
+  } else {
+    process.env.LETTA_API_KEY = ORIGINAL_LETTA_API_KEY;
+  }
 });
 
 function makeGitRepo(): string {
@@ -41,6 +85,40 @@ function makeGitRepo(): string {
   tempDirs.push(dir);
   execSync("git init -b main", { cwd: dir, stdio: "ignore" });
   return dir;
+}
+
+function makeBareGitRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "memory-git-remote-"));
+  tempDirs.push(dir);
+  execSync("git init --bare -b main", { cwd: dir, stdio: "ignore" });
+  return dir;
+}
+
+function commitFile(repo: string, fileName: string, content: string): string {
+  writeFileSync(join(repo, fileName), content, "utf-8");
+  git(repo, `add ${fileName}`);
+  git(repo, `commit -m ${fileName}`);
+  return git(repo, "rev-parse HEAD").trim();
+}
+
+function makeSyncedRepo(): { repo: string; remote: string } {
+  const remote = makeBareGitRepo();
+  const repo = makeGitRepo();
+  git(repo, "config user.name Test");
+  git(repo, "config user.email test@example.com");
+  git(repo, `remote add origin ${remote}`);
+  commitFile(repo, "initial.md", "initial");
+  git(repo, "push -u origin main");
+  return { repo, remote };
+}
+
+function cloneRepo(remote: string): string {
+  const repo = mkdtempSync(join(tmpdir(), "memory-git-clone-"));
+  tempDirs.push(repo);
+  execSync(`git clone ${remote} .`, { cwd: repo, stdio: "ignore" });
+  git(repo, "config user.name Test");
+  git(repo, "config user.email test@example.com");
+  return repo;
 }
 
 function git(cwd: string, args: string): string {
@@ -84,9 +162,67 @@ describe("normalizeCredentialBaseUrl", () => {
     test("defaults to api.letta.com when LETTA_MEMFS_BASE_URL is unset, even if LETTA_BASE_URL is localhost", () => {
       process.env.LETTA_BASE_URL = "http://localhost:51338";
       delete process.env.LETTA_MEMFS_BASE_URL;
+      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
       expect(getGitRemoteUrl("agent-123")).toBe(
         "https://api.letta.com/v1/git/agent-123/state.git",
       );
+    });
+
+    test("keeps canonical memfs URL stable in desktop proxy transport sessions", () => {
+      process.env.LETTA_BASE_URL = "http://localhost:51338";
+      delete process.env.LETTA_MEMFS_BASE_URL;
+      process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+      process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
+
+      expect(getMemfsServerUrl()).toBe("https://api.letta.com");
+      expect(getGitRemoteUrl("agent-123")).toBe(
+        "https://api.letta.com/v1/git/agent-123/state.git",
+      );
+    });
+
+    test("uses desktop proxy as a transient git transport rewrite for network commands", () => {
+      process.env.LETTA_BASE_URL = "http://localhost:51338";
+      delete process.env.LETTA_MEMFS_BASE_URL;
+      process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
+
+      expect(buildMemfsGitProxyArgs(["push"])).toEqual([
+        "-c",
+        "url.http://localhost:51338/v1/git/.insteadOf=https://api.letta.com/v1/git/",
+      ]);
+      expect(buildMemfsGitProxyArgs(["pull", "--ff-only"])).toEqual([
+        "-c",
+        "url.http://localhost:51338/v1/git/.insteadOf=https://api.letta.com/v1/git/",
+      ]);
+    });
+
+    test("does not apply desktop proxy rewrite to local git config reads", () => {
+      delete process.env.LETTA_MEMFS_BASE_URL;
+      process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
+
+      expect(buildMemfsGitProxyArgs(["remote", "get-url", "origin"])).toEqual(
+        [],
+      );
+      expect(buildMemfsGitProxyArgs(["config", "--local", "--list"])).toEqual(
+        [],
+      );
+      expect(buildMemfsGitProxyArgs(["status", "--porcelain"])).toEqual([]);
+    });
+
+    test("does not proxy explicit self-hosted memfs URLs", () => {
+      process.env.LETTA_MEMFS_BASE_URL = "https://selfhost.example.com";
+      process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
+
+      expect(buildMemfsGitProxyArgs(["push"])).toEqual([]);
+      expect(getGitRemoteUrl("agent-123")).toBe(
+        "https://selfhost.example.com/v1/git/agent-123/state.git",
+      );
+    });
+
+    test("does not persist credential helpers when desktop proxy transport is active", () => {
+      delete process.env.LETTA_MEMFS_BASE_URL;
+      process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
+
+      expect(shouldConfigurePersistentMemfsCredentialHelper()).toBe(false);
     });
   });
 
@@ -113,6 +249,27 @@ describe("normalizeCredentialBaseUrl", () => {
       expect(isMemfsRemoteUrlForAgent("/tmp/remote.git", "agent-123")).toBe(
         false,
       );
+    });
+
+    test("recognizes malformed but repairable memfs remotes", () => {
+      expect(
+        isRepairableMemfsRemoteUrl(
+          "http://localhost:57294/v1/git",
+          "agent-123",
+        ),
+      ).toBe(true);
+      expect(
+        isRepairableMemfsRemoteUrl(
+          "http://localhost:57294/v1/git/agent-123",
+          "agent-123",
+        ),
+      ).toBe(true);
+      expect(
+        isRepairableMemfsRemoteUrl(
+          "http://localhost:57294/v1/git/agent-999/state.git",
+          "agent-123",
+        ),
+      ).toBe(false);
     });
   });
 
@@ -155,6 +312,49 @@ describe("formatGitCredentialHelperPath", () => {
   });
 });
 
+describe("git auth hardening", () => {
+  test("auth args pass Basic auth and suppress inherited credential helpers", () => {
+    const args = buildGitAuthArgs("token-123");
+
+    expect(args.slice(0, 2)).toEqual(["-c", "credential.helper="]);
+    expect(args).toContain("core.askPass=");
+    expect(args.join("\n")).toContain("http.extraHeader=Authorization: Basic");
+  });
+
+  test("does NOT add Pierre routing header when LETTA_MEMFS_BACKEND is unset", () => {
+    const args = buildGitAuthArgs("token-123", { PATH: "/usr/bin" });
+    expect(args.join("\n")).not.toContain("x-letta-memfs-backend");
+  });
+
+  test("adds Pierre routing header when LETTA_MEMFS_BACKEND=pierre", () => {
+    const args = buildGitAuthArgs("token-123", {
+      LETTA_MEMFS_BACKEND: "pierre",
+    });
+    expect(args.join("\n")).toContain(
+      "http.extraHeader=x-letta-memfs-backend: pierre",
+    );
+  });
+
+  test("does NOT add Pierre routing header for other LETTA_MEMFS_BACKEND values", () => {
+    for (const value of ["memfs-py", "dual", "PIERRE", ""]) {
+      const args = buildGitAuthArgs("token-123", {
+        LETTA_MEMFS_BACKEND: value,
+      });
+      expect(args.join("\n")).not.toContain("x-letta-memfs-backend");
+    }
+  });
+
+  test("git env disables terminal and Git Credential Manager prompts", () => {
+    const env = buildNonInteractiveGitEnv({ PATH: "/usr/bin" });
+
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.GCM_INTERACTIVE).toBe("never");
+    expect(env.GIT_ASKPASS).toBe("");
+    expect(env.SSH_ASKPASS).toBe("");
+  });
+});
+
 describe("maybeUpdateMemoryRemoteOrigin", () => {
   test("updates stale memfs origin URL and clears stale origin pushurl", async () => {
     const repo = makeGitRepo();
@@ -168,10 +368,59 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      expectedOrigin,
+    );
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
+  });
+
+  test("repairs stale desktop proxy origin back to canonical cloud while proxy transport is active", async () => {
+    const repo = makeGitRepo();
+    const agentId = "agent-123";
+    const staleOrigin = getGitRemoteUrl(agentId, "http://localhost:50864");
+
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:54085";
+    delete process.env.LETTA_MEMFS_BASE_URL;
+    git(repo, `remote add origin ${staleOrigin}`);
+
+    await maybeUpdateMemoryRemoteOrigin(repo, agentId);
+
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      "https://api.letta.com/v1/git/agent-123/state.git",
+    );
+  });
+
+  test("repairs malformed memfs origin missing agent and repo path", async () => {
+    const repo = makeGitRepo();
+    const agentId = "agent-123";
+
+    process.env.LETTA_BASE_URL = "http://localhost:54085";
+    process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:54085";
+    delete process.env.LETTA_MEMFS_BASE_URL;
+    git(repo, "remote add origin http://localhost:54085/v1/git");
+
+    await maybeUpdateMemoryRemoteOrigin(repo, agentId);
+
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      "https://api.letta.com/v1/git/agent-123/state.git",
+    );
+  });
+
+  test("repairs legacy memfs origin missing state.git suffix", async () => {
+    const repo = makeGitRepo();
+    const agentId = "agent-123";
+
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    git(repo, "remote add origin https://api.letta.com/v1/git/agent-123");
+
+    await maybeUpdateMemoryRemoteOrigin(repo, agentId);
+
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      "https://api.letta.com/v1/git/agent-123/state.git",
+    );
   });
 
   test("clears origin pushurl even when origin URL is already current", async () => {
@@ -186,7 +435,9 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      expectedOrigin,
+    );
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
@@ -206,7 +457,9 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      expectedOrigin,
+    );
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
@@ -224,7 +477,7 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(origin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(origin);
     expect(
       git(repo, "config --local --get-all remote.origin.pushurl").trim(),
     ).toBe(pushUrl);
@@ -246,9 +499,81 @@ describe("maybeUpdateMemoryRemoteOrigin", () => {
 
     await maybeUpdateMemoryRemoteOrigin(repo, agentId);
 
-    expect(git(repo, "remote get-url origin").trim()).toBe(expectedOrigin);
+    expect(git(repo, "config --get remote.origin.url").trim()).toBe(
+      expectedOrigin,
+    );
     expect(
       gitOrEmpty(repo, "config --local --get-all remote.origin.pushurl"),
     ).toBe("");
+  });
+});
+
+describe("pullMemory recovery", () => {
+  test("recovers clean unrelated local memory history by resetting to origin/main", async () => {
+    const remote = makeBareGitRepo();
+    const source = cloneRepo(remote);
+    commitFile(source, "remote.md", "remote memory");
+    git(source, "push -u origin main");
+
+    const agentId = `agent-test-${Date.now()}`;
+    const agentRoot = getAgentRootDir(agentId);
+    tempDirs.push(agentRoot);
+    const memoryDir = getMemoryRepoDir(agentId);
+    mkdirSync(memoryDir, { recursive: true });
+    execSync("git init -b main", { cwd: memoryDir, stdio: "ignore" });
+    git(memoryDir, "config user.name Test");
+    git(memoryDir, "config user.email test@example.com");
+    git(memoryDir, `remote add origin ${remote}`);
+    commitFile(memoryDir, "local.md", "local placeholder");
+    git(memoryDir, "fetch origin main");
+    git(memoryDir, "branch --set-upstream-to origin/main main");
+
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await pullMemory(agentId);
+
+    expect(result.updated).toBe(true);
+    expect(result.summary).toContain("Recovered memory repo by resetting");
+    expect(existsSync(join(memoryDir, "remote.md"))).toBe(true);
+    expect(existsSync(join(memoryDir, "local.md"))).toBe(false);
+  });
+});
+
+describe("assertMemoryRepoReadyForWrite", () => {
+  test("pushes clean local commits before blocking memory writes", async () => {
+    const { repo, remote } = makeSyncedRepo();
+    const localSha = commitFile(repo, "local.md", "local");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    await assertMemoryRepoReadyForWrite(repo, "agent-123");
+
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("0");
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(localSha);
+  });
+
+  test("leaves clean behind repos for write-time conflict replay", async () => {
+    const { repo, remote } = makeSyncedRepo();
+    const originalSha = git(repo, "rev-parse HEAD").trim();
+    const other = cloneRepo(remote);
+    commitFile(other, "remote.md", "remote");
+    git(other, "push");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    await assertMemoryRepoReadyForWrite(repo, "agent-123");
+
+    expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
   });
 });

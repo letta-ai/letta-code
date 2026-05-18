@@ -54,8 +54,9 @@ test("preserves existing Slack angle-bracket tokens", () => {
   ).toBe("hi <@U123> see <https://example.com|docs> and <!here>");
 });
 
-test("renders bullet lists for Slack", () => {
-  expect(markdownToSlackMrkdwn("- one\n- two")).toBe("• one\n• two");
+test("keeps Slack bullet lists ASCII-safe", () => {
+  expect(markdownToSlackMrkdwn("- one\n- two")).toBe("- one\n- two");
+  expect(markdownToSlackMrkdwn("+ one\n* two")).toBe("- one\n- two");
 });
 
 test("renders headings as bold text for Slack", () => {
@@ -77,6 +78,18 @@ test("renders markdown links with balanced parentheses and escaped attributes", 
     markdownToTelegramHtml('[**docs**](https://example.com/?q="x"&ref=(test))'),
   ).toBe(
     '<a href="https://example.com/?q=&quot;x&quot;&amp;ref=(test)"><b>docs</b></a>',
+  );
+});
+
+test("renders Telegram block quotes as HTML blockquote tags", () => {
+  expect(markdownToTelegramHtml("> quoted\n> **bold** & safe\n\nnormal")).toBe(
+    "<blockquote>quoted\n<b>bold</b> &amp; safe</blockquote>\n\nnormal",
+  );
+});
+
+test("does not render block quote markers inside Telegram code blocks", () => {
+  expect(markdownToTelegramHtml("```\n> quoted\n```")).toBe(
+    "<pre>&gt; quoted</pre>",
   );
 });
 

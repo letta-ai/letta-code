@@ -23,6 +23,7 @@ import { resolveEligibleProactiveSlackAccount } from "../../channels/slack/proac
 import type {
   ChannelAdapter,
   ChannelRoute,
+  ChannelTurnSource,
   OutboundChannelMessage,
   SupportedChannelId,
 } from "../../channels/types";
@@ -233,9 +234,46 @@ function applyTelegramInlineFormatting(text: string): string {
     .replace(/(^|[^\w_])_([^\s_](?:[\s\S]*?[^\s_])?)_(?!\w)/g, "$1<i>$2</i>");
 }
 
+function replaceTelegramBlockQuotes(
+  text: string,
+  placeholders: string[],
+): string {
+  const lines = text.split("\n");
+  const formattedLines: string[] = [];
+
+  for (let index = 0; index < lines.length; index++) {
+    const quoteMatch = lines[index]?.match(/^ {0,3}> ?(.*)$/);
+    if (!quoteMatch) {
+      formattedLines.push(lines[index] ?? "");
+      continue;
+    }
+
+    const quoteLines: string[] = [quoteMatch[1] ?? ""];
+    while (index + 1 < lines.length) {
+      const nextMatch = lines[index + 1]?.match(/^ {0,3}> ?(.*)$/);
+      if (!nextMatch) {
+        break;
+      }
+      quoteLines.push(nextMatch[1] ?? "");
+      index++;
+    }
+
+    formattedLines.push(
+      createTelegramPlaceholder(
+        placeholders,
+        `<blockquote>${formatTelegramText(quoteLines.join("\n"), {
+          enableBlockQuotes: false,
+        })}</blockquote>`,
+      ),
+    );
+  }
+
+  return formattedLines.join("\n");
+}
+
 function formatTelegramText(
   text: string,
-  options?: { enableLinks?: boolean },
+  options?: { enableBlockQuotes?: boolean; enableLinks?: boolean },
 ): string {
   const placeholders: string[] = [];
   let result = replaceFencedCodeBlocks(text, placeholders);
@@ -243,8 +281,15 @@ function formatTelegramText(
 
   if (options?.enableLinks !== false) {
     result = replaceMarkdownLinks(result, placeholders, (label) =>
-      formatTelegramText(label, { enableLinks: false }),
+      formatTelegramText(label, {
+        enableBlockQuotes: false,
+        enableLinks: false,
+      }),
     );
+  }
+
+  if (options?.enableBlockQuotes !== false) {
+    result = replaceTelegramBlockQuotes(result, placeholders);
   }
 
   result = escapeTelegramHtml(result);
@@ -408,7 +453,7 @@ function normalizeSlackBlockFormatting(text: string): string {
 
       const bulletMatch = line.match(/^(\s*)[-+*]\s+(.+)$/);
       if (bulletMatch) {
-        return `${bulletMatch[1] ?? ""}• ${bulletMatch[2] ?? ""}`;
+        return `${bulletMatch[1] ?? ""}- ${bulletMatch[2] ?? ""}`;
       }
 
       return line;
@@ -484,6 +529,8 @@ interface MessageChannelArgs {
   title?: string;
   /** Injected by executeTool() — NOT read from global context. */
   parentScope?: { agentId: string; conversationId: string };
+  /** Injected by executeTool() for channel-originated turns. */
+  channelTurnSources?: ChannelTurnSource[];
 }
 
 interface NormalizedMessageChannelInput {
@@ -554,17 +601,7 @@ function normalizeMessageAction(
   rawAction: string,
 ): ChannelMessageActionName | null {
   const normalized = rawAction.trim().toLowerCase();
-
-  switch (normalized) {
-    case "send":
-      return "send";
-    case "react":
-      return "react";
-    case "upload-file":
-      return "upload-file";
-    default:
-      return null;
-  }
+  return normalized.length > 0 ? normalized : null;
 }
 
 function normalizeMessageChannelInput(
@@ -657,6 +694,40 @@ function buildSyntheticChannelRoute(params: {
   };
 }
 
+function inferAccountIdFromChannelTurnSources(params: {
+  input: NormalizedMessageChannelInput;
+  scope: { agentId: string; conversationId: string };
+  channelTurnSources?: ChannelTurnSource[];
+}): string | undefined {
+  const chatId = params.input.chatId;
+  if (!chatId) {
+    return undefined;
+  }
+
+  const accountIds = new Set<string>();
+  for (const source of params.channelTurnSources ?? []) {
+    if (
+      source.channel !== params.input.channel ||
+      source.chatId !== chatId ||
+      source.agentId !== params.scope.agentId ||
+      source.conversationId !== params.scope.conversationId
+    ) {
+      continue;
+    }
+    if (
+      params.input.threadId !== undefined &&
+      (source.threadId ?? null) !== (params.input.threadId ?? null)
+    ) {
+      continue;
+    }
+    if (source.accountId?.trim()) {
+      accountIds.add(source.accountId.trim());
+    }
+  }
+
+  return accountIds.size === 1 ? [...accountIds][0] : undefined;
+}
+
 async function resolveExplicitMessageChannelContext(params: {
   input: NormalizedMessageChannelInput;
   scope: { agentId: string; conversationId: string };
@@ -727,14 +798,24 @@ export async function message_channel(
   try {
     let executionContext: ResolvedMessageChannelExecutionContext | string;
     if (input.chatId) {
+      const resolvedAccountId =
+        input.accountId ??
+        inferAccountIdFromChannelTurnSources({
+          input,
+          scope,
+          channelTurnSources: args.channelTurnSources,
+        });
       const route: ChannelRoute | null = registry.getRouteForScope(
         input.channel,
         input.chatId,
         scope.agentId,
         scope.conversationId,
+        resolvedAccountId,
       );
       if (!route) {
-        return `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation.`;
+        return resolvedAccountId
+          ? `Error: No route for chat_id "${input.chatId}" on "${input.channel}" account "${resolvedAccountId}" for this agent/conversation.`
+          : `Error: No route for chat_id "${input.chatId}" on "${input.channel}" for this agent/conversation. If multiple channel accounts can receive this chat, pass accountId (from the channel notification's account_id) to disambiguate.`;
       }
 
       const adapter = registry.getAdapter(input.channel, route.accountId);

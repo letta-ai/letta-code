@@ -9,9 +9,13 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getServerUrl } from "../../agent/client";
 import { getConversationId, getCurrentAgentId } from "../../agent/context";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import {
+  getMemoryFilesystemRoot,
+  resolveScopedMemoryDir,
+} from "../../agent/memoryFilesystem";
+import { getServerUrl } from "../../backend/api/client";
+import { isLocalBackendNoMemfsEnvEnabled } from "../../backend/local/paths";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 
@@ -134,9 +138,9 @@ export function resolveLettaInvocation(
       return {
         command: execPath,
         args: [
-          "--loader:.md=text",
-          "--loader:.mdx=text",
-          "--loader:.txt=text",
+          "--loader=.md:text",
+          "--loader=.mdx:text",
+          "--loader=.txt:text",
           "run",
           resolvedScriptPath,
         ],
@@ -180,6 +184,79 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
     mode: 0o755,
   });
   return shimDir;
+}
+
+const LETTA_CLOUD_MEMFS_GIT_BASE_URL = "https://api.letta.com";
+const LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV = "LETTA_MEMFS_GIT_PROXY_BASE_URL";
+
+function isLocalhostUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function trimBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+function getShellMemfsBaseUrl(env: NodeJS.ProcessEnv): string {
+  // Use the shell environment as the source of truth for command execution.
+  // This keeps Desktop's transient LETTA_BASE_URL proxy from affecting the
+  // canonical MemFS git remote, while still allowing an explicit MemFS base
+  // override to opt out of the Cloud rewrite.
+  return env.LETTA_MEMFS_BASE_URL || LETTA_CLOUD_MEMFS_GIT_BASE_URL;
+}
+
+function getShellMemfsGitProxyRewriteConfig(
+  env: NodeJS.ProcessEnv,
+): { configKey: string; configValue: string } | null {
+  const rawProxyBaseUrl = env[LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV]?.trim();
+  if (!rawProxyBaseUrl || !isLocalhostUrl(rawProxyBaseUrl)) {
+    return null;
+  }
+
+  const memfsBaseUrl = trimBaseUrl(getShellMemfsBaseUrl(env));
+  if (!memfsBaseUrl.includes("api.letta.com")) {
+    return null;
+  }
+
+  const proxyBaseUrl = trimBaseUrl(rawProxyBaseUrl);
+  const proxyPrefix = `${proxyBaseUrl}/v1/git/`;
+  const memfsPrefix = `${memfsBaseUrl}/v1/git/`;
+
+  return {
+    configKey: `url.${proxyPrefix}.insteadOf`,
+    configValue: memfsPrefix,
+  };
+}
+
+function appendGitConfigEnv(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: string,
+): void {
+  const rawCount = env.GIT_CONFIG_COUNT;
+  const count = rawCount && /^\d+$/.test(rawCount) ? Number(rawCount) : 0;
+  env[`GIT_CONFIG_KEY_${count}`] = key;
+  env[`GIT_CONFIG_VALUE_${count}`] = value;
+  env.GIT_CONFIG_COUNT = String(count + 1);
+}
+
+function applyMemfsGitProxyEnv(env: NodeJS.ProcessEnv): void {
+  const rewrite = getShellMemfsGitProxyRewriteConfig(env);
+  if (!rewrite) {
+    return;
+  }
+
+  appendGitConfigEnv(env, rewrite.configKey, rewrite.configValue);
+  env.GIT_TERMINAL_PROMPT = "0";
+  env.GCM_INTERACTIVE = "never";
+  env.GIT_ASKPASS = "";
+  env.SSH_ASKPASS = "";
 }
 
 /**
@@ -241,14 +318,41 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.AGENT_ID = agentId;
 
     try {
-      if (settingsManager.isMemfsEnabled(agentId)) {
-        const memoryDir = getMemoryFilesystemRoot(agentId);
+      const localBackendNoMemfs = isLocalBackendNoMemfsEnvEnabled();
+      const localBackendEnabled =
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
+        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";
+      if (
+        !localBackendNoMemfs &&
+        (settingsManager.isMemfsEnabled(agentId) || localBackendEnabled)
+      ) {
+        const memoryDir = resolveScopedMemoryDir({ agentId });
+        if (!memoryDir) {
+          throw new Error("Unable to resolve memory directory");
+        }
         env.LETTA_MEMORY_DIR = memoryDir;
         env.MEMORY_DIR = memoryDir;
       } else {
-        // Clear inherited/stale memory-dir vars for non-memfs agents.
-        delete env.LETTA_MEMORY_DIR;
-        delete env.MEMORY_DIR;
+        const inheritedMemoryDir = process.env.MEMORY_DIR?.trim();
+        const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
+        const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
+        const inheritedParentMemoryDir = parentAgentId
+          ? getMemoryFilesystemRoot(parentAgentId)
+          : null;
+
+        if (
+          inheritedMemoryDir &&
+          inheritedParentMemoryDir &&
+          path.resolve(inheritedMemoryDir) ===
+            path.resolve(inheritedParentMemoryDir)
+        ) {
+          env.MEMORY_DIR = inheritedMemoryDir;
+          env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;
+        } else {
+          // Clear inherited/stale memory-dir vars for non-memfs agents.
+          delete env.LETTA_MEMORY_DIR;
+          delete env.MEMORY_DIR;
+        }
       }
     } catch {
       // Settings may not be initialized in tests/startup; preserve inherited values.
@@ -307,6 +411,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (!env.TERM) {
     env.TERM = "xterm-256color";
   }
+
+  // Desktop's local listener only has a localhost session token; the proxy owns
+  // the real Cloud token. Apply a process-local git URL rewrite so agent-run
+  // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
+  // ephemeral localhost URL into the memory repo's git config.
+  applyMemfsGitProxyEnv(env);
 
   return env;
 }

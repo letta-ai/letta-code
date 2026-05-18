@@ -20,6 +20,7 @@ import type {
 import { sharedReminderProviders } from "../../reminders/engine";
 import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
 import { clearTools, loadSpecificTools } from "../../tools/manager";
+import { shouldProcessInboundMessageDirectly } from "../../websocket/listener/queue";
 import { resolveRecoveredApprovalResponse } from "../../websocket/listener/recovery";
 import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
 import type { IncomingMessage } from "../../websocket/listener/types";
@@ -45,6 +46,9 @@ const defaultDrainResult: DrainResult = {
   apiDurationMs: 0,
 };
 
+const TEST_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+
 const sendMessageStreamCalls: Array<{
   conversationId: string;
   messages: unknown[];
@@ -54,6 +58,7 @@ const sendMessageStreamCalls: Array<{
       clientTools: Array<{ name: string }>;
       loadedToolNames: string[];
     };
+    skipImageNormalization?: boolean;
   };
 }> = [];
 const sendMessageStreamMock = mock(
@@ -169,6 +174,31 @@ const classifyApprovalsMock = mock(async () => ({
 const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("../../cli/helpers/stream");
+// Capture real implementations BEFORE applying `mock.module(...)` so they
+// can be restored in afterAll. Bun's `mock.restore()` only resets mock
+// function state — it does NOT undo `mock.module()` swaps, so mocked modules
+// would otherwise leak into subsequent test files (e.g. approvalClassification.test.ts)
+// because module identity is process-global.
+//
+// Note: ES module namespace exports are LIVE bindings, so we copy each
+// function reference into a local `const` here. Re-reading
+// `module.classifyApprovals` after `mock.module` runs would return the mocked
+// value, and feeding that back into `mockImplementation` would cause infinite
+// recursion at restore time.
+const realApprovalClassificationModule = await import(
+  "../../cli/helpers/approvalClassification"
+);
+const realClassifyApprovals =
+  realApprovalClassificationModule.classifyApprovals;
+const realApprovalExecutionModule = await import(
+  "../../agent/approval-execution"
+);
+const realExecuteApprovalBatch =
+  realApprovalExecutionModule.executeApprovalBatch;
+const realApprovalRecoveryModule = await import(
+  "../../agent/approval-recovery"
+);
+const realFetchRunErrorDetail = realApprovalRecoveryModule.fetchRunErrorDetail;
 
 mock.module("../../agent/message", () => ({
   sendMessageStream: sendMessageStreamMock,
@@ -201,7 +231,7 @@ mock.module("../../cli/helpers/stream", () => ({
   drainStreamWithResume: drainStreamWithResumeMock,
 }));
 
-mock.module("../../agent/client", () => ({
+mock.module("../../backend/api/client", () => ({
   getClient: getClientMock,
   getServerUrl: () => "https://example.test",
   clearLastSDKDiagnostic: () => {},
@@ -221,6 +251,9 @@ mock.module("../../agent/approval-recovery", () => ({
 }));
 
 const listenClientModule = await import("../../websocket/listen-client");
+const { sendApprovalContinuationWithRetry } = await import(
+  "../../websocket/listener/send"
+);
 const {
   __listenClientTestUtils,
   requestApprovalOverWS,
@@ -338,6 +371,29 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   afterAll(() => {
+    // Bun's `mock.module()` swaps are process-global and are NOT undone by
+    // `mock.restore()` (which only resets mock function call history /
+    // queued return values). Subsequent test files that statically import
+    // these module paths would otherwise receive the mocked version, with
+    // any leftover `mockResolvedValueOnce(...)` values bleeding into them.
+    //
+    // Mitigation: reset the underlying mock functions and re-point them at
+    // the real implementations captured before mocking. The `mock.module`
+    // factory always returns the same wrapper object, so swapping the
+    // function reference behind it propagates to all consumers.
+    classifyApprovalsMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: real implementations have wider signatures than the narrow zero-arg mocks
+    (classifyApprovalsMock as any).mockImplementation(realClassifyApprovals);
+    executeApprovalBatchMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (executeApprovalBatchMock as any).mockImplementation(
+      realExecuteApprovalBatch,
+    );
+    fetchRunErrorDetailMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (fetchRunErrorDetailMock as any).mockImplementation(
+      realFetchRunErrorDetail,
+    );
     mock.restore();
   });
 
@@ -390,6 +446,53 @@ describe("listen-client multi-worker concurrency", () => {
     await turnA;
     expect(runtimeA.isProcessing).toBe(false);
     expect(__listenClientTestUtils.getListenerStatus(listener)).toBe("idle");
+  });
+
+  test("listener turns skip duplicate shared image normalization", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-image",
+    );
+    const socket = new MockSocket();
+    const drain = createDeferredDrain();
+    drainHandlers.set("conv-image", () => drain.promise);
+
+    const turn = __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-image",
+        messages: [
+          {
+            role: "user" as const,
+            content: [
+              { type: "text" as const, text: "inspect this" },
+              {
+                type: "image" as const,
+                source: {
+                  type: "base64" as const,
+                  media_type: "image/png",
+                  data: TEST_PNG_BASE64,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    await waitFor(() => sendMessageStreamCalls.length === 1);
+
+    expect(sendMessageStreamCalls[0]?.opts).toMatchObject({
+      skipImageNormalization: true,
+    });
+
+    drain.resolve(defaultDrainResult);
+    await turn;
   });
 
   test("keeps default conversations separate for different agents during concurrent turns", async () => {
@@ -816,6 +919,34 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
   });
 
+  test("idle inbound user messages bypass the queue runtime", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-idle",
+    );
+    const incoming = makeIncomingMessage("agent-1", "conv-idle", "hello");
+
+    expect(shouldProcessInboundMessageDirectly(runtime, incoming)).toBe(true);
+
+    const queueInput = {
+      kind: "message",
+      source: "user",
+      content: "queued",
+      clientMessageId: "cm-queued",
+      agentId: "agent-1",
+      conversationId: "conv-idle",
+    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
+    const queuedItem = runtime.queueRuntime.enqueue(queueInput);
+    if (!queuedItem) {
+      throw new Error("Expected queued item to be created");
+    }
+    runtime.queuedMessagesByItemId.set(queuedItem.id, incoming);
+
+    expect(shouldProcessInboundMessageDirectly(runtime, incoming)).toBe(false);
+  });
+
   test("channel queue items re-enter the listener loop as normal queued turns", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.setActiveRuntime(listener);
@@ -982,6 +1113,87 @@ describe("listen-client multi-worker concurrency", () => {
       batchId: "batch-1",
       sources: channelTurnSources,
       outcome: "completed",
+    });
+  });
+
+  test("channel queue lifecycle includes terminal loop error text when the turn stops with error", async () => {
+    const lifecycleEvents: Array<Record<string, unknown>> = [];
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+      handleTurnLifecycleEvent: async (event) => {
+        lifecycleEvents.push(event as unknown as Record<string, unknown>);
+      },
+    } satisfies ChannelAdapter);
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-channel-error",
+    );
+    const socket = new MockSocket();
+    const channelTurnSources = [
+      {
+        channel: "telegram" as const,
+        accountId: "acct-telegram",
+        chatId: "515978553",
+        chatType: "direct" as const,
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-channel-error",
+      },
+    ];
+
+    const enqueuedItem = __listenClientTestUtils.enqueueChannelTurn(
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conv-channel-error",
+      },
+      [
+        {
+          type: "text" as const,
+          text: '<channel-notification source="telegram" chat_id="515978553">test</channel-notification>',
+        },
+      ],
+      channelTurnSources,
+    );
+
+    expect(enqueuedItem).not.toBeNull();
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async () => {
+        runtime.lastStopReason = "error";
+        runtime.lastTerminalLoopErrorMessage =
+          "ChatGPT usage limit reached. Resets at 1:00 PM.";
+      },
+    );
+
+    await waitFor(() => lifecycleEvents.length === 2);
+
+    expect(lifecycleEvents[1]).toEqual({
+      type: "finished",
+      batchId: "batch-1",
+      sources: channelTurnSources,
+      outcome: "error",
+      error: "ChatGPT usage limit reached. Resets at 1:00 PM.",
     });
   });
 
@@ -1397,6 +1609,7 @@ describe("listen-client multi-worker concurrency", () => {
     expect(firstSendMessages?.[0]).toMatchObject({
       type: "approval",
       approvals: [],
+      otid: expect.any(String),
     });
     expect(firstSendMessages?.[1]).toEqual({
       role: "user",
@@ -1631,6 +1844,7 @@ describe("listen-client multi-worker concurrency", () => {
       expect.objectContaining({
         type: "approval",
         approvals: approvalResults,
+        otid: expect.any(String),
       }),
     );
   });
@@ -2023,7 +2237,7 @@ describe("listen-client multi-worker concurrency", () => {
       command: {
         type: "change_device_state",
         runtime: { agent_id: "agent-1", conversation_id: "conv-mid" },
-        payload: { mode: "bypassPermissions" },
+        payload: { mode: "unrestricted" },
       },
       socket: socket as unknown as WebSocket,
       opts: {},
@@ -2034,7 +2248,14 @@ describe("listen-client multi-worker concurrency", () => {
 
     await turnPromise;
 
-    expect(capturedModeAtClassification === "bypassPermissions").toBe(true);
+    expect(capturedModeAtClassification === "unrestricted").toBe(true);
+    const continuationMessages = sendMessageStreamMock.mock.calls[1]?.[1] as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(continuationMessages?.[0]).toMatchObject({
+      type: "approval",
+      otid: expect.any(String),
+    });
   });
 
   test("change_device_state does not prune default-state entry mid-turn", async () => {
@@ -2046,7 +2267,7 @@ describe("listen-client multi-worker concurrency", () => {
       command: {
         type: "change_device_state",
         runtime: { agent_id: "agent-1", conversation_id: "default" },
-        payload: { mode: "default" },
+        payload: { mode: "standard" },
       },
       socket: socket as unknown as WebSocket,
       opts: {},
@@ -2297,5 +2518,91 @@ describe("listen-client multi-worker concurrency", () => {
       signal: expect.any(AbortSignal),
     });
     expect(firstCall?.[2]?.signal).not.toBe(parentAbortController.signal);
+  });
+
+  test("approval continuation busy retry emits retry delta before waiting", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-approval-busy",
+      "conv-approval-busy",
+    );
+    const socket = new MockSocket();
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail:
+              "Cannot send a new message: Another request is currently being processed for this conversation.",
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+    conversationMessagesStreamMock.mockRejectedValueOnce(
+      new Error("resume unavailable"),
+    );
+
+    const originalSetTimeout = globalThis.setTimeout;
+    type SetTimeoutParams = Parameters<typeof setTimeout>;
+    globalThis.setTimeout = ((
+      handler: SetTimeoutParams[0],
+      _timeout?: SetTimeoutParams[1],
+      ...args: unknown[]
+    ) => originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+    try {
+      const stream = await sendApprovalContinuationWithRetry(
+        "conv-approval-busy",
+        [
+          {
+            type: "approval",
+            approvals: [],
+            otid: "approval-otid",
+          },
+        ],
+        {
+          agentId: "agent-approval-busy",
+          streamTokens: true,
+          background: true,
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        new AbortController().signal,
+      );
+
+      expect(stream as unknown as MockStream).toEqual({
+        conversationId: "conv-approval-busy",
+        agentId: "agent-approval-busy",
+      });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(conversationMessagesStreamMock.mock.calls[0]?.[1]).toMatchObject({
+      otid: "approval-otid",
+      starting_after: 0,
+      batch_size: 1000,
+    });
+
+    const retryPayload = socket.sentPayloads
+      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+      .find(
+        (payload) =>
+          payload.type === "stream_delta" &&
+          (payload.delta as { message_type?: unknown } | undefined)
+            ?.message_type === "retry",
+      );
+
+    expect(retryPayload?.delta).toMatchObject({
+      message_type: "retry",
+      message: "Conversation is busy, waiting and retrying…",
+      reason: "error",
+      attempt: 1,
+      max_attempts: 3,
+      delay_ms: 10000,
+    });
   });
 });

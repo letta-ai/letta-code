@@ -1,5 +1,5 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
-import { buildAppUrl, buildChatUrl } from "./appUrls";
+import { buildAgentTerminalLink, buildAppUrl } from "./appUrls";
 import { getErrorContext } from "./errorContext";
 import { checkZaiError } from "./zaiErrors";
 
@@ -25,6 +25,7 @@ const CLOUDFLARE_EDGE_5XX_MARKER_PATTERN =
   /(^|\s)(502|52[0-6])\s*<!doctype html|error code\s*(502|52[0-6])/i;
 const CLOUDFLARE_EDGE_5XX_TITLE_PATTERN = /\|\s*(502|52[0-6])\s*:/i;
 const CLOUDFLARE_EDGE_5XX_FORMATTED_PATTERN = /\bCloudflare\s+(502|52[0-6])\b/i;
+const CLOUDFLARE_JSON_5XX_PATTERN = /"cloudflare_error"\s*:\s*true/s;
 
 export function isCloudflareEdge52xHtmlError(text: string): boolean {
   const normalized = text.toLowerCase();
@@ -43,6 +44,7 @@ export function isCloudflareEdge52xHtmlError(text: string): boolean {
 export function isCloudflareEdge52xErrorText(text: string): boolean {
   return (
     CLOUDFLARE_EDGE_5XX_FORMATTED_PATTERN.test(text) ||
+    CLOUDFLARE_JSON_5XX_PATTERN.test(text) ||
     isCloudflareEdge52xHtmlError(text)
   );
 }
@@ -50,6 +52,21 @@ export function isCloudflareEdge52xErrorText(text: string): boolean {
 function parseCloudflareEdgeError(
   text: string,
 ): CloudflareEdgeErrorInfo | undefined {
+  // Try JSON-formatted Cloudflare error first (from Letta API proxy)
+  if (CLOUDFLARE_JSON_5XX_PATTERN.test(text)) {
+    try {
+      const obj = JSON.parse(text);
+      return {
+        code: String(obj.status),
+        statusText: obj.error_name || obj.title || undefined,
+        host: obj.zone || undefined,
+        rayId: obj.ray_id || undefined,
+      };
+    } catch {
+      // Not valid JSON, fall through to HTML parsing
+    }
+  }
+
   if (!isCloudflareEdge52xHtmlError(text)) return undefined;
 
   const code =
@@ -227,6 +244,82 @@ function findAndFormatCloudflareEdgeError(e: unknown): string | undefined {
 
       if (typeof inner.message === "string") {
         const msg = checkCloudflareEdgeError(inner.message);
+        if (msg) return msg;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+export function isProviderStreamDisconnectErrorText(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("connection error during streaming") ||
+    normalized.includes("incomplete chunked read") ||
+    normalized.includes(
+      "peer closed connection without sending complete message body",
+    ) ||
+    normalized.includes("remoteprotocolerror")
+  );
+}
+
+export function checkProviderStreamDisconnectError(
+  text: string,
+): string | undefined {
+  if (!isProviderStreamDisconnectErrorText(text)) return undefined;
+
+  const provider = getProviderDisplayName();
+  return `${provider} closed the streaming connection before completing the response. Letta Code retries this automatically when it is safe; if it keeps happening, retry or switch models with /model.`;
+}
+
+function findAndFormatProviderStreamDisconnectError(
+  e: unknown,
+): string | undefined {
+  if (typeof e === "string") return checkProviderStreamDisconnectError(e);
+
+  if (typeof e !== "object" || e === null) return undefined;
+
+  if (e instanceof Error) {
+    const msg = checkProviderStreamDisconnectError(e.message);
+    if (msg) return msg;
+  }
+
+  const obj = e as Record<string, unknown>;
+
+  if (typeof obj.detail === "string") {
+    const msg = checkProviderStreamDisconnectError(obj.detail);
+    if (msg) return msg;
+  }
+
+  if (typeof obj.message === "string") {
+    const msg = checkProviderStreamDisconnectError(obj.message);
+    if (msg) return msg;
+  }
+
+  if (obj.error && typeof obj.error === "object") {
+    const errObj = obj.error as Record<string, unknown>;
+
+    if (typeof errObj.detail === "string") {
+      const msg = checkProviderStreamDisconnectError(errObj.detail);
+      if (msg) return msg;
+    }
+
+    if (typeof errObj.message === "string") {
+      const msg = checkProviderStreamDisconnectError(errObj.message);
+      if (msg) return msg;
+    }
+
+    if (errObj.error && typeof errObj.error === "object") {
+      const inner = errObj.error as Record<string, unknown>;
+
+      if (typeof inner.detail === "string") {
+        const msg = checkProviderStreamDisconnectError(inner.detail);
+        if (msg) return msg;
+      }
+
+      if (typeof inner.message === "string") {
+        const msg = checkProviderStreamDisconnectError(inner.message);
         if (msg) return msg;
       }
     }
@@ -548,6 +641,10 @@ export function formatErrorDetails(
   const cloudflareEdgeMsg = findAndFormatCloudflareEdgeError(e);
   if (cloudflareEdgeMsg) return cloudflareEdgeMsg;
 
+  const providerStreamDisconnectMsg =
+    findAndFormatProviderStreamDisconnectError(e);
+  if (providerStreamDisconnectMsg) return providerStreamDisconnectMsg;
+
   // Check for Z.ai provider errors (wrapped in generic "OpenAI" messages)
   const errorText =
     e instanceof APIError
@@ -710,8 +807,9 @@ export function getRetryStatusMessage(
 ): string | null {
   if (!errorDetail) return DEFAULT_RETRY_MESSAGE;
 
-  // Cloudflare edge errors are transient and retried silently — no status line
-  if (isCloudflareEdge52xErrorText(errorDetail)) return null;
+  // Cloudflare edge errors are transient — show a specific message
+  if (isCloudflareEdge52xErrorText(errorDetail))
+    return "Cloudflare transient error, retrying...";
 
   if (checkZaiError(errorDetail)) return "Z.ai API error, retrying...";
 
@@ -741,7 +839,7 @@ export function getRetryStatusMessage(
 const ENDPOINT_TYPE_DISPLAY_NAMES: Record<string, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
-  chatgpt_oauth: "ChatGPT",
+  chatgpt_oauth: "OpenAI",
   google_ai: "Google AI",
   google_vertex: "Google Vertex",
   bedrock: "AWS Bedrock",
@@ -764,6 +862,6 @@ function createAgentLink(
   agentId: string,
   conversationId?: string,
 ): string {
-  const url = buildChatUrl(agentId, { conversationId });
-  return `View agent: \x1b]8;;${url}\x1b\\${agentId}\x1b]8;;\x1b\\ (run: ${runId})`;
+  const agentRef = buildAgentTerminalLink(agentId, { conversationId });
+  return `View agent: ${agentRef} (run: ${runId})`;
 }

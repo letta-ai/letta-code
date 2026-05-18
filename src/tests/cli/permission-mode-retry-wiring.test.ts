@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
 
 function readAppSource(): string {
-  const appPath = fileURLToPath(new URL("../../cli/App.tsx", import.meta.url));
-  return readFileSync(appPath, "utf-8");
+  return readInteractiveAppSource();
 }
 
 describe("permission mode retry wiring", () => {
@@ -38,11 +36,17 @@ describe("permission mode retry wiring", () => {
 
     const slashPlanStart = source.indexOf('if (trimmed === "/plan") {');
     const slashPlanEnd = source.indexOf(
-      "return { submitted: true };",
+      "// Special handling for /init command",
       slashPlanStart,
     );
     expect(slashPlanStart).toBeGreaterThan(-1);
     expect(slashPlanEnd).toBeGreaterThan(slashPlanStart);
+    expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
+      "settingsManager.isPlanModeEnabled()",
+    );
+    expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
+      "Plan mode is disabled in user settings.",
+    );
     expect(source.slice(slashPlanStart, slashPlanEnd)).toContain(
       "cacheLastPlanFilePath(planPath);",
     );
@@ -55,6 +59,9 @@ describe("permission mode retry wiring", () => {
     );
     expect(modeChangeStart).toBeGreaterThan(-1);
     expect(modeChangeEnd).toBeGreaterThan(modeChangeStart);
+    expect(source.slice(modeChangeStart, modeChangeEnd)).toContain(
+      'if (mode === "plan" && !settingsManager.isPlanModeEnabled())',
+    );
     expect(source.slice(modeChangeStart, modeChangeEnd)).toContain(
       "cacheLastPlanFilePath(planPath);",
     );
@@ -70,6 +77,27 @@ describe("permission mode retry wiring", () => {
     expect(source.slice(enterPlanStart, enterPlanEnd)).toContain(
       "cacheLastPlanFilePath(planFilePath);",
     );
+  });
+
+  test("/plan-mode toggles setting and refreshes loaded tools", () => {
+    const source = readAppSource();
+
+    const start = source.indexOf(
+      'if (trimmed === "/plan-mode" || trimmed.startsWith("/plan-mode "))',
+    );
+    const end = source.indexOf("// Special handling for /init command", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("settingsManager.setPlanModeEnabled(enabled)");
+    expect(segment).toContain("await settingsManager.flush()");
+    expect(segment).toContain('permissionMode.setMode("unrestricted")');
+    expect(segment).toContain(
+      "await forceToolsetSwitch(currentToolset, agentId)",
+    );
+    expect(segment).toContain("await switchToolsetForModel(");
+    expect(segment).toContain("Usage: /plan-mode on|off");
   });
 
   test("pins submission permission mode and defines a restore helper", () => {
@@ -151,7 +179,7 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain('permissionMode.setMode("plan")');
   });
 
-  test("auto-approves EnterPlanMode in bypassPermissions mode", () => {
+  test("auto-approves EnterPlanMode in unrestricted mode", () => {
     const source = readAppSource();
 
     const guardStart = source.indexOf("Guard EnterPlanMode:");
@@ -165,9 +193,7 @@ describe("permission mode retry wiring", () => {
 
     const segment = source.slice(guardStart, guardEnd);
     expect(segment).toContain('approval?.toolName === "EnterPlanMode"');
-    expect(segment).toContain(
-      'permissionMode.getMode() === "bypassPermissions"',
-    );
+    expect(segment).toContain('permissionMode.getMode() === "unrestricted"');
     expect(segment).toContain("handleEnterPlanModeApprove(true)");
   });
 
@@ -190,7 +216,7 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain("lastPlanFilePathRef.current = planFilePath;");
   });
 
-  test("restores bypassPermissions when it was active before plan approval", () => {
+  test("restores unrestricted when it was active before plan approval", () => {
     const source = readAppSource();
 
     const start = source.indexOf("const handlePlanApprove = useCallback(");
@@ -205,11 +231,11 @@ describe("permission mode retry wiring", () => {
     expect(segment).toContain(
       "const previousMode = permissionMode.getModeBeforePlan();",
     );
-    expect(segment).toContain('previousMode === "bypassPermissions"');
-    expect(segment).toContain('"bypassPermissions"');
+    expect(segment).toContain('previousMode === "unrestricted"');
+    expect(segment).toContain('"unrestricted"');
   });
 
-  test("does not auto-approve ExitPlanMode in bypassPermissions mode", () => {
+  test("does not auto-approve ExitPlanMode in unrestricted mode", () => {
     const source = readAppSource();
 
     const guardStart = source.indexOf("Guard ExitPlanMode:");

@@ -25,6 +25,7 @@ describe("listen subcommand auth resolution", () => {
   const originalConsoleWarn = console.warn;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
+  const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_DEBUG_PANEL;
 
   beforeEach(() => {
     refreshAccessTokenMock.mockReset();
@@ -39,6 +40,7 @@ describe("listen subcommand auth resolution", () => {
 
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
+    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
 
     settingsManager.getSettingsWithSecureTokens = mock(async () => ({
       env: {},
@@ -73,6 +75,11 @@ describe("listen subcommand auth resolution", () => {
       delete process.env.LETTA_BASE_URL;
     } else {
       process.env.LETTA_BASE_URL = originalBaseUrl;
+    }
+    if (originalDesktopDebugPanel === undefined) {
+      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    } else {
+      process.env.LETTA_DESKTOP_DEBUG_PANEL = originalDesktopDebugPanel;
     }
     __listenSubcommandTestUtils.setOAuthDepsForTests(null);
   });
@@ -231,5 +238,58 @@ describe("listen subcommand auth resolution", () => {
 
     expect(requestDeviceCodeMock).not.toHaveBeenCalled();
     expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
+  test("uses local channel mode for self-hosted listeners with channels", async () => {
+    process.env.LETTA_BASE_URL = "http://localhost:8283";
+
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {},
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    const result = await __listenSubcommandTestUtils.resolveListenerStartupMode(
+      ["telegram"],
+    );
+
+    expect(result).toEqual({
+      kind: "local-channels",
+      serverUrl: "http://localhost:8283",
+    });
+    expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+    expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
+  test("rejects self-hosted listener startup without channels", async () => {
+    process.env.LETTA_BASE_URL = "http://localhost:8283";
+
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {},
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    const result = await __listenSubcommandTestUtils.resolveListenerStartupMode(
+      [],
+    );
+
+    expect(result).toEqual({
+      kind: "unsupported-self-hosted",
+      serverUrl: "http://localhost:8283",
+    });
+    expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+    expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
+  test("uses remote registration mode for Cloud listeners with channels", async () => {
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {},
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    const result = await __listenSubcommandTestUtils.resolveListenerStartupMode(
+      ["telegram"],
+    );
+
+    expect(result).toEqual({
+      kind: "remote",
+      serverUrl: "https://api.letta.com",
+    });
   });
 });

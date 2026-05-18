@@ -1,7 +1,23 @@
 const SEP = "\u0000";
 type ShellLaunchOptions = {
   login?: boolean;
+  powershellEnvAliases?: string[];
 };
+
+const POWERSHELL_ENV_ALIASES = [
+  "MEMORY_DIR",
+  "LETTA_MEMORY_DIR",
+  "AGENT_ID",
+  "LETTA_AGENT_ID",
+  "LETTA_PARENT_AGENT_ID",
+  "CONVERSATION_ID",
+  "LETTA_CONVERSATION_ID",
+  "USER_CWD",
+];
+
+function isValidEnvAlias(name: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
 
 function pushUnique(
   list: string[][],
@@ -15,19 +31,41 @@ function pushUnique(
   list.push(entry);
 }
 
-function windowsLaunchers(command: string): string[][] {
+function normalizePowerShellCommand(command: string): string {
+  const trimmed = command.trim();
+  if (
+    trimmed.startsWith("&") ||
+    trimmed.startsWith('"') ||
+    trimmed.startsWith("'")
+  ) {
+    return trimmed.startsWith("&") ? trimmed : `& ${trimmed}`;
+  }
+  return trimmed;
+}
+
+export function buildPowerShellCommand(
+  command: string,
+  envAliases: string[] = [],
+): string {
+  const powerShellCommand = normalizePowerShellCommand(command);
+  const aliases = [
+    ...new Set([...POWERSHELL_ENV_ALIASES, ...envAliases]),
+  ].filter(isValidEnvAlias);
+  const aliasPrelude = aliases
+    .map((name) => `$${name} = $env:${name}`)
+    .join("; ");
+  return `${aliasPrelude}; ${powerShellCommand}`;
+}
+
+function windowsLaunchers(
+  command: string,
+  envAliases: string[] = [],
+): string[][] {
   const trimmed = command.trim();
   if (!trimmed) return [];
   const launchers: string[][] = [];
   const seen = new Set<string>();
-  const powerShellCommand =
-    trimmed.startsWith("&") ||
-    trimmed.startsWith('"') ||
-    trimmed.startsWith("'")
-      ? trimmed.startsWith("&")
-        ? trimmed
-        : `& ${trimmed}`
-      : trimmed;
+  const powerShellCommand = buildPowerShellCommand(trimmed, envAliases);
 
   // Default to PowerShell on Windows (same as Gemini CLI and Codex CLI)
   // This ensures better PATH compatibility since many tools are configured
@@ -131,6 +169,6 @@ export function buildShellLaunchers(
 ): string[][] {
   const login = options?.login ?? false;
   return process.platform === "win32"
-    ? windowsLaunchers(command)
+    ? windowsLaunchers(command, options?.powershellEnvAliases)
     : unixLaunchers(command, login);
 }

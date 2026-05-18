@@ -17,7 +17,7 @@ afterEach(() => {
 // ============================================================================
 
 test("default mode - no overrides", () => {
-  permissionMode.setMode("default");
+  permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -38,7 +38,7 @@ test("default mode - no overrides", () => {
 });
 
 test("default mode - auto-allows memory", () => {
-  permissionMode.setMode("default");
+  permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -64,7 +64,7 @@ test("default mode - auto-allows memory", () => {
 });
 
 test("default mode - auto-allows memory_apply_patch", () => {
-  permissionMode.setMode("default");
+  permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -88,7 +88,7 @@ test("default mode - auto-allows memory_apply_patch", () => {
 });
 
 test("default mode - treats Agent like Task for safe subagent auto-approval", () => {
-  permissionMode.setMode("default");
+  permissionMode.setMode("standard");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -112,11 +112,11 @@ test("default mode - treats Agent like Task for safe subagent auto-approval", ()
 });
 
 // ============================================================================
-// Permission Mode: bypassPermissions
+// Permission Mode: unrestricted
 // ============================================================================
 
-test("bypassPermissions mode - allows all tools", () => {
-  permissionMode.setMode("bypassPermissions");
+test("unrestricted mode - allows all tools", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -131,7 +131,7 @@ test("bypassPermissions mode - allows all tools", () => {
     "/Users/test/project",
   );
   expect(bashResult.decision).toBe("allow");
-  expect(bashResult.reason).toBe("Permission mode: bypassPermissions");
+  expect(bashResult.reason).toBe("Permission mode: unrestricted");
 
   const writeResult = checkPermission(
     "Write",
@@ -142,8 +142,8 @@ test("bypassPermissions mode - allows all tools", () => {
   expect(writeResult.decision).toBe("allow");
 });
 
-test("bypassPermissions mode - ExitPlanMode always requires approval", () => {
-  permissionMode.setMode("bypassPermissions");
+test("unrestricted mode - ExitPlanMode always requires approval", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -178,8 +178,8 @@ test("bypassPermissions mode - ExitPlanMode always requires approval", () => {
   expect(enterResult.decision).toBe("allow");
 });
 
-test("bypassPermissions mode - does NOT override deny rules", () => {
-  permissionMode.setMode("bypassPermissions");
+test("unrestricted mode - does NOT override deny rules", () => {
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -194,7 +194,7 @@ test("bypassPermissions mode - does NOT override deny rules", () => {
     "/Users/test/project",
   );
 
-  // Deny rules take precedence even in bypassPermissions mode
+  // Deny rules take precedence even in unrestricted mode
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
 });
@@ -638,6 +638,51 @@ test("memory mode - allows Write inside MEMORY_DIR", () => {
   }
 });
 
+test("memory mode - allows Bash redirection inside MEMORY_DIR", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      {
+        command:
+          'echo "test content" > "$MEMORY_DIR/skills/example/SKILL.md" && ls -la "$MEMORY_DIR/skills/example/"',
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+
+    expect(result.decision).toBe("allow");
+    expect(result.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - denies Bash redirection outside MEMORY_DIR", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      { command: 'echo "test content" > /tmp/outside-memory.txt' },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+
+    expect(result.decision).toBe("deny");
+    expect(result.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
 test("memory mode - denies Write outside memory roots", () => {
   permissionMode.setMode("memory");
   const originalMemoryDir = process.env.MEMORY_DIR;
@@ -869,6 +914,152 @@ test("memory mode - denies git rebase exec hooks inside scoped shell commands", 
       "/Users/test/.letta/agents/agent-1/memory",
     );
     expect(bashResult.decision).toBe("deny");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+// ============================================================================
+// Permission Mode: memory — instructive denial reasons
+// ============================================================================
+// The bare "Permission mode: memory" reason gives the agent no signal for
+// how to recover. These tests assert that each deny path produces a
+// category-specific reason that names the offending construct and a
+// concrete remediation idiom.
+
+test("memory mode reason - tool not allowed names the tool", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "WebSearch",
+      { query: "letta" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("Memory mode");
+    expect(result.reason).toContain("WebSearch");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode reason - Write outside roots names target and roots", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Write",
+      { file_path: "/Users/test/project/README.md" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/project",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("/Users/test/project/README.md");
+    expect(result.reason).toContain("/Users/test/.letta/agents/agent-1/memory");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode reason - Bash with $() points at variable usage", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      {
+        command:
+          'cd "$MEMORY_DIR" && CHILD=$(echo $LETTA_AGENT_ID) && echo $CHILD',
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("command substitution");
+    expect(result.reason).toContain("$LETTA_AGENT_ID");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode reason - Bash with python3 points at heredoc", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      {
+        command: `cd "$MEMORY_DIR" && python3 -c "open('x.md','w').write('hi')"`,
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("python3");
+    expect(result.reason).toContain("heredoc");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode reason - Bash redirect outside roots names target", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      { command: 'echo "hi" > /tmp/outside.txt' },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("redirects only to paths under");
+    expect(result.reason).toContain("/tmp/outside.txt");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode reason - existing scoped denials get instructive reason too", () => {
+  // Regression: the existing "denies command substitution" test (line 879)
+  // only asserted decision=deny. With the new wiring it should also surface
+  // the cmdsub category reason, not the generic "Permission mode: memory".
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      {
+        command:
+          'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "$(touch /tmp/pwn)"',
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("command substitution");
+    // Must NOT be the bare default — that was the bug we're fixing.
+    expect(result.reason).not.toBe("Permission mode: memory");
   } finally {
     if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = originalMemoryDir;
@@ -1212,7 +1403,7 @@ test("plan mode - denies WebFetch", () => {
 // ============================================================================
 
 test("Deny rules override permission mode", () => {
-  permissionMode.setMode("bypassPermissions");
+  permissionMode.setMode("unrestricted");
 
   const permissions: PermissionRules = {
     allow: [],
@@ -1227,7 +1418,7 @@ test("Deny rules override permission mode", () => {
     "/Users/test/project",
   );
 
-  // Deny rule takes precedence over bypassPermissions
+  // Deny rule takes precedence over unrestricted
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
 });
@@ -1261,17 +1452,17 @@ test("Permission mode takes precedence over CLI allowedTools", () => {
 });
 
 test("plan mode - remembers and restores previous mode", () => {
-  permissionMode.setMode("bypassPermissions");
-  expect(permissionMode.getMode()).toBe("bypassPermissions");
+  permissionMode.setMode("unrestricted");
+  expect(permissionMode.getMode()).toBe("unrestricted");
 
   // Enter plan mode - should remember prior mode.
   permissionMode.setMode("plan");
   expect(permissionMode.getMode()).toBe("plan");
-  expect(permissionMode.getModeBeforePlan()).toBe("bypassPermissions");
+  expect(permissionMode.getModeBeforePlan()).toBe("unrestricted");
 
   // Exit plan mode by restoring previous mode.
-  permissionMode.setMode(permissionMode.getModeBeforePlan() ?? "default");
-  expect(permissionMode.getMode()).toBe("bypassPermissions");
+  permissionMode.setMode(permissionMode.getModeBeforePlan() ?? "unrestricted");
+  expect(permissionMode.getMode()).toBe("unrestricted");
 
   // Once we leave plan mode, the remembered mode is consumed.
   expect(permissionMode.getModeBeforePlan()).toBe(null);

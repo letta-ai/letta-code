@@ -2,19 +2,186 @@ import type {
   ChannelAccount,
   ChannelAdapter,
   ChannelChatType,
+  ChannelDefaultPermissionMode,
   ChannelRoute,
+  DmPolicy,
   OutboundChannelMessage,
-  SupportedChannelId,
+  SlackChannelMode,
 } from "./types";
 
 export interface ChannelPluginMetadata {
-  id: SupportedChannelId;
+  id: string;
   displayName: string;
   runtimePackages: string[];
   runtimeModules: string[];
+  source?: "first-party" | "user";
+  firstParty?: boolean;
+  /**
+   * Optional declarative description of the plugin's account-config fields.
+   * When present, clients can render a dynamic settings form instead of
+   * relying on free-form JSON textareas. Surfaced to clients via
+   * `channels_list_response.channels[*].config_schema`.
+   */
+  configSchema?: ChannelConfigSchema;
 }
 
-export type ChannelMessageActionName = "send" | "react" | "upload-file";
+export type ChannelConfigFieldType =
+  | "text"
+  | "secret"
+  | "select"
+  | "boolean"
+  | "number"
+  | "string-array"
+  | "key-value-map";
+
+export interface ChannelConfigFieldBase {
+  /** Snake-case key used in the plugin's stored config payload. */
+  key: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+  /**
+   * Advisory UI hint: when true the dialog renders a "restart required"
+   * chip near the field. Does not yet enforce restart semantics — that's
+   * future work. Plugins should still document which fields they hot-read
+   * vs. read once at startup.
+   */
+  restartRequired?: boolean;
+  /**
+   * Where this field lives in the storage model:
+   *   - 'app' (default): stored on the app's plugin config, shared across
+   *     all accounts. Rendered in the App settings tab.
+   *   - 'account': stored on each individual account (e.g. credentials,
+   *     per-handle identifiers). Rendered in the Accounts tab. The App
+   *     settings form omits these fields entirely.
+   * If unspecified, treat as 'app' to preserve backwards compatibility.
+   */
+  scope?: "app" | "account";
+}
+
+export interface ChannelConfigTextField extends ChannelConfigFieldBase {
+  type: "text";
+  default?: string;
+  placeholder?: string;
+}
+
+export interface ChannelConfigSecretField extends ChannelConfigFieldBase {
+  type: "secret";
+  placeholder?: string;
+}
+
+export interface ChannelConfigSelectOption {
+  value: string;
+  label: string;
+}
+
+export interface ChannelConfigSelectField extends ChannelConfigFieldBase {
+  type: "select";
+  options: ChannelConfigSelectOption[];
+  default?: string;
+}
+
+export interface ChannelConfigBooleanField extends ChannelConfigFieldBase {
+  type: "boolean";
+  default?: boolean;
+}
+
+export interface ChannelConfigNumberField extends ChannelConfigFieldBase {
+  type: "number";
+  default?: number;
+  /** Inclusive lower bound (validated server-side + UI-rendered). */
+  min?: number;
+  /** Inclusive upper bound. */
+  max?: number;
+  /** Step granularity for the UI input (e.g. 0.05). */
+  step?: number;
+  /** Trailing adornment text rendered after the input (e.g. "ms", "%"). */
+  suffix?: string;
+  placeholder?: string;
+}
+
+export interface ChannelConfigStringArrayField extends ChannelConfigFieldBase {
+  type: "string-array";
+  default?: string[];
+  /** Placeholder shown inside each row's input. */
+  placeholder?: string;
+}
+
+export interface ChannelConfigKeyValueMapField extends ChannelConfigFieldBase {
+  type: "key-value-map";
+  /** Whether row values are typed strings or numbers. */
+  valueType: "string" | "number";
+  default?: Record<string, string | number>;
+  /** Column-header labels for the key/value columns. */
+  keyLabel?: string;
+  valueLabel?: string;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+}
+
+export type ChannelConfigField =
+  | ChannelConfigTextField
+  | ChannelConfigSecretField
+  | ChannelConfigSelectField
+  | ChannelConfigBooleanField
+  | ChannelConfigNumberField
+  | ChannelConfigStringArrayField
+  | ChannelConfigKeyValueMapField;
+
+export interface ChannelConfigSchema {
+  version: 1;
+  fields: ChannelConfigField[];
+}
+
+export type ChannelProtocolConfig = Record<string, unknown>;
+
+export interface ChannelCommonAccountPatch {
+  displayName?: string;
+  enabled?: boolean;
+  dmPolicy?: DmPolicy;
+  allowedUsers?: string[];
+}
+
+export interface ChannelPluginAccountPatch {
+  token?: string;
+  botToken?: string;
+  appToken?: string;
+  mode?: SlackChannelMode;
+  agentId?: string | null;
+  defaultPermissionMode?: ChannelDefaultPermissionMode;
+  allowedChannels?: string[];
+  transcribeVoice?: boolean;
+}
+
+export type ChannelAccountPatch = ChannelCommonAccountPatch &
+  ChannelPluginAccountPatch & {
+    /** Plugin-owned snake_case config accepted from the websocket protocol. */
+    config?: ChannelProtocolConfig;
+  };
+
+export type ChannelConfigPatch = Pick<
+  ChannelCommonAccountPatch,
+  "dmPolicy" | "allowedUsers"
+> &
+  ChannelPluginAccountPatch & {
+    /** Plugin-owned snake_case config accepted from the websocket protocol. */
+    config?: ChannelProtocolConfig;
+  };
+
+export interface ChannelAccountConfigAdapter<TAccount extends ChannelAccount> {
+  /** Validate plugin-owned config payloads. */
+  isValidConfig(config: ChannelProtocolConfig): boolean;
+  /** Convert protocol snake_case config into the internal account patch shape. */
+  toAccountPatch(config: ChannelProtocolConfig): ChannelPluginAccountPatch;
+  /** Redacted/safe plugin config included in account list/get responses. */
+  toAccountConfig(account: TAccount): ChannelProtocolConfig;
+  /** Redacted/safe plugin config included in channel_get_config responses. */
+  toConfigSnapshotConfig(account: TAccount): ChannelProtocolConfig;
+  /** Whether this plugin config patch changes credentials/display identity. */
+  shouldRefreshDisplayName(patch: ChannelPluginAccountPatch): boolean;
+}
+
+export type ChannelMessageActionName = string;
 
 export interface ChannelMessageToolSchemaContribution {
   properties: Record<string, unknown>;
@@ -37,7 +204,7 @@ export interface ChannelMessageToolDiscovery {
 
 export interface ChannelMessageActionRequest {
   action: ChannelMessageActionName;
-  channel: SupportedChannelId;
+  channel: string;
   chatId: string;
   message?: string;
   replyToMessageId?: string;

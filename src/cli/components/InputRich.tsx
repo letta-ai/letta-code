@@ -31,6 +31,8 @@ import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { buildChatUrl } from "../helpers/appUrls.js";
 import { bytesToTokens, formatCompact } from "../helpers/format";
+import { CLI_GLYPHS } from "../helpers/glyphs";
+import { formatGoalStatusIndicator } from "../helpers/goalCommand";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import {
   getActiveBackgroundAgents,
@@ -134,44 +136,253 @@ function findCursorLine(
   };
 }
 
-// Matches OSC 8 hyperlink sequences: \x1b]8;;URL\x1b\DISPLAY\x1b]8;;\x1b\
-// biome-ignore lint/suspicious/noControlCharactersInRegex: OSC 8 escape sequences require \x1b
-const OSC8_REGEX = /\x1b\]8;;([^\x1b]*)\x1b\\([^\x1b]*)\x1b\]8;;\x1b\\/g;
+// Combined regex for ANSI colors (256-color and 24-bit) and OSC 8 hyperlinks
+// Captures: p1[;p2[;p3[;p4[;p5]]]]m
+// 256-color fg: 38;5;N     → p1=38, p2=5,  p3=N
+// 256-color bg: 48;5;N     → p1=48, p2=5,  p3=N
+// 24-bit fg:    38;2;R;G;B → p1=38, p2=2,  p3=R, p4=G, p5=B
+// 24-bit bg:    48;2;R;G;B → p1=48, p2=2,  p3=R, p4=G, p5=B
+// Reset:        0m         → p1=0
+// OSC 8: \x1b]8;;URL\x1b\DISPLAY\x1b]8;;\x1b\
+const COMBINED_STYLE_REGEX =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI/OSC escape sequences require control characters
+  /\x1b\[(\d+)(?:;(\d+)(?:;(\d+)(?:;(\d+)(?:;(\d+))?)?)?)?m|\x1b\]8;;([^\x1b]*)\x1b\\([^\x1b]*)\x1b\]8;;\x1b\\/g;
 
-function parseOsc8Line(line: string, keyPrefix: string): ReactNode[] {
+// 256-color palette lookup (simplified - standard xterm colors 0-255)
+// Returns hex color for palette index
+function get256Color(index: number): string | undefined {
+  if (index < 0 || index > 255) return undefined;
+
+  // Standard 16 colors (0-15)
+  const standardColors = [
+    "#000000",
+    "#800000",
+    "#008000",
+    "#808000",
+    "#000080",
+    "#800080",
+    "#008080",
+    "#c0c0c0",
+    "#808080",
+    "#ff0000",
+    "#00ff00",
+    "#ffff00",
+    "#0000ff",
+    "#ff00ff",
+    "#00ffff",
+    "#ffffff",
+  ];
+  if (index < 16) return standardColors[index];
+
+  // 216 color cube (16-231): 6x6x6 cube
+  if (index < 232) {
+    const cubeIndex = index - 16;
+    const r = Math.floor(cubeIndex / 36) % 6;
+    const g = Math.floor(cubeIndex / 6) % 6;
+    const b = cubeIndex % 6;
+    // Convert 0-5 to 0-255 range (0, 95, 135, 175, 215, 255)
+    const values = [0, 95, 135, 175, 215, 255];
+    const toHex = (v: number) => v.toString(16).padStart(2, "0");
+    return `#${toHex(values[r] ?? 0)}${toHex(values[g] ?? 0)}${toHex(values[b] ?? 0)}`;
+  }
+
+  // Grayscale (232-255): 24 shades from black to white
+  const grayValue = 8 + (index - 232) * 10;
+  const hex = grayValue.toString(16).padStart(2, "0");
+  return `#${hex}${hex}${hex}`;
+}
+
+function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
   const parts: ReactNode[] = [];
   let lastIndex = 0;
-  const regex = new RegExp(OSC8_REGEX.source, "g");
+  let currentColor: string | undefined;
+  let currentBgColor: string | undefined;
+
+  const regex = new RegExp(COMBINED_STYLE_REGEX.source, "g");
 
   for (let match = regex.exec(line); match !== null; match = regex.exec(line)) {
-    if (match.index > lastIndex) {
+    const fullMatch = match[0];
+
+    // Handle OSC 8 hyperlink: groups 6=URL, 7=display text
+    const osc8Url = match[6];
+    const osc8Display = match[7];
+    if (osc8Url !== undefined && osc8Display !== undefined) {
+      // Flush any pending text with current color before the link
+      if (match.index > lastIndex) {
+        const text = line.slice(lastIndex, match.index);
+        if (text || currentColor || currentBgColor) {
+          parts.push(
+            <Text
+              key={`${keyPrefix}-${lastIndex}`}
+              color={currentColor}
+              backgroundColor={currentBgColor}
+            >
+              {text}
+            </Text>,
+          );
+        }
+      }
+      // Create link with display text (ANSI colors inside link text not supported for now)
       parts.push(
-        <Text key={`${keyPrefix}-${lastIndex}`}>
-          {line.slice(lastIndex, match.index)}
+        <Link key={`${keyPrefix}-${match.index}`} url={osc8Url}>
+          <Text color={currentColor} backgroundColor={currentBgColor}>
+            {osc8Display}
+          </Text>
+        </Link>,
+      );
+      lastIndex = match.index + fullMatch.length;
+      continue;
+    }
+
+    const code = parseInt(match[1] ?? "0", 10);
+
+    // Handle reset
+    if (code === 0) {
+      if (lastIndex > 0 || currentColor || currentBgColor) {
+        const text = line.slice(lastIndex, match.index);
+        if (text || currentColor || currentBgColor) {
+          parts.push(
+            <Text
+              key={`${keyPrefix}-${lastIndex}`}
+              color={currentColor}
+              backgroundColor={currentBgColor}
+            >
+              {text}
+            </Text>,
+          );
+        }
+      }
+      lastIndex = match.index + fullMatch.length;
+      currentColor = undefined;
+      currentBgColor = undefined;
+      continue;
+    }
+
+    // Handle 24-bit foreground color: 38;2;R;G;B → p1=38,p2=2,p3=R,p4=G,p5=B
+    if (code === 38 && match[2] === "2") {
+      const r = match[3];
+      const g = match[4];
+      const b = match[5];
+      if (r && g && b) {
+        const text = line.slice(lastIndex, match.index);
+        if (text || currentColor || currentBgColor) {
+          parts.push(
+            <Text
+              key={`${keyPrefix}-${lastIndex}`}
+              color={currentColor}
+              backgroundColor={currentBgColor}
+            >
+              {text}
+            </Text>,
+          );
+        }
+        lastIndex = match.index + fullMatch.length;
+        currentColor = `#${parseInt(r, 10).toString(16).padStart(2, "0")}${parseInt(g, 10).toString(16).padStart(2, "0")}${parseInt(b, 10).toString(16).padStart(2, "0")}`;
+        continue;
+      }
+    }
+
+    // Handle 256-color foreground: 38;5;N
+    if (code === 38 && match[2] === "5") {
+      const n = match[3];
+      if (n) {
+        const text = line.slice(lastIndex, match.index);
+        if (text || currentColor || currentBgColor) {
+          parts.push(
+            <Text
+              key={`${keyPrefix}-${lastIndex}`}
+              color={currentColor}
+              backgroundColor={currentBgColor}
+            >
+              {text}
+            </Text>,
+          );
+        }
+        lastIndex = match.index + fullMatch.length;
+        const color256 = get256Color(parseInt(n, 10));
+        if (color256) currentColor = color256;
+        continue;
+      }
+    }
+
+    // Handle 24-bit background color: 48;2;R;G;B → p1=48,p2=2,p3=R,p4=G,p5=B
+    if (code === 48 && match[2] === "2") {
+      const r = match[3];
+      const g = match[4];
+      const b = match[5];
+      if (r && g && b) {
+        const text = line.slice(lastIndex, match.index);
+        if (text || currentColor || currentBgColor) {
+          parts.push(
+            <Text
+              key={`${keyPrefix}-${lastIndex}`}
+              color={currentColor}
+              backgroundColor={currentBgColor}
+            >
+              {text}
+            </Text>,
+          );
+        }
+        lastIndex = match.index + fullMatch.length;
+        currentBgColor = `#${parseInt(r, 10).toString(16).padStart(2, "0")}${parseInt(g, 10).toString(16).padStart(2, "0")}${parseInt(b, 10).toString(16).padStart(2, "0")}`;
+        continue;
+      }
+    }
+
+    // Handle 256-color background: 48;5;N
+    if (code === 48 && match[2] === "5") {
+      const n = match[3];
+      if (n) {
+        const text = line.slice(lastIndex, match.index);
+        if (text || currentColor || currentBgColor) {
+          parts.push(
+            <Text
+              key={`${keyPrefix}-${lastIndex}`}
+              color={currentColor}
+              backgroundColor={currentBgColor}
+            >
+              {text}
+            </Text>,
+          );
+        }
+        lastIndex = match.index + fullMatch.length;
+        const color256 = get256Color(parseInt(n, 10));
+        if (color256) currentBgColor = color256;
+      }
+    }
+
+    // Fallback: unrecognized SGR code (bold, underline, standard 16-color, etc.)
+    // Advance lastIndex past the matched sequence so raw escape bytes don't leak into rendered text
+    lastIndex = match.index + fullMatch.length;
+  }
+
+  // Add remaining text with current color
+  if (lastIndex < line.length) {
+    const text = line.slice(lastIndex);
+    if (text || currentColor || currentBgColor) {
+      parts.push(
+        <Text
+          key={`${keyPrefix}-${lastIndex}`}
+          color={currentColor}
+          backgroundColor={currentBgColor}
+        >
+          {text}
         </Text>,
       );
     }
-    const url = match[1] ?? "";
-    const display = match[2] ?? "";
-    parts.push(
-      <Link key={`${keyPrefix}-${match.index}`} url={url}>
-        <Text>{display}</Text>
-      </Link>,
-    );
-    lastIndex = match.index + match[0].length;
   }
-  if (lastIndex < line.length) {
-    parts.push(
-      <Text key={`${keyPrefix}-${lastIndex}`}>{line.slice(lastIndex)}</Text>,
-    );
-  }
+
   if (parts.length === 0) {
     parts.push(<Text key={keyPrefix}>{line}</Text>);
   }
+
   return parts;
 }
 
 function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
+  if (modeGlyph === "") {
+    return modeName;
+  }
   if (modeGlyph === "⚡︎") {
     return `${modeGlyph}${modeName}`;
   }
@@ -180,30 +391,26 @@ function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
 
 function StatusLineContent({
   text,
-  padding,
+  _padding,
   modeName,
   modeColor,
   modeGlyph,
   showExitHint,
 }: {
   text: string;
-  padding: number;
+  _padding: number;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
   showExitHint: boolean;
 }) {
   const lines = text.split("\n");
-  const paddingStr = padding > 0 ? " ".repeat(padding) : "";
   const parts: ReactNode[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (i > 0) {
       parts.push("\n");
     }
-    if (paddingStr) {
-      parts.push(paddingStr);
-    }
-    parts.push(...parseOsc8Line(lines[i] ?? "", `l${i}`));
+    parts.push(...parseStyledLine(lines[i] ?? "", `l${i}`));
   }
   return (
     <Text wrap="wrap">
@@ -246,6 +453,8 @@ const InputFooter = memo(function InputFooter({
   statusLineRight,
   statusLinePadding,
   footerNotification,
+  goalStatusText,
+  hasQueuedMessages = false,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -266,6 +475,8 @@ const InputFooter = memo(function InputFooter({
   statusLineRight?: string;
   statusLinePadding?: number;
   footerNotification?: string | null;
+  goalStatusText?: string | null;
+  hasQueuedMessages?: boolean;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -383,10 +594,12 @@ const InputFooter = memo(function InputFooter({
     hasTemporaryModelOverride,
   ]);
 
-  const rightLabel = useMemo(
-    () => " ".repeat(rightPrefixSpaces) + rightLabelCore,
-    [rightPrefixSpaces, rightLabelCore],
-  );
+  const rightLabel = useMemo(() => {
+    if (goalStatusText) {
+      return chalk.magenta(goalStatusText);
+    }
+    return " ".repeat(rightPrefixSpaces) + rightLabelCore;
+  }, [goalStatusText, rightPrefixSpaces, rightLabelCore]);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -408,7 +621,7 @@ const InputFooter = memo(function InputFooter({
         ) : statusLineText ? (
           <StatusLineContent
             text={statusLineText}
-            padding={statusLinePadding ?? 0}
+            _padding={statusLinePadding ?? 0}
             modeName={modeName}
             modeColor={modeColor}
             modeGlyph={modeGlyph}
@@ -428,6 +641,8 @@ const InputFooter = memo(function InputFooter({
           <Text color={colors.status.processingShimmer}>
             {footerNotification}
           </Text>
+        ) : hasQueuedMessages ? (
+          <Text dimColor>press ↑ to edit queued message</Text>
         ) : (
           <Text dimColor>Press / for commands</Text>
         )}
@@ -447,7 +662,7 @@ const InputFooter = memo(function InputFooter({
         ) : statusLineRight ? (
           statusLineRight.split("\n").map((line, i) => (
             <Text key={`${i}-${line}`} wrap="truncate-end">
-              {parseOsc8Line(line, `r${i}`)}
+              {parseStyledLine(line, `r${i}`)}
             </Text>
           ))
         ) : backgroundAgents.length > 0 ? (
@@ -681,7 +896,10 @@ const StreamingStatus = memo(function StreamingStatus({
     );
   }, [interruptRequested, statusHintSuffix]);
   const tipLineText = useMemo(() => {
-    return truncateEnd(`⎿  Tip: ${tipMessage}`, statusContentWidth);
+    return truncateEnd(
+      `${CLI_GLYPHS.result}  Tip: ${tipMessage}`,
+      statusContentWidth,
+    );
   }, [tipMessage, statusContentWidth]);
 
   if (!streaming || !visible) {
@@ -693,7 +911,7 @@ const StreamingStatus = memo(function StreamingStatus({
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
           <Text color={colors.status.processing}>
-            {animate ? <Spinner type="layer" /> : "●"}
+            {animate ? <Spinner type="layer" /> : CLI_GLYPHS.bullet}
           </Text>
         </Box>
         <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
@@ -750,6 +968,7 @@ export function Input({
   onPermissionModeChange,
   onExit,
   onInterrupt,
+  onCtrlO,
   interruptRequested = false,
   agentId,
   agentName,
@@ -758,7 +977,7 @@ export function Input({
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
   messageQueue,
-  onEnterQueueEditMode,
+  onQueueEdit,
   onEscapeCancel,
   inputDisabled = false,
   ralphActive = false,
@@ -795,6 +1014,7 @@ export function Input({
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
   onInterrupt?: () => void;
+  onCtrlO?: () => void;
   interruptRequested?: boolean;
   agentId?: string;
   agentName?: string | null;
@@ -803,7 +1023,7 @@ export function Input({
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   messageQueue?: QueuedMessage[];
-  onEnterQueueEditMode?: () => void;
+  onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
   inputDisabled?: boolean;
   ralphActive?: boolean;
@@ -1112,6 +1332,12 @@ export function Input({
   useInput((input, key) => {
     if (!interactionEnabled) return;
 
+    // Handle CTRL-O to expand/collapse the last tool call output
+    if (input === "o" && key.ctrl) {
+      if (onCtrlO) onCtrlO();
+      return;
+    }
+
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
@@ -1174,15 +1400,12 @@ export function Input({
       }
 
       // Cycle through permission modes
-      const modes: PermissionMode[] = [
-        "default",
-        "plan",
-        "acceptEdits",
-        "bypassPermissions",
-      ];
+      const modes: PermissionMode[] = settingsManager.isPlanModeEnabled()
+        ? ["unrestricted", "acceptEdits", "standard", "plan"]
+        : ["unrestricted", "acceptEdits", "standard"];
       const currentIndex = modes.indexOf(currentMode);
       const nextIndex = (currentIndex + 1) % modes.length;
-      const nextMode = modes[nextIndex] ?? "default";
+      const nextMode = modes[nextIndex] ?? "unrestricted";
 
       // Update both singleton and local state
       permissionMode.setMode(nextMode);
@@ -1244,27 +1467,19 @@ export function Input({
           return;
         }
 
-        // Check if we should load queue (streaming with queued messages)
+        // Check if we should load queued messages into input for editing.
+        // Fire when already at position 0 (empty input or after first Up moved us here).
         if (
-          streaming &&
           messageQueue &&
-          messageQueue.length > 0 &&
-          atStartBoundary
+          messageQueue.filter((m) => m.kind === "user").length > 0 &&
+          onQueueEdit &&
+          (atStartBoundary || currentCursorPosition === 0)
         ) {
           setAtStartBoundary(false);
-          // Clear the queue and load into input as one multi-line message
-          const queueText = messageQueue
-            .filter((item) => item.kind === "user")
-            .map((item) => item.text.trim())
-            .filter((msg) => msg.length > 0)
-            .join("\n");
-          if (!queueText) {
-            return;
-          }
-          setValue(queueText);
-          // Signal to App.tsx to clear the queue
-          if (onEnterQueueEditMode) {
-            onEnterQueueEditMode();
+          const combined = onQueueEdit();
+          if (combined) {
+            setValue(combined);
+            setCursorPos(combined.length);
           }
           return;
         }
@@ -1504,6 +1719,7 @@ export function Input({
     name: string;
     color: string;
     glyph?: string;
+    showExitHint?: boolean;
   } | null>(() => {
     // Check ralph pending first (waiting for task input)
     if (ralphPending) {
@@ -1527,6 +1743,10 @@ export function Input({
           ? `${ralph.currentIteration}/${ralph.maxIterations}`
           : `${ralph.currentIteration}`;
 
+      if (ralph.mode === "goal") {
+        return null;
+      }
+
       if (ralph.isYolo) {
         return {
           name: `yolo-ralph (iter ${iterDisplay})`,
@@ -1543,22 +1763,67 @@ export function Input({
     switch (currentMode) {
       case "acceptEdits":
         return { name: "accept edits", color: colors.status.processing };
+      case "standard":
+        return {
+          name: "standard (request approval) mode",
+          color: colors.status.processingShimmer,
+          glyph: "▶",
+        };
       case "plan":
         return {
           name: "plan (read-only) mode",
           color: colors.status.success,
           glyph: "⏸",
         };
-      case "bypassPermissions":
-        return {
-          name: "yolo (allow all) mode",
-          color: colors.status.error,
-          glyph: "⚡︎",
-        };
+      case "unrestricted":
+        // Default mode — show nothing so "Press / for commands" renders instead
+        return null;
       default:
         return null;
     }
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
+
+  // Goal status footer text. Stored in state (rather than recomputed every
+  // render) so we only trigger a re-render when the displayed string actually
+  // changes. The previous implementation used setGoalFooterTick + setInterval
+  // which forced a full Input re-render every second while a goal was active,
+  // matching the flicker pattern documented in review-knowledge.md.
+  const currentGoal = conversationId
+    ? settingsManager.getConversationGoal(conversationId)
+    : null;
+  const goalStatus = currentGoal?.status ?? null;
+  const goalActiveStartedAt = currentGoal?.activeStartedAt ?? null;
+  const goalIsActive = goalStatus === "active";
+
+  const [goalStatusText, setGoalStatusText] = useState<string | null>(() =>
+    currentGoal ? formatGoalStatusIndicator(currentGoal) : null,
+  );
+
+  // Sync on prop-driven changes (status transitions, clear, pause, complete).
+  // goalStatus and goalActiveStartedAt are intentional triggers — they detect
+  // transitions even though the effect body re-reads via getConversationGoal.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are change triggers, not values used in the effect body
+  useEffect(() => {
+    const goal = conversationId
+      ? settingsManager.getConversationGoal(conversationId)
+      : null;
+    const nextText = goal ? formatGoalStatusIndicator(goal) : null;
+    setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
+  }, [conversationId, goalStatus, goalActiveStartedAt]);
+
+  // While the goal is active, re-check the formatted string each second but
+  // only re-render when it actually changes. Combined with the fixed-width
+  // format from formatGoalElapsedSeconds, the string changes at most once per
+  // second and the change is always same-width, so no footer flicker.
+  useEffect(() => {
+    if (!goalIsActive || !conversationId) return;
+    const timer = setInterval(() => {
+      const goal = settingsManager.getConversationGoal(conversationId);
+      const nextText = goal ? formatGoalStatusIndicator(goal) : null;
+      setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [goalIsActive, conversationId]);
 
   // Create a horizontal line using box-drawing characters.
   const horizontalLine = useMemo(
@@ -1652,7 +1917,9 @@ export function Input({
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
-                showExitHint={ralphActive || ralphPending}
+                showExitHint={
+                  modeInfo?.showExitHint ?? (ralphActive || ralphPending)
+                }
                 agentName={agentName}
                 currentModel={currentModel}
                 currentReasoningEffort={currentReasoningEffort}
@@ -1670,6 +1937,11 @@ export function Input({
                 statusLineRight={statusLineRight}
                 statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
+                goalStatusText={goalStatusText}
+                hasQueuedMessages={
+                  (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
+                  0
+                }
               />
             )}
           </Box>
@@ -1704,6 +1976,7 @@ export function Input({
     modeInfo?.name,
     modeInfo?.color,
     modeInfo?.glyph,
+    modeInfo?.showExitHint,
     ralphActive,
     ralphPending,
     currentModel,
@@ -1718,6 +1991,7 @@ export function Input({
     statusLineRight,
     statusLinePadding,
     footerNotification,
+    goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,

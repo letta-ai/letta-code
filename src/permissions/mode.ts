@@ -1,10 +1,11 @@
 // src/permissions/mode.ts
-// Permission mode management (default, acceptEdits, plan, memory, bypassPermissions)
+// Permission mode management (unrestricted, standard, acceptEdits, plan, memory)
 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { canonicalToolName } from "./canonical";
 import { extractApplyPatchPaths } from "./crossAgentGuard";
+import { classifyMemoryBashDenial } from "./memoryDenialReason";
 import {
   isPathWithinRoots,
   resolveAllowedMemoryRoots,
@@ -17,11 +18,50 @@ import {
 import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
 export type PermissionMode =
-  | "default"
+  | "standard"
   | "acceptEdits"
   | "plan"
   | "memory"
-  | "bypassPermissions";
+  | "unrestricted";
+
+/** The default starting permission mode. */
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "unrestricted";
+
+/** All valid current permission mode values. */
+export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
+  "unrestricted",
+  "standard",
+  "acceptEdits",
+  "plan",
+  "memory",
+] as const;
+
+/**
+ * Migrate legacy permission mode strings to their current equivalents.
+ * - "default" → "standard" (renamed for clarity)
+ * - "bypassPermissions" → "unrestricted" (renamed for clarity)
+ * Returns null if the value is not a recognized mode (current or legacy).
+ */
+export function migratePermissionMode(value: string): PermissionMode | null {
+  if (VALID_PERMISSION_MODES.includes(value as PermissionMode)) {
+    return value as PermissionMode;
+  }
+  if (value === "default") return "standard";
+  if (value === "bypassPermissions" || value === "fullAccess")
+    return "unrestricted";
+  return null;
+}
+
+/**
+ * Result of a permission-mode check. Includes a decision and an optional
+ * `reason` string the caller can surface to the agent (e.g. denial guidance
+ * like "use heredoc instead of $()"). When `reason` is omitted the caller
+ * falls back to a generic `"Permission mode: {mode}"` message.
+ */
+export interface ModeOverrideResult {
+  decision: "allow" | "deny";
+  reason?: string;
+}
 
 // Use globalThis to ensure singleton across bundle
 // This prevents Bun's bundler from creating duplicate instances of the mode manager
@@ -49,10 +89,41 @@ function everyResolvedTargetIsWithinRoots(
   );
 }
 
+/**
+ * Build a denial reason for write/edit tools whose target is outside the
+ * allowed memory roots (or where the tool was invoked without any target
+ * path at all). Names the offending path and the allowed roots so the
+ * agent can correct course.
+ */
+function buildWriteOutsideRootsReason(
+  candidatePaths: string[],
+  allowedRoots: string[],
+): string {
+  if (allowedRoots.length === 0) {
+    return (
+      "Memory mode requires $MEMORY_DIR (or LETTA_MEMORY_SCOPE / " +
+      "--memory-scope) to be set so write targets can be resolved against " +
+      "an allowed memory root."
+    );
+  }
+  const rootsList = allowedRoots.join(", ");
+  if (candidatePaths.length === 0) {
+    return (
+      `Memory mode requires Write/Edit targets to be inside $MEMORY_DIR ` +
+      `(${rootsList}). The tool was invoked without a resolvable target path.`
+    );
+  }
+  const targetList = candidatePaths.join(", ");
+  return (
+    `Memory mode requires Write/Edit targets to be inside $MEMORY_DIR. ` +
+    `Got: ${targetList}. Allowed roots: ${rootsList}.`
+  );
+}
+
 function getGlobalMode(): PermissionMode {
   const global = globalThis as GlobalWithMode;
   if (!global[MODE_KEY]) {
-    global[MODE_KEY] = "default";
+    global[MODE_KEY] = DEFAULT_PERMISSION_MODE;
   }
   return global[MODE_KEY];
 }
@@ -216,7 +287,7 @@ class PermissionModeManager {
 
   /**
    * Get the permission mode that was active before entering plan mode.
-   * Used to restore the user's previous setting (e.g., bypassPermissions).
+   * Used to restore the user's previous setting (e.g., unrestricted).
    */
   getModeBeforePlan(): PermissionMode | null {
     return getGlobalModeBeforePlan();
@@ -249,6 +320,11 @@ class PermissionModeManager {
    * scoped PermissionModeState (listener/remote mode) can bypass the global
    * singleton without requiring a temporary mutation of global state.
    * Returns null if mode doesn't apply to this tool.
+   *
+   * When returning a deny decision, the result may include a `reason` string
+   * to help the agent recover (e.g. "use heredoc instead of $()"). If
+   * `reason` is omitted callers fall back to a generic
+   * `"Permission mode: {mode}"` message.
    */
   checkModeOverride(
     toolName: string,
@@ -256,20 +332,20 @@ class PermissionModeManager {
     workingDirectory: string = process.cwd(),
     modeOverride?: PermissionMode,
     planFilePathOverride?: string | null,
-  ): "allow" | "deny" | null {
+  ): ModeOverrideResult | null {
     const effectiveMode = modeOverride ?? this.currentMode;
     const _effectivePlanFilePath =
       planFilePathOverride !== undefined
         ? planFilePathOverride
         : this.getPlanFilePath();
     switch (effectiveMode) {
-      case "bypassPermissions":
-        // ExitPlanMode always requires human approval, even in yolo mode
+      case "unrestricted":
+        // ExitPlanMode always requires human approval, even in unrestricted mode
         if (toolName === "ExitPlanMode" || toolName === "exit_plan_mode") {
           return null;
         }
         // Auto-allow everything else (except explicit deny rules checked earlier)
-        return "allow";
+        return { decision: "allow" };
 
       case "acceptEdits":
         // Auto-allow edit/write tools across Anthropic, Codex, and Gemini
@@ -293,7 +369,7 @@ class PermissionModeManager {
             "WriteFileGemini",
           ].includes(toolName)
         ) {
-          return "allow";
+          return { decision: "allow" };
         }
         return null;
 
@@ -358,7 +434,7 @@ class PermissionModeManager {
         ];
 
         if (allowedInPlan.includes(toolName)) {
-          return "allow";
+          return { decision: "allow" };
         }
 
         // Special case: allow writes to any plan file in ~/.letta/plans/
@@ -397,7 +473,7 @@ class PermissionModeManager {
                 : false;
             })
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
         }
 
@@ -412,13 +488,13 @@ class PermissionModeManager {
         if (canonicalToolName(toolName) === "Task") {
           const subagentType = toolArgs?.subagent_type as string | undefined;
           if (subagentType && readOnlySubagentTypes.has(subagentType)) {
-            return "allow";
+            return { decision: "allow" };
           }
         }
 
         // Allow Skill tool — skills are read-only (load instructions, not modify files)
         if (toolName === "Skill" || toolName === "skill") {
-          return "allow";
+          return { decision: "allow" };
         }
 
         // Allow read-only shell commands (ls, git status, git log, etc.)
@@ -439,7 +515,7 @@ class PermissionModeManager {
             command &&
             isReadOnlyShellCommand(command, { allowExternalPaths: true })
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
 
           // Special case: allow shell heredoc writes when they ONLY target
@@ -454,13 +530,13 @@ class PermissionModeManager {
             );
 
             if (resolvedPath && isPathInPlansDir(resolvedPath, plansDir)) {
-              return "allow";
+              return { decision: "allow" };
             }
           }
         }
 
         // Everything else denied in plan mode
-        return "deny";
+        return { decision: "deny" };
       }
 
       case "memory": {
@@ -524,11 +600,20 @@ class PermissionModeManager {
         ];
 
         if (allowedReadOnlyTools.includes(toolName)) {
-          return "allow";
+          return { decision: "allow" };
         }
 
         if (toolName === "memory_apply_patch") {
-          return allowedMemoryRoots.length > 0 ? "allow" : "deny";
+          if (allowedMemoryRoots.length > 0) {
+            return { decision: "allow" };
+          }
+          return {
+            decision: "deny",
+            reason:
+              "Memory mode requires $MEMORY_DIR (or LETTA_MEMORY_SCOPE / " +
+              "--memory-scope) to be set so the apply-patch target can be " +
+              "resolved.",
+          };
         }
 
         if (writeTools.includes(toolName)) {
@@ -553,10 +638,16 @@ class PermissionModeManager {
               workingDirectory,
             )
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
 
-          return "deny";
+          return {
+            decision: "deny",
+            reason: buildWriteOutsideRootsReason(
+              candidatePaths,
+              allowedMemoryRoots,
+            ),
+          };
         }
 
         if (shellTools.includes(toolName)) {
@@ -565,7 +656,7 @@ class PermissionModeManager {
             command &&
             isReadOnlyShellCommand(command, { allowExternalPaths: true })
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
 
           if (
@@ -575,16 +666,36 @@ class PermissionModeManager {
               workingDirectory,
             })
           ) {
-            return "allow";
+            return { decision: "allow" };
           }
 
-          return "deny";
+          if (!command) {
+            return {
+              decision: "deny",
+              reason:
+                "Memory mode requires the Bash tool to be invoked with a " +
+                "`command` argument.",
+            };
+          }
+
+          const { reason } = classifyMemoryBashDenial(
+            command,
+            allowedMemoryRoots,
+            { workingDirectory },
+          );
+          return { decision: "deny", reason };
         }
 
-        return "deny";
+        return {
+          decision: "deny",
+          reason:
+            `Memory mode only permits read-only tools, Edit/Write to paths ` +
+            `under $MEMORY_DIR, and scoped Bash. Tool '${toolName}' is not ` +
+            `available.`,
+        };
       }
 
-      case "default":
+      case "standard":
         // No mode overrides, use normal permission flow
         return null;
 
@@ -597,7 +708,7 @@ class PermissionModeManager {
    * Reset to default mode
    */
   reset(): void {
-    this.currentMode = "default";
+    this.currentMode = DEFAULT_PERMISSION_MODE;
     setGlobalPlanFilePath(null);
     setGlobalModeBeforePlan(null);
   }

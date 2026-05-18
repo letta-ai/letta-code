@@ -1,42 +1,39 @@
 /**
- * Handler-level tests for list_messages using mock Letta clients.
+ * Handler-level tests for list_messages using mock backends.
  *
  * These tests call handleListMessages() directly with mock implementations
- * of conversations.messages.list.  They verify:
+ * of backend.listConversationMessages.  They verify:
  *
- * 1. Which client method is called for each routing case (explicit conv,
+ * 1. Which backend method is called for each routing case (explicit conv,
  *    omitted+named session conv, omitted+default session conv)
- * 2. The arguments passed to each client method
+ * 2. The arguments passed to each backend method
  * 3. The shape and content of the returned ControlResponse
- * 4. Error path — client throws, handler returns error envelope
+ * 4. Error path — backend throws, handler returns error envelope
  *
  * No network. No CLI subprocess. No process.stdout.
  */
 import { describe, expect, mock, test } from "bun:test";
-import type { ListMessagesHandlerClient } from "../../agent/listMessagesHandler";
+import type { ListMessagesHandlerBackend } from "../../agent/listMessagesHandler";
 import { handleListMessages } from "../../agent/listMessagesHandler";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock factory
 // ─────────────────────────────────────────────────────────────────────────────
 
-function makeClient(convMessages: unknown[] = []): {
-  client: ListMessagesHandlerClient;
+function makeBackend(convMessages: unknown[] = []): {
+  backend: ListMessagesHandlerBackend;
   convListSpy: ReturnType<typeof mock>;
 } {
   const convListSpy = mock(async () => ({
     getPaginatedItems: () => convMessages,
   }));
 
-  const client: ListMessagesHandlerClient = {
-    conversations: {
-      messages: {
-        list: convListSpy as unknown as ListMessagesHandlerClient["conversations"]["messages"]["list"],
-      },
-    },
+  const backend: ListMessagesHandlerBackend = {
+    listConversationMessages:
+      convListSpy as unknown as ListMessagesHandlerBackend["listConversationMessages"],
   };
 
-  return { client, convListSpy };
+  return { backend, convListSpy };
 }
 
 const BASE = {
@@ -45,19 +42,19 @@ const BASE = {
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Routing: which client method is called
+// Routing: which backend method is called
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("handleListMessages — routing (which API is called)", () => {
-  test("explicit conversation_id → calls conversations.messages.list with that id", async () => {
-    const { client, convListSpy } = makeClient([{ id: "m1" }]);
+describe("handleListMessages — routing (which backend method is called)", () => {
+  test("explicit conversation_id → calls backend.listConversationMessages with that id", async () => {
+    const { backend, convListSpy } = makeBackend([{ id: "m1" }]);
 
     const resp = await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages", conversation_id: "conv-explicit" },
       sessionConversationId: "default",
       sessionAgentId: "agent-session",
-      client,
+      backend,
     });
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
@@ -66,21 +63,21 @@ describe("handleListMessages — routing (which API is called)", () => {
   });
 
   test("explicit conversation_id overrides a non-default session conv", async () => {
-    const { client, convListSpy } = makeClient([]);
+    const { backend, convListSpy } = makeBackend([]);
 
     await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages", conversation_id: "conv-override" },
       sessionConversationId: "conv-session-other",
       sessionAgentId: "agent-session",
-      client,
+      backend,
     });
 
     expect(convListSpy.mock.calls[0]?.[0]).toBe("conv-override");
   });
 
-  test("omitted conversation_id + named session conv → calls conversations.messages.list with session conv", async () => {
-    const { client, convListSpy } = makeClient([
+  test("omitted conversation_id + named session conv → calls backend.listConversationMessages with session conv", async () => {
+    const { backend, convListSpy } = makeBackend([
       { id: "msg-A" },
       { id: "msg-B" },
     ]);
@@ -90,7 +87,7 @@ describe("handleListMessages — routing (which API is called)", () => {
       listReq: { subtype: "list_messages" }, // no conversation_id
       sessionConversationId: "conv-session-xyz",
       sessionAgentId: "agent-session",
-      client,
+      backend,
     });
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
@@ -105,15 +102,15 @@ describe("handleListMessages — routing (which API is called)", () => {
     }
   });
 
-  test("omitted conversation_id + session on default → calls conversations.messages.list with default + agent_id", async () => {
-    const { client, convListSpy } = makeClient([{ id: "msg-default-1" }]);
+  test("omitted conversation_id + session on default → calls backend.listConversationMessages with default + agent_id", async () => {
+    const { backend, convListSpy } = makeBackend([{ id: "msg-default-1" }]);
 
     const resp = await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages" }, // no conversation_id
       sessionConversationId: "default",
       sessionAgentId: "agent-def",
-      client,
+      backend,
     });
 
     expect(convListSpy).toHaveBeenCalledTimes(1);
@@ -124,14 +121,14 @@ describe("handleListMessages — routing (which API is called)", () => {
   });
 
   test("explicit agent_id + session default → conversations path uses request agent_id query", async () => {
-    const { client, convListSpy } = makeClient([]);
+    const { backend, convListSpy } = makeBackend([]);
 
     await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages", agent_id: "agent-override" },
       sessionConversationId: "default",
       sessionAgentId: "agent-session",
-      client,
+      backend,
     });
 
     expect(convListSpy.mock.calls[0]?.[0]).toBe("default");
@@ -144,9 +141,9 @@ describe("handleListMessages — routing (which API is called)", () => {
 // Args forwarding: limit, order, cursor options
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("handleListMessages — API call arguments", () => {
+describe("handleListMessages — backend call arguments", () => {
   test("passes limit and order to conversations path", async () => {
-    const { client, convListSpy } = makeClient([]);
+    const { backend, convListSpy } = makeBackend([]);
 
     await handleListMessages({
       ...BASE,
@@ -158,7 +155,7 @@ describe("handleListMessages — API call arguments", () => {
       },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     const opts = convListSpy.mock.calls[0]?.[1] as {
@@ -170,14 +167,14 @@ describe("handleListMessages — API call arguments", () => {
   });
 
   test("defaults to limit=50 and order=desc when not specified", async () => {
-    const { client, convListSpy } = makeClient([]);
+    const { backend, convListSpy } = makeBackend([]);
 
     await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages" },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     expect(convListSpy.mock.calls[0]?.[0]).toBe("default");
@@ -192,7 +189,7 @@ describe("handleListMessages — API call arguments", () => {
   });
 
   test("forwards before cursor to conversations path", async () => {
-    const { client, convListSpy } = makeClient([]);
+    const { backend, convListSpy } = makeBackend([]);
 
     await handleListMessages({
       ...BASE,
@@ -203,7 +200,7 @@ describe("handleListMessages — API call arguments", () => {
       },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     const opts = convListSpy.mock.calls[0]?.[1] as { before?: string };
@@ -211,14 +208,14 @@ describe("handleListMessages — API call arguments", () => {
   });
 
   test("forwards before cursor to default conversation path", async () => {
-    const { client, convListSpy } = makeClient([]);
+    const { backend, convListSpy } = makeBackend([]);
 
     await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages", before: "msg-cursor-agents" },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     expect(convListSpy.mock.calls[0]?.[0]).toBe("default");
@@ -231,14 +228,14 @@ describe("handleListMessages — API call arguments", () => {
   });
 
   test("does not include before/after when absent", async () => {
-    const { client, convListSpy } = makeClient([]);
+    const { backend, convListSpy } = makeBackend([]);
 
     await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages", conversation_id: "conv-1" },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     const opts = convListSpy.mock.calls[0]?.[1] as Record<string, unknown>;
@@ -254,14 +251,14 @@ describe("handleListMessages — API call arguments", () => {
 describe("handleListMessages — response shape", () => {
   test("success response has correct envelope", async () => {
     const msgs = [{ id: "m1" }, { id: "m2" }];
-    const { client } = makeClient(msgs);
+    const { backend } = makeBackend(msgs);
 
     const resp = await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages", conversation_id: "conv-1" },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     expect(resp.type).toBe("control_response");
@@ -282,7 +279,7 @@ describe("handleListMessages — response shape", () => {
 
   test("has_more is true when result length equals limit", async () => {
     const msgs = Array.from({ length: 50 }, (_, i) => ({ id: `m${i}` }));
-    const { client } = makeClient(msgs);
+    const { backend } = makeBackend(msgs);
 
     const resp = await handleListMessages({
       ...BASE,
@@ -293,7 +290,7 @@ describe("handleListMessages — response shape", () => {
       },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     if (resp.response.subtype === "success") {
@@ -303,14 +300,14 @@ describe("handleListMessages — response shape", () => {
   });
 
   test("next_before is null when result is empty", async () => {
-    const { client } = makeClient([]);
+    const { backend } = makeBackend([]);
 
     const resp = await handleListMessages({
       ...BASE,
       listReq: { subtype: "list_messages", conversation_id: "conv-1" },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     if (resp.response.subtype === "success") {
@@ -325,16 +322,13 @@ describe("handleListMessages — response shape", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("handleListMessages — error path", () => {
-  test("client Error → error control_response with message", async () => {
+  test("backend Error → error control_response with message", async () => {
     const convListSpy = mock(async () => {
       throw new Error("404 conversation not found");
     });
-    const client: ListMessagesHandlerClient = {
-      conversations: {
-        messages: {
-          list: convListSpy as unknown as ListMessagesHandlerClient["conversations"]["messages"]["list"],
-        },
-      },
+    const backend: ListMessagesHandlerBackend = {
+      listConversationMessages:
+        convListSpy as unknown as ListMessagesHandlerBackend["listConversationMessages"],
     };
 
     const resp = await handleListMessages({
@@ -342,7 +336,7 @@ describe("handleListMessages — error path", () => {
       listReq: { subtype: "list_messages", conversation_id: "conv-bad" },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     expect(resp.response.subtype).toBe("error");
@@ -356,12 +350,9 @@ describe("handleListMessages — error path", () => {
     const convListSpy = mock(async () => {
       throw "string error";
     });
-    const client: ListMessagesHandlerClient = {
-      conversations: {
-        messages: {
-          list: convListSpy as unknown as ListMessagesHandlerClient["conversations"]["messages"]["list"],
-        },
-      },
+    const backend: ListMessagesHandlerBackend = {
+      listConversationMessages:
+        convListSpy as unknown as ListMessagesHandlerBackend["listConversationMessages"],
     };
 
     const resp = await handleListMessages({
@@ -369,7 +360,7 @@ describe("handleListMessages — error path", () => {
       listReq: { subtype: "list_messages", conversation_id: "conv-1" },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     if (resp.response.subtype === "error") {
@@ -381,12 +372,9 @@ describe("handleListMessages — error path", () => {
     const convListSpy = mock(async () => {
       throw new Error("agent unavailable");
     });
-    const client: ListMessagesHandlerClient = {
-      conversations: {
-        messages: {
-          list: convListSpy as unknown as ListMessagesHandlerClient["conversations"]["messages"]["list"],
-        },
-      },
+    const backend: ListMessagesHandlerBackend = {
+      listConversationMessages:
+        convListSpy as unknown as ListMessagesHandlerBackend["listConversationMessages"],
     };
 
     const resp = await handleListMessages({
@@ -395,7 +383,7 @@ describe("handleListMessages — error path", () => {
       listReq: { subtype: "list_messages" },
       sessionConversationId: "default",
       sessionAgentId: "agent-1",
-      client,
+      backend,
     });
 
     expect(resp.session_id).toBe("my-session");

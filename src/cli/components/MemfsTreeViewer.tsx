@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { isGitRepo } from "../../agent/memoryGit";
+import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import {
   getFileNodes,
   readFileContent,
@@ -11,7 +11,7 @@ import {
   type TreeNode,
 } from "../../agent/memoryScanner";
 import { generateAndOpenMemoryViewer } from "../../web/generate-memory-viewer";
-import { buildChatUrl } from "../helpers/appUrls";
+import { buildChatUrl, isLocalAgentId } from "../helpers/appUrls";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -52,7 +52,10 @@ export function MemfsTreeViewer({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const isTmux = Boolean(process.env.TMUX);
-  const adeUrl = buildChatUrl(agentId, { view: "memory", conversationId });
+  const isLocalAgent = isLocalAgentId(agentId);
+  const adeUrl = isLocalAgent
+    ? null
+    : buildChatUrl(agentId, { view: "memory", conversationId });
 
   // State
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -63,9 +66,12 @@ export function MemfsTreeViewer({
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Get memory filesystem root
-  const memoryRoot = getMemoryFilesystemRoot(agentId);
+  const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
   const memoryExists = existsSync(memoryRoot);
-  const hasGitRepo = useMemo(() => isGitRepo(agentId), [agentId]);
+  const hasGitRepo = useMemo(
+    () => existsSync(join(memoryRoot, ".git")),
+    [memoryRoot],
+  );
 
   function showStatus(msg: string, durationMs: number) {
     if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
@@ -473,12 +479,13 @@ export function MemfsTreeViewer({
         ) : (
           <Box>
             <Text dimColor>{"  "}↑↓ navigate · Enter view · </Text>
-            {!isTmux && (
+            {adeUrl && !isTmux && (
               <Link url={adeUrl}>
                 <Text dimColor>Edit in ADE</Text>
               </Link>
             )}
-            {isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
+            {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
+            {!adeUrl && <Text dimColor>Local agent: {agentId}</Text>}
             {hasGitRepo && <Text dimColor> · O open in browser</Text>}
             <Text dimColor> · Esc close</Text>
           </Box>

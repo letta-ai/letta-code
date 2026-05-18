@@ -546,14 +546,23 @@ function buildReadSummary(
       ? `${options.lastLines} lines`
       : undefined;
 
+  // Show just the file path (no "path:" label), matching Glob/Search/List style
+  // formatDisplayPath returns "" when path is cwd — skip in that case
+  const displayPath = formatDisplayPath(path);
+  const parts: string[] = [];
+  if (displayPath) {
+    parts.push(displayPath);
+  }
+  if (lineSummary) {
+    parts.push(`lines: ${lineSummary}`);
+  }
+  if (trailingSummary) {
+    parts.push(`last: ${trailingSummary}`);
+  }
   return {
     kind: "read",
     label: "Read",
-    summary: formatSummaryFields([
-      ["path", formatDisplayPath(path)],
-      ["lines", lineSummary],
-      ["last", trailingSummary],
-    ]),
+    summary: parts.join(", ") || ".",
     rawCommand: "",
   };
 }
@@ -562,17 +571,23 @@ function buildListSummary(
   path: string | undefined,
   options: { filter?: string; limit?: number } = {},
 ): ShellSemanticDisplay {
+  // Show just the directory path (no "path:" label), matching Glob/Search style
+  // formatDisplayPath returns "" when path is cwd — skip in that case
+  const displayPath = path ? formatDisplayPath(path) : null;
+  const parts: string[] = [];
+  if (displayPath) {
+    parts.push(displayPath);
+  }
+  if (options.filter) {
+    parts.push(`filter: ${quoteSummaryValue(options.filter)}`);
+  }
+  if (options.limit) {
+    parts.push(`limit: ${options.limit}`);
+  }
   return {
     kind: "list",
     label: "List",
-    summary: formatSummaryFields([
-      ["path", path ? formatDisplayPath(path) : "."],
-      [
-        "filter",
-        options.filter ? quoteSummaryValue(options.filter) : undefined,
-      ],
-      ["limit", options.limit],
-    ]),
+    summary: parts.join(", ") || ".",
     rawCommand: "",
   };
 }
@@ -582,14 +597,24 @@ function buildSearchSummary(
   path: string | undefined,
   options: { limit?: number } = {},
 ): ShellSemanticDisplay {
+  // Show "query" in path (no labels), matching Glob/Search tool display style
+  // formatDisplayPath returns "" when path is cwd — skip "in" in that case
+  const displayPath = path ? formatDisplayPath(path) : null;
+  const parts: string[] = [];
+  if (query && displayPath) {
+    parts.push(`${quoteSummaryValue(query)} in ${displayPath}`);
+  } else if (query) {
+    parts.push(quoteSummaryValue(query));
+  } else if (displayPath) {
+    parts.push(displayPath);
+  }
+  if (options.limit) {
+    parts.push(`limit: ${options.limit}`);
+  }
   return {
     kind: "search",
     label: "Search",
-    summary: formatSummaryFields([
-      ["query", query ? quoteSummaryValue(query) : "search"],
-      ["path", path ? formatDisplayPath(path) : undefined],
-      ["limit", options.limit],
-    ]),
+    summary: parts.join(", ") || "search",
     rawCommand: "",
   };
 }

@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 
 export type CliFlagMode = "interactive" | "headless" | "both";
+export type CliBackendMode = "api" | "local";
 
 type CliFlagParserConfig = {
   type: "string" | "boolean";
@@ -103,6 +104,15 @@ export const CLI_FLAG_CATALOG = {
     },
   },
   "system-custom": { parser: { type: "string" }, mode: "both" },
+  personality: {
+    parser: { type: "string" },
+    mode: "both",
+    help: {
+      argLabel: "<name>",
+      description:
+        'Personality preset for --new-agent: "letta-code", "linus", "kawaii", "claude", or "codex"',
+    },
+  },
   "memory-blocks": { parser: { type: "string" }, mode: "both" },
   "block-value": {
     parser: { type: "string", multiple: true },
@@ -125,6 +135,15 @@ export const CLI_FLAG_CATALOG = {
   // Advanced/internal flags intentionally hidden from --help output.
   // They remain in the shared catalog for strict parsing parity.
   run: { parser: { type: "boolean" }, mode: "headless" },
+  "dev-backend": { parser: { type: "string" }, mode: "headless" },
+  backend: {
+    parser: { type: "string" },
+    mode: "both",
+    help: {
+      argLabel: "<mode>",
+      description: 'Backend mode: "api" or "local"',
+    },
+  },
   tools: { parser: { type: "string" }, mode: "both" },
   allowedTools: { parser: { type: "string" }, mode: "both" },
   disallowedTools: { parser: { type: "string" }, mode: "both" },
@@ -372,3 +391,44 @@ export function parseCliArgs(args: string[], strict: boolean) {
 }
 
 export type ParsedCliArgs = ReturnType<typeof parseCliArgs>;
+
+export function parseBackendModeFlag(
+  value: string | undefined,
+): CliBackendMode | undefined {
+  if (value === undefined) return undefined;
+  if (value === "api" || value === "local") return value;
+  throw new Error(
+    `Invalid --backend value "${value}". Expected "api" or "local".`,
+  );
+}
+
+export function extractBackendFlag(args: string[]): {
+  backend?: CliBackendMode;
+  args: string[];
+} {
+  const filtered: string[] = [];
+  let backend: CliBackendMode | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (arg === "--backend") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        throw new Error(
+          'Missing value for --backend. Expected "api" or "local".',
+        );
+      }
+      backend = parseBackendModeFlag(value);
+      index += 1;
+      continue;
+    }
+    if (arg?.startsWith("--backend=")) {
+      backend = parseBackendModeFlag(arg.slice("--backend=".length));
+      continue;
+    }
+    filtered.push(arg);
+  }
+
+  return { backend, args: filtered };
+}

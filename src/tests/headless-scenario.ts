@@ -2,59 +2,117 @@
 /**
  * Headless scenario test runner
  *
- * Runs a single multi-step scenario against the LeTTA Code CLI (headless) for a given
+ * Runs a single multi-step scenario against the Letta Code CLI (headless) for a given
  * model and output format. Intended for CI matrix usage.
  *
  * Usage:
  *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
+ *   bun tsx src/tests/headless-scenario.ts --backend local --model gpt-5-mini-medium --output text --parallel on
  */
 
-import { spawn } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
 } from "../integration-tests/processDiagnostics";
 import { createIsolatedCliTestEnv } from "./testProcessEnv";
 
+const execFile = promisify(execFileCb);
+
+type Backend = "api" | "local";
+type LocalProvider = "openai" | "anthropic";
+
 type Args = {
+  backend: Backend;
   model: string;
   output: "text" | "json" | "stream-json";
   parallel: "on" | "off" | "hybrid";
+  provider?: LocalProvider;
 };
+
+interface RunResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+  localStorageDir?: string;
+}
 
 function parseArgs(argv: string[]): Args {
   const args: {
+    backend: Backend;
     model?: string;
     output: Args["output"];
     parallel: Args["parallel"];
+    provider?: LocalProvider;
   } = {
+    backend: "api",
     output: "text",
     parallel: "on",
   };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
-    if (v === "--model") args.model = argv[++i];
+    if (v === "--backend") args.backend = argv[++i] as Backend;
+    else if (v === "--model") args.model = argv[++i];
     else if (v === "--output") args.output = argv[++i] as Args["output"];
     else if (v === "--parallel") args.parallel = argv[++i] as Args["parallel"];
+    else if (v === "--provider") args.provider = argv[++i] as LocalProvider;
   }
   if (!args.model) throw new Error("Missing --model");
-  if (!["text", "json", "stream-json"].includes(args.output))
+  if (!["api", "local"].includes(args.backend)) {
+    throw new Error(`Invalid --backend ${args.backend}`);
+  }
+  if (!["text", "json", "stream-json"].includes(args.output)) {
     throw new Error(`Invalid --output ${args.output}`);
-  if (!["on", "off", "hybrid"].includes(args.parallel))
+  }
+  if (!["on", "off", "hybrid"].includes(args.parallel)) {
     throw new Error(`Invalid --parallel ${args.parallel}`);
+  }
+  if (
+    args.provider !== undefined &&
+    !["openai", "anthropic"].includes(args.provider)
+  ) {
+    throw new Error(`Invalid --provider ${args.provider}`);
+  }
   return args as Args;
 }
 
-// Tests run against Letta Cloud; only LETTA_API_KEY is required.
-async function ensurePrereqs(_model: string): Promise<"ok" | "skip"> {
-  if (!process.env.LETTA_API_KEY) {
-    console.log("SKIP: Missing env LETTA_API_KEY");
+function inferLocalProvider(model: string): LocalProvider {
+  if (
+    model.startsWith("anthropic/") ||
+    model.startsWith("claude") ||
+    model.includes("sonnet") ||
+    model.includes("haiku") ||
+    model.includes("opus")
+  ) {
+    return "anthropic";
+  }
+  return "openai";
+}
+
+async function ensurePrereqs(args: Args): Promise<"ok" | "skip"> {
+  if (args.backend === "api") {
+    if (!process.env.LETTA_API_KEY) {
+      console.log("SKIP: Missing env LETTA_API_KEY");
+      return "skip";
+    }
+    return "ok";
+  }
+
+  const provider = args.provider ?? inferLocalProvider(args.model);
+  const requiredKey =
+    provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+  if (!process.env[requiredKey]) {
+    console.log(`SKIP: Missing env ${requiredKey}`);
     return "skip";
   }
   return "ok";
 }
 
-function scenarioPrompt(): string {
+function apiScenarioPrompt(): string {
   return (
     "I want to test your tool calling abilities (do not ask for any clarifications, this is an automated test suite inside a CI runner, there is no human to assist you). " +
     "First, call a single conversation_search to search for 'hello'. " +
@@ -67,32 +125,70 @@ function scenarioPrompt(): string {
   );
 }
 
-async function runCLI(
-  model: string,
-  output: Args["output"],
-): Promise<{ stdout: string; stderr: string; code: number }> {
+function localScenarioPrompt(): string {
+  return (
+    "I want to test local backend tool calling abilities (do not ask for clarifications; this is an automated CI runner). " +
+    "First, run a shell command to output exactly LOCAL_SHELL_ONE. " +
+    "Then, try running two shell commands in parallel to output exactly LOCAL_PARALLEL_TWO and LOCAL_PARALLEL_THREE. " +
+    "Then, use whichever memory tool is available (`memory` or `memory_apply_patch`) to create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`. " +
+    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command and memory update above succeeded, your final response must include the uppercase word BANANA. " +
+    "If any step failed, do not include BANANA."
+  );
+}
+
+function scenarioPrompt(backend: Backend): string {
+  return backend === "local" ? localScenarioPrompt() : apiScenarioPrompt();
+}
+
+function providerEnvValue(provider: LocalProvider): string {
+  return provider === "openai" ? "openai-responses" : "anthropic";
+}
+
+async function runCLI(args: Args): Promise<RunResult> {
+  const localStorageDir =
+    args.backend === "local"
+      ? await mkdtemp(join(tmpdir(), "lc-local-headless-scenario-"))
+      : undefined;
+  const provider = args.provider ?? inferLocalProvider(args.model);
+  const env = createIsolatedCliTestEnv(
+    args.backend === "local"
+      ? {
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "true",
+          LETTA_LOCAL_BACKEND_DIR: localStorageDir,
+          LETTA_CODE_DEV_PI_PROVIDER: providerEnvValue(provider),
+        }
+      : {},
+  );
+  if (args.backend === "local") {
+    delete env.LETTA_API_KEY;
+    delete env.LETTA_BASE_URL;
+    delete env.LETTA_API_BASE;
+  }
+
+  const cliArgs = [
+    "run",
+    "dev",
+    "-p",
+    scenarioPrompt(args.backend),
+    "--yolo",
+    "--new-agent",
+  ];
+  if (args.backend === "api") {
+    cliArgs.push("--no-memfs");
+  }
+  cliArgs.push(
+    "--base-tools",
+    args.backend === "local"
+      ? "none"
+      : "memory,web_search,fetch_webpage,conversation_search",
+    "--output-format",
+    args.output,
+    "-m",
+    args.model,
+  );
+
   return new Promise((resolve, reject) => {
-    const proc = spawn(
-      "bun",
-      [
-        "run",
-        "dev",
-        "-p",
-        scenarioPrompt(),
-        "--yolo",
-        "--new-agent",
-        "--no-memfs",
-        "--base-tools",
-        "memory,web_search,fetch_webpage,conversation_search",
-        "--output-format",
-        output,
-        "-m",
-        model,
-      ],
-      {
-        env: createIsolatedCliTestEnv(),
-      },
-    );
+    const proc = spawn("bun", cliArgs, { env });
 
     let stdout = "";
     let stderr = "";
@@ -108,17 +204,71 @@ async function runCLI(
     proc.on("close", (code) => {
       if (code !== 0) {
         console.error(
-          `CLI failed (${model} / ${output}).\n${formatCapturedOutput({
-            stdout,
-            stderr,
-          })}`,
+          `CLI failed (${args.backend} / ${args.model} / ${args.output}).\n${formatCapturedOutput(
+            {
+              stdout,
+              stderr,
+            },
+          )}`,
         );
       }
-      resolve({ stdout, stderr, code: code ?? 1 });
+      resolve({ stdout, stderr, code: code ?? 1, localStorageDir });
     });
 
     proc.on("error", reject);
   });
+}
+
+async function cleanupRun(run: RunResult): Promise<void> {
+  if (run.localStorageDir) {
+    await rm(run.localStorageDir, { recursive: true, force: true });
+  }
+}
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFile("git", args, { cwd });
+  return String(stdout ?? "").trim();
+}
+
+async function validateLocalStorage(storageDir: string | undefined) {
+  if (!storageDir) throw new Error("Missing local storage dir for local run");
+  const agentFiles = await readdir(join(storageDir, "agents"));
+  if (agentFiles.length === 0) {
+    throw new Error("Local backend did not persist an agent record");
+  }
+  const agent = JSON.parse(
+    await readFile(join(storageDir, "agents", agentFiles[0] ?? ""), "utf8"),
+  ) as { id?: unknown };
+  if (typeof agent.id !== "string" || agent.id.length === 0) {
+    throw new Error("Persisted local agent record is missing id");
+  }
+
+  const memoryDir = join(storageDir, "memfs", agent.id, "memory");
+  const head = await git(memoryDir, ["rev-parse", "--verify", "HEAD"]);
+  if (head.length !== 40) {
+    throw new Error(`Invalid local MemFS HEAD revision: ${head}`);
+  }
+  const commitCount = Number(
+    await git(memoryDir, ["rev-list", "--count", "HEAD"]),
+  );
+  if (!Number.isFinite(commitCount) || commitCount < 2) {
+    throw new Error(
+      `Expected local MemFS scenario to create a memory-tool commit, found ${commitCount} commit(s)`,
+    );
+  }
+  const status = await git(memoryDir, ["status", "--porcelain"]);
+  if (status) {
+    throw new Error(`Local MemFS repo should be clean, found:\n${status}`);
+  }
+  const memoryFile = await git(memoryDir, [
+    "show",
+    "HEAD:reference/ci/local-backend.md",
+  ]);
+  if (!memoryFile.includes("LOCAL_MEMFS_SCENARIO_OK")) {
+    throw new Error(
+      "Local MemFS scenario memory file is missing expected marker",
+    );
+  }
 }
 
 const REQUIRED_MARKERS = ["BANANA"];
@@ -183,74 +333,79 @@ function validateOutput(stdout: string, output: Args["output"]) {
 }
 
 async function main() {
-  const { model, output } = parseArgs(process.argv.slice(2));
-  const prereq = await ensurePrereqs(model);
+  const args = parseArgs(process.argv.slice(2));
+  const prereq = await ensurePrereqs(args);
   if (prereq === "skip") return;
 
-  let stdout = "";
-  let stderr = "";
-  let code = 0;
+  let lastRun: RunResult = { stdout: "", stderr: "", code: 0 };
   let lastError: Error | null = null;
   const failedAttempts: Array<{ attempt: number; message: string }> = [];
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    ({ stdout, stderr, code } = await runCLI(model, output));
-    if (code !== 0) {
-      lastError = new Error(
-        `CLI exited with code ${code}.\n${formatCapturedOutput({
-          stdout,
-          stderr,
-        })}`,
-      );
-    } else {
-      try {
-        validateOutput(stdout, output);
-        console.log(`OK: ${model} / ${output}`);
-        return;
-      } catch (error) {
-        const validationError =
-          error instanceof Error ? error : new Error(String(error));
-        lastError = new Error(
-          `${validationError.message}\n${formatCapturedOutput({
-            stdout,
-            stderr,
+    const run = await runCLI(args);
+    lastRun = run;
+    try {
+      if (run.code !== 0) {
+        throw new Error(
+          `CLI exited with code ${run.code}.\n${formatCapturedOutput({
+            stdout: run.stdout,
+            stderr: run.stderr,
           })}`,
         );
       }
+      validateOutput(run.stdout, args.output);
+      if (args.backend === "local") {
+        await validateLocalStorage(run.localStorageDir);
+      }
+      console.log(`OK: ${args.backend} / ${args.model} / ${args.output}`);
+      await cleanupRun(run);
+      return;
+    } catch (error) {
+      const validationError =
+        error instanceof Error ? error : new Error(String(error));
+      lastError = validationError;
+      failedAttempts.push({
+        attempt,
+        message: validationError.message,
+      });
+      await cleanupRun(run);
     }
-
-    failedAttempts.push({
-      attempt,
-      message: lastError?.message ?? "unknown error",
-    });
 
     if (attempt < MAX_ATTEMPTS) {
       console.error(
-        `[headless-scenario] attempt ${attempt}/${MAX_ATTEMPTS} failed for ${model} / ${output}: ${lastError?.message ?? "unknown error"}`,
+        `[headless-scenario] attempt ${attempt}/${MAX_ATTEMPTS} failed for ${args.backend} / ${args.model} / ${args.output}: ${lastError?.message ?? "unknown error"}`,
       );
       await Bun.sleep(500);
     }
   }
 
   try {
-    if (code !== 0) {
-      process.exit(code);
+    if (lastRun.code !== 0) {
+      process.exit(lastRun.code);
     }
     if (lastError) {
       throw new Error(formatAttemptDiagnostics(failedAttempts));
     }
   } catch (e) {
     // Dump full stdout to aid debugging
-    console.error(`\n===== BEGIN STDOUT (${model} / ${output}) =====`);
-    console.error(stdout);
-    console.error(`===== END STDOUT (${model} / ${output}) =====\n`);
+    console.error(
+      `\n===== BEGIN STDOUT (${args.backend} / ${args.model} / ${args.output}) =====`,
+    );
+    console.error(lastRun.stdout);
+    console.error(
+      `===== END STDOUT (${args.backend} / ${args.model} / ${args.output}) =====\n`,
+    );
 
-    console.error(`\n===== BEGIN STDERR (${model} / ${output}) =====`);
-    console.error(stderr);
-    console.error(`===== END STDERR (${model} / ${output}) =====\n`);
+    console.error(
+      `\n===== BEGIN STDERR (${args.backend} / ${args.model} / ${args.output}) =====`,
+    );
+    console.error(lastRun.stderr);
+    console.error(
+      `===== END STDERR (${args.backend} / ${args.model} / ${args.output}) =====\n`,
+    );
 
-    if (output === "stream-json") {
-      const lines = stdout.split(/\r?\n/).filter(Boolean);
+    if (args.output === "stream-json") {
+      const lines = lastRun.stdout.split(/\r?\n/).filter(Boolean);
       const tail = lines.slice(-50).join("\n");
       console.error(
         "----- stream-json tail (last 50 lines) -----\n" +

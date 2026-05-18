@@ -13,7 +13,9 @@ import {
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;
 
-const { skill } = await import("../../tools/impl/Skill");
+const { renderSkillContent, skill, wrapSkillContent } = await import(
+  "../../tools/impl/Skill"
+);
 
 function withSkillContext<T>(fn: () => Promise<T>) {
   return runWithRuntimeContext(
@@ -277,6 +279,75 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued[0]?.content).toContain(
       "Loaded from USER_CWD project skills.",
     );
+  });
+
+  test("renders skill arguments and skill directory substitutions", () => {
+    const rendered = renderSkillContent(
+      "deploy",
+      [
+        "---",
+        "name: deploy",
+        "description: deploy",
+        "arguments: environment version",
+        "---",
+        "",
+        "Deploy $environment at $version from $" +
+          "{CLAUDE_SKILL_DIR}; all=$ARGUMENTS first=$0 second=$ARGUMENTS[1].",
+      ].join("\n"),
+      join(tempRoot, "deploy", "SKILL.md"),
+      { args: "prod v1" },
+    );
+
+    expect(rendered).toContain("Deploy prod at v1");
+    expect(rendered).toContain("all=prod v1");
+    expect(rendered).toContain("first=prod");
+    expect(rendered).toContain("second=v1");
+    expect(rendered).toContain(join(tempRoot, "deploy"));
+  });
+
+  test("appends arguments when no placeholder is present", () => {
+    const rendered = renderSkillContent(
+      "review",
+      "---\nname: review\ndescription: review\n---\n\nReview the code.",
+      join(tempRoot, "review", "SKILL.md"),
+      { args: "src/index.ts" },
+    );
+
+    expect(rendered).toContain("Review the code.");
+    expect(rendered).toContain("ARGUMENTS: src/index.ts");
+  });
+
+  test("blocks model invocation for manual-only skills unless explicitly allowed", () => {
+    const content =
+      "---\nname: deploy\ndescription: deploy\ndisable-model-invocation: true\n---\n\nDeploy.";
+    expect(() =>
+      renderSkillContent(
+        "deploy",
+        content,
+        join(tempRoot, "deploy", "SKILL.md"),
+      ),
+    ).toThrow("disable-model-invocation");
+
+    expect(
+      renderSkillContent(
+        "deploy",
+        content,
+        join(tempRoot, "deploy", "SKILL.md"),
+        {
+          allowDisabledModelInvocation: true,
+        },
+      ),
+    ).toContain("Deploy.");
+  });
+
+  test("wraps slash-containing skill names in a safe XML envelope", () => {
+    const wrapped = wrapSkillContent(
+      "integrations/oauth/letta-oauth",
+      "Use OAuth.",
+    );
+
+    expect(wrapped).toContain('<skill name="integrations/oauth/letta-oauth">');
+    expect(wrapped).toContain("Use OAuth.");
   });
 
   test("executeTool forwards parentScope to Skill for listener-scoped memfs lookup", async () => {

@@ -7,13 +7,28 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
-export const SUPPORTED_CHANNEL_IDS = ["telegram", "slack", "discord"] as const;
-export type SupportedChannelId = (typeof SUPPORTED_CHANNEL_IDS)[number];
+import type { PermissionMode } from "../permissions/mode";
+
+export const FIRST_PARTY_CHANNEL_IDS = [
+  "telegram",
+  "slack",
+  "discord",
+  "custom",
+] as const;
+export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
+/**
+ * Built-in channels shipped with Letta Code. Custom channel IDs are discovered
+ * at runtime from ~/.letta/channels/<id>/channel.json.
+ */
+export const SUPPORTED_CHANNEL_IDS = FIRST_PARTY_CHANNEL_IDS;
+export type SupportedChannelId = string;
 export type ChannelChatType = "direct" | "channel";
-export type SlackDefaultPermissionMode =
-  | "default"
-  | "acceptEdits"
-  | "bypassPermissions";
+export type ChannelDefaultPermissionMode = Extract<
+  PermissionMode,
+  "standard" | "acceptEdits" | "unrestricted"
+>;
+export type SlackDefaultPermissionMode = ChannelDefaultPermissionMode;
+export type DiscordDefaultPermissionMode = ChannelDefaultPermissionMode;
 
 export interface ChannelMessageAttachment {
   id?: string;
@@ -48,7 +63,7 @@ export interface ChannelThreadContext {
 }
 
 export interface ChannelTurnSource {
-  channel: SupportedChannelId;
+  channel: string;
   accountId?: string;
   chatId: string;
   chatType?: ChannelChatType;
@@ -100,7 +115,7 @@ export interface ChannelAdapter {
   /** Platform identifier, e.g. "telegram", "slack". */
   readonly id: string;
   /** Channel identifier, e.g. "telegram". */
-  readonly channelId?: SupportedChannelId;
+  readonly channelId?: string;
   /** Account identifier within the channel. */
   readonly accountId?: string;
   /** Human-readable display name, e.g. "Telegram". */
@@ -266,6 +281,12 @@ interface ChannelAccountBase {
   updatedAt: string;
 }
 
+export interface CustomChannelAccount extends ChannelAccountBase {
+  channel: string;
+  /** Plugin-owned persisted account settings. May contain secrets. */
+  config: Record<string, unknown>;
+}
+
 export interface TelegramChannelConfig {
   channel: "telegram";
   enabled: boolean;
@@ -290,8 +311,16 @@ export interface DiscordChannelConfig {
   channel: "discord";
   enabled: boolean;
   token: string;
+  defaultPermissionMode: DiscordDefaultPermissionMode;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /**
+   * Optional allowlist of guild channel IDs. When non-empty, only messages
+   * whose channel ID (or parent channel ID for thread messages) appears in
+   * this list are processed. Empty/undefined preserves the default behavior
+   * of listening in every guild channel the bot can see.
+   */
+  allowedChannels?: string[];
 }
 
 export type ChannelConfig =
@@ -327,14 +356,65 @@ export interface SlackChannelAccount extends ChannelAccountBase {
 export interface DiscordChannelAccount extends ChannelAccountBase {
   channel: "discord";
   token: string;
-  /** Agent ID used for guild auto-routing (like Slack's agentId). */
+  /** Agent ID used for account-bound DM and guild auto-routing. */
   agentId: string | null;
+  /** Permission mode for new Discord-created conversations. */
+  defaultPermissionMode: DiscordDefaultPermissionMode;
+  /**
+   * Optional allowlist of guild channel IDs. When non-empty, only messages
+   * whose channel ID (or parent channel ID for thread messages) appears in
+   * this list are processed. Empty/undefined preserves the default behavior
+   * of listening in every guild channel the bot can see. DMs are unaffected.
+   */
+  allowedChannels?: string[];
 }
 
 export type ChannelAccount =
   | TelegramChannelAccount
   | SlackChannelAccount
-  | DiscordChannelAccount;
+  | DiscordChannelAccount
+  | CustomChannelAccount;
+
+export function isFirstPartyChannelId(
+  channelId: string,
+): channelId is FirstPartyChannelId {
+  return FIRST_PARTY_CHANNEL_IDS.includes(channelId as FirstPartyChannelId);
+}
+
+export function isTelegramChannelAccount(
+  account: ChannelAccount,
+): account is TelegramChannelAccount {
+  return (
+    account.channel === "telegram" && "token" in account && "binding" in account
+  );
+}
+
+export function isSlackChannelAccount(
+  account: ChannelAccount,
+): account is SlackChannelAccount {
+  return (
+    account.channel === "slack" &&
+    "botToken" in account &&
+    "appToken" in account
+  );
+}
+
+export function isDiscordChannelAccount(
+  account: ChannelAccount,
+): account is DiscordChannelAccount {
+  return account.channel === "discord" && "token" in account;
+}
+
+export function isCustomChannelAccount(
+  account: ChannelAccount,
+): account is CustomChannelAccount {
+  // The "custom" first-party channel and all user-installed channels share the
+  // same generic config-bag shape (no specific fields like `token`).
+  if (account.channel === "custom") {
+    return "config" in account;
+  }
+  return !isFirstPartyChannelId(account.channel) && "config" in account;
+}
 
 // ── Pairing ───────────────────────────────────────────────────────
 

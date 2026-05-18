@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.24.1",
+  "version": "0.25.10",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "bin": {
@@ -35,18 +35,19 @@
   "dependencies": {
     "@letta-ai/letta-client": "^1.10.2",
     "glob": "^13.0.0",
-    "highlight.js": "^11.11.1",
     "ink-link": "^5.0.0",
-    "lowlight": "^3.3.0",
     "node-pty": "^1.1.0",
     "open": "^10.2.0",
     "sharp": "^0.34.5",
+    "shiki": "^4.0.2",
+    "strip-ansi": "^7.2.0",
     "ws": "^8.19.0"
   },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "^0.74.0",
     "@slack/bolt": "^4.7.0",
     "@types/bun": "^1.3.7",
     "@types/diff": "^8.0.0",
@@ -72,7 +73,7 @@
     "typecheck": "tsc --noEmit",
     "check:test-mock-isolation": "bun run scripts/check-test-mock-isolation.js",
     "check": "bun run scripts/check.js",
-    "dev": "LETTA_DEBUG=${LETTA_DEBUG:-1} LETTA_RESPONSES_WS=${LETTA_RESPONSES_WS:-1} bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
+    "dev": "LETTA_DEBUG=${LETTA_DEBUG:-1} LETTA_RESPONSES_WS=${LETTA_RESPONSES_WS:-1} bun --loader=.md:text --loader=.mdx:text --loader=.txt:text run src/index.ts",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
     "test:update-chain:manual": "bun run src/tests/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/tests/update-chain-smoke.ts --mode startup",

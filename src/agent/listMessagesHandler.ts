@@ -2,11 +2,12 @@
  * Extracted handler for the list_messages control request.
  *
  * Returns a ControlResponse object (caller does console.log + JSON.stringify).
- * Accepting a minimal client interface makes the handler fully testable with
+ * Accepting a minimal backend interface makes the handler fully testable with
  * mock objects — no real network or process required.
  */
 
 import { randomUUID } from "node:crypto";
+import type { Backend, ConversationMessageListBody } from "../backend";
 import type {
   ControlResponse,
   ListMessagesControlRequest,
@@ -15,29 +16,13 @@ import type {
 import { resolveListMessagesRoute } from "./listMessagesRouting";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Minimal client interface — only what the handler needs
+// Minimal backend interface — only what the handler needs
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface ConversationsMessagesPage {
-  getPaginatedItems(): unknown[];
-}
-
-export interface ListMessagesHandlerClient {
-  conversations: {
-    messages: {
-      list(
-        conversationId: string,
-        opts: {
-          limit: number;
-          order: "asc" | "desc";
-          agent_id?: string;
-          before?: string;
-          after?: string;
-        },
-      ): Promise<ConversationsMessagesPage>;
-    };
-  };
-}
+export type ListMessagesHandlerBackend = Pick<
+  Backend,
+  "listConversationMessages"
+>;
 
 export interface HandleListMessagesParams {
   listReq: ListMessagesControlRequest;
@@ -47,7 +32,7 @@ export interface HandleListMessagesParams {
   sessionAgentId: string;
   sessionId: string;
   requestId: string;
-  client: ListMessagesHandlerClient;
+  backend: ListMessagesHandlerBackend;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +54,7 @@ export async function handleListMessages(
     sessionAgentId,
     sessionId,
     requestId,
-    client,
+    backend,
   } = params;
 
   const limit = listReq.limit ?? 50;
@@ -86,15 +71,12 @@ export async function handleListMessages(
       sessionAgentId,
     );
 
-    const page = await client.conversations.messages.list(
-      route.conversationId,
-      {
-        limit,
-        order,
-        ...(route.agentId ? { agent_id: route.agentId } : {}),
-        ...cursorOpts,
-      },
-    );
+    const page = await backend.listConversationMessages(route.conversationId, {
+      limit,
+      order,
+      ...(route.agentId ? { agent_id: route.agentId } : {}),
+      ...cursorOpts,
+    } as ConversationMessageListBody);
     const items = page.getPaginatedItems();
 
     const hasMore = items.length >= limit;

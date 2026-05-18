@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { resolveStartupTarget } from "../agent/resolve-startup-agent";
 import { settingsManager } from "../settings-manager";
 
 const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
+const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
 
 let testHomeDir: string;
 let testProjectDir: string;
@@ -66,6 +68,8 @@ beforeEach(async () => {
   testHomeDir = await mkdtemp(join(tmpdir(), "letta-startup-home-"));
   testProjectDir = await mkdtemp(join(tmpdir(), "letta-startup-project-"));
   process.env.HOME = testHomeDir;
+  delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  delete process.env.LETTA_LOCAL_BACKEND_DIR;
   process.chdir(testProjectDir);
 });
 
@@ -73,6 +77,16 @@ afterEach(async () => {
   await settingsManager.reset();
   process.chdir(originalCwd);
   process.env.HOME = originalHome;
+  if (originalLocalBackendFlag === undefined) {
+    delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  } else {
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackendFlag;
+  }
+  if (originalLocalBackendDir === undefined) {
+    delete process.env.LETTA_LOCAL_BACKEND_DIR;
+  } else {
+    process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+  }
   await rm(testHomeDir, { recursive: true, force: true });
   await rm(testProjectDir, { recursive: true, force: true });
 });
@@ -285,6 +299,73 @@ describe("startup resolution from settings files", () => {
     expect(target).toEqual({
       action: "resume",
       agentId: "agent-session-local",
+    });
+  });
+
+  test("local backend sessions are keyed by storage directory, not api.letta.com", async () => {
+    const storageDir = join(testHomeDir, "lc-local-backend-a");
+    const localKey = `local:${resolve(storageDir)}`;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+    settingsManager.persistSession(
+      "agent-local-valid",
+      "local-conv-valid",
+      testProjectDir,
+    );
+
+    const globalSettings = settingsManager.getSettings();
+    const localSettings =
+      settingsManager.getLocalProjectSettings(testProjectDir);
+    expect(globalSettings.sessionsByServer?.[localKey]).toEqual({
+      agentId: "agent-local-valid",
+      conversationId: "local-conv-valid",
+    });
+    expect(localSettings.sessionsByServer?.[localKey]).toEqual({
+      agentId: "agent-local-valid",
+      conversationId: "local-conv-valid",
+    });
+    expect(globalSettings.sessionsByServer?.["api.letta.com"]).toBeUndefined();
+    expect(localSettings.sessionsByServer?.["api.letta.com"]).toBeUndefined();
+  });
+
+  test("local backend reads the session for the active storage directory", async () => {
+    const storageDirA = join(testHomeDir, "lc-local-backend-a");
+    const storageDirB = join(testHomeDir, "lc-local-backend-b");
+    const localKeyA = `local:${resolve(storageDirA)}`;
+    const localKeyB = `local:${resolve(storageDirB)}`;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDirB;
+
+    await writeLocalSettings({
+      lastSession: {
+        agentId: "agent-legacy-stale",
+        conversationId: "conv-legacy-stale",
+      },
+      sessionsByServer: {
+        [localKeyA]: {
+          agentId: "agent-local-a",
+          conversationId: "conv-a",
+        },
+        [localKeyB]: {
+          agentId: "agent-local-b",
+          conversationId: "conv-b",
+        },
+        "api.letta.com": {
+          agentId: "agent-api-stale",
+          conversationId: "conv-api-stale",
+        },
+      },
+    });
+
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    expect(settingsManager.getLocalLastSession(testProjectDir)).toEqual({
+      agentId: "agent-local-b",
+      conversationId: "conv-b",
     });
   });
 });

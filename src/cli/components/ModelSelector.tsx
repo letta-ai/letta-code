@@ -13,6 +13,7 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "../../providers/byok-providers";
+import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -23,6 +24,7 @@ const SOLID_LINE = "─";
 const VISIBLE_ITEMS = 8;
 
 type ModelCategory =
+  | "recents"
   | "supported"
   | "byok"
   | "byok-all"
@@ -33,17 +35,37 @@ type ModelCategory =
 // Re-export for consumers that import from ModelSelector
 export { buildByokProviderAliases, isByokHandleForSelector };
 
+export function usesBackendModelCatalog(
+  isSelfHosted?: boolean,
+  localModelCatalog?: boolean,
+): boolean {
+  return Boolean(isSelfHosted || localModelCatalog);
+}
+
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
 // For Letta-hosted, keep ordering consistent across billing tiers.
+// "recents" is prepended when the user has >= 2 recently used models.
 export function getModelCategories(
   _billingTier?: string,
   isSelfHosted?: boolean,
+  localModelCatalog?: boolean,
+  recentModelCount?: number,
 ): ModelCategory[] {
-  if (isSelfHosted) {
-    return ["server-recommended", "server-all"];
+  const showRecents =
+    (recentModelCount ?? settingsManager.getRecentModels().length) >= 2;
+  if (usesBackendModelCatalog(isSelfHosted, localModelCatalog)) {
+    const base: ModelCategory[] = ["server-recommended", "server-all"];
+    if (showRecents) {
+      return ["recents", ...base];
+    }
+    return base;
   }
-  return ["supported", "all", "byok", "byok-all"];
+  const base: ModelCategory[] = ["supported", "all", "byok", "byok-all"];
+  if (showRecents) {
+    return ["recents", ...base];
+  }
+  return base;
 }
 
 type UiModel = {
@@ -80,6 +102,8 @@ export function filterModelsByAvailabilityForSelector<
 
 interface ModelSelectorProps {
   currentModelId?: string;
+  /** The current model's handle (e.g., "anthropic/claude-sonnet-4.6") for accurate current model highlighting */
+  currentModelHandle?: string | null;
   onSelect: (modelId: string) => void;
   onCancel: () => void;
   /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
@@ -90,25 +114,33 @@ interface ModelSelectorProps {
   billingTier?: string;
   /** Whether connected to a self-hosted server (not api.letta.com) */
   isSelfHosted?: boolean;
+  /** Whether the active backend provides a local-only model catalog */
+  localModelCatalog?: boolean;
 }
 
 export function ModelSelector({
   currentModelId,
+  currentModelHandle,
   onSelect,
   onCancel,
   filterProvider,
   forceRefresh: forceRefreshOnMount,
   billingTier,
   isSelfHosted,
+  localModelCatalog,
 }: ModelSelectorProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
 
-  // For self-hosted, only show server-specific tabs
+  // For self-hosted and local backends, only show the active backend's model catalog.
   const modelCategories = useMemo(
-    () => getModelCategories(billingTier, isSelfHosted),
-    [billingTier, isSelfHosted],
+    () => getModelCategories(billingTier, isSelfHosted, localModelCatalog),
+    [billingTier, isSelfHosted, localModelCatalog],
+  );
+  const backendModelCatalog = usesBackendModelCatalog(
+    isSelfHosted,
+    localModelCatalog,
   );
   const isFreeTier = billingTier === "free";
   const defaultCategory = modelCategories[0] ?? "supported";
@@ -180,6 +212,10 @@ export function ModelSelector({
   }, [forceRefreshOnMount]);
 
   useEffect(() => {
+    if (localModelCatalog) {
+      setByokProviderAliases(buildByokProviderAliases([]));
+      return;
+    }
     (async () => {
       try {
         const providers = await listProviders();
@@ -190,7 +226,7 @@ export function ModelSelector({
         setByokProviderAliases(buildByokProviderAliases([]));
       }
     })();
-  }, []);
+  }, [localModelCatalog]);
 
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
@@ -405,7 +441,7 @@ export function ModelSelector({
   // Server-recommended models: models.json entries available on the server (for self-hosted)
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
-    if (!isSelfHosted || availableHandles === undefined) return [];
+    if (!backendModelCatalog || availableHandles === undefined) return [];
     let available = typedModels.filter(
       (m) => availableHandles?.has(m.handle) && m.handle !== "letta/letta-free",
     );
@@ -430,7 +466,7 @@ export function ModelSelector({
     }
     return deduped;
   }, [
-    isSelfHosted,
+    backendModelCatalog,
     typedModels,
     availableHandles,
     searchQuery,
@@ -440,17 +476,52 @@ export function ModelSelector({
   // Server-all models: ALL handles from the server (for self-hosted)
   // Filter out letta/letta-free legacy model
   const serverAllModels = useMemo(() => {
-    if (!isSelfHosted) return [];
+    if (!backendModelCatalog) return [];
     let handles = allApiHandles.filter((h) => h !== "letta/letta-free");
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       handles = handles.filter((h) => h.toLowerCase().includes(query));
     }
     return handles;
-  }, [isSelfHosted, allApiHandles, searchQuery]);
+  }, [backendModelCatalog, allApiHandles, searchQuery]);
+
+  // Recent models: models the user has recently selected (max 5)
+  // Only includes models that are currently available
+  const recentModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+    const recentHandles = settingsManager.getRecentModels();
+    if (recentHandles.length < 2) return []; // Don't show recents with < 2 items
+
+    const resolved: UiModel[] = [];
+    for (const handle of recentHandles) {
+      // When availableHandles is non-null, skip unavailable models
+      if (availableHandles !== null && !availableHandles.has(handle)) continue;
+
+      // Try to resolve to a static model with label/description
+      const staticModel = pickPreferredStaticModel(handle);
+      if (staticModel) {
+        resolved.push({
+          ...staticModel,
+          id: handle,
+          handle,
+        });
+      } else {
+        resolved.push({
+          id: handle,
+          handle,
+          label: handle,
+          description: "",
+        });
+      }
+    }
+    return resolved;
+  }, [availableHandles, pickPreferredStaticModel]);
 
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
+    if (category === "recents") {
+      return recentModels;
+    }
     if (category === "supported") {
       return supportedModels;
     }
@@ -481,6 +552,7 @@ export function ModelSelector({
     return allLettaModels;
   }, [
     category,
+    recentModels,
     supportedModels,
     byokModels,
     byokAllModels,
@@ -559,9 +631,12 @@ export function ModelSelector({
         return;
       }
 
-      // Allow 'r' to refresh even while loading (but not while already refreshing)
-      if (input === "r" && !refreshing && !searchQuery) {
-        loadModels.current(true);
+      // Allow 'r' to refresh even while loading. If a refresh is already in
+      // flight, consume the key so repeated presses don't turn into search text.
+      if (input === "r" && !searchQuery) {
+        if (!refreshing) {
+          loadModels.current(true);
+        }
         return;
       }
 
@@ -610,7 +685,7 @@ export function ModelSelector({
       }
 
       // Disable navigation/selection while loading or no results
-      if (isLoading || refreshing || currentList.length === 0) {
+      if (isLoading || currentList.length === 0) {
         return;
       }
 
@@ -630,6 +705,7 @@ export function ModelSelector({
   );
 
   const getCategoryLabel = (cat: ModelCategory) => {
+    if (cat === "recents") return `Recents [${recentModels.length}]`;
     if (cat === "supported") return `Letta API [${supportedModels.length}]`;
     if (cat === "byok") return `BYOK [${byokModels.length}]`;
     if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
@@ -640,6 +716,9 @@ export function ModelSelector({
   };
 
   const getCategoryDescription = (cat: ModelCategory) => {
+    if (cat === "recents") {
+      return "Models you've recently used";
+    }
     if (cat === "server-recommended") {
       return "Recommended models currently available for this account";
     }
@@ -728,7 +807,7 @@ export function ModelSelector({
         </Box>
       )}
 
-      {!isLoading && !refreshing && visibleModels.length === 0 && (
+      {!isLoading && visibleModels.length === 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>
             {category === "supported"
@@ -745,51 +824,49 @@ export function ModelSelector({
         </Box>
       )}
       <Box flexDirection="column">
-        {!refreshing &&
-          visibleModels.map((model, index) => {
-            const actualIndex = startIndex + index;
-            const isSelected = actualIndex === selectedIndex;
-            const isCurrent = model.id === currentModelId;
-            // Show lock for non-free models when on free tier (only for Letta API tabs)
-            const showLock =
-              isFreeTier &&
-              !model.free &&
-              (category === "supported" || category === "all");
+        {visibleModels.map((model, index) => {
+          const actualIndex = startIndex + index;
+          const isSelected = actualIndex === selectedIndex;
+          const isCurrent =
+            model.id === currentModelId || model.handle === currentModelHandle;
+          // Show lock for non-free models when on free tier (only for Letta API tabs)
+          const showLock =
+            isFreeTier &&
+            !model.free &&
+            (category === "supported" || category === "all");
 
-            return (
-              <Box key={model.id} flexDirection="row">
-                <Text
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {isSelected ? "> " : "  "}
-                </Text>
-                {showLock && <Text dimColor>🔒 </Text>}
-                <Text
-                  bold={isSelected}
-                  color={
-                    isSelected
-                      ? colors.selector.itemHighlighted
-                      : isCurrent
-                        ? colors.selector.itemCurrent
-                        : undefined
-                  }
-                >
-                  {model.label}
-                  {isCurrent && <Text> (current)</Text>}
-                </Text>
-                {model.description && (
-                  <Text dimColor> · {model.description}</Text>
-                )}
-              </Box>
-            );
-          })}
-        {!refreshing && showScrollDown ? (
+          return (
+            <Box key={model.id} flexDirection="row">
+              <Text
+                color={isSelected ? colors.selector.itemHighlighted : undefined}
+              >
+                {isSelected ? "> " : "  "}
+              </Text>
+              {showLock && <Text dimColor>🔒 </Text>}
+              <Text
+                bold={isSelected}
+                color={
+                  isSelected
+                    ? colors.selector.itemHighlighted
+                    : isCurrent
+                      ? colors.selector.itemCurrent
+                      : undefined
+                }
+              >
+                {model.label}
+                {isCurrent && <Text> (current)</Text>}
+              </Text>
+              {model.description && (
+                <Text dimColor> · {model.description}</Text>
+              )}
+            </Box>
+          );
+        })}
+        {showScrollDown ? (
           <Text dimColor>
             {"  "}↓ {itemsBelow} more below
           </Text>
-        ) : !refreshing && currentList.length > visibleCount ? (
+        ) : currentList.length > visibleCount ? (
           <Text> </Text>
         ) : null}
       </Box>
@@ -799,8 +876,8 @@ export function ModelSelector({
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>
             {"  "}
-            {currentList.length} models{isCached ? " · cached" : ""} · R to
-            refresh list
+            {currentList.length} models{isCached ? " · cached" : ""}
+            {refreshing ? " · refreshing..." : " · R to refresh list"}
           </Text>
           <Text dimColor>
             {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel

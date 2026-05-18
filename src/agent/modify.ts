@@ -8,10 +8,10 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import { getBackend } from "../backend";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { debugLog } from "../utils/debug";
 import { getModelContextWindow } from "./available-models";
-import { getClient } from "./client";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -21,6 +21,10 @@ type ModelSettings =
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return modelHandle.includes("claude-opus-4-7");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -203,6 +207,16 @@ function buildModelSettings(
       updateArgs.max_output_tokens;
   }
 
+  // Preserve OpenCode-style modality metadata when present so local-model
+  // transforms can decide whether file/image parts are safe to send.
+  if (isRecord(updateArgs?.modalities)) {
+    (settings as Record<string, unknown>).modalities = updateArgs.modalities;
+  }
+  if (isRecord(updateArgs?.capabilities)) {
+    (settings as Record<string, unknown>).capabilities =
+      updateArgs.capabilities;
+  }
+
   return settings;
 }
 
@@ -227,7 +241,7 @@ export async function updateAgentLLMConfig(
   updateArgs?: Record<string, unknown>,
   options?: UpdateAgentLLMConfigOptions,
 ): Promise<AgentState> {
-  const client = await getClient();
+  const backend = getBackend();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const explicitContextWindow = updateArgs?.context_window as
@@ -242,7 +256,7 @@ export async function updateAgentLLMConfig(
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
-  await client.agents.update(agentId, {
+  await backend.updateAgent(agentId, {
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
@@ -252,7 +266,9 @@ export async function updateAgentLLMConfig(
     }),
   });
 
-  const finalAgent = await client.agents.retrieve(agentId);
+  const finalAgent = await backend.retrieveAgent(agentId, {
+    include: ["agent.secrets", "agent.tools", "agent.tags"],
+  });
   return finalAgent;
 }
 
@@ -273,7 +289,7 @@ export async function updateConversationLLMConfig(
   updateArgs?: Record<string, unknown>,
   options?: UpdateAgentLLMConfigOptions,
 ): Promise<Conversation> {
-  const client = await getClient();
+  const backend = getBackend();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const explicitContextWindow = updateArgs?.context_window as
@@ -290,9 +306,9 @@ export async function updateConversationLLMConfig(
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
-  } as unknown as Parameters<typeof client.conversations.update>[1];
+  } as Parameters<typeof backend.updateConversation>[1];
 
-  return client.conversations.update(conversationId, payload);
+  return backend.updateConversation(conversationId, payload);
 }
 
 /**
@@ -321,10 +337,12 @@ export async function recompileAgentSystemPrompt(
     };
   },
 ): Promise<string> {
-  const client = (clientOverride ?? (await getClient())) as Exclude<
-    typeof clientOverride,
-    undefined
-  >;
+  const backend = getBackend();
+  if (!clientOverride && !backend.capabilities.promptRecompile) {
+    throw new Error(
+      "Server-side prompt recompile is not supported by this backend yet",
+    );
+  }
 
   if (!agentId) {
     throw new Error("recompileAgentSystemPrompt requires agentId");
@@ -335,7 +353,11 @@ export async function recompileAgentSystemPrompt(
     agent_id: agentId,
   };
 
-  return client.conversations.recompile(conversationId, params);
+  if (clientOverride) {
+    return clientOverride.conversations.recompile(conversationId, params);
+  }
+
+  return backend.recompileConversation(conversationId, params);
 }
 
 export interface SystemPromptUpdateResult {
@@ -355,9 +377,7 @@ export async function updateAgentSystemPromptRaw(
   systemPromptContent: string,
 ): Promise<SystemPromptUpdateResult> {
   try {
-    const client = await getClient();
-
-    await client.agents.update(agentId, {
+    await getBackend().updateAgent(agentId, {
       system: systemPromptContent,
     });
 
@@ -400,9 +420,10 @@ export async function updateAgentSystemPrompt(
     );
     const { settingsManager } = await import("../settings-manager");
 
-    const client = await getClient();
-    const memoryMode =
-      settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
+    const backend = getBackend();
+    const memoryMode = backend.capabilities.localMemfs
+      ? "local-memfs"
+      : settingsManager.isReady && settingsManager.isMemfsEnabled(agentId)
         ? "memfs"
         : "standard";
 
@@ -434,8 +455,11 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state
-    const agent = await client.agents.retrieve(agentId);
+    // Re-fetch agent to get updated state (include relationships so
+    // callers that rely on agent.tags/tools/secrets aren't broken).
+    const agent = await backend.retrieveAgent(agentId, {
+      include: ["agent.secrets", "agent.tools", "agent.tags"],
+    });
 
     return {
       success: true,
@@ -452,13 +476,12 @@ export async function updateAgentSystemPrompt(
 }
 
 /**
- * Updates an agent's system prompt to swap between managed memory modes.
- *
- * Uses the shared memory prompt reconciler so we safely replace managed memory
- * sections without corrupting fenced code blocks or leaving orphan fragments.
+ * Updates an agent's system prompt to swap between full prompt variants when
+ * the stored prompt recipe is known. Custom prompts are already complete and
+ * are left unchanged.
  *
  * @param agentId - The agent ID to update
- * @param enableMemfs - Whether to enable (add) or disable (remove) the memfs addon
+ * @param enableMemfs - Whether to use the memfs or standard full prompt variant
  * @returns Result with success status and message
  */
 export async function updateAgentSystemPromptMemfs(
@@ -467,11 +490,13 @@ export async function updateAgentSystemPromptMemfs(
 ): Promise<SystemPromptUpdateResult> {
   try {
     const { settingsManager } = await import("../settings-manager");
-    const { isKnownPreset, buildSystemPrompt, swapMemoryAddon } = await import(
-      "./promptAssets"
-    );
+    const { isKnownPreset, buildSystemPrompt } = await import("./promptAssets");
 
-    const newMode = enableMemfs ? "memfs" : "standard";
+    const newMode = enableMemfs
+      ? getBackend().capabilities.localMemfs
+        ? "local-memfs"
+        : "memfs"
+      : "standard";
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
@@ -480,21 +505,19 @@ export async function updateAgentSystemPromptMemfs(
     if (storedPreset && isKnownPreset(storedPreset)) {
       nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
     } else {
-      const client = await getClient();
-      const agent = await client.agents.retrieve(agentId);
-      nextSystemPrompt = swapMemoryAddon(agent.system || "", newMode);
+      const agent = await getBackend().retrieveAgent(agentId);
+      nextSystemPrompt = agent.system || "";
     }
 
-    const client = await getClient();
-    await client.agents.update(agentId, {
+    await getBackend().updateAgent(agentId, {
       system: nextSystemPrompt,
     });
 
     return {
       success: true,
       message: enableMemfs
-        ? "System prompt updated to include Memory Filesystem section"
-        : "System prompt updated to include standard Memory section",
+        ? "System prompt updated for memfs memory mode"
+        : "System prompt updated for standard memory mode",
     };
   } catch (error) {
     return {

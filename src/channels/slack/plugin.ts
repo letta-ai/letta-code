@@ -10,6 +10,8 @@ export const slackChannelPlugin: ChannelPlugin = {
     displayName: "Slack",
     runtimePackages: ["@slack/bolt@4.7.0", "@slack/web-api@7.15.0"],
     runtimeModules: ["@slack/bolt", "@slack/web-api"],
+    source: "first-party",
+    firstParty: true,
   },
   createAdapter(account: ChannelAccount) {
     return createSlackAdapter(account as SlackChannelAccount);

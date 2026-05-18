@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { migratePermissionMode } from "../permissions/mode";
 import {
   getChannelAccountsPath,
   getChannelDir,
@@ -6,11 +7,19 @@ import {
 } from "./config";
 import type {
   ChannelAccount,
+  ChannelDefaultPermissionMode,
+  CustomChannelAccount,
   DiscordChannelAccount,
   SlackChannelAccount,
-  SlackDefaultPermissionMode,
   SupportedChannelId,
   TelegramChannelAccount,
+} from "./types";
+import {
+  isCustomChannelAccount,
+  isDiscordChannelAccount,
+  isFirstPartyChannelId,
+  isSlackChannelAccount,
+  isTelegramChannelAccount,
 } from "./types";
 
 interface ChannelAccountStore {
@@ -34,32 +43,65 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     allowedUsers: [...account.allowedUsers],
   } as T;
 
-  if (account.channel === "telegram") {
+  if (isTelegramChannelAccount(account)) {
     (cloned as TelegramChannelAccount).binding = { ...account.binding };
+  }
+
+  if (isDiscordChannelAccount(account) && account.allowedChannels) {
+    (cloned as DiscordChannelAccount).allowedChannels = [
+      ...account.allowedChannels,
+    ];
+  }
+
+  if ("config" in account) {
+    (cloned as CustomChannelAccount).config = { ...account.config };
   }
 
   return cloned;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   const next = cloneAccount(account);
+  // Both the "custom" first-party channel and all user-installed channels use
+  // the generic `config: Record<string, unknown>` shape, so make sure that
+  // field is present and well-formed before downstream code reads it.
+  if (isCustomChannelAccount(next) || !isFirstPartyChannelId(next.channel)) {
+    (next as CustomChannelAccount).config = isRecord(
+      (next as Partial<CustomChannelAccount>).config,
+    )
+      ? { ...(next as CustomChannelAccount).config }
+      : {};
+  }
   if (
-    (next.channel === "telegram" &&
+    (isTelegramChannelAccount(next) &&
       (next.displayName === "Telegram bot" ||
         next.displayName === "Migrated Telegram bot")) ||
-    (next.channel === "slack" &&
+    (isSlackChannelAccount(next) &&
       (next.displayName === "Slack app" ||
         next.displayName === "Migrated Slack app")) ||
-    (next.channel === "discord" &&
+    (isDiscordChannelAccount(next) &&
       (next.displayName === "Discord bot" ||
         next.displayName === "Migrated Discord bot"))
   ) {
     next.displayName = undefined;
   }
-  if (next.channel === "slack") {
-    (next as SlackChannelAccount).defaultPermissionMode = ((
-      next as SlackChannelAccount
-    ).defaultPermissionMode ?? "default") as SlackDefaultPermissionMode;
+  if (isSlackChannelAccount(next)) {
+    const migrated = migratePermissionMode(
+      (next as SlackChannelAccount).defaultPermissionMode ?? "standard",
+    );
+    (next as SlackChannelAccount).defaultPermissionMode =
+      (migrated as ChannelDefaultPermissionMode | null) ?? "standard";
+  }
+  if (isDiscordChannelAccount(next)) {
+    const migrated = migratePermissionMode(
+      (next as DiscordChannelAccount).defaultPermissionMode ?? "standard",
+    );
+    (next as DiscordChannelAccount).defaultPermissionMode =
+      (migrated as ChannelDefaultPermissionMode | null) ?? "standard";
   }
   return next;
 }
@@ -100,7 +142,11 @@ function makeDefaultLegacyAccount(
       token: config.token,
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
+      allowedChannels: config.allowedChannels
+        ? [...config.allowedChannels]
+        : undefined,
       agentId: null,
+      defaultPermissionMode: config.defaultPermissionMode ?? "standard",
       createdAt: now,
       updatedAt: now,
     };
@@ -116,7 +162,7 @@ function makeDefaultLegacyAccount(
     dmPolicy: config.dmPolicy,
     allowedUsers: [...config.allowedUsers],
     agentId: null,
-    defaultPermissionMode: "default",
+    defaultPermissionMode: "standard",
     createdAt: now,
     updatedAt: now,
   };
