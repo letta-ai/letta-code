@@ -29,7 +29,7 @@ async function sendDiscordMessage(
 
   return request.mediaPath
     ? `Attachment sent to discord (message_id: ${result.messageId})`
-    : `[Discord] Delivered to ${request.chatId}:\n${formatted.text.slice(0, 2000)}`;
+    : `Message sent to discord (message_id: ${result.messageId})`;
 }
 
 async function reactInDiscord(

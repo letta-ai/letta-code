@@ -4,7 +4,6 @@ import type {
   ChannelChatType,
   ChannelDefaultPermissionMode,
   ChannelRoute,
-  DiscordChannelMode,
   DmPolicy,
   OutboundChannelMessage,
   SlackChannelMode,
@@ -150,11 +149,7 @@ export interface ChannelPluginAccountPatch {
   mode?: SlackChannelMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
-  allowedChannels?: string[] | Record<string, DiscordChannelMode>;
-  autoThreadOnMention?: boolean;
-  acknowledgeMessageReaction?: boolean;
-  removeStaleConversations?: boolean;
-  inboundDebounceMs?: number;
+  allowedChannels?: string[];
   transcribeVoice?: boolean;
 }
 

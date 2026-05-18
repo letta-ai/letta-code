@@ -20,7 +20,6 @@ import {
   loadChannelAccounts,
 } from "./accounts";
 import { tryHandleChannelSlashCommand } from "./commands";
-import { isDiscordGuildChannelAllowed } from "./discord/channelGating";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
@@ -846,35 +845,6 @@ export class ChannelRegistry {
       if (!discordResult) {
         return;
       }
-
-      // Delivery-time re-check: if allowed_channels changed since route creation,
-      // drop the message (but preserve the route unless removeStaleConversations is set).
-      if (msg.chatType === "channel" && config.allowedChannels) {
-        const isAllowed = isDiscordGuildChannelAllowed({
-          channelId: msg.chatId,
-          parentChannelId: msg.parentChannelId ?? null,
-          isThread: !!(msg.threadId && msg.threadId === msg.chatId),
-          allowedChannels: config.allowedChannels,
-        });
-        if (!isAllowed) {
-          const resolvedParentId = msg.parentChannelId ?? null;
-          const isThread = !!(msg.threadId && msg.threadId === msg.chatId);
-          console.log(
-            "[Discord] Delivery blocked by allowed_channels policy:",
-            JSON.stringify({
-              accountId: msg.accountId ?? config.accountId,
-              chatId: msg.chatId,
-              threadId: msg.threadId,
-              resolvedParentId,
-              reason: isThread
-                ? `Thread "${msg.chatId}" parent channel "${resolvedParentId}" is not in allowed_channels`
-                : `Guild channel "${msg.chatId}" is not in allowed_channels`,
-            }),
-          );
-          return;
-        }
-      }
-
       const preparedMessage = adapter.prepareInboundMessage
         ? await adapter.prepareInboundMessage(msg, {
             isFirstRouteTurn: discordResult.isFirstRouteTurn,
@@ -1199,8 +1169,7 @@ export class ChannelRegistry {
       return { route, isFirstRouteTurn: false };
     }
 
-    // In guild channels, only create routes from explicit mentions or
-    // open-mode channels. The adapter sets isMention=true for open channels.
+    // In guild channels, only create routes from explicit mentions.
     // Existing routed threads continue above via the route lookup path.
     if (msg.chatType === "channel" && !msg.isMention) {
       return null;

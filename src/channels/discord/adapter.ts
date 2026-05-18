@@ -1,8 +1,4 @@
 import { basename } from "node:path";
-import {
-  createInboundDebouncer,
-  type InboundDebouncer,
-} from "../inboundDebounce";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -11,15 +7,7 @@ import type {
   InboundChannelMessage,
   OutboundChannelMessage,
 } from "../types";
-import {
-  isDiscordGuildChannelAllowed,
-  resolveDiscordChannelMode,
-} from "./channelGating";
-import {
-  buildDiscordDebounceKey,
-  type DiscordDebounceRawInput,
-  resolveDiscordInboundDebounceMs,
-} from "./debounce";
+import { isDiscordGuildChannelAllowed } from "./channelGating";
 import { formatDiscordDeliveryError } from "./errorReply";
 import {
   resolveDiscordInboundAttachments,
@@ -88,7 +76,6 @@ interface DiscordChannelLike {
   isTextBased?: () => boolean;
   isThread?: () => boolean;
   send?: (options: string | Record<string, unknown>) => Promise<{ id: string }>;
-  sendTyping?: () => Promise<unknown>;
   messages?: {
     fetch: (id: string) => Promise<DiscordFetchedMessageLike>;
   };
@@ -354,131 +341,6 @@ export function createDiscordAdapter(
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
   const lifecycleErrorReplyKeys = new Map<string, number>();
 
-  // ── Inbound debounce (open-channel guild messages only) ──────────
-  const debounceMs = resolveDiscordInboundDebounceMs(config);
-
-  type DiscordDebounceEntry = {
-    inbound: InboundChannelMessage;
-    raw: DiscordDebounceRawInput;
-    isOpenChannel: boolean;
-  };
-
-  const debouncer: InboundDebouncer<DiscordDebounceEntry> =
-    createInboundDebouncer<DiscordDebounceEntry>({
-      debounceMs,
-      buildKey: ({ raw }) => buildDiscordDebounceKey(raw, config.accountId),
-      shouldDebounce: ({ inbound, isOpenChannel }) =>
-        isOpenChannel &&
-        !inbound.isMention &&
-        !inbound.attachments?.length &&
-        !inbound.reaction,
-      onFlush: async (entries) => {
-        if (entries.length === 0) return;
-        const last = entries[entries.length - 1]!;
-
-        // Merge text with sender labels if multiple senders
-        let combinedText: string;
-        if (entries.length === 1) {
-          combinedText = last.inbound.text;
-        } else {
-          const uniqueSenders = new Set(entries.map((e) => e.inbound.senderId));
-          if (uniqueSenders.size > 1) {
-            combinedText = entries
-              .map(
-                (entry) =>
-                  `[${entry.inbound.senderName ?? entry.inbound.senderId}]: ${entry.inbound.text}`,
-              )
-              .filter((text) => text && text.length > 0)
-              .join("\n");
-          } else {
-            combinedText = entries
-              .map((entry) => entry.inbound.text)
-              .filter((text) => text && text.length > 0)
-              .join("\n");
-          }
-        }
-
-        const merged: InboundChannelMessage = {
-          ...last.inbound,
-          text: combinedText,
-        };
-
-        if (!adapter.onMessage) return;
-        try {
-          await withTypingIndicator(last.inbound.chatId, () =>
-            adapter.onMessage!(merged),
-          );
-        } catch (error) {
-          console.error(
-            "[Discord] Error handling debounced inbound message:",
-            error,
-          );
-        }
-      },
-      onError: (err) => {
-        console.error(
-          "[Discord] Inbound debounce flush failed:",
-          err instanceof Error ? err.message : err,
-        );
-      },
-    });
-
-  const TYPING_INTERVAL_MS = 8_000;
-
-  /**
-   * Track which chats have an active typing indicator so overlapping calls
-   * for the same channel reuse the existing interval instead of doubling up.
-   */
-  const activeTypingChats = new Set<string>();
-
-  /**
-   * Trigger Discord typing indicator in the given channel before executing
-   * `fn`, then re-trigger every ~8s (before Discord's 10s expiry) until
-   * `fn` resolves. Non-throwing — typing failures are silently swallowed.
-   *
-   * Debounce note: typing starts at debounce flush time (when the buffered
-   * messages are dispatched to the LLM). If the debounce window itself feels
-   * idle, typing could be triggered earlier — when the first message enters
-   * the buffer — as a future enhancement.
-   */
-  async function withTypingIndicator(
-    chatId: string,
-    fn: () => Promise<void>,
-  ): Promise<void> {
-    if (!client) return fn();
-
-    // Race/overlap guard: if an interval is already active for this chat,
-    // skip creating a second one. The existing interval covers us.
-    if (activeTypingChats.has(chatId)) return fn();
-
-    let interval: ReturnType<typeof setInterval> | undefined;
-    try {
-      const channel = await client.channels.fetch(chatId);
-      if (channel?.sendTyping) {
-        activeTypingChats.add(chatId);
-        await channel.sendTyping().catch(() => {});
-        interval = setInterval(() => {
-          channel.sendTyping?.().catch(() => {});
-        }, TYPING_INTERVAL_MS);
-        // Don't let the interval pin the Node process.
-        interval.unref?.();
-      }
-    } catch (err) {
-      // Typing is best-effort; never block message processing.
-      console.debug(
-        "[Discord] Typing indicator failed for channel %s: %s",
-        chatId,
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-    try {
-      await fn();
-    } finally {
-      if (interval) clearInterval(interval);
-      activeTypingChats.delete(chatId);
-    }
-  }
-
   function pruneSeenIngressMessageKeys(now: number = Date.now()): void {
     for (const [key, expiresAt] of seenIngressMessageKeys) {
       if (expiresAt <= now) {
@@ -633,7 +495,6 @@ export function createDiscordAdapter(
   ): Promise<void> | null {
     const key = getLifecycleMessageKey(source);
     if (!key) return null;
-    if (!config.acknowledgeMessageReaction) return null;
     const previous =
       lifecycleOperationByMessageKey.get(key) ?? Promise.resolve();
     const operation = previous
@@ -783,7 +644,7 @@ export function createDiscordAdapter(
         botUserId = client?.user?.id ?? null;
         const tag = client?.user?.tag ?? "(unknown)";
         console.log(
-          `[Discord] Bot logged in as ${tag} (dm_policy: ${config.dmPolicy}, autoThreadOnMention: ${config.autoThreadOnMention ?? false}, inboundDebounceMs: ${debounceMs})`,
+          `[Discord] Bot logged in as ${tag} (dm_policy: ${config.dmPolicy})`,
         );
         running = true;
       });
@@ -829,9 +690,7 @@ export function createDiscordAdapter(
           };
 
           try {
-            await withTypingIndicator(message.channelId, () =>
-              adapter.onMessage!(inbound),
-            );
+            await adapter.onMessage(inbound);
           } catch (error) {
             console.error("[Discord] Error handling DM:", error);
             await notifyDiscordDeliveryError(message, error);
@@ -840,32 +699,19 @@ export function createDiscordAdapter(
         }
 
         // ── Guild handling ────────────────────────────────────────
+        // Outside a thread: only process @mentions (auto-create thread).
         // Inside a thread: surface messages and let the registry decide whether
         // the thread is already routed, or whether a new mention is required.
-        // Outside a thread:
-        //   - "open" channels: process every non-bot message (no @mention needed)
-        //   - "mention-only" channels (or no gate): only process @mentions
-
-        const parentChannelId =
-          (message.channel as { parentId?: string | null }).parentId ?? null;
-        const channelMode = resolveDiscordChannelMode(
-          message.channelId,
-          parentChannelId,
-          isThread,
-          config.allowedChannels,
-        );
-
-        // For non-thread messages, check if the channel is in "open" mode
-        const isOpenChannel = channelMode === "open";
-
-        if (!isThread && !wasMentioned && !isOpenChannel) return;
+        if (!isThread && !wasMentioned) return;
 
         // Channel allowlist: when configured, only process guild messages whose
         // channel ID (or parent channel ID for thread messages) is allowed.
         if (
           !isDiscordGuildChannelAllowed({
             channelId: message.channelId,
-            parentChannelId,
+            parentChannelId:
+              (message.channel as { parentId?: string | null }).parentId ??
+              null,
             isThread,
             allowedChannels: config.allowedChannels,
           })
@@ -879,9 +725,8 @@ export function createDiscordAdapter(
           ? message.channelId
           : null;
 
-        // If mentioned outside a thread and autoThreadOnMention is enabled,
-        // create a Discord thread for the conversation.
-        if (!isThread && wasMentioned && config.autoThreadOnMention !== false) {
+        // If mentioned outside a thread, create one
+        if (!isThread && wasMentioned) {
           const createdThread = await createThreadForMention(message, content);
           if (!createdThread) return;
           effectiveChatId = createdThread.id;
@@ -912,36 +757,14 @@ export function createDiscordAdapter(
           timestamp: message.createdTimestamp,
           messageId: message.id,
           threadId: effectiveThreadId,
-          parentChannelId: parentChannelId ?? undefined,
           chatType: "channel",
-          isMention: wasMentioned || isOpenChannel,
+          isMention: wasMentioned,
           attachments,
           raw: message,
         };
 
         try {
-          // Open-channel non-mention messages go through the debounce pipeline.
-          // Mentions, DMs, attachments, and reactions always bypass.
-          const shouldDebounce =
-            isOpenChannel &&
-            !wasMentioned &&
-            debounceMs > 0 &&
-            !attachments?.length;
-
-          if (shouldDebounce) {
-            await debouncer.enqueue({
-              inbound,
-              raw: {
-                channelId: effectiveChatId,
-                threadId: effectiveThreadId,
-              },
-              isOpenChannel,
-            });
-          } else {
-            await withTypingIndicator(effectiveChatId, () =>
-              adapter.onMessage!(inbound),
-            );
-          }
+          await adapter.onMessage(inbound);
         } catch (error) {
           console.error("[Discord] Error handling guild message:", error);
           await notifyDiscordDeliveryError(message, error);
@@ -982,29 +805,18 @@ export function createDiscordAdapter(
           typeof msg.channel.isThread === "function" &&
           msg.channel.isThread();
 
-        // In guilds, only react on messages in threads or open channels
-        const reactionParentChannelId =
-          (msg.channel as { parentId?: string | null }).parentId ?? null;
-        const reactionChannelMode = resolveDiscordChannelMode(
-          channelId,
-          reactionParentChannelId,
-          isThread,
-          config.allowedChannels,
-        );
-        if (
-          chatType === "channel" &&
-          !isThread &&
-          reactionChannelMode !== "open"
-        )
-          return;
+        // In guilds, only react on messages in threads we're tracking
+        if (chatType === "channel" && !isThread) return;
 
-        // Apply channel allowlist gating in guilds
+        // Apply channel allowlist gating in guilds (parent channel of the thread)
         if (
           chatType === "channel" &&
+          isThread &&
           !isDiscordGuildChannelAllowed({
             channelId,
-            parentChannelId: reactionParentChannelId,
-            isThread,
+            parentChannelId:
+              (msg.channel as { parentId?: string | null }).parentId ?? null,
+            isThread: true,
             allowedChannels: config.allowedChannels,
           })
         )
