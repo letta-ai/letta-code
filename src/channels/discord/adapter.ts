@@ -1,4 +1,8 @@
 import { basename } from "node:path";
+import {
+  createInboundDebouncer,
+  type InboundDebouncer,
+} from "../inboundDebounce";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -7,10 +11,6 @@ import type {
   InboundChannelMessage,
   OutboundChannelMessage,
 } from "../types";
-import {
-  createInboundDebouncer,
-  type InboundDebouncer,
-} from "../inboundDebounce";
 import {
   isDiscordGuildChannelAllowed,
   resolveDiscordChannelMode,
@@ -374,19 +374,20 @@ export function createDiscordAdapter(
         !inbound.reaction,
       onFlush: async (entries) => {
         if (entries.length === 0) return;
-        const last = entries[entries.length - 1];
+        const last = entries[entries.length - 1]!;
 
         // Merge text with sender labels if multiple senders
         let combinedText: string;
         if (entries.length === 1) {
           combinedText = last.inbound.text;
         } else {
-          const uniqueSenders = new Set(
-            entries.map((e) => e.inbound.senderId),
-          );
+          const uniqueSenders = new Set(entries.map((e) => e.inbound.senderId));
           if (uniqueSenders.size > 1) {
             combinedText = entries
-              .map((entry) => `[${entry.inbound.senderName ?? entry.inbound.senderId}]: ${entry.inbound.text}`)
+              .map(
+                (entry) =>
+                  `[${entry.inbound.senderName ?? entry.inbound.senderId}]: ${entry.inbound.text}`,
+              )
               .filter((text) => text && text.length > 0)
               .join("\n");
           } else {
@@ -405,7 +406,7 @@ export function createDiscordAdapter(
         if (!adapter.onMessage) return;
         try {
           await withTypingIndicator(last.inbound.chatId, () =>
-            adapter.onMessage(merged),
+            adapter.onMessage!(merged),
           );
         } catch (error) {
           console.error(
@@ -829,7 +830,7 @@ export function createDiscordAdapter(
 
           try {
             await withTypingIndicator(message.channelId, () =>
-              adapter.onMessage(inbound),
+              adapter.onMessage!(inbound),
             );
           } catch (error) {
             console.error("[Discord] Error handling DM:", error);
@@ -938,7 +939,7 @@ export function createDiscordAdapter(
             });
           } else {
             await withTypingIndicator(effectiveChatId, () =>
-              adapter.onMessage(inbound),
+              adapter.onMessage!(inbound),
             );
           }
         } catch (error) {
@@ -990,7 +991,11 @@ export function createDiscordAdapter(
           isThread,
           config.allowedChannels,
         );
-        if (chatType === "channel" && !isThread && reactionChannelMode !== "open")
+        if (
+          chatType === "channel" &&
+          !isThread &&
+          reactionChannelMode !== "open"
+        )
           return;
 
         // Apply channel allowlist gating in guilds

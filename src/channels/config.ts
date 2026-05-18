@@ -179,7 +179,7 @@ function parseDefaultPermissionMode(
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
   parse(parsed) {
     const rawAllowedChannels = parsed.allowed_channels;
-    let allowedChannels: DiscordChannelConfig["allowedChannels"] = undefined;
+    let allowedChannels: DiscordChannelConfig["allowedChannels"];
     if (Array.isArray(rawAllowedChannels)) {
       allowedChannels = rawAllowedChannels as string[];
     } else if (
@@ -187,8 +187,10 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
       typeof rawAllowedChannels === "object" &&
       !Array.isArray(rawAllowedChannels)
     ) {
-      allowedChannels =
-        rawAllowedChannels as Record<string, DiscordChannelMode>;
+      allowedChannels = rawAllowedChannels as Record<
+        string,
+        DiscordChannelMode
+      >;
     }
     return {
       channel: "discord",
@@ -216,9 +218,7 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
         typeof parsed.inbound_debounce_ms === "number" &&
         Number.isFinite(parsed.inbound_debounce_ms) &&
         parsed.inbound_debounce_ms >= 0
-          ? Math.trunc(
-              Math.min(parsed.inbound_debounce_ms, 10000),
-            )
+          ? Math.trunc(Math.min(parsed.inbound_debounce_ms, 10000))
           : undefined,
     };
   },

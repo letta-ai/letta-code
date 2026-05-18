@@ -171,8 +171,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
-        remove_stale_conversations:
-          account.removeStaleConversations ?? false,
+        remove_stale_conversations: account.removeStaleConversations ?? false,
         inbound_debounce_ms: account.inboundDebounceMs,
       };
     },
@@ -186,8 +185,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
-        remove_stale_conversations:
-          account.removeStaleConversations ?? false,
+        remove_stale_conversations: account.removeStaleConversations ?? false,
         inbound_debounce_ms: account.inboundDebounceMs,
       };
     },

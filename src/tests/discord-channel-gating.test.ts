@@ -160,9 +160,9 @@ describe("resolveDiscordChannelMode", () => {
   });
 
   test("returns null for channel not in legacy string array", () => {
-    expect(
-      resolveDiscordChannelMode("ch-unknown", null, false, ["ch-1"]),
-    ).toBe(null);
+    expect(resolveDiscordChannelMode("ch-unknown", null, false, ["ch-1"])).toBe(
+      null,
+    );
   });
 
   test("returns 'open' for channel set to open in mode map", () => {

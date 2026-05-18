@@ -9,11 +9,15 @@ import {
 
 describe("resolveDiscordInboundDebounceMs", () => {
   test("returns default 1200ms when config is undefined", () => {
-    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: undefined })).toBe(1200);
+    expect(
+      resolveDiscordInboundDebounceMs({ inboundDebounceMs: undefined }),
+    ).toBe(1200);
   });
 
   test("returns config value when set", () => {
-    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 500 })).toBe(500);
+    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 500 })).toBe(
+      500,
+    );
   });
 
   test("returns 0 when config value is 0 (disabled)", () => {
@@ -21,26 +25,36 @@ describe("resolveDiscordInboundDebounceMs", () => {
   });
 
   test("clamps to 10000ms max", () => {
-    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 50000 })).toBe(10000);
+    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 50000 })).toBe(
+      10000,
+    );
   });
 
   test("truncates fractional values", () => {
-    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 1500.7 })).toBe(1500);
+    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 1500.7 })).toBe(
+      1500,
+    );
   });
 
   test("returns default for NaN config value", () => {
-    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: NaN })).toBe(1200);
+    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: NaN })).toBe(
+      1200,
+    );
   });
 
   test("returns default for negative config value", () => {
-    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: -100 })).toBe(1200);
+    expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: -100 })).toBe(
+      1200,
+    );
   });
 
   test("env var takes precedence over config", () => {
     const original = process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
     process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS = "300";
     try {
-      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 500 })).toBe(300);
+      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 500 })).toBe(
+        300,
+      );
     } finally {
       if (original === undefined) {
         delete process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
@@ -54,7 +68,9 @@ describe("resolveDiscordInboundDebounceMs", () => {
     const original = process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
     process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS = "0";
     try {
-      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 500 })).toBe(0);
+      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 500 })).toBe(
+        0,
+      );
     } finally {
       if (original === undefined) {
         delete process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
@@ -68,7 +84,9 @@ describe("resolveDiscordInboundDebounceMs", () => {
     const original = process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
     process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS = "99999";
     try {
-      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: undefined })).toBe(10000);
+      expect(
+        resolveDiscordInboundDebounceMs({ inboundDebounceMs: undefined }),
+      ).toBe(10000);
     } finally {
       if (original === undefined) {
         delete process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
@@ -82,7 +100,9 @@ describe("resolveDiscordInboundDebounceMs", () => {
     const original = process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
     process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS = "";
     try {
-      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 800 })).toBe(800);
+      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 800 })).toBe(
+        800,
+      );
     } finally {
       if (original === undefined) {
         delete process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
@@ -96,7 +116,9 @@ describe("resolveDiscordInboundDebounceMs", () => {
     const original = process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
     process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS = "abc";
     try {
-      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 800 })).toBe(800);
+      expect(resolveDiscordInboundDebounceMs({ inboundDebounceMs: 800 })).toBe(
+        800,
+      );
     } finally {
       if (original === undefined) {
         delete process.env.LETTA_DISCORD_INBOUND_DEBOUNCE_MS;
@@ -112,19 +134,13 @@ describe("resolveDiscordInboundDebounceMs", () => {
 describe("buildDiscordDebounceKey", () => {
   test("returns null when scope is empty", () => {
     expect(
-      buildDiscordDebounceKey(
-        { channelId: "", threadId: null },
-        "acct-1",
-      ),
+      buildDiscordDebounceKey({ channelId: "", threadId: null }, "acct-1"),
     ).toBe(null);
   });
 
   test("keys by channelId when no thread", () => {
     expect(
-      buildDiscordDebounceKey(
-        { channelId: "ch-1", threadId: null },
-        "acct-1",
-      ),
+      buildDiscordDebounceKey({ channelId: "ch-1", threadId: null }, "acct-1"),
     ).toBe("discord:acct-1:ch-1");
   });
 
@@ -153,9 +169,7 @@ describe("buildDiscordDebounceKey", () => {
     // The key does not include senderId so that multi-sender bursts
     // in the same channel merge into one LLM call with sender labels.
     const input = { channelId: "ch-1", threadId: null };
-    expect(
-      buildDiscordDebounceKey(input, "acct-1"),
-    ).toBe(
+    expect(buildDiscordDebounceKey(input, "acct-1")).toBe(
       buildDiscordDebounceKey(input, "acct-1"),
     );
   });

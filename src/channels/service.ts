@@ -617,8 +617,7 @@ function mergeAccountPatch(
       allowedChannels:
         normalizedPatch.allowedChannels ?? existing.allowedChannels,
       autoThreadOnMention:
-        normalizedPatch.autoThreadOnMention ??
-        existing.autoThreadOnMention,
+        normalizedPatch.autoThreadOnMention ?? existing.autoThreadOnMention,
       acknowledgeMessageReaction:
         normalizedPatch.acknowledgeMessageReaction ??
         existing.acknowledgeMessageReaction,
@@ -626,8 +625,7 @@ function mergeAccountPatch(
         normalizedPatch.removeStaleConversations ??
         existing.removeStaleConversations,
       inboundDebounceMs:
-        normalizedPatch.inboundDebounceMs ??
-        existing.inboundDebounceMs,
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -839,10 +837,8 @@ export async function setChannelConfigLive(
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
-        acknowledgeMessageReaction:
-          normalizedPatch.acknowledgeMessageReaction,
-        removeStaleConversations:
-          normalizedPatch.removeStaleConversations,
+        acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
+        removeStaleConversations: normalizedPatch.removeStaleConversations,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         transcribeVoice: normalizedPatch.transcribeVoice,
         config: normalizedPatch.config,
