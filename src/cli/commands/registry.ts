@@ -183,6 +183,24 @@ export const commands: Record<string, Command> = {
       return "Clearing in-context messages...";
     },
   },
+  "/chdir": {
+    desc: "Change working directory for this TUI session (/chdir <path>)",
+    args: "<path>",
+    order: 18.5,
+    handler: () => {
+      // Handled specially in App.tsx to switch local cwd
+      return "Changing working directory...";
+    },
+  },
+  "/cd": {
+    desc: "Alias for /chdir",
+    args: "<path>",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to switch local cwd
+      return "Changing working directory...";
+    },
+  },
 
   // === Page 2: Agent management (order 20-29) ===
   "/new": {
