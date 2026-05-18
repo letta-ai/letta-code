@@ -24,6 +24,8 @@ export function StaticTranscript({
   showCompactionsEnabled,
   precomputedDiffs,
   lastPlanFilePath,
+  hiddenToolCallId,
+  lastShellToolCallId,
 }: {
   renderEpoch: number;
   items: StaticItem[];
@@ -32,9 +34,15 @@ export function StaticTranscript({
   showCompactionsEnabled: boolean;
   precomputedDiffs: Map<string, AdvancedDiffSuccess>;
   lastPlanFilePath: string | null;
+  hiddenToolCallId?: string;
+  lastShellToolCallId?: string;
 }) {
   return (
-    <Static key={renderEpoch} items={items} style={{ flexDirection: "column" }}>
+    <Static
+      key={`${renderEpoch}-${hiddenToolCallId ?? ""}`}
+      items={items}
+      style={{ flexDirection: "column" }}
+    >
       {(item: StaticItem, index: number) => {
         try {
           return (
@@ -52,6 +60,8 @@ export function StaticTranscript({
                   line={item}
                   precomputedDiffs={precomputedDiffs}
                   lastPlanFilePath={lastPlanFilePath}
+                  expandedToolCallId={hiddenToolCallId}
+                  lastShellToolCallId={lastShellToolCallId}
                 />
               ) : item.kind === "subagent_group" ? (
                 <SubagentGroupStatic agents={item.agents} />
