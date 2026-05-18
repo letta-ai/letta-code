@@ -405,6 +405,25 @@ function isCreditExhaustedError(e: APIError, reasons?: string[]): boolean {
   return hasErrorReason(e, "not-enough-credits", reasons);
 }
 
+function isLettaHostedModelContext(): boolean {
+  const { modelLabel } = getErrorContext();
+  return modelLabel?.startsWith("letta/") || false;
+}
+
+function getLettaHostedQuotaMessage(
+  e: APIError,
+  reasons: string[],
+): string | undefined {
+  if (e.status !== 402 || !isLettaHostedModelContext()) return undefined;
+  if (
+    reasons.includes("basic-usage-exceeded") &&
+    reasons.includes("not-enough-credits")
+  ) {
+    return `You've reached the quota for this Letta-hosted model. Upgrade your plan for more quota, or purchase credits at ${LETTA_USAGE_URL}.`;
+  }
+  return undefined;
+}
+
 function getTierUsageLimitMessage(reasons: string[]): string | undefined {
   if (reasons.includes("premium-usage-exceeded")) {
     return `You've reached your Premium model usage limit. Try switching to Standard or Basic hosted models with /model. View your plan and usage at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
@@ -701,6 +720,9 @@ export function formatErrorDetails(
       const resourceType = match ? match[1] : "resources";
       return `${resourceLimitMsg}\nUpgrade at: ${LETTA_USAGE_URL}\nDelete ${resourceType} at: ${LETTA_AGENTS_URL}`;
     }
+
+    const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
+    if (lettaHostedQuotaMsg) return lettaHostedQuotaMsg;
 
     // Check for credit exhaustion error - provide a friendly message
     if (isCreditExhaustedError(e, reasons)) {
