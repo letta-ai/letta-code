@@ -204,6 +204,8 @@ export interface InboundChannelMessage {
   chatType?: ChannelChatType;
   /** Whether this inbound message was explicitly addressed to the bot. */
   isMention?: boolean;
+  /** For platform channel threads, the parent channel ID (e.g. Discord guild channel). */
+  parentChannelId?: string;
   /** Downloaded attachments/media associated with the inbound message. */
   attachments?: ChannelMessageAttachment[];
   /** Reaction metadata for non-text channel events. */
@@ -343,6 +345,13 @@ export interface DiscordChannelConfig {
    */
   acknowledgeMessageReaction?: boolean;
   /**
+   * When true and a guild channel is removed from `allowedChannels`,
+   * the corresponding route/conversation will be deleted. Default false —
+   * routes are preserved even if the channel is no longer allowed,
+   * preventing destructive cleanup from stale config changes.
+   */
+  removeStaleConversations?: boolean;
+  /**
    * Optional debounce window (ms) for inbound open-channel guild messages.
    * When greater than `0`, short back-to-back messages from the same sender
    * in the same channel/thread stack into a single combined dispatch
@@ -415,6 +424,12 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * is the primary UX for in-flight feedback.
    */
   acknowledgeMessageReaction?: boolean;
+  /**
+   * When true and a guild channel is removed from `allowedChannels`,
+   * the corresponding route/conversation will be deleted. Default false —
+   * routes are preserved even if the channel is no longer allowed.
+   */
+  removeStaleConversations?: boolean;
   /**
    * Optional debounce window (ms) for inbound open-channel guild messages.
    * When greater than `0`, short back-to-back messages from the same sender

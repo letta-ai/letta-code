@@ -911,6 +911,7 @@ export function createDiscordAdapter(
           timestamp: message.createdTimestamp,
           messageId: message.id,
           threadId: effectiveThreadId,
+          parentChannelId: parentChannelId ?? undefined,
           chatType: "channel",
           isMention: wasMentioned || isOpenChannel,
           attachments,

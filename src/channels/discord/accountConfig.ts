@@ -13,6 +13,7 @@ const DISCORD_CONFIG_KEYS = new Set([
   "default_permission_mode",
   "auto_thread_on_mention",
   "acknowledge_message_reaction",
+  "remove_stale_conversations",
   "inbound_debounce_ms",
 ]);
 
@@ -106,6 +107,9 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         (config.acknowledge_message_reaction === undefined ||
           config.acknowledge_message_reaction === true ||
           config.acknowledge_message_reaction === false) &&
+        (config.remove_stale_conversations === undefined ||
+          config.remove_stale_conversations === true ||
+          config.remove_stale_conversations === false) &&
         (config.inbound_debounce_ms === undefined ||
           (typeof config.inbound_debounce_ms === "number" &&
             Number.isFinite(config.inbound_debounce_ms) &&
@@ -150,6 +154,11 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           config.acknowledge_message_reaction === false
             ? config.acknowledge_message_reaction
             : undefined,
+        removeStaleConversations:
+          config.remove_stale_conversations === true ||
+          config.remove_stale_conversations === false
+            ? config.remove_stale_conversations
+            : undefined,
       };
     },
 
@@ -162,6 +171,8 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
+        remove_stale_conversations:
+          account.removeStaleConversations ?? false,
         inbound_debounce_ms: account.inboundDebounceMs,
       };
     },
@@ -175,6 +186,8 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         auto_thread_on_mention: account.autoThreadOnMention ?? false,
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
+        remove_stale_conversations:
+          account.removeStaleConversations ?? false,
         inbound_debounce_ms: account.inboundDebounceMs,
       };
     },

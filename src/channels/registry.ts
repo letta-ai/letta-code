@@ -63,6 +63,7 @@ import type {
   SlackChannelAccount,
 } from "./types";
 import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
+import { isDiscordGuildChannelAllowed } from "./discord/channelGating";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
@@ -845,6 +846,32 @@ export class ChannelRegistry {
       if (!discordResult) {
         return;
       }
+
+      // Delivery-time re-check: if allowed_channels changed since route creation,
+      // drop the message (but preserve the route unless removeStaleConversations is set).
+      if (
+        msg.chatType === "channel" &&
+        config.allowedChannels
+      ) {
+        const isAllowed = isDiscordGuildChannelAllowed({
+          channelId: msg.chatId,
+          parentChannelId: msg.parentChannelId ?? null,
+          isThread: !!(msg.threadId && msg.threadId === msg.chatId),
+          allowedChannels: config.allowedChannels,
+        });
+        if (!isAllowed) {
+          console.log(
+            "[Discord] Delivery blocked by allowed_channels policy:",
+            JSON.stringify({
+              accountId: msg.accountId ?? config.accountId,
+              chatId: msg.chatId,
+              threadId: msg.threadId,
+            }),
+          );
+          return;
+        }
+      }
+
       const preparedMessage = adapter.prepareInboundMessage
         ? await adapter.prepareInboundMessage(msg, {
             isFirstRouteTurn: discordResult.isFirstRouteTurn,
