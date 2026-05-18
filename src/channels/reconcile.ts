@@ -236,7 +236,7 @@ function reconcileDiscord(
   }
 
   const policyGateReason =
-    options?.apply && !removeStaleConversations
+    options?.apply && !removeStaleConversations && skippedByPolicy.length > 0
       ? "remove_stale_conversations is false (default). " +
         "Set it to true in the Discord account config to allow --apply removals. " +
         `${skippedByPolicy.length} stale route(s) would be removed but were blocked by policy.`

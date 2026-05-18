@@ -339,6 +339,24 @@ describe("Discord route reconciliation", () => {
     expect(result.removedRoutes[0]?.chatId).toBe("channel-beta");
   });
 
+  test("--apply with no stale routes: policyGateReason is null", async () => {
+    addDiscordRoute({ chatId: "channel-alpha" });
+    addDiscordRoute({ chatId: "channel-beta" });
+
+    const { reconcileRoutesForChannel } = await import(
+      "../../channels/reconcile"
+    );
+    const result = reconcileRoutesForChannel("discord", "discord-bot", {
+      apply: true,
+    });
+
+    expect(result.totalRoutesChecked).toBe(2);
+    expect(result.staleRoutes).toHaveLength(0);
+    expect(result.removedRoutes).toHaveLength(0);
+    expect(result.skippedByPolicy).toHaveLength(0);
+    expect(result.policyGateReason).toBeNull();
+  });
+
   // ── Mode map tests ───────────────────────────────────────────
 
   test("works with mode map (Record) format for allowed_channels", async () => {
