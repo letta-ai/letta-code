@@ -264,6 +264,45 @@ describe("reflectionTranscript helper", () => {
     expect(state.turns_since_last_successful_reflection).toBe(1);
   });
 
+  test("auto payload includes noncanonical rows before the next canonical anchor", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "local-user", text: "live user row" },
+      {
+        kind: "assistant",
+        id: "assistant:message-assistant-1",
+        text: "live assistant row",
+        phase: "finished",
+        messageId: "message-assistant-1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+    expect(payload.startMessageId).toBe("message-assistant-1");
+    expect(payload.endMessageId).toBe("message-assistant-1");
+
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+    const messages = JSON.parse(payloadText);
+    expect(messages).toContainEqual({ role: "user", content: "live user row" });
+    expect(messages).toContainEqual({
+      role: "assistant",
+      content: "live assistant row",
+    });
+
+    await finalizeAutoReflectionPayload(
+      agentId,
+      conversationId,
+      payload.payloadPath,
+      payload.endSnapshotLine,
+      true,
+    );
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.reflected_through_message_id).toBe("message-assistant-1");
+    expect(state.reflected_completed_turns).toBe(1);
+    expect(state.turns_since_last_successful_reflection).toBe(0);
+  });
+
   test("message-id cursor controls whether new payloads are available", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "first", messageId: "u1" },
