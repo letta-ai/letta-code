@@ -134,10 +134,18 @@ function textFromUnknown(value: unknown): string {
   }
 }
 
-function convertLegacyMessage(message: unknown): LocalMessage[] {
+/** Extracts the numeric suffix from a ui-msg-N ID, or returns 0. */
+function numericId(id: string): number {
+  const match = id.match(/ui-msg-(\d+)$/);
+  return match ? Number(match[1]) : 0;
+}
+
+function convertLegacyMessage(
+  message: unknown,
+  nextId: () => number,
+): LocalMessage[] {
   if (!isRecord(message)) return [];
-  const id =
-    typeof message.id === "string" ? message.id : `ui-msg-${Date.now()}`;
+  const id = typeof message.id === "string" ? message.id : `ui-msg-${nextId()}`;
   const metadata = isRecord(message.metadata) ? { ...message.metadata } : {};
   const timestamp = timestampForLegacy(message);
   const createdAt = isoTimestampForLegacy(message);
@@ -196,70 +204,117 @@ function convertLegacyMessage(message: unknown): LocalMessage[] {
 
   if (message.role !== "assistant") return [];
 
-  const assistant = {
-    id,
-    role: "assistant" as const,
-    metadata: { ...metadata, created_at: createdAt, updated_at: updatedAt },
-    content: [] as (LocalMessage & { role: "assistant" })["content"],
-    api: "legacy-local",
-    provider: "legacy-local",
-    model: "legacy-local",
-    usage: emptyLocalUsage(),
-    stopReason: "stop" as const,
-    timestamp,
-  };
-  const toolResults: LocalMessage[] = [];
-
-  for (const part of Array.isArray(message.parts) ? message.parts : []) {
-    if (!isRecord(part) || typeof part.type !== "string") continue;
-    if (part.type === "text" && typeof part.text === "string") {
-      assistant.content.push({ type: "text", text: part.text });
-      continue;
-    }
-    if (part.type === "reasoning" && typeof part.text === "string") {
-      assistant.content.push({ type: "thinking", thinking: part.text });
-      continue;
-    }
-    if (part.type.startsWith("tool-") && typeof part.toolCallId === "string") {
-      const toolName = part.type.slice("tool-".length);
-      const toolCall = {
-        type: "toolCall" as const,
-        id: part.toolCallId,
-        name: toolName,
-        arguments: isRecord(part.input)
-          ? part.input
-          : { input: part.input ?? {} },
-      };
-      assistant.content.push(toolCall);
-      if (
-        part.state === "output-available" ||
-        part.state === "output-error" ||
-        part.state === "output-denied"
-      ) {
-        const isError = part.state !== "output-available";
-        const output =
-          part.state === "output-available" ? part.output : part.errorText;
-        toolResults.push({
-          id: `${id}:tool-result:${part.toolCallId}`,
-          role: "toolResult",
-          toolCallId: part.toolCallId,
-          toolName,
-          content: [{ type: "text", text: textFromUnknown(output) }],
-          isError,
-          timestamp,
-          metadata: {
-            ...metadata,
-            created_at: createdAt,
-            updated_at: updatedAt,
-          },
-        });
+  // Split parts on step-start boundaries. Each step represents a logical LLM
+  // turn within the stored message. The old format used step-start markers to
+  // delimit turns where the agent called a tool, got a result, and continued
+  // generating — all within one stored message. Splitting preserves the
+  // correct turn structure so that tool_use blocks are always at the end of
+  // an assistant message (required by Anthropic's API).
+  const parts = Array.isArray(message.parts) ? message.parts : [];
+  const steps: Array<Record<string, unknown>[]> = [];
+  let currentStep: Record<string, unknown>[] = [];
+  for (const part of parts) {
+    if (isRecord(part) && part.type === "step-start") {
+      if (currentStep.length > 0) {
+        steps.push(currentStep);
       }
+      currentStep = [];
+    } else if (isRecord(part)) {
+      currentStep.push(part);
+    }
+  }
+  if (currentStep.length > 0) {
+    steps.push(currentStep);
+  }
+
+  // If no step-start markers were found, treat the whole message as one step
+  // (backward compatibility for messages without step-start markers).
+  if (steps.length === 0 && parts.length > 0) {
+    const filtered = parts.filter((part): part is Record<string, unknown> =>
+      isRecord(part),
+    );
+    if (filtered.length > 0) {
+      steps.push(filtered);
     }
   }
 
-  return assistant.content.length > 0
-    ? [assistant, ...toolResults]
-    : toolResults;
+  const result: LocalMessage[] = [];
+
+  for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+    const step = steps[stepIndex]!;
+    // Single-step messages keep the original ID; multi-step messages get
+    // fresh sequential IDs to avoid introducing a new ID format.
+    const stepId = steps.length === 1 ? id : `ui-msg-${nextId()}`;
+    const content: (LocalMessage & { role: "assistant" })["content"] = [];
+    const stepToolResults: LocalMessage[] = [];
+
+    for (const part of step) {
+      if (part.type === "text" && typeof part.text === "string") {
+        content.push({ type: "text", text: part.text });
+        continue;
+      }
+      if (part.type === "reasoning" && typeof part.text === "string") {
+        content.push({ type: "thinking", thinking: part.text });
+        continue;
+      }
+      if (
+        typeof part.type === "string" &&
+        part.type.startsWith("tool-") &&
+        typeof part.toolCallId === "string"
+      ) {
+        const toolName = part.type.slice("tool-".length);
+        content.push({
+          type: "toolCall" as const,
+          id: part.toolCallId,
+          name: toolName,
+          arguments: isRecord(part.input)
+            ? part.input
+            : { input: part.input ?? {} },
+        });
+        if (
+          part.state === "output-available" ||
+          part.state === "output-error" ||
+          part.state === "output-denied"
+        ) {
+          const isError = part.state !== "output-available";
+          const output =
+            part.state === "output-available" ? part.output : part.errorText;
+          stepToolResults.push({
+            id: `ui-msg-${nextId()}`,
+            role: "toolResult",
+            toolCallId: part.toolCallId,
+            toolName,
+            content: [{ type: "text", text: textFromUnknown(output) }],
+            isError,
+            timestamp,
+            metadata: {
+              ...metadata,
+              created_at: createdAt,
+              updated_at: updatedAt,
+            },
+          });
+        }
+      }
+    }
+
+    if (content.length > 0) {
+      result.push({
+        id: stepId,
+        role: "assistant",
+        metadata: { ...metadata, created_at: createdAt, updated_at: updatedAt },
+        content,
+        api: "legacy-local",
+        provider: "legacy-local",
+        model: "legacy-local",
+        usage: emptyLocalUsage(),
+        stopReason: "stop" as const,
+        timestamp,
+      });
+    }
+    result.push(...stepToolResults);
+  }
+
+  return result;
 }
 
 function timestampSuffix(date = new Date()): string {
@@ -295,15 +350,42 @@ function manifest(input: {
 function convertMessages(
   messages: unknown[],
   mode: "legacy" | "repair-versioned",
-): LocalMessage[] {
-  if (mode === "legacy") {
-    return messages.flatMap(convertLegacyMessage);
+  nextId: () => number,
+): { messages: LocalMessage[]; idRemapping: Map<string, string[]> } {
+  const idRemapping = new Map<string, string[]>();
+  const converted: LocalMessage[] = [];
+
+  for (const message of messages) {
+    const isLegacy = isLegacyUiMessage(message);
+    const isPi = isPiLocalMessage(message);
+
+    if (mode === "legacy" && !isLegacy) continue;
+    if (mode === "repair-versioned" && !isLegacy && !isPi) continue;
+
+    if (isPi) {
+      converted.push(message);
+      continue;
+    }
+
+    const beforeLen = converted.length;
+    const result = convertLegacyMessage(message, nextId);
+    converted.push(...result);
+
+    // If the legacy message's original ID is not in the converted output,
+    // it was split into multiple messages with new IDs. Record the mapping.
+    if (isRecord(message) && typeof message.id === "string") {
+      const originalId = message.id;
+      const hasOriginal = result.some((m) => m.id === originalId);
+      if (!hasOriginal && result.length > 0) {
+        idRemapping.set(
+          originalId,
+          result.map((m) => m.id),
+        );
+      }
+    }
   }
-  return messages.flatMap((message) => {
-    if (isLegacyUiMessage(message)) return convertLegacyMessage(message);
-    if (isPiLocalMessage(message)) return [message];
-    return [];
-  });
+
+  return { messages: converted, idRemapping };
 }
 
 export function migrateLocalBackendTranscripts(input: {
@@ -343,14 +425,67 @@ export function migrateLocalBackendTranscripts(input: {
       continue;
     }
     const repairVersioned = hasManifest && hasLegacyUiRows;
-    const converted = convertMessages(
+
+    // Compute the max numeric ID across all messages so that step-split
+    // messages get fresh, non-colliding sequential IDs. We check both
+    // legacy and pi-format messages to avoid collisions with preserved IDs.
+    const maxId = legacyMessages.reduce<number>((max, msg) => {
+      if (isRecord(msg) && typeof msg.id === "string") {
+        const n = numericId(msg.id);
+        return n > max ? n : max;
+      }
+      if (isPiLocalMessage(msg)) {
+        const n = numericId(msg.id);
+        return n > max ? n : max;
+      }
+      return max;
+    }, 0);
+    let idCounter = maxId + 1;
+    const nextId = () => idCounter++;
+
+    const { messages: converted, idRemapping } = convertMessages(
       legacyMessages,
       repairVersioned ? "repair-versioned" : "legacy",
+      nextId,
     );
     const backupPath = `${messagesPath}.pre-pi-backup-${timestampSuffix()}`;
     if (!input.dryRun) {
       copyFileSync(messagesPath, backupPath);
       writeJsonl(messagesPath, converted);
+
+      // Remap in_context_message_ids in conversation.json for any
+      // legacy assistant messages that were split into multiple messages.
+      const conversationPath = join(conversationDir, "conversation.json");
+      if (existsSync(conversationPath) && idRemapping.size > 0) {
+        try {
+          const conversation = JSON.parse(
+            readFileSync(conversationPath, "utf8"),
+          );
+          if (Array.isArray(conversation.in_context_message_ids)) {
+            const remapped: string[] = [];
+            for (const id of conversation.in_context_message_ids) {
+              if (typeof id !== "string") {
+                remapped.push(id);
+                continue;
+              }
+              const newIds = idRemapping.get(id);
+              if (newIds) {
+                remapped.push(...newIds);
+              } else {
+                remapped.push(id);
+              }
+            }
+            conversation.in_context_message_ids = remapped;
+            writeFileSync(
+              conversationPath,
+              `${JSON.stringify(conversation, null, 2)}\n`,
+            );
+          }
+        } catch {
+          // If conversation.json can't be read/parsed, skip remapping
+        }
+      }
+
       writeFileSync(
         manifestPath,
         `${JSON.stringify(
