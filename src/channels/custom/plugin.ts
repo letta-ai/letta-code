@@ -15,7 +15,7 @@ export const CUSTOM_CHANNEL_CONFIG_SCHEMA: ChannelConfigSchema = {
       type: "text",
       key: "url",
       label: "Webhook URL",
-      required: false,
+      required: true,
       placeholder: "https://example.com/webhook",
       description: "Letta Code will POST incoming agent messages to this URL.",
     },
