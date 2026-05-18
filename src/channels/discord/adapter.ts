@@ -425,31 +425,56 @@ export function createDiscordAdapter(
   const TYPING_INTERVAL_MS = 8_000;
 
   /**
+   * Track which chats have an active typing indicator so overlapping calls
+   * for the same channel reuse the existing interval instead of doubling up.
+   */
+  const activeTypingChats = new Set<string>();
+
+  /**
    * Trigger Discord typing indicator in the given channel before executing
    * `fn`, then re-trigger every ~8s (before Discord's 10s expiry) until
    * `fn` resolves. Non-throwing — typing failures are silently swallowed.
+   *
+   * Debounce note: typing starts at debounce flush time (when the buffered
+   * messages are dispatched to the LLM). If the debounce window itself feels
+   * idle, typing could be triggered earlier — when the first message enters
+   * the buffer — as a future enhancement.
    */
   async function withTypingIndicator(
     chatId: string,
     fn: () => Promise<void>,
   ): Promise<void> {
     if (!client) return fn();
+
+    // Race/overlap guard: if an interval is already active for this chat,
+    // skip creating a second one. The existing interval covers us.
+    if (activeTypingChats.has(chatId)) return fn();
+
     let interval: ReturnType<typeof setInterval> | undefined;
     try {
       const channel = await client.channels.fetch(chatId);
       if (channel?.sendTyping) {
+        activeTypingChats.add(chatId);
         await channel.sendTyping().catch(() => {});
         interval = setInterval(() => {
           channel.sendTyping?.().catch(() => {});
         }, TYPING_INTERVAL_MS);
+        // Don't let the interval pin the Node process.
+        interval.unref?.();
       }
-    } catch {
+    } catch (err) {
       // Typing is best-effort; never block message processing.
+      console.debug(
+        "[Discord] Typing indicator failed for channel %s: %s",
+        chatId,
+        err instanceof Error ? err.message : String(err),
+      );
     }
     try {
       await fn();
     } finally {
       if (interval) clearInterval(interval);
+      activeTypingChats.delete(chatId);
     }
   }
 
