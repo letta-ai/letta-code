@@ -256,7 +256,6 @@ function buildMaybeLaunchReflectionSubagent(params: {
             autoPayload.payloadPath,
             autoPayload.endSnapshotLine,
             success,
-            triggerSource,
           );
 
           const completionMessage = await handleMemorySubagentCompletion(
