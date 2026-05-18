@@ -10,6 +10,7 @@ import {
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
 } from "./cwd";
+import { isGitWorktreeRoot } from "./file-commands";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import { getConversationRuntime } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
@@ -23,21 +24,29 @@ function isWithinOrEqual(parent: string, candidate: string): boolean {
   );
 }
 
-function refreshIndexForWorkingDirectory(workingDirectory: string): void {
-  if (!isWithinOrEqual(getIndexRoot(), workingDirectory)) {
+async function refreshIndexForWorkingDirectory(
+  workingDirectory: string,
+): Promise<void> {
+  const currentRoot = getIndexRoot();
+  const needsReroot =
+    !isWithinOrEqual(currentRoot, workingDirectory) ||
+    (workingDirectory !== currentRoot &&
+      (await isGitWorktreeRoot(workingDirectory)));
+
+  if (needsReroot) {
     setIndexRoot(workingDirectory);
   }
   void ensureFileIndex();
 }
 
-export function switchCurrentRuntimeWorkingDirectory(
+export async function switchCurrentRuntimeWorkingDirectory(
   workingDirectory: string,
-): void {
+): Promise<void> {
   updateRuntimeContext({ workingDirectory });
-  refreshIndexForWorkingDirectory(workingDirectory);
+  await refreshIndexForWorkingDirectory(workingDirectory);
 }
 
-export function switchConversationWorkingDirectory(params: {
+export async function switchConversationWorkingDirectory(params: {
   runtime: ListenerRuntime;
   agentId: string | null;
   conversationId: string;
@@ -46,7 +55,7 @@ export function switchConversationWorkingDirectory(params: {
   statusRuntime?: ConversationRuntime | ListenerRuntime;
   statusSocket?: WebSocket;
   updateCurrentRuntimeContext?: boolean;
-}): void {
+}): Promise<void> {
   const { runtime, workingDirectory } = params;
   const agentId = normalizeCwdAgentId(params.agentId);
   const conversationId = normalizeConversationId(params.conversationId);
@@ -77,7 +86,7 @@ export function switchConversationWorkingDirectory(params: {
     reminderState.pendingSessionContextReason = "cwd_changed";
   }
 
-  refreshIndexForWorkingDirectory(workingDirectory);
+  await refreshIndexForWorkingDirectory(workingDirectory);
 
   const statusSocket = params.statusSocket ?? runtime.socket;
   if (params.emitStatus !== false && statusSocket) {

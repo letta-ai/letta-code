@@ -154,12 +154,14 @@ async function runWatchLoop(params: {
     if (debounceTimer) clearTimeout(debounceTimer);
     const filename = event.filename;
     debounceTimer = setTimeout(() => {
-      handleNewWorktree({
+      void handleNewWorktree({
         worktreesDir,
         filename,
         runtime,
         agentId,
         conversationId,
+      }).catch((err) => {
+        console.error("[WorktreeWatcher] failed to handle new worktree:", err);
       });
     }, DEBOUNCE_MS);
   }
@@ -210,7 +212,7 @@ async function handleNewWorktree(params: {
     `[WorktreeWatcher] New worktree detected: ${newWorktreePath} — switching CWD`,
   );
 
-  switchConversationWorkingDirectory({
+  await switchConversationWorkingDirectory({
     runtime,
     agentId,
     conversationId,

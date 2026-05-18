@@ -3,10 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { getRuntimeContext } from "../../runtime-context";
-import {
-  switchConversationWorkingDirectory,
-  switchCurrentRuntimeWorkingDirectory,
-} from "../../websocket/listener/cwd-change";
+import { switchConversationWorkingDirectory } from "../../websocket/listener/cwd-change";
 import { getActiveRuntime } from "../../websocket/listener/runtime";
 import { restartWorktreeWatcher } from "../../websocket/listener/worktree-watcher";
 import { getShellEnv } from "./shellEnv.js";
@@ -388,24 +385,24 @@ export async function create_worktree(
 
     const normalizedWorktreePath = path.normalize(await realpath(worktreePath));
     const shouldSwitchCwd = args.switch_cwd !== false;
+    let switchedCwd = false;
 
     if (shouldSwitchCwd) {
       const listener = getActiveRuntime();
       if (listener && runtimeContext?.conversationId) {
-        switchConversationWorkingDirectory({
+        await switchConversationWorkingDirectory({
           runtime: listener,
           agentId: runtimeContext.agentId ?? null,
           conversationId: runtimeContext.conversationId,
           workingDirectory: normalizedWorktreePath,
           updateCurrentRuntimeContext: true,
         });
+        switchedCwd = true;
         restartWorktreeWatcher({
           runtime: listener,
           agentId: runtimeContext.agentId ?? null,
           conversationId: runtimeContext.conversationId,
         });
-      } else {
-        switchCurrentRuntimeWorkingDirectory(normalizedWorktreePath);
       }
     }
 
@@ -413,7 +410,7 @@ export async function create_worktree(
       worktreePath: normalizedWorktreePath,
       branchName,
       baseRef,
-      switchedCwd: shouldSwitchCwd,
+      switchedCwd,
     });
 
     return {
@@ -422,7 +419,7 @@ export async function create_worktree(
       worktree_path: normalizedWorktreePath,
       branch_name: branchName,
       base_ref: baseRef,
-      switched_cwd: shouldSwitchCwd,
+      switched_cwd: switchedCwd,
     };
   } catch (error) {
     return {

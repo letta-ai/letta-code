@@ -4,6 +4,11 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  ensureFileIndex,
+  getIndexRoot,
+  setIndexRoot,
+} from "../../cli/helpers/fileIndex";
+import {
   getCurrentWorkingDirectory,
   runWithRuntimeContext,
 } from "../../runtime-context";
@@ -40,10 +45,12 @@ async function createRepo(): Promise<string> {
 
 describe("CreateWorktree tool", () => {
   let tempDirs: string[] = [];
+  let originalIndexRoot: string;
   const originalHome = process.env.HOME;
 
   beforeEach(() => {
     tempDirs = [];
+    originalIndexRoot = getIndexRoot();
     resetRemoteSettingsCache();
     setActiveRuntime(null);
   });
@@ -51,6 +58,8 @@ describe("CreateWorktree tool", () => {
   afterEach(async () => {
     setActiveRuntime(null);
     resetRemoteSettingsCache();
+    await ensureFileIndex().catch(() => undefined);
+    setIndexRoot(originalIndexRoot);
     if (originalHome === undefined) {
       delete process.env.HOME;
     } else {
@@ -155,6 +164,75 @@ describe("CreateWorktree tool", () => {
         "conv-b",
       ),
     ).toBe(repo);
+  });
+
+  test("does not claim a persistent cwd switch outside listener mode", async () => {
+    const repo = await trackRepo();
+    setActiveRuntime(null);
+
+    const result = await runWithRuntimeContext(
+      { workingDirectory: repo },
+      async () => {
+        const toolResult = await create_worktree({
+          name: "Plain CLI Feature",
+          refresh_base: false,
+        });
+        expect(getCurrentWorkingDirectory()).toBe(repo);
+        return toolResult;
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(result.worktree_path).toBeDefined();
+    expect(result.switched_cwd).toBe(false);
+    expect(result.content[0]?.text).toContain(
+      "The conversation working directory was left unchanged.",
+    );
+  });
+
+  test("re-roots the file index when switching into a nested worktree", async () => {
+    const repo = await trackRepo();
+    const fakeHome = await mkdtemp(
+      path.join(tmpdir(), "letta-create-worktree-index-home-"),
+    );
+    tempDirs.push(fakeHome);
+    process.env.HOME = fakeHome;
+    resetRemoteSettingsCache();
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.bootWorkingDirectory = repo;
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    setActiveRuntime(listener);
+
+    try {
+      setIndexRoot(repo);
+
+      const result = await runWithRuntimeContext(
+        {
+          agentId: "agent-1",
+          conversationId: "conv-a",
+          workingDirectory: repo,
+        },
+        () =>
+          create_worktree({
+            name: "Index Root Feature",
+            refresh_base: false,
+          }),
+      );
+
+      expect(result.status).toBe("success");
+      if (!result.worktree_path) {
+        throw new Error("Expected CreateWorktree to return a worktree path");
+      }
+      expect(result.switched_cwd).toBe(true);
+      expect(getIndexRoot()).toBe(result.worktree_path);
+    } finally {
+      setIndexRoot(originalIndexRoot);
+    }
   });
 
   test("fetches the remote default branch before creating the worktree", async () => {
