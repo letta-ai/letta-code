@@ -97,6 +97,16 @@ Recommended Telegram flow:
 Headless deploy flow:
   letta server --channels telegram --install-channel-runtimes
 
+Local backend flow:
+  1. letta channels install telegram
+  2. letta channels configure telegram
+  3. letta server --backend local --channels telegram
+  4. Message the bot once to get a pairing code
+  5. letta channels pair --channel telegram --code <code> --agent <agent-id> --conversation default
+
+Only set LETTA_BASE_URL when targeting a separate self-hosted server. Do not set
+a dummy LETTA_BASE_URL for --backend local.
+
 State files:
   ~/.letta/channels/telegram/accounts.json
   ~/.letta/channels/telegram/pairing.yaml

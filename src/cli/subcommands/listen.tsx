@@ -15,6 +15,7 @@ import {
   refreshAccessToken,
   requestDeviceCode,
 } from "../../auth/oauth";
+import { isLocalBackendEnvEnabled } from "../../backend/local/paths";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import { RemoteSessionLog } from "../../websocket/listen-log";
@@ -108,7 +109,11 @@ function getListenerServerUrl(settings: {
 
 type ListenerStartupMode =
   | { kind: "remote"; serverUrl: string }
-  | { kind: "local-channels"; serverUrl: string }
+  | {
+      kind: "local-channels";
+      serverUrl: string;
+      backend: "local" | "self-hosted";
+    }
   | { kind: "unsupported-self-hosted"; serverUrl: string };
 
 function normalizeListenerBaseUrl(url: string): string {
@@ -128,6 +133,14 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
+  if (isLocalBackendEnvEnabled() && channelNames.length > 0) {
+    return {
+      kind: "local-channels",
+      serverUrl: "local-backend",
+      backend: "local",
+    };
+  }
+
   if (isCloudListenerServerUrl(serverUrl)) {
     return { kind: "remote", serverUrl };
   }
@@ -141,7 +154,7 @@ async function resolveListenerStartupMode(
   }
 
   if (channelNames.length > 0) {
-    return { kind: "local-channels", serverUrl };
+    return { kind: "local-channels", serverUrl, backend: "self-hosted" };
   }
 
   return { kind: "unsupported-self-hosted", serverUrl };
@@ -494,12 +507,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     if (startupMode.kind === "local-channels") {
       const connectionId = `local-${deviceId}`;
+      const startupLabel =
+        startupMode.backend === "local"
+          ? "local backend"
+          : `self-hosted server ${startupMode.serverUrl}`;
       sessionLog.log(
-        `Starting local channel listener for ${startupMode.serverUrl}`,
+        `Starting local channel listener for ${startupLabel}`,
       );
       sessionLog.log("Skipping environment registration");
       console.log(
-        `Starting local channel listener for self-hosted server ${startupMode.serverUrl}`,
+        `Starting local channel listener for ${startupLabel}`,
       );
       console.log("Skipping environment registration. Press Ctrl+C to stop.\n");
 
