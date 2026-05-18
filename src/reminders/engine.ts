@@ -7,6 +7,7 @@ import {
   type ReflectionSettings,
   shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
+import { getReflectionTranscriptState } from "@/cli/helpers/reflection-transcript";
 import {
   buildSessionContext,
   type SessionContextSource,
@@ -197,23 +198,28 @@ async function buildPermissionModeReminder(
 async function buildReflectionStepReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  const shouldFireStepTrigger = shouldFireStepCountTrigger(
-    context.state.turnCount,
-    context.reflectionSettings,
-  );
-
   const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
   let reminder: string | null = null;
 
-  if (shouldFireStepTrigger) {
+  if (context.reflectionSettings.trigger === "step-count") {
     if (memfsEnabled) {
-      if (context.maybeLaunchReflectionSubagent) {
-        await context.maybeLaunchReflectionSubagent("step-count");
-      } else {
-        debugLog(
-          "memory",
-          `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-        );
+      const transcriptState = await getReflectionTranscriptState(
+        context.agent.id,
+        context.agent.conversationId ?? "default",
+      );
+      const shouldFireStepTrigger = shouldFireStepCountTrigger(
+        transcriptState.turns_since_last_successful_reflection,
+        context.reflectionSettings,
+      );
+      if (shouldFireStepTrigger) {
+        if (context.maybeLaunchReflectionSubagent) {
+          await context.maybeLaunchReflectionSubagent("step-count");
+        } else {
+          debugLog(
+            "memory",
+            `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
+          );
+        }
       }
     } else {
       reminder = await buildMemoryReminder(

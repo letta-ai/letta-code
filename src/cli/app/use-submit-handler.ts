@@ -2729,6 +2729,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   autoPayload.payloadPath,
                   autoPayload.endSnapshotLine,
                   success,
+                  "manual",
                 );
 
                 const msg = await handleMemorySubagentCompletion(
@@ -3369,6 +3370,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 autoPayload.payloadPath,
                 autoPayload.endSnapshotLine,
                 success,
+                triggerSource,
               );
 
               const msg = await handleMemorySubagentCompletion(

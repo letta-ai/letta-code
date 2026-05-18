@@ -15,7 +15,10 @@ import {
   buildReflectionSubagentPrompt,
   filterSystemPromptForReflection,
   finalizeAutoReflectionPayload,
+  getReflectionTranscriptDerivedState,
   getReflectionTranscriptPaths,
+  getReflectionTranscriptState,
+  REFLECTION_STATE_SCHEMA_VERSION,
 } from "@/cli/helpers/reflection-transcript";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -51,7 +54,7 @@ describe("reflectionTranscript helper", () => {
     await rm(testRoot, { recursive: true, force: true });
   });
 
-  test("auto payload advances cursor on success", async () => {
+  test("auto payload advances message-id state on success", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "hello", messageId: "u1" },
       {
@@ -86,13 +89,26 @@ describe("reflectionTranscript helper", () => {
       payload.payloadPath,
       payload.endSnapshotLine,
       true,
+      "step-count",
     );
 
     expect(existsSync(payload.payloadPath)).toBe(true);
 
     const stateRaw = await readFile(paths.statePath, "utf-8");
-    const state = JSON.parse(stateRaw) as { auto_cursor_line: number };
-    expect(state.auto_cursor_line).toBe(payload.endSnapshotLine);
+    const state = JSON.parse(stateRaw) as {
+      schema_version: string;
+      reflected_through_message_id?: string;
+      total_completed_turns: number;
+      reflected_completed_turns: number;
+      turns_since_last_successful_reflection: number;
+      last_reflection_source?: string;
+    };
+    expect(state.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
+    expect(state.reflected_through_message_id).toBe("a1");
+    expect(state.total_completed_turns).toBe(1);
+    expect(state.reflected_completed_turns).toBe(1);
+    expect(state.turns_since_last_successful_reflection).toBe(0);
+    expect(state.last_reflection_source).toBe("step-count");
 
     const secondPayload = await buildAutoReflectionPayload(
       agentId,
@@ -101,7 +117,7 @@ describe("reflectionTranscript helper", () => {
     expect(secondPayload).toBeNull();
   });
 
-  test("auto payload keeps cursor on failure", async () => {
+  test("auto payload keeps message-id state on failure", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "remember this", messageId: "u1" },
     ]);
@@ -122,14 +138,20 @@ describe("reflectionTranscript helper", () => {
 
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
     const stateRaw = await readFile(paths.statePath, "utf-8");
-    const state = JSON.parse(stateRaw) as { auto_cursor_line: number };
-    expect(state.auto_cursor_line).toBe(0);
+    const state = JSON.parse(stateRaw) as {
+      reflected_through_message_id?: string;
+      reflected_completed_turns: number;
+      turns_since_last_successful_reflection: number;
+    };
+    expect(state.reflected_through_message_id).toBeUndefined();
+    expect(state.reflected_completed_turns).toBe(0);
+    expect(state.turns_since_last_successful_reflection).toBe(1);
 
     const retried = await buildAutoReflectionPayload(agentId, conversationId);
     expect(retried).not.toBeNull();
   });
 
-  test("auto payload clamps out-of-range cursor and resumes on new transcript lines", async () => {
+  test("legacy cursor migrates to message-id state and resumes on new transcript lines", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "first", messageId: "u1" },
     ]);
@@ -148,8 +170,16 @@ describe("reflectionTranscript helper", () => {
     expect(firstAttempt).toBeNull();
 
     const clampedRaw = await readFile(paths.statePath, "utf-8");
-    const clamped = JSON.parse(clampedRaw) as { auto_cursor_line: number };
-    expect(clamped.auto_cursor_line).toBe(1);
+    const clamped = JSON.parse(clampedRaw) as {
+      schema_version: string;
+      reflected_through_message_id?: string;
+      reflected_completed_turns: number;
+      turns_since_last_successful_reflection: number;
+    };
+    expect(clamped.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
+    expect(clamped.reflected_through_message_id).toBe("u1");
+    expect(clamped.reflected_completed_turns).toBe(1);
+    expect(clamped.turns_since_last_successful_reflection).toBe(0);
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       {
@@ -216,6 +246,205 @@ describe("reflectionTranscript helper", () => {
 
     expect(payload.startMessageId).toBe("message-user-1");
     expect(payload.endMessageId).toBe("message-assistant-1");
+  });
+
+  test("auto payload ignores transcript rows without canonical message ids", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "local-user", text: "no backend id yet" },
+      {
+        kind: "assistant",
+        id: "local-assistant",
+        text: "no backend id either",
+        phase: "finished",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).toBeNull();
+
+    const derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.hasUnreflectedMessages).toBe(false);
+    expect(derived.unreflectedCompletedTurns).toBe(1);
+  });
+
+  test("derived state uses message-id cursor existence checks", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "first", messageId: "u1" },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "done",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+    await finalizeAutoReflectionPayload(
+      agentId,
+      conversationId,
+      payload.payloadPath,
+      payload.endSnapshotLine,
+      true,
+      "compaction-event",
+    );
+
+    let derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.hasUnreflectedMessages).toBe(false);
+    expect(derived.unreflectedCompletedTurns).toBe(0);
+    expect(derived.state.last_reflection_source).toBe("compaction-event");
+
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u2", text: "second", messageId: "u2" },
+    ]);
+
+    derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.hasUnreflectedMessages).toBe(true);
+    expect(derived.unreflectedCompletedTurns).toBe(1);
+    expect(derived.state.turns_since_last_successful_reflection).toBe(1);
+  });
+
+  test("turns appended during reflection are preserved across finalize", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "first", messageId: "u1" },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "ok",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    // Two more user turns complete while reflection is "running".
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u2", text: "second", messageId: "u2" },
+    ]);
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u3", text: "third", messageId: "u3" },
+    ]);
+
+    await finalizeAutoReflectionPayload(
+      agentId,
+      conversationId,
+      payload.payloadPath,
+      payload.endSnapshotLine,
+      true,
+    );
+
+    const derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.state.total_completed_turns).toBe(3);
+    expect(derived.state.reflected_completed_turns).toBe(1);
+    expect(derived.state.turns_since_last_successful_reflection).toBe(2);
+    expect(derived.state.reflected_through_message_id).toBe("a1");
+  });
+
+  test("assistant-only delta does not advance completed-turn counter", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+    ]);
+
+    let derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.state.total_completed_turns).toBe(1);
+
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.state.total_completed_turns).toBe(1);
+  });
+
+  test("concurrent append and finalize do not lose state updates", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    await Promise.all([
+      appendTranscriptDeltaJsonl(agentId, conversationId, [
+        { kind: "user", id: "u2", text: "second", messageId: "u2" },
+      ]),
+      finalizeAutoReflectionPayload(
+        agentId,
+        conversationId,
+        payload.payloadPath,
+        payload.endSnapshotLine,
+        true,
+      ),
+      appendTranscriptDeltaJsonl(agentId, conversationId, [
+        { kind: "user", id: "u3", text: "third", messageId: "u3" },
+      ]),
+    ]);
+
+    const derived = await getReflectionTranscriptDerivedState(
+      agentId,
+      conversationId,
+    );
+    expect(derived.state.total_completed_turns).toBe(3);
+    expect(derived.state.reflected_completed_turns).toBe(1);
+    expect(derived.state.turns_since_last_successful_reflection).toBe(2);
+    expect(derived.state.reflected_through_message_id).toBe("a1");
+  });
+
+  test("concurrent appends to the same conversation serialize via the state lock", async () => {
+    const appends = await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        appendTranscriptDeltaJsonl(agentId, conversationId, [
+          {
+            kind: "user",
+            id: `u${i}`,
+            text: `msg ${i}`,
+            messageId: `m${i}`,
+          },
+        ]),
+      ),
+    );
+
+    expect(appends).toEqual([1, 1, 1, 1, 1]);
+
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_turns).toBe(5);
   });
 
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
