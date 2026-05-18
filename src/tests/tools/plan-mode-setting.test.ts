@@ -108,3 +108,53 @@ describe("plan mode setting tool filtering", () => {
     expect(GEMINI_PASCAL_TOOLS).toContain("ExitPlanMode");
   });
 });
+
+describe("worktree tool setting tool filtering", () => {
+  test("default tool loading includes CreateWorktree by default", async () => {
+    expect(settingsManager.shouldIncludeWorktreeTool()).toBe(true);
+
+    await loadTools("anthropic/claude-sonnet-4");
+    const tools = getToolNames();
+
+    expect(tools).toContain("CreateWorktree");
+  });
+
+  test("default tool loading omits CreateWorktree when disabled", async () => {
+    settingsManager.setIncludeWorktreeTool(false);
+
+    await loadTools("anthropic/claude-sonnet-4");
+    const tools = getToolNames();
+
+    expect(tools).not.toContain("CreateWorktree");
+  });
+
+  test("specific tool loading cannot re-enable CreateWorktree", async () => {
+    settingsManager.setIncludeWorktreeTool(false);
+
+    await loadSpecificTools(["AskUserQuestion", "CreateWorktree"]);
+    const tools = getToolNames();
+
+    expect(tools).toContain("AskUserQuestion");
+    expect(tools).not.toContain("CreateWorktree");
+  });
+
+  test("client allowlist and explicit include cannot re-enable CreateWorktree", async () => {
+    settingsManager.setIncludeWorktreeTool(false);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        include: ["CreateWorktree"],
+        clientToolAllowlist: ["AskUserQuestion", "CreateWorktree"],
+      },
+    );
+
+    expect(prepared.loadedToolNames).toEqual(["AskUserQuestion"]);
+  });
+
+  test("source toolset lists keep CreateWorktree for enabled mode", () => {
+    expect(ANTHROPIC_DEFAULT_TOOLS).toContain("CreateWorktree");
+    expect(OPENAI_PASCAL_TOOLS).toContain("CreateWorktree");
+    expect(GEMINI_PASCAL_TOOLS).toContain("CreateWorktree");
+  });
+});

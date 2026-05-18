@@ -258,6 +258,7 @@ const PLAN_MODE_TOOL_NAMES = new Set<ToolName>([
   "EnterPlanMode",
   "ExitPlanMode",
 ]);
+const WORKTREE_TOOL_NAMES = new Set<ToolName>(["CreateWorktree"]);
 
 function isPlanModeTool(toolName: string): boolean {
   return PLAN_MODE_TOOL_NAMES.has(toolName as ToolName);
@@ -271,12 +272,28 @@ function isPlanModeEnabled(): boolean {
   }
 }
 
+function shouldIncludeWorktreeTool(): boolean {
+  try {
+    return settingsManager.shouldIncludeWorktreeTool();
+  } catch {
+    return true;
+  }
+}
+
 function filterPlanModeTools(toolNames: ToolName[]): ToolName[] {
   if (isPlanModeEnabled()) {
     return toolNames;
   }
 
   return toolNames.filter((name) => !PLAN_MODE_TOOL_NAMES.has(name));
+}
+
+function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
+  if (shouldIncludeWorktreeTool()) {
+    return toolNames;
+  }
+
+  return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
 }
 
 function filterExternalToolsByClientAllowlist(
@@ -299,6 +316,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
   "TaskOutput",
+  "CreateWorktree",
   "Edit",
   "EnterPlanMode",
   "ExitPlanMode",
@@ -330,6 +348,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "glob_gemini",
   "search_file_content",
   "memory",
+  "CreateWorktree",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -342,6 +361,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
+  "CreateWorktree",
   "EnterPlanMode",
   "ExitPlanMode",
   "memory_apply_patch",
@@ -359,6 +379,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
+  "CreateWorktree",
   "EnterPlanMode",
   "ExitPlanMode",
   "memory",
@@ -382,6 +403,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
+  CreateWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },
   EnterPlanMode: { requiresApproval: true },
   ExitPlanMode: { requiresApproval: false },
@@ -622,6 +644,20 @@ function getExecutionContextById(
   contextId: string,
 ): ToolExecutionContextSnapshot | undefined {
   return getExecutionContexts().get(contextId);
+}
+
+export function updateToolExecutionContextWorkingDirectory(
+  contextId: string,
+  workingDirectory: string,
+): boolean {
+  const context = getExecutionContextById(contextId);
+  if (!context) {
+    return false;
+  }
+
+  context.workingDirectory = workingDirectory;
+  context.runtimeContext.workingDirectory = workingDirectory;
+  return true;
 }
 
 /**
@@ -966,6 +1002,7 @@ function capturePreparedToolExecutionContext(
     ),
   };
   const contextId = saveExecutionContext(executionSnapshot);
+  executionSnapshot.runtimeContext.toolContextId = contextId;
 
   return {
     contextId,
@@ -1219,6 +1256,12 @@ async function buildSpecificToolRegistry(
     }
 
     const internalName = getInternalToolName(name);
+    if (
+      !shouldIncludeWorktreeTool() &&
+      WORKTREE_TOOL_NAMES.has(internalName as ToolName)
+    ) {
+      continue;
+    }
     if (!isPlanModeEnabled() && isPlanModeTool(internalName)) {
       continue;
     }
@@ -1304,6 +1347,7 @@ async function resolveBaseToolNamesForModel(
   }
 
   baseToolNames = filterPlanModeTools(baseToolNames);
+  baseToolNames = filterWorktreeTools(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
@@ -1838,15 +1882,19 @@ export async function executeTool(
         }
       }
 
-      // Inject the execution context id for plan-mode tools so they can update
-      // the per-conversation PermissionModeState without touching the global singleton.
+      // Inject the execution context id for tools that need to mutate
+      // turn-scoped execution state without touching global singletons.
       const PLAN_MODE_TOOL_NAMES = new Set([
         "EnterPlanMode",
         "enter_plan_mode",
         "ExitPlanMode",
         "exit_plan_mode",
       ]);
-      if (PLAN_MODE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
+      if (
+        (PLAN_MODE_TOOL_NAMES.has(internalName) ||
+          WORKTREE_TOOL_NAMES.has(internalName as ToolName)) &&
+        options?.toolContextId
+      ) {
         enhancedArgs = {
           ...enhancedArgs,
           _executionContextId: options.toolContextId,

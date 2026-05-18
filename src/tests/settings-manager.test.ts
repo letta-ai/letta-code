@@ -215,6 +215,19 @@ describe("Settings Manager - Global Settings", () => {
     expect(settingsManager.isPlanModeEnabled()).toBe(false);
   });
 
+  test("Worktree tool defaults on and can be toggled", () => {
+    expect(settingsManager.getSetting("includeWorktreeTool")).toBe(true);
+    expect(settingsManager.shouldIncludeWorktreeTool()).toBe(true);
+
+    settingsManager.setIncludeWorktreeTool(false);
+    expect(settingsManager.getSetting("includeWorktreeTool")).toBe(false);
+    expect(settingsManager.shouldIncludeWorktreeTool()).toBe(false);
+
+    settingsManager.setIncludeWorktreeTool(true);
+    expect(settingsManager.getSetting("includeWorktreeTool")).toBe(true);
+    expect(settingsManager.shouldIncludeWorktreeTool()).toBe(true);
+  });
+
   test("Update single setting", () => {
     // Verify initial state first
     const initialSettings = settingsManager.getSettings();

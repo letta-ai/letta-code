@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { resolveGitWorktreeAddTargetPath } from "../../websocket/listener/worktree-ownership";
+import { noteExpectedWorktreeForLauncher } from "../../websocket/listener/worktree-ownership";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
@@ -18,26 +17,6 @@ import { buildShellLaunchers } from "./shellLaunchers.js";
 import { spawnWithLauncher } from "./shellRunner.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
-
-/**
- * Check if a `git worktree add` command targets `.letta/worktrees/`.
- * Returns an error message if the path is invalid, or null if OK.
- */
-function validateWorktreePath(command: string, cwd: string): string | null {
-  const resolved = resolveGitWorktreeAddTargetPath(command, cwd);
-  if (!resolved) return null;
-
-  const requiredPrefix = resolve(cwd, ".letta/worktrees");
-
-  if (!resolved.startsWith(requiredPrefix)) {
-    return (
-      `Error: Worktrees must be created under .letta/worktrees/. ` +
-      `Use: git worktree add -b <branch> .letta/worktrees/<name> main\n` +
-      `Got: ${resolved}`
-    );
-  }
-  return null;
-}
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
@@ -207,15 +186,6 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   } = args;
   const userCwd = getCurrentWorkingDirectory();
 
-  // Block worktree creation outside .letta/worktrees/
-  const worktreeError = validateWorktreePath(command, userCwd);
-  if (worktreeError) {
-    return {
-      content: [{ type: "text", text: worktreeError }],
-      status: "error",
-    };
-  }
-
   if (command === "/bg") {
     const processes = Array.from(backgroundProcesses.entries());
     if (processes.length === 0) {
@@ -262,6 +232,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         status: "error",
       };
     }
+    noteExpectedWorktreeForLauncher(launcher, userCwd);
     const childProcess = spawn(executable, launcherArgs, {
       shell: false,
       cwd: userCwd,

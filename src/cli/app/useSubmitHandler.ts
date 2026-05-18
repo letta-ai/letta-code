@@ -61,14 +61,21 @@ import {
   type SharedReminderState,
   syncReminderStateFromContextTracker,
 } from "../../reminders/state";
+import { getCurrentWorkingDirectory } from "../../runtime-context";
 import { settingsManager } from "../../settings-manager";
 import { telemetry } from "../../telemetry";
 import type { ToolsetName } from "../../tools/toolset";
 import { debugLog, debugWarn } from "../../utils/debug";
+import { switchCurrentRuntimeWorkingDirectory } from "../../websocket/listener/cwd-change";
 import type { CommandHandle } from "../commands/runner";
 import { validateAgentName } from "../components/PinDialog";
 import { type Buffers, type Line, toLines } from "../helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "../helpers/appUrls";
+import {
+  CHDIR_USAGE,
+  parseChdirCommand,
+  resolveChdirTarget,
+} from "../helpers/chdirCommand";
 import type { ContextTracker } from "../helpers/contextTracker";
 import { resetContextHistory } from "../helpers/contextTracker";
 import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
@@ -758,6 +765,39 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           } else {
             const cmd = commandRunner.start("/reload", "Reload not available");
             cmd.fail("Reload is not available in this context");
+          }
+          return { submitted: true };
+        }
+
+        const chdirCommand = parseChdirCommand(trimmed);
+        if (chdirCommand) {
+          const cmd = commandRunner.start(
+            chdirCommand.command,
+            "Changing working directory...",
+          );
+          if (!chdirCommand.pathArg) {
+            cmd.fail(CHDIR_USAGE);
+            return { submitted: true };
+          }
+
+          try {
+            const nextWorkingDirectory = await resolveChdirTarget(
+              chdirCommand.pathArg,
+              getCurrentWorkingDirectory(),
+            );
+            await switchCurrentRuntimeWorkingDirectory(nextWorkingDirectory);
+            sharedReminderStateRef.current.hasSentSessionContext = false;
+            sharedReminderStateRef.current.pendingSessionContextReason =
+              "cwd_changed";
+            triggerStatusLineRefresh();
+            cmd.finish(
+              `Working directory changed to ${nextWorkingDirectory}`,
+              true,
+            );
+          } catch (error) {
+            const errorDetails =
+              error instanceof Error ? error.message : String(error);
+            cmd.fail(`Failed to change working directory: ${errorDetails}`);
           }
           return { submitted: true };
         }

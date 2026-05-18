@@ -87,6 +87,7 @@ export interface Settings {
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
   planModeEnabled: boolean; // Enables plan-mode tools and /plan command when true
+  includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
   recentModels: string[]; // Recently used model IDs (most recent first, max 5)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
@@ -169,6 +170,7 @@ const DEFAULT_SETTINGS: Settings = {
   sessionContextEnabled: true,
   autoSwapOnQuotaLimit: true,
   planModeEnabled: false,
+  includeWorktreeTool: true,
   recentModels: [],
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
@@ -575,6 +577,14 @@ class SettingsManager {
 
   setPlanModeEnabled(enabled: boolean): void {
     this.updateSettings({ planModeEnabled: enabled });
+  }
+
+  shouldIncludeWorktreeTool(): boolean {
+    return this.getSettings().includeWorktreeTool !== false;
+  }
+
+  setIncludeWorktreeTool(enabled: boolean): void {
+    this.updateSettings({ includeWorktreeTool: enabled });
   }
 
   getRecentModels(): string[] {
