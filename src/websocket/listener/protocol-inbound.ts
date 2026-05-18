@@ -49,6 +49,7 @@ import type {
   MemoryHistoryCommand,
   ReadFileCommand,
   ReadMemoryFileCommand,
+  RemoveQueueItemCommand,
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
@@ -1509,6 +1510,24 @@ export function isExecuteCommandCommand(
   );
 }
 
+export function isRemoveQueueItemCommand(
+  value: unknown,
+): value is RemoveQueueItemCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+    item_id?: unknown;
+  };
+  return (
+    c.type === "remove_queue_item" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime) &&
+    typeof c.item_id === "string"
+  );
+}
+
 export function parseServerLifecycleMessage(
   data: WebSocket.RawData,
 ): ServerLifecycleMessage | null {
@@ -1597,6 +1616,7 @@ export function parseServerMessage(
       isChannelRouteUpdateCommand(parsed) ||
       isChannelRouteRemoveCommand(parsed) ||
       isExecuteCommandCommand(parsed) ||
+      isRemoveQueueItemCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
       isCheckoutBranchCommand(parsed) ||
       isSecretListCommand(parsed) ||
