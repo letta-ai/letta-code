@@ -1,14 +1,10 @@
 // Experiment toggle picker.
 // Wraps MultiSelectPicker with experiment-specific logic.
 
-import { Box } from "ink";
 import { memo, useCallback, useMemo } from "react";
 import type { ExperimentId, ExperimentSnapshot } from "../../experiments/types";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MultiSelectPicker } from "./MultiSelectPicker";
-import { Text } from "./Text";
-
-const SOLID_LINE = "─";
+import { OverlayShell } from "./OverlayShell";
 
 interface ExperimentSelectorProps {
   experiments: ExperimentSnapshot[];
@@ -23,9 +19,6 @@ export const ExperimentSelector = memo(function ExperimentSelector({
   onConfirm,
   onCancel,
 }: ExperimentSelectorProps) {
-  const terminalWidth = useTerminalWidth();
-  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
-
   const items = useMemo(
     () =>
       experiments.map((exp) => ({
@@ -62,18 +55,13 @@ export const ExperimentSelector = memo(function ExperimentSelector({
   );
 
   return (
-    <>
-      <Text dimColor>{"> /experiments"}</Text>
-      <Text dimColor>{solidLine}</Text>
-      <Box height={1} />
+    <OverlayShell command="/experiments" title="Toggle Experiments">
       <MultiSelectPicker
-        title="Toggle Experiments"
-        description="Select which experiments to enable."
         items={items}
         selected={initialSelected}
         onConfirm={handleConfirm}
         onCancel={onCancel}
       />
-    </>
+    </OverlayShell>
   );
 });
