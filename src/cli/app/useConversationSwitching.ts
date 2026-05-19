@@ -723,16 +723,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           `${CLI_GLYPHS.result}  ${agentUrl}`,
           `${CLI_GLYPHS.result}  ${memfsTip}`,
         ].join("\n");
-        cmd.finish(successOutput, true);
-        const successItem: StaticItem = {
-          kind: "command",
-          id: cmd.id,
-          input: cmd.input,
-          output: successOutput,
-          phase: "finished",
-          success: true,
-        };
-
         // Clear current transcript and static items
         buffersRef.current.byId.clear();
         buffersRef.current.order = [];
@@ -782,9 +772,8 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           id: uid("sep"),
         };
 
-        setStaticItems([separator, successItem]);
-        // Sync lines display after clearing buffers
-        setLines(toLines(buffersRef.current));
+        setStaticItems([separator]);
+        cmd.finish(successOutput, true);
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
         cmd.fail(`Failed to create agent: ${errorDetails}`);
