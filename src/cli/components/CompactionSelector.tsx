@@ -27,10 +27,10 @@ const MODE_LABELS: Record<CompactionMode, string> = {
 
 const MODE_DESCRIPTIONS: Record<CompactionMode, string> = {
   all: "Compact the entire context window each time.",
-  sliding_window: "Keep the most recent messages within a token limit.",
-  self_compact_all: "Agent summarizes its entire context window itself.",
+  sliding_window: "Compact older messages to stay within a token limit.",
+  self_compact_all: "Agent self-compacts the entire context window each time.",
   self_compact_sliding_window:
-    "Agent summarizes older messages to stay within a token limit.",
+    "Agent self-compacts older messages to stay within a token limit.",
 };
 
 function parseMode(raw: string | null | undefined): CompactionMode {
