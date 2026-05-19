@@ -1,7 +1,8 @@
 // Reusable multi-select checkbox picker for interactive configuration.
 //
-// Inspired by Codex's "Configure Terminal Title" UI and extracted from
-// InlineQuestionApproval's multi-select logic, but simplified:
+// Pure list + input handling. Wrappers provide the shell
+// (header, title, footer) via OverlayShell.
+//
 // - No custom input / "Type something" option
 // - No "Submit" button — Enter confirms directly
 // - Optional live preview line at the bottom
@@ -17,11 +18,11 @@ export interface SelectableItem {
   key: string;
   label: string;
   description: string;
+  /** When true, Space does not toggle this item and it renders dimmed. */
+  disabled?: boolean;
 }
 
 export interface MultiSelectPickerProps {
-  title: string;
-  description: string;
   items: SelectableItem[];
   selected: Set<string>;
   onConfirm: (selectedKeys: string[]) => void;
@@ -31,8 +32,6 @@ export interface MultiSelectPickerProps {
 }
 
 export const MultiSelectPicker = memo(function MultiSelectPicker({
-  title,
-  description,
   items,
   selected,
   onConfirm,
@@ -81,10 +80,10 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
         onConfirm([...selectedSet]);
         return;
       }
-      // Space toggles checkbox
+      // Space toggles checkbox (no-op for disabled items)
       if (input === " ") {
         const item = items[cursor];
-        if (item) {
+        if (item && !item.disabled) {
           toggle(item.key);
         }
         return;
@@ -97,20 +96,17 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
 
   return (
     <Box flexDirection="column">
-      {/* Title */}
-      <Text bold>{title}</Text>
-
-      {/* Description */}
-      <Text dimColor>{description}</Text>
-
-      <Box height={1} />
-
       {/* Items */}
       <Box flexDirection="column">
         {items.map((item, index) => {
           const isCursor = index === cursor;
           const isChecked = selectedSet.has(item.key);
-          const color = isCursor ? colors.approval.header : undefined;
+          const isDisabled = item.disabled ?? false;
+          const color = isDisabled
+            ? undefined
+            : isCursor
+              ? colors.approval.header
+              : undefined;
 
           return (
             <Box key={item.key} flexDirection="row">
@@ -120,13 +116,21 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
               </Box>
               {/* Checkbox */}
               <Box width={4} flexShrink={0}>
-                <Text color={isChecked ? "green" : color}>
+                <Text
+                  color={isDisabled ? undefined : isChecked ? "green" : color}
+                  dimColor={isDisabled}
+                >
                   [{isChecked ? "✓" : " "}]{" "}
                 </Text>
               </Box>
               {/* Label + description */}
               <Box flexGrow={1} width={Math.max(0, columns - 6)}>
-                <Text color={color} bold={isCursor} wrap="truncate-end">
+                <Text
+                  color={color}
+                  bold={isCursor && !isDisabled}
+                  dimColor={isDisabled}
+                  wrap="truncate-end"
+                >
                   {item.label}
                   {item.description && (
                     <Text dimColor> · {item.description}</Text>

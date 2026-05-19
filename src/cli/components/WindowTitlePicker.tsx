@@ -1,7 +1,6 @@
 // Window title configuration picker.
 // Wraps MultiSelectPicker with window-title-specific logic.
 
-import { Box } from "ink";
 import { memo, useCallback, useMemo, useState } from "react";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
@@ -12,11 +11,8 @@ import {
   WINDOW_TITLE_FIELDS,
   type WindowTitleField,
 } from "../helpers/windowTitleConfig";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MultiSelectPicker } from "./MultiSelectPicker";
-import { Text } from "./Text";
-
-const SOLID_LINE = "─";
+import { OverlayShell } from "./OverlayShell";
 
 interface WindowTitlePickerProps {
   agentName: string | null;
@@ -31,9 +27,6 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
   conversationSummary,
   onClose,
 }: WindowTitlePickerProps) {
-  const terminalWidth = useTerminalWidth();
-  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
-
   const currentItems = useMemo(
     () => resolveWindowTitleConfig(projectDirectory),
     [projectDirectory],
@@ -90,19 +83,14 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
   }, [projectDirectory, titleData, onClose]);
 
   return (
-    <>
-      <Text dimColor>{"> /title"}</Text>
-      <Text dimColor>{solidLine}</Text>
-      <Box height={1} />
+    <OverlayShell command="/title" title="Configure Terminal Title">
       <MultiSelectPicker
-        title="Configure Terminal Title"
-        description="Select which items to display in the terminal title."
         items={items}
         selected={new Set(selectedKeys)}
         onConfirm={handleConfirm}
         onCancel={handleCancel}
         onSelectionChange={handleSelectionChange}
       />
-    </>
+    </OverlayShell>
   );
 });
