@@ -649,9 +649,9 @@ const InputFooter = memo(function InputFooter({
           <Text dimColor>
             {deferModeSupported
               ? queueMode === "defer"
-                ? "press ↑ to edit · ctrl+d to release queue"
-                : "press ↑ to edit · ctrl+d to hold queue until done"
-              : "press ↑ to edit"}
+                ? "press ↑ to edit queued message · ctrl+d to release queue"
+                : "press ↑ to edit queued message · ctrl+d to hold queue until done"
+              : "press ↑ to edit queued message"}
           </Text>
         ) : (
           <Text dimColor>Press / for commands</Text>

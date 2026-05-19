@@ -40,7 +40,7 @@ describe("queue edit wiring", () => {
     const source = readFileSync(path, "utf-8");
 
     expect(source).toContain("hasQueuedMessages");
-    expect(source).toContain("press ↑ to edit");
+    expect(source).toContain("press ↑ to edit queued message");
   });
 
   test("InputRich has onQueueEdit prop for up-arrow edit", () => {
