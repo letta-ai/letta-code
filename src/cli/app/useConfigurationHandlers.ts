@@ -1134,6 +1134,76 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     ],
   );
 
+  const handleExperimentsConfirm = useCallback(
+    async (
+      changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
+    ) => {
+      if (changes.length === 0) {
+        setActiveOverlay(null);
+        return;
+      }
+
+      const overlayCommand = consumeOverlayCommand("experiment");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        // For batch changes we can only queue one action; queue the first change.
+        const first = changes[0];
+        if (first) {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/experiments",
+              "Experiment changes queued – will update after current task completes",
+            );
+          cmd.update({
+            output:
+              "Experiment changes queued – will update after current task completes",
+            phase: "running",
+          });
+          setQueuedOverlayAction({
+            type: "set_experiment",
+            experimentId: first.experimentId,
+            enabled: first.enabled,
+            commandId: cmd.id,
+          });
+        }
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/experiments", "Updating experiments...");
+        cmd.update({ output: "Updating experiments...", phase: "running" });
+
+        try {
+          const results = changes.map(({ experimentId, enabled }) =>
+            experimentManager.set(experimentId, enabled),
+          );
+          const summary = results
+            .map((s) => `"${s.label}" ${s.enabled ? "enabled" : "disabled"}`)
+            .join(", ");
+          cmd.finish(`Experiments updated: ${summary}`, true);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to update experiments: ${errorDetails}`);
+        } finally {
+          setActiveOverlay(null);
+        }
+      });
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+      setActiveOverlay,
+      setQueuedOverlayAction,
+    ],
+  );
+
   return {
     handleModelSelect,
     handleSystemPromptSelect,
@@ -1142,5 +1212,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     handleCompactionModeSelect,
     handleToolsetSelect,
     handleExperimentSelect,
+    handleExperimentsConfirm,
   };
 }

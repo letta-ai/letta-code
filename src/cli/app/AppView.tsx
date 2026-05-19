@@ -193,9 +193,8 @@ type AppViewProps = {
   handleEnterPlanModeReject: () => Promise<void>;
   handleQueueEdit: () => string;
   handleExit: () => Promise<void>;
-  handleExperimentSelect: (
-    selection: { experimentId: ExperimentId; enabled: boolean },
-    commandId?: string | null,
+  handleExperimentsConfirm: (
+    changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
   ) => Promise<void>;
   handleFeedbackSubmit: (message: string) => Promise<void>;
   handleInterrupt: () => Promise<void>;
@@ -366,7 +365,7 @@ export function AppView(props: AppViewProps) {
     handleEnterPlanModeReject,
     handleQueueEdit,
     handleExit,
-    handleExperimentSelect,
+    handleExperimentsConfirm,
     handleFeedbackSubmit,
     handleInterrupt,
     handleModelSelect,
@@ -947,7 +946,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "experiment" && (
               <ExperimentSelector
                 experiments={experimentManager.list()}
-                onSelect={handleExperimentSelect}
+                onConfirm={handleExperimentsConfirm}
                 onCancel={closeOverlay}
               />
             )}
