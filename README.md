@@ -4,11 +4,11 @@
 
 Letta Code is a memory-first coding harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more). Agents automatically reconfigure themselves through updating their skills, memory, and system prompt to adapt what they know and how they act. 
 
-You can interact with Letta Code agents through: 
+You can interact with Letta Code agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
-* The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux.
-* In your browser (including [mobile]((https://docs.letta.com/letta-code/remote-mobile))) at [chat.letta.com](chat.letta.com)
-* Through messaging integrations (Telegram, Slack, Whatsapp, or custom connectors)
+* The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux
+* Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
+* Messaging integrations, including Telegram, Slack, WhatsApp, and custom connectors
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
@@ -17,18 +17,74 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 ```bash
 npm install -g @letta-ai/letta-code
 ```
-Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
+Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)).
+
+On first run, choose how you want to start:
+
+* **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Constellation login.
+* **Login to Constellation** syncs agent state through the Constellation so you can access the same agents from `chat.letta.com`, the desktop app, other machines, and messaging integrations.
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, zAI coding plan, etc.), and use `/model` to swap models.
 
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
 
-## Connecting to Constellation
-Letta Code agents are *stateful* so rely on having a centralized, git-backed memory store. State can be stored on: 
-* **The current local machine**: Local storage, single machine (best for privacy-sensitive usecases)
-* **Constellation (remote)**: Agents can connect to or run on remote machines, and can communicate with agents across machines 
+## Local mode
+Local mode runs an embedded Letta-compatible backend inside Letta Code. Agents, conversations, memory, provider connections, and secrets are stored on your machine.
 
-Constellation allows your agents to work on any machine, while still maintaining the same cohesive memory, identity, and experience. Agents on Constellation can be access from any machine through the CLI, or run on remote environments (any machine can be connected as a remote env by running `letta server` on it). 
+Local mode is a good fit when you want:
+
+* A self-contained agent runtime for local projects
+* Disposable agents for experiments or development
+* Inspectable state stored as ordinary local files
+* Local git-backed MemFS memory
+* Direct provider connections from your machine
+
+Local mode means local **state**, not necessarily local **inference**. If you connect a remote provider like OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, or ChatGPT/Codex, prompts still go to that provider. For a fully local loop, connect a local inference provider like Ollama, LM Studio, or llama.cpp.
+
+You can enter local mode from the first-run setup menu, or explicitly with:
+
+```bash
+letta --backend local
+```
+
+Connect a provider from inside the TUI with `/connect`, or from the shell with `letta --backend local connect`:
+
+```bash
+letta --backend local connect anthropic --api-key "$ANTHROPIC_API_KEY"
+letta --backend local connect ollama
+letta --backend local connect lmstudio
+letta --backend local connect llama-cpp
+letta --backend local connect chatgpt
+```
+
+Then create a local agent:
+
+```bash
+letta --backend local --new-agent --model anthropic/claude-sonnet-4-6
+```
+
+Local backend state is stored by default in:
+
+```text
+~/.letta/lc-local-backend
+```
+
+You can override this location for isolated experiments:
+
+```bash
+export LETTA_LOCAL_BACKEND_DIR="$PWD/.letta-local"
+letta --backend local --new-agent
+```
+
+Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
+
+## Connecting to Constellation
+Letta Code agents are *stateful*: memory, identity, and conversation history persist across sessions. State can live in either:
+
+* **Local mode**: local storage on the current machine, best for local-first or privacy-sensitive work
+* **Constellation**: remote state so agents can follow you across devices, environments, and communication channels
+
+The Constellation allows your agents to work on any machine while maintaining the same cohesive memory, identity, and experience. Agents in the Constellation can be accessed from the CLI, desktop app, browser, mobile, or messaging integrations. Any machine can also be connected as a remote environment by running `letta server` on it.
 
 ```mermaid
 graph TD
@@ -70,7 +126,12 @@ Letta Code works with skills (reusable modules that teach your agent new capabil
 ```
 
 ## Remote environments
-Letta Code agents can work on 
+Letta Code agents in the Constellation can connect to remote environments. Run `letta server` on a machine to register it as an environment, then use the CLI, desktop app, web app, or messaging integrations to route agent work there.
+
+```bash
+letta server
+letta server --env-name "work-laptop"
+```
 
 ## Messaging Integrations
 Letta Code supports [channels](https://docs.letta.com/letta-code/channels). 
