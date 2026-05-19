@@ -1035,6 +1035,7 @@ export function createDiscordAdapter(
           timestamp: Date.now(),
           messageId: msg.id,
           threadId: isThread ? channelId : null,
+          parentChannelId: reactionParentChannelId ?? undefined,
           chatType,
           isMention: false,
           reaction: {
