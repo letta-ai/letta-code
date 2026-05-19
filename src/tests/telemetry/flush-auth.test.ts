@@ -8,6 +8,7 @@ type TelemetryTestState = {
   currentAgentId: string | null;
   surface: "tui" | "headless" | "websocket";
   sessionEndTracked: boolean;
+  isCloudUser: () => boolean;
 };
 
 const telemetryState = telemetry as unknown as TelemetryTestState;
@@ -17,6 +18,7 @@ describe("telemetry flush auth", () => {
   const originalGetSettingsWithSecureTokens =
     settingsManager.getSettingsWithSecureTokens;
   const originalGetSettings = settingsManager.getSettings;
+  const originalIsCloudUser = telemetryState.isCloudUser;
   const originalLettaApiKey = process.env.LETTA_API_KEY;
   const originalTelemetryDisabled = process.env.LETTA_TELEMETRY_DISABLED;
   const originalLettaBaseUrl = process.env.LETTA_BASE_URL;
@@ -64,6 +66,7 @@ describe("telemetry flush auth", () => {
     settingsManager.getSettingsWithSecureTokens =
       originalGetSettingsWithSecureTokens;
     settingsManager.getSettings = originalGetSettings;
+    telemetryState.isCloudUser = originalIsCloudUser;
     restoreEnvVar("LETTA_API_KEY", originalLettaApiKey);
     restoreEnvVar("LETTA_TELEMETRY_DISABLED", originalTelemetryDisabled);
     restoreEnvVar("LETTA_BASE_URL", originalLettaBaseUrl);
@@ -93,7 +96,9 @@ describe("telemetry flush auth", () => {
   });
 
   test("self-hosted users do not send error telemetry", async () => {
-    setEnvVar("LETTA_BASE_URL", "http://localhost:8283");
+    // Avoid process.env races with unrelated test files on Windows, where env
+    // keys are case-insensitive but not isolated across the full Bun run.
+    telemetryState.isCloudUser = () => false;
 
     const fetchMock = mock(async () => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
