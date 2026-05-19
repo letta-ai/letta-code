@@ -64,7 +64,10 @@ describe("formatChannelNotification", () => {
       "Plain assistant text is not delivered to the user.",
     );
     expect(reminder).toContain(
-      'MUST be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
+      'If you should reply to the external user, your final action for this turn must be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
+    );
+    expect(reminder).toContain(
+      "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
     );
     expect(reminder).toContain(
       "Do not produce a plain text assistant response as the user-visible reply.",
@@ -87,7 +90,7 @@ describe("formatChannelNotification", () => {
     const xml = buildChannelNotificationXml(msg);
 
     expect(reminder).toContain(
-      'MUST be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
+      'If you should reply to the external user, your final action for this turn must be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
     );
     expect(reminder).not.toContain('accountId="account-1"');
     expect(xml).toContain('account_id="account-1"');

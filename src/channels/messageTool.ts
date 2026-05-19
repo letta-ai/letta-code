@@ -132,7 +132,7 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
 
   const scopedReplyContract =
     scope && scope.channels.length > 0
-      ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. For the user-visible reply, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply.'
+      ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.'
       : "";
 
   return `${description}${scopedReplyContract}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
