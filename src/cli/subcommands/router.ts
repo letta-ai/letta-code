@@ -1,4 +1,5 @@
 import { runAgentsSubcommand } from "./agents";
+import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
@@ -6,6 +7,7 @@ import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./localBackend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
+import { runSetupSubcommand } from "./setup";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("../../updater/auto-update");
@@ -37,6 +39,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runListenSubcommand(rest);
     case "connect":
       return runConnectSubcommand(rest);
+    case "backend":
+      return runBackendSubcommand(rest);
+    case "setup":
+      return runSetupSubcommand(rest);
     case "cron":
       return runCronSubcommand(rest);
     case "channels":

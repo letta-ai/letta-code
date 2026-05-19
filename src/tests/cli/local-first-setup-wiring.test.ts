@@ -20,7 +20,8 @@ describe("local-first setup wiring", () => {
     expect(source).toContain(
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
     );
-    expect(source).toContain("letta --backend api");
+    expect(source).toContain("letta setup");
+    expect(source).toContain("letta backend api");
     expect(source).toContain("Agents you create are local to this");
     expect(source).toContain("chat.letta.com");
     expect(source).toContain("Welcome to Letta Code.");
@@ -39,7 +40,7 @@ describe("local-first setup wiring", () => {
     expect(source.slice(start, end)).toContain('preferredBackendMode: "api"');
   });
 
-  test("startup honors saved local preference only when cloud credentials are absent", () => {
+  test("startup honors saved local preference as the default backend", () => {
     const source = readSource("../../index.ts");
     const start = source.indexOf('settings.preferredBackendMode === "local"');
     const end = source.indexOf('configureBackendMode("local")', start);
@@ -50,7 +51,22 @@ describe("local-first setup wiring", () => {
     const segment = source.slice(start - 120, end + 60);
     expect(segment).toContain("!explicitBackendMode");
     expect(segment).toContain("baseURL === LETTA_CLOUD_API_URL");
-    expect(segment).toContain("!apiKey");
-    expect(segment).toContain("!settings.refreshToken");
+    expect(segment).not.toContain("!apiKey");
+    expect(segment).not.toContain("!settings.refreshToken");
+  });
+
+  test("backend and setup subcommands expose default backend controls", () => {
+    const router = readSource("../../cli/subcommands/router.ts");
+    const backendCommand = readSource("../../cli/subcommands/backend.ts");
+    const setupCommand = readSource("../../cli/subcommands/setup.ts");
+
+    expect(router).toContain('case "backend"');
+    expect(router).toContain('case "setup"');
+    expect(backendCommand).toContain("letta backend api");
+    expect(backendCommand).toContain("letta backend local");
+    expect(backendCommand).toContain(
+      "settingsManager.updateSettings({ preferredBackendMode: backendMode })",
+    );
+    expect(setupCommand).toContain("await runSetup()");
   });
 });

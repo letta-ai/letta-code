@@ -135,6 +135,8 @@ USAGE
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta connect ...     Connect providers from terminal
+  letta backend ...     Show or set the default backend
+  letta setup           Re-run first-run setup
 
 OPTIONS
 ${renderCliOptionsHelp()}
@@ -154,6 +156,7 @@ SUBCOMMANDS
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
   letta connect <provider> [options]
+  letta backend [api|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
@@ -727,9 +730,7 @@ async function main(): Promise<void> {
   if (
     !explicitBackendMode &&
     settings.preferredBackendMode === "local" &&
-    baseURL === LETTA_CLOUD_API_URL &&
-    !apiKey &&
-    !settings.refreshToken
+    baseURL === LETTA_CLOUD_API_URL
   ) {
     configureBackendMode("local");
   }
