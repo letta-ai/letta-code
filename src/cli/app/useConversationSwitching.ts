@@ -699,7 +699,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
               : undefined,
         });
 
-        // Enable memfs on the Constellation API backend (tags, repo clone, tool detach)
+        // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
         // without blocking the new-agent UX on the initial clone.
         void enableMemfsIfCloud(agent.id);
 

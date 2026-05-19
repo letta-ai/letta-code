@@ -138,7 +138,7 @@ function gitOrEmpty(cwd: string, args: string): string {
 }
 
 describe("normalizeCredentialBaseUrl", () => {
-  test("normalizes hosted API URL to origin", () => {
+  test("normalizes Letta Cloud URL to origin", () => {
     expect(normalizeCredentialBaseUrl("https://api.letta.com")).toBe(
       "https://api.letta.com",
     );

@@ -44,7 +44,7 @@ function isTransientRegistrationError(error: unknown): boolean {
 }
 
 /**
- * Register this device with the Constellation environments endpoint.
+ * Register this device with the Letta Cloud environments endpoint.
  * Throws on any failure with an error message suitable for wrapping in caller-specific context.
  */
 export async function registerWithCloud(

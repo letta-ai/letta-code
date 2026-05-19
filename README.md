@@ -21,8 +21,8 @@ Navigate to your project directory and run `letta` (see command-line options [in
 
 On first run, choose how you want to start:
 
-* **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Constellation login.
-* **Login to Constellation** syncs agent state through the Constellation so you can access the same agents from `chat.letta.com`, the desktop app, other machines, and messaging integrations.
+* **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Letta Cloud login.
+* **Login to Constellation** signs you into Letta Cloud so you can access the same agents from `chat.letta.com`, the desktop app, other machines, and messaging integrations.
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, zAI coding plan, etc.), and use `/model` to swap models.
 
@@ -84,23 +84,23 @@ export LETTA_LOCAL_BACKEND_DIR="$PWD/.letta-local"
 letta --backend local --new-agent
 ```
 
-Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
+Local agents do not appear in Letta Cloud, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
 
-## Connecting to Constellation
+## Connecting to Letta Cloud
 Letta Code agents are *stateful*: memory, identity, and conversation history persist across sessions. State can live in either:
 
 * **Local mode**: local storage on the current machine, best for local-first or privacy-sensitive work
-* **Constellation**: remote state so agents can follow you across devices, environments, and communication channels
+* **Letta Cloud**: remote state so agents can follow you across devices, environments, and communication channels
 
-The Constellation allows your agents to work on any machine while maintaining the same cohesive memory, identity, and experience. Agents in the Constellation can be accessed from the CLI, desktop app, browser, mobile, or messaging integrations. Any machine can also be connected as a remote environment by running `letta server` on it.
+Letta Cloud allows your agents to work on any machine while maintaining the same cohesive memory, identity, and experience. Agents in Letta Cloud can be accessed from the CLI, desktop app, browser, mobile, or messaging integrations. Any machine can also be connected as a remote environment by running `letta server` on it.
 
 ```mermaid
 graph TD
-    Constellation["⭐ Constellation"]
-    Constellation --> A["💻 Your Laptop"]
-    Constellation --> B["☁️ Hosted Runtime"]
-    Constellation --> C["🖥️ Mac Mini"]
-    Constellation --> D["📦 Sandbox"]
+    LettaCloud["☁️ Letta Cloud"]
+    LettaCloud --> A["💻 Your Laptop"]
+    LettaCloud --> B["🌐 Browser / Mobile"]
+    LettaCloud --> C["🖥️ Mac Mini"]
+    LettaCloud --> D["📦 Sandbox"]
 ```
 
 ## Philosophy
@@ -134,7 +134,7 @@ Letta Code works with skills (reusable modules that teach your agent new capabil
 ```
 
 ## Remote environments
-Letta Code agents in the Constellation can connect to remote environments. Run `letta server` on a machine to register it as an environment, then use the CLI, desktop app, web app, or messaging integrations to route agent work there.
+Letta Code agents in Letta Cloud can connect to remote environments. Run `letta server` on a machine to register it as an environment, then use the CLI, desktop app, web app, or messaging integrations to route agent work there.
 
 ```bash
 letta server

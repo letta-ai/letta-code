@@ -119,7 +119,7 @@ export interface Settings {
   pinnedAgentsByServer?: Record<string, string[]>; // DEPRECATED: use agents array
   // Unified agent settings array (replaces pinnedAgentsByServer)
   agents?: AgentSettings[];
-  // Constellation OAuth token management (stored separately in secrets)
+  // Letta Cloud OAuth token management (stored separately in secrets)
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;

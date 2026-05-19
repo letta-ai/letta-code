@@ -91,7 +91,7 @@ When running a migration, always use the skill [[skills/db-migrations]]
 ```
 or external memory files: 
 ```
-Sarah's active projects are: Letta Code [[projects/letta_code.md]] and Constellation [[projects/constellation.md]]
+Sarah's active projects are: Letta Code [[projects/letta_code.md]] and Letta Cloud [[projects/letta_cloud]]
 ```
 - Ensure that contents of files match the file name and descriptions 
 - Make sure your future self will be able to find and load external files when needed. 

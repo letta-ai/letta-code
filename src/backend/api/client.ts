@@ -232,7 +232,7 @@ export async function getClient() {
     }
   }
 
-  // Check if refresh token is missing for Constellation auth
+  // Check if refresh token is missing for Letta Cloud
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||

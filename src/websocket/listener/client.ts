@@ -1,6 +1,6 @@
 /**
  * WebSocket client for listen mode
- * Connects to the Constellation and receives messages to execute locally
+ * Connects to Letta Cloud and receives messages to execute locally
  */
 
 import type WebSocket from "ws";
