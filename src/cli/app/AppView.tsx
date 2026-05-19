@@ -61,6 +61,7 @@ import { ToolCallMessage } from "../components/ToolCallMessageRich";
 import { ToolsetSelector } from "../components/ToolsetSelector";
 import { UserMessage } from "../components/UserMessageRich";
 import { WelcomeScreen } from "../components/WelcomeScreen";
+import { WindowTitlePicker } from "../components/WindowTitlePicker";
 import { AnimationProvider } from "../contexts/AnimationContext";
 import { type Buffers, type Line, toLines } from "../helpers/accumulator";
 import { backfillBuffers } from "../helpers/backfill";
@@ -137,6 +138,8 @@ type AppViewProps = {
   contextTrackerRef: RefObject<ContextTracker>;
   continueSession: boolean;
   conversationId: string;
+  conversationSummary: string | null;
+  projectDirectory: string;
   currentApproval: ApprovalRequest | undefined;
   currentApprovalContext: ApprovalContext | undefined;
   currentModelDisplay: string | null;
@@ -269,6 +272,7 @@ type AppViewProps = {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setModelReasoningPrompt: Dispatch<
     SetStateAction<ModelReasoningPrompt | null>
@@ -320,6 +324,8 @@ export function AppView(props: AppViewProps) {
     contextTrackerRef,
     continueSession,
     conversationId,
+    conversationSummary,
+    projectDirectory,
     currentApproval,
     currentApprovalContext,
     currentModelDisplay,
@@ -408,6 +414,7 @@ export function AppView(props: AppViewProps) {
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setLines,
     setModelReasoningPrompt,
     setModelSelectorOptions,
@@ -792,6 +799,16 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
+            {/* Window Title Configurator - for customizing terminal title */}
+            {activeOverlay === "window-title" && (
+              <WindowTitlePicker
+                agentName={agentName ?? null}
+                projectDirectory={projectDirectory}
+                conversationSummary={conversationSummary}
+                onClose={closeOverlay}
+              />
+            )}
+
             {/* GitHub App Installer - setup Letta Code GitHub Action */}
             {activeOverlay === "install-github-app" && (
               <InstallGithubAppFlow
@@ -1042,6 +1059,7 @@ export function AppView(props: AppViewProps) {
                       // Only update state after validation succeeds
                       setConversationIdAndRef(convId);
                       setConversationAutoTitleEligibility(false);
+                      setConversationSummary(selectorContext?.summary ?? null);
 
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
@@ -1188,6 +1206,7 @@ export function AppView(props: AppViewProps) {
                     );
                     setConversationIdAndRef(conversation.id);
                     setConversationAutoTitleEligibility(true);
+                    setConversationSummary(null);
                     settingsManager.persistSession(agentId, conversation.id);
 
                     // Build success command with agent + conversation info

@@ -78,6 +78,7 @@ import {
   isDebugEnabled,
 } from "../../utils/debug";
 import { recordTuiPerf } from "../../utils/tuiPerf";
+import { getVersion } from "../../version";
 import {
   type CommandFinishedEvent,
   type CommandHandle,
@@ -141,6 +142,10 @@ import {
 } from "../helpers/toolNameMapping";
 import { isTaskTool } from "../helpers/toolNameMapping.js";
 import { getTuiBlockedReason } from "../helpers/tuiQueueAdapter";
+import {
+  renderWindowTitle,
+  resolveWindowTitleConfig,
+} from "../helpers/windowTitleConfig";
 import { useConfigurableStatusLine } from "../hooks/useConfigurableStatusLine";
 import { useSuspend } from "../hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "../hooks/useSyncedState";
@@ -239,6 +244,9 @@ export default function App({
 
   // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
+  const [conversationSummary, setConversationSummary] = useState<string | null>(
+    null,
+  );
 
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
@@ -307,14 +315,6 @@ export default function App({
       setCurrentAgentId(agentId);
     }
   }, [agentId]);
-
-  // Set terminal title to "{Agent Name} | Letta Code"
-  useEffect(() => {
-    const title = agentState?.name
-      ? `${agentState.name} | Letta Code`
-      : "Letta Code";
-    process.stdout.write(`\x1b]0;${title}\x07`);
-  }, [agentState?.name]);
 
   // Whether a stream is in flight (disables input)
   // Uses synced state to keep ref in sync for reliable async checks
@@ -781,6 +781,19 @@ export default function App({
       null
     );
   }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
+
+  // Set terminal title from window title config
+  useEffect(() => {
+    const items = resolveWindowTitleConfig(projectDirectory);
+    const title = renderWindowTitle(items, {
+      agentName: agentState?.name ?? null,
+      appName: "Letta Code",
+      version: getVersion(),
+      conversationSummary,
+    });
+    process.stdout.write(`\x1b]0;${title}\x07`);
+  }, [agentState?.name, conversationSummary, projectDirectory]);
+
   const currentModelProvider = llmConfig?.provider_name ?? null;
   const currentReasoningEffort: ModelReasoningEffort | null =
     currentModelLabel?.startsWith("letta/auto")
@@ -3274,6 +3287,7 @@ export default function App({
     setRestoreQueueOnCancel,
     setRestoredInput,
     setStreaming,
+    setConversationSummary,
     setTempModelOverride,
     setThinkingMessage,
     setTrajectoryElapsedBaseMs,
@@ -3573,6 +3587,7 @@ export default function App({
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setCurrentModelHandle,
     setInterruptRequested,
     setIsExecutingTool,
@@ -3690,6 +3705,7 @@ export default function App({
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setConversationOverrideContextWindowLimit,
     setConversationOverrideModelSettings,
     setCurrentPersonalityId,
@@ -4398,6 +4414,8 @@ export default function App({
       contextTrackerRef={contextTrackerRef}
       continueSession={continueSession}
       conversationId={conversationId}
+      conversationSummary={conversationSummary}
+      projectDirectory={projectDirectory}
       currentApproval={currentApproval}
       currentApprovalContext={currentApprovalContext}
       currentModelDisplay={currentModelDisplay}
@@ -4488,6 +4506,7 @@ export default function App({
       setCommandRunning={setCommandRunning}
       setConversationAutoTitleEligibility={setConversationAutoTitleEligibility}
       setConversationIdAndRef={setConversationIdAndRef}
+      setConversationSummary={setConversationSummary}
       setLines={setLines}
       setModelReasoningPrompt={setModelReasoningPrompt}
       setModelSelectorOptions={setModelSelectorOptions}
