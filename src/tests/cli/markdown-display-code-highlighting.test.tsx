@@ -95,6 +95,27 @@ test("markdown code block fallback renders plain code content", async () => {
   expect(stripAnsi(output)).toContain("bun run check");
 });
 
+test("markdown renders indented fenced code blocks inside list items", async () => {
+  const output = await renderMarkdown(
+    [
+      "1. Immediately, via the tool result",
+      "   CreateWorktree returns text like:",
+      "   ```txt",
+      "   Created worktree.",
+      "",
+      "   Path: /tmp/worktree",
+      "   ```",
+    ].join("\n"),
+  );
+  const plain = stripAnsi(output);
+
+  expect(plain).toContain("1. Immediately, via the tool result");
+  expect(plain).toContain("Created worktree.");
+  expect(plain).toContain("Path: /tmp/worktree");
+  expect(plain).not.toContain("```txt");
+  expect(plain).not.toContain("```");
+});
+
 test("MarkdownDisplay wires fenced code blocks through syntax highlighting", () => {
   const sourcePath = fileURLToPath(
     new URL("../../cli/components/MarkdownDisplay.tsx", import.meta.url),
