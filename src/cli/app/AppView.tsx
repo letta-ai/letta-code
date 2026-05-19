@@ -180,7 +180,10 @@ type AppViewProps = {
     mode: string,
     commandId?: string | null,
   ) => Promise<void>;
-  handleCreateNewAgent: (name: string) => Promise<void>;
+  handleCreateNewAgent: (
+    name: string,
+    opts?: { commandId?: string },
+  ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
   handleDenyCurrent: (reason: string) => Promise<void>;
   handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
@@ -985,8 +988,11 @@ export function AppView(props: AppViewProps) {
                 }}
                 onCancel={closeOverlay}
                 onCreateNewAgent={(name: string) => {
+                  const overlayCommand = consumeOverlayCommand("resume");
                   closeOverlay();
-                  handleCreateNewAgent(name);
+                  void handleCreateNewAgent(name, {
+                    commandId: overlayCommand?.id,
+                  });
                 }}
               />
             )}

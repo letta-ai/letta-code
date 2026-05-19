@@ -650,15 +650,17 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
   // Handle creating a new agent and switching to it
   // biome-ignore lint/correctness/useExhaustiveDependencies: switch refs are stable objects; .current is read dynamically during agent creation.
   const handleCreateNewAgent = useCallback(
-    async (name: string) => {
+    async (name: string, opts?: { commandId?: string }) => {
       // Close dialog immediately
       setActiveOverlay(null);
 
       // Lock input for async operation
       setCommandRunning(true);
 
-      const inputCmd = "/new";
-      const cmd = commandRunner.start(inputCmd, `Creating agent "${name}"...`);
+      const cmd = opts?.commandId
+        ? commandRunner.getHandle(opts.commandId, "/new")
+        : commandRunner.start("/new", `Creating agent "${name}"...`);
+      cmd.update({ output: `Creating agent "${name}"...`, phase: "running" });
 
       try {
         // Pre-determine memfs mode so the agent is created with the correct prompt.
