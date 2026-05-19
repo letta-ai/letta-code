@@ -34,7 +34,8 @@ export const ExperimentSelector = memo(function ExperimentSelector({
   );
 
   const initialSelected = useMemo(
-    () => new Set(experiments.filter((e) => e.enabled).map((e) => e.id)),
+    () =>
+      new Set<string>(experiments.filter((e) => e.enabled).map((e) => e.id)),
     [experiments],
   );
 
