@@ -2508,6 +2508,7 @@ ${SYSTEM_REMINDER_CLOSE}
         try {
           let errorType: string | undefined;
           let detail = detailFromRun ?? latestErrorText ?? "";
+          let explicitRetryable: boolean | undefined;
 
           if (lastRunId) {
             const run = await getBackend().retrieveRun(lastRunId);
@@ -2516,14 +2517,21 @@ ${SYSTEM_REMINDER_CLOSE}
                   error_type?: string;
                   message?: string;
                   detail?: string;
+                  retryable?: boolean;
                   // Handle nested error structure (error.error) that can occur in some edge cases
-                  error?: { error_type?: string; detail?: string };
+                  error?: {
+                    error_type?: string;
+                    detail?: string;
+                    retryable?: boolean;
+                  };
                 }
               | undefined;
 
             // Check for llm_error at top level or nested (handles error.error nesting)
             errorType = metaError?.error_type ?? metaError?.error?.error_type;
             detail = metaError?.detail ?? metaError?.error?.detail ?? detail;
+            explicitRetryable =
+              metaError?.retryable ?? metaError?.error?.retryable;
           }
 
           // Special handling for empty response errors (Opus 4.6 SADs)
@@ -2579,7 +2587,11 @@ ${SYSTEM_REMINDER_CLOSE}
             continue;
           }
 
-          if (shouldRetryRunMetadataError(errorType, detail)) {
+          if (
+            explicitRetryable === true ||
+            (explicitRetryable !== false &&
+              shouldRetryRunMetadataError(errorType, detail))
+          ) {
             const attempt = llmApiErrorRetries + 1;
             const delayMs = getRetryDelayMs({
               category: "transient_provider",
