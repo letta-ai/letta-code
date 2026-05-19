@@ -111,9 +111,20 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
     attrs.push(`size_bytes="${attachment.sizeBytes}"`);
   }
 
+  const children: string[] = [];
   if (attachment.transcription) {
-    const escapedTranscription = escapeXmlText(attachment.transcription);
-    return `<attachment ${attrs.join(" ")}>\n  <attempted_transcription>${escapedTranscription}</attempted_transcription>\n</attachment>`;
+    children.push(
+      `<attempted_transcription>${escapeXmlText(attachment.transcription)}</attempted_transcription>`,
+    );
+  }
+  if (attachment.transcriptionError) {
+    children.push(
+      `<attempted_transcription_error>${escapeXmlText(attachment.transcriptionError)}</attempted_transcription_error>`,
+    );
+  }
+
+  if (children.length > 0) {
+    return `<attachment ${attrs.join(" ")}>\n  ${children.join("\n  ")}\n</attachment>`;
   }
 
   return `<attachment ${attrs.join(" ")} />`;

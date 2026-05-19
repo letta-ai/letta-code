@@ -71,7 +71,7 @@ describe("transcribeAudioFile", () => {
     expect(result.error).toBeTruthy();
   });
 
-  test("calls Whisper API and returns transcribed text", async () => {
+  test("calls OpenAI transcription API with gpt-4o-transcribe and returns text", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
 
     const fetchMock = mock(async () => {
@@ -109,6 +109,8 @@ describe("transcribeAudioFile", () => {
       expect(options.headers).toEqual(
         expect.objectContaining({ Authorization: "Bearer sk-test" }),
       );
+      expect(options.body).toBeInstanceOf(FormData);
+      expect((options.body as FormData).get("model")).toBe("gpt-4o-transcribe");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
