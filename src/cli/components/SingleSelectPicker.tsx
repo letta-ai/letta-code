@@ -17,6 +17,8 @@ export interface SelectableItem {
   isCurrent?: boolean;
   /** When true, item is dimmed and Enter is a no-op */
   disabled?: boolean;
+  /** When true, label renders dimmed but item is still selectable */
+  dimLabel?: boolean;
 }
 
 export interface SingleSelectPickerProps {
@@ -99,6 +101,7 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
         const isCursor = index === cursor;
         const isCurrent = item.isCurrent ?? false;
         const isDisabled = item.disabled ?? false;
+        const isDimLabel = item.dimLabel ?? false;
 
         const cursorColor = isDisabled
           ? undefined
@@ -119,7 +122,7 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
             <Text
               color={labelColor}
               bold={isCursor && !isDisabled}
-              dimColor={isDisabled}
+              dimColor={isDisabled || isDimLabel}
             >
               {item.label}
               {isCurrent && " (current)"}

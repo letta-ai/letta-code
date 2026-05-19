@@ -47,6 +47,7 @@ export const SystemPromptSelector = memo(function SystemPromptSelector({
       promptItems.push({
         key: SHOW_ALL_KEY,
         label: "Show all prompts",
+        dimLabel: true,
       });
     }
     return promptItems;
