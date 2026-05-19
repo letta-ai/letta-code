@@ -1,7 +1,8 @@
 // Reusable multi-select checkbox picker for interactive configuration.
 //
-// Inspired by Codex's "Configure Terminal Title" UI and extracted from
-// InlineQuestionApproval's multi-select logic, but simplified:
+// Pure list + input handling. Wrappers provide the shell
+// (header, title, footer) via OverlayShell.
+//
 // - No custom input / "Type something" option
 // - No "Submit" button — Enter confirms directly
 // - Optional live preview line at the bottom
@@ -22,8 +23,6 @@ export interface SelectableItem {
 }
 
 export interface MultiSelectPickerProps {
-  title: string;
-  description: string;
   items: SelectableItem[];
   selected: Set<string>;
   onConfirm: (selectedKeys: string[]) => void;
@@ -33,8 +32,6 @@ export interface MultiSelectPickerProps {
 }
 
 export const MultiSelectPicker = memo(function MultiSelectPicker({
-  title,
-  description,
   items,
   selected,
   onConfirm,
@@ -99,14 +96,6 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
 
   return (
     <Box flexDirection="column">
-      {/* Title */}
-      <Text bold>{title}</Text>
-
-      {/* Description */}
-      <Text dimColor>{description}</Text>
-
-      <Box height={1} />
-
       {/* Items */}
       <Box flexDirection="column">
         {items.map((item, index) => {
