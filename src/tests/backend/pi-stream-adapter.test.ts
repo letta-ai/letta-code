@@ -13,7 +13,10 @@ import {
   PiStreamAdapter,
   type PiStreamFunction,
 } from "../../backend/dev/PiStreamAdapter";
-import type { ProviderTurnInput } from "../../backend/dev/ProviderTurnExecutor";
+import type {
+  ProviderStreamEvent,
+  ProviderTurnInput,
+} from "../../backend/dev/ProviderTurnExecutor";
 import { emptyLocalUsage } from "../../backend/local/LocalMessage";
 import { createOrUpdateLocalProvider } from "../../backend/local/LocalProviderAuthStore";
 
@@ -27,6 +30,15 @@ function assistantMessage(): AssistantMessage {
     usage: emptyLocalUsage(),
     stopReason: "stop",
     timestamp: Date.now(),
+  };
+}
+
+function assistantErrorMessage(errorMessage: string): AssistantMessage {
+  return {
+    ...assistantMessage(),
+    content: [],
+    stopReason: "error",
+    errorMessage,
   };
 }
 
@@ -141,5 +153,54 @@ describe("PiStreamAdapter", () => {
       }
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("retries retryable Codex transport errors before model output", async () => {
+    let calls = 0;
+    const stream: PiStreamFunction = () => {
+      calls += 1;
+      if (calls === 1) {
+        const error = assistantErrorMessage(
+          "WebSocket closed 1006 Connection ended\nretry-after-ms: 0",
+        );
+        return streamFromEvents(
+          [{ type: "error", reason: "error", error }],
+          error,
+        );
+      }
+
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({ stream });
+    const events: ProviderStreamEvent[] = [];
+    for await (const event of adapter.stream(input())) {
+      events.push(event);
+    }
+
+    expect(calls).toBe(2);
+    const retryEvent = events.find((event) => {
+      if (event.type !== "letta-chunk") return false;
+      const chunk = event.chunk as {
+        message_type?: string;
+        event_type?: string;
+      };
+      return (
+        chunk.message_type === "event_message" && chunk.event_type === "retry"
+      );
+    });
+    expect(retryEvent).toBeDefined();
+    if (!retryEvent || retryEvent.type !== "letta-chunk") {
+      throw new Error("Expected retry event");
+    }
+    expect(
+      (retryEvent.chunk as { event_data?: { message?: string } }).event_data
+        ?.message,
+    ).toContain("WebSocket closed 1006 Connection ended");
+    expect(events.some((event) => event.type === "local-message")).toBe(true);
   });
 });
