@@ -39,6 +39,7 @@ import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
 } from "../../tools/impl/shellEnv";
+import { debugLog, debugWarn } from "../../utils/debug";
 import { getErrorMessage } from "../../utils/error";
 import { getAvailableModelHandles } from "../available-models";
 import { getCurrentAgentId } from "../context";
@@ -493,6 +494,13 @@ function parseResultFromStdout(
   const lines = stdout.trim().split("\n");
   const lastLine = lines[lines.length - 1] ?? "";
 
+  if (stdout.trim().length === 0) {
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: stdout is empty (agentId=${agentId})`,
+    );
+  }
+
   try {
     const result = JSON.parse(lastLine);
 
@@ -505,6 +513,10 @@ function parseResultFromStdout(
       };
     }
 
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: last line parsed as JSON but type=${result.type}, not "result" (agentId=${agentId})`,
+    );
     return {
       agentId: agentId || "",
       report: "",
@@ -512,6 +524,11 @@ function parseResultFromStdout(
       error: "Unexpected output format from subagent",
     };
   } catch (parseError) {
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: JSON.parse failed on last line (${lastLine.length} chars): ${getErrorMessage(parseError)}. ` +
+        `Total stdout: ${stdout.length} chars, ${lines.length} lines. Last line: ${lastLine.slice(0, 200)}`,
+    );
     return {
       agentId: agentId || "",
       report: "",
@@ -1208,6 +1225,11 @@ async function executeSubagent(
 
     // Return error if captured
     if (state.finalError) {
+      debugWarn(
+        "subagent",
+        `Subagent ${subagentId} (agentId=${state.agentId}) exited with captured error: ${state.finalError}. ` +
+          `exitCode=${exitCode}, stderr=${stderr.length} bytes`,
+      );
       return {
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
@@ -1218,9 +1240,30 @@ async function executeSubagent(
       };
     }
 
+    // No result or error captured during streaming — this is unusual
+    debugWarn(
+      "subagent",
+      `Subagent ${subagentId} (agentId=${state.agentId}) exited cleanly (exitCode=${exitCode}) ` +
+        `but no result event was captured during streaming. ` +
+        `stdout=${Buffer.concat(stdoutChunks).length} bytes, stderr=${stderr.length} bytes`,
+    );
+
     // Fallback: parse from stdout
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
-    return parseResultFromStdout(stdout, state.agentId);
+    debugLog(
+      "subagent",
+      `Falling back to parseResultFromStdout for ${subagentId} (agentId=${state.agentId}). ` +
+        `stdout=${stdout.length} bytes, stderr=${stderr.length} bytes, exitCode=${exitCode}`,
+    );
+    const result = parseResultFromStdout(stdout, state.agentId);
+    if (!result.success) {
+      debugWarn(
+        "subagent",
+        `parseResultFromStdout failed for ${subagentId}: ${result.error}. ` +
+          `stdout first 500 chars: ${stdout.slice(0, 500)}`,
+      );
+    }
+    return result;
   } catch (error) {
     return {
       agentId: "",
