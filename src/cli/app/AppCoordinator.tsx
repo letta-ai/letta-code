@@ -1403,7 +1403,9 @@ export default function App({
   // between each sequential tool call, making defer indistinguishable from immediate).
   const deferModeSupported = !isLocalAgentId(agentId);
   // When 'immediate' (default), they fire on any turn end.
-  const [queueMode, setQueueMode] = useState<"immediate" | "defer">("immediate");
+  const [queueMode, setQueueMode] = useState<"immediate" | "defer">(
+    "immediate",
+  );
   const handleCtrlD = useCallback(() => {
     if (!deferModeSupported) return;
     setQueueMode((prev) => (prev === "immediate" ? "defer" : "immediate"));
@@ -1413,7 +1415,6 @@ export default function App({
   queueModeRef.current = queueMode;
   // Tracks the stop reason of the last completed turn, set by useConversationLoop.
   const lastStopReasonRef = useRef<string | null>(null);
-
 
   // Track last dequeued message for restoration on error
   // If an error occurs after dequeue, we restore this to the input field (if input is empty)
@@ -3804,7 +3805,6 @@ export default function App({
         (lastStopReasonRef.current === "end_turn" &&
           processingConversationRef.current === 0))
     ) {
-
       // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
       if (!batch) return;

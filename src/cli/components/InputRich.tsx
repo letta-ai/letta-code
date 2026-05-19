@@ -2025,6 +2025,7 @@ export function Input({
     promptVisualWidth,
     suppressDividers,
     queueMode,
+    deferModeSupported,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
