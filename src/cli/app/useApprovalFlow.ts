@@ -97,6 +97,7 @@ type ApprovalFlowContext = {
     opts?: { deferToolCalls?: boolean },
   ) => void;
   consumeQueuedMessages: () => QueuedMessage[] | null;
+  queueModeRef: MutableRefObject<"immediate" | "defer">;
   conversationGenerationRef: MutableRefObject<number>;
   conversationId: string;
   conversationIdRef: MutableRefObject<string>;
@@ -164,6 +165,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     commandRunner,
     commitEligibleLines,
     consumeQueuedMessages,
+    queueModeRef,
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
@@ -572,7 +574,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           waitingForQueueCancelRef.current = false;
           queueSnapshotRef.current = [];
         } else {
-          const queuedItemsToAppend = consumeQueuedMessages();
+          const queuedItemsToAppend =
+            queueModeRef.current === "immediate"
+              ? consumeQueuedMessages()
+              : null;
           const queuedNotifications = queuedItemsToAppend
             ? getQueuedNotificationSummaries(queuedItemsToAppend)
             : [];

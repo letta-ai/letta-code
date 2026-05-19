@@ -154,6 +154,9 @@ type AppViewProps = {
   expandedToolCallId: string | null;
   lastShellToolCallId: string | null;
   handleCtrlO: () => void;
+  queueMode: "immediate" | "defer";
+  deferModeSupported: boolean;
+  handleCtrlD: () => void;
 
   feedbackPrefill: string;
   footerUpdateText: string | null;
@@ -343,6 +346,9 @@ export function AppView(props: AppViewProps) {
     expandedToolCallId,
     lastShellToolCallId,
     handleCtrlO,
+    queueMode,
+    deferModeSupported,
+    handleCtrlD,
     feedbackPrefill,
     footerUpdateText,
     handleAgentSelect,
@@ -714,6 +720,9 @@ export function AppView(props: AppViewProps) {
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
                 onCtrlO={handleCtrlO}
+                onCtrlD={handleCtrlD}
+                queueMode={queueMode}
+                deferModeSupported={deferModeSupported}
                 interruptRequested={interruptRequested}
                 agentId={agentId}
                 agentName={agentName}

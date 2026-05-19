@@ -147,6 +147,7 @@ type ConversationLoopContext = {
   clearApprovalToolContext: () => void;
   closeTrajectorySegment: () => void;
   consumeQueuedMessages: () => QueuedMessage[] | null;
+  queueModeRef: MutableRefObject<"immediate" | "defer">;
   contextTrackerRef: MutableRefObject<ContextTracker>;
   conversationBusyRetriesRef: MutableRefObject<number>;
   conversationGenerationRef: MutableRefObject<number>;
@@ -193,6 +194,7 @@ type ConversationLoopContext = {
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setCurrentModelId: Dispatch<SetStateAction<string | null>>;
   setDequeueEpoch: Dispatch<SetStateAction<number>>;
+  lastStopReasonRef: MutableRefObject<string | null>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
@@ -240,6 +242,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     clearApprovalToolContext,
     closeTrajectorySegment,
     consumeQueuedMessages,
+    queueModeRef,
     contextTrackerRef,
     conversationBusyRetriesRef,
     conversationGenerationRef,
@@ -282,6 +285,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
     setNeedsEagerApprovalCheck,
@@ -1389,6 +1393,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             stopReasonToHandle = "requires_approval";
           }
 
+          // Record the final stop reason so the dequeue gate can check it.
+          lastStopReasonRef.current = stopReasonToHandle;
+
           // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
             clearApprovalToolContext();
@@ -1966,8 +1973,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   return;
                 }
 
-                // Append queued messages if any (from 15s append mode)
-                const queuedItemsToAppend = consumeQueuedMessages();
+                // Append queued messages if any (from 15s append mode).
+                // In defer mode, skip mid-run bundling — let the dequeue gate
+                // handle dispatch after the agent is fully done (end_turn).
+                const queuedItemsToAppend =
+                  queueModeRef.current === "immediate"
+                    ? consumeQueuedMessages()
+                    : null;
                 const queuedNotifications = queuedItemsToAppend
                   ? getQueuedNotificationSummaries(queuedItemsToAppend)
                   : [];
@@ -2788,6 +2800,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
         abortControllerRef.current = null;
 
+        // Decrement BEFORE bumping the epoch so that when the dequeue effect
+        // fires synchronously (Ink legacy mode), processingConversationRef.current
+        // already reflects the true count. The defer gate checks === 0 to confirm
+        // no more nested processConversation calls are outstanding.
+        if (!isStale) {
+          processingConversationRef.current = Math.max(
+            0,
+            processingConversationRef.current - 1,
+          );
+        }
+
         // Trigger dequeue effect now that processConversation is no longer active.
         // The dequeue effect checks abortControllerRef (a ref, not state), so it
         // won't re-run on its own — bump dequeueEpoch to force re-evaluation.
@@ -2795,15 +2818,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         // cancelled and queued messages should NOT be auto-submitted.
         if (!isStale && (tuiQueueRef.current?.length ?? 0) > 0) {
           setDequeueEpoch((e: number) => e + 1);
-        }
-
-        // Only decrement ref if this conversation is still current.
-        // If stale (ESC was pressed), handleInterrupt already reset ref to 0.
-        if (!isStale) {
-          processingConversationRef.current = Math.max(
-            0,
-            processingConversationRef.current - 1,
-          );
         }
       }
     },
