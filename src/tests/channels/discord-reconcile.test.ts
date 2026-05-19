@@ -234,7 +234,7 @@ describe("Discord route reconciliation", () => {
 
   // ── Removal gating tests ──────────────────────────────────────
 
-  test("--apply with remove_stale_conversations=false: stale route remains, policy gate logged", async () => {
+  test("--apply with remove_stale_routes=false: stale route remains, policy gate logged", async () => {
     addDiscordRoute({ chatId: "channel-alpha" });
     addDiscordRoute({ chatId: "channel-gamma" });
 
@@ -251,7 +251,7 @@ describe("Discord route reconciliation", () => {
     expect(result.skippedByPolicy).toHaveLength(1);
     expect(result.skippedByPolicy[0]?.route.chatId).toBe("channel-gamma");
     expect(result.policyGateReason).toContain(
-      "remove_stale_conversations is false",
+      "remove_stale_routes is false",
     );
 
     // Route should still exist
@@ -260,8 +260,8 @@ describe("Discord route reconciliation", () => {
     ).not.toBeNull();
   });
 
-  test("--apply with remove_stale_conversations=true: stale route removed", async () => {
-    // Override account to have removeStaleConversations=true
+  test("--apply with remove_stale_routes=true: stale route removed", async () => {
+    // Override account to have removeStaleRoutes=true
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
       {
@@ -274,7 +274,7 @@ describe("Discord route reconciliation", () => {
         dmPolicy: "pairing",
         allowedUsers: [],
         allowedChannels: ["channel-alpha"],
-        removeStaleConversations: true,
+        removeStaleRoutes: true,
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T00:00:00.000Z",
       },
@@ -308,7 +308,7 @@ describe("Discord route reconciliation", () => {
     ).toBeNull();
   });
 
-  test("--apply with remove_stale_conversations=true: non-stale routes preserved", async () => {
+  test("--apply with remove_stale_routes=true: non-stale routes preserved", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
       {
@@ -321,7 +321,7 @@ describe("Discord route reconciliation", () => {
         dmPolicy: "pairing",
         allowedUsers: [],
         allowedChannels: ["channel-alpha"],
-        removeStaleConversations: true,
+        removeStaleRoutes: true,
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T00:00:00.000Z",
       },

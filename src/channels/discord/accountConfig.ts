@@ -14,7 +14,7 @@ const DISCORD_CONFIG_KEYS = new Set([
   "auto_thread_on_mention",
   "thread_policy_by_channel",
   "acknowledge_message_reaction",
-  "remove_stale_conversations",
+  "remove_stale_routes",
   "inbound_debounce_ms",
 ]);
 
@@ -115,9 +115,9 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         (config.acknowledge_message_reaction === undefined ||
           config.acknowledge_message_reaction === true ||
           config.acknowledge_message_reaction === false) &&
-        (config.remove_stale_conversations === undefined ||
-          config.remove_stale_conversations === true ||
-          config.remove_stale_conversations === false) &&
+        (config.remove_stale_routes === undefined ||
+          config.remove_stale_routes === true ||
+          config.remove_stale_routes === false) &&
         (config.inbound_debounce_ms === undefined ||
           (typeof config.inbound_debounce_ms === "number" &&
             Number.isFinite(config.inbound_debounce_ms) &&
@@ -167,10 +167,10 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
           config.acknowledge_message_reaction === false
             ? config.acknowledge_message_reaction
             : undefined,
-        removeStaleConversations:
-          config.remove_stale_conversations === true ||
-          config.remove_stale_conversations === false
-            ? config.remove_stale_conversations
+        removeStaleRoutes:
+          config.remove_stale_routes === true ||
+          config.remove_stale_routes === false
+            ? config.remove_stale_routes
             : undefined,
       };
     },
@@ -185,7 +185,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         thread_policy_by_channel: account.threadPolicyByChannel ?? {},
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
-        remove_stale_conversations: account.removeStaleConversations ?? false,
+        remove_stale_routes: account.removeStaleRoutes ?? false,
         inbound_debounce_ms: account.inboundDebounceMs,
       };
     },
@@ -200,7 +200,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         thread_policy_by_channel: account.threadPolicyByChannel ?? {},
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
-        remove_stale_conversations: account.removeStaleConversations ?? false,
+        remove_stale_routes: account.removeStaleRoutes ?? false,
         inbound_debounce_ms: account.inboundDebounceMs,
       };
     },

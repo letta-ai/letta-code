@@ -849,7 +849,7 @@ export class ChannelRegistry {
 
       // Delivery-time re-check: if allowed_channels changed since route creation,
       // drop the message (route cleanup, if desired, is handled separately by
-      // reconcile + removeStaleConversations).
+      // reconcile + removeStaleRoutes).
       if (msg.chatType === "channel" && config.allowedChannels) {
         const isAllowed = isDiscordGuildChannelAllowed({
           channelId: msg.chatId,

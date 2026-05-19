@@ -80,7 +80,7 @@ Route add options:
 Route reconcile options:
   --channel <name>       Channel name (e.g. "discord")
   --account-id <id>      Channel account ID (optional; inferred when only one account exists)
-  --apply                Apply cleanup (removes stale routes only); gated by remove_stale_conversations
+  --apply                Apply cleanup (removes stale routes only); gated by remove_stale_routes
 
 Pair options:
   --channel <name>       Channel name (e.g. "telegram")

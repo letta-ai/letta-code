@@ -17,9 +17,9 @@
  * CLI invocation:
  *   letta channels route reconcile --channel discord [--account-id ...] [--apply]
  *
- *   --apply with removeStaleConversations=false (the default): route removal is
+ *   --apply with removeStaleRoutes=false (the default): route removal is
  *   blocked and a clear diagnostic is emitted.
- *   --apply with removeStaleConversations=true: stale routes are removed.
+ *   --apply with removeStaleRoutes=true: stale routes are removed.
  */
 
 import { getChannelAccount, loadChannelAccounts } from "./accounts";
@@ -134,7 +134,7 @@ function reconcileDiscord(
   account: DiscordChannelAccount,
   options?: ReconcileOptions,
 ): ReconciliationResult {
-  const { allowedChannels, accountId, removeStaleConversations } = account;
+  const { allowedChannels, accountId, removeStaleRoutes } = account;
 
   // Load routes from disk
   loadRoutes("discord");
@@ -209,7 +209,7 @@ function reconcileDiscord(
 
       // Apply phase
       if (options?.apply) {
-        if (removeStaleConversations) {
+        if (removeStaleRoutes) {
           const removed = removeRoute(
             "discord",
             route.chatId,
@@ -227,8 +227,8 @@ function reconcileDiscord(
   }
 
   const policyGateReason =
-    options?.apply && !removeStaleConversations && skippedByPolicy.length > 0
-      ? "remove_stale_conversations is false (default). " +
+    options?.apply && !removeStaleRoutes && skippedByPolicy.length > 0
+      ? "remove_stale_routes is false (default). " +
         "Set it to true in the Discord account config to allow --apply removals. " +
         `${skippedByPolicy.length} stale route(s) would be removed but were blocked by policy.`
       : null;

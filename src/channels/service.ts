@@ -104,7 +104,7 @@ export interface ChannelConfigSnapshot {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
-  removeStaleConversations?: boolean;
+  removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
 }
 
@@ -173,7 +173,7 @@ export interface ChannelAccountSnapshot {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
-  removeStaleConversations?: boolean;
+  removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   createdAt: string;
   updatedAt: string;
@@ -456,7 +456,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       autoThreadOnMention: account.autoThreadOnMention ?? false,
       threadPolicyByChannel: account.threadPolicyByChannel ?? {},
       acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
-      removeStaleConversations: account.removeStaleConversations ?? false,
+      removeStaleRoutes: account.removeStaleRoutes ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -541,7 +541,7 @@ function createAccountFromPatch(
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
-      removeStaleConversations: normalizedPatch.removeStaleConversations,
+      removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       createdAt: now,
       updatedAt: now,
@@ -627,9 +627,9 @@ function mergeAccountPatch(
       acknowledgeMessageReaction:
         normalizedPatch.acknowledgeMessageReaction ??
         existing.acknowledgeMessageReaction,
-      removeStaleConversations:
-        normalizedPatch.removeStaleConversations ??
-        existing.removeStaleConversations,
+      removeStaleRoutes:
+        normalizedPatch.removeStaleRoutes ??
+        existing.removeStaleRoutes,
       inboundDebounceMs:
         normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
@@ -765,7 +765,7 @@ export function getChannelConfigSnapshot(
       autoThreadOnMention: account.autoThreadOnMention ?? false,
       threadPolicyByChannel: account.threadPolicyByChannel ?? {},
       acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
-      removeStaleConversations: account.removeStaleConversations ?? false,
+      removeStaleRoutes: account.removeStaleRoutes ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
     };
   }
@@ -822,7 +822,7 @@ export async function setChannelConfigLive(
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
-      removeStaleConversations: normalizedPatch.removeStaleConversations,
+      removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       config: normalizedPatch.config,
       displayName: existing.displayName,
@@ -847,7 +847,7 @@ export async function setChannelConfigLive(
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
         threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
-        removeStaleConversations: normalizedPatch.removeStaleConversations,
+        removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         transcribeVoice: normalizedPatch.transcribeVoice,
         config: normalizedPatch.config,

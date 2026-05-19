@@ -154,7 +154,7 @@ export interface ChannelPluginAccountPatch {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
-  removeStaleConversations?: boolean;
+  removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   transcribeVoice?: boolean;
 }

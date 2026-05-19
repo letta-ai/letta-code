@@ -358,7 +358,7 @@ export interface DiscordChannelConfig {
    * This only removes routes (not conversations). Default false — routes
    * are preserved even if the channel is no longer allowed.
    */
-  removeStaleConversations?: boolean;
+  removeStaleRoutes?: boolean;
   /**
    * Optional debounce window (ms) for inbound open-channel guild messages.
    * When greater than `0`, short back-to-back messages from the same sender
@@ -447,7 +447,7 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * This only removes routes (not conversations). Default false — routes
    * are preserved even if the channel is no longer allowed.
    */
-  removeStaleConversations?: boolean;
+  removeStaleRoutes?: boolean;
   /**
    * Optional debounce window (ms) for inbound open-channel guild messages.
    * When greater than `0`, short back-to-back messages from the same sender

@@ -215,9 +215,9 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
         typeof parsed.acknowledge_message_reaction === "boolean"
           ? parsed.acknowledge_message_reaction
           : undefined,
-      removeStaleConversations:
-        typeof parsed.remove_stale_conversations === "boolean"
-          ? parsed.remove_stale_conversations
+      removeStaleRoutes:
+        typeof parsed.remove_stale_routes === "boolean"
+          ? parsed.remove_stale_routes
           : undefined,
       inboundDebounceMs:
         typeof parsed.inbound_debounce_ms === "number" &&
