@@ -39,7 +39,7 @@ export function StaticTranscript({
 }) {
   return (
     <Static
-      key={`${renderEpoch}-${hiddenToolCallId ?? ""}`}
+      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${lastShellToolCallId ?? ""}`}
       items={items}
       style={{ flexDirection: "column" }}
     >
