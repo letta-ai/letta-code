@@ -150,12 +150,24 @@ export async function isRetriablePostStopError(
       | {
           error_type?: string;
           detail?: string;
-          error?: { error_type?: string; detail?: string };
+          retryable?: boolean;
+          error?: {
+            error_type?: string;
+            detail?: string;
+            retryable?: boolean;
+          };
         }
       | undefined;
 
     const errorType = metaError?.error_type ?? metaError?.error?.error_type;
     const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+    const retryable = metaError?.retryable ?? metaError?.error?.retryable;
+    if (retryable === false) {
+      return false;
+    }
+    if (retryable === true) {
+      return true;
+    }
     return shouldRetryRunMetadataError(errorType, detail);
   } catch {
     return shouldRetryRunMetadataError(undefined, fallbackDetail);

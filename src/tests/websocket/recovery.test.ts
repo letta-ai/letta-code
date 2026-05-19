@@ -1,5 +1,33 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { __testSetBackend, type Backend } from "../../backend";
 import { isRetriablePostStopError } from "../../websocket/listener/recovery";
+
+const capabilities = {
+  remoteMemfs: false,
+  serverSideToolManagement: false,
+  serverSecrets: false,
+  agentFileImportExport: false,
+  promptRecompile: false,
+  byokProviderRefresh: false,
+  localModelCatalog: true,
+  localMemfs: false,
+};
+
+function setRunErrorMetadata(error: unknown): void {
+  __testSetBackend({
+    capabilities,
+    async retrieveRun(runId: string) {
+      return {
+        id: runId,
+        metadata: { error },
+      };
+    },
+  } as unknown as Backend);
+}
+
+afterEach(() => {
+  __testSetBackend(null);
+});
 
 describe("websocket post-stop retry fallback", () => {
   test("retries formatted Cloudflare 521 detail without a run id", async () => {
@@ -8,6 +36,30 @@ describe("websocket post-stop retry fallback", () => {
 
     await expect(isRetriablePostStopError("error", null, detail)).resolves.toBe(
       true,
+    );
+  });
+
+  test("honors explicit retryable run metadata", async () => {
+    setRunErrorMetadata({
+      error_type: "internal_error",
+      detail: "Authentication error",
+      retryable: true,
+    });
+
+    await expect(isRetriablePostStopError("error", "run-1")).resolves.toBe(
+      true,
+    );
+  });
+
+  test("honors explicit non-retryable run metadata", async () => {
+    setRunErrorMetadata({
+      error_type: "llm_error",
+      detail: "HTTP 503: provider overloaded",
+      retryable: false,
+    });
+
+    await expect(isRetriablePostStopError("error", "run-1")).resolves.toBe(
+      false,
     );
   });
 });
