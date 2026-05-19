@@ -43,7 +43,6 @@ import { MemoryTabViewer } from "../components/MemoryTabViewer";
 import { MessageSearch } from "../components/MessageSearch";
 import { ModelReasoningSelector } from "../components/ModelReasoningSelector";
 import { ModelSelector } from "../components/ModelSelector";
-import { NewAgentDialog } from "../components/NewAgentDialog";
 import { PendingApprovalStub } from "../components/PendingApprovalStub";
 import { PersonalitySelector } from "../components/PersonalitySelector";
 import { PinDialog } from "../components/PinDialog";
@@ -181,7 +180,10 @@ type AppViewProps = {
     mode: string,
     commandId?: string | null,
   ) => Promise<void>;
-  handleCreateNewAgent: (name: string) => Promise<void>;
+  handleCreateNewAgent: (
+    name: string,
+    opts?: { commandId?: string },
+  ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
   handleDenyCurrent: (reason: string) => Promise<void>;
   handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
@@ -985,9 +987,12 @@ export function AppView(props: AppViewProps) {
                   });
                 }}
                 onCancel={closeOverlay}
-                onCreateNewAgent={() => {
+                onCreateNewAgent={(name: string) => {
+                  const overlayCommand = consumeOverlayCommand("resume");
                   closeOverlay();
-                  setActiveOverlay("new");
+                  void handleCreateNewAgent(name, {
+                    commandId: overlayCommand?.id,
+                  });
                 }}
               />
             )}
@@ -1514,14 +1519,6 @@ export function AppView(props: AppViewProps) {
             {/* Hooks Manager - for managing hooks configuration */}
             {activeOverlay === "hooks" && (
               <HooksManager onClose={closeOverlay} agentId={agentId} />
-            )}
-
-            {/* New Agent Dialog - for naming new agent before creation */}
-            {activeOverlay === "new" && (
-              <NewAgentDialog
-                onSubmit={handleCreateNewAgent}
-                onCancel={closeOverlay}
-              />
             )}
 
             {/* Pin Dialog - for naming agent before pinning */}
