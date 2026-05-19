@@ -21,7 +21,7 @@ describe("bootstrap reminder reset wiring", () => {
 
     const anchors = [
       'origin: "agent-switch"',
-      'const inputCmd = "/new";', // new-agent creation flow
+      'commandRunner.start("/new"', // new-agent creation flow
       "const newMatch = msg.trim().match(/^\\/new(?:\\s+(.+))?$/);",
       'if (msg.trim() === "/clear")',
       'origin: "resume-direct"',
@@ -45,7 +45,7 @@ describe("bootstrap reminder reset wiring", () => {
   test("new-agent creation flow resets routing to default conversation", () => {
     const source = readInteractiveAppSource();
 
-    const anchor = 'const inputCmd = "/new";';
+    const anchor = 'commandRunner.start("/new"';
     const anchorIndex = source.indexOf(anchor);
     expect(anchorIndex).toBeGreaterThanOrEqual(0);
 
