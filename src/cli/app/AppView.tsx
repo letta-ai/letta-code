@@ -457,6 +457,7 @@ export function AppView(props: AppViewProps) {
         precomputedDiffs={precomputedDiffsRef.current}
         lastPlanFilePath={lastPlanFilePathRef.current}
         hiddenToolCallId={expandedToolCallId ?? undefined}
+        lastShellToolCallId={lastShellToolCallId ?? undefined}
       />
 
       <Box flexDirection="column">
