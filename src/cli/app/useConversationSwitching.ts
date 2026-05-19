@@ -103,6 +103,7 @@ type ConversationSwitchingContext = {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setInterruptRequested: Dispatch<SetStateAction<boolean>>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
@@ -153,6 +154,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setCurrentModelHandle,
     setInterruptRequested,
     setIsExecutingTool,
@@ -354,6 +356,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         await maybeCarryOverActiveConversationModel(conversationId);
         setConversationIdAndRef(conversationId);
         setConversationAutoTitleEligibility(false);
+        setConversationSummary(null);
 
         pendingConversationSwitchRef.current = {
           origin: "fork",
@@ -442,6 +445,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetBootstrapReminderState,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,
+      setConversationSummary,
       setCommandRunning,
       setStreaming,
       recoverRestoredPendingApprovals,
@@ -555,6 +559,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setCurrentModelHandle(agentModelHandle);
         setConversationIdAndRef(targetConversationId);
         setConversationAutoTitleEligibility(false);
+        setConversationSummary(null);
 
         // Ensure bootstrap reminders are re-injected on the first user turn
         // after switching to a different conversation/agent context.
@@ -628,6 +633,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetPendingReasoningCycle,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,
+      setConversationSummary,
       agentIdRef,
       pendingConversationSwitchRef,
       setActiveOverlay,
@@ -744,6 +750,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setCurrentModelHandle(agentModelHandle);
         setConversationIdAndRef(targetConversationId);
         setConversationAutoTitleEligibility(false);
+        setConversationSummary(null);
 
         // Set conversation switch context for new agent switch
         pendingConversationSwitchRef.current = {
@@ -794,6 +801,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetBootstrapReminderState,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,
+      setConversationSummary,
       agentIdRef,
       pendingConversationSwitchRef,
       setActiveOverlay,

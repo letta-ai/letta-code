@@ -201,6 +201,7 @@ type ConversationLoopContext = {
   setRestoreQueueOnCancel: Dispatch<SetStateAction<boolean>>;
   setRestoredInput: Dispatch<SetStateAction<string | null>>;
   setStreaming: (value: boolean) => void;
+  setConversationSummary: (summary: string | null) => void;
   setTempModelOverride: (next: string | null) => void;
   setThinkingMessage: Dispatch<SetStateAction<string>>;
   setTrajectoryElapsedBaseMs: Dispatch<SetStateAction<number>>;
@@ -289,6 +290,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setRestoreQueueOnCancel,
     setRestoredInput,
     setStreaming,
+    setConversationSummary,
     setTempModelOverride,
     setThinkingMessage,
     setTrajectoryElapsedBaseMs,
@@ -1522,6 +1524,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   })
                   .then(() => {
                     shouldAutoGenerateConversationTitleRef.current = false;
+                    setConversationSummary(conversationTitle);
                   })
                   .catch((err) => {
                     // Silently ignore - not critical.
@@ -2809,6 +2812,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       refreshDerived,
       refreshDerivedThrottled,
       setStreaming,
+      setConversationSummary,
       currentModelId,
       updateStreamingOutput,
       needsEagerApprovalCheck,

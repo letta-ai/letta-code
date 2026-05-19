@@ -259,6 +259,7 @@ type SubmitHandlerContext = {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setConversationOverrideContextWindowLimit: Dispatch<
     SetStateAction<number | null>
   >;
@@ -735,6 +736,25 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             "Experiments dialog dismissed",
           );
           setActiveOverlay("experiment");
+          return { submitted: true };
+        }
+
+        if (trimmed === "/title") {
+          if (isAgentBusy()) {
+            const cmd = commandRunner.start(
+              "/title",
+              "Cannot configure title while the agent is running.",
+            );
+            cmd.fail("Wait for the current turn to finish and try again.");
+            return { submitted: true };
+          }
+          startOverlayCommand(
+            "window-title",
+            "/title",
+            "Opening title configurator...",
+            "Title configurator dismissed",
+          );
+          setActiveOverlay("window-title");
           return { submitted: true };
         }
 
