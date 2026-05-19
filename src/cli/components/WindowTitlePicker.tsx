@@ -81,6 +81,14 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
     [onClose],
   );
 
+  const handleCancel = useCallback(() => {
+    // Revert terminal title to the persisted config
+    const savedItems = resolveWindowTitleConfig(projectDirectory);
+    const title = renderWindowTitle(savedItems, titleData);
+    process.stdout.write(`\x1b]0;${title}\x07`);
+    onClose();
+  }, [projectDirectory, titleData, onClose]);
+
   return (
     <>
       <Text dimColor>{"> /title"}</Text>
@@ -92,7 +100,7 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
         items={items}
         selected={new Set(selectedKeys)}
         onConfirm={handleConfirm}
-        onCancel={onClose}
+        onCancel={handleCancel}
         onSelectionChange={handleSelectionChange}
       />
     </>
