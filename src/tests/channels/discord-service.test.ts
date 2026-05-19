@@ -431,6 +431,54 @@ describe("discord channel service", () => {
     });
   });
 
+  test("load: missing auto_thread_on_mention keeps legacy auto-thread behavior", () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "test-token",
+        agentId: null,
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    loadChannelAccounts("discord");
+    const first = listChannelAccounts("discord")[0];
+    expect(first).toBeDefined();
+    if (!first || !isDiscordChannelAccount(first)) {
+      throw new Error("expected discord account");
+    }
+    expect(first.autoThreadOnMention).toBe(true);
+  });
+
+  test("create: new Discord accounts explicitly default auto-thread off", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      { token: "test-token", dmPolicy: "pairing" },
+      { accountId: "discord-bot-defaults" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.autoThreadOnMention).toBe(false);
+    expect(created.config.auto_thread_on_mention).toBe(false);
+
+    const account = listChannelAccounts("discord").find(
+      (item) => item.accountId === "discord-bot-defaults",
+    );
+    expect(account).toBeDefined();
+    if (!account || !isDiscordChannelAccount(account)) {
+      throw new Error("expected discord account");
+    }
+    expect(account.autoThreadOnMention).toBe(false);
+  });
+
   test("load: reads camelCase key (legacy migration)", () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [

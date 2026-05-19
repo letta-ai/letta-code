@@ -538,7 +538,7 @@ function createAccountFromPatch(
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
-      autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+      autoThreadOnMention: normalizedPatch.autoThreadOnMention ?? false,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,

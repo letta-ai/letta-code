@@ -148,6 +148,13 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     );
     (next as DiscordChannelAccount).defaultPermissionMode =
       (migrated as ChannelDefaultPermissionMode | null) ?? "standard";
+
+    // Compatibility migration: existing accounts created before this field was
+    // persisted auto-threaded on mentions by default. Keep that behavior for
+    // accounts that lack an explicit setting, while new accounts write false.
+    if (!("auto_thread_on_mention" in raw) && !("autoThreadOnMention" in raw)) {
+      (next as DiscordChannelAccount).autoThreadOnMention = true;
+    }
   }
   return next;
 }
@@ -193,7 +200,7 @@ function makeDefaultLegacyAccount(
           ? [...config.allowedChannels]
           : { ...config.allowedChannels }
         : undefined,
-      autoThreadOnMention: config.autoThreadOnMention,
+      autoThreadOnMention: config.autoThreadOnMention ?? true,
       threadPolicyByChannel: config.threadPolicyByChannel,
       agentId: null,
       defaultPermissionMode: config.defaultPermissionMode ?? "standard",
