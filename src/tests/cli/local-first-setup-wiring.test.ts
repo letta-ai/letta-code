@@ -11,7 +11,7 @@ describe("local-first setup wiring", () => {
 
     expect(source).toContain('const LOCAL_MODE_LABEL = "Proceed locally"');
     expect(source).toContain(
-      'const AUTH_LOGIN_LABEL = "Login to Letta Constellation"',
+      'const AUTH_LOGIN_LABEL = "Login to Constellation"',
     );
     expect(source).toContain(
       "const [selectedOption, setSelectedOption] = useState(1)",

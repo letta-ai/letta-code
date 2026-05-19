@@ -14,7 +14,7 @@ import { pollForToken, requestDeviceCode } from "./oauth";
 
 type SetupMode = "menu" | "device-code" | "auth-code" | "self-host" | "done";
 
-const AUTH_LOGIN_LABEL = "Login to Letta Constellation";
+const AUTH_LOGIN_LABEL = "Login to Constellation";
 const LOCAL_MODE_LABEL = "Proceed locally";
 const AUTH_LOGO_ANIMATE = false;
 
@@ -43,7 +43,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
           setSelectedOption((prev) => Math.min(2, prev + 1));
         } else if (key.return) {
           if (selectedOption === 0) {
-            // Login to Letta Constellation - start device code flow
+            // Login to Constellation - start device code flow
             setMode("device-code");
             startDeviceCodeFlow();
           } else if (selectedOption === 1) {
@@ -193,9 +193,8 @@ export function SetupUI({ onComplete }: SetupUIProps) {
       <Text> </Text>
       <Text bold>Welcome to Letta Code.</Text>
       <Text dimColor>
-        Sign in to Letta Constellation for remote access via chat.letta.com and
-        other devices, or continue locally with agent state stored on this
-        device.
+        Sign in to Constellation for remote access via chat.letta.com and other
+        devices, or continue locally with agent state stored on this device.
       </Text>
       <Text> </Text>
       <Box>
