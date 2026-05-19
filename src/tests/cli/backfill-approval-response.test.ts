@@ -4,6 +4,26 @@ import { createBuffers } from "../../cli/helpers/accumulator";
 import { backfillBuffers } from "../../cli/helpers/backfill";
 
 describe("backfill approval response handling", () => {
+  test("trims trailing newlines from backfilled reasoning messages", () => {
+    const buffers = createBuffers();
+    const history = [
+      {
+        id: "reasoning-1",
+        message_type: "reasoning_message",
+        reasoning: "Creating a pull request\n\n",
+      },
+    ] as unknown as Message[];
+
+    backfillBuffers(buffers, history);
+
+    const line = buffers.byId.get("reasoning-1");
+    expect(line).toMatchObject({
+      kind: "reasoning",
+      text: "Creating a pull request",
+      phase: "finished",
+    });
+  });
+
   test("merges local approval requests and tool returns into tool call lines", () => {
     const buffers = createBuffers();
     const history = [
