@@ -81,6 +81,7 @@ export const commands: Record<string, Command> = {
   "/reflection": {
     desc: "Alias for /reflect",
     args: "[transcript_file]",
+    hidden: true,
     handler: () => {
       // Handled specially in App.tsx
       return "Launching reflection agent...";
