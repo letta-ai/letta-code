@@ -5,7 +5,7 @@
 
 import type { ModelsDiff, Verdict } from "./diff-models-json.ts";
 
-const ACTION_REVIEWER = "@kl2806";
+const ACTION_REVIEWERS = ["@kl2806", "@devanshrj"];
 
 export interface PathChangeSummary {
   path: string;
@@ -83,7 +83,7 @@ export function renderBody(input: RenderInput): string {
   parts.push(verdictRationale(input));
   parts.push("");
   if (needsReviewerAttention(input)) {
-    parts.push(`Reviewer: ${ACTION_REVIEWER}`);
+    parts.push(`Reviewers: ${ACTION_REVIEWERS.join(" ")}`);
     parts.push("");
   }
 
