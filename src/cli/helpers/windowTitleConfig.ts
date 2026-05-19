@@ -1,6 +1,7 @@
 // Config resolution and rendering for the terminal window title.
 // Precedence: local project > project > global settings.
 
+import { execSync } from "node:child_process";
 import { settingsManager } from "../../settings-manager";
 import { debugLog } from "../../utils/debug";
 
@@ -8,6 +9,7 @@ import { debugLog } from "../../utils/debug";
 export const WINDOW_TITLE_FIELDS = [
   "agent-name",
   "conversation-name",
+  "git-branch",
   "app-name",
   "version",
 ] as const;
@@ -23,6 +25,14 @@ export const WINDOW_TITLE_FIELD_INFO: Record<
     label: "Agent Name",
     description: "Current agent's name",
   },
+  "conversation-name": {
+    label: "Conversation",
+    description: "Current conversation title (omitted when unavailable)",
+  },
+  "git-branch": {
+    label: "Git Branch",
+    description: "Current git branch name (omitted when not in a repo)",
+  },
   "app-name": {
     label: "App Name",
     description: 'Application name (e.g. "Letta Code")',
@@ -30,10 +40,6 @@ export const WINDOW_TITLE_FIELD_INFO: Record<
   version: {
     label: "Version",
     description: "Letta Code version",
-  },
-  "conversation-name": {
-    label: "Conversation",
-    description: "Current conversation title (omitted when unavailable)",
   },
 };
 
@@ -49,6 +55,7 @@ export interface WindowTitleData {
   appName?: string | null;
   version: string;
   conversationSummary?: string | null;
+  gitBranch?: string | null;
 }
 
 /**
@@ -142,7 +149,24 @@ function resolveFieldValue(
       return data.version;
     case "conversation-name":
       return data.conversationSummary || null;
+    case "git-branch":
+      return data.gitBranch || null;
     default:
       return null;
+  }
+}
+
+/** Resolve the current git branch name, or null if not in a git repo. */
+export function resolveGitBranch(
+  workingDirectory: string = process.cwd(),
+): string | null {
+  try {
+    return execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: workingDirectory,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
   }
 }

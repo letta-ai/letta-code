@@ -144,6 +144,7 @@ import { isTaskTool } from "../helpers/toolNameMapping.js";
 import { getTuiBlockedReason } from "../helpers/tuiQueueAdapter";
 import {
   renderWindowTitle,
+  resolveGitBranch,
   resolveWindowTitleConfig,
 } from "../helpers/windowTitleConfig";
 import { useConfigurableStatusLine } from "../hooks/useConfigurableStatusLine";
@@ -790,6 +791,7 @@ export default function App({
       appName: "Letta Code",
       version: getVersion(),
       conversationSummary,
+      gitBranch: resolveGitBranch(projectDirectory),
     });
     process.stdout.write(`\x1b]0;${title}\x07`);
   }, [agentState?.name, conversationSummary, projectDirectory]);

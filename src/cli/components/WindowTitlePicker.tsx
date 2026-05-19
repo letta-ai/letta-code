@@ -7,6 +7,7 @@ import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import {
   renderWindowTitle,
+  resolveGitBranch,
   resolveWindowTitleConfig,
   WINDOW_TITLE_FIELD_INFO,
   WINDOW_TITLE_FIELDS,
@@ -57,8 +58,9 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
       appName: "Letta Code",
       version: getVersion(),
       conversationSummary,
+      gitBranch: resolveGitBranch(projectDirectory),
     }),
-    [agentName, conversationSummary],
+    [agentName, conversationSummary, projectDirectory],
   );
 
   const handleSelectionChange = useCallback(
