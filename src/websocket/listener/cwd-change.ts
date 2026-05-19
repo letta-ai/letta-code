@@ -6,6 +6,7 @@ import {
   setIndexRoot,
 } from "../../cli/helpers/fileIndex";
 import { updateRuntimeContext } from "../../runtime-context";
+import { settingsManager } from "../../settings-manager";
 import {
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
@@ -39,9 +40,19 @@ async function refreshIndexForWorkingDirectory(
   void ensureFileIndex();
 }
 
+async function loadSettingsForWorkingDirectory(
+  workingDirectory: string,
+): Promise<void> {
+  await Promise.all([
+    settingsManager.loadProjectSettings(workingDirectory),
+    settingsManager.loadLocalProjectSettings(workingDirectory),
+  ]);
+}
+
 export async function switchCurrentRuntimeWorkingDirectory(
   workingDirectory: string,
 ): Promise<void> {
+  await loadSettingsForWorkingDirectory(workingDirectory);
   process.chdir(workingDirectory);
   process.env.USER_CWD = workingDirectory;
   updateRuntimeContext({ workingDirectory });
@@ -61,6 +72,8 @@ export async function switchConversationWorkingDirectory(params: {
   const { runtime, workingDirectory } = params;
   const agentId = normalizeCwdAgentId(params.agentId);
   const conversationId = normalizeConversationId(params.conversationId);
+
+  await loadSettingsForWorkingDirectory(workingDirectory);
 
   setConversationWorkingDirectory(
     runtime,

@@ -213,6 +213,9 @@ describe("CreateWorktree tool", () => {
         "conv-b",
       ),
     ).toBe(repo);
+    expect(() =>
+      settingsManager.getConversationGoal("conv-a", result.worktree_path),
+    ).not.toThrow();
   });
 
   test("switches the current session cwd outside listener mode", async () => {
@@ -241,6 +244,9 @@ describe("CreateWorktree tool", () => {
     expect(result.switched_cwd).toBe(true);
     expect(process.cwd()).toBe(result.worktree_path);
     expect(process.env.USER_CWD).toBe(result.worktree_path);
+    expect(() =>
+      settingsManager.getConversationGoal("conv-plain", result.worktree_path),
+    ).not.toThrow();
     expect(result.content[0]?.text).toContain(
       "This conversation's working directory is now the new worktree.",
     );
