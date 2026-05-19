@@ -43,7 +43,6 @@ import { MemoryTabViewer } from "../components/MemoryTabViewer";
 import { MessageSearch } from "../components/MessageSearch";
 import { ModelReasoningSelector } from "../components/ModelReasoningSelector";
 import { ModelSelector } from "../components/ModelSelector";
-import { NewAgentDialog } from "../components/NewAgentDialog";
 import { PendingApprovalStub } from "../components/PendingApprovalStub";
 import { PersonalitySelector } from "../components/PersonalitySelector";
 import { PinDialog } from "../components/PinDialog";
@@ -985,9 +984,9 @@ export function AppView(props: AppViewProps) {
                   });
                 }}
                 onCancel={closeOverlay}
-                onCreateNewAgent={() => {
+                onCreateNewAgent={(name: string) => {
                   closeOverlay();
-                  setActiveOverlay("new");
+                  handleCreateNewAgent(name);
                 }}
               />
             )}
@@ -1514,14 +1513,6 @@ export function AppView(props: AppViewProps) {
             {/* Hooks Manager - for managing hooks configuration */}
             {activeOverlay === "hooks" && (
               <HooksManager onClose={closeOverlay} agentId={agentId} />
-            )}
-
-            {/* New Agent Dialog - for naming new agent before creation */}
-            {activeOverlay === "new" && (
-              <NewAgentDialog
-                onSubmit={handleCreateNewAgent}
-                onCancel={closeOverlay}
-              />
             )}
 
             {/* Pin Dialog - for naming agent before pinning */}

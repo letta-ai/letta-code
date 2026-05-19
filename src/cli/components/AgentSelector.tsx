@@ -3,10 +3,13 @@ import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getModelDisplayName } from "../../agent/model";
 import { type Backend, getBackend } from "../../backend";
+import { DEFAULT_AGENT_NAME } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
+import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { validateAgentName } from "./PinDialog";
 import { Text } from "./Text";
 
 // Horizontal line character (matches approval dialogs)
@@ -16,13 +19,13 @@ interface AgentSelectorProps {
   currentAgentId: string;
   onSelect: (agentId: string) => void;
   onCancel: () => void;
-  /** Called when user presses N to create a new agent */
-  onCreateNewAgent?: () => void;
+  /** Called when user creates a new agent (from New tab or N shortcut) */
+  onCreateNewAgent?: (name: string) => void;
   /** The command that triggered this selector (e.g., "/agents" or "/resume") */
   command?: string;
 }
 
-type TabId = "pinned" | "letta-code" | "all";
+type TabId = "pinned" | "letta-code" | "all" | "new";
 
 type ViewState =
   | { type: "list" }
@@ -39,18 +42,21 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "pinned", label: "Pinned" },
   { id: "letta-code", label: "Letta Code" },
   { id: "all", label: "All" },
+  { id: "new", label: "New" },
 ];
 
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
   pinned: "Save agents for easy access by pinning them with /pin",
   "letta-code": "Displaying agents created inside of Letta Code",
   all: "Displaying all available agents",
+  new: "Create a brand new agent",
 };
 
 const TAB_EMPTY_STATES: Record<TabId, string> = {
   pinned: "No pinned agents, use /pin to save",
   "letta-code": "No agents with tag 'origin:letta-code'",
   all: "No agents found",
+  new: "",
 };
 
 const DISPLAY_PAGE_SIZE = 5;
@@ -169,6 +175,10 @@ export function AgentSelector({
   const [viewState, setViewState] = useState<ViewState>({ type: "list" });
   const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // New agent tab state
+  const [newAgentNameInput, setNewAgentNameInput] = useState("");
+  const [newAgentNameError, setNewAgentNameError] = useState("");
 
   // Load pinned agents
   const loadPinnedAgents = useCallback(async () => {
@@ -507,6 +517,37 @@ export function AgentSelector({
 
     if (currentLoading) return;
 
+    // New tab has its own input handling (name input, not list navigation)
+    if (activeTab === "new") {
+      if (key.return) {
+        const trimmed = newAgentNameInput.trim();
+        if (!trimmed) {
+          onCreateNewAgent?.(DEFAULT_AGENT_NAME);
+          return;
+        }
+        const validationError = validateAgentName(trimmed);
+        if (validationError) {
+          setNewAgentNameError(validationError);
+          return;
+        }
+        onCreateNewAgent?.(trimmed);
+      } else if (key.escape) {
+        if (newAgentNameInput) {
+          setNewAgentNameInput("");
+          setNewAgentNameError("");
+        } else {
+          onCancel();
+        }
+      } else if (key.backspace || key.delete) {
+        setNewAgentNameInput((prev) => prev.slice(0, -1));
+        setNewAgentNameError("");
+      } else if (input && !key.ctrl && !key.meta && !key.tab) {
+        setNewAgentNameInput((prev) => prev + input);
+        setNewAgentNameError("");
+      }
+      return;
+    }
+
     const maxIndex =
       activeTab === "pinned"
         ? pinnedPageAgents.length - 1
@@ -644,8 +685,8 @@ export function AgentSelector({
         setDeleteConfirmInput("");
       }
     } else if (input === "n" || input === "N") {
-      // Create new agent
-      onCreateNewAgent?.();
+      // Switch to New tab
+      setActiveTab("new");
     } else if (activeTab !== "pinned" && input && !key.ctrl && !key.meta) {
       // Type to search (list tabs only)
       setSearchInput((prev) => prev + input);
@@ -923,8 +964,61 @@ export function AgentSelector({
           </Box>
         )}
 
+      {/* New tab content */}
+      {activeTab === "new" && (
+        <Box flexDirection="column">
+          <Box height={1} />
+          <Box paddingLeft={2}>
+            <Text>
+              Enter a name for your new agent, or press Enter for default.
+            </Text>
+          </Box>
+          <Box height={1} />
+          <Box flexDirection="column">
+            <Box paddingLeft={2}>
+              <Text>Agent name:</Text>
+            </Box>
+            <Box>
+              <Text color={colors.selector.itemHighlighted}>{">"}</Text>
+              <Text> </Text>
+              <PasteAwareTextInput
+                value={newAgentNameInput}
+                onChange={(val) => {
+                  setNewAgentNameInput(val);
+                  setNewAgentNameError("");
+                }}
+                onSubmit={(text) => {
+                  const trimmed = text.trim();
+                  if (!trimmed) {
+                    onCreateNewAgent?.(DEFAULT_AGENT_NAME);
+                    return;
+                  }
+                  const validationError = validateAgentName(trimmed);
+                  if (validationError) {
+                    setNewAgentNameError(validationError);
+                    return;
+                  }
+                  onCreateNewAgent?.(trimmed);
+                }}
+                placeholder={DEFAULT_AGENT_NAME}
+              />
+            </Box>
+          </Box>
+          {newAgentNameError && (
+            <Box paddingLeft={2} marginTop={1}>
+              <Text color="red">{newAgentNameError}</Text>
+            </Box>
+          )}
+          <Box height={1} />
+          <Box paddingLeft={2}>
+            <Text dimColor>Enter create · Esc cancel</Text>
+          </Box>
+        </Box>
+      )}
+
       {/* Footer */}
-      {!currentLoading &&
+      {activeTab !== "new" &&
+        !currentLoading &&
         ((activeTab === "pinned" && validPinnedAgents.length > 0) ||
           (activeTab === "letta-code" &&
             !lettaCodeError &&
@@ -938,7 +1032,7 @@ export function AgentSelector({
               : activeTab === "letta-code"
                 ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
                 : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
-          const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""}${onCreateNewAgent ? " · N new" : ""} · Esc cancel`;
+          const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""} · Esc cancel`;
 
           return (
             <Box flexDirection="column">
