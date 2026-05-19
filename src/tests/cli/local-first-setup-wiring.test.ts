@@ -20,6 +20,7 @@ describe("local-first setup wiring", () => {
     expect(source).toContain(
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
     );
+    expect(source).toContain("letta --backend api");
     expect(source).toContain("Agents you create are local to this");
     expect(source).toContain("chat.letta.com");
     expect(source).toContain("Welcome to Letta Code.");

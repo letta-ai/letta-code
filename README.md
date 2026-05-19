@@ -55,6 +55,12 @@ You can enter local mode from the first-run setup menu, or explicitly with:
 letta --backend local
 ```
 
+To switch back to Letta Cloud after choosing local mode, start Letta Code with the API backend and choose **Login to Constellation**:
+
+```bash
+letta --backend api
+```
+
 Connect a provider from inside the TUI with `/connect`, or from the shell with `letta --backend local connect`:
 
 ```bash
