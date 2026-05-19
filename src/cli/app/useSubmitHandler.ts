@@ -3180,6 +3180,29 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const contentParts =
         overrideContentParts ?? buildMessageContentFromDisplay(msg);
 
+      // Append the optimistic user message and trigger a render immediately —
+      // before any async work (reminder building, hooks, etc.) so the user
+      // sees their message appear without delay. Ink uses React legacy mode
+      // which doesn't auto-batch async state updates, so we do this synchronously
+      // while still inside the React event handler to get a single render cycle.
+      const userOtid = createClientOtid();
+      const optimisticUserLineId = appendOptimisticUserLine(
+        buffersRef.current,
+        userTextForInput,
+        userOtid,
+      );
+      buffersRef.current.tokenCount = 0;
+      buffersRef.current.interrupted = false;
+      if (!sessionStatsRef.current.getTrajectorySnapshot()) {
+        trajectoryTokenDisplayRef.current = 0;
+        setTrajectoryTokenBase(0);
+        trajectoryRunTokenStartRef.current = 0;
+      }
+      setThinkingMessage(getRandomThinkingVerb());
+      setStreaming(true);
+      openTrajectorySegment();
+      refreshDerived();
+
       // Prepend ralph mode reminder if in ralph mode
       let ralphModeReminder = "";
       if (ralphMode.getState().isActive) {
@@ -3436,34 +3459,9 @@ ${SYSTEM_REMINDER_CLOSE}
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
 
-      // Append an optimistic user row now, then reconcile it with the echoed
-      // user_message chunk once the server returns the canonical message.id.
-      const userOtid = createClientOtid();
-      const optimisticUserLineId = appendOptimisticUserLine(
-        buffersRef.current,
-        userTextForInput,
-        userOtid,
-      );
       const transcriptStartLineIndex = userTextForInput
         ? Math.max(0, toLines(buffersRef.current).length - 1)
         : null;
-
-      // Reset token counter for this turn (only count the agent's response)
-      buffersRef.current.tokenCount = 0;
-      // If the previous trajectory ended, ensure the live token display resets.
-      if (!sessionStatsRef.current.getTrajectorySnapshot()) {
-        trajectoryTokenDisplayRef.current = 0;
-        setTrajectoryTokenBase(0);
-        trajectoryRunTokenStartRef.current = 0;
-      }
-      // Clear interrupted flag from previous turn
-      buffersRef.current.interrupted = false;
-      // Rotate to a new thinking message for this turn
-      setThinkingMessage(getRandomThinkingVerb());
-      // Show streaming state immediately for responsiveness (pending approval check takes ~100ms)
-      setStreaming(true);
-      openTrajectorySegment();
-      refreshDerived();
 
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).
