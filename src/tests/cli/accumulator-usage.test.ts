@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { createBuffers, onChunk } from "../../cli/helpers/accumulator";
+import {
+  createBuffers,
+  markCurrentLineAsFinished,
+  onChunk,
+} from "../../cli/helpers/accumulator";
 import { createContextTracker } from "../../cli/helpers/contextTracker";
 
 function usageChunk(
@@ -533,6 +537,25 @@ describe("accumulator usage statistics", () => {
     expect(live && "isContinuation" in live ? live.isContinuation : false).toBe(
       true,
     );
+  });
+
+  test("trims trailing reasoning newlines when finalizing unsplit reasoning", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-final-newline",
+      reasoning: "Creating a pull request\n\n",
+    } as unknown as LettaStreamingResponse);
+    markCurrentLineAsFinished(buffers);
+
+    const line = buffers.byId.get("reasoning-final-newline");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe(
+      "Creating a pull request",
+    );
+    expect(line && "phase" in line ? line.phase : "").toBe("finished");
+    expect(buffers.lastReasoning).toBe("Creating a pull request");
   });
 
   test("reconciles optimistic user lines to the backend message id via otid", () => {

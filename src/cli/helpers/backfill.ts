@@ -12,6 +12,7 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "../../constants";
 import type { Buffers } from "./accumulator";
+import { trimFinishedReasoningText } from "./reasoningText";
 import { extractTaskNotificationsForDisplay } from "./taskNotifications";
 
 /**
@@ -247,7 +248,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         buffers.byId.set(lineId, {
           kind: "reasoning",
           id: lineId,
-          text: msg.reasoning,
+          text: trimFinishedReasoningText(msg.reasoning ?? ""),
           phase: "finished",
           messageId: msg.id,
         });
