@@ -92,6 +92,7 @@ export interface Settings {
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
   planModeEnabled: boolean; // Enables plan-mode tools and /plan command when true
   includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
+  preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
   recentModels: string[]; // Recently used model IDs (most recent first, max 5)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
