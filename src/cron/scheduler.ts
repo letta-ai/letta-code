@@ -66,6 +66,8 @@ let schedulerState: SchedulerState | null = null;
 
 const TICK_INTERVAL_MS = 60_000;
 const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
+const LEASE_RETRY_MS = 30_000; // 30 seconds between lease claim retries
+const MAX_LEASE_RETRIES = 3;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -256,11 +258,17 @@ function tick(
 /**
  * Start the cron scheduler. Should be called when the WS listener connects.
  * No-ops if already running.
+ *
+ * If the lease claim fails (e.g. another process briefly holds it after a
+ * crash/restart), the scheduler will retry up to MAX_LEASE_RETRIES times
+ * with LEASE_RETRY_MS between attempts. The user is warned that cron
+ * tasks won't fire until the scheduler starts.
  */
 export function startScheduler(
   socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
+  _retryCount = 0,
 ): void {
   if (schedulerState) return;
 
@@ -268,12 +276,24 @@ export function startScheduler(
   try {
     token = claimSchedulerLease();
   } catch (err) {
-    // Another process holds the lease — that's the expected outcome when
-    // multiple letta-code instances run against the same dir. Log at debug
-    // level so we don't spam the user's terminal on every reconnect; set
-    // LETTA_DISABLE_CRON_SCHEDULER=1 in the env to skip the claim entirely.
-    if (process.env.LETTA_DEBUG === "1") {
-      console.debug("[Cron] Could not claim scheduler lease:", err);
+    if (_retryCount < MAX_LEASE_RETRIES) {
+      console.warn(
+        `[Cron] Could not claim scheduler lease (attempt ${_retryCount + 1}/${MAX_LEASE_RETRIES + 1}): ${err instanceof Error ? err.message : err}`,
+      );
+      console.warn(
+        "[Cron] Cron tasks will not fire until the scheduler starts. Retrying...",
+      );
+      setTimeout(
+        () => startScheduler(socket, opts, processQueuedTurn, _retryCount + 1),
+        LEASE_RETRY_MS,
+      );
+    } else {
+      console.error(
+        `[Cron] Failed to claim scheduler lease after ${MAX_LEASE_RETRIES + 1} attempts. Cron tasks will not fire.`,
+      );
+      console.error(
+        "[Cron] Another process may hold the lease. Restart Letta Code to retry.",
+      );
     }
     return;
   }
