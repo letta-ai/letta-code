@@ -92,9 +92,6 @@ const MULTILINE_USER = [
   { kind: "user" as const, text: "line one\nline two\nline three" },
 ];
 
-// Intentionally unused — documents the empty-batch case tested inline below
-const _EMPTY: Array<{ kind: "user" | "task_notification"; text: string }> = [];
-
 // ── Tests ─────────────────────────────────────────────────────────
 
 describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () => {

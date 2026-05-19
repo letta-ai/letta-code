@@ -748,7 +748,6 @@ export function AppView(props: AppViewProps) {
                 shouldAnimate={shouldAnimate}
                 statusLineText={statusLine.text || undefined}
                 statusLineRight={statusLine.rightText || undefined}
-                statusLinePadding={statusLine.padding || 0}
                 statusLinePrompt={statusLine.prompt}
                 footerNotification={footerUpdateText}
               />

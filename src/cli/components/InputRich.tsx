@@ -391,14 +391,12 @@ function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
 
 function StatusLineContent({
   text,
-  _padding,
   modeName,
   modeColor,
   modeGlyph,
   showExitHint,
 }: {
   text: string;
-  _padding: number;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
@@ -451,7 +449,6 @@ const InputFooter = memo(function InputFooter({
   rightColumnWidth,
   statusLineText,
   statusLineRight,
-  statusLinePadding,
   footerNotification,
   goalStatusText,
   hasQueuedMessages = false,
@@ -475,7 +472,6 @@ const InputFooter = memo(function InputFooter({
   rightColumnWidth: number;
   statusLineText?: string;
   statusLineRight?: string;
-  statusLinePadding?: number;
   footerNotification?: string | null;
   goalStatusText?: string | null;
   hasQueuedMessages?: boolean;
@@ -625,7 +621,6 @@ const InputFooter = memo(function InputFooter({
         ) : statusLineText ? (
           <StatusLineContent
             text={statusLineText}
-            _padding={statusLinePadding ?? 0}
             modeName={modeName}
             modeColor={modeColor}
             modeGlyph={modeGlyph}
@@ -1006,7 +1001,6 @@ export function Input({
   shouldAnimate = true,
   statusLineText,
   statusLineRight,
-  statusLinePadding = 0,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
@@ -1055,7 +1049,6 @@ export function Input({
   shouldAnimate?: boolean;
   statusLineText?: string;
   statusLineRight?: string;
-  statusLinePadding?: number;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -1962,7 +1955,6 @@ export function Input({
                 rightColumnWidth={footerRightColumnWidth}
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
-                statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
                 goalStatusText={goalStatusText}
                 hasQueuedMessages={
@@ -2018,7 +2010,7 @@ export function Input({
     inputChromeHeight,
     statusLineText,
     statusLineRight,
-    statusLinePadding,
+
     footerNotification,
     goalStatusText,
     promptChar,
