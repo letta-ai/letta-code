@@ -455,6 +455,8 @@ const InputFooter = memo(function InputFooter({
   footerNotification,
   goalStatusText,
   hasQueuedMessages = false,
+  queueMode = "immediate",
+  deferModeSupported = false,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -477,6 +479,8 @@ const InputFooter = memo(function InputFooter({
   footerNotification?: string | null;
   goalStatusText?: string | null;
   hasQueuedMessages?: boolean;
+  queueMode?: "immediate" | "defer";
+  deferModeSupported?: boolean;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -642,7 +646,13 @@ const InputFooter = memo(function InputFooter({
             {footerNotification}
           </Text>
         ) : hasQueuedMessages ? (
-          <Text dimColor>press ↑ to edit queued message</Text>
+          <Text dimColor>
+            {deferModeSupported
+              ? queueMode === "defer"
+                ? "press ↑ to edit · ctrl+d to release queue"
+                : "press ↑ to edit · ctrl+d to hold queue until done"
+              : "press ↑ to edit"}
+          </Text>
         ) : (
           <Text dimColor>Press / for commands</Text>
         )}
@@ -969,6 +979,9 @@ export function Input({
   onExit,
   onInterrupt,
   onCtrlO,
+  onCtrlD,
+  queueMode = "immediate",
+  deferModeSupported = false,
   interruptRequested = false,
   agentId,
   agentName,
@@ -1015,6 +1028,9 @@ export function Input({
   onExit?: () => void;
   onInterrupt?: () => void;
   onCtrlO?: () => void;
+  onCtrlD?: () => void;
+  queueMode?: "immediate" | "defer";
+  deferModeSupported?: boolean;
   interruptRequested?: boolean;
   agentId?: string;
   agentName?: string | null;
@@ -1330,6 +1346,17 @@ export function Input({
   });
 
   useInput((input, key) => {
+    // Handle CTRL-D to toggle queue defer mode — works even while agent is running
+    // since that's exactly when messages are queued and the toggle is useful.
+    if (
+      input === "d" &&
+      key.ctrl &&
+      (messageQueue?.filter((m) => m.kind === "user").length ?? 0) > 0
+    ) {
+      if (onCtrlD) onCtrlD();
+      return;
+    }
+
     if (!interactionEnabled) return;
 
     // Handle CTRL-O to expand/collapse the last tool call output
@@ -1836,7 +1863,7 @@ export function Input({
       <>
         {/* Queue display - show whenever there are queued messages */}
         {messageQueue && messageQueue.length > 0 && (
-          <QueuedMessages messages={messageQueue} />
+          <QueuedMessages messages={messageQueue} queueMode={queueMode} />
         )}
 
         {interactionEnabled ? (
@@ -1942,6 +1969,8 @@ export function Input({
                   (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
                   0
                 }
+                queueMode={queueMode}
+                deferModeSupported={deferModeSupported}
               />
             )}
           </Box>
@@ -1995,6 +2024,7 @@ export function Input({
     promptChar,
     promptVisualWidth,
     suppressDividers,
+    queueMode,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state

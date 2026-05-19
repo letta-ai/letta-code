@@ -92,6 +92,7 @@ import {
   type Line,
   toLines,
 } from "../helpers/accumulator";
+import { isLocalAgentId } from "../helpers/appUrls";
 import { backfillBuffers } from "../helpers/backfill";
 import { chunkLog } from "../helpers/chunkLog";
 import {
@@ -1396,6 +1397,23 @@ export default function App({
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
   // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
+
+  // Queue defer mode: when 'defer', queued messages only fire on end_turn stop reason.
+  // Defer mode is only meaningful in API backend mode (local backend fires end_turn
+  // between each sequential tool call, making defer indistinguishable from immediate).
+  const deferModeSupported = !isLocalAgentId(agentId);
+  // When 'immediate' (default), they fire on any turn end.
+  const [queueMode, setQueueMode] = useState<"immediate" | "defer">("immediate");
+  const handleCtrlD = useCallback(() => {
+    if (!deferModeSupported) return;
+    setQueueMode((prev) => (prev === "immediate" ? "defer" : "immediate"));
+  }, [deferModeSupported]);
+  // Ref mirror of queueMode so useConversationLoop can read it without stale closures.
+  const queueModeRef = useRef<"immediate" | "defer">("immediate");
+  queueModeRef.current = queueMode;
+  // Tracks the stop reason of the last completed turn, set by useConversationLoop.
+  const lastStopReasonRef = useRef<string | null>(null);
+
 
   // Track last dequeued message for restoration on error
   // If an error occurs after dequeue, we restore this to the input field (if input is empty)
@@ -3237,6 +3255,7 @@ export default function App({
     clearApprovalToolContext,
     closeTrajectorySegment,
     consumeQueuedMessages,
+    queueModeRef,
     contextTrackerRef,
     conversationBusyRetriesRef,
     conversationGenerationRef,
@@ -3279,6 +3298,7 @@ export default function App({
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
     setNeedsEagerApprovalCheck,
@@ -3338,6 +3358,7 @@ export default function App({
     commandRunner,
     commitEligibleLines,
     consumeQueuedMessages,
+    queueModeRef,
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
@@ -3775,8 +3796,15 @@ export default function App({
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
       !abortControllerRef.current && // Don't dequeue while processConversation is still active
-      !dequeueInFlightRef.current // Don't dequeue while previous dequeue submit is still in flight
+      !dequeueInFlightRef.current && // Don't dequeue while previous dequeue submit is still in flight
+      // In defer mode, only dequeue when the agent is truly done:
+      // - last stop reason was end_turn (not requires_approval or error)
+      // - processingConversationRef === 0 (no nested processConversation calls outstanding)
+      (queueMode === "immediate" ||
+        (lastStopReasonRef.current === "end_turn" &&
+          processingConversationRef.current === 0))
     ) {
+
       // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
       if (!batch) return;
@@ -3808,6 +3836,8 @@ export default function App({
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
+      // Reset to immediate mode after each dequeue — defer is opt-in per batch.
+      setQueueMode("immediate");
       void onSubmitRef.current(concatenatedMessage).finally(() => {
         dequeueInFlightRef.current = false;
         // If more items arrived while in-flight, bump epoch so the effect re-runs.
@@ -3845,6 +3875,7 @@ export default function App({
     anySelectorOpen,
     dequeueEpoch,
     queuedOverlayAction,
+    queueMode,
   ]);
 
   const {
@@ -4430,6 +4461,9 @@ export default function App({
       expandedToolCallId={expandedToolCallId}
       lastShellToolCallId={lastShellToolCallId}
       handleCtrlO={handleCtrlO}
+      queueMode={queueMode}
+      deferModeSupported={deferModeSupported}
+      handleCtrlD={handleCtrlD}
       emittedIdsRef={emittedIdsRef}
       feedbackPrefill={feedbackPrefill}
       footerUpdateText={footerUpdateText}
