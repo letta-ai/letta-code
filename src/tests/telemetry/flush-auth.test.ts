@@ -21,13 +21,27 @@ describe("telemetry flush auth", () => {
   const originalTelemetryDisabled = process.env.LETTA_TELEMETRY_DISABLED;
   const originalLettaBaseUrl = process.env.LETTA_BASE_URL;
 
+  function deleteEnvVarCaseInsensitive(name: string): void {
+    const normalized = name.toLowerCase();
+    for (const key of Object.keys(process.env)) {
+      if (key.toLowerCase() === normalized) {
+        delete process.env[key];
+      }
+    }
+  }
+
+  function setEnvVar(name: string, value: string): void {
+    deleteEnvVarCaseInsensitive(name);
+    process.env[name] = value;
+  }
+
   function restoreEnvVar(name: string, value: string | undefined): void {
     if (value === undefined) {
-      delete process.env[name];
+      deleteEnvVarCaseInsensitive(name);
       return;
     }
 
-    process.env[name] = value;
+    setEnvVar(name, value);
   }
 
   beforeEach(() => {
@@ -37,9 +51,9 @@ describe("telemetry flush auth", () => {
     telemetryState.currentAgentId = null;
     telemetryState.surface = "tui";
     telemetryState.sessionEndTracked = false;
-    delete process.env.LETTA_API_KEY;
-    delete process.env.LETTA_TELEMETRY_DISABLED;
-    delete process.env.LETTA_BASE_URL;
+    deleteEnvVarCaseInsensitive("LETTA_API_KEY");
+    deleteEnvVarCaseInsensitive("LETTA_TELEMETRY_DISABLED");
+    deleteEnvVarCaseInsensitive("LETTA_BASE_URL");
     settingsManager.getSettings = mock(() => ({
       env: {},
     })) as unknown as typeof settingsManager.getSettings;
@@ -79,7 +93,7 @@ describe("telemetry flush auth", () => {
   });
 
   test("self-hosted users do not send error telemetry", async () => {
-    process.env.LETTA_BASE_URL = "http://localhost:8283";
+    setEnvVar("LETTA_BASE_URL", "http://localhost:8283");
 
     const fetchMock = mock(async () => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -95,7 +109,7 @@ describe("telemetry flush auth", () => {
   });
 
   test("self-hosted users still send usage telemetry", async () => {
-    process.env.LETTA_BASE_URL = "http://localhost:8283";
+    setEnvVar("LETTA_BASE_URL", "http://localhost:8283");
 
     const fetchMock = mock(async () => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -114,7 +128,7 @@ describe("telemetry flush auth", () => {
   });
 
   test("flush prefers env token over secure settings token", async () => {
-    process.env.LETTA_API_KEY = "env-key";
+    setEnvVar("LETTA_API_KEY", "env-key");
 
     const fetchMock = mock(
       async (_url: string | URL | Request, init?: RequestInit) => {
