@@ -30,7 +30,7 @@ Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, 
 
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
 
-## Running locally versus with Constellation
+## Connecting to Constellation
 Constellation allows your agents to work on any machine, while still maintaining the same cohesive memory, identity, and experience. Agents on Constellation can be access from any machine through the CLI, or run on remote environments (any machine can be connected as a remote env by running `letta server` on it). 
 
 ```mermaid
