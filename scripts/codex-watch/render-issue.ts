@@ -5,6 +5,8 @@
 
 import type { ModelsDiff, Verdict } from "./diff-models-json.ts";
 
+const ACTION_REVIEWER = "@kl2806";
+
 export interface PathChangeSummary {
   path: string;
   /** One-line commit subjects under this path between the two refs. */
@@ -80,6 +82,10 @@ export function renderBody(input: RenderInput): string {
   parts.push("");
   parts.push(verdictRationale(input));
   parts.push("");
+  if (needsReviewerAttention(input)) {
+    parts.push(`Reviewer: ${ACTION_REVIEWER}`);
+    parts.push("");
+  }
 
   // Tool / schema deltas
   parts.push(`## Tool / schema deltas`);
@@ -173,6 +179,10 @@ export function renderBody(input: RenderInput): string {
   parts.push(`- Workflow run: ${input.workflow_run_url}`);
 
   return parts.join("\n");
+}
+
+function needsReviewerAttention(input: RenderInput): boolean {
+  return input.verdict !== "no-op";
 }
 
 function verdictRationale(input: RenderInput): string {
