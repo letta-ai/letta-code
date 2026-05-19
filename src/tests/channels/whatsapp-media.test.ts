@@ -51,7 +51,20 @@ describe("WhatsApp media helpers", () => {
         text: "",
         mediaPath: "/tmp/voice.ogg",
       }),
-    ).toEqual({ audio: { url: "/tmp/voice.ogg" }, ptt: true });
+    ).toEqual({
+      audio: { url: "/tmp/voice.ogg" },
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
+    });
+  });
+
+  test("rejects non-Ogg/Opus audio for outbound voice memos", () => {
+    expect(() =>
+      buildWhatsAppOutboundPayload({
+        text: "",
+        mediaPath: "/tmp/voice.mp3",
+      }),
+    ).toThrow(/Ogg\/Opus/);
   });
 
   test("returns attachment metadata without downloading when media is disabled", async () => {

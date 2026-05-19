@@ -281,17 +281,26 @@ export function buildWhatsAppOutboundPayload(
   }
 
   const fileName = msg.fileName || basename(msg.mediaPath);
-  const lower = `${fileName}${extname(msg.mediaPath)}`.toLowerCase();
+  const extension = getWhatsAppOutboundMediaExtension(msg);
   const caption = msg.text?.trim() || msg.title?.trim() || undefined;
 
-  if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
+  const validationError = getWhatsAppOutboundMediaValidationError(msg);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  if (WHATSAPP_IMAGE_EXTENSIONS.has(extension)) {
     return { image: { url: msg.mediaPath }, ...(caption ? { caption } : {}) };
   }
-  if (/\.(mp4|mov|m4v|webm)$/.test(lower)) {
+  if (WHATSAPP_VIDEO_EXTENSIONS.has(extension)) {
     return { video: { url: msg.mediaPath }, ...(caption ? { caption } : {}) };
   }
-  if (/\.(ogg|oga|opus|mp3|m4a|wav)$/.test(lower)) {
-    return { audio: { url: msg.mediaPath }, ptt: true };
+  if (WHATSAPP_VOICE_MEMO_EXTENSIONS.has(extension)) {
+    return {
+      audio: { url: msg.mediaPath },
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
+    };
   }
   return {
     document: { url: msg.mediaPath },
@@ -299,4 +308,44 @@ export function buildWhatsAppOutboundPayload(
     mimetype: "application/octet-stream",
     ...(caption ? { caption } : {}),
   };
+}
+
+export const WHATSAPP_VOICE_MEMO_REQUIREMENT =
+  "WhatsApp voice memos require an Ogg/Opus file (.ogg, .oga, or .opus). Convert MP3/M4A/WAV audio to Ogg Opus before upload.";
+
+const WHATSAPP_IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+]);
+const WHATSAPP_VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm"]);
+const WHATSAPP_VOICE_MEMO_EXTENSIONS = new Set([".ogg", ".oga", ".opus"]);
+const WHATSAPP_AUDIO_EXTENSIONS = new Set([
+  ...WHATSAPP_VOICE_MEMO_EXTENSIONS,
+  ".mp3",
+  ".m4a",
+  ".wav",
+]);
+
+function getWhatsAppOutboundMediaExtension(
+  msg: Pick<OutboundChannelMessage, "mediaPath" | "fileName">,
+): string {
+  const fileNameExtension = extname(msg.fileName ?? "");
+  const mediaPathExtension = extname(msg.mediaPath ?? "");
+  return (fileNameExtension || mediaPathExtension).toLowerCase();
+}
+
+export function getWhatsAppOutboundMediaValidationError(
+  msg: Pick<OutboundChannelMessage, "mediaPath" | "fileName">,
+): string | null {
+  const extension = getWhatsAppOutboundMediaExtension(msg);
+  if (
+    WHATSAPP_AUDIO_EXTENSIONS.has(extension) &&
+    !WHATSAPP_VOICE_MEMO_EXTENSIONS.has(extension)
+  ) {
+    return WHATSAPP_VOICE_MEMO_REQUIREMENT;
+  }
+  return null;
 }

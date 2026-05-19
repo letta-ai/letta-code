@@ -35,12 +35,14 @@ describe("registry copy: first-party channels", () => {
     );
   });
 
-  test("first-party whatsapp pairing keeps the desktop wording", () => {
+  test("first-party whatsapp pairing includes the desktop and CLI paths", () => {
     const text = buildPairingInstructions("whatsapp", "W123");
     expect(text).toContain("open Channels >");
     expect(text).toContain("WhatsApp");
     expect(text).toContain("Pairing code: W123");
-    expect(text).not.toContain("letta channels pair");
+    expect(text).toContain(
+      "letta channels pair --channel whatsapp --code W123 --agent <agent-id>",
+    );
   });
 
   test("first-party whatsapp unbound route keeps the desktop wording", () => {

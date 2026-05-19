@@ -85,7 +85,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     lines.splice(
       lines.length - 2,
       0,
-      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Replies are sent as the linked WhatsApp number.',
+      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Voice memo/audio uploads must be Ogg/Opus (.ogg, .oga, or .opus), not MP3/M4A/WAV. Replies are sent as the linked WhatsApp number.',
     );
   }
   if (msg.attachments?.length) {

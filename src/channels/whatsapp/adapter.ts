@@ -71,6 +71,21 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+export function isWhatsAppConflictDisconnect(update: unknown): boolean {
+  const record = asRecord(update);
+  if (record.connection !== "close") return false;
+  const lastDisconnect = asRecord(record.lastDisconnect);
+  const error = asRecord(lastDisconnect.error);
+  const output = asRecord(error.output);
+  const statusCode = output.statusCode;
+  const message = typeof error.message === "string" ? error.message : "";
+  return (
+    statusCode === 440 ||
+    /\bconflict\b/i.test(message) ||
+    /connection replaced/i.test(message)
+  );
+}
+
 function timestampToMs(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value * 1000;
@@ -176,6 +191,8 @@ export function createWhatsAppAdapter(
   let selfPhoneJid: string | null = null;
   let selfLid: string | null = null;
   let connectedAtMs = 0;
+  let connectionGeneration = 0;
+  let releaseSocketLease: (() => void) | null = null;
   let downloadContentFromMessage:
     | ((message: unknown, type: string) => Promise<AsyncIterable<Uint8Array>>)
     | null = null;
@@ -205,6 +222,21 @@ export function createWhatsAppAdapter(
       },
       24 * 60 * 60 * 1000,
     );
+  }
+
+  function clearActiveSocket(closeWebSocket: boolean): void {
+    const currentSock = sock;
+    const releaseLease = releaseSocketLease;
+    sock = null;
+    releaseSocketLease = null;
+    if (closeWebSocket) {
+      try {
+        currentSock?.ws?.close?.();
+      } catch {
+        // Best effort. Do not logout; logout invalidates the linked device.
+      }
+    }
+    releaseLease?.();
   }
 
   async function ensureRuntimeHelpers(): Promise<void> {
@@ -239,6 +271,9 @@ export function createWhatsAppAdapter(
   }
 
   async function connect(): Promise<void> {
+    connectionGeneration += 1;
+    const generation = connectionGeneration;
+    clearActiveSocket(true);
     await ensureRuntimeHelpers();
     connectedAtMs = Date.now();
     const result = await createWhatsAppSocket({
@@ -246,6 +281,7 @@ export function createWhatsAppAdapter(
       printQr: true,
       messageStore,
       onConnectionUpdate(update) {
+        if (generation !== connectionGeneration) return;
         if (update.connection === "open") {
           reconnectAttempts = 0;
           selfPhoneJid = stripDeviceSuffix(sock?.user?.id ?? null) || null;
@@ -258,15 +294,42 @@ export function createWhatsAppAdapter(
           );
         }
         if (update.connection === "close" && !stopping) {
+          clearActiveSocket(false);
           const lastDisconnect = asRecord(update.lastDisconnect);
           const error = asRecord(lastDisconnect.error);
+          if (isWhatsAppConflictDisconnect(update)) {
+            running = false;
+            stopping = true;
+            const message =
+              typeof error.message === "string"
+                ? error.message
+                : "WhatsApp session conflict";
+            setWhatsAppConnectionState(account.accountId, {
+              status: "error",
+              lastError: `${message}. Another WhatsApp client is using this linked-device session; not reconnecting automatically.`,
+            });
+            console.warn(
+              `[WhatsApp:${account.accountId}] disconnected due to session conflict; not reconnecting automatically. Stop any other WhatsApp server using this account/auth session, then restart this server.`,
+            );
+            return;
+          }
           scheduleReconnect(
             typeof error.message === "string" ? error.message : undefined,
           );
         }
       },
     });
+    if (generation !== connectionGeneration || stopping || !running) {
+      try {
+        (result.sock as WhatsAppSocket).ws?.close?.();
+      } catch {
+        // Best effort; release below is the important part.
+      }
+      result.release();
+      return;
+    }
     sock = result.sock as WhatsAppSocket;
+    releaseSocketLease = result.release;
     sock.ev?.on?.("messages.upsert", (event) => {
       void handleMessagesUpsert(event).catch((error) => {
         console.error(
@@ -456,12 +519,8 @@ export function createWhatsAppAdapter(
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
-      try {
-        sock?.ws?.close?.();
-      } catch {
-        // Best effort. Do not logout; logout invalidates the linked device.
-      }
-      sock = null;
+      connectionGeneration += 1;
+      clearActiveSocket(true);
       setWhatsAppConnectionState(account.accountId, { status: "disconnected" });
     },
 

@@ -136,6 +136,22 @@ describe("formatChannelNotification", () => {
     expect(reminder).not.toContain("reply_to_message_id");
   });
 
+  test("adds WhatsApp media guidance for voice memo uploads", () => {
+    const msg: InboundChannelMessage = {
+      channel: "whatsapp",
+      chatId: "15551234567@s.whatsapp.net",
+      senderId: "15551234567@s.whatsapp.net",
+      text: "send voice",
+      timestamp: Date.now(),
+    };
+
+    const reminder = buildChannelReminderText(msg);
+
+    expect(reminder).toContain("Ogg/Opus");
+    expect(reminder).toContain(".ogg");
+    expect(reminder).toContain("not MP3/M4A/WAV");
+  });
+
   test("escapes XML special characters in notification text without over-escaping quotes", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",

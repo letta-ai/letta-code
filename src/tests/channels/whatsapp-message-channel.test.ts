@@ -56,6 +56,16 @@ describe("WhatsApp MessageChannel actions", () => {
     ]);
   });
 
+  test("documents the Ogg/Opus requirement for media uploads", () => {
+    expect(whatsappMessageActions.describeMessageTool({}).schema).toEqual({
+      properties: {
+        media: expect.objectContaining({
+          description: expect.stringContaining("Ogg/Opus"),
+        }),
+      },
+    });
+  });
+
   test("sends text messages", async () => {
     const { ctx, sent } = makeContext("send", { message: "hello" });
     await expect(whatsappMessageActions.handleAction(ctx)).resolves.toContain(
@@ -76,6 +86,17 @@ describe("WhatsApp MessageChannel actions", () => {
     await expect(whatsappMessageActions.handleAction(ctx)).resolves.toMatch(
       /requires media/,
     );
+  });
+
+  test("rejects MP3 voice memo uploads before calling the adapter", async () => {
+    const { ctx, sent } = makeContext("upload-file", {
+      mediaPath: "/tmp/voice.mp3",
+    });
+
+    await expect(whatsappMessageActions.handleAction(ctx)).resolves.toMatch(
+      /Ogg\/Opus/,
+    );
+    expect(sent).toHaveLength(0);
   });
 
   test("sends reactions", async () => {
