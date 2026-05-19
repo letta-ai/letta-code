@@ -90,6 +90,10 @@ import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
+import {
+  CreateWorktreeResultRenderer,
+  parseCreateWorktreeResult,
+} from "./CreateWorktreeResultRenderer.js";
 import { colors } from "./colors.js";
 import {
   EditRenderer,
@@ -535,6 +539,14 @@ export const ToolCallMessage = memo(
             );
           }
           // Fall through to regular handling if parsing fails
+        }
+
+        // Check if this is CreateWorktree - show a compact structured summary
+        // instead of the full instructional tool return.
+        if (rawName === "CreateWorktree" && line.resultOk !== false) {
+          if (parseCreateWorktreeResult(extractedText)) {
+            return <CreateWorktreeResultRenderer resultText={extractedText} />;
+          }
         }
 
         // Check if this is ExitPlanMode - just show path, not plan content
