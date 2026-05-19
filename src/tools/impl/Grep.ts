@@ -181,7 +181,7 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       stdout?: string;
     };
     const code = typeof err.code === "number" ? err.code : undefined;
-    const _stdout = typeof err.stdout === "string" ? err.stdout : "";
+
     const message =
       typeof err.message === "string" ? err.message : "Unknown error";
     if (code === 1) {

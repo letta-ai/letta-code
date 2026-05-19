@@ -367,7 +367,6 @@ function convertMessages(
       continue;
     }
 
-    const beforeLen = converted.length;
     const result = convertLegacyMessage(message, nextId);
     converted.push(...result);
 

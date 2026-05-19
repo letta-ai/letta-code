@@ -5698,12 +5698,6 @@ describe("listen-client edit_file command", () => {
       // Give the async handler time to process
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Check for response
-      const responses = socket.sentPayloads.map((p) => JSON.parse(p as string));
-      const _editResponse = responses.find(
-        (r) => r.type === "edit_file_response",
-      );
-
       // Note: The handler runs asynchronously, so we may need to wait
       // In a real test, we'd mock the edit function or use a different approach
     } finally {

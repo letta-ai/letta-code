@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getChannelDir, getChannelsRoot } from "../config";
+import { getChannelDir } from "../config";
 import { FIRST_PARTY_CHANNEL_IDS } from "../types";
 
 // ── Slugification ─────────────────────────────────────────────────────────────
