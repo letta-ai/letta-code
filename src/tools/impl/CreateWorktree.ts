@@ -329,9 +329,10 @@ function buildSuccessMessage(params: {
       : "The conversation working directory was left unchanged.",
     "",
     "Next steps:",
-    "- Load the working-in-parallel skill if available.",
-    "- Inspect the repo setup before editing.",
-    "- Install dependencies if needed before running tests.",
+    "- Confirm you are in the new worktree with `git status` before editing.",
+    "- Read README, AGENTS.md, or other project setup docs before running commands.",
+    "- If this repo needs per-worktree dependency setup, install dependencies with the project's package manager. Check the repo first: if it uses Bun, run `bun install` instead of `npm install`; if it uses pnpm, yarn, or npm, use that package manager instead.",
+    "- Then make changes, test, commit, and push from this worktree.",
   ];
   return lines.join("\n");
 }
