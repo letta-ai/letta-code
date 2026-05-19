@@ -188,6 +188,8 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
 
 const LETTA_CLOUD_MEMFS_GIT_BASE_URL = "https://api.letta.com";
 const LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV = "LETTA_MEMFS_GIT_PROXY_BASE_URL";
+const PIERRE_BACKEND_HEADER = "x-letta-memfs-backend";
+const PIERRE_BACKEND_VALUE = "pierre";
 
 function isLocalhostUrl(value: string | undefined): boolean {
   if (!value) return false;
@@ -211,9 +213,12 @@ function getShellMemfsBaseUrl(env: NodeJS.ProcessEnv): string {
   return env.LETTA_MEMFS_BASE_URL || LETTA_CLOUD_MEMFS_GIT_BASE_URL;
 }
 
-function getShellMemfsGitProxyRewriteConfig(
-  env: NodeJS.ProcessEnv,
-): { configKey: string; configValue: string } | null {
+function getShellMemfsGitProxyRewriteConfig(env: NodeJS.ProcessEnv): {
+  configKey: string;
+  configValue: string;
+  proxyPrefix: string;
+  memfsPrefix: string;
+} | null {
   const rawProxyBaseUrl = env[LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV]?.trim();
   if (!rawProxyBaseUrl || !isLocalhostUrl(rawProxyBaseUrl)) {
     return null;
@@ -231,6 +236,8 @@ function getShellMemfsGitProxyRewriteConfig(
   return {
     configKey: `url.${proxyPrefix}.insteadOf`,
     configValue: memfsPrefix,
+    proxyPrefix,
+    memfsPrefix,
   };
 }
 
@@ -257,6 +264,30 @@ function applyMemfsGitProxyEnv(env: NodeJS.ProcessEnv): void {
   env.GCM_INTERACTIVE = "never";
   env.GIT_ASKPASS = "";
   env.SSH_ASKPASS = "";
+}
+
+function isPierreMemfsBackendRequested(env: NodeJS.ProcessEnv): boolean {
+  return env.LETTA_MEMFS_BACKEND === PIERRE_BACKEND_VALUE;
+}
+
+function applyPierreMemfsGitHeaderEnv(env: NodeJS.ProcessEnv): void {
+  if (!isPierreMemfsBackendRequested(env)) {
+    return;
+  }
+
+  const memfsPrefix = `${trimBaseUrl(getShellMemfsBaseUrl(env))}/v1/git/`;
+  const headerValue = `${PIERRE_BACKEND_HEADER}: ${PIERRE_BACKEND_VALUE}`;
+
+  appendGitConfigEnv(env, `http.${memfsPrefix}.extraHeader`, headerValue);
+
+  const rewrite = getShellMemfsGitProxyRewriteConfig(env);
+  if (rewrite) {
+    appendGitConfigEnv(
+      env,
+      `http.${rewrite.proxyPrefix}.extraHeader`,
+      headerValue,
+    );
+  }
 }
 
 /**
@@ -417,6 +448,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
   // ephemeral localhost URL into the memory repo's git config.
   applyMemfsGitProxyEnv(env);
+  applyPierreMemfsGitHeaderEnv(env);
 
   return env;
 }
