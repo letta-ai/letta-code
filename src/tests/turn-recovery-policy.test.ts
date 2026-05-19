@@ -191,6 +191,14 @@ describe("provider detail retry helpers", () => {
         "INTERNAL_SERVER_ERROR: Connection error during OpenRouter streaming: peer closed connection without sending complete message body (incomplete chunked read)",
       ),
     ).toBe(true);
+    expect(
+      isRetryableProviderErrorDetail(
+        'Codex error: {"type":"error","error":{"type":"server_error","code":"server_error","message":"An error occurred while processing your request. You can retry your request."},"sequence_number":6}',
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableProviderErrorDetail("WebSocket closed 1006 Connection ended"),
+    ).toBe(true);
   });
 
   test("detects non-retryable auth patterns", () => {
@@ -246,6 +254,27 @@ describe("provider detail retry helpers", () => {
     expect(shouldRetryRunMetadataError(undefined, detail)).toBe(true);
     expect(
       shouldRetryPreStreamTransientError({ status: undefined, detail }),
+    ).toBe(true);
+  });
+
+  test("Codex Responses server and WebSocket failures are retryable", () => {
+    const codexServerError =
+      'Codex error: {"type":"error","error":{"type":"server_error","code":"server_error","message":"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 940a060b-50b3-4800-a2bc-6a3937b9553c in your message.","param":null},"sequence_number":6}';
+    const webSocketClose = "WebSocket closed 1006 Connection ended";
+
+    expect(shouldRetryRunMetadataError(undefined, codexServerError)).toBe(true);
+    expect(shouldRetryRunMetadataError(undefined, webSocketClose)).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: undefined,
+        detail: codexServerError,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: undefined,
+        detail: webSocketClose,
+      }),
     ).toBe(true);
   });
 

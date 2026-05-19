@@ -15,6 +15,32 @@ export interface LocalProviderErrorInfo {
 }
 
 const LOCAL_PROVIDER_MAX_RETRY_DELAY_MS = 60_000;
+const RETRYABLE_LOCAL_PROVIDER_DETAIL_PATTERNS = [
+  "server_error",
+  "server error",
+  "internal_error",
+  "internal error",
+  "service_unavailable",
+  "service unavailable",
+  "temporarily_unavailable",
+  "temporarily unavailable",
+  "you can retry your request",
+  "retry your request",
+  "websocket closed",
+  "websocket error",
+  "connection ended",
+  "connection lost",
+  "other side closed",
+  "fetch failed",
+  "upstream connect",
+  "reset before headers",
+  "socket hang up",
+  "ended without",
+  "http2 request did not get a response",
+  "timed out",
+  "terminated",
+  "retry delay",
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -124,6 +150,13 @@ function isRetryableRateLimitJSONDetail(detail: string): boolean {
   return false;
 }
 
+function hasRetryableLocalProviderDetail(detail: string): boolean {
+  const normalized = detail.toLowerCase();
+  return RETRYABLE_LOCAL_PROVIDER_DETAIL_PATTERNS.some((pattern) =>
+    normalized.includes(pattern),
+  );
+}
+
 function statusCode(error: unknown): number | undefined {
   if (!isRecord(error)) return undefined;
   const status = error.statusCode ?? error.status;
@@ -140,6 +173,7 @@ export function isRetryableLocalProviderError(error: unknown): boolean {
   if (status !== undefined && status >= 500) return true;
   if (status === undefined && isRetryableRateLimitJSONDetail(detail))
     return true;
+  if (hasRetryableLocalProviderDetail(detail)) return true;
   return shouldRetryPreStreamTransientError({ status, detail });
 }
 
