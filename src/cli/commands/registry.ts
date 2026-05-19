@@ -167,7 +167,7 @@ export const commands: Record<string, Command> = {
     },
   },
   // "/remote": {
-  //   desc: "Connect to Letta Cloud (device connect mode)",
+  //   desc: "Connect to the Constellation (device connect mode)",
   //   args: "[--env-name <name>]",
   //   order: 17.5,
   //   handler: () => {

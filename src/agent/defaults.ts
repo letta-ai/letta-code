@@ -153,7 +153,7 @@ async function addTagToAgent(
 /**
  * Create a fresh default Letta Code agent and pin it globally.
  * Always creates a new agent — does NOT search by tag to avoid picking up
- * agents created by other users on shared Letta Cloud orgs.
+ * agents created by other users in shared Constellation orgs.
  *
  * Respects `createDefaultAgents` setting (defaults to true).
  *
@@ -190,7 +190,7 @@ export async function ensureDefaultAgents(
     await addTagToAgent(backend, agent.id, MEMO_TAG);
     settingsManager.pinGlobal(agent.id);
 
-    // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
+    // Enable memfs on the Constellation API backend (tags, repo clone, tool detach)
     // without blocking startup on the initial clone.
     if (backend.capabilities.remoteMemfs) {
       void enableMemfsIfCloud(agent.id, backend);

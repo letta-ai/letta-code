@@ -178,7 +178,7 @@ class TelemetryManager {
   }
 
   /**
-   * Check if the user is connected to Letta Cloud (api.letta.com)
+   * Check if the user is connected to the hosted API (api.letta.com)
    */
   private isCloudUser(): boolean {
     try {

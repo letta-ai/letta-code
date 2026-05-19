@@ -98,7 +98,7 @@ The Constellation allows your agents to work on any machine while maintaining th
 graph TD
     Constellation["⭐ Constellation"]
     Constellation --> A["💻 Your Laptop"]
-    Constellation --> B["☁️ Letta Cloud"]
+    Constellation --> B["☁️ Hosted Runtime"]
     Constellation --> C["🖥️ Mac Mini"]
     Constellation --> D["📦 Sandbox"]
 ```

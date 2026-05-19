@@ -1,6 +1,6 @@
 /**
  * CLI subcommand: letta server --name \"george\"
- * Register letta-code as a listener to receive messages from Letta Cloud
+ * Register letta-code as a listener to receive messages from the Constellation
  */
 
 import { hostname } from "node:os";
@@ -320,7 +320,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
     );
     console.log(
-      "Register this letta-code instance to receive messages from Letta Cloud.\n",
+      "Register this letta-code instance as a remote environment in the Constellation.\n",
     );
     console.log("Options:");
     console.log(
@@ -354,7 +354,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "  letta server --debug                       # Log all WS events\n",
     );
     console.log(
-      "Once connected, this instance will listen for incoming messages from cloud agents.",
+      "Once connected, this instance will listen for incoming messages from Constellation agents.",
     );
     console.log(
       "Messages will be executed locally using your letta-code environment.",
@@ -786,7 +786,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log("Disconnected.");
             unmount();
             console.log("\n\u2717 Listener disconnected");
-            console.log("Connection to Letta Cloud was lost.\n");
+            console.log("Connection to the Constellation was lost.\n");
             void exitWithTelemetry(1, "listener_disconnected");
           },
           onError: (error: Error) => {

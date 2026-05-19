@@ -1,5 +1,5 @@
 /**
- * Server mode - Register letta-code as a listener to receive messages from Letta Cloud
+ * Server mode - Register letta-code as a listener to receive messages from the Constellation
  * Usage: letta server --name "george"
  */
 
@@ -127,7 +127,7 @@ export async function handleListen(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "✓ Listen mode stopped\n\nListener disconnected from Letta Cloud.",
+      "✓ Listen mode stopped\n\nListener disconnected from the Constellation.",
       true,
     );
     return;
@@ -141,7 +141,7 @@ export async function handleListen(
       msg,
       "Usage: /server [--env-name <name>]\n" +
         "       /server off\n\n" +
-        "Register this letta-code instance to receive messages from Letta Cloud.\n" +
+        "Register this letta-code instance as a remote environment in the Constellation.\n" +
         "Alias: /remote\n\n" +
         "Options:\n" +
         "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)\n" +
@@ -151,7 +151,7 @@ export async function handleListen(
         "  /server                         # Start listener with hostname\n" +
         '  /server --env-name "work-laptop" # Start with custom name\n' +
         "  /server off                     # Stop listening\n\n" +
-        "Once connected, this instance will listen for incoming messages from cloud agents.\n" +
+        "Once connected, this instance will listen for incoming messages from Constellation agents.\n" +
         "Messages will be executed locally using your letta-code environment.",
       true,
     );
@@ -196,7 +196,7 @@ export async function handleListen(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "Connecting to Letta Cloud...",
+    "Connecting to the Constellation...",
     true,
     "running",
   );
@@ -297,7 +297,7 @@ export async function handleListen(
             cmdId,
             msg,
             `Environment initialized: ${connectionName}\n` +
-              `Reconnecting to Letta Cloud...\n` +
+              `Reconnecting to the Constellation...\n` +
               `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s${urlText}`,
             true,
             "running",
@@ -374,7 +374,7 @@ export async function handleListen(
             cmdId,
             msg,
             `✗ Listener disconnected\n\n` +
-              `Connection to Letta Cloud was lost.`,
+              `Connection to the Constellation was lost.`,
             false,
             "finished",
           );

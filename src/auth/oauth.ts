@@ -1,5 +1,5 @@
 /**
- * OAuth 2.0 utilities for Letta Cloud authentication
+ * OAuth 2.0 utilities for Constellation authentication
  * Uses Device Code Flow for CLI authentication
  */
 

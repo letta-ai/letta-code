@@ -167,7 +167,7 @@ BEHAVIOR
   - Local: .letta/settings.local.json (pinned to project)
 
   If no credentials are configured, you'll be prompted to authenticate via
-  Letta Cloud OAuth on first run.
+  local mode or sign in to the Constellation on first run.
 
 EXAMPLES
   # when installed as an executable
@@ -1030,7 +1030,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    // Check if refresh token is missing for Letta Cloud (only when not using env var)
+    // Check if refresh token is missing for Constellation auth (only when not using env var)
     // Skip this check if we already have an API key from env
     if (
       !isHeadless &&

@@ -3,7 +3,7 @@
  *
  * Runs only when:
  * - LETTA_API_KEY is set
- * - LETTA_BASE_URL points to Letta Cloud (api.letta.com)
+ * - LETTA_BASE_URL points to the hosted API (api.letta.com)
  */
 
 import { describe, expect, test } from "bun:test";

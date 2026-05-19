@@ -112,7 +112,7 @@ describe("listen subcommand auth resolution", () => {
     expect(pollForTokenMock).not.toHaveBeenCalled();
   });
 
-  test("refreshes saved Letta Cloud tokens when they are expired", async () => {
+  test("refreshes saved Constellation tokens when they are expired", async () => {
     const updateSettingsMock = mock(() => {});
     const flushMock = mock(async () => {});
 
