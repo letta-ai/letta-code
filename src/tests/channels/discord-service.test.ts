@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
+  listChannelAccounts,
+  loadChannelAccounts,
 } from "../../channels/accounts";
 import {
   __testOverrideLoadPairingStore,
@@ -33,6 +35,7 @@ import {
   __testOverrideSaveTargetStore,
   clearTargetStores,
 } from "../../channels/targets";
+import { isDiscordChannelAccount } from "../../channels/types";
 
 describe("discord channel service", () => {
   function resetState(): void {
@@ -282,5 +285,252 @@ describe("discord channel service", () => {
     expect(getRoute("discord", "thread-1", "discord-bot", "thread-1")).toBe(
       null,
     );
+  });
+
+  // ── threadPolicyByChannel ──────────────────────────────────
+
+  test("threadPolicyByChannel is set during creation and reflected in snapshot", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        dmPolicy: "pairing",
+        threadPolicyByChannel: { "channel-alpha": true, "channel-beta": false },
+      },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    expect(created.threadPolicyByChannel).toEqual({
+      "channel-alpha": true,
+      "channel-beta": false,
+    });
+    expect(created.config.thread_policy_by_channel).toEqual({
+      "channel-alpha": true,
+      "channel-beta": false,
+    });
+
+    const snapshot = getChannelAccountSnapshot("discord", "discord-bot");
+    if (!snapshot || snapshot.channelId !== "discord")
+      throw new Error("wrong channel");
+    expect(snapshot.threadPolicyByChannel).toEqual({
+      "channel-alpha": true,
+      "channel-beta": false,
+    });
+  });
+
+  test("threadPolicyByChannel defaults to empty object when not provided", () => {
+    const created = createChannelAccountLive(
+      "discord",
+      { token: "test-token", dmPolicy: "pairing" },
+      { accountId: "discord-bot" },
+    );
+
+    if (created.channelId !== "discord") throw new Error("wrong channel");
+    // The snapshot normalizes undefined → {}
+    expect(created.threadPolicyByChannel).toEqual({});
+    expect(created.config.thread_policy_by_channel).toEqual({});
+  });
+
+  test("threadPolicyByChannel is preserved through updateChannelAccountLive", () => {
+    createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        dmPolicy: "pairing",
+        threadPolicyByChannel: { "channel-alpha": true },
+      },
+      { accountId: "discord-bot" },
+    );
+
+    const updated = updateChannelAccountLive("discord", "discord-bot", {
+      threadPolicyByChannel: {
+        "channel-alpha": false,
+        "channel-gamma": true,
+      },
+    });
+
+    if (updated.channelId !== "discord") throw new Error("wrong channel");
+    expect(updated.threadPolicyByChannel).toEqual({
+      "channel-alpha": false,
+      "channel-gamma": true,
+    });
+  });
+
+  test("threadPolicyByChannel is preserved through setChannelConfigLive", async () => {
+    const snapshot = await setChannelConfigLive("discord", {
+      token: "new-token",
+      dmPolicy: "pairing",
+      threadPolicyByChannel: { "channel-delta": false },
+    });
+
+    expect(snapshot).not.toBeNull();
+    if (snapshot.channelId !== "discord") throw new Error("wrong channel");
+    expect(snapshot.threadPolicyByChannel).toEqual({ "channel-delta": false });
+    expect(snapshot.config.thread_policy_by_channel).toEqual({
+      "channel-delta": false,
+    });
+  });
+
+  test("threadPolicyByChannel is merged through patch merge", async () => {
+    // Create with no threadPolicyByChannel
+    createChannelAccountLive(
+      "discord",
+      { token: "test-token", dmPolicy: "pairing" },
+      { accountId: "discord-bot" },
+    );
+
+    // Set config live with threadPolicyByChannel (should update existing)
+    const snapshot = await setChannelConfigLive("discord", {
+      token: "test-token",
+      dmPolicy: "pairing",
+      threadPolicyByChannel: { "channel-echo": true },
+    });
+
+    expect(snapshot).not.toBeNull();
+    if (snapshot.channelId !== "discord") throw new Error("wrong channel");
+    expect(snapshot.threadPolicyByChannel).toEqual({ "channel-echo": true });
+  });
+
+  // ── Key migration: accounts.json snake_case ↔ camelCase ──────
+
+  test("load: reads snake_case key from loaded account", () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "test-token",
+        agentId: null,
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        thread_policy_by_channel: { "channel-alpha": true },
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    loadChannelAccounts("discord");
+    const accounts = listChannelAccounts("discord");
+    expect(accounts).toHaveLength(1);
+    const first = accounts[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error("expected account");
+    expect(isDiscordChannelAccount(first)).toBe(true);
+    if (!isDiscordChannelAccount(first))
+      throw new Error("expected discord account");
+    expect(first.threadPolicyByChannel).toEqual({
+      "channel-alpha": true,
+    });
+  });
+
+  test("load: reads camelCase key (legacy migration)", () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "test-token",
+        agentId: null,
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        threadPolicyByChannel: { "channel-beta": false },
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    loadChannelAccounts("discord");
+    const accounts = listChannelAccounts("discord");
+    expect(accounts).toHaveLength(1);
+    const first = accounts[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error("expected account");
+    expect(isDiscordChannelAccount(first)).toBe(true);
+    if (!isDiscordChannelAccount(first))
+      throw new Error("expected discord account");
+    expect(first.threadPolicyByChannel).toEqual({
+      "channel-beta": false,
+    });
+  });
+
+  test("load: snake_case wins when both keys exist", () => {
+    clearChannelAccountStores();
+    const warnSpy = mock<(msg: string) => void>();
+    const originalWarn = console.warn;
+    console.warn = warnSpy;
+
+    try {
+      __testOverrideLoadChannelAccounts(() => [
+        {
+          channel: "discord",
+          accountId: "discord-bot",
+          enabled: true,
+          token: "test-token",
+          agentId: null,
+          defaultPermissionMode: "standard",
+          dmPolicy: "pairing",
+          allowedUsers: [],
+          thread_policy_by_channel: { "channel-snake": true },
+          threadPolicyByChannel: { "channel-camel": false },
+          createdAt: "2026-04-11T00:00:00.000Z",
+          updatedAt: "2026-04-11T00:00:00.000Z",
+        },
+      ]);
+      __testOverrideSaveChannelAccounts(() => {});
+
+      loadChannelAccounts("discord");
+      const accounts = listChannelAccounts("discord");
+      expect(accounts).toHaveLength(1);
+      const first = accounts[0];
+      expect(first).toBeDefined();
+      if (!first) throw new Error("expected account");
+      expect(isDiscordChannelAccount(first)).toBe(true);
+      if (!isDiscordChannelAccount(first))
+        throw new Error("expected discord account");
+      // snake_case value wins
+      expect(first.threadPolicyByChannel).toEqual({
+        "channel-snake": true,
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("save: emits snake_case key only", () => {
+    clearChannelAccountStores();
+    let savedAccounts: unknown[] | null = null;
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts((_channelId, accounts) => {
+      savedAccounts = accounts;
+    });
+
+    createChannelAccountLive(
+      "discord",
+      {
+        token: "test-token",
+        dmPolicy: "pairing",
+        threadPolicyByChannel: { "channel-gamma": false },
+      },
+      { accountId: "discord-bot" },
+    );
+
+    expect(savedAccounts).not.toBeNull();
+    expect(savedAccounts).toHaveLength(1);
+    const saved = (
+      savedAccounts as unknown as Array<Record<string, unknown>>
+    )[0];
+    expect(saved).toBeDefined();
+    // Should have thread_policy_by_channel (snake_case)
+    expect(saved?.thread_policy_by_channel).toEqual({ "channel-gamma": false });
+    // Should NOT have threadPolicyByChannel (camelCase)
+    expect(saved?.threadPolicyByChannel).toBeUndefined();
   });
 });

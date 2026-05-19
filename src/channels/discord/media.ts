@@ -43,6 +43,7 @@ export async function resolveDiscordInboundAttachments(params: {
   accountId: string;
   rawAttachments: DiscordRawAttachment[];
   chatId: string;
+  transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment[]> {
   if (params.rawAttachments.length === 0) {
     return [];
@@ -117,6 +118,20 @@ export async function resolveDiscordInboundAttachments(params: {
       // Encode images as base64 for vision
       if (kind === "image" && attachment.contentType?.startsWith("image/")) {
         entry.imageDataBase64 = buffer.toString("base64");
+      }
+
+      // Discord voice messages arrive as ordinary audio attachments, so the
+      // opt-in applies to inbound audio attachments generally.
+      if (kind === "audio" && params.transcribeVoice) {
+        const { isTranscriptionConfigured, transcribeAudioFile } = await import(
+          "../transcription/index"
+        );
+        if (isTranscriptionConfigured()) {
+          const result = await transcribeAudioFile(localPath);
+          if (result.success && result.text) {
+            entry.transcription = result.text;
+          }
+        }
       }
 
       results.push(entry);
