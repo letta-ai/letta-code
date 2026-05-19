@@ -517,33 +517,16 @@ export function AgentSelector({
 
     if (currentLoading) return;
 
-    // New tab has its own input handling (name input, not list navigation)
+    // New tab has its own input handling via PasteAwareTextInput.
+    // Only handle Escape here.
     if (activeTab === "new") {
-      if (key.return) {
-        const trimmed = newAgentNameInput.trim();
-        if (!trimmed) {
-          onCreateNewAgent?.(DEFAULT_AGENT_NAME);
-          return;
-        }
-        const validationError = validateAgentName(trimmed);
-        if (validationError) {
-          setNewAgentNameError(validationError);
-          return;
-        }
-        onCreateNewAgent?.(trimmed);
-      } else if (key.escape) {
+      if (key.escape) {
         if (newAgentNameInput) {
           setNewAgentNameInput("");
           setNewAgentNameError("");
         } else {
           onCancel();
         }
-      } else if (key.backspace || key.delete) {
-        setNewAgentNameInput((prev) => prev.slice(0, -1));
-        setNewAgentNameError("");
-      } else if (input && !key.ctrl && !key.meta && !key.tab) {
-        setNewAgentNameInput((prev) => prev + input);
-        setNewAgentNameError("");
       }
       return;
     }
