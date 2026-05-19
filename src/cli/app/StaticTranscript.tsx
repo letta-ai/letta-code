@@ -35,11 +35,16 @@ export function StaticTranscript({
   precomputedDiffs: Map<string, AdvancedDiffSuccess>;
   lastPlanFilePath: string | null;
   hiddenToolCallId?: string;
+  /** Used to show ctrl+o hint on the last committed tool call.
+   *  Intentionally NOT included in the Static key — passing it here without
+   *  keying on it means the hint shows correctly when an item first commits,
+   *  and may be stale on older items (minor cosmetic issue, much better than
+   *  remounting on every tool call and re-printing history). */
   lastShellToolCallId?: string;
 }) {
   return (
     <Static
-      key={`${renderEpoch}-${hiddenToolCallId ?? ""}-${lastShellToolCallId ?? ""}`}
+      key={`${renderEpoch}-${hiddenToolCallId ?? ""}`}
       items={items}
       style={{ flexDirection: "column" }}
     >
