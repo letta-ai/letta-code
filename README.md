@@ -2,12 +2,20 @@
 
 [![npm](https://img.shields.io/npm/v/@letta-ai/letta-code.svg?style=flat-square)](https://www.npmjs.com/package/@letta-ai/letta-code) [![Discord](https://img.shields.io/badge/discord-join-blue?style=flat-square&logo=discord)](https://discord.gg/letta)
 
-Letta Code is a memory-first coding harness, designed for long-lived agents that can learn from experience.
+Letta Code is a memory-first coding harness, designed for long-lived agents that can learn from experience. 
 
-Instead of working in independent sessions, you work with a persisted agent whose memory is portable across models (Claude, GPT, Gemini, GLM, Kimi, and more) and environments. 
+Instead of working in independent sessions, you work with a persisted agent whose memory is portable across models (Claude, GPT, Gemini, GLM, Kimi, and more) and environments. Agents automatically reconfigure themselves through updating their skills, memory, and system prompt to adapt what they know and how they act. 
 
 Run Letta Code in the [**CLI**](https://docs.letta.com/letta-code/cli), or download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux.
 You can also access Letta Code via [your phone](https://docs.letta.com/letta-code/remote-mobile) and [Slack/Telegram/Discord](https://docs.letta.com/letta-code/channels).
+
+You can interact with Letta Code agents through: 
+* A local [**CLI**](https://docs.letta.com/letta-code/cli)
+* The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux.
+* In your browser (including [mobile]((https://docs.letta.com/letta-code/remote-mobile))) 
+* Through messaging integrations (Telegram, Slack, Whatsapp, or custom connectors) with `letta server`
+
+Letta Code agents are *stateful* to rely on having a centralized memory store. 
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
@@ -21,6 +29,17 @@ Navigate to your project directory and run `letta` (see various command-line opt
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, zAI coding plan, etc.), and use `/model` to swap models.
 
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
+
+## Constellation 
+
+```mermaid
+graph TD
+    Constellation["⭐ Constellation"]
+    Constellation --> A["💻 Your Laptop"]
+    Constellation --> B["☁️ Letta Cloud"]
+    Constellation --> C["🖥️ Mac Mini"]
+    Constellation --> D["📦 Sandbox"]
+```
 
 ## Philosophy 
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
