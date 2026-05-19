@@ -23,6 +23,7 @@
  */
 
 import { getChannelAccount, loadChannelAccounts } from "./accounts";
+import { isDiscordGuildChannelAllowed } from "./discord/channelGating";
 import { getRoutesForChannel, loadRoutes, removeRoute } from "./routing";
 import type { ChannelRoute, DiscordChannelAccount } from "./types";
 
@@ -189,14 +190,12 @@ function reconcileDiscord(
     // Non-thread guild channel route — chatId IS the guild channel
     const channelId = route.chatId;
 
-    // Check if this channel is in the allowedChannels list
-    let isAllowed: boolean;
-    if (Array.isArray(allowedChannels)) {
-      isAllowed = allowedChannels.includes(channelId);
-    } else {
-      // Mode map
-      isAllowed = channelId in allowedChannels;
-    }
+    const isAllowed = isDiscordGuildChannelAllowed({
+      channelId,
+      parentChannelId: null,
+      isThread: false,
+      allowedChannels,
+    });
 
     if (!isAllowed) {
       const staleInfo: StaleRouteInfo = {

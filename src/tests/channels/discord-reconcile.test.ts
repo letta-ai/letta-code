@@ -401,6 +401,36 @@ describe("Discord route reconciliation", () => {
     expect(result.staleRoutes[0]?.route.chatId).toBe("channel-gamma");
   });
 
+  test("wildcard mode map treats every non-thread guild route as allowed", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        allowedChannels: { "*": "open" },
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    addDiscordRoute({ chatId: "channel-alpha" });
+    addDiscordRoute({ chatId: "channel-gamma" });
+
+    const { reconcileRoutesForChannel } = await import(
+      "../../channels/reconcile"
+    );
+    const result = reconcileRoutesForChannel("discord", "discord-bot");
+
+    expect(result.totalRoutesChecked).toBe(2);
+    expect(result.staleRoutes).toHaveLength(0);
+  });
+
   // ── Thread parent resolution test ────────────────────────────
 
   test("thread stale detection: thread routes flagged as indeterminate, parent channel route checked directly", async () => {

@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { isDebugEnabled } from "../../utils/debug";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
@@ -926,18 +927,18 @@ export function createDiscordAdapter(
         const normalizedText = wasMentioned
           ? normalizeDiscordMentionText(content, botUserId)
           : content;
-        if (attachments?.length) {
-          const transcriptions = attachments
-            .map((attachment) => attachment.transcription?.trim())
-            .filter((text): text is string => !!text);
-          if (transcriptions.length > 0) {
-            console.log(
-              `[Discord] Audio transcription attached for message ${message.id}: ${transcriptions.join(" ").slice(0, 120)}`,
+        if (attachments?.length && isDebugEnabled()) {
+          const hasTranscription = attachments.some((attachment) =>
+            Boolean(attachment.transcription?.trim()),
+          );
+          if (hasTranscription) {
+            console.debug(
+              `[Discord] Audio transcription attached for message ${message.id}`,
             );
           } else if (
             attachments.some((attachment) => attachment.kind === "audio")
           ) {
-            console.log(
+            console.debug(
               `[Discord] Audio attachment received for message ${message.id}; transcription missing`,
             );
           }
