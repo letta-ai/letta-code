@@ -17,7 +17,7 @@
  * CLI invocation:
  *   letta channels route reconcile --channel discord [--account-id ...] [--apply]
  *
- *   --apply with removeStaleConversations=false (the default): removal is
+ *   --apply with removeStaleConversations=false (the default): route removal is
  *   blocked and a clear diagnostic is emitted.
  *   --apply with removeStaleConversations=true: stale routes are removed.
  */

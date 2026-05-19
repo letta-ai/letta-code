@@ -354,17 +354,18 @@ export interface DiscordChannelConfig {
   acknowledgeMessageReaction?: boolean;
   /**
    * When true and a guild channel is removed from `allowedChannels`,
-   * the corresponding route/conversation will be deleted. Default false —
-   * routes are preserved even if the channel is no longer allowed,
-   * preventing destructive cleanup from stale config changes.
+   * stale routes for that channel can be removed by reconcile `--apply`.
+   * This only removes routes (not conversations). Default false — routes
+   * are preserved even if the channel is no longer allowed.
    */
   removeStaleConversations?: boolean;
   /**
    * Optional debounce window (ms) for inbound open-channel guild messages.
    * When greater than `0`, short back-to-back messages from the same sender
    * in the same channel/thread stack into a single combined dispatch
-   * (trailing edge). Default `0` (disabled). Only applies to open-channel
-   * messages; DMs, @mentions, attachments, and reactions always bypass.
+   * (trailing edge). Default `1200`. Set `0` to disable. Only applies to
+   * open-channel messages; DMs, @mentions, attachments, and reactions always
+   * bypass.
    * The env var `LETTA_DISCORD_INBOUND_DEBOUNCE_MS` takes precedence if set.
    * Clamped to `0..10000`.
    */
@@ -442,16 +443,18 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   acknowledgeMessageReaction?: boolean;
   /**
    * When true and a guild channel is removed from `allowedChannels`,
-   * the corresponding route/conversation will be deleted. Default false —
-   * routes are preserved even if the channel is no longer allowed.
+   * stale routes for that channel can be removed by reconcile `--apply`.
+   * This only removes routes (not conversations). Default false — routes
+   * are preserved even if the channel is no longer allowed.
    */
   removeStaleConversations?: boolean;
   /**
    * Optional debounce window (ms) for inbound open-channel guild messages.
    * When greater than `0`, short back-to-back messages from the same sender
    * in the same channel/thread stack into a single combined dispatch
-   * (trailing edge). Default `0` (disabled). Only applies to open-channel
-   * messages; DMs, @mentions, attachments, and reactions always bypass.
+   * (trailing edge). Default `1200`. Set `0` to disable. Only applies to
+   * open-channel messages; DMs, @mentions, attachments, and reactions always
+   * bypass.
    * The env var `LETTA_DISCORD_INBOUND_DEBOUNCE_MS` takes precedence if set.
    * Clamped to `0..10000`.
    */
