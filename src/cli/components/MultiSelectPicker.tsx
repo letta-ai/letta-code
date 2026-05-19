@@ -17,6 +17,8 @@ export interface SelectableItem {
   key: string;
   label: string;
   description: string;
+  /** When true, Space does not toggle this item and it renders dimmed. */
+  disabled?: boolean;
 }
 
 export interface MultiSelectPickerProps {
@@ -81,10 +83,10 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
         onConfirm([...selectedSet]);
         return;
       }
-      // Space toggles checkbox
+      // Space toggles checkbox (no-op for disabled items)
       if (input === " ") {
         const item = items[cursor];
-        if (item) {
+        if (item && !item.disabled) {
           toggle(item.key);
         }
         return;
@@ -110,7 +112,12 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
         {items.map((item, index) => {
           const isCursor = index === cursor;
           const isChecked = selectedSet.has(item.key);
-          const color = isCursor ? colors.approval.header : undefined;
+          const isDisabled = item.disabled ?? false;
+          const color = isDisabled
+            ? undefined
+            : isCursor
+              ? colors.approval.header
+              : undefined;
 
           return (
             <Box key={item.key} flexDirection="row">
@@ -120,13 +127,21 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
               </Box>
               {/* Checkbox */}
               <Box width={4} flexShrink={0}>
-                <Text color={isChecked ? "green" : color}>
+                <Text
+                  color={isDisabled ? undefined : isChecked ? "green" : color}
+                  dimColor={isDisabled}
+                >
                   [{isChecked ? "✓" : " "}]{" "}
                 </Text>
               </Box>
               {/* Label + description */}
               <Box flexGrow={1} width={Math.max(0, columns - 6)}>
-                <Text color={color} bold={isCursor} wrap="truncate-end">
+                <Text
+                  color={color}
+                  bold={isCursor && !isDisabled}
+                  dimColor={isDisabled}
+                  wrap="truncate-end"
+                >
                   {item.label}
                   {item.description && (
                     <Text dimColor> · {item.description}</Text>

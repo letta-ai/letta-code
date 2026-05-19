@@ -3855,6 +3855,7 @@ export default function App({
     handleCompactionModeSelect,
     handleToolsetSelect,
     handleExperimentSelect,
+    handleExperimentsConfirm,
   } = useConfigurationHandlers({
     activeOverlay,
     agentId,
@@ -4448,7 +4449,7 @@ export default function App({
       handleEnterPlanModeReject={handleEnterPlanModeReject}
       handleQueueEdit={handleQueueEdit}
       handleExit={handleExit}
-      handleExperimentSelect={handleExperimentSelect}
+      handleExperimentsConfirm={handleExperimentsConfirm}
       handleFeedbackSubmit={handleFeedbackSubmit}
       handleInterrupt={handleInterrupt}
       handleModelSelect={handleModelSelect}

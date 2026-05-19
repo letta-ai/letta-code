@@ -1134,6 +1134,41 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     ],
   );
 
+  const handleExperimentsConfirm = useCallback(
+    async (
+      changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
+    ) => {
+      if (changes.length === 0) {
+        setActiveOverlay(null);
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd = commandRunner.start(
+          "/experiments",
+          "Updating experiments...",
+        );
+        cmd.update({ output: "Updating experiments...", phase: "running" });
+
+        try {
+          const results = changes.map(({ experimentId, enabled }) =>
+            experimentManager.set(experimentId, enabled),
+          );
+          const summary = results
+            .map((s) => `"${s.label}" ${s.enabled ? "enabled" : "disabled"}`)
+            .join(", ");
+          cmd.finish(`Experiments updated: ${summary}`, true);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to update experiments: ${errorDetails}`);
+        } finally {
+          setActiveOverlay(null);
+        }
+      });
+    },
+    [agentId, commandRunner, withCommandLock, setActiveOverlay],
+  );
+
   return {
     handleModelSelect,
     handleSystemPromptSelect,
@@ -1142,5 +1177,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     handleCompactionModeSelect,
     handleToolsetSelect,
     handleExperimentSelect,
+    handleExperimentsConfirm,
   };
 }
