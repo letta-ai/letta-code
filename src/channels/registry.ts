@@ -19,7 +19,12 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "./accounts";
-import { tryHandleChannelSlashCommand } from "./commands";
+import {
+  buildChannelCancelNoActiveTurnMessage,
+  buildChannelCancelUnavailableMessage,
+  parseChannelSlashCommand,
+  tryHandleChannelSlashCommand,
+} from "./commands";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
@@ -249,6 +254,13 @@ export type ChannelApprovalResponseHandler = (params: {
   response: ApprovalResponseBody;
 }) => Promise<boolean>;
 
+export type ChannelCancelHandler = (params: {
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+}) => Promise<boolean>;
+
 type PendingChannelControlRequest = {
   event: ChannelControlRequestEvent;
   deliveredThisProcess: boolean;
@@ -288,6 +300,7 @@ export class ChannelRegistry {
   private messageHandler: ChannelMessageHandler | null = null;
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
+  private cancelHandler: ChannelCancelHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
@@ -418,6 +431,10 @@ export class ChannelRegistry {
     handler: ChannelApprovalResponseHandler | null,
   ): void {
     this.approvalResponseHandler = handler;
+  }
+
+  setCancelHandler(handler: ChannelCancelHandler | null): void {
+    this.cancelHandler = handler;
   }
 
   setEventHandler(
@@ -710,6 +727,7 @@ export class ChannelRegistry {
     this.messageHandler = null;
     this.eventHandler = null;
     this.approvalResponseHandler = null;
+    this.cancelHandler = null;
   }
 
   /**
@@ -726,6 +744,7 @@ export class ChannelRegistry {
     this.messageHandler = null;
     this.eventHandler = null;
     this.approvalResponseHandler = null;
+    this.cancelHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
     instance = null;
@@ -737,6 +756,11 @@ export class ChannelRegistry {
     adapter: ChannelAdapter,
     msg: InboundChannelMessage,
   ): Promise<boolean> {
+    const slashCommand = parseChannelSlashCommand(msg.text);
+    if (slashCommand?.name === "cancel") {
+      return false;
+    }
+
     const scopeKey = getChannelApprovalScopeKey({
       channel: msg.channel,
       accountId: msg.accountId,
@@ -796,6 +820,39 @@ export class ChannelRegistry {
     return true;
   }
 
+  private async handleCancelSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.getRoute(
+      msg.channel,
+      msg.chatId,
+      msg.accountId,
+      msg.threadId,
+    );
+    if (!route?.enabled || !this.cancelHandler) {
+      return {
+        handled: true,
+        text: buildChannelCancelUnavailableMessage(msg.channel),
+      };
+    }
+
+    const cancelled = await this.cancelHandler({
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
+
+    if (!cancelled) {
+      return {
+        handled: true,
+        text: buildChannelCancelNoActiveTurnMessage(msg.channel),
+      };
+    }
+
+    return { handled: true };
+  }
+
   private async handleInboundMessage(
     msg: InboundChannelMessage,
   ): Promise<void> {
@@ -806,7 +863,12 @@ export class ChannelRegistry {
       return;
     }
 
-    if (await tryHandleChannelSlashCommand(adapter, msg)) {
+    if (
+      await tryHandleChannelSlashCommand(adapter, msg, {
+        cancel: async (_command, commandMsg) =>
+          this.handleCancelSlashCommand(commandMsg),
+      })
+    ) {
       return;
     }
 

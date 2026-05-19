@@ -16,11 +16,28 @@ export type ChannelSlashCommandDefinition = {
   summary: string;
 };
 
+export type ChannelSlashCommandHandlerResult = {
+  handled: boolean;
+  text?: string;
+};
+
+export type ChannelSlashCommandHandlers = {
+  cancel?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
+};
+
 const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
   {
     name: "help",
     kind: "direct",
     summary: "Show channel usage guidance.",
+  },
+  {
+    name: "cancel",
+    kind: "agent-scoped",
+    summary: "Cancel the in-progress agent turn for this chat.",
   },
 ];
 
@@ -64,7 +81,6 @@ export function parseChannelSlashCommand(
 export function buildChannelHelpMessage(channelId: string): string {
   const displayName = channelDisplayName(channelId);
   const supportedCommands = listChannelSlashCommands()
-    .filter((definition) => definition.kind === "direct")
     .map((definition) => `/${definition.name}`)
     .join(", ");
 
@@ -83,7 +99,6 @@ export function buildUnsupportedChannelCommandMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   const supportedCommands = listChannelSlashCommands()
-    .filter((definition) => definition.kind === "direct")
     .map((definition) => `/${definition.name}`)
     .join(", ");
 
@@ -94,19 +109,50 @@ export function buildUnsupportedChannelCommandMessage(
   ].join("\n\n");
 }
 
+export function buildChannelCancelUnavailableMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return [
+    `${displayName} received /cancel, but this chat is not connected to an active Letta Code conversation yet.`,
+    "Send a normal message first to connect this chat to an agent.",
+  ].join("\n\n");
+}
+
+export function buildChannelCancelNoActiveTurnMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} received /cancel, but there is no in-progress agent turn to cancel for this chat.`;
+}
+
+export function buildChannelCancelAcceptedMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cancelled the in-progress agent turn for this chat.`;
+}
+
 export async function tryHandleChannelSlashCommand(
   adapter: ChannelAdapter,
   msg: InboundChannelMessage,
+  handlers: ChannelSlashCommandHandlers = {},
 ): Promise<boolean> {
   const command = parseChannelSlashCommand(msg.text);
   if (!command) {
     return false;
   }
 
-  const text =
-    command.name === "help"
-      ? buildChannelHelpMessage(msg.channel)
-      : buildUnsupportedChannelCommandMessage(msg.channel, command);
+  let text: string;
+  if (command.name === "help") {
+    text = buildChannelHelpMessage(msg.channel);
+  } else if (command.name === "cancel" && handlers.cancel) {
+    const result = await handlers.cancel(command, msg);
+    if (!result.handled) {
+      return false;
+    }
+    text = result.text ?? buildChannelCancelAcceptedMessage(msg.channel);
+  } else {
+    text = buildUnsupportedChannelCommandMessage(msg.channel, command);
+  }
 
   await adapter.sendDirectReply(
     msg.chatId,
