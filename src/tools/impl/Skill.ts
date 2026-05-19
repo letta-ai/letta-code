@@ -9,6 +9,7 @@ import {
   getBundledSkills,
   getFrontmatterBoolean,
   getFrontmatterStringList,
+  getLegacyAgentSkillsDir,
   SKILLS_DIR,
 } from "../../agent/skills";
 import { getCurrentWorkingDirectory } from "../../runtime-context";
@@ -72,10 +73,11 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
  *
  * Search order (highest priority first):
  * 1. Project skills (.skills/)
- * 2. Agent skills (~/.letta/agents/{id}/skills/)
- * 3. Agent memory skills ($MEMORY_DIR/skills/ or ~/.letta/agents/{id}/memory/skills/)
- * 4. Global skills (~/.letta/skills/)
- * 5. Bundled skills
+ * 2. Agent memory skills (~/.letta/agents/{id}/memory/skills/)
+ * 3. Agent legacy skills (~/.letta/agents/{id}/skills/)
+ * 4. Agent memory skills fallback ($MEMORY_DIR/skills/)
+ * 5. Global skills (~/.letta/skills/)
+ * 6. Bundled skills
  */
 export async function readSkillContent(
   skillId: string,
@@ -91,7 +93,7 @@ export async function readSkillContent(
     // Not in project, continue
   }
 
-  // 2. Try agent skills directory (if agentId provided)
+  // 2. Try agent memory skills directory (if agentId provided)
   if (agentId) {
     const agentSkillPath = join(
       getAgentSkillsDir(agentId),
@@ -106,7 +108,24 @@ export async function readSkillContent(
     }
   }
 
-  // 3. Try agent memory skills directories
+  // 3. Try agent legacy skills directory (if agentId provided).
+  // Discovery still includes this path for pre-memfs installs, so invocation must
+  // check it too or the prompt can list skills that the Skill tool cannot load.
+  if (agentId) {
+    const legacyAgentSkillPath = join(
+      getLegacyAgentSkillsDir(agentId),
+      skillId,
+      "SKILL.md",
+    );
+    try {
+      const content = await readFile(legacyAgentSkillPath, "utf-8");
+      return { content, path: legacyAgentSkillPath };
+    } catch {
+      // Not in legacy agent dir, continue
+    }
+  }
+
+  // 4. Try agent memory skills fallback directories
   for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
     const memorySkillPath = join(memorySkillsDir, skillId, "SKILL.md");
     try {
@@ -117,7 +136,7 @@ export async function readSkillContent(
     }
   }
 
-  // 4. Try global skills directory
+  // 5. Try global skills directory
   const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
   try {
     const content = await readFile(globalSkillPath, "utf-8");
@@ -126,7 +145,7 @@ export async function readSkillContent(
     // Not in global, continue
   }
 
-  // 5. Try bundled skills (lowest priority)
+  // 6. Try bundled skills (lowest priority)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path) {

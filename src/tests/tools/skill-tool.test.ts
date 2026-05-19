@@ -214,6 +214,39 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued[0]?.content).toContain("Loaded from agent memory fallback.");
   });
 
+  test("loads legacy ~/.letta/agents/<id>/skills entries listed by discovery", async () => {
+    const skillName = "legacy-agent-skill";
+    const skillDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "skills",
+      skillName,
+    );
+
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: legacy-agent-skill\ndescription: test\n---\n\nLoaded from legacy agent skills.",
+      "utf8",
+    );
+
+    delete process.env.MEMORY_DIR;
+    delete process.env.LETTA_MEMORY_DIR;
+    process.env.HOME = tempRoot;
+
+    const result = await runScopedSkill({
+      skill: skillName,
+      toolCallId: "tc-legacy-agent-skill",
+    });
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from legacy agent skills.");
+  });
+
   test("prefers injected parentScope.agentId over global agent context for memfs fallback", async () => {
     const skillName = "scoped-agent-skill";
     const injectedAgentId = "agent-scoped-parent";
