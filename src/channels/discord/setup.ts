@@ -111,9 +111,9 @@ export async function runDiscordSetup(): Promise<boolean> {
     }
 
     const autoThreadInput = await rl.question(
-      "\nAuto-create a thread when @mentioned in a guild channel? [Y/n]: ",
+      "\nAuto-create a thread when @mentioned in a guild channel? [y/N]: ",
     );
-    const autoThreadOnMention = !/^(n|no)$/i.test(autoThreadInput.trim());
+    const autoThreadOnMention = /^(y|yes)$/i.test(autoThreadInput.trim());
 
     const debounceInput = await rl.question(
       "Inbound debounce for open-channel messages in ms [0]: ",

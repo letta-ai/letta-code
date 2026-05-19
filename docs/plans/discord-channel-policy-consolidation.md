@@ -28,7 +28,7 @@ This branch consolidates the overlapping Discord channel work from PR #2045 and 
 
 ## Fix before opening the PR
 
-- Keep `autoThreadOnMention` defaulting to legacy-compatible `true`.
+- Keep `autoThreadOnMention` defaulting to `false`; Discord thread creation is opt-in.
 - Keep `inboundDebounceMs` defaulting to `0` / disabled; open-channel debounce remains opt-in.
 - Do not overload `isMention` for open-channel routing; carry `isOpenChannel` separately.
 - Remove the unrelated Discord MessageChannel tool-result format change.

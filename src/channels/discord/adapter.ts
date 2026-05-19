@@ -243,7 +243,7 @@ function resolveDiscordChatType(
  * Discord uses native Unicode emoji directly (not names like Slack).
  * Strip colons for common named patterns.
  */
-function resolveDiscordReactionEmoji(value: string): string {
+export function resolveDiscordReactionEmoji(value: string): string {
   const trimmed = value.trim();
   if (trimmed.startsWith("<:") || trimmed.startsWith("<a:")) {
     return trimmed;
@@ -266,6 +266,20 @@ export function buildDiscordIngressMessageKey(
     return null;
   }
   return `${accountId}:${messageId}`;
+}
+
+export function shouldAutoThreadOnDiscordMention(
+  account: Pick<
+    DiscordChannelAccount,
+    "autoThreadOnMention" | "threadPolicyByChannel"
+  >,
+  channelId: string,
+): boolean {
+  return (
+    account.threadPolicyByChannel?.[channelId] ??
+    account.autoThreadOnMention ??
+    false
+  );
 }
 
 export function buildDiscordReplyOptions(
@@ -785,7 +799,7 @@ export function createDiscordAdapter(
         botUserId = client?.user?.id ?? null;
         const tag = client?.user?.tag ?? "(unknown)";
         console.log(
-          `[Discord] Bot logged in as ${tag} (dm_policy: ${config.dmPolicy}, autoThreadOnMention: ${config.autoThreadOnMention ?? true}, inboundDebounceMs: ${debounceMs})`,
+          `[Discord] Bot logged in as ${tag} (dm_policy: ${config.dmPolicy}, autoThreadOnMention: ${config.autoThreadOnMention ?? false}, inboundDebounceMs: ${debounceMs})`,
         );
         running = true;
       });
@@ -891,11 +905,11 @@ export function createDiscordAdapter(
         // If mentioned outside a thread and thread creation is enabled,
         // create a Discord thread for the conversation.
         // Resolution order: per-channel override → account-level
-        // autoThreadOnMention → enabled (legacy-compatible default).
-        const shouldAutoThread =
-          config.threadPolicyByChannel?.[message.channelId] ??
-          config.autoThreadOnMention ??
-          true;
+        // autoThreadOnMention → disabled by default.
+        const shouldAutoThread = shouldAutoThreadOnDiscordMention(
+          config,
+          message.channelId,
+        );
         if (!isThread && wasMentioned && shouldAutoThread) {
           const createdThread = await createThreadForMention(message, content);
           if (!createdThread) return;
@@ -912,6 +926,22 @@ export function createDiscordAdapter(
         const normalizedText = wasMentioned
           ? normalizeDiscordMentionText(content, botUserId)
           : content;
+        if (attachments?.length) {
+          const transcriptions = attachments
+            .map((attachment) => attachment.transcription?.trim())
+            .filter((text): text is string => !!text);
+          if (transcriptions.length > 0) {
+            console.log(
+              `[Discord] Audio transcription attached for message ${message.id}: ${transcriptions.join(" ").slice(0, 120)}`,
+            );
+          } else if (
+            attachments.some((attachment) => attachment.kind === "audio")
+          ) {
+            console.log(
+              `[Discord] Audio attachment received for message ${message.id}; transcription missing`,
+            );
+          }
+        }
         if (!normalizedText && (!attachments || attachments.length === 0))
           return;
 

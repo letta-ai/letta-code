@@ -185,7 +185,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
         transcribe_voice: account.transcribeVoice === true,
-        auto_thread_on_mention: account.autoThreadOnMention ?? true,
+        auto_thread_on_mention: account.autoThreadOnMention ?? false,
         thread_policy_by_channel: account.threadPolicyByChannel ?? {},
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,
@@ -201,7 +201,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         default_permission_mode: account.defaultPermissionMode ?? "standard",
         allowed_channels: serializeAllowedChannels(account.allowedChannels),
         transcribe_voice: account.transcribeVoice === true,
-        auto_thread_on_mention: account.autoThreadOnMention ?? true,
+        auto_thread_on_mention: account.autoThreadOnMention ?? false,
         thread_policy_by_channel: account.threadPolicyByChannel ?? {},
         acknowledge_message_reaction:
           account.acknowledgeMessageReaction ?? false,

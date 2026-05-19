@@ -119,6 +119,17 @@ describe("isDiscordGuildChannelAllowed", () => {
     ).toBe(false);
   });
 
+  test("returns true for wildcard mode map", () => {
+    expect(
+      isDiscordGuildChannelAllowed({
+        channelId: "ch-anywhere",
+        parentChannelId: null,
+        isThread: false,
+        allowedChannels: { "*": "open" },
+      }),
+    ).toBe(true);
+  });
+
   test("returns true when mode map is empty", () => {
     expect(
       isDiscordGuildChannelAllowed({
@@ -189,6 +200,14 @@ describe("resolveDiscordChannelMode", () => {
         "ch-open": "open",
       }),
     ).toBe(null);
+  });
+
+  test("returns wildcard mode for channel not explicitly in mode map", () => {
+    expect(
+      resolveDiscordChannelMode("ch-anywhere", null, false, {
+        "*": "open",
+      }),
+    ).toBe("open");
   });
 
   test("returns null when mode map is empty", () => {

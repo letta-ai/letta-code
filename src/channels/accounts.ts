@@ -29,6 +29,7 @@ import {
  * account object; the canonicalized snake_case form is emitted on save.
  */
 const SNAKE_TO_CAMEL: Record<string, string> = {
+  allowed_channels: "allowedChannels",
   auto_thread_on_mention: "autoThreadOnMention",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
   inbound_debounce_ms: "inboundDebounceMs",

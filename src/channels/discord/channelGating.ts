@@ -88,7 +88,7 @@ export function isDiscordGuildChannelAllowed(
       parentChannelId,
       isThread,
     );
-    return gateChannelId in allowedChannels;
+    return gateChannelId in allowedChannels || "*" in allowedChannels;
   }
   return true;
 }
@@ -126,7 +126,7 @@ export function resolveDiscordChannelMode(
     if (Object.keys(allowedChannels).length === 0) {
       return null;
     }
-    return allowedChannels[gateChannelId] ?? null;
+    return allowedChannels[gateChannelId] ?? allowedChannels["*"] ?? null;
   }
   return null;
 }

@@ -127,7 +127,9 @@ describe("discord channel service", () => {
     expect(snapshot.hasToken).toBe(true);
     expect(snapshot.dmPolicy).toBe("pairing");
     expect(snapshot.defaultPermissionMode).toBe("standard");
+    expect(snapshot.autoThreadOnMention).toBe(false);
     expect(snapshot.config.default_permission_mode).toBe("standard");
+    expect(snapshot.config.auto_thread_on_mention).toBe(false);
 
     // Should NOT have Slack-specific fields
     expect((snapshot as Record<string, unknown>).mode).toBeUndefined();
@@ -406,6 +408,7 @@ describe("discord channel service", () => {
         defaultPermissionMode: "standard",
         dmPolicy: "pairing",
         allowedUsers: [],
+        allowed_channels: { "*": "open" },
         thread_policy_by_channel: { "channel-alpha": true },
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T00:00:00.000Z",
@@ -422,6 +425,7 @@ describe("discord channel service", () => {
     expect(isDiscordChannelAccount(first)).toBe(true);
     if (!isDiscordChannelAccount(first))
       throw new Error("expected discord account");
+    expect(first.allowedChannels).toEqual({ "*": "open" });
     expect(first.threadPolicyByChannel).toEqual({
       "channel-alpha": true,
     });

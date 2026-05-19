@@ -2,12 +2,68 @@ import { describe, expect, test } from "bun:test";
 import {
   buildDiscordIngressMessageKey,
   buildDiscordReplyOptions,
+  shouldAutoThreadOnDiscordMention,
 } from "../../channels/discord/adapter";
 
 // The Discord adapter's internal helpers are not exported, but we can test
 // the equivalent logic by reimplementing the pure functions here and verifying
 // they match the adapter's behavior. These are regression tests for the
 // algorithms used in adapter.ts.
+
+// ── shouldAutoThreadOnDiscordMention ───────────────────────────────
+
+describe("shouldAutoThreadOnDiscordMention", () => {
+  test("defaults to false when no policy is configured", () => {
+    expect(
+      shouldAutoThreadOnDiscordMention(
+        { autoThreadOnMention: undefined, threadPolicyByChannel: undefined },
+        "channel-1",
+      ),
+    ).toBe(false);
+  });
+
+  test("preserves account-level false", () => {
+    expect(
+      shouldAutoThreadOnDiscordMention(
+        { autoThreadOnMention: false, threadPolicyByChannel: {} },
+        "channel-1",
+      ),
+    ).toBe(false);
+  });
+
+  test("allows account-level true", () => {
+    expect(
+      shouldAutoThreadOnDiscordMention(
+        { autoThreadOnMention: true, threadPolicyByChannel: {} },
+        "channel-1",
+      ),
+    ).toBe(true);
+  });
+
+  test("per-channel policy overrides account-level false", () => {
+    expect(
+      shouldAutoThreadOnDiscordMention(
+        {
+          autoThreadOnMention: false,
+          threadPolicyByChannel: { "channel-1": true },
+        },
+        "channel-1",
+      ),
+    ).toBe(true);
+  });
+
+  test("per-channel policy overrides account-level true", () => {
+    expect(
+      shouldAutoThreadOnDiscordMention(
+        {
+          autoThreadOnMention: true,
+          threadPolicyByChannel: { "channel-1": false },
+        },
+        "channel-1",
+      ),
+    ).toBe(false);
+  });
+});
 
 // ── splitMessageText ──────────────────────────────────────────────────────
 
