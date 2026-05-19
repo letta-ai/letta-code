@@ -35,7 +35,10 @@ import {
   parseServerLifecycleMessage,
   parseServerMessage,
 } from "./protocol-inbound";
-import { emitDeviceStatusUpdate } from "./protocol-outbound";
+import {
+  emitDeviceStatusUpdate,
+  emitQueueUpdateIfOpen,
+} from "./protocol-outbound";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -432,6 +435,35 @@ export function createListenerMessageHandler(
           },
           processQueuedTurn,
         });
+        return;
+      }
+
+      if (parsed.type === "remove_queue_item") {
+        const scopedRuntime = getOrCreateScopedRuntime(
+          runtime,
+          parsed.runtime.agent_id,
+          parsed.runtime.conversation_id || "default",
+        );
+        const removed = scopedRuntime.queueRuntime.removeItem(parsed.item_id);
+        // Emit a response so the client knows if the item was found/removed
+        safeSocketSend(
+          socket,
+          {
+            type: "remove_queue_item_response",
+            request_id: parsed.request_id,
+            success: removed !== null,
+            item_id: parsed.item_id,
+          },
+          "remove_queue_item_response",
+          "remove_queue_item",
+        );
+        // Broadcast the updated queue so all connected clients see the change
+        if (removed !== null) {
+          emitQueueUpdateIfOpen(runtime, {
+            agent_id: parsed.runtime.agent_id,
+            conversation_id: parsed.runtime.conversation_id,
+          });
+        }
         return;
       }
 

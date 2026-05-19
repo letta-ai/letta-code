@@ -1584,6 +1584,24 @@ export interface ExecuteCommandCommand {
 }
 
 // ─────────────────────────────────────────────────
+//  Queue item commands
+// ─────────────────────────────────────────────────
+
+/**
+ * Remove a specific item from the queue by ID.
+ * Used by desktop to implement queue editing (load into input, remove from queue).
+ */
+export interface RemoveQueueItemCommand {
+  type: "remove_queue_item";
+  /** Correlation id (echoed back in the response for request correlation). */
+  request_id: string;
+  /** Runtime scope — identifies which agent + conversation this targets. */
+  runtime: RuntimeScope;
+  /** The queue item ID to remove. */
+  item_id: string;
+}
+
+// ─────────────────────────────────────────────────
 //  Git branch commands
 // ─────────────────────────────────────────────────
 
@@ -1695,6 +1713,13 @@ export interface SecretApplyResponse {
   error?: string;
 }
 
+export interface RemoveQueueItemResponse {
+  type: "remove_queue_item_response";
+  request_id: string;
+  success: boolean;
+  item_id: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -1758,6 +1783,7 @@ export type WsProtocolCommand =
   | ChannelRouteRemoveCommand
   | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
+  | RemoveQueueItemCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
   | SecretListCommand
@@ -1800,6 +1826,7 @@ export type WsProtocolMessage =
   | ChannelRoutesUpdatedMessage
   | ChannelTargetsUpdatedMessage
   | SecretListResponse
-  | SecretApplyResponse;
+  | SecretApplyResponse
+  | RemoveQueueItemResponse;
 
 export type { StopReasonType };
