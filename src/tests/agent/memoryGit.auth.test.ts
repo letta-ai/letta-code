@@ -23,6 +23,7 @@ import {
   maybeUpdateMemoryRemoteOrigin,
   normalizeCredentialBaseUrl,
   pullMemory,
+  redactGitAuthInText,
   shouldConfigurePersistentMemfsCredentialHelper,
 } from "../../agent/memoryGit";
 import {
@@ -352,6 +353,31 @@ describe("git auth hardening", () => {
     expect(env.GCM_INTERACTIVE).toBe("never");
     expect(env.GIT_ASKPASS).toBe("");
     expect(env.SSH_ASKPASS).toBe("");
+  });
+
+  test("redacts MemFS Authorization headers from git failure text", () => {
+    const secret = "sk-let-test-secret-123";
+    const encoded = Buffer.from(`letta:${secret}`).toString("base64");
+    const message = `Command failed: git -c credential.helper= -c core.askPass= -c http.extraHeader=Authorization: Basic ${encoded} clone https://api.letta.com/v1/git/agent-123/state.git .\nfatal: destination path '.' already exists and is not an empty directory.`;
+
+    const redacted = redactGitAuthInText(message);
+
+    expect(redacted).toContain(
+      "http.extraHeader=Authorization: Basic <redacted>",
+    );
+    expect(redacted).not.toContain(encoded);
+    expect(redacted).not.toContain(secret);
+  });
+
+  test("redacts bearer headers and credential helper passwords", () => {
+    const secret = "sk-let-test-secret-456";
+    const message = `Authorization: Bearer ${secret}\ngit config credential.https://api.letta.com.helper !f() { echo "username=letta"; echo "password=${secret}"; }; f`;
+
+    const redacted = redactGitAuthInText(message);
+
+    expect(redacted).toContain("Authorization: Bearer <redacted>");
+    expect(redacted).toContain("password=<redacted>");
+    expect(redacted).not.toContain(secret);
   });
 });
 
