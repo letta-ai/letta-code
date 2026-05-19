@@ -1143,11 +1143,38 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         return;
       }
 
+      const overlayCommand = consumeOverlayCommand("experiment");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        // For batch changes we can only queue one action; queue the first change.
+        const first = changes[0];
+        if (first) {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/experiments",
+              "Experiment changes queued – will update after current task completes",
+            );
+          cmd.update({
+            output:
+              "Experiment changes queued – will update after current task completes",
+            phase: "running",
+          });
+          setQueuedOverlayAction({
+            type: "set_experiment",
+            experimentId: first.experimentId,
+            enabled: first.enabled,
+            commandId: cmd.id,
+          });
+        }
+        return;
+      }
+
       await withCommandLock(async () => {
-        const cmd = commandRunner.start(
-          "/experiments",
-          "Updating experiments...",
-        );
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/experiments", "Updating experiments...");
         cmd.update({ output: "Updating experiments...", phase: "running" });
 
         try {
@@ -1166,7 +1193,15 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         }
       });
     },
-    [agentId, commandRunner, withCommandLock, setActiveOverlay],
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+      setActiveOverlay,
+      setQueuedOverlayAction,
+    ],
   );
 
   return {
