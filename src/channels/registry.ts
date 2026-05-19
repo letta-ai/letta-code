@@ -823,12 +823,7 @@ export class ChannelRegistry {
   private async handleCancelSlashCommand(
     msg: InboundChannelMessage,
   ): Promise<{ handled: boolean; text?: string }> {
-    const route = this.getRoute(
-      msg.channel,
-      msg.chatId,
-      msg.accountId,
-      msg.threadId,
-    );
+    const route = this.getCancelRoute(msg);
     if (!route?.enabled || !this.cancelHandler) {
       return {
         handled: true,
@@ -851,6 +846,42 @@ export class ChannelRegistry {
     }
 
     return { handled: true };
+  }
+
+  private getCancelRoute(msg: InboundChannelMessage): ChannelRoute | null {
+    let route = this.getRoute(
+      msg.channel,
+      msg.chatId,
+      msg.accountId,
+      msg.threadId,
+    );
+    if (route) {
+      return route;
+    }
+
+    loadRoutes(msg.channel);
+    route = this.getRoute(msg.channel, msg.chatId, msg.accountId, msg.threadId);
+    if (route) {
+      return route;
+    }
+
+    if (
+      msg.channel !== "slack" ||
+      msg.chatType !== "channel" ||
+      msg.threadId != null
+    ) {
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const matches = getRoutesForChannel(msg.channel, accountId).filter(
+      (candidate) =>
+        candidate.chatId === msg.chatId &&
+        candidate.chatType === "channel" &&
+        candidate.enabled,
+    );
+
+    return matches.length === 1 ? (matches[0] ?? null) : null;
   }
 
   private async handleInboundMessage(

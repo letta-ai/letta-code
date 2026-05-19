@@ -348,6 +348,76 @@ describe("ChannelRegistry", () => {
       "Telegram received /cancel, but there is no in-progress agent turn to cancel for this chat.",
     );
   });
+
+  test("/cancel can target the sole Slack thread route when native commands omit thread metadata", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const cancellations: unknown[] = [];
+    const registry = new ChannelRegistry();
+    registry.setMessageHandler(() => {});
+    registry.setCancelHandler(async (params) => {
+      cancellations.push(params);
+      return true;
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/cancel",
+      timestamp: Date.now(),
+      messageId: "trigger-1",
+      threadId: null,
+      chatType: "channel",
+    });
+
+    expect(cancellations).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies[0]?.text).toBe(
+      "Slack cancelled the in-progress agent turn for this chat.",
+    );
+  });
 });
 
 describe("buildSlackConversationSummary", () => {
