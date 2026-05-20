@@ -189,7 +189,7 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
 const LETTA_CLOUD_MEMFS_GIT_BASE_URL = "https://api.letta.com";
 const LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV = "LETTA_MEMFS_GIT_PROXY_BASE_URL";
 const PIERRE_BACKEND_HEADER = "x-letta-memfs-backend";
-const PIERRE_BACKEND_VALUE = "pierre";
+const PIERRE_BACKEND_VALUE = "hosted";
 
 function isLocalhostUrl(value: string | undefined): boolean {
   if (!value) return false;

@@ -326,12 +326,12 @@ describe("git auth hardening", () => {
     expect(args.join("\n")).not.toContain("x-letta-memfs-backend");
   });
 
-  test("adds Pierre routing header when LETTA_MEMFS_BACKEND=pierre", () => {
+  test("adds Pierre routing header when LETTA_MEMFS_BACKEND=hosted", () => {
     const args = buildGitAuthArgs("token-123", {
-      LETTA_MEMFS_BACKEND: "pierre",
+      LETTA_MEMFS_BACKEND: "hosted",
     });
     expect(args.join("\n")).toContain(
-      "http.extraHeader=x-letta-memfs-backend: pierre",
+      "http.extraHeader=x-letta-memfs-backend: hosted",
     );
   });
 
