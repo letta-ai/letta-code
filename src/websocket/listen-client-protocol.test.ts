@@ -1129,6 +1129,71 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
+  test("remote goal status reports blocked goals", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-goal-blocked-"));
+    const originalCwd = process.cwd();
+    let goalSettingsDir = storageDir;
+    try {
+      process.chdir(storageDir);
+      goalSettingsDir = process.cwd();
+      await settingsManager.initialize();
+      await settingsManager.loadLocalProjectSettings(goalSettingsDir);
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "WS Goal Agent",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agent.id,
+        "conv-goal-blocked",
+      );
+      const socket = new MockSocket(WebSocket.OPEN);
+
+      settingsManager.setConversationGoal(
+        "conv-goal-blocked",
+        "ship the feature",
+      );
+      settingsManager.updateConversationGoalStatus(
+        "conv-goal-blocked",
+        "blocked",
+      );
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "goal",
+          request_id: "goal-status-blocked-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "conv-goal-blocked" },
+          args: "status",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      const payloads = socket.sentPayloads.join("\n");
+      expect(payloads).toContain("Goal blocked");
+      expect(payloads).toContain("ship the feature");
+    } finally {
+      try {
+        settingsManager.clearConversationGoal(
+          "conv-goal-blocked",
+          goalSettingsDir,
+        );
+      } catch {
+        // settings may not have initialized if the test failed early
+      }
+      process.chdir(originalCwd);
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("runs remote clear execute_command against local backend", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "ws-clear-local-"));
     try {
