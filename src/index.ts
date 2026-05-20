@@ -1213,7 +1213,7 @@ async function main(): Promise<void> {
   const { render } = await import("ink");
   const { useState, useEffect, useCallback } = React;
   const AppModule = await import("./cli/App");
-  const App = AppModule.default;
+  const App = AppModule.App;
 
   function LoadingApp({
     forceNew,
