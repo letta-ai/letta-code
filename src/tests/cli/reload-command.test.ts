@@ -58,6 +58,7 @@ describe("/reload command", () => {
 
     expect(source).toContain("onReload: handleReload");
     expect(source).toContain(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting source contains literal template string syntax
       "key: `${agentId}:${conversationId}:${appReloadEpoch}`",
     );
   });

@@ -241,7 +241,8 @@ function convertLegacyMessage(
   const result: LocalMessage[] = [];
 
   for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
-    const step = steps[stepIndex]!;
+    const step = steps[stepIndex];
+    if (!step) continue;
     // Single-step messages keep the original ID; multi-step messages get
     // fresh sequential IDs to avoid introducing a new ID format.
     const stepId = steps.length === 1 ? id : `ui-msg-${nextId()}`;
