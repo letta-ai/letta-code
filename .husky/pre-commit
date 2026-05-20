@@ -1,12 +1,7 @@
 #!/usr/bin/env sh
 
-# Lint staged files only (fast)
-bunx lint-staged
-
-# Typecheck full project (catches type errors in unchanged files)
-bun run typecheck
-
 # Ban relative parent imports — use @/ instead of ../
+# Runs first so the error message is clear before tsc fires confusing TS2307s.
 # Exempts package.json imports which must remain relative (they live above src/)
 STAGED_TS=$(git diff --cached --name-only | grep -E '\.(ts|tsx)$')
 if [ -n "$STAGED_TS" ]; then
@@ -15,6 +10,14 @@ if [ -n "$STAGED_TS" ]; then
     echo ""
     echo "❌ Relative parent imports found — use @/ instead of ../:"
     echo "$VIOLATIONS"
+    echo ""
+    echo "Fix: change 'from \"../foo\"' to 'from \"@/foo\"'"
     exit 1
   fi
 fi
+
+# Lint staged files only (fast)
+bunx lint-staged
+
+# Typecheck full project (catches type errors in unchanged files)
+bun run typecheck
