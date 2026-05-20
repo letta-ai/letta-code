@@ -29,8 +29,8 @@ Letta Code is a frontier coding agent and can also be used as a long-lived perso
 | [Hooks](https://docs.letta.com/letta-code/hooks) | Run custom scripts at key points of agent execution to automate workflows |
 | [Permissions](https://docs.letta.com/letta-code/permissions) | Set permission modes and customize what actions are auto-approved or auto-denied |
 | [Crons & Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats and crons, and let agents work across time with self-managed schedules |
-| [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) (requires Constellation login) | Agents work across multiple environments. Make any machine available as a remote environment by running `letta server --env-name "..."`|
-| [Secrets](https://docs.letta.com/letta-code/secrets) (requires Constellation login) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
+| [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) | Agents work across multiple environments. Make any machine available as a remote environment by running `letta server --env-name "..."`|
+| [Secrets](https://docs.letta.com/letta-code/secrets) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
 
 See the full list of slash commands in our [documentation](https://docs.letta.com/letta-code/slash-commands).
 
