@@ -14,10 +14,7 @@ import { __listenClientTestUtils } from "@/websocket/listen-client";
 
 function readModelToolsetCommandSource(): string {
   const commandPath = fileURLToPath(
-    new URL(
-      "./listener/commands/model-toolset.ts",
-      import.meta.url,
-    ),
+    new URL("./listener/commands/model-toolset.ts", import.meta.url),
   );
   return readFileSync(commandPath, "utf-8");
 }
