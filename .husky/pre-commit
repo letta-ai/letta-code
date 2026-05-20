@@ -6,7 +6,7 @@
 # Note: || true guards against grep exit code 1 (no match) under sh -e (husky v9)
 STAGED_TS=$(git diff --cached --name-only | grep -E '\.(ts|tsx)$' || true)
 if [ -n "$STAGED_TS" ]; then
-  VIOLATIONS=$(echo "$STAGED_TS" | xargs grep -l 'from "\.\.' 2>/dev/null | xargs grep 'from "\.\.' 2>/dev/null | grep -v 'package\.json' || true)
+  VIOLATIONS=$(echo "$STAGED_TS" | xargs grep -lE '^(import|export).*from "\.\.' 2>/dev/null | xargs grep -E '^(import|export).*from "\.\.' 2>/dev/null | grep -v 'package\.json' || true)
   if [ -n "$VIOLATIONS" ]; then
     echo ""
     echo "❌ Relative parent imports found — use @/ instead of ../:"

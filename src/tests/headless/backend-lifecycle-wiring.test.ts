@@ -65,7 +65,7 @@ describe("headless backend lifecycle wiring", () => {
   test("interactive profile picker resolves agents through Backend", () => {
     const source = readSource("../../cli/profile-selection.tsx");
 
-    expect(source).toContain('import { getBackend } from "../backend"');
+    expect(source).toContain('import { getBackend } from "@/backend"');
     expect(source).toContain("backend.retrieveAgent(");
     expect(source).not.toContain("getClient");
     expect(source).not.toContain("client.agents.");

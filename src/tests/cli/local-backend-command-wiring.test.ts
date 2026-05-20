@@ -95,9 +95,7 @@ describe("local backend command wiring", () => {
       new URL("../../cli/commands/profile.ts", import.meta.url),
     );
     const profileSource = readFileSync(profilePath, "utf-8");
-    expect(profileSource).toContain(
-      'import { getBackend } from "../../backend";',
-    );
+    expect(profileSource).toContain('import { getBackend } from "@/backend"');
     expect(profileSource).not.toContain("getClient");
 
     const memoryViewerPath = fileURLToPath(
@@ -212,7 +210,7 @@ describe("local backend command wiring", () => {
       new URL("../../tools/impl/Task.ts", import.meta.url),
     );
     const taskSource = readFileSync(taskPath, "utf-8");
-    expect(taskSource).toContain('import { getBackend } from "../../backend";');
+    expect(taskSource).toContain('import { getBackend } from "@/backend"');
     expect(taskSource).toContain("await getBackend().forkConversation(");
     expect(taskSource).not.toContain('from "../../backend/api/conversations"');
 

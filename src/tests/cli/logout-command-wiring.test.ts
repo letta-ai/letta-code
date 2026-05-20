@@ -10,7 +10,7 @@ describe("logout command wiring", () => {
     const source = readAppSource();
 
     expect(source).toContain(
-      'import { buildLogoutSuccessMessage } from "../helpers/logoutMessage";',
+      'import { buildLogoutSuccessMessage } from "@/cli/helpers/logoutMessage"',
     );
     expect(source).toContain(
       "buildLogoutSuccessMessage(Boolean(process.env.LETTA_API_KEY))",
