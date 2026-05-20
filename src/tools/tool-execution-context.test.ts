@@ -15,7 +15,7 @@ import {
   clearChannelAccountStores,
   upsertChannelAccount,
 } from "@/channels/accounts";
-import { clearDynamicMessageChannelToolCache } from "@/channels/messageTool";
+import { clearDynamicMessageChannelToolCache } from "@/channels/message-tool";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import { setRouteInMemory } from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";

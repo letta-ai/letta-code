@@ -12,7 +12,7 @@ import { settingsManager } from "@/settings-manager";
 import { type CreateAgentOptions, createAgent } from "./create";
 import { parseMdxFrontmatter } from "./memory";
 import { getDefaultModel, resolveModel } from "./model";
-import { MEMORY_PROMPTS } from "./promptAssets";
+import { MEMORY_PROMPTS } from "./prompt-assets";
 
 // Tags used to identify default agents
 export const MEMO_TAG = "default:memo";
@@ -172,7 +172,7 @@ export async function ensureDefaultAgents(
   try {
     // Pre-determine memfs mode so the agent is created with the correct prompt.
     const { isLettaCloud, enableMemfsIfCloud } = await import(
-      "@/agent/memoryFilesystem"
+      "@/agent/memory-filesystem"
     );
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs && (await isLettaCloud());

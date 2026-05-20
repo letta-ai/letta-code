@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { TestDirectory } from "@/test-utils/testFs";
-import { multi_edit } from "@/tools/impl/MultiEdit";
+import { TestDirectory } from "@/test-utils/test-fs";
+import { multi_edit } from "@/tools/impl/multi-edit";
 
 describe("MultiEdit tool", () => {
   let testDir: TestDirectory;

@@ -4,7 +4,7 @@ import {
   buildDynamicMessageChannelSchema,
   buildDynamicMessageChannelToolDefinition,
   clearDynamicMessageChannelToolCache,
-} from "@/channels/messageTool";
+} from "@/channels/message-tool";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
 

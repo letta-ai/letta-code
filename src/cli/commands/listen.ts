@@ -6,7 +6,7 @@
 import { hostname } from "node:os";
 import { getServerUrl } from "@/backend/api/client";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
-import { buildAgentReference } from "@/cli/helpers/appUrls";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
 import {

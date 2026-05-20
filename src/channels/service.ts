@@ -6,7 +6,7 @@ import {
   normalizeChannelConfigPatch,
   toChannelAccountProtocolConfig,
   toChannelConfigSnapshotProtocolConfig,
-} from "./accountConfig";
+} from "./account-config";
 import {
   getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,
@@ -25,12 +25,12 @@ import {
   getChannelDisplayName,
   getSupportedChannelIds,
   isSupportedChannelId,
-} from "./pluginRegistry";
+} from "./plugin-registry";
 import type {
   ChannelAccountPatch,
   ChannelConfigPatch,
   ChannelProtocolConfig,
-} from "./pluginTypes";
+} from "./plugin-types";
 import {
   completePairing,
   ensureChannelRegistry,
@@ -179,7 +179,7 @@ export interface ChannelAccountSnapshot {
   updatedAt: string;
 }
 
-export type { ChannelAccountPatch, ChannelConfigPatch } from "./pluginTypes";
+export type { ChannelAccountPatch, ChannelConfigPatch } from "./plugin-types";
 
 let resolveChannelAccountDisplayNameOverride:
   | ((

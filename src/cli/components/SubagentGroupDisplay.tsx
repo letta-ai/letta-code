@@ -23,15 +23,15 @@ import {
   type SubagentState,
   subscribe,
   toggleExpanded,
-} from "@/agent/subagentState.js";
+} from "@/agent/subagent-state.js";
 import { useAnimation } from "@/cli/contexts/AnimationContext.js";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   formatStats,
   getSubagentModelDisplay,
   getTreeChars,
-} from "@/cli/helpers/subagentDisplay.js";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth.js";
+} from "@/cli/helpers/subagent-display.js";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";

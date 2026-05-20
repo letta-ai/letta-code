@@ -8,7 +8,7 @@ describe("listen reflection wiring", () => {
       new URL("../websocket/listener/turn.ts", import.meta.url),
     );
     const listenContextPath = fileURLToPath(
-      new URL("../reminders/listenContext.ts", import.meta.url),
+      new URL("../reminders/listen-context.ts", import.meta.url),
     );
     const turnSource = readFileSync(turnPath, "utf-8");
     const listenContextSource = readFileSync(listenContextPath, "utf-8");

@@ -7,7 +7,7 @@ import {
 import {
   emptyLocalUsage,
   type LocalMessage,
-} from "@/backend/local/LocalMessage";
+} from "@/backend/local/local-message";
 
 function user(
   id: string,

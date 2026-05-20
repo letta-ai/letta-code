@@ -8,7 +8,7 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { create_worktree } from "@/tools/impl/CreateWorktree";
+import { create_worktree } from "@/tools/impl/create-worktree";
 import {
   clearToolsWithLock,
   executeTool,
@@ -16,7 +16,11 @@ import {
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
 } from "@/tools/manager";
-import { ensureFileIndex, getIndexRoot, setIndexRoot } from "@/utils/fileIndex";
+import {
+  ensureFileIndex,
+  getIndexRoot,
+  setIndexRoot,
+} from "@/utils/file-index";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 import { setActiveRuntime } from "@/websocket/listener/runtime";

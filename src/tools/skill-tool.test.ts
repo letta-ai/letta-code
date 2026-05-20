@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { consumeQueuedSkillContent } from "@/tools/impl/skillContentRegistry";
+import { consumeQueuedSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;
 
 const { renderSkillContent, skill, wrapSkillContent } = await import(
-  "@/tools/impl/Skill"
+  "@/tools/impl/skill"
 );
 
 function withSkillContext<T>(fn: () => Promise<T>) {

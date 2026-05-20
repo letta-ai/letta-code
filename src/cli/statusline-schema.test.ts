@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   STATUSLINE_DERIVED_FIELDS,
   STATUSLINE_NATIVE_FIELDS,
-} from "@/cli/helpers/statusLineSchema";
+} from "@/cli/helpers/status-line-schema";
 
 describe("statusLineSchema", () => {
   test("contains native and derived fields", () => {

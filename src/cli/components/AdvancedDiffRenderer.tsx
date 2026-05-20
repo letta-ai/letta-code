@@ -7,7 +7,7 @@ import {
   computeAdvancedDiff,
 } from "@/cli/helpers/diff";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { EditRenderer, MultiEditRenderer, WriteRenderer } from "./DiffRenderer";
 import {

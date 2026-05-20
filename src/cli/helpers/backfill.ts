@@ -11,10 +11,10 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
-import { extractTaskNotificationsForDisplay } from "@/utils/taskNotifications";
+import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import type { Buffers } from "./accumulator";
 import { extractCompactionSummary } from "./compaction-utils";
-import { trimFinishedReasoningText } from "./reasoningText";
+import { trimFinishedReasoningText } from "./reasoning-text";
 
 /**
  * Extract displayable text from tool return content.

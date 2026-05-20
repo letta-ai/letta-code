@@ -1,4 +1,4 @@
-import { trackBoundaryError } from "./telemetry/errorReporting";
+import { trackBoundaryError } from "./telemetry/error-reporting";
 
 export interface UpdateNotification {
   latestVersion: string;

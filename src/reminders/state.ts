@@ -1,4 +1,4 @@
-import type { ContextTracker } from "@/cli/helpers/contextTracker";
+import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { PermissionMode } from "@/permissions/mode";
 
 const MAX_PENDING_INTERACTION_REMINDERS = 25;

@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createMinimalAgent } from "@/backend/api/agents";
-import { buildAgentReference } from "@/cli/helpers/appUrls";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/letta.yml";
 const ALTERNATE_WORKFLOW_PATH = ".github/workflows/letta-code.yml";

@@ -1,7 +1,7 @@
-import type { ChannelPlugin } from "@/channels/pluginTypes";
+import type { ChannelPlugin } from "@/channels/plugin-types";
 import type { ChannelAccount, TelegramChannelAccount } from "@/channels/types";
 import { createTelegramAdapter } from "./adapter";
-import { telegramMessageActions } from "./messageActions";
+import { telegramMessageActions } from "./message-actions";
 import { runTelegramSetup } from "./setup";
 
 export const telegramChannelPlugin: ChannelPlugin = {

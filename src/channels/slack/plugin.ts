@@ -1,7 +1,7 @@
-import type { ChannelPlugin } from "@/channels/pluginTypes";
+import type { ChannelPlugin } from "@/channels/plugin-types";
 import type { ChannelAccount, SlackChannelAccount } from "@/channels/types";
 import { createSlackAdapter } from "./adapter";
-import { slackMessageActions } from "./messageActions";
+import { slackMessageActions } from "./message-actions";
 import { runSlackSetup } from "./setup";
 
 export const slackChannelPlugin: ChannelPlugin = {

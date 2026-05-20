@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatStatusLineHelp } from "@/cli/helpers/statusLineHelp";
+import { formatStatusLineHelp } from "@/cli/helpers/status-line-help";
 
 describe("statusLineHelp", () => {
   test("includes configuration and input sections", () => {

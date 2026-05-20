@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { todo_write } from "@/tools/impl/TodoWrite";
+import { todo_write } from "@/tools/impl/todo-write";
 
 describe("TodoWrite tool", () => {
   test("accepts valid todos with all required fields", async () => {

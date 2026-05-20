@@ -8,7 +8,7 @@ import {
   getCachedModelHandles,
 } from "@/agent/available-models";
 import { models } from "@/agent/model";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,

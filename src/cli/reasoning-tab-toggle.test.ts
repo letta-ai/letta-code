@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoningTabToggle";
+import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
 
 describe("reasoning tab toggle command parsing", () => {
   test("returns null for non-matching commands", () => {
