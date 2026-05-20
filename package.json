@@ -13,7 +13,8 @@
     "scripts",
     "skills",
     "vendor",
-    "dist/types"
+    "dist/types",
+    "docs"
   ],
   "exports": {
     ".": "./letta.js",
