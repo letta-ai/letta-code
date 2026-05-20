@@ -7,12 +7,12 @@ import {
   useCallback,
 } from "react";
 import type { ApprovalResult } from "@/agent/approval-execution";
+import { interruptActiveSubagents } from "@/agent/subagentState";
 import { getBackend } from "@/backend";
 import type { Buffers } from "@/cli/helpers/accumulator";
 import { markIncompleteToolsAsCancelled } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
-import { interruptActiveSubagents } from "@/cli/helpers/subagentState";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import type { ApprovalContext } from "@/permissions/analyzer";
 

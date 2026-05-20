@@ -2,6 +2,7 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { ensureFileIndex } from "@/utils/fileIndex";
 import {
   getResumeDataFromBackend,
   type ResumeData,
@@ -52,7 +53,6 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
-import { ensureFileIndex } from "./cli/helpers/fileIndex";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminalTheme";
 import { ProfileSelectionInline } from "./cli/profile-selection";

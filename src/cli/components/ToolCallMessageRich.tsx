@@ -2,6 +2,7 @@
 // is shown via StaticPlanApproval during approval, not in tool result
 import { Box } from "ink";
 import { Fragment, memo, type ReactNode } from "react";
+import { getSubagentByToolCallId } from "@/agent/subagentState.js";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
   formatArgsDisplay,
@@ -9,7 +10,6 @@ import {
   parsePatchOperations,
 } from "@/cli/helpers/formatArgsDisplay.js";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { getSubagentByToolCallId } from "@/cli/helpers/subagentState.js";
 import {
   getDisplayToolName,
   isFileEditTool,

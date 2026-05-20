@@ -3,6 +3,7 @@
  * Enforces architectural import boundaries between top-level modules.
  *
  * Rules:
+ *   tools/    must not import from  cli/
  *   backend/  must not import from  cli/  or  websocket/
  *   providers/ must not import from  agent/  or  cli/
  *
@@ -24,6 +25,12 @@ const srcDir = join(rootDir, "src");
  * `description` is shown on violation.
  */
 const RULES = [
+  {
+    layer: "tools",
+    forbidden: ["cli"],
+    description:
+      "tools/ run in headless and agent contexts — they must not import from cli/",
+  },
   {
     layer: "backend",
     forbidden: ["cli", "websocket"],

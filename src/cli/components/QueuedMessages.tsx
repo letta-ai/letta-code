@@ -1,7 +1,7 @@
 import { Box } from "ink";
 import { memo } from "react";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
 import { Text } from "./Text";
 
 interface QueuedMessagesProps {

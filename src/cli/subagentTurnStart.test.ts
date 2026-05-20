@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
-  collectFinishedTaskToolCalls,
-  hasInProgressTaskToolCalls,
-} from "@/cli/helpers/subagentAggregation";
-import {
   clearAllSubagents,
   clearCompletedSubagents,
   completeSubagent,
   getSubagentByToolCallId,
   registerSubagent,
-} from "@/cli/helpers/subagentState";
+} from "@/agent/subagentState";
+import {
+  collectFinishedTaskToolCalls,
+  hasInProgressTaskToolCalls,
+} from "@/cli/helpers/subagentAggregation";
 import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,

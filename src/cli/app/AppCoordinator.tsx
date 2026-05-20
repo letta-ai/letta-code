@@ -29,6 +29,13 @@ import { shouldRecommendDefaultPrompt } from "@/agent/promptAssets";
 import { reconcileExistingAgentState } from "@/agent/reconcileExistingAgentState";
 import { recordSessionEnd } from "@/agent/sessionHistory";
 import { SessionStats } from "@/agent/stats";
+import {
+  clearSubagentsByIds,
+  getActiveBackgroundAgents,
+  getSubagentByToolCallId,
+  getSnapshot as getSubagentSnapshot,
+  subscribe as subscribeToSubagents,
+} from "@/agent/subagentState";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
@@ -61,12 +68,6 @@ import { setErrorContext } from "@/cli/helpers/errorContext";
 import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
 import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
 import {
-  addToMessageQueue,
-  type QueuedMessage,
-  setMessageQueueAdder,
-} from "@/cli/helpers/messageQueueBridge";
-import { generatePlanFilePath } from "@/cli/helpers/planName";
-import {
   buildContentFromQueueBatch,
   toQueuedMsg,
 } from "@/cli/helpers/queuedMessageParts";
@@ -77,15 +78,7 @@ import {
   createSubagentGroupItem,
   hasInProgressTaskToolCalls,
 } from "@/cli/helpers/subagentAggregation";
-import {
-  clearSubagentsByIds,
-  getActiveBackgroundAgents,
-  getSubagentByToolCallId,
-  getSnapshot as getSubagentSnapshot,
-  subscribe as subscribeToSubagents,
-} from "@/cli/helpers/subagentState";
 import { buildStartupSystemPromptWarning } from "@/cli/helpers/systemPromptWarning.ts";
-import { appendTaskNotificationEventsToBuffer } from "@/cli/helpers/taskNotifications";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
 import {
   isFileEditTool,
@@ -151,6 +144,13 @@ import {
   debugWarn,
   isDebugEnabled,
 } from "@/utils/debug";
+import {
+  addToMessageQueue,
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/messageQueueBridge";
+import { generatePlanFilePath } from "@/utils/planName";
+import { appendTaskNotificationEventsToBuffer } from "@/utils/taskNotifications";
 import { recordTuiPerf } from "@/utils/tuiPerf";
 import { getVersion } from "@/version";
 import { AppView } from "./AppView";

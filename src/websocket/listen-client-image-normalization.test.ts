@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import sharp from "sharp";
-import { MAX_IMAGE_HEIGHT, MAX_IMAGE_WIDTH } from "@/cli/helpers/imageResize";
+import { MAX_IMAGE_HEIGHT, MAX_IMAGE_WIDTH } from "@/utils/imageResize";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 
 describe("listen-client inbound image normalization", () => {

@@ -1,13 +1,12 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnSource } from "@/channels/types";
-import { setMessageQueueAdder } from "@/cli/helpers/messageQueueBridge";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
-} from "@/cli/helpers/subagentState";
+} from "@/agent/subagentState";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
 import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
@@ -20,6 +19,7 @@ import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/errorReporting";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
+import { setMessageQueueAdder } from "@/utils/messageQueueBridge";
 import { killAllTerminals } from "@/websocket/terminalHandler";
 import { rejectPendingApprovalResolvers } from "./approval";
 import { handleChannelRegistryEvent } from "./commands/channels";

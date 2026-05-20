@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import sharp from "sharp";
-import { MAX_IMAGE_HEIGHT, MAX_IMAGE_WIDTH } from "@/cli/helpers/imageResize";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
 import { TestDirectory } from "@/test-utils/testFs";
 import { read } from "@/tools/impl/Read";
+import { MAX_IMAGE_HEIGHT, MAX_IMAGE_WIDTH } from "@/utils/imageResize";
 
 describe("Read tool", () => {
   let testDir: TestDirectory;

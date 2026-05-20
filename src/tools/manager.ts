@@ -17,7 +17,6 @@ import {
 } from "@/channels/messageTool";
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
-import { refreshFileIndex } from "@/cli/helpers/fileIndex";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import {
   runPostToolUseFailureHooks,
@@ -38,6 +37,7 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
+import { refreshFileIndex } from "@/utils/fileIndex";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,

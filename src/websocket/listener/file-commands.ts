@@ -1,14 +1,14 @@
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import type WebSocket from "ws";
+import { trackBoundaryError } from "@/telemetry/errorReporting";
 import {
   ensureFileIndex,
   getIndexRoot,
   refreshFileIndex,
   searchFileIndex,
   setIndexRoot,
-} from "@/cli/helpers/fileIndex";
-import { trackBoundaryError } from "@/telemetry/errorReporting";
+} from "@/utils/fileIndex";
 import { runGrepInFiles } from "./grepInFiles";
 import {
   isEditFileCommand,

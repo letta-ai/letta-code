@@ -13,6 +13,11 @@ import { getCurrentAgentId } from "@/agent/context";
 import { getDefaultModelForTier, resolveModel } from "@/agent/model";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import {
+  addToolCall,
+  emitStreamEvent,
+  updateSubagent,
+} from "@/agent/subagentState.js";
+import {
   type BackendMode,
   getBackend,
   getLocalBackendStorageDir,
@@ -20,11 +25,6 @@ import {
 import { getBillingTier } from "@/backend/api/metadata";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
 import { buildAgentReference } from "@/cli/helpers/appUrls";
-import {
-  addToolCall,
-  emitStreamEvent,
-  updateSubagent,
-} from "@/cli/helpers/subagentState.js";
 import {
   INTERRUPTED_BY_USER,
   SYSTEM_REMINDER_CLOSE,

@@ -68,7 +68,6 @@ import {
   getReflectionSettings,
   type ReflectionSettings,
 } from "@/cli/helpers/memoryReminder";
-import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -84,6 +83,7 @@ import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
 import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
 import { _readPlanFile } from "./planFile";

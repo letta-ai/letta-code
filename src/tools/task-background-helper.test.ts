@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import type { SubagentState } from "@/cli/helpers/subagentState";
+import type { SubagentState } from "@/agent/subagentState";
 import {
   clearAllSubagents,
   registerSubagent,
   updateSubagent,
-} from "@/cli/helpers/subagentState";
+} from "@/agent/subagentState";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,

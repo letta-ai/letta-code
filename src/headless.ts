@@ -6,6 +6,10 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import {
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/messageQueueBridge";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -76,10 +80,6 @@ import {
   type ReflectionSettings,
   type ReflectionTrigger,
 } from "./cli/helpers/memoryReminder";
-import {
-  type QueuedMessage,
-  setMessageQueueAdder,
-} from "./cli/helpers/messageQueueBridge";
 import {
   type DrainStreamHook,
   drainStreamWithResume,

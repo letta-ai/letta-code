@@ -5,12 +5,12 @@ import {
   isQueueBridgeConnected,
   type QueuedMessage,
   setMessageQueueAdder,
-} from "@/cli/helpers/messageQueueBridge";
+} from "@/utils/messageQueueBridge";
 import {
   formatTaskNotification,
   formatTaskNotifications,
   type TaskNotification,
-} from "@/cli/helpers/taskNotifications";
+} from "@/utils/taskNotifications";
 
 describe("taskNotifications", () => {
   describe("formatTaskNotification", () => {

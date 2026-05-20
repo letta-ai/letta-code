@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
-import { resizeImageIfNeeded } from "./imageResize";
+import { resizeImageIfNeeded } from "@/utils/imageResize";
 import { allocateImage } from "./pasteRegistry";
 
 /**

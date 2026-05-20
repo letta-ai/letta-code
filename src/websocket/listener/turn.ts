@@ -21,6 +21,7 @@ import {
   getStreamToolContextId,
   type sendMessageStream,
 } from "@/agent/message";
+import { getSubagents } from "@/agent/subagentState";
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
@@ -44,7 +45,6 @@ import {
   finalizeAutoReflectionPayload,
 } from "@/cli/helpers/reflectionTranscript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
-import { getSubagents } from "@/cli/helpers/subagentState";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
