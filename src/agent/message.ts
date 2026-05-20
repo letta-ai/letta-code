@@ -9,21 +9,21 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
-import { getBackend } from "../backend";
+import { getBackend } from "@/backend";
 import {
   type ClientTool,
   type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareCurrentToolExecutionContext,
   waitForToolsetReady,
-} from "../tools/manager";
-import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
+} from "@/tools/manager";
+import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,
   normalizeMessageImageParts,
-} from "../utils/messageImageNormalization";
-import { createStreamAbortRelay } from "../utils/streamAbortRelay";
-import { isTimingsEnabled } from "../utils/timing";
+} from "@/utils/messageImageNormalization";
+import { createStreamAbortRelay } from "@/utils/streamAbortRelay";
+import { isTimingsEnabled } from "@/utils/timing";
 import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,

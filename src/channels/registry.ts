@@ -10,9 +10,9 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
-import { getClient } from "../backend/api/client";
-import type { ApprovalResponseBody } from "../types/protocol_v2";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { getClient } from "@/backend/api/client";
+import type { ApprovalResponseBody } from "@/types/protocol_v2";
 import {
   getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,

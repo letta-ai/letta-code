@@ -3,7 +3,7 @@
  * This allows tools to access the current agent ID without threading it through params.
  */
 
-import { getRuntimeContext, updateRuntimeContext } from "../runtime-context";
+import { getRuntimeContext, updateRuntimeContext } from "@/runtime-context";
 import { ALL_SKILL_SOURCES } from "./skillSources";
 import type { SkillSource } from "./skills";
 

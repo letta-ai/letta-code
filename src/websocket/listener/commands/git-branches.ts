@@ -1,13 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type WebSocket from "ws";
-import { getGitContext } from "../../../cli/helpers/gitContext";
+import { getGitContext } from "@/cli/helpers/gitContext";
 import {
   isCheckoutBranchCommand,
   isSearchBranchesCommand,
-} from "../protocol-inbound";
-import { emitDeviceStatusUpdate } from "../protocol-outbound";
-import type { ListenerRuntime } from "../types";
+} from "@/websocket/listener/protocol-inbound";
+import { emitDeviceStatusUpdate } from "@/websocket/listener/protocol-outbound";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 type GitBranchCommandContext = {

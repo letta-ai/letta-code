@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { createIsolatedCliTestEnv } from "@/test-utils/testProcessEnv";
 import {
   formatCapturedOutput,
   summarizeRecentMessages,

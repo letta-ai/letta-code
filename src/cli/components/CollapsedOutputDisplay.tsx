@@ -1,7 +1,7 @@
 import { Box } from "ink";
 import { memo } from "react";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 import { Text } from "./Text";
 
@@ -12,19 +12,23 @@ interface CollapsedOutputDisplayProps {
   output: string; // Full output from completion
   maxLines?: number; // Max lines to show before collapsing (Infinity = show all)
   maxChars?: number; // Max chars to show before clipping
+  expanded?: boolean; // Whether to show full output
+  isLast?: boolean; // Whether this is the last shell tool call (shows ctrl+o hint)
 }
 
 /**
  * Display component for bash output after completion.
  * Shows first 3 lines with count of hidden lines.
  * Uses proper two-column layout with width constraints for correct wrapping.
- * Note: expand/collapse (ctrl+o) is deferred to a future PR.
+ * Toggle expand/collapse with ctrl+o (handled by AppCoordinator).
  */
 export const CollapsedOutputDisplay = memo(
   ({
     output,
     maxLines = DEFAULT_COLLAPSED_LINES,
     maxChars,
+    expanded = false,
+    isLast = false,
   }: CollapsedOutputDisplayProps) => {
     const columns = useTerminalWidth();
     const contentWidth = Math.max(0, columns - PREFIX_WIDTH);
@@ -32,6 +36,7 @@ export const CollapsedOutputDisplay = memo(
     let displayOutput = output;
     let clippedByChars = false;
     if (
+      !expanded &&
       typeof maxChars === "number" &&
       maxChars > 0 &&
       output.length > maxChars
@@ -51,7 +56,8 @@ export const CollapsedOutputDisplay = memo(
       return null;
     }
 
-    const showAll = maxLines === Infinity || maxLines >= lines.length;
+    const showAll =
+      expanded || maxLines === Infinity || maxLines >= lines.length;
     const visibleLines = showAll ? lines : lines.slice(0, maxLines);
     const hiddenCount = showAll ? 0 : Math.max(0, lines.length - maxLines);
 
@@ -78,25 +84,40 @@ export const CollapsedOutputDisplay = memo(
             </Box>
           </Box>
         ))}
-        {/* Hidden count hint */}
+        {/* Hidden count hint with ctrl+o toggle */}
         {hiddenCount > 0 && (
           <Box flexDirection="row">
             <Box width={PREFIX_WIDTH} flexShrink={0}>
               <Text>{"     "}</Text>
             </Box>
             <Box flexGrow={1} width={contentWidth}>
-              <Text dimColor>… +{hiddenCount} lines</Text>
+              <Text dimColor>
+                … +{hiddenCount} lines{isLast ? " (ctrl+o to expand)" : ""}
+              </Text>
             </Box>
           </Box>
         )}
-        {/* Character clipping hint (only if not already showing line count) */}
+        {/* Collapse hint when expanded */}
+        {expanded && lines.length > maxLines && (
+          <Box flexDirection="row">
+            <Box width={PREFIX_WIDTH} flexShrink={0}>
+              <Text>{"     "}</Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text dimColor>(ctrl+o to collapse)</Text>
+            </Box>
+          </Box>
+        )}
+        {/* Character clipping hint with ctrl+o hint (only if not already showing line count) */}
         {clippedByChars && hiddenCount === 0 && (
           <Box flexDirection="row">
             <Box width={PREFIX_WIDTH} flexShrink={0}>
               <Text>{"     "}</Text>
             </Box>
             <Box flexGrow={1} width={contentWidth}>
-              <Text dimColor>… output clipped</Text>
+              <Text dimColor>
+                … output clipped{isLast ? " (ctrl+o to expand)" : ""}
+              </Text>
             </Box>
           </Box>
         )}

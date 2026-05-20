@@ -20,35 +20,35 @@ import {
   rebuildInputWithFreshDenials,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
-} from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { createAgent } from "../../agent/create";
-import { selectDefaultAgentModel } from "../../agent/defaults";
-import { sendMessageStream } from "../../agent/message";
-import { getBackend } from "../../backend";
-import { getServerUrl } from "../../backend/api/client";
-import { runSessionStartHooks } from "../../hooks";
-import { updateProjectSettings } from "../../settings";
-import { settingsManager } from "../../settings-manager";
-import type { PreparedScopeToolContext } from "../../tools/toolset";
-import { debugLog, debugWarn } from "../../utils/debug";
-import type { BtwState } from "../components/BtwPane";
+} from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { createAgent } from "@/agent/create";
+import { selectDefaultAgentModel } from "@/agent/defaults";
+import { sendMessageStream } from "@/agent/message";
+import { getBackend } from "@/backend";
+import { getServerUrl } from "@/backend/api/client";
+import type { BtwState } from "@/cli/components/BtwPane";
 import {
   type Buffers,
   extractTextPart,
   type Line,
   toLines,
-} from "../helpers/accumulator";
-import { buildAgentReference } from "../helpers/appUrls";
-import { backfillBuffers } from "../helpers/backfill";
+} from "@/cli/helpers/accumulator";
+import { buildAgentReference } from "@/cli/helpers/appUrls";
+import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
   type ContextTracker,
   resetContextHistory,
-} from "../helpers/contextTracker";
-import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
-import { formatErrorDetails } from "../helpers/errorFormatter";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import type { ApprovalRequest } from "../helpers/stream";
+} from "@/cli/helpers/contextTracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversationSwitchAlert";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { runSessionStartHooks } from "@/hooks";
+import { updateProjectSettings } from "@/settings";
+import { settingsManager } from "@/settings-manager";
+import type { PreparedScopeToolContext } from "@/tools/toolset";
+import { debugLog, debugWarn } from "@/utils/debug";
 
 import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
 import { uid } from "./ids";
@@ -103,6 +103,7 @@ type ConversationSwitchingContext = {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setInterruptRequested: Dispatch<SetStateAction<boolean>>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
@@ -153,6 +154,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setCurrentModelHandle,
     setInterruptRequested,
     setIsExecutingTool,
@@ -354,6 +356,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         await maybeCarryOverActiveConversationModel(conversationId);
         setConversationIdAndRef(conversationId);
         setConversationAutoTitleEligibility(false);
+        setConversationSummary(null);
 
         pendingConversationSwitchRef.current = {
           origin: "fork",
@@ -442,6 +445,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetBootstrapReminderState,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,
+      setConversationSummary,
       setCommandRunning,
       setStreaming,
       recoverRestoredPendingApprovals,
@@ -555,6 +559,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setCurrentModelHandle(agentModelHandle);
         setConversationIdAndRef(targetConversationId);
         setConversationAutoTitleEligibility(false);
+        setConversationSummary(null);
 
         // Ensure bootstrap reminders are re-injected on the first user turn
         // after switching to a different conversation/agent context.
@@ -562,7 +567,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
 
         // Set conversation switch context for agent switch
         {
-          const { getModelDisplayName } = await import("../../agent/model");
+          const { getModelDisplayName } = await import("@/agent/model");
           const modelHandle =
             agent.model ||
             (agent.llm_config?.model_endpoint_type && agent.llm_config?.model
@@ -628,6 +633,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetPendingReasoningCycle,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,
+      setConversationSummary,
       agentIdRef,
       pendingConversationSwitchRef,
       setActiveOverlay,
@@ -644,20 +650,22 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
   // Handle creating a new agent and switching to it
   // biome-ignore lint/correctness/useExhaustiveDependencies: switch refs are stable objects; .current is read dynamically during agent creation.
   const handleCreateNewAgent = useCallback(
-    async (name: string) => {
+    async (name: string, opts?: { commandId?: string }) => {
       // Close dialog immediately
       setActiveOverlay(null);
 
       // Lock input for async operation
       setCommandRunning(true);
 
-      const inputCmd = "/new";
-      const cmd = commandRunner.start(inputCmd, `Creating agent "${name}"...`);
+      const cmd = opts?.commandId
+        ? commandRunner.getHandle(opts.commandId, "/new")
+        : commandRunner.start("/new", `Creating agent "${name}"...`);
+      cmd.update({ output: `Creating agent "${name}"...`, phase: "running" });
 
       try {
         // Pre-determine memfs mode so the agent is created with the correct prompt.
         const { isLettaCloud, enableMemfsIfCloud } = await import(
-          "../../agent/memoryFilesystem"
+          "@/agent/memoryFilesystem"
         );
         const backend = getBackend();
         const willAutoEnableMemfs = await isLettaCloud();
@@ -715,16 +723,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           `${CLI_GLYPHS.result}  ${agentUrl}`,
           `${CLI_GLYPHS.result}  ${memfsTip}`,
         ].join("\n");
-        cmd.finish(successOutput, true);
-        const successItem: StaticItem = {
-          kind: "command",
-          id: cmd.id,
-          input: cmd.input,
-          output: successOutput,
-          phase: "finished",
-          success: true,
-        };
-
         // Clear current transcript and static items
         buffersRef.current.byId.clear();
         buffersRef.current.order = [];
@@ -744,6 +742,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setCurrentModelHandle(agentModelHandle);
         setConversationIdAndRef(targetConversationId);
         setConversationAutoTitleEligibility(false);
+        setConversationSummary(null);
 
         // Set conversation switch context for new agent switch
         pendingConversationSwitchRef.current = {
@@ -754,7 +753,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
             name: agent.name || agent.id,
             description: agent.description ?? undefined,
             model: agentModelHandle
-              ? (await import("../../agent/model")).getModelDisplayName(
+              ? (await import("@/agent/model")).getModelDisplayName(
                   agentModelHandle,
                 ) || agentModelHandle
               : "unknown",
@@ -773,9 +772,8 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           id: uid("sep"),
         };
 
-        setStaticItems([separator, successItem]);
-        // Sync lines display after clearing buffers
-        setLines(toLines(buffersRef.current));
+        setStaticItems([separator]);
+        cmd.finish(successOutput, true);
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
         cmd.fail(`Failed to create agent: ${errorDetails}`);
@@ -794,6 +792,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       resetBootstrapReminderState,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,
+      setConversationSummary,
       agentIdRef,
       pendingConversationSwitchRef,
       setActiveOverlay,

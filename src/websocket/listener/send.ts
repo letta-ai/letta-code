@@ -5,9 +5,9 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { fetchRunErrorInfo } from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { sendMessageStream } from "../../agent/message";
+import { fetchRunErrorInfo } from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { sendMessageStream } from "@/agent/message";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
@@ -15,11 +15,11 @@ import {
   getRetryDelayMs,
   parseRetryAfterHeaderMs,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-} from "../../agent/turn-recovery-policy";
-import { type ConversationMessageStreamBody, getBackend } from "../../backend";
-import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
-import { prepareToolExecutionContextForScope } from "../../tools/toolset";
-import { createStreamAbortRelay } from "../../utils/streamAbortRelay";
+} from "@/agent/turn-recovery-policy";
+import { type ConversationMessageStreamBody, getBackend } from "@/backend";
+import { getRetryStatusMessage } from "@/cli/helpers/errorFormatter";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
+import { createStreamAbortRelay } from "@/utils/streamAbortRelay";
 import {
   rememberPendingApprovalBatchIds,
   resolveRecoveryBatchId,

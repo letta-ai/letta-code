@@ -1,7 +1,7 @@
 import type Letta from "@letta-ai/letta-client";
-import { forkConversation } from "../../backend/api/conversations";
-import { DEFAULT_SUMMARIZATION_MODEL } from "../../constants";
-import { isDebugEnabled } from "../../utils/debug";
+import { forkConversation } from "@/backend/api/conversations";
+import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { isDebugEnabled } from "@/utils/debug";
 
 /**
  * Maximum characters allowed for an auto-generated conversation title.

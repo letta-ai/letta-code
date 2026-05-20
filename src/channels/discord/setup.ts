@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "../accounts";
-import type { DiscordChannelAccount, DmPolicy } from "../types";
+import { upsertChannelAccount } from "@/channels/accounts";
+import type { DiscordChannelAccount, DmPolicy } from "@/channels/types";
 import { ensureDiscordRuntimeInstalled } from "./runtime";
 
 function isValidBotToken(token: string): boolean {

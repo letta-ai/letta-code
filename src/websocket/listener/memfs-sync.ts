@@ -7,17 +7,17 @@
  * correctly — mirroring what the local headless path does during bootstrap.
  */
 
-import { debugLog, debugWarn } from "../../utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 import type { ListenerRuntime } from "./types";
 
 /**
  * Core sync logic — fetches agent, checks tag, clones/pulls repo.
  */
 async function syncMemfsForAgent(agentId: string): Promise<void> {
-  const { getBackend } = await import("../../backend");
+  const { getBackend } = await import("@/backend");
   const agent = await getBackend().retrieveAgent(agentId);
 
-  const { GIT_MEMORY_ENABLED_TAG } = await import("../../agent/memoryGit");
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memoryGit");
   if (!agent.tags?.includes(GIT_MEMORY_ENABLED_TAG)) {
     debugLog(
       "memfs-sync",
@@ -28,7 +28,7 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
 
   debugLog("memfs-sync", `Syncing memfs for agent ${agentId}`);
 
-  const { applyMemfsFlags } = await import("../../agent/memoryFilesystem");
+  const { applyMemfsFlags } = await import("@/agent/memoryFilesystem");
   await applyMemfsFlags(agentId, undefined, undefined, {
     pullOnExistingRepo: true,
     agentTags: agent.tags,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "../accounts";
-import type { DmPolicy, SlackChannelAccount } from "../types";
+import { upsertChannelAccount } from "@/channels/accounts";
+import type { DmPolicy, SlackChannelAccount } from "@/channels/types";
 import { resolveSlackAccountDisplayName } from "./adapter";
 import { ensureSlackRuntimeInstalled } from "./runtime";
 

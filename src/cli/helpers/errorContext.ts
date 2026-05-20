@@ -7,6 +7,7 @@ interface ErrorContext {
   billingTier?: string;
   modelDisplayName?: string;
   modelEndpointType?: string;
+  modelLabel?: string;
 }
 
 let currentContext: ErrorContext = {};

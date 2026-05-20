@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChannelMessageAttachment } from "../types";
+import type { ChannelMessageAttachment } from "@/channels/types";
 
 const DISCORD_ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 15_000;
 const DISCORD_ATTACHMENTS_DIR = join(tmpdir(), "letta-discord-attachments");

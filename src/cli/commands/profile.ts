@@ -1,10 +1,10 @@
 // src/cli/commands/profile.ts
 // Profile command handlers for managing local agent profiles
 
-import { getBackend } from "../../backend";
-import { settingsManager } from "../../settings-manager";
-import type { Buffers, Line } from "../helpers/accumulator";
-import { formatErrorDetails } from "../helpers/errorFormatter";
+import { getBackend } from "@/backend";
+import type { Buffers, Line } from "@/cli/helpers/accumulator";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { settingsManager } from "@/settings-manager";
 
 // tiny helper for unique ids
 function uid(prefix: string) {

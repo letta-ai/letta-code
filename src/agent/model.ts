@@ -1,8 +1,8 @@
 /**
  * Model resolution and handling utilities
  */
-import modelsData from "../models.json";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import modelsData from "@/models.json";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 
 export const models = modelsData.models;
 

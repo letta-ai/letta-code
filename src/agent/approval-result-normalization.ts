@@ -1,7 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { INTERRUPTED_BY_USER } from "../constants";
-import type { ToolReturnContent } from "../tools/manager";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import type { ToolReturnContent } from "@/tools/manager";
 import type { ApprovalResult } from "./approval-execution";
 
 type OutgoingMessage = MessageCreate | ApprovalCreate;

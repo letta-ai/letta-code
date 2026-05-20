@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { debugLog, debugWarn } from "../utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 import { addBaseToolsToServer } from "./create";
 
 const MARKER_PATH = join(homedir(), ".letta", ".bootstrapped");

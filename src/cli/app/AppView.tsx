@@ -4,86 +4,86 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
-import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
-import type { ModelReasoningEffort } from "../../agent/model";
-import type { PersonalityId } from "../../agent/personality";
-import type { SessionStats } from "../../agent/stats";
-import { getBackend } from "../../backend";
-import { experimentManager } from "../../experiments/manager";
-import type { ExperimentId } from "../../experiments/types";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import { settingsManager } from "../../settings-manager";
-import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
-import type { CommandHandle } from "../commands/runner";
-import { AgentSelector } from "../components/AgentSelector";
-import { ApprovalSwitch } from "../components/ApprovalSwitch";
-import { AssistantMessage } from "../components/AssistantMessageRich";
-import { BashCommandMessage } from "../components/BashCommandMessage";
-import { BtwPane, type BtwState } from "../components/BtwPane";
-import { CommandMessage } from "../components/CommandMessage";
-import { CompactionSelector } from "../components/CompactionSelector";
-import { ConversationSelector } from "../components/ConversationSelector";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { isActiveMemfsEnabled } from "@/agent/memoryRuntime";
+import type { ModelReasoningEffort } from "@/agent/model";
+import type { PersonalityId } from "@/agent/personality";
+import type { SessionStats } from "@/agent/stats";
+import { getBackend } from "@/backend";
+import type { CommandHandle } from "@/cli/commands/runner";
+import { AgentSelector } from "@/cli/components/AgentSelector";
+import { ApprovalSwitch } from "@/cli/components/ApprovalSwitch";
+import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
+import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
+import { BtwPane, type BtwState } from "@/cli/components/BtwPane";
+import { CommandMessage } from "@/cli/components/CommandMessage";
+import { CompactionSelector } from "@/cli/components/CompactionSelector";
+import { ConversationSelector } from "@/cli/components/ConversationSelector";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
-import { ErrorMessage } from "../components/ErrorMessageRich";
-import { EventMessage } from "../components/EventMessage";
-import { ExperimentSelector } from "../components/ExperimentSelector";
-import { FeedbackDialog } from "../components/FeedbackDialog";
-import { HelpDialog } from "../components/HelpDialog";
-import { HooksManager } from "../components/HooksManager";
-import { Input } from "../components/InputRich";
-import { InstallGithubAppFlow } from "../components/InstallGithubAppFlow";
-import { McpConnectFlow } from "../components/McpConnectFlow";
-import { McpSelector } from "../components/McpSelector";
-import { MemfsTreeViewer } from "../components/MemfsTreeViewer";
-import { MemoryTabViewer } from "../components/MemoryTabViewer";
-import { MessageSearch } from "../components/MessageSearch";
-import { ModelReasoningSelector } from "../components/ModelReasoningSelector";
-import { ModelSelector } from "../components/ModelSelector";
-import { NewAgentDialog } from "../components/NewAgentDialog";
-import { PendingApprovalStub } from "../components/PendingApprovalStub";
-import { PersonalitySelector } from "../components/PersonalitySelector";
-import { PinDialog } from "../components/PinDialog";
-import { ProviderSelector } from "../components/ProviderSelector";
-import { ReasoningMessage } from "../components/ReasoningMessageRich";
-import { SkillsDialog } from "../components/SkillsDialog";
-import { SleeptimeSelector } from "../components/SleeptimeSelector";
+import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
+import { EventMessage } from "@/cli/components/EventMessage";
+import { ExperimentSelector } from "@/cli/components/ExperimentSelector";
+import { FeedbackDialog } from "@/cli/components/FeedbackDialog";
+import { HelpDialog } from "@/cli/components/HelpDialog";
+import { HooksManager } from "@/cli/components/HooksManager";
+import { Input } from "@/cli/components/InputRich";
+import { InstallGithubAppFlow } from "@/cli/components/InstallGithubAppFlow";
+import { McpConnectFlow } from "@/cli/components/McpConnectFlow";
+import { McpSelector } from "@/cli/components/McpSelector";
+import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
+import { MemoryTabViewer } from "@/cli/components/MemoryTabViewer";
+import { MessageSearch } from "@/cli/components/MessageSearch";
+import { ModelReasoningSelector } from "@/cli/components/ModelReasoningSelector";
+import { ModelSelector } from "@/cli/components/ModelSelector";
+import { PendingApprovalStub } from "@/cli/components/PendingApprovalStub";
+import { PersonalitySelector } from "@/cli/components/PersonalitySelector";
+import { PinDialog } from "@/cli/components/PinDialog";
+import { ProviderSelector } from "@/cli/components/ProviderSelector";
+import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
+import { SkillsDialog } from "@/cli/components/SkillsDialog";
+import { SleeptimeSelector } from "@/cli/components/SleeptimeSelector";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "../components/InlinePlanApproval";
-import { StatusMessage } from "../components/StatusMessage";
-import { SubagentGroupDisplay } from "../components/SubagentGroupDisplay";
-import { SubagentManager } from "../components/SubagentManager";
-import { SystemPromptSelector } from "../components/SystemPromptSelector";
-import { ToolCallMessage } from "../components/ToolCallMessageRich";
-import { ToolsetSelector } from "../components/ToolsetSelector";
-import { UserMessage } from "../components/UserMessageRich";
-import { WelcomeScreen } from "../components/WelcomeScreen";
-import { AnimationProvider } from "../contexts/AnimationContext";
-import { type Buffers, type Line, toLines } from "../helpers/accumulator";
-import { backfillBuffers } from "../helpers/backfill";
+import { StatusMessage } from "@/cli/components/StatusMessage";
+import { SubagentGroupDisplay } from "@/cli/components/SubagentGroupDisplay";
+import { SubagentManager } from "@/cli/components/SubagentManager";
+import { SystemPromptSelector } from "@/cli/components/SystemPromptSelector";
+import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
+import { ToolsetSelector } from "@/cli/components/ToolsetSelector";
+import { UserMessage } from "@/cli/components/UserMessageRich";
+import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
+import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
+import { AnimationProvider } from "@/cli/contexts/AnimationContext";
+import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
   type ContextTracker,
   resetContextHistory,
-} from "../helpers/contextTracker";
-import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { CLI_GLYPHS } from "../helpers/glyphs";
+} from "@/cli/helpers/contextTracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversationSwitchAlert";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getReflectionSettings,
   type ReflectionSettings,
-} from "../helpers/memoryReminder";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
-import type { ApprovalRequest } from "../helpers/stream";
+} from "@/cli/helpers/memoryReminder";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
-} from "../helpers/toolNameMapping";
-import { isTaskTool } from "../helpers/toolNameMapping.js";
-import type { StatusLineState } from "../hooks/useConfigurableStatusLine";
+} from "@/cli/helpers/toolNameMapping";
+import { isTaskTool } from "@/cli/helpers/toolNameMapping.js";
+import type { StatusLineState } from "@/cli/hooks/useConfigurableStatusLine";
+import { experimentManager } from "@/experiments/manager";
+import type { ExperimentId } from "@/experiments/types";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import { settingsManager } from "@/settings-manager";
+import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
 import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
 import { _readPlanFile } from "./planFile";
@@ -137,6 +137,8 @@ type AppViewProps = {
   contextTrackerRef: RefObject<ContextTracker>;
   continueSession: boolean;
   conversationId: string;
+  conversationSummary: string | null;
+  projectDirectory: string;
   currentApproval: ApprovalRequest | undefined;
   currentApprovalContext: ApprovalContext | undefined;
   currentModelDisplay: string | null;
@@ -149,6 +151,13 @@ type AppViewProps = {
   currentToolset: ToolsetName | null;
   currentToolsetPreference: ToolsetPreference;
   emittedIdsRef: RefObject<Set<string>>;
+  expandedToolCallId: string | null;
+  lastShellToolCallId: string | null;
+  handleCtrlO: () => void;
+  queueMode: "immediate" | "defer";
+  deferModeSupported: boolean;
+  handleCtrlD: () => void;
+
   feedbackPrefill: string;
   footerUpdateText: string | null;
   handleAgentSelect: (
@@ -174,16 +183,18 @@ type AppViewProps = {
     mode: string,
     commandId?: string | null,
   ) => Promise<void>;
-  handleCreateNewAgent: (name: string) => Promise<void>;
+  handleCreateNewAgent: (
+    name: string,
+    opts?: { commandId?: string },
+  ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
   handleDenyCurrent: (reason: string) => Promise<void>;
   handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
   handleEnterPlanModeReject: () => Promise<void>;
   handleQueueEdit: () => string;
   handleExit: () => Promise<void>;
-  handleExperimentSelect: (
-    selection: { experimentId: ExperimentId; enabled: boolean },
-    commandId?: string | null,
+  handleExperimentsConfirm: (
+    changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
   ) => Promise<void>;
   handleFeedbackSubmit: (message: string) => Promise<void>;
   handleInterrupt: () => Promise<void>;
@@ -265,6 +276,7 @@ type AppViewProps = {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setModelReasoningPrompt: Dispatch<
     SetStateAction<ModelReasoningPrompt | null>
@@ -316,6 +328,8 @@ export function AppView(props: AppViewProps) {
     contextTrackerRef,
     continueSession,
     conversationId,
+    conversationSummary,
+    projectDirectory,
     currentApproval,
     currentApprovalContext,
     currentModelDisplay,
@@ -328,6 +342,12 @@ export function AppView(props: AppViewProps) {
     currentToolset,
     currentToolsetPreference,
     emittedIdsRef,
+    expandedToolCallId,
+    lastShellToolCallId,
+    handleCtrlO,
+    queueMode,
+    deferModeSupported,
+    handleCtrlD,
     feedbackPrefill,
     footerUpdateText,
     handleAgentSelect,
@@ -345,7 +365,7 @@ export function AppView(props: AppViewProps) {
     handleEnterPlanModeReject,
     handleQueueEdit,
     handleExit,
-    handleExperimentSelect,
+    handleExperimentsConfirm,
     handleFeedbackSubmit,
     handleInterrupt,
     handleModelSelect,
@@ -401,6 +421,7 @@ export function AppView(props: AppViewProps) {
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setLines,
     setModelReasoningPrompt,
     setModelSelectorOptions,
@@ -435,6 +456,8 @@ export function AppView(props: AppViewProps) {
         showCompactionsEnabled={showCompactionsEnabled}
         precomputedDiffs={precomputedDiffsRef.current}
         lastPlanFilePath={lastPlanFilePathRef.current}
+        hiddenToolCallId={expandedToolCallId ?? undefined}
+        lastShellToolCallId={lastShellToolCallId ?? undefined}
       />
 
       <Box flexDirection="column">
@@ -577,6 +600,8 @@ export function AppView(props: AppViewProps) {
                             precomputedDiffs={precomputedDiffsRef.current}
                             lastPlanFilePath={lastPlanFilePathRef.current}
                             isStreaming={streaming}
+                            expandedToolCallId={expandedToolCallId}
+                            lastShellToolCallId={lastShellToolCallId}
                           />
                         ) : ln.kind === "error" ? (
                           <ErrorMessage line={ln} />
@@ -693,6 +718,10 @@ export function AppView(props: AppViewProps) {
                 }
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
+                onCtrlO={handleCtrlO}
+                onCtrlD={handleCtrlD}
+                queueMode={queueMode}
+                deferModeSupported={deferModeSupported}
                 interruptRequested={interruptRequested}
                 agentId={agentId}
                 agentName={agentName}
@@ -719,7 +748,6 @@ export function AppView(props: AppViewProps) {
                 shouldAnimate={shouldAnimate}
                 statusLineText={statusLine.text || undefined}
                 statusLineRight={statusLine.rightText || undefined}
-                statusLinePadding={statusLine.padding || 0}
                 statusLinePrompt={statusLine.prompt}
                 footerNotification={footerUpdateText}
               />
@@ -777,6 +805,16 @@ export function AppView(props: AppViewProps) {
                 initialMode={agentState?.compaction_settings?.mode}
                 onSave={handleCompactionModeSelect}
                 onCancel={closeOverlay}
+              />
+            )}
+
+            {/* Window Title Configurator - for customizing terminal title */}
+            {activeOverlay === "window-title" && (
+              <WindowTitlePicker
+                agentName={agentName ?? null}
+                projectDirectory={projectDirectory}
+                conversationSummary={conversationSummary}
+                onClose={closeOverlay}
               />
             )}
 
@@ -872,7 +910,7 @@ export function AppView(props: AppViewProps) {
                   const {
                     handleConnect,
                     setActiveCommandId: setActiveConnectCommandId,
-                  } = await import("../commands/connect");
+                  } = await import("@/cli/commands/connect");
                   setActiveConnectCommandId(cmd.id);
                   try {
                     await handleConnect(
@@ -907,7 +945,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "experiment" && (
               <ExperimentSelector
                 experiments={experimentManager.list()}
-                onSelect={handleExperimentSelect}
+                onConfirm={handleExperimentsConfirm}
                 onCancel={closeOverlay}
               />
             )}
@@ -956,9 +994,12 @@ export function AppView(props: AppViewProps) {
                   });
                 }}
                 onCancel={closeOverlay}
-                onCreateNewAgent={() => {
+                onCreateNewAgent={(name: string) => {
+                  const overlayCommand = consumeOverlayCommand("resume");
                   closeOverlay();
-                  setActiveOverlay("new");
+                  void handleCreateNewAgent(name, {
+                    commandId: overlayCommand?.id,
+                  });
                 }}
               />
             )}
@@ -1030,6 +1071,7 @@ export function AppView(props: AppViewProps) {
                       // Only update state after validation succeeds
                       setConversationIdAndRef(convId);
                       setConversationAutoTitleEligibility(false);
+                      setConversationSummary(selectorContext?.summary ?? null);
 
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
@@ -1176,6 +1218,7 @@ export function AppView(props: AppViewProps) {
                     );
                     setConversationIdAndRef(conversation.id);
                     setConversationAutoTitleEligibility(true);
+                    setConversationSummary(null);
                     settingsManager.persistSession(agentId, conversation.id);
 
                     // Build success command with agent + conversation info
@@ -1483,14 +1526,6 @@ export function AppView(props: AppViewProps) {
             {/* Hooks Manager - for managing hooks configuration */}
             {activeOverlay === "hooks" && (
               <HooksManager onClose={closeOverlay} agentId={agentId} />
-            )}
-
-            {/* New Agent Dialog - for naming new agent before creation */}
-            {activeOverlay === "new" && (
-              <NewAgentDialog
-                onSubmit={handleCreateNewAgent}
-                onCancel={closeOverlay}
-              />
             )}
 
             {/* Pin Dialog - for naming agent before pinning */}

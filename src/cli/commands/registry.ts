@@ -81,6 +81,7 @@ export const commands: Record<string, Command> = {
   "/reflection": {
     desc: "Alias for /reflect",
     args: "[transcript_file]",
+    hidden: true,
     handler: () => {
       // Handled specially in App.tsx
       return "Launching reflection agent...";
@@ -181,6 +182,24 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to reset agent messages
       return "Clearing in-context messages...";
+    },
+  },
+  "/chdir": {
+    desc: "Change working directory for this TUI session (/chdir <path>)",
+    args: "<path>",
+    order: 18.5,
+    handler: () => {
+      // Handled specially in App.tsx to switch local cwd
+      return "Changing working directory...";
+    },
+  },
+  "/cd": {
+    desc: "Alias for /chdir",
+    args: "<path>",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to switch local cwd
+      return "Changing working directory...";
     },
   },
 
@@ -406,10 +425,19 @@ export const commands: Record<string, Command> = {
       return "Managing status line...";
     },
   },
+  "/title": {
+    desc: "Configure terminal window title",
+    noArgs: true,
+    order: 36.6,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Opening title configurator...";
+    },
+  },
   "/reasoning-tab": {
     desc: "Toggle Tab shortcut for reasoning tiers (/reasoning-tab on|off|status)",
     args: "[on|off|status]",
-    order: 36.6,
+    order: 36.7,
     handler: () => {
       // Handled specially in App.tsx
       return "Managing reasoning Tab shortcut...";
@@ -437,8 +465,8 @@ export const commands: Record<string, Command> = {
         getKeybindingsPath,
         installKeybinding,
         removeKeybinding,
-      } = await import("../utils/terminalKeybindingInstaller");
-      const { updateSettings } = await import("../../settings");
+      } = await import("@/cli/utils/terminalKeybindingInstaller");
+      const { updateSettings } = await import("@/settings");
 
       const isRevert = args.includes("--revert") || args.includes("--remove");
       const terminal = detectTerminalType();

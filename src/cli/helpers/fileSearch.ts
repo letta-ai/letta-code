@@ -1,12 +1,12 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { debugLog } from "../../utils/debug";
+import { debugLog } from "@/utils/debug";
 import {
   ensureFileIndex,
   type FileMatch,
   getIndexRoot,
   searchFileIndex,
-} from "./fileIndex";
+} from "@/utils/fileIndex";
 import { shouldHardExcludeEntry } from "./fileSearchConfig";
 
 export function debounce<T extends (...args: never[]) => unknown>(

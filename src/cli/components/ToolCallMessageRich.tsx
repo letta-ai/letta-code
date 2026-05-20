@@ -2,16 +2,14 @@
 // is shown via StaticPlanApproval during approval, not in tool result
 import { Box } from "ink";
 import { Fragment, memo, type ReactNode } from "react";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { clipToolReturn } from "../../tools/manager.js";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
+import { getSubagentByToolCallId } from "@/agent/subagentState.js";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
   formatArgsDisplay,
   parsePatchInput,
   parsePatchOperations,
-} from "../helpers/formatArgsDisplay.js";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { getSubagentByToolCallId } from "../helpers/subagentState.js";
+} from "@/cli/helpers/formatArgsDisplay.js";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getDisplayToolName,
   isFileEditTool,
@@ -26,7 +24,9 @@ import {
   isShellTool,
   isTaskTool,
   isTodoTool,
-} from "../helpers/toolNameMapping.js";
+} from "@/cli/helpers/toolNameMapping.js";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { clipToolReturn } from "@/tools/manager.js";
 import { Text } from "./Text";
 
 /**
@@ -85,11 +85,15 @@ function colorizeArgs(argsStr: string): ReactNode {
   return <>{parts}</>;
 }
 
-import type { StreamingState } from "../helpers/accumulator";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { StreamingState } from "@/cli/helpers/accumulator";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
+import {
+  CreateWorktreeResultRenderer,
+  parseCreateWorktreeResult,
+} from "./CreateWorktreeResultRenderer.js";
 import { colors } from "./colors.js";
 import {
   EditRenderer,
@@ -146,11 +150,15 @@ export const ToolCallMessage = memo(
     precomputedDiffs,
     lastPlanFilePath,
     isStreaming,
+    expandedToolCallId,
+    lastShellToolCallId,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     lastPlanFilePath?: string | null;
     isStreaming?: boolean;
+    expandedToolCallId?: string | null;
+    lastShellToolCallId?: string | null;
   }) => {
     const columns = useTerminalWidth();
     try {
@@ -531,6 +539,14 @@ export const ToolCallMessage = memo(
             );
           }
           // Fall through to regular handling if parsing fails
+        }
+
+        // Check if this is CreateWorktree - show a compact structured summary
+        // instead of the full instructional tool return.
+        if (rawName === "CreateWorktree" && line.resultOk !== false) {
+          if (parseCreateWorktreeResult(extractedText)) {
+            return <CreateWorktreeResultRenderer resultText={extractedText} />;
+          }
         }
 
         // Check if this is ExitPlanMode - just show path, not plan content
@@ -1025,6 +1041,10 @@ export const ToolCallMessage = memo(
               <CollapsedOutputDisplay
                 output={extractMessageFromResult(line.resultText)}
                 maxChars={300}
+                expanded={
+                  expandedToolCallId != null && expandedToolCallId === line.id
+                }
+                isLast={lastShellToolCallId === line.id}
               />
             )}
 

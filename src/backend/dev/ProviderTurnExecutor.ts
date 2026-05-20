@@ -2,13 +2,16 @@ import { randomUUID } from "node:crypto";
 import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type { LocalMessage } from "../local/LocalMessage";
-import type { LocalAgentRecord, StoredMessage } from "../local/LocalStore";
+import type { LocalMessage } from "@/backend/local/LocalMessage";
+import type {
+  LocalAgentRecord,
+  StoredMessage,
+} from "@/backend/local/LocalStore";
 import {
   attachLocalMessage,
   markLocalStateChunkOnly,
   type ProviderStreamPart,
-} from "../local/LocalStreamChunks";
+} from "@/backend/local/LocalStreamChunks";
 import type {
   HeadlessTurnBody,
   HeadlessTurnExecutor,

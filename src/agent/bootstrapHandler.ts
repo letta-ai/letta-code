@@ -12,12 +12,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Backend, ConversationMessageListBody } from "../backend";
+import type { Backend, ConversationMessageListBody } from "@/backend";
 import type {
   BootstrapSessionStatePayload,
   BootstrapSessionStateRequest,
   ControlResponse,
-} from "../types/protocol";
+} from "@/types/protocol";
 import { resolveListMessagesRoute } from "./listMessagesRouting";
 
 // ─────────────────────────────────────────────────────────────────────────────

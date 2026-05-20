@@ -1,5 +1,5 @@
-import { getBackend } from "../backend";
-import { settingsManager } from "../settings-manager";
+import { getBackend } from "@/backend";
+import { settingsManager } from "@/settings-manager";
 import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
 
 /**
