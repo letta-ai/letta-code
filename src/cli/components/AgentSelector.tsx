@@ -8,12 +8,11 @@ import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
+import { OverlayShell } from "./OverlayShell";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { validateAgentName } from "./PinDialog";
+import { TabBar } from "./TabBar";
 import { Text } from "./Text";
-
-// Horizontal line character (matches approval dialogs)
-const SOLID_LINE = "─";
 
 interface AgentSelectorProps {
   currentAgentId: string;
@@ -676,28 +675,6 @@ export function AgentSelector({
     }
   });
 
-  // Render tab bar
-  const renderTabBar = () => (
-    <Box flexDirection="row" gap={2}>
-      {TABS.map((tab) => {
-        const isActive = tab.id === activeTab;
-        // Always use same width (with padding) to prevent jitter when switching tabs
-        return (
-          <Text
-            key={tab.id}
-            backgroundColor={
-              isActive ? colors.selector.itemHighlighted : undefined
-            }
-            color={isActive ? "white" : undefined}
-            bold={isActive}
-          >
-            {` ${tab.label} `}
-          </Text>
-        );
-      })}
-    </Box>
-  );
-
   // Render agent item (shared between tabs)
   const renderAgentItem = (
     agent: AgentState,
@@ -833,41 +810,64 @@ export function AgentSelector({
     );
   };
 
-  // Calculate horizontal line width
-  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
-
   // If in delete confirmation view, render that instead of the list
   if (viewState.type === "deleteConfirm") {
     return (
-      <Box flexDirection="column">
-        {/* Command header */}
-        <Text dimColor>{`> ${command}`}</Text>
-        <Text dimColor>{solidLine}</Text>
-
-        <Box height={1} />
-
+      <OverlayShell command={command} title="Delete agent">
         {renderDeleteConfirm()}
-      </Box>
+      </OverlayShell>
     );
   }
 
   return (
-    <Box flexDirection="column">
-      {/* Command header */}
-      <Text dimColor>{`> ${command}`}</Text>
-      <Text dimColor>{solidLine}</Text>
+    <OverlayShell
+      command={command}
+      title="Swap to a different agent"
+      footer={
+        activeTab !== "new" &&
+        !currentLoading &&
+        ((activeTab === "pinned" && validPinnedAgents.length > 0) ||
+          (activeTab === "letta-code" &&
+            !lettaCodeError &&
+            lettaCodeAgents.length > 0) ||
+          (activeTab === "all" && !allError && allAgents.length > 0))
+          ? (() => {
+              const footerWidth = Math.max(0, terminalWidth - 2);
+              const pageText =
+                activeTab === "pinned"
+                  ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
+                  : activeTab === "letta-code"
+                    ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
+                    : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
+              const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""} · Esc cancel`;
 
-      <Box height={1} />
-
-      {/* Header */}
-      <Box flexDirection="column" gap={1} marginBottom={1}>
-        <Text bold color={colors.selector.title}>
-          Swap to a different agent
-        </Text>
-        <Box flexDirection="column" paddingLeft={1}>
-          {renderTabBar()}
-          <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
-        </Box>
+              return (
+                <Box flexDirection="column">
+                  <Box flexDirection="row">
+                    <Box width={2} flexShrink={0} />
+                    <Box flexGrow={1} width={footerWidth}>
+                      <MarkdownDisplay text={pageText} dimColor />
+                    </Box>
+                  </Box>
+                  <Box flexDirection="row">
+                    <Box width={2} flexShrink={0} />
+                    <Box flexGrow={1} width={footerWidth}>
+                      <MarkdownDisplay text={hintsText} dimColor />
+                    </Box>
+                  </Box>
+                </Box>
+              );
+            })()
+          : undefined
+      }
+    >
+      <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
+        <TabBar
+          tabs={TABS.map((t) => t.id)}
+          activeTab={activeTab}
+          getLabel={(tabId) => TABS.find((t) => t.id === tabId)?.label ?? tabId}
+        />
+        <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
       </Box>
 
       {/* Search input - list tabs only */}
@@ -998,42 +998,6 @@ export function AgentSelector({
           </Box>
         </Box>
       )}
-
-      {/* Footer */}
-      {activeTab !== "new" &&
-        !currentLoading &&
-        ((activeTab === "pinned" && validPinnedAgents.length > 0) ||
-          (activeTab === "letta-code" &&
-            !lettaCodeError &&
-            lettaCodeAgents.length > 0) ||
-          (activeTab === "all" && !allError && allAgents.length > 0)) &&
-        (() => {
-          const footerWidth = Math.max(0, terminalWidth - 2);
-          const pageText =
-            activeTab === "pinned"
-              ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
-              : activeTab === "letta-code"
-                ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
-                : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
-          const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""} · Esc cancel`;
-
-          return (
-            <Box flexDirection="column">
-              <Box flexDirection="row">
-                <Box width={2} flexShrink={0} />
-                <Box flexGrow={1} width={footerWidth}>
-                  <MarkdownDisplay text={pageText} dimColor />
-                </Box>
-              </Box>
-              <Box flexDirection="row">
-                <Box width={2} flexShrink={0} />
-                <Box flexGrow={1} width={footerWidth}>
-                  <MarkdownDisplay text={hintsText} dimColor />
-                </Box>
-              </Box>
-            </Box>
-          );
-        })()}
-    </Box>
+    </OverlayShell>
   );
 }
