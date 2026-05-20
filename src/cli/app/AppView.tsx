@@ -133,7 +133,9 @@ type AppViewProps = {
   closeOverlay: () => void;
   columns: number;
   commandRunner: AppCommandRunner;
-  completeOverlay: (overlay: NonNullable<ActiveOverlay>) => CommandHandle | null;
+  completeOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
+  ) => CommandHandle | null;
   contextTrackerRef: RefObject<ContextTracker>;
   continueSession: boolean;
   conversationId: string;
@@ -822,8 +824,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "install-github-app" && (
               <InstallGithubAppFlow
                 onComplete={(result) => {
-                  const overlayCommand =
-                    completeOverlay("install-github-app");
+                  const overlayCommand = completeOverlay("install-github-app");
 
                   const cmd =
                     overlayCommand ??

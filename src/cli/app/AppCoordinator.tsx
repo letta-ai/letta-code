@@ -2351,7 +2351,12 @@ export function App({
       openingOutput: string,
       dismissOutput: string,
     ) => {
-      const cmd = startOverlayCommand(overlay, input, openingOutput, dismissOutput);
+      const cmd = startOverlayCommand(
+        overlay,
+        input,
+        openingOutput,
+        dismissOutput,
+      );
       setActiveOverlay(overlay);
       return cmd;
     },

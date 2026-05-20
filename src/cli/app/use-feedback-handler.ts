@@ -3,6 +3,7 @@
 import { type MutableRefObject, useCallback } from "react";
 import type { SessionStats } from "@/agent/stats";
 import { submitFeedbackMetadata } from "@/backend/api/metadata";
+import type { CommandHandle } from "@/cli/commands/runner";
 import { chunkLog } from "@/cli/helpers/chunk-log";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { resolvePlaceholders } from "@/cli/helpers/paste-registry";
@@ -11,7 +12,6 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLogFile } from "@/utils/debug";
 import { getVersion } from "@/version";
-import type { CommandHandle } from "@/cli/commands/runner";
 import type { ActiveOverlay, CommandStarter } from "./types";
 
 type FeedbackHandlerContext = {
@@ -19,7 +19,9 @@ type FeedbackHandlerContext = {
   agentId: string;
   agentName: string | null;
   billingTier: string | null;
-  completeOverlay: (overlay: NonNullable<ActiveOverlay>) => CommandHandle | null;
+  completeOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
+  ) => CommandHandle | null;
   commandRunner: CommandStarter;
   currentModelId: string | null;
   sessionStatsRef: MutableRefObject<SessionStats>;
