@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type WebSocket from "ws";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
-import { createListenerMessageHandler } from "../../websocket/listener/message-router";
-import { parseServerLifecycleMessage } from "../../websocket/listener/protocol-inbound";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { createListenerMessageHandler } from "@/websocket/listener/message-router";
+import { parseServerLifecycleMessage } from "@/websocket/listener/protocol-inbound";
 import type {
   IncomingMessage,
   ListenerRuntime,
   StartListenerOptions,
-} from "../../websocket/listener/types";
+} from "@/websocket/listener/types";
 
 function makeListenerOptions(): StartListenerOptions {
   return {

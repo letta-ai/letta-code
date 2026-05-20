@@ -4,9 +4,9 @@
  * Quick sanity check: create an agent, send a message, log streamed output.
  */
 
-import { createAgent } from "../agent/create";
-import { sendMessageStream } from "../agent/message";
-import { getClient } from "../backend/api/client";
+import { createAgent } from "@/agent/create";
+import { sendMessageStream } from "@/agent/message";
+import { getClient } from "@/backend/api/client";
 
 async function main() {
   const apiKey = process.env.LETTA_API_KEY;

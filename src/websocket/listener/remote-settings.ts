@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { PermissionMode } from "../../permissions/mode";
+import type { PermissionMode } from "@/permissions/mode";
 
 /**
  * Persisted permission mode state for a single conversation.

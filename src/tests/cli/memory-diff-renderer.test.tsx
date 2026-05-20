@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import { render } from "ink";
 import stripAnsi from "strip-ansi";
-import { MemoryDiffRenderer } from "../../cli/components/MemoryDiffRenderer";
+import { MemoryDiffRenderer } from "@/cli/components/MemoryDiffRenderer";
 
 class CaptureStream extends Writable {
   columns = 100;

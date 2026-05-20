@@ -8,9 +8,9 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ModelReasoningEffort } from "../../agent/model";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
-import { formatErrorDetails } from "../helpers/errorFormatter";
+import type { ModelReasoningEffort } from "@/agent/model";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 
 import {
   deriveReasoningEffort,

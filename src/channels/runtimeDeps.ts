@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import {
   detectPackageManager,
   type PackageManager,
-} from "../updater/auto-update";
+} from "@/updater/auto-update";
 import { getChannelDir } from "./config";
 import { getChannelPluginMetadata } from "./pluginRegistry";
 import type { SupportedChannelId } from "./types";

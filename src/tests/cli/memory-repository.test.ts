@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { redactUrl } from "../../cli/commands/memory-repository";
+import { redactUrl } from "@/cli/commands/memory-repository";
 
 describe("redactUrl", () => {
   test("masks credentials in HTTPS URLs", () => {

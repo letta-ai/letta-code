@@ -3,9 +3,9 @@
 // Contains device/environment information only. Agent metadata is in agentMetadata.ts.
 
 import { platform } from "node:os";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import type { SessionContextReason } from "../../reminders/state";
-import { getVersion } from "../../version";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import type { SessionContextReason } from "@/reminders/state";
+import { getVersion } from "@/version";
 import { gatherGitContextSnapshot } from "./gitContext";
 
 export type SessionContextSource = "interactive-cli" | "headless" | "listen";

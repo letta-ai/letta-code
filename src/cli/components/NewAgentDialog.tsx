@@ -1,7 +1,7 @@
 import { Box, useInput } from "ink";
 import { useState } from "react";
-import { DEFAULT_AGENT_NAME } from "../../constants";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { DEFAULT_AGENT_NAME } from "@/constants";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { validateAgentName } from "./PinDialog";

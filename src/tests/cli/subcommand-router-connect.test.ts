@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runSubcommand } from "../../cli/subcommands/router";
+import { runSubcommand } from "@/cli/subcommands/router";
 
 describe("subcommand router", () => {
   test("routes connect subcommand", async () => {

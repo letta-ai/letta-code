@@ -4,8 +4,8 @@ import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
-} from "../../channels/accounts";
-import { __listenClientTestUtils } from "../../websocket/listener/client";
+} from "@/channels/accounts";
+import { __listenClientTestUtils } from "@/websocket/listener/client";
 
 class MockSocket {
   public sentPayloads: string[] = [];

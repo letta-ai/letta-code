@@ -1,7 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import picomatch from "picomatch";
-import LSSchema from "../schemas/LS.json";
+import LSSchema from "@/tools/schemas/LS.json";
 import { LIMITS } from "./truncation.js";
 import { validateParamTypes, validateRequiredParams } from "./validation.js";
 

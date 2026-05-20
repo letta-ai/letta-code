@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   buildSharedReminderParts,
   sharedReminderProviders,
-} from "../../reminders/engine";
-import { buildListenReminderContext } from "../../reminders/listenContext";
+} from "@/reminders/engine";
+import { buildListenReminderContext } from "@/reminders/listenContext";
 import {
   createSharedReminderState,
   resetSharedReminderState,
   type SharedReminderState,
-} from "../../reminders/state";
+} from "@/reminders/state";
 
 /**
  * Stub providers so tests run in isolation without hitting real

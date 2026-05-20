@@ -14,7 +14,6 @@ import type {
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { INTERRUPTED_BY_USER } from "../../constants";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -26,7 +25,8 @@ import type {
   ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationUpdateBody,
-} from "../backend";
+} from "@/backend/backend";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import type { LocalCompactionStats } from "./compaction";
 import {
   emptyLocalUsage,

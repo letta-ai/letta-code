@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { sessionPermissions } from "../permissions/session";
+import { sessionPermissions } from "@/permissions/session";
 
 afterEach(() => {
   // Clean up session state after each test

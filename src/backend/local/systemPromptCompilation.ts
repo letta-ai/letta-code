@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename, dirname, relative } from "node:path";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { parseFrontmatter } from "../../utils/frontmatter";
+import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { parseFrontmatter } from "@/utils/frontmatter";
 import type { LocalAgentRecord } from "./LocalStore";
 
 const CORE_MEMORY_VARIABLE = "{CORE_MEMORY}";

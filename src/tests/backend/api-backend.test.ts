@@ -11,7 +11,7 @@ import type {
   ConversationRecompileBody,
   ConversationUpdateBody,
   RunMessageStreamBody,
-} from "../../backend";
+} from "@/backend";
 
 const retrieveAgentMock = mock(
   async (_agentId: string, _options?: unknown) => ({ id: "agent-1" }),
@@ -122,7 +122,7 @@ import {
   configureBackendMode,
   getBackend,
   isLocalBackendEnabled,
-} from "../../backend";
+} from "@/backend";
 
 describe("APIBackend", () => {
   beforeEach(() => {

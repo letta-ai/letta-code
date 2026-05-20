@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runMemorySubcommand } from "../../cli/subcommands/memory";
+import { runMemorySubcommand } from "@/cli/subcommands/memory";
 
 interface Capture {
   stdout: string[];

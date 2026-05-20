@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
+import { buildConversationMessagesCreateRequestBody } from "@/agent/message";
 
 describe("buildConversationMessagesCreateRequestBody client_skills", () => {
   test("includes client_skills alongside client_tools", () => {

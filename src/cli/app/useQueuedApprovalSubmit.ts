@@ -3,14 +3,14 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { type Dispatch, type MutableRefObject, useCallback } from "react";
-import type { ApprovalResult } from "../../agent/approval-execution";
+import type { ApprovalResult } from "@/agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-} from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { getBackend } from "../../backend";
-import { debugWarn } from "../../utils/debug";
+} from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { getBackend } from "@/backend";
+import { debugWarn } from "@/utils/debug";
 
 import { createClientOtid } from "./ids";
 import type {

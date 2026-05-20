@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { InboundChannelMessage } from "../../channels/types";
+import type { InboundChannelMessage } from "@/channels/types";
 import {
   buildChannelNotificationXml,
   buildChannelReminderText,
-} from "../../channels/xml";
+} from "@/channels/xml";
 
 describe("discord xml", () => {
   test("notification XML has source=discord", () => {

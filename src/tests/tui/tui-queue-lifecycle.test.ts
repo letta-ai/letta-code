@@ -18,14 +18,14 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { getTuiBlockedReason } from "../../cli/helpers/tuiQueueAdapter";
+import { getTuiBlockedReason } from "@/cli/helpers/tuiQueueAdapter";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
   QueueClearedReason,
   QueueItem,
-} from "../../queue/queueRuntime";
-import { QueueRuntime } from "../../queue/queueRuntime";
+} from "@/queue/queueRuntime";
+import { QueueRuntime } from "@/queue/queueRuntime";
 
 // ── Helpers ───────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
-import { discoverFallbackRunIdForResume } from "../../cli/helpers/stream";
+import { discoverFallbackRunIdForResume } from "@/cli/helpers/stream";
 
 type RunsListClient = {
   runs: {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { classifyApprovals } from "../../cli/helpers/approvalClassification";
-import { permissionMode } from "../../permissions/mode";
-import { loadTools } from "../../tools/manager";
+import { classifyApprovals } from "@/cli/helpers/approvalClassification";
+import { permissionMode } from "@/permissions/mode";
+import { loadTools } from "@/tools/manager";
 
 describe("classifyApprovals", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;

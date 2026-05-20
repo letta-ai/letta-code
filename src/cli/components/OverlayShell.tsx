@@ -4,7 +4,7 @@
 
 import { Box } from "ink";
 import type { ReactNode } from "react";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

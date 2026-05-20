@@ -8,12 +8,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { QueuedMessage } from "../../cli/helpers/messageQueueBridge";
+import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
 import {
   buildContentFromQueueBatch,
   buildQueuedContentParts,
-} from "../../cli/helpers/queuedMessageParts";
-import { QueueRuntime } from "../../queue/queueRuntime";
+} from "@/cli/helpers/queuedMessageParts";
+import { QueueRuntime } from "@/queue/queueRuntime";
 
 // ── Helpers ───────────────────────────────────────────────────────
 

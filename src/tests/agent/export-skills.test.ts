@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { packageSkills } from "../../agent/export";
+import { packageSkills } from "@/agent/export";
 
 describe("packageSkills from .skills/ directory", () => {
   const testDir = join(process.cwd(), ".test-skills-export");

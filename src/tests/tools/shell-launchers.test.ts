@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildPowerShellCommand,
   buildShellLaunchers,
-} from "../../tools/impl/shellLaunchers";
+} from "@/tools/impl/shellLaunchers";
 
 describe("Shell Launchers", () => {
   test("builds launchers for a command", () => {

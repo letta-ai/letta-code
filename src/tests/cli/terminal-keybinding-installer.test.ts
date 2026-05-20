@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   injectWezTermDeleteFix,
   wezTermDeleteFixExists,
-} from "../../cli/utils/terminalKeybindingInstaller";
+} from "@/cli/utils/terminalKeybindingInstaller";
 
 describe("injectWezTermDeleteFix", () => {
   test("injects before the real return config line, not a commented one", () => {

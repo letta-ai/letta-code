@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { extractPrimaryShellCommand } from "../permissions/shell-command-normalization";
+import { extractPrimaryShellCommand } from "@/permissions/shell-command-normalization";
 import {
   parseShellAnalysis,
   splitShellSegments,
   splitShellSegmentsAllowCommandSubstitution,
-} from "../permissions/shellAnalysis";
+} from "@/permissions/shellAnalysis";
 
 describe("shellAnalysis", () => {
   test("parses nested read-only control flow into structured nodes", () => {

@@ -4,7 +4,7 @@ import {
   type MessageQueueItem,
   type QueueItem,
   QueueRuntime,
-} from "../../queue/queueRuntime";
+} from "@/queue/queueRuntime";
 
 // ── Helpers ───────────────────────────────────────────────────────
 

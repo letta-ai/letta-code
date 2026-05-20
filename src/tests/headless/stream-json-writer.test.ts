@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import {
-  writeWireMessage,
-  writeWireMessageAsync,
-} from "../../streamJsonWriter";
-import type { ControlRequest, MessageWire } from "../../types/protocol";
+import { writeWireMessage, writeWireMessageAsync } from "@/streamJsonWriter";
+import type { ControlRequest, MessageWire } from "@/types/protocol";
 
 const originalConsoleLog = console.log;
 const originalStdoutWrite = process.stdout.write;

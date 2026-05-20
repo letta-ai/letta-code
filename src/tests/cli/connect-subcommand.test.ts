@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { runConnectSubcommand } from "../../cli/subcommands/connect";
+import { runConnectSubcommand } from "@/cli/subcommands/connect";
 
 function createIoDeps() {
   const stdout: string[] = [];

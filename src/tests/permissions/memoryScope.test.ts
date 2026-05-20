@@ -1,11 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { cliPermissions } from "../../permissions/cli";
+import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { cliPermissions } from "@/permissions/cli";
 import {
   normalizeScopedPath,
   resolveAllowedMemoryRoots,
-} from "../../permissions/memoryScope";
+} from "@/permissions/memoryScope";
 
 afterEach(() => {
   delete process.env.MEMORY_DIR;

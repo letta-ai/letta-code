@@ -4,20 +4,20 @@ import type WebSocket from "ws";
 import {
   estimateSystemPromptTokensFromMemoryDir,
   setSystemPromptDoctorState,
-} from "../../cli/helpers/systemPromptWarning";
-import { settingsManager } from "../../settings-manager";
+} from "@/cli/helpers/systemPromptWarning";
+import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
-} from "../../types/protocol_v2";
-import { isDebugEnabled } from "../../utils/debug";
+} from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   handleTerminalInput,
   handleTerminalKill,
   handleTerminalResize,
   handleTerminalSpawn,
-} from "../terminalHandler";
+} from "@/websocket/terminalHandler";
 import { handleExecuteCommand } from "./commands";
 import {
   handleChannelsProtocolCommand,

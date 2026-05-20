@@ -1,16 +1,16 @@
 import type WebSocket from "ws";
-import { resolveModel } from "../../../agent/model";
-import { settingsManager } from "../../../settings-manager";
+import { resolveModel } from "@/agent/model";
+import { settingsManager } from "@/settings-manager";
 import type {
   CreateAgentCommand,
   SkillDisableCommand,
   SkillEnableCommand,
-} from "../../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   isCreateAgentCommand,
   isSkillDisableCommand,
   isSkillEnableCommand,
-} from "../protocol-inbound";
+} from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type SkillCommand = SkillEnableCommand | SkillDisableCommand;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseFrontmatter } from "../../utils/frontmatter";
+import { parseFrontmatter } from "@/utils/frontmatter";
 
 describe("parseFrontmatter", () => {
   test("parses LF frontmatter", () => {

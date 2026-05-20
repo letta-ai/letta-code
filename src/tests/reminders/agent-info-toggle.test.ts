@@ -3,8 +3,8 @@ import {
   buildSharedReminderParts,
   type SharedReminderContext,
   sharedReminderProviders,
-} from "../../reminders/engine";
-import { createSharedReminderState } from "../../reminders/state";
+} from "@/reminders/engine";
+import { createSharedReminderState } from "@/reminders/state";
 
 /**
  * Regression test for #1848:

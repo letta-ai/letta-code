@@ -2,13 +2,13 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { getRuntimeContext } from "../../runtime-context";
+import { getRuntimeContext } from "@/runtime-context";
 import {
   switchConversationWorkingDirectory,
   switchCurrentRuntimeWorkingDirectory,
-} from "../../websocket/listener/cwd-change";
-import { getActiveRuntime } from "../../websocket/listener/runtime";
-import { restartWorktreeWatcher } from "../../websocket/listener/worktree-watcher";
+} from "@/websocket/listener/cwd-change";
+import { getActiveRuntime } from "@/websocket/listener/runtime";
+import { restartWorktreeWatcher } from "@/websocket/listener/worktree-watcher";
 import { getShellEnv } from "./shellEnv.js";
 import { validateRequiredParams } from "./validation.js";
 

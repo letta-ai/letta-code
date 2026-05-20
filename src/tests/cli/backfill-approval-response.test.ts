@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-import { createBuffers } from "../../cli/helpers/accumulator";
-import { backfillBuffers } from "../../cli/helpers/backfill";
+import { createBuffers } from "@/cli/helpers/accumulator";
+import { backfillBuffers } from "@/cli/helpers/backfill";
 
 describe("backfill approval response handling", () => {
   test("trims trailing newlines from backfilled reasoning messages", () => {

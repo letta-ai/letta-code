@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bash } from "../../tools/impl/Bash";
+import { bash } from "@/tools/impl/Bash";
 
 const isWindows = process.platform === "win32";
 

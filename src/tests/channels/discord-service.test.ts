@@ -3,19 +3,19 @@ import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
-} from "../../channels/accounts";
+} from "@/channels/accounts";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
   clearPairingStores,
-} from "../../channels/pairing";
+} from "@/channels/pairing";
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
   addRoute,
   clearAllRoutes,
   getRoute,
-} from "../../channels/routing";
+} from "@/channels/routing";
 import {
   __testOverrideResolveChannelAccountDisplayName,
   bindChannelAccountLive,
@@ -27,12 +27,12 @@ import {
   setChannelConfigLive,
   unbindChannelAccountLive,
   updateChannelAccountLive,
-} from "../../channels/service";
+} from "@/channels/service";
 import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
   clearTargetStores,
-} from "../../channels/targets";
+} from "@/channels/targets";
 
 describe("discord channel service", () => {
   function resetState(): void {

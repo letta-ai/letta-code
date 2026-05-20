@@ -3,11 +3,11 @@ import {
   formatLocalMessagesForSummary,
   type LocalCompactionStats,
   packageLocalSummaryMessage,
-} from "../../backend/local/compaction";
+} from "@/backend/local/compaction";
 import {
   emptyLocalUsage,
   type LocalMessage,
-} from "../../backend/local/LocalMessage";
+} from "@/backend/local/LocalMessage";
 
 function user(
   id: string,

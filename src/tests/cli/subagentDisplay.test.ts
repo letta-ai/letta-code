@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getSubagentModelDisplay } from "../../cli/helpers/subagentDisplay";
+import { getSubagentModelDisplay } from "@/cli/helpers/subagentDisplay";
 
 describe("getSubagentModelDisplay", () => {
   test("formats known model IDs using short labels", () => {

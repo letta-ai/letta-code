@@ -3,7 +3,7 @@ import {
   SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
+} from "@/constants";
 
 export function stripSystemReminders(text: string): string {
   return text

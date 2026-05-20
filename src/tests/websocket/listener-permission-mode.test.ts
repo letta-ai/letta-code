@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {
   getConversationPermissionModeState,
   getOrCreateConversationPermissionModeStateRef,
   getPermissionModeScopeKey,
   pruneConversationPermissionModeStateIfDefault,
-} from "../../websocket/listener/permissionMode";
+} from "@/websocket/listener/permissionMode";
 
 describe("listener permission mode helpers", () => {
   test("getOrCreate ref preserves identity across legacy default-key migration", () => {

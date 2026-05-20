@@ -1,8 +1,8 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Skill, SkillSource } from "../../agent/skills";
-import { estimateTokens } from "../helpers/format";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { Skill, SkillSource } from "@/agent/skills";
+import { estimateTokens } from "@/cli/helpers/format";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

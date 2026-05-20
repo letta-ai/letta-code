@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_AGENT_CONFIGS,
   selectDefaultAgentModel,
-} from "../../agent/defaults";
+} from "@/agent/defaults";
 import {
   getPersonalityContent,
   getPersonalityHumanContent,
-} from "../../agent/personality";
+} from "@/agent/personality";
 
 describe("selectDefaultAgentModel", () => {
   test("uses the caller's preferred model when it is available on self-hosted", () => {

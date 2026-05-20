@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { permissionMode } from "../../permissions/mode";
-import { exit_plan_mode } from "../../tools/impl/ExitPlanMode";
+import { permissionMode } from "@/permissions/mode";
+import { exit_plan_mode } from "@/tools/impl/ExitPlanMode";
 
 describe("ExitPlanMode tool", () => {
   test("restores prior permission mode when exiting plan mode", async () => {

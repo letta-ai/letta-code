@@ -4,9 +4,9 @@ import {
   ensureFileIndex,
   getIndexRoot,
   setIndexRoot,
-} from "../../cli/helpers/fileIndex";
-import { updateRuntimeContext } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
+} from "@/cli/helpers/fileIndex";
+import { updateRuntimeContext } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import {
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,

@@ -5,8 +5,8 @@ import { createReadStream } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getBackend } from "../backend";
-import { getClient } from "../backend/api/client";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
 import { getModelUpdateArgs } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 

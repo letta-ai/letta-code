@@ -3,7 +3,7 @@ import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
-} from "../../channels/accounts";
+} from "@/channels/accounts";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
@@ -11,30 +11,30 @@ import {
   createPairingCode,
   getPendingPairings,
   isUserApproved,
-} from "../../channels/pairing";
+} from "@/channels/pairing";
 import {
   __testOverrideLoadPendingControlRequestStore,
   __testOverrideSavePendingControlRequestStore,
   clearPendingControlRequestStore,
-} from "../../channels/pendingControlRequests";
+} from "@/channels/pendingControlRequests";
 import {
   buildSlackConversationSummary,
   ChannelRegistry,
   completePairing,
   getChannelRegistry,
-} from "../../channels/registry";
+} from "@/channels/registry";
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
   addRoute,
   clearAllRoutes,
   getRoute,
-} from "../../channels/routing";
+} from "@/channels/routing";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   InboundChannelMessage,
-} from "../../channels/types";
+} from "@/channels/types";
 
 beforeEach(() => {
   __testOverrideLoadPendingControlRequestStore(null);

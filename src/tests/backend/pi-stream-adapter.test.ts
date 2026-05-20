@@ -12,13 +12,13 @@ import type {
 import {
   PiStreamAdapter,
   type PiStreamFunction,
-} from "../../backend/dev/PiStreamAdapter";
+} from "@/backend/dev/PiStreamAdapter";
 import type {
   ProviderStreamEvent,
   ProviderTurnInput,
-} from "../../backend/dev/ProviderTurnExecutor";
-import { emptyLocalUsage } from "../../backend/local/LocalMessage";
-import { createOrUpdateLocalProvider } from "../../backend/local/LocalProviderAuthStore";
+} from "@/backend/dev/ProviderTurnExecutor";
+import { emptyLocalUsage } from "@/backend/local/LocalMessage";
+import { createOrUpdateLocalProvider } from "@/backend/local/LocalProviderAuthStore";
 
 function assistantMessage(): AssistantMessage {
   return {

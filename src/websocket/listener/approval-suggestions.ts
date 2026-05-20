@@ -2,14 +2,14 @@ import {
   type ApprovalClassification,
   type ClassifyApprovalsOptions,
   classifyApprovals,
-} from "../../cli/helpers/approvalClassification";
-import type { ApprovalRequest } from "../../cli/helpers/stream";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import { analyzeToolApproval, savePermissionRule } from "../../tools/manager";
+} from "@/cli/helpers/approvalClassification";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import { analyzeToolApproval, savePermissionRule } from "@/tools/manager";
 import type {
   ApprovalResponseAllowDecision,
   PermissionSuggestion,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 
 type SuggestedApprovalClassification = ApprovalClassification<ApprovalContext>;
 

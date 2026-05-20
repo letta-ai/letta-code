@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildDiscordIngressMessageKey,
   buildDiscordReplyOptions,
-} from "../../channels/discord/adapter";
+} from "@/channels/discord/adapter";
 
 // The Discord adapter's internal helpers are not exported, but we can test
 // the equivalent logic by reimplementing the pure functions here and verifying

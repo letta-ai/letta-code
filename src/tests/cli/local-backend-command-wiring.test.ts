@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/tests/helpers/readInteractiveAppSource";
 
 function appSource(): string {
   return readInteractiveAppSource();
@@ -23,7 +23,7 @@ describe("local backend command wiring", () => {
   test("new, fork, clear, and resume route conversation operations through Backend", () => {
     const source = appSource();
     expect(source).toContain("getResumeDataFromBackend");
-    expect(source).not.toContain('from "../backend/api/conversations"');
+    expect(source).not.toContain('from "@/backend/api/conversations"');
 
     const newSegment = segmentBetween(
       source,
@@ -95,9 +95,7 @@ describe("local backend command wiring", () => {
       new URL("../../cli/commands/profile.ts", import.meta.url),
     );
     const profileSource = readFileSync(profilePath, "utf-8");
-    expect(profileSource).toContain(
-      'import { getBackend } from "../../backend";',
-    );
+    expect(profileSource).toContain('import { getBackend } from "@/backend"');
     expect(profileSource).not.toContain("getClient");
 
     const memoryViewerPath = fileURLToPath(
@@ -164,7 +162,7 @@ describe("local backend command wiring", () => {
     );
     const messageSearchSource = readFileSync(messageSearchPath, "utf-8");
     expect(messageSearchSource).toContain("searchMessagesForBackend");
-    expect(messageSearchSource).not.toContain("../../backend/api/search");
+    expect(messageSearchSource).not.toContain("@/backend/api/search");
 
     const messagesSubcommandPath = fileURLToPath(
       new URL("../../cli/subcommands/messages.ts", import.meta.url),
@@ -212,9 +210,9 @@ describe("local backend command wiring", () => {
       new URL("../../tools/impl/Task.ts", import.meta.url),
     );
     const taskSource = readFileSync(taskPath, "utf-8");
-    expect(taskSource).toContain('import { getBackend } from "../../backend";');
+    expect(taskSource).toContain('import { getBackend } from "@/backend"');
     expect(taskSource).toContain("await getBackend().forkConversation(");
-    expect(taskSource).not.toContain('from "../../backend/api/conversations"');
+    expect(taskSource).not.toContain('from "@/backend/api/conversations"');
 
     const managerPath = fileURLToPath(
       new URL("../../agent/subagents/manager.ts", import.meta.url),

@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import { bash } from "../../tools/impl/Bash";
-import { bash_output } from "../../tools/impl/BashOutput";
-import { kill_bash } from "../../tools/impl/KillBash";
+import { bash } from "@/tools/impl/Bash";
+import { bash_output } from "@/tools/impl/BashOutput";
+import { kill_bash } from "@/tools/impl/KillBash";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
   backgroundProcesses,
-} from "../../tools/impl/process_manager";
+} from "@/tools/impl/process_manager";
 
 const isWindows = process.platform === "win32";
 

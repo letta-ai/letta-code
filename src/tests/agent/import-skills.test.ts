@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { extractSkillsFromAf } from "../../agent/import";
+import { extractSkillsFromAf } from "@/agent/import";
 
 describe("skills extraction from .af files", () => {
   const testDir = join(process.cwd(), ".test-skills-import");

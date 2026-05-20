@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { customAccountConfigAdapter } from "../../channels/custom/accountConfig";
-import type { CustomChannelAccount } from "../../channels/types";
+import { customAccountConfigAdapter } from "@/channels/custom/accountConfig";
+import type { CustomChannelAccount } from "@/channels/types";
 
 function makeAccount(
   config: Record<string, unknown>,

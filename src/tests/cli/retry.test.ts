@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { __testSetBackend, type Backend } from "../../backend";
-import { isRetriableError } from "../../cli/app/retry";
+import { __testSetBackend, type Backend } from "@/backend";
+import { isRetriableError } from "@/cli/app/retry";
 
 const capabilities = {
   remoteMemfs: false,

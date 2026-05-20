@@ -4,26 +4,26 @@ import type WebSocket from "ws";
 import type {
   ApprovalDecision,
   ApprovalResult,
-} from "../../agent/approval-execution";
-import type { ChannelTurnSource } from "../../channels/types";
-import type { ContextTracker } from "../../cli/helpers/contextTracker";
-import type { ApprovalRequest } from "../../cli/helpers/stream";
-import type { ApprovalContext } from "../../permissions/analyzer";
+} from "@/agent/approval-execution";
+import type { ChannelTurnSource } from "@/channels/types";
+import type { ContextTracker } from "@/cli/helpers/contextTracker";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import type { ApprovalContext } from "@/permissions/analyzer";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
   QueueItem,
   QueueRuntime,
-} from "../../queue/queueRuntime";
-import type { SharedReminderState } from "../../reminders/state";
-import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
+} from "@/queue/queueRuntime";
+import type { SharedReminderState } from "@/reminders/state";
+import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
   ControlRequest,
   LoopStatus,
   RuntimeScope,
   WsProtocolCommand,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import type { ListenerTransport } from "./transport";
 
 export interface StartListenerOptions {

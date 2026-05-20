@@ -12,7 +12,7 @@ import type {
   TranscriptBackfillMessage,
   TranscriptSupplementMessage,
   WireMessage,
-} from "../../types/protocol";
+} from "@/types/protocol";
 
 // ── Helpers ───────────────────────────────────────────────────────
 

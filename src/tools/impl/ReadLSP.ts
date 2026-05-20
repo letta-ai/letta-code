@@ -2,7 +2,7 @@
  * LSP-enhanced Read tool - wraps the base Read tool and adds LSP diagnostics
  * This is used when LETTA_ENABLE_LSP is set
  */
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { read as baseRead, type ToolReturnContent } from "./Read.js";
 
 // Format a single diagnostic in opencode style: "ERROR [line:col] message"

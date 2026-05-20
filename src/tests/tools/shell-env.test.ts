@@ -1,19 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { configureBackendMode } from "../../backend";
+import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { configureBackendMode } from "@/backend";
 import {
   getLocalBackendMemoryFilesystemRoot,
   LOCAL_BACKEND_NO_MEMFS_ENV,
-} from "../../backend/local/paths";
-import { runWithRuntimeContext } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
+} from "@/backend/local/paths";
+import { runWithRuntimeContext } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import {
   ensureLettaShimDir,
   getShellEnv,
   resolveLettaInvocation,
-} from "../../tools/impl/shellEnv";
+} from "@/tools/impl/shellEnv";
 
 function withTemporaryAgentEnv<T>(agentId: string, fn: () => T): T {
   const originalAgentId = process.env.AGENT_ID;

@@ -1,21 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type { HeadlessTurnExecutorInput } from "../../backend/dev/HeadlessTurnExecutor";
+import type { HeadlessTurnExecutorInput } from "@/backend/dev/HeadlessTurnExecutor";
 import {
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
   providerLocalMessage,
   providerStreamPart,
-} from "../../backend/dev/ProviderTurnExecutor";
+} from "@/backend/dev/ProviderTurnExecutor";
 import {
   emptyLocalUsage,
   type LocalMessage,
-} from "../../backend/local/LocalMessage";
+} from "@/backend/local/LocalMessage";
 import {
   getAttachedLocalMessage,
   isLocalStateChunkOnly,
   type ProviderStreamPart,
-} from "../../backend/local/LocalStreamChunks";
+} from "@/backend/local/LocalStreamChunks";
 
 function part(value: Record<string, unknown>): ProviderStreamPart {
   return value as unknown as ProviderStreamPart;

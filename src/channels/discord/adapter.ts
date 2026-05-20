@@ -6,7 +6,7 @@ import type {
   DiscordChannelAccount,
   InboundChannelMessage,
   OutboundChannelMessage,
-} from "../types";
+} from "@/channels/types";
 import { isDiscordGuildChannelAllowed } from "./channelGating";
 import { formatDiscordDeliveryError } from "./errorReply";
 import {

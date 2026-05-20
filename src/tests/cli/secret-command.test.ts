@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { setCurrentAgentId } from "../../agent/context";
-import { handleSecretCommand } from "../../cli/commands/secret";
+import { setCurrentAgentId } from "@/agent/context";
+import { handleSecretCommand } from "@/cli/commands/secret";
 import {
   __testOverrideSecretsBackend,
   clearSecretsCache,
   loadSecrets,
-} from "../../utils/secretsStore";
+} from "@/utils/secretsStore";
 
 const AGENT_ID = "agent-secret-command";
 

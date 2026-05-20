@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { resolveStartupTarget } from "../agent/resolve-startup-agent";
-import { settingsManager } from "../settings-manager";
+import { resolveStartupTarget } from "@/agent/resolve-startup-agent";
+import { settingsManager } from "@/settings-manager";
 
 const originalHome = process.env.HOME;
 const originalCwd = process.cwd();

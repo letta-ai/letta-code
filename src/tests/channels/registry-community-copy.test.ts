@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildChannelHelpMessage } from "../../channels/commands";
+import { buildChannelHelpMessage } from "@/channels/commands";
 
 const { buildPairingInstructions, buildUnboundRouteInstructions } =
   await import("../../channels/registry");

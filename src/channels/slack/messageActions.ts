@@ -1,8 +1,8 @@
 import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
-} from "../pluginTypes";
-import type { SlackChannelAccount } from "../types";
+} from "@/channels/pluginTypes";
+import type { SlackChannelAccount } from "@/channels/types";
 import { resolveSlackMessageTarget } from "./targetResolution";
 
 async function sendSlackMessage(

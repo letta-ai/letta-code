@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { list_dir } from "../tools/impl/ListDirCodex.js";
-import { DIRECTORY_LIMIT_ENV } from "../utils/directoryLimits";
+import { list_dir } from "@/tools/impl/ListDirCodex.js";
+import { DIRECTORY_LIMIT_ENV } from "@/utils/directoryLimits";
 
 const DIRECTORY_LIMIT_ENV_KEYS = Object.values(DIRECTORY_LIMIT_ENV);
 const ORIGINAL_DIRECTORY_ENV = Object.fromEntries(

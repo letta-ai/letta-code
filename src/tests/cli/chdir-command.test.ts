@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   parseChdirCommand,
   resolveChdirTarget,
-} from "../../cli/helpers/chdirCommand";
+} from "@/cli/helpers/chdirCommand";
 
 describe("/chdir command", () => {
   test("is registered with /cd alias", () => {

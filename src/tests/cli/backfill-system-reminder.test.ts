@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-import { createBuffers } from "../../cli/helpers/accumulator";
-import { backfillBuffers } from "../../cli/helpers/backfill";
+import { createBuffers } from "@/cli/helpers/accumulator";
+import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
   SYSTEM_ALERT_CLOSE,
   SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
+} from "@/constants";
 
 function userMessage(
   id: string,

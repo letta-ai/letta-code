@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { read_file } from "../tools/impl/ReadFileCodex.js";
+import { read_file } from "@/tools/impl/ReadFileCodex.js";
 
 describe("read_file indentation mode", () => {
   let tempDir: string;

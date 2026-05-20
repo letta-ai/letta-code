@@ -5,8 +5,8 @@ import { join } from "node:path";
 import {
   clearSubagentConfigCache,
   getAllSubagentConfigs,
-} from "../../agent/subagents";
-import { __testSetBackend, type Backend } from "../../backend";
+} from "@/agent/subagents";
+import { __testSetBackend, type Backend } from "@/backend";
 
 let tempDir: string | null = null;
 

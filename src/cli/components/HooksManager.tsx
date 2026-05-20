@@ -3,7 +3,8 @@
 
 import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { getBackend } from "../../backend";
+import { getBackend } from "@/backend";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import {
   type HookCommand,
   type HookEvent,
@@ -14,7 +15,7 @@ import {
   type SimpleHookEvent,
   type SimpleHookMatcher,
   type ToolHookEvent,
-} from "../../hooks/types";
+} from "@/hooks/types";
 import {
   addHookMatcher,
   addSimpleHookMatcher,
@@ -28,9 +29,8 @@ import {
   removeHook,
   type SaveLocation,
   setHooksDisabled,
-} from "../../hooks/writer";
-import { settingsManager } from "../../settings-manager";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/hooks/writer";
+import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { Text } from "./Text";

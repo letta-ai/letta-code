@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   validateParamTypes,
   validateRequiredParams,
-} from "../../tools/impl/validation";
+} from "@/tools/impl/validation";
 
 describe("validateRequiredParams", () => {
   test("passes when all required params are present", () => {

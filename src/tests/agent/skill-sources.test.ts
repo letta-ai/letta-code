@@ -3,7 +3,7 @@ import {
   ALL_SKILL_SOURCES,
   parseSkillSourcesList,
   resolveSkillSourcesSelection,
-} from "../../agent/skillSources";
+} from "@/agent/skillSources";
 
 describe("skill source selection", () => {
   test("defaults to all sources", () => {

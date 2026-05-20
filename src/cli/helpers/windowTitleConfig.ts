@@ -1,8 +1,8 @@
 // Config resolution and rendering for the terminal window title.
 // Precedence: local project > project > global settings.
 
-import { settingsManager } from "../../settings-manager";
-import { debugLog } from "../../utils/debug";
+import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 
 /** All valid field keys for the window title. */
 export const WINDOW_TITLE_FIELDS = [

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getDefaultModel, getDefaultModelForTier } from "../../agent/model";
+import { getDefaultModel, getDefaultModelForTier } from "@/agent/model";
 
 describe("getDefaultModelForTier", () => {
   test("returns the default model for free tier", () => {

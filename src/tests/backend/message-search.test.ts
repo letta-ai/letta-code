@@ -6,12 +6,12 @@ import type {
   AgentCreateBody,
   ConversationCreateBody,
   ConversationMessageCreateBody,
-} from "../../backend";
-import { LocalBackend } from "../../backend/local";
+} from "@/backend";
+import { LocalBackend } from "@/backend/local";
 import {
   searchMessagesForBackend,
   warmMessageSearchCacheForBackend,
-} from "../../backend/messageSearch";
+} from "@/backend/messageSearch";
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {

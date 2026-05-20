@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { isReflectionSubagentActive } from "../../cli/helpers/reflectionGate";
+import { isReflectionSubagentActive } from "@/cli/helpers/reflectionGate";
 
 type Row = {
   type: string;

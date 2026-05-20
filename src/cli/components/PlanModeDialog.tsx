@@ -1,7 +1,7 @@
 import { Box, useInput } from "ink";
 import { memo, useState } from "react";
-import { resolvePlaceholders } from "../helpers/pasteRegistry";
-import { useProgressIndicator } from "../hooks/useProgressIndicator";
+import { resolvePlaceholders } from "@/cli/helpers/pasteRegistry";
+import { useProgressIndicator } from "@/cli/hooks/useProgressIndicator";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";

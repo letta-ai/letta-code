@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
-} from "../../cli/components/ModelSelector";
+} from "@/cli/components/ModelSelector";
 
 describe("ModelSelector custom BYOK provider detection", () => {
   test("treats connected custom OpenAI providers as BYOK", () => {

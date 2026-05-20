@@ -1,5 +1,5 @@
-import { getCurrentAgentId } from "../agent/context";
-import { generateAgentResponse } from "../backend/api/generate";
+import { getCurrentAgentId } from "@/agent/context";
+import { generateAgentResponse } from "@/backend/api/generate";
 import {
   HookExitCode,
   type HookInput,

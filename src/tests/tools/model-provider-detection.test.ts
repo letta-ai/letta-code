@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { isOpenAIModel } from "../../tools/manager";
-import { deriveToolsetFromModel } from "../../tools/toolset";
+import { isOpenAIModel } from "@/tools/manager";
+import { deriveToolsetFromModel } from "@/tools/toolset";
 
 describe("isOpenAIModel", () => {
   test("detects openai handles", () => {

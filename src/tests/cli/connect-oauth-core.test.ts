@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import {
   isChatGPTOAuthConnected,
   runChatGPTOAuthConnectFlow,
-} from "../../cli/commands/connect-oauth-core";
+} from "@/cli/commands/connect-oauth-core";
 
 describe("connect OAuth core", () => {
   test("runs full OAuth flow and creates provider", async () => {

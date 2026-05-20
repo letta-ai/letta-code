@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { filterModelsByAvailabilityForSelector } from "../../cli/components/ModelSelector";
+import { filterModelsByAvailabilityForSelector } from "@/cli/components/ModelSelector";
 
 type StubModel = { handle: string; label: string };
 

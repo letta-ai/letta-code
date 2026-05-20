@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import {
   isMemoryDirCommand,
   isReadOnlyShellCommand,
-} from "../permissions/readOnlyShell";
+} from "@/permissions/readOnlyShell";
 
 test("FIX: isReadOnlyShellCommand should not auto-approve reading sensitive files", () => {
   // These used to return true, now should return false

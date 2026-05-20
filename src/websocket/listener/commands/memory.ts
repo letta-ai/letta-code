@@ -1,6 +1,6 @@
 import type WebSocket from "ws";
-import { trackBoundaryError } from "../../../telemetry/errorReporting";
-import type { ListMemoryCommand } from "../../../types/protocol_v2";
+import { trackBoundaryError } from "@/telemetry/errorReporting";
+import type { ListMemoryCommand } from "@/types/protocol_v2";
 import {
   isDeleteMemoryFileCommand,
   isEnableMemfsCommand,
@@ -10,7 +10,7 @@ import {
   isMemoryHistoryCommand,
   isReadMemoryFileCommand,
   isWriteMemoryFileCommand,
-} from "../protocol-inbound";
+} from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;

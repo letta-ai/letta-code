@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
 
 const { setActiveRuntime, stopRuntime } = __listenClientTestUtils;
 

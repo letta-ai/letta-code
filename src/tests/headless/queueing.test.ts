@@ -5,7 +5,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import {
   type BidirectionalQueuedInput,
   mergeBidirectionalQueuedInput,
-} from "../../headless";
+} from "@/headless";
 
 describe("headless bidirectional queue merging", () => {
   test("merges queued user and task notification inputs into one content payload", () => {

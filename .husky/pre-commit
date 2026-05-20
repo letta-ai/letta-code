@@ -1,7 +1,28 @@
 #!/usr/bin/env sh
 
+# Ban relative parent imports — use @/ instead of ../
+# Runs first so the error message is clear before tsc fires confusing TS2307s.
+# Exempts package.json imports which must remain relative (they live above src/)
+# Note: || true guards against grep exit code 1 (no match) under sh -e (husky v9)
+STAGED_TS=$(git diff --cached --name-only | grep -E '\.(ts|tsx)$' || true)
+if [ -n "$STAGED_TS" ]; then
+  VIOLATIONS=$(echo "$STAGED_TS" | xargs grep -lE '^(import|export).*from "\.\.' 2>/dev/null | xargs grep -E '^(import|export).*from "\.\.' 2>/dev/null | grep -v 'package\.json' || true)
+  if [ -n "$VIOLATIONS" ]; then
+    echo ""
+    echo "❌ Relative parent imports found — use @/ instead of ../:"
+    echo "$VIOLATIONS"
+    echo ""
+    echo "Fix: change 'from \"../foo\"' to 'from \"@/foo\"'"
+    exit 1
+  fi
+fi
+
 # Lint staged files only (fast)
-bunx lint-staged
+# Guard: lint-staged v16 exits code 1 when no files match, which would
+# fail the hook even on empty commits. Only run if lintable files are staged.
+if git diff --cached --name-only | grep -qE '\.(ts|tsx|js|jsx|json)$' 2>/dev/null; then
+  bunx lint-staged
+fi
 
 # Typecheck full project (catches type errors in unchanged files)
 bun run typecheck

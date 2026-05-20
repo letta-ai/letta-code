@@ -9,8 +9,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { shell_command } from "../../tools/impl/ShellCommand.js";
-import { LIMITS } from "../../tools/impl/truncation.js";
+import { shell_command } from "@/tools/impl/ShellCommand.js";
+import { LIMITS } from "@/tools/impl/truncation.js";
 import { createTempRuntimeScriptCommand } from "./runtimeScript.js";
 
 test("shell_command executes basic echo", async () => {

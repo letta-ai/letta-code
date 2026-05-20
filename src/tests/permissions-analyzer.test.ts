@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { analyzeApprovalContext } from "../permissions/analyzer";
+import { analyzeApprovalContext } from "@/permissions/analyzer";
 
 // ============================================================================
 // Bash Command Analysis Tests

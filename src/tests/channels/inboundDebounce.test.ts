@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createInboundDebouncer } from "../../channels/inboundDebounce";
+import { createInboundDebouncer } from "@/channels/inboundDebounce";
 
 type Item = { key: string | null; value: string };
 

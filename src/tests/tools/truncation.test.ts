@@ -4,7 +4,7 @@ import {
   truncateArray,
   truncateByChars,
   truncateByLines,
-} from "../../tools/impl/truncation";
+} from "@/tools/impl/truncation";
 
 describe("truncation utilities", () => {
   describe("truncateByChars", () => {

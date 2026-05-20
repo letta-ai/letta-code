@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { __testSetBackend, type Backend } from "../../backend";
-import { isRetriablePostStopError } from "../../websocket/listener/recovery";
+import { __testSetBackend, type Backend } from "@/backend";
+import { isRetriablePostStopError } from "@/websocket/listener/recovery";
 
 const capabilities = {
   remoteMemfs: false,

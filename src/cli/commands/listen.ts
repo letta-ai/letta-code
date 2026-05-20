@@ -4,15 +4,15 @@
  */
 
 import { hostname } from "node:os";
-import { getServerUrl } from "../../backend/api/client";
-import { settingsManager } from "../../settings-manager";
-import { getErrorMessage } from "../../utils/error";
+import { getServerUrl } from "@/backend/api/client";
+import type { Buffers, Line } from "@/cli/helpers/accumulator";
+import { buildAgentReference } from "@/cli/helpers/appUrls";
+import { settingsManager } from "@/settings-manager";
+import { getErrorMessage } from "@/utils/error";
 import {
   registerWithCloud,
   registerWithCloudRetry,
-} from "../../websocket/listen-register";
-import type { Buffers, Line } from "../helpers/accumulator";
-import { buildAgentReference } from "../helpers/appUrls";
+} from "@/websocket/listen-register";
 
 // tiny helper for unique ids
 function uid(prefix: string) {

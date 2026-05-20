@@ -1,21 +1,21 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import type { SubagentState } from "../../cli/helpers/subagentState";
+import type { SubagentState } from "@/cli/helpers/subagentState";
 import {
   clearAllSubagents,
   registerSubagent,
   updateSubagent,
-} from "../../cli/helpers/subagentState";
+} from "@/cli/helpers/subagentState";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
   backgroundTasks,
-} from "../../tools/impl/process_manager";
+} from "@/tools/impl/process_manager";
 import {
   spawnBackgroundSubagentTask,
   waitForBackgroundSubagentAgentId,
   waitForBackgroundSubagentLink,
-} from "../../tools/impl/Task";
+} from "@/tools/impl/Task";
 
 describe("spawnBackgroundSubagentTask", () => {
   let subagentCounter = 0;

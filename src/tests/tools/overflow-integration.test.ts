@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { bash } from "../../tools/impl/Bash";
-import { grep } from "../../tools/impl/Grep";
-import { getOverflowDirectory } from "../../tools/impl/overflow";
+import { bash } from "@/tools/impl/Bash";
+import { grep } from "@/tools/impl/Grep";
+import { getOverflowDirectory } from "@/tools/impl/overflow";
 
 describe("overflow integration tests", () => {
   const testWorkingDir = process.cwd();

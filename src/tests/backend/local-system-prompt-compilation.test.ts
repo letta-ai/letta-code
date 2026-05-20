@@ -3,14 +3,14 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { resolveAndBuildSystemPrompt } from "../../agent/promptAssets";
-import type { LocalAgentRecord } from "../../backend/local/LocalStore";
+import { resolveAndBuildSystemPrompt } from "@/agent/promptAssets";
+import type { LocalAgentRecord } from "@/backend/local/LocalStore";
 import {
   appendAvailableSkillsBlock,
   compileAvailableSkillsBlock,
   compileLocalSystemPrompt,
   hashRawSystemPrompt,
-} from "../../backend/local/systemPromptCompilation";
+} from "@/backend/local/systemPromptCompilation";
 
 function agent(system = "base {CORE_MEMORY}"): LocalAgentRecord {
   return {

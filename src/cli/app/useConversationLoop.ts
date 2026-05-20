@@ -14,7 +14,7 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import { executeAutoAllowedTools } from "../../agent/approval-execution";
+import { executeAutoAllowedTools } from "@/agent/approval-execution";
 import {
   extractConflictDetail,
   fetchRunErrorDetail,
@@ -28,29 +28,13 @@ import {
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
   shouldAttemptApprovalRecovery,
-} from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { getStreamToolContextId, sendMessageStream } from "../../agent/message";
-import { getModelInfo, getModelInfoForLlmConfig } from "../../agent/model";
-import { INTERRUPT_RECOVERY_ALERT } from "../../agent/promptAssets";
-import type { SessionStats } from "../../agent/stats";
-import { type ConversationMessageStreamBody, getBackend } from "../../backend";
-import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "../../constants";
-import { runStopHooks } from "../../hooks";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import { formatPermissionDenial } from "../../permissions/formatDenial";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import type { QueueRuntime } from "../../queue/queueRuntime";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import {
-  analyzeToolApproval,
-  type ToolExecutionResult,
-} from "../../tools/manager";
-import type { PreparedScopeToolContext } from "../../tools/toolset";
-import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
+} from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { getStreamToolContextId, sendMessageStream } from "@/agent/message";
+import { getModelInfo, getModelInfoForLlmConfig } from "@/agent/model";
+import { INTERRUPT_RECOVERY_ALERT } from "@/agent/promptAssets";
+import type { SessionStats } from "@/agent/stats";
+import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
   type Buffers,
   type Line,
@@ -58,52 +42,65 @@ import {
   onChunk,
   setToolCallsRunning,
   toLines,
-} from "../helpers/accumulator";
-import { classifyApprovals } from "../helpers/approvalClassification";
-import type { ContextTracker } from "../helpers/contextTracker";
+} from "@/cli/helpers/accumulator";
+import { classifyApprovals } from "@/cli/helpers/approvalClassification";
+import type { ContextTracker } from "@/cli/helpers/contextTracker";
 import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
   parsePatchToAdvancedDiff,
-} from "../helpers/diff";
+} from "@/cli/helpers/diff";
 import {
   formatErrorDetails,
   formatTelemetryErrorMessage,
   getRetryStatusMessage,
   isEncryptedContentError,
   isProviderStreamDisconnectErrorText,
-} from "../helpers/errorFormatter";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { buildGoalBudgetLimitPrompt } from "../helpers/goalCommand";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
+} from "@/cli/helpers/errorFormatter";
+import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
+import { buildGoalBudgetLimitPrompt } from "@/cli/helpers/goalCommand";
+import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
   getQueuedNotificationSummaries,
-} from "../helpers/queuedMessageParts";
-import { appendTranscriptDeltaJsonl } from "../helpers/reflectionTranscript";
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
+} from "@/cli/helpers/queuedMessageParts";
+import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflectionTranscript";
+import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
 import {
   type ApprovalRequest,
   type DrainResult,
   drainStream,
   drainStreamWithResume,
-} from "../helpers/stream";
+} from "@/cli/helpers/stream";
 import {
   clearCompletedSubagents,
   hasActiveSubagents,
-} from "../helpers/subagentState";
-import { shouldClearCompletedSubagentsOnTurnStart } from "../helpers/subagentTurnStart";
+} from "@/cli/helpers/subagentState";
+import { shouldClearCompletedSubagentsOnTurnStart } from "@/cli/helpers/subagentTurnStart";
 import {
   getRandomPastTenseVerb,
   getRandomThinkingVerb,
-} from "../helpers/thinkingMessages";
+} from "@/cli/helpers/thinkingMessages";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
-} from "../helpers/toolNameMapping";
-import { alwaysRequiresUserInput } from "../helpers/toolNameMapping.js";
+} from "@/cli/helpers/toolNameMapping";
+import { alwaysRequiresUserInput } from "@/cli/helpers/toolNameMapping.js";
+import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { runStopHooks } from "@/hooks";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import { formatPermissionDenial } from "@/permissions/formatDenial";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import type { QueueRuntime } from "@/queue/queueRuntime";
+import { ralphMode } from "@/ralph/mode";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
+import type { PreparedScopeToolContext } from "@/tools/toolset";
+import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 
 import {
   CONVERSATION_BUSY_MAX_RETRIES,

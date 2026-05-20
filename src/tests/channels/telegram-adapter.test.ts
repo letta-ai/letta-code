@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { __testOverrideChannelsRoot } from "../../channels/config";
-import type { InboundChannelMessage } from "../../channels/types";
+import { __testOverrideChannelsRoot } from "@/channels/config";
+import type { InboundChannelMessage } from "@/channels/types";
 
 type FakeBotStartOptions = {
   onStart?: (botInfo: {

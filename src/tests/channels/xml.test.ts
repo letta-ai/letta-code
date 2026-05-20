@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { InboundChannelMessage } from "../../channels/types";
+import type { InboundChannelMessage } from "@/channels/types";
 import {
   buildChannelNotificationXml,
   buildChannelReminderText,
   formatChannelNotification,
-} from "../../channels/xml";
+} from "@/channels/xml";
 
 function expectTextParts(
   content: MessageCreate["content"],

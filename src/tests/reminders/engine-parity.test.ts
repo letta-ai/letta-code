@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { SkillSource } from "../../agent/skills";
-import type { ReflectionSettings } from "../../cli/helpers/memoryReminder";
+import type { SkillSource } from "@/agent/skills";
+import type { ReflectionSettings } from "@/cli/helpers/memoryReminder";
 import {
   SHARED_REMINDER_CATALOG,
   SHARED_REMINDER_IDS,
   type SharedReminderId,
   type SharedReminderMode,
-} from "../../reminders/catalog";
+} from "@/reminders/catalog";
 import {
   buildSharedReminderParts,
   sharedReminderProviders,
-} from "../../reminders/engine";
-import { createSharedReminderState } from "../../reminders/state";
+} from "@/reminders/engine";
+import { createSharedReminderState } from "@/reminders/state";
 
 const originalProviders = { ...sharedReminderProviders };
 const providerMap = sharedReminderProviders;

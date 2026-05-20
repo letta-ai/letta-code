@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PRE_COMMIT_HOOK_SCRIPT } from "../../agent/memoryGit";
+import { PRE_COMMIT_HOOK_SCRIPT } from "@/agent/memoryGit";
 
 let tempDir: string;
 

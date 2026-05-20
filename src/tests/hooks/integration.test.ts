@@ -18,10 +18,10 @@ import {
   runStopHooks,
   runSubagentStopHooks,
   runUserPromptSubmitHooks,
-} from "../../hooks";
-import { checkPermissionWithHooks } from "../../permissions/checker";
-import { permissionMode } from "../../permissions/mode";
-import { settingsManager } from "../../settings-manager";
+} from "@/hooks";
+import { checkPermissionWithHooks } from "@/permissions/checker";
+import { permissionMode } from "@/permissions/mode";
+import { settingsManager } from "@/settings-manager";
 
 // Skip on Windows - test commands use bash syntax (&&, >&2, etc.)
 // The executor itself is cross-platform, but these test commands are bash-specific

@@ -2,18 +2,18 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import {
   collectFinishedTaskToolCalls,
   hasInProgressTaskToolCalls,
-} from "../../cli/helpers/subagentAggregation";
+} from "@/cli/helpers/subagentAggregation";
 import {
   clearAllSubagents,
   clearCompletedSubagents,
   completeSubagent,
   getSubagentByToolCallId,
   registerSubagent,
-} from "../../cli/helpers/subagentState";
+} from "@/cli/helpers/subagentState";
 import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,
-} from "../../cli/helpers/subagentTurnStart";
+} from "@/cli/helpers/subagentTurnStart";
 
 type MinimalToolCallLine = {
   kind: "tool_call";

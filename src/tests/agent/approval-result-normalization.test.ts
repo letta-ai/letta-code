@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import type { ApprovalResult } from "../../agent/approval-execution";
+import type { ApprovalResult } from "@/agent/approval-execution";
 import {
   normalizeApprovalResultsForPersistence,
   normalizeOutgoingApprovalMessages,
-} from "../../agent/approval-result-normalization";
-import { INTERRUPTED_BY_USER } from "../../constants";
+} from "@/agent/approval-result-normalization";
+import { INTERRUPTED_BY_USER } from "@/constants";
 
 describe("normalizeApprovalResultsForPersistence", () => {
   test("converts legacy approved approval payloads with tool_return into tool results", () => {

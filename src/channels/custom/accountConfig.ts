@@ -1,5 +1,5 @@
-import type { ChannelAccountConfigAdapter } from "../pluginTypes";
-import type { CustomChannelAccount } from "../types";
+import type { ChannelAccountConfigAdapter } from "@/channels/pluginTypes";
+import type { CustomChannelAccount } from "@/channels/types";
 
 /**
  * Account config adapter for the first-party "custom" channel.

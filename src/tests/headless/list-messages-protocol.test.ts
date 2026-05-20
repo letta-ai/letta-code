@@ -13,13 +13,13 @@
  * No live Letta API calls are made here; those are in the manual smoke suite.
  */
 import { describe, expect, test } from "bun:test";
-import { resolveListMessagesRoute } from "../../agent/listMessagesRouting";
+import { resolveListMessagesRoute } from "@/agent/listMessagesRouting";
 import type {
   ControlRequest,
   ControlResponse,
   ListMessagesControlRequest,
   ListMessagesResponsePayload,
-} from "../../types/protocol";
+} from "@/types/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Wire-shape / type tests

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   resolveStartupTarget,
   type StartupResolutionInput,
-} from "../agent/resolve-startup-agent";
+} from "@/agent/resolve-startup-agent";
 
 /**
  * Unit tests for the NUX (new user experience) agent resolution logic.

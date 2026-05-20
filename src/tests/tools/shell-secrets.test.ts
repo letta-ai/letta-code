@@ -1,22 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { bash } from "../../tools/impl/Bash";
-import { run_shell_command } from "../../tools/impl/RunShellCommandGemini";
-import { shell_command } from "../../tools/impl/ShellCommand.js";
-import { buildPowerShellCommand } from "../../tools/impl/shellLaunchers";
+import { bash } from "@/tools/impl/Bash";
+import { run_shell_command } from "@/tools/impl/RunShellCommandGemini";
+import { shell_command } from "@/tools/impl/ShellCommand.js";
+import { buildPowerShellCommand } from "@/tools/impl/shellLaunchers";
 import {
   executeTool,
   prepareToolExecutionContextForSpecificTools,
   releaseToolExecutionContext,
   type ToolReturnContent,
-} from "../../tools/manager";
+} from "@/tools/manager";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
-} from "../../tools/secret-substitution";
-import {
-  clearSecretsCache,
-  initSecretsFromServer,
-} from "../../utils/secretsStore";
+} from "@/tools/secret-substitution";
+import { clearSecretsCache, initSecretsFromServer } from "@/utils/secretsStore";
 
 const TEST_AGENT_ID = "agent-shell-secrets";
 

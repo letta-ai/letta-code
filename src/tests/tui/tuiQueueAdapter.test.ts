@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import {
   getTuiBlockedReason,
   type TuiQueueGatingConditions,
-} from "../../cli/helpers/tuiQueueAdapter";
+} from "@/cli/helpers/tuiQueueAdapter";
 
 const allClear: TuiQueueGatingConditions = {
   streaming: false,

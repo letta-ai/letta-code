@@ -4,7 +4,7 @@ import {
   parseJsonArrayFlag,
   parsePositiveIntFlag,
   resolveImportFlagAlias,
-} from "../../cli/flagUtils";
+} from "@/cli/flagUtils";
 
 describe("flag utils", () => {
   test("parseCsvListFlag handles undefined and none", () => {

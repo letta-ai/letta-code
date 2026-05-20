@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { runListenSubcommand } from "../../cli/subcommands/listen";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
+import { runListenSubcommand } from "@/cli/subcommands/listen";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 
 describe("listen subcommand telemetry", () => {
   const originalLoadLocalProjectSettings =

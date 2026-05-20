@@ -3,15 +3,12 @@ import {
   executeTool,
   prepareToolExecutionContextForSpecificTools,
   releaseToolExecutionContext,
-} from "../../tools/manager";
+} from "@/tools/manager";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
-} from "../../tools/secret-substitution";
-import {
-  clearSecretsCache,
-  initSecretsFromServer,
-} from "../../utils/secretsStore";
+} from "@/tools/secret-substitution";
+import { clearSecretsCache, initSecretsFromServer } from "@/utils/secretsStore";
 import { createTempRuntimeScriptCommand } from "./runtimeScript";
 
 const AGENT_A = "agent-secret-substitution-a";

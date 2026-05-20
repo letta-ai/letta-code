@@ -1,43 +1,43 @@
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
 import stripAnsi from "strip-ansi";
-import { getDisplayableToolReturn } from "../agent/approval-execution";
+import { getDisplayableToolReturn } from "@/agent/approval-execution";
 import {
   getConversationId,
   getCurrentAgentId,
   getSkillSources,
   getSkillsDirectory,
-} from "../agent/context";
-import { getModelInfo } from "../agent/model";
-import { getAllSubagentConfigs } from "../agent/subagents";
+} from "@/agent/context";
+import { getModelInfo } from "@/agent/model";
+import { getAllSubagentConfigs } from "@/agent/subagents";
 import {
   buildDynamicMessageChannelToolDefinition,
   getCachedDynamicMessageChannelToolDefinition,
   type MessageChannelToolDiscoveryScope,
-} from "../channels/messageTool";
-import { getActiveChannelIds } from "../channels/registry";
-import type { ChannelTurnSource } from "../channels/types";
-import { refreshFileIndex } from "../cli/helpers/fileIndex";
-import { INTERRUPTED_BY_USER } from "../constants";
+} from "@/channels/messageTool";
+import { getActiveChannelIds } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
+import { refreshFileIndex } from "@/cli/helpers/fileIndex";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
-} from "../hooks";
+} from "@/hooks";
 import {
   permissionMode as globalPermissionMode,
   type PermissionMode,
-} from "../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+} from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
   type RuntimeContextSnapshot,
   runWithRuntimeContext,
-} from "../runtime-context";
-import { settingsManager } from "../settings-manager";
-import { telemetry } from "../telemetry";
-import { debugLog } from "../utils/debug";
+} from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { debugLog } from "@/utils/debug";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,

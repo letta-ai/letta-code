@@ -4,8 +4,8 @@ import { join } from "node:path";
 import {
   ensureLettaIgnoreFile,
   readLettaIgnorePatterns,
-} from "../../cli/helpers/ignoredDirectories";
-import { TestDirectory } from "../helpers/testFs";
+} from "@/cli/helpers/ignoredDirectories";
+import { TestDirectory } from "@/tests/helpers/testFs";
 
 describe("ensureLettaIgnoreFile", () => {
   let testDir: TestDirectory;

@@ -18,7 +18,7 @@ import {
   updateTask,
   verifySchedulerLease,
   withLock,
-} from "../../cron/cronFile";
+} from "@/cron/cronFile";
 
 // ── Test setup ──────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import type { ConversationGoal } from "../../settings-manager";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import type { ConversationGoal } from "@/settings-manager";
 import { formatCompact } from "./format";
 
 export const GOAL_USAGE =

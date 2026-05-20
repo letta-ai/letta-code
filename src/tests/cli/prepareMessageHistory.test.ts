@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-import { prepareMessageHistory } from "../../agent/check-approval";
+import { prepareMessageHistory } from "@/agent/check-approval";
 
 function msg(
   type: string,

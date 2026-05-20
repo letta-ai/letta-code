@@ -3,7 +3,7 @@ import {
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
-} from "../../auth/oauth";
+} from "@/auth/oauth";
 
 const originalFetch = globalThis.fetch;
 

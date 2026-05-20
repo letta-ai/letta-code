@@ -10,7 +10,7 @@ import {
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
-} from "../../updater/auto-update";
+} from "@/updater/auto-update";
 
 describe("auto-update ENOTEMPTY handling", () => {
   let testDir: string;

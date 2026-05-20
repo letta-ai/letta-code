@@ -9,17 +9,17 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import type { ConversationMessageCreateBody } from "../../backend";
-import type { PiStreamFunction } from "../../backend/dev/PiStreamAdapter";
-import { createOrUpdateLocalProvider } from "../../backend/local";
-import { LocalBackend } from "../../backend/local/LocalBackend";
-import { emptyLocalUsage } from "../../backend/local/LocalMessage";
-import { listLocalModels } from "../../backend/local/LocalModelConfig";
+import type { ConversationMessageCreateBody } from "@/backend";
+import type { PiStreamFunction } from "@/backend/dev/PiStreamAdapter";
+import { createOrUpdateLocalProvider } from "@/backend/local";
+import { LocalBackend } from "@/backend/local/LocalBackend";
+import { emptyLocalUsage } from "@/backend/local/LocalMessage";
+import { listLocalModels } from "@/backend/local/LocalModelConfig";
 import {
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
-} from "../../backend/local/LocalStore";
-import { migrateLocalBackendTranscripts } from "../../backend/local/transcriptMigration";
+} from "@/backend/local/LocalStore";
+import { migrateLocalBackendTranscripts } from "@/backend/local/transcriptMigration";
 
 async function firstConversationDir(storageDir: string): Promise<string> {
   const entries = await readdir(join(storageDir, "conversations"));

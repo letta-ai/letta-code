@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createCustomAdapter } from "../../channels/custom/adapter";
-import type { CustomChannelAccount } from "../../channels/types";
+import { createCustomAdapter } from "@/channels/custom/adapter";
+import type { CustomChannelAccount } from "@/channels/types";
 
 interface CapturedRequest {
   url: string;

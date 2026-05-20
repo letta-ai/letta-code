@@ -12,7 +12,7 @@ import type {
   QueueItemSource,
   QueueLifecycleEvent,
   WireMessage,
-} from "../../types/protocol";
+} from "@/types/protocol";
 
 /**
  * Wire-shape tests for queue lifecycle protocol events.

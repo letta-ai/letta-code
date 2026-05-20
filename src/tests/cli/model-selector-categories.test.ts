@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   getModelCategories,
   usesBackendModelCatalog,
-} from "../../cli/components/ModelSelector";
+} from "@/cli/components/ModelSelector";
 
 describe("getModelCategories", () => {
   test("uses the same hosted category order for free and paid tiers", () => {

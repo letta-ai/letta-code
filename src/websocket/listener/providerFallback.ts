@@ -1,5 +1,5 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getModelInfo, getModelInfoForLlmConfig } from "../../agent/model";
+import { getModelInfo, getModelInfoForLlmConfig } from "@/agent/model";
 import { PROVIDER_FALLBACK_MAP } from "./constants";
 
 export type ProviderFallbackState = {

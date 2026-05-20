@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/tests/helpers/readInteractiveAppSource";
 
 function readSource(relativePath: string): string {
   return readFileSync(
@@ -65,7 +65,7 @@ describe("headless backend lifecycle wiring", () => {
   test("interactive profile picker resolves agents through Backend", () => {
     const source = readSource("../../cli/profile-selection.tsx");
 
-    expect(source).toContain('import { getBackend } from "../backend"');
+    expect(source).toContain('import { getBackend } from "@/backend"');
     expect(source).toContain("backend.retrieveAgent(");
     expect(source).not.toContain("getClient");
     expect(source).not.toContain("client.agents.");

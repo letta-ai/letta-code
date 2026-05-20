@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   SHARED_REMINDER_CATALOG,
   SHARED_REMINDER_IDS,
-} from "../../reminders/catalog";
+} from "@/reminders/catalog";
 import {
   assertSharedReminderCoverage,
   sharedReminderProviders,
-} from "../../reminders/engine";
+} from "@/reminders/engine";
 
 describe("shared reminder catalog", () => {
   test("provider coverage matches catalog", () => {

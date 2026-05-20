@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { write_file_gemini } from "../../tools/impl/WriteFileGemini";
-import { TestDirectory } from "../helpers/testFs";
+import { TestDirectory } from "@/tests/helpers/testFs";
+import { write_file_gemini } from "@/tools/impl/WriteFileGemini";
 
 describe("WriteFileGemini tool", () => {
   let testDir: TestDirectory;

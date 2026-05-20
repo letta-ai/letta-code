@@ -11,22 +11,19 @@ import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
-} from "../../channels/accounts";
+} from "@/channels/accounts";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
   clearPairingStores,
-} from "../../channels/pairing";
+} from "@/channels/pairing";
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
   clearAllRoutes,
   getRoute,
-} from "../../channels/routing";
-import type {
-  ChannelAdapter,
-  InboundChannelMessage,
-} from "../../channels/types";
+} from "@/channels/routing";
+import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
 
 const createConversation = mock(async () => ({ id: "conv-discord" }));
 

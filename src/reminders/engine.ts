@@ -1,20 +1,20 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { SkillSource } from "../agent/skills";
-import { buildAgentInfo } from "../cli/helpers/agentInfo";
+import type { SkillSource } from "@/agent/skills";
+import { buildAgentInfo } from "@/cli/helpers/agentInfo";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
   type ReflectionSettings,
   shouldFireStepCountTrigger,
-} from "../cli/helpers/memoryReminder";
+} from "@/cli/helpers/memoryReminder";
 import {
   buildSessionContext,
   type SessionContextSource,
-} from "../cli/helpers/sessionContext";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
-import { permissionMode } from "../permissions/mode";
-import { settingsManager } from "../settings-manager";
-import { debugLog } from "../utils/debug";
+} from "@/cli/helpers/sessionContext";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { permissionMode } from "@/permissions/mode";
+import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 import {
   SHARED_REMINDER_CATALOG,
   type SharedReminderId,

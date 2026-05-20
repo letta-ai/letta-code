@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { permissionMode } from "../../permissions/mode";
+import { permissionMode } from "@/permissions/mode";
 import {
   type SharedReminderContext,
   sharedReminderProviders,
-} from "../../reminders/engine";
-import { createSharedReminderState } from "../../reminders/state";
+} from "@/reminders/engine";
+import { createSharedReminderState } from "@/reminders/state";
 
 function baseContext(
   mode: SharedReminderContext["mode"],

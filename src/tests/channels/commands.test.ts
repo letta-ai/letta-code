@@ -4,7 +4,7 @@ import {
   buildUnsupportedChannelCommandMessage,
   listChannelSlashCommands,
   parseChannelSlashCommand,
-} from "../../channels/commands";
+} from "@/channels/commands";
 
 describe("channel slash commands", () => {
   test("parses channel slash commands with bot suffixes and args", () => {

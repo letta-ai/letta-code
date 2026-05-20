@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { MEMORY_CHECK_REMINDER } from "../../agent/promptAssets";
+import { MEMORY_CHECK_REMINDER } from "@/agent/promptAssets";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
@@ -7,13 +7,13 @@ import {
   persistReflectionSettingsForAgent,
   reflectionSettingsToLegacyMode,
   shouldFireStepCountTrigger,
-} from "../../cli/helpers/memoryReminder";
+} from "@/cli/helpers/memoryReminder";
 import {
   type SharedReminderContext,
   sharedReminderProviders,
-} from "../../reminders/engine";
-import { createSharedReminderState } from "../../reminders/state";
-import { settingsManager } from "../../settings-manager";
+} from "@/reminders/engine";
+import { createSharedReminderState } from "@/reminders/state";
+import { settingsManager } from "@/settings-manager";
 
 const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
 const originalGetSettings = settingsManager.getSettings;

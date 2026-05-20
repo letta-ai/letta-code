@@ -3,7 +3,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import {
   createProviderFallbackState,
   maybeApplyProviderFallback,
-} from "../../websocket/listener/providerFallback";
+} from "@/websocket/listener/providerFallback";
 
 function agentWithModel(
   model: string,

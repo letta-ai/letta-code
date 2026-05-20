@@ -14,13 +14,13 @@ import {
   Type,
   type Usage,
 } from "@earendil-works/pi-ai";
-import type { ClientTool } from "../../tools/manager";
-import type { LocalCompactionStats } from "../local/compaction";
+import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,
   type LocalAssistantMessage,
   type LocalMessage,
-} from "../local/LocalMessage";
+} from "@/backend/local/LocalMessage";
+import type { ClientTool } from "@/tools/manager";
 import { isContextWindowOverflowError } from "./contextWindowOverflow";
 import {
   isRetryableLocalProviderError,

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChannelMessageAttachment } from "../../channels/types";
+import type { ChannelMessageAttachment } from "@/channels/types";
 
 type SlackMessageHandler = (args: {
   message: {

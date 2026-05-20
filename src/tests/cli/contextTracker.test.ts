@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createContextTracker,
   resetContextHistory,
-} from "../../cli/helpers/contextTracker";
+} from "@/cli/helpers/contextTracker";
 
 describe("contextTracker", () => {
   test("resetContextHistory clears token history and pending compaction flags", () => {

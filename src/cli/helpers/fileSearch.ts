@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { debugLog } from "../../utils/debug";
+import { debugLog } from "@/utils/debug";
 import {
   ensureFileIndex,
   type FileMatch,

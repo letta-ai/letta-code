@@ -1,5 +1,5 @@
-import type { ChannelPlugin } from "../pluginTypes";
-import type { ChannelAccount, DiscordChannelAccount } from "../types";
+import type { ChannelPlugin } from "@/channels/pluginTypes";
+import type { ChannelAccount, DiscordChannelAccount } from "@/channels/types";
 import { createDiscordAdapter } from "./adapter";
 import { discordMessageActions } from "./messageActions";
 import { runDiscordSetup } from "./setup";

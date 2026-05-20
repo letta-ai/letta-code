@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clipToolReturn } from "../../tools/manager";
+import { clipToolReturn } from "@/tools/manager";
 
 describe("clipToolReturn", () => {
   test("clips long single-line output and appends ellipsis", () => {

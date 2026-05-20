@@ -1,8 +1,8 @@
 // src/cli/app/useBashHandlers.ts
 
 import { type Dispatch, type MutableRefObject, useCallback } from "react";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { appendStreamingOutput, type Buffers } from "../helpers/accumulator";
+import { appendStreamingOutput, type Buffers } from "@/cli/helpers/accumulator";
+import { INTERRUPTED_BY_USER } from "@/constants";
 
 import { uid } from "./ids";
 

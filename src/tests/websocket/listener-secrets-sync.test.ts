@@ -3,14 +3,14 @@ import {
   clearSecretsCache,
   initSecretsFromServer,
   loadSecrets,
-} from "../../utils/secretsStore";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
+} from "@/utils/secretsStore";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {
   __testOverrideRefreshSecretsForAgent,
   __testSetFreshnessMs,
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
-} from "../../websocket/listener/secrets-sync";
+} from "@/websocket/listener/secrets-sync";
 
 const retrieveMock = mock((_agentId: string, _opts?: Record<string, unknown>) =>
   Promise.resolve({ secrets: [] as Array<{ key: string; value: string }> }),

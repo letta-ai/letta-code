@@ -2,13 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runWithRuntimeContext } from "../../runtime-context";
-import { consumeQueuedSkillContent } from "../../tools/impl/skillContentRegistry";
-import {
-  clearTools,
-  executeTool,
-  loadSpecificTools,
-} from "../../tools/manager";
+import { runWithRuntimeContext } from "@/runtime-context";
+import { consumeQueuedSkillContent } from "@/tools/impl/skillContentRegistry";
+import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;

@@ -13,13 +13,13 @@ import {
   __testOverrideLoadPendingControlRequestStore,
   __testOverrideSavePendingControlRequestStore,
   clearPendingControlRequestStore,
-} from "../../channels/pendingControlRequests";
-import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
+} from "@/channels/pendingControlRequests";
+import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
-} from "../../channels/types";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
+} from "@/channels/types";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
 
 const {
   createRuntime,

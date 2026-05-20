@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatPermissionDenial } from "../../permissions/formatDenial";
+import { formatPermissionDenial } from "@/permissions/formatDenial";
 
 describe("formatPermissionDenial", () => {
   test("custom denyReason takes precedence over everything", () => {

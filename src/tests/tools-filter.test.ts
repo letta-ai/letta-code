@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { toolFilter } from "../tools/filter";
+import { toolFilter } from "@/tools/filter";
 
 // Clean up after each test
 afterEach(() => {

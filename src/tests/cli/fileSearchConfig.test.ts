@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   shouldExcludeEntry,
   shouldHardExcludeEntry,
-} from "../../cli/helpers/fileSearchConfig";
+} from "@/cli/helpers/fileSearchConfig";
 
 // These tests rely on there being NO .letta/.lettaignore in the working
 // directory — they verify that nothing is excluded unless the user explicitly

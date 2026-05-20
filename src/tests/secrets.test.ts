@@ -16,7 +16,7 @@ import {
   setApiKey,
   setRefreshToken,
   setSecureTokens,
-} from "../utils/secrets";
+} from "@/utils/secrets";
 
 const keychainAvailablePrecompute = await isKeychainAvailable();
 

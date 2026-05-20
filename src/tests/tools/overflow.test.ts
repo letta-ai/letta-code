@@ -9,7 +9,7 @@ import {
   getOverflowStats,
   OVERFLOW_CONFIG,
   writeOverflowFile,
-} from "../../tools/impl/overflow";
+} from "@/tools/impl/overflow";
 
 describe("overflow utilities", () => {
   const testWorkingDir = "/test/project/path";

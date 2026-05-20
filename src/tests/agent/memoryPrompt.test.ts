@@ -6,7 +6,7 @@ import {
   resolveAndBuildSystemPrompt,
   SYSTEM_PROMPTS,
   shouldRecommendDefaultPrompt,
-} from "../../agent/promptAssets";
+} from "@/agent/promptAssets";
 
 describe("isKnownPreset", () => {
   test("returns true for known preset IDs", () => {
