@@ -18,15 +18,15 @@ You can interact with Letta Code agents through:
 
 | Feature | Description |
 |---|---|
-| [Self-improvement](https://docs.letta.com/letta-code/self-improvement) | Agents programmatically rewrite themselves to improve their own memory, prompting, and [learning skills](https://www.letta.com/blog/skill-learning) |
-| [Message search](https://docs.letta.com/letta-code/conversation-search) | Search across all messages and agents with `/search` or ask your agent to |
-| [MemFS](https://docs.letta.com/letta-code/memfs) | All context (including [memory blocks](https://www.letta.com/blog/memory-blocks)) are tracked via git. Sync context to a custom GitHub repository by setting `/memory-repository set git@github.com:...` |
-| [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS) |
+| [Self-improvement & Learning](https://docs.letta.com/letta-code/self-improvement) | Agents programmatically rewrite their context to improve and adapt over time, including system prompt learning (through [memory blocks](https://www.letta.com/blog/memory-blocks)) and [skill learning](https://www.letta.com/blog/skill-learning). Configure periodic dreaming with `/sleeptime`, audit memory quality with `/doctor`, and view memory with `/palace`   |
+| [Message search](https://docs.letta.com/letta-code/conversation-search) | Search across all messages and agents with `/search`. Agent can also search their own conversations or conversations of other agents |
+| [MemFS](https://docs.letta.com/letta-code/memfs) | All context (including memory blocks) is tracked via git. Sync context to a custom GitHub repository by setting `/memory-repository set git@github.com:...` |
+| [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS). View skills with `/skills` and create with `/skill-creator` |
 | [Subagents & Multi-agent](https://docs.letta.com/letta-code/subagents) | Call built-in subagents (general-purpose, forked, recall, history-analyzer) async or sync. Agents can all any other agent (including themselves) as subagents  |
 | [Messaging Integrations](https://docs.letta.com/letta-code/channels) | Chat with the same agent from Slack, Telegram, your browser (chat.letta.com) including mobile, and through custom channels |
-| [Hooks](https://docs.letta.com/letta-code/hooks) | Configure deterministic code to run on certain events |
-| [Permissions](https://docs.letta.com/letta-code/permissions) | Customize what actions are auto-approved or auto-denied. |
-| [Crons/Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats of crons, and let agents work across time with self-managed schedules |
+| [Hooks](https://docs.letta.com/letta-code/hooks) | Run custom scripts at key points of agent execution to automate workflows |
+| [Permissions](https://docs.letta.com/letta-code/permissions) | Set permission modes and customize what actions are auto-approved or auto-denied |
+| [Crons & Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats of crons, and let agents work across time with self-managed schedules |
 | [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) (requires Constellation login) | Agents work across multiple environments. Make any machine available as a remote environment by running `letta server --env-name "..."`|
 | [Secrets](https://docs.letta.com/letta-code/secrets) (requires Constellation login) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
 
@@ -109,7 +109,7 @@ letta server --env-name "work-laptop"
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments. 
 
 ## Research
-Letta Code is developed by the creators of [MemGPT](https://arxiv.org/abs/2310.08560) and [sleep-time compute](https://arxiv.org/abs/2504.13171) (now called "dreaming"), and drive by our [research](https://www.letta.com/research) in AI memory and continual learning. 
+Letta Code is developed by the creators of [MemGPT](https://arxiv.org/abs/2310.08560) and [sleep-time compute](https://arxiv.org/abs/2504.13171) (now called "dreaming"), and driven by our [research](https://www.letta.com/research) in AI memory and continual learning. 
 
 ## Other
 Community maintained packages are available for Arch Linux users on the [AUR](https://aur.archlinux.org/packages/letta-code):
