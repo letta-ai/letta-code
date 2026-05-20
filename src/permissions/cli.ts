@@ -17,6 +17,7 @@ export function parseScopeList(value: string | undefined | null): string[] {
     .map((id) => id.trim())
     .filter((id) => id.length > 0);
 }
+
 import { normalizePermissionRule } from "./rule-normalization";
 
 /**
@@ -177,5 +178,3 @@ export class CliPermissions {
     this.memoryScope = [];
   }
 }
-
-

@@ -64,8 +64,6 @@ function removeSystemContextBlocks(text: string): string {
     .trim();
 }
 
-
-
 function renderAssistantContentParts(
   parts: string | LettaAssistantMessageContentUnion[],
 ): string {

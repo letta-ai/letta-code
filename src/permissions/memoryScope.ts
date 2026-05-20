@@ -3,8 +3,8 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 import { getCurrentAgentId } from "@/agent/context";
 import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
-import { cliPermissions } from "./cliPermissionsInstance";
 import { parseScopeList } from "./cli";
+import { cliPermissions } from "./cliPermissionsInstance";
 
 export interface ResolveAllowedMemoryRootsOptions {
   env?: NodeJS.ProcessEnv;

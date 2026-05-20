@@ -48,8 +48,8 @@ import {
   getAttachedLocalMessage,
   isLocalStateChunkOnly,
 } from "./LocalStreamChunks";
+import type { LocalAgentRecord, StoredMessage } from "./local-types";
 import type { LocalCompiledSystemPrompt } from "./systemPromptCompilation";
-import { type LocalAgentRecord, type StoredMessage } from "./local-types";
 export type { LocalAgentRecord, StoredMessage };
 
 type StoredConversation = Conversation & {
