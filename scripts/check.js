@@ -33,6 +33,19 @@ try {
   failed = true;
 }
 
+// Check exported function style
+console.log("🔤 Checking exported function style...");
+try {
+  await $`bun run check:exported-functions`;
+  console.log("✅ Exported function style clean\n");
+} catch (error) {
+  console.error("❌ Exported arrow functions found\n");
+  console.error(
+    "Use 'export function name() {}' instead of 'export const name = () =>'\n",
+  );
+  failed = true;
+}
+
 // Run test mock isolation check
 console.log("🧪 Checking Bun module mock isolation...");
 try {
