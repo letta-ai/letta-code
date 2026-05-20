@@ -246,6 +246,18 @@ function resolveDiscordReactionEmoji(value: string): string {
   return nameMap[normalized] ?? normalized;
 }
 
+export function shouldAutoThreadOnDiscordMention(
+  account: Pick<
+    DiscordChannelAccount,
+    "autoThreadOnMention" | "threadPolicyByChannel"
+  >,
+  channelId: string,
+): boolean {
+  const override = account.threadPolicyByChannel?.[channelId];
+  if (typeof override === "boolean") return override;
+  return account.autoThreadOnMention ?? false;
+}
+
 export function buildDiscordIngressMessageKey(
   accountId: string | undefined,
   messageId: string | undefined,

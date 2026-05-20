@@ -20,7 +20,7 @@ import {
   loadChannelAccounts,
 } from "./accounts";
 import { tryHandleChannelSlashCommand } from "./commands";
-import { isDiscordGuildChannelAllowed } from "./discord/channelGating";
+import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
