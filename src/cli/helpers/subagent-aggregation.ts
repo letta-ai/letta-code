@@ -134,9 +134,11 @@ export function createSubagentGroupItem(
         id: subagent.id,
         type: subagent.type,
         description: subagent.description,
-        status: subagent.isBackground
-          ? "running"
-          : (subagent.status as "completed" | "error"),
+        status:
+          subagent.isBackground &&
+          (subagent.status === "pending" || subagent.status === "running")
+            ? "running"
+            : (subagent.status as "completed" | "error"),
         toolCount: getSubagentToolCount(subagent),
         totalTokens: subagent.totalTokens,
         agentURL: subagent.agentURL,

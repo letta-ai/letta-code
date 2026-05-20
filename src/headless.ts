@@ -210,6 +210,31 @@ function reportAndExitHeadless(
   process.exit(1);
 }
 
+async function reportStartupErrorAndExit(
+  errorType: string,
+  error: unknown,
+  context: string,
+  outputFormat: string,
+): Promise<never> {
+  trackHeadlessBoundaryError(errorType, error, context);
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (outputFormat === "stream-json") {
+    const errorMsg: ErrorMessage = {
+      type: "error",
+      message,
+      stop_reason: "error",
+      session_id: "startup",
+      uuid: `startup-error-${randomUUID()}`,
+    };
+    await writeWireMessageAsync(errorMsg);
+  } else {
+    console.error(`Error: ${message}`);
+  }
+
+  return await flushAndExit(1);
+}
+
 export type BidirectionalQueuedInput = QueuedTurnInput<
   MessageCreate["content"]
 >;
@@ -1093,7 +1118,18 @@ export async function handleHeadlessCommand(
       blockValues,
       tags: personalityOptions?.tags ?? tags,
     };
-    const result = await createAgent(createOptions);
+    let result: Awaited<ReturnType<typeof createAgent>>;
+    try {
+      result = await createAgent(createOptions);
+    } catch (error) {
+      await reportStartupErrorAndExit(
+        "headless_agent_create_failed",
+        error,
+        "headless_startup_agent_create",
+        values["output-format"] || "text",
+      );
+      throw error;
+    }
     agent = result.agent;
     autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
   }
