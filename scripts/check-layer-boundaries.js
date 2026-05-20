@@ -50,6 +50,12 @@ const RULES = [
     description:
       "websocket/listener/ uses the getBackend() abstraction — it must not import the raw API client or conversations module directly",
   },
+  {
+    layer: "cli/app",
+    forbidden: ["backend/api/conversations"],
+    description:
+      "cli/app/ uses the getBackend() abstraction for conversation operations — it must not import the raw conversations module directly",
+  },
 ];
 
 // Matches: import ... from "@/forbidden/..." (static imports only)
