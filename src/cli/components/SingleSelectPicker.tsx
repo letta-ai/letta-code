@@ -29,25 +29,13 @@ export interface SingleSelectPickerProps {
   onSelect: (key: string) => void;
   /** Called when user presses Escape or Ctrl-C */
   onCancel: () => void;
-  /** Override the default footer hint line */
-  footerHint?: string;
-  /**
-   * Extra key handlers beyond the built-in ↑↓/Enter/Escape/Ctrl-C.
-   * Key is the input character, value is a callback with the current cursor index.
-   * Useful for shortcuts like "A" for show-all.
-   */
-  extraActions?: Record<string, (cursorIndex: number) => void>;
 }
-
-const DEFAULT_FOOTER_HINT = "  Enter select · ↑↓ navigate · Esc cancel";
 
 export const SingleSelectPicker = memo(function SingleSelectPicker({
   items,
   initialCursorIndex = 0,
   onSelect,
   onCancel,
-  footerHint = DEFAULT_FOOTER_HINT,
-  extraActions,
 }: SingleSelectPickerProps) {
   const [cursor, setCursor] = useState(initialCursorIndex);
 
@@ -82,15 +70,8 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
         onCancel();
         return;
       }
-      // Check extra actions
-      if (input && extraActions) {
-        const action = extraActions[input];
-        if (action) {
-          action(cursor);
-        }
-      }
     },
-    [items, cursor, onCancel, onSelect, extraActions],
+    [items, cursor, onCancel, onSelect],
   );
 
   useInput(handleInput, { isActive: true });
@@ -136,7 +117,7 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
 
       {/* Footer hint */}
       <Box marginTop={1}>
-        <Text dimColor>{footerHint}</Text>
+        <Text dimColor> Enter select · ↑↓ navigate · Esc cancel</Text>
       </Box>
     </Box>
   );
