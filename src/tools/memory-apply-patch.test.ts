@@ -84,7 +84,7 @@ mock.module("../backend/api/client", () => ({
   getServerUrl: () => "http://localhost:8283",
 }));
 
-const { memory_apply_patch } = await import("@/tools/impl/MemoryApplyPatch");
+const { memory_apply_patch } = await import("@/tools/impl/memory-apply-patch");
 const { __testSetBackend } = await import("@/backend");
 const { LocalBackend } = await import("@/backend/local");
 const { getLocalBackendMemoryFilesystemRoot } = await import(

@@ -2,13 +2,13 @@
 // is shown via StaticPlanApproval during approval, not in tool result
 import { Box } from "ink";
 import { Fragment, memo, type ReactNode } from "react";
-import { getSubagentByToolCallId } from "@/agent/subagentState.js";
+import { getSubagentByToolCallId } from "@/agent/subagent-state.js";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
   formatArgsDisplay,
   parsePatchInput,
   parsePatchOperations,
-} from "@/cli/helpers/formatArgsDisplay.js";
+} from "@/cli/helpers/format-args-display.js";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getDisplayToolName,
@@ -24,7 +24,7 @@ import {
   isShellTool,
   isTaskTool,
   isTodoTool,
-} from "@/cli/helpers/toolNameMapping.js";
+} from "@/cli/helpers/tool-name-mapping.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { clipToolReturn } from "@/tools/manager.js";
 import { Text } from "./Text";
@@ -86,7 +86,7 @@ function colorizeArgs(argsStr: string): ReactNode {
 }
 
 import type { StreamingState } from "@/cli/helpers/accumulator";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";

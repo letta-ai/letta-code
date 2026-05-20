@@ -21,14 +21,14 @@ import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,
   normalizeMessageImageParts,
-} from "@/utils/messageImageNormalization";
-import { createStreamAbortRelay } from "@/utils/streamAbortRelay";
+} from "@/utils/message-image-normalization";
+import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import { isTimingsEnabled } from "@/utils/timing";
 import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import { buildClientSkillsPayload } from "./clientSkills";
+import { buildClientSkillsPayload } from "./client-skills";
 import { getSkillSources } from "./context";
 
 const streamRequestStartTimes = new WeakMap<object, number>();

@@ -10,7 +10,7 @@ import {
   MIN_STATUS_LINE_DEBOUNCE_MS,
   normalizeStatusLineConfig,
   resolveStatusLineConfig,
-} from "@/cli/helpers/statusLineConfig";
+} from "@/cli/helpers/status-line-config";
 import { settingsManager } from "@/settings-manager";
 import { setServiceName } from "@/utils/secrets.js";
 

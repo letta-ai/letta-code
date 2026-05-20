@@ -7,7 +7,7 @@ import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Backend, getBackend } from "@/backend";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";

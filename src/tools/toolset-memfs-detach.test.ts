@@ -10,7 +10,7 @@ import {
   test,
 } from "bun:test";
 import { __testSetBackend } from "@/backend";
-import { FakeHeadlessBackend } from "@/backend/dev/FakeHeadlessBackend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 
 // Mock getClient before importing the module under test
 

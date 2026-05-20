@@ -1,4 +1,4 @@
-import { getChannelDisplayName } from "./pluginRegistry";
+import { getChannelDisplayName } from "./plugin-registry";
 import type { ChannelAdapter, InboundChannelMessage } from "./types";
 
 export type ChannelSlashCommandKind = "direct" | "agent-scoped";

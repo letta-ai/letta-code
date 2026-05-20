@@ -15,7 +15,7 @@ import {
   updateProvider as updateProviderRequest,
 } from "@/backend/api/providers";
 import { getBackend } from "@/backend/backend";
-import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "@/backend/dev/PiProviderRegistry";
+import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "@/backend/dev/pi-provider-registry";
 import {
   createOrUpdateLocalProvider,
   deleteLocalProvider,
@@ -24,8 +24,8 @@ import {
   listLocalProviders,
   removeLocalProviderByName,
   updateLocalProvider,
-} from "@/backend/local/LocalProviderAuthStore";
-import type { LocalProviderTimeout } from "@/backend/local/LocalProviderTimeout";
+} from "@/backend/local/local-provider-auth-store";
+import type { LocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 
 export type { ProviderResponse } from "@/backend/api/providers";
 

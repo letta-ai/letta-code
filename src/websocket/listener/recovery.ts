@@ -25,8 +25,8 @@ import {
 import { getBackend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
-import { formatPermissionDenial } from "@/permissions/formatDenial";
-import { isInteractiveApprovalTool } from "@/tools/interactivePolicy";
+import { formatPermissionDenial } from "@/permissions/format-denial";
+import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
@@ -46,7 +46,7 @@ import {
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
 } from "./interrupts";
-import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
+import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,

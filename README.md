@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@letta-ai/letta-code.svg?style=flat-square)](https://www.npmjs.com/package/@letta-ai/letta-code) [![Discord](https://img.shields.io/badge/discord-join-blue?style=flat-square&logo=discord)](https://discord.gg/letta)
 
-Letta Code is a memory-first agent harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more). 
+Letta Code is a memory-first agent harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more).
 
 You can interact with Letta Code agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
@@ -10,13 +10,13 @@ You can interact with Letta Code agents through:
 * Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
 * Messaging integrations, including [Telegram](https://docs.letta.com/letta-code/channels#telegram-cli), [Slack](https://docs.letta.com/letta-code/channels#slack-cli), [Discord](https://docs.letta.com/letta-code/channels#discord-cli), and [custom channels](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md)
 
-Letta Code is a frontier coding agent and can also be used as a long-lived personal agent. 
+Letta Code is a frontier coding agent and can also be used as a long-lived personal agent.
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
-## Feature Overview 
+## Feature Overview
 > [!TIP]
-> Letta Code agents are designed to be self-configuring. If you want to configure something (e.g. skills, behavior, hooks, permissions), try asking your agent to do it for you. 
+> Letta Code agents are designed to be self-configuring. If you want to configure something (e.g. skills, behavior, hooks, permissions), try asking your agent to do it for you.
 
 | Feature | Description |
 |---|---|
@@ -130,7 +130,6 @@ graph TD
     LettaCloud --> C["🖥️ Mac Mini"]
     LettaCloud --> D["📦 Sandbox"]
 ```
-
 ## Philosophy
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
 

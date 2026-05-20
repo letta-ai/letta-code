@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { TestDirectory } from "@/test-utils/testFs";
-import { ls } from "@/tools/impl/LS";
+import { TestDirectory } from "@/test-utils/test-fs";
+import { ls } from "@/tools/impl/ls";
 
 describe("LS tool", () => {
   let testDir: TestDirectory;

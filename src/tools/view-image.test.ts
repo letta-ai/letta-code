@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { TestDirectory } from "@/test-utils/testFs";
-import { view_image } from "@/tools/impl/ViewImage";
+import { TestDirectory } from "@/test-utils/test-fs";
+import { view_image } from "@/tools/impl/view-image";
 
 describe("ViewImage tool", () => {
   let testDir: TestDirectory;

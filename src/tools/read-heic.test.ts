@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { cpSync } from "node:fs";
 import sharp from "sharp";
-import { TestDirectory } from "@/test-utils/testFs";
-import { read } from "@/tools/impl/Read";
+import { TestDirectory } from "@/test-utils/test-fs";
+import { read } from "@/tools/impl/read";
 
 describe("Read tool HEIC support", () => {
   let testDir: TestDirectory;

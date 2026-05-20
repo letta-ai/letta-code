@@ -6,7 +6,7 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStream } from "@/cli/helpers/stream";
-import { createStreamAbortRelay } from "@/utils/streamAbortRelay";
+import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 
 function makeStreamWithToolCall(
   toolCallId = "tc-1",

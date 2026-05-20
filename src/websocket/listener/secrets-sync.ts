@@ -50,7 +50,7 @@ async function refreshSecretsForAgent(agentId: string): Promise<void> {
     return;
   }
 
-  const { initSecretsFromServer } = await import("@/utils/secretsStore");
+  const { initSecretsFromServer } = await import("@/utils/secrets-store");
   await initSecretsFromServer(agentId);
   debugLog("secrets-sync", `Refreshed secrets for agent ${agentId}`);
 }

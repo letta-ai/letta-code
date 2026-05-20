@@ -6,7 +6,7 @@ import type {
   ApprovalResult,
 } from "@/agent/approval-execution";
 import type { ChannelTurnSource } from "@/channels/types";
-import type { ContextTracker } from "@/cli/helpers/contextTracker";
+import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import type {
@@ -14,7 +14,7 @@ import type {
   QueueBlockedReason,
   QueueItem,
   QueueRuntime,
-} from "@/queue/queueRuntime";
+} from "@/queue/queue-runtime";
 import type { SharedReminderState } from "@/reminders/state";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
@@ -195,7 +195,7 @@ export type ListenerRuntime = {
   /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
   permissionModeByConversation: Map<
     string,
-    import("@/websocket/listener/permissionMode").ConversationPermissionModeState
+    import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;

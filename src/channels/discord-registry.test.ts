@@ -27,7 +27,8 @@ import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
 
 const createConversation = mock(async () => ({ id: "conv-discord" }));
 
-mock.module("../backend/api/client", () => ({
+mock.module("@/backend/api/client", () => ({
+  getServerUrl: () => "https://api.letta.com",
   getClient: async () => ({
     conversations: {
       create: createConversation,
@@ -168,6 +169,67 @@ describe("discord channel registry", () => {
       null,
     );
     expect(deliveries).toHaveLength(1);
+  });
+
+  test("creates a route for policy-permitted open-channel traffic without marking it as a mention", async () => {
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: false,
+        isOpenChannel: true,
+      }),
+    );
+
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(getRoute("discord", "thread-1", "discord-bot", "thread-1")).not.toBe(
+      null,
+    );
+    expect(deliveries).toHaveLength(1);
+  });
+
+  test("does not spam setup replies for unbound ambient open-channel traffic", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: null,
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: false,
+        isOpenChannel: true,
+      }),
+    );
+
+    expect(replies).toHaveLength(0);
+    expect(createConversation).not.toHaveBeenCalled();
   });
 
   test("auto-creates a direct-message route for bound open Discord accounts", async () => {
@@ -348,5 +410,158 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(0);
     expect(replies).toHaveLength(1);
     expect(replies[0]?.text).toContain("Pairing code:");
+  });
+
+  // ── Delivery-time gate (allowed_channels re-check) ─────────────
+
+  test("delivery-time gate passes thread-on-mention with correct parentChannelId", async () => {
+    // Simulates a mention in guild-channel "alpha" where the adapter
+    // creates a thread and sets parentChannelId to the guild channel.
+    // The delivery-time gate should resolve alpha → allowed.
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    // Override account with allowedChannels that includes the guild channel
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        allowedChannels: ["alpha"],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    // This is what the adapter sends after creating a thread for
+    // a mention in guild channel "alpha":
+    //   chatId = thread ID
+    //   threadId = thread ID (both same — "thread-1")
+    //   parentChannelId = "alpha" (the original guild channel)
+    //   isMention = true
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "thread-1",
+        threadId: "thread-1",
+        parentChannelId: "alpha",
+        chatType: "channel",
+        isMention: true,
+        messageId: "mention-msg-1",
+      }),
+    );
+
+    // Route should be created and message delivered
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(
+      getRoute("discord", "thread-1", "discord-bot", "thread-1"),
+    ).not.toBeNull();
+    expect(deliveries).toHaveLength(1);
+  });
+
+  test("delivery-time gate blocks thread-on-mention when parent channel is not allowed", async () => {
+    // Same as above but the guild channel is NOT in allowedChannels.
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        allowedChannels: ["alpha"],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    // Guild channel "blocked-channel" is not in allowedChannels
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "thread-2",
+        threadId: "thread-2",
+        parentChannelId: "blocked-channel",
+        chatType: "channel",
+        isMention: true,
+        messageId: "mention-msg-2",
+      }),
+    );
+
+    // Route should still be created (ensureDiscordRoute happens before
+    // the gate check), but the message should NOT be delivered
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(
+      getRoute("discord", "thread-2", "discord-bot", "thread-2"),
+    ).not.toBeNull();
+    expect(deliveries).toHaveLength(0);
+  });
+
+  test("delivery-time gate passes thread-on-mention when allowedChannels is not configured", async () => {
+    // When allowedChannels is not configured, the gate is skipped.
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    // Restore default account (no allowedChannels)
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "standard",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "thread-3",
+        threadId: "thread-3",
+        parentChannelId: "any-channel",
+        chatType: "channel",
+        isMention: true,
+        messageId: "mention-msg-3",
+      }),
+    );
+
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(deliveries).toHaveLength(1);
   });
 });

@@ -16,9 +16,9 @@ import { permissionMode } from "@/permissions/mode";
 import type {
   MessageQueueItem,
   TaskNotificationQueueItem,
-} from "@/queue/queueRuntime";
+} from "@/queue/queue-runtime";
 import { sharedReminderProviders } from "@/reminders/engine";
-import { queueSkillContent } from "@/tools/impl/skillContentRegistry";
+import { queueSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, loadSpecificTools } from "@/tools/manager";
 import { shouldProcessInboundMessageDirectly } from "@/websocket/listener/queue";
 import { resolveRecoveredApprovalResponse } from "@/websocket/listener/recovery";
@@ -186,7 +186,7 @@ const realStreamModule = await import("@/cli/helpers/stream");
 // value, and feeding that back into `mockImplementation` would cause infinite
 // recursion at restore time.
 const realApprovalClassificationModule = await import(
-  "@/cli/helpers/approvalClassification"
+  "@/cli/helpers/approval-classification"
 );
 const realClassifyApprovals =
   realApprovalClassificationModule.classifyApprovals;
@@ -234,7 +234,7 @@ mock.module("../backend/api/client", () => ({
   consumeLastSDKDiagnostic: () => null,
 }));
 
-mock.module("../cli/helpers/approvalClassification", () => ({
+mock.module("../cli/helpers/approval-classification", () => ({
   classifyApprovals: classifyApprovalsMock,
 }));
 

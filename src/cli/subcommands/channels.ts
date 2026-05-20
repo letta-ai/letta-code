@@ -28,7 +28,7 @@ import {
   getSupportedChannelIds,
   isSupportedChannelId,
   loadChannelPlugin,
-} from "@/channels/pluginRegistry";
+} from "@/channels/plugin-registry";
 import { completePairing } from "@/channels/registry";
 import {
   addRoute,
@@ -40,7 +40,7 @@ import {
 import {
   getChannelRuntimeDir,
   isChannelRuntimeInstalled,
-} from "@/channels/runtimeDeps";
+} from "@/channels/runtime-deps";
 import { listChannelAccountSnapshots } from "@/channels/service";
 import type {
   ChannelRoute,
@@ -208,7 +208,7 @@ async function handleInstall(channel: string): Promise<number> {
   }
 
   try {
-    const { installChannelRuntime } = await import("@/channels/runtimeDeps");
+    const { installChannelRuntime } = await import("@/channels/runtime-deps");
     await installChannelRuntime(channelId);
     console.log(
       JSON.stringify(

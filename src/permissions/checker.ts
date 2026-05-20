@@ -6,8 +6,8 @@ import { getCurrentAgentId } from "@/agent/context";
 import { runPermissionRequestHooks } from "@/hooks";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
-import { cliPermissions } from "./cliPermissionsInstance";
-import { evaluateCrossAgentGuard, extractFilePath } from "./crossAgentGuard";
+import { cliPermissions } from "./cli-permissions-instance";
+import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
 import {
   type MatcherOptions,
   matchesBashPattern,
@@ -15,7 +15,7 @@ import {
   matchesToolPattern,
 } from "./matcher";
 import { permissionMode } from "./mode";
-import { isMemoryDirCommand, isReadOnlyShellCommand } from "./readOnlyShell";
+import { isMemoryDirCommand, isReadOnlyShellCommand } from "./read-only-shell";
 import { sessionPermissions } from "./session";
 import type {
   PermissionCheckResult,

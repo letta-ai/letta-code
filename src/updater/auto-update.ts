@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getVersion } from "@/version";
 
 const execFileAsync = promisify(execFile);

@@ -11,7 +11,7 @@ import {
   runGhPreflight,
   validateRepoSlug,
 } from "@/cli/commands/install-github-app";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";

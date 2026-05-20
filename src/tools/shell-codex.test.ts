@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { shell } from "@/tools/impl/Shell.js";
+import { shell } from "@/tools/impl/shell.js";
 
 const isWindows = process.platform === "win32";
 

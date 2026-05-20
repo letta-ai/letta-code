@@ -3,8 +3,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConversationMessageCreateBody } from "@/backend";
-import { FakeHeadlessBackend } from "@/backend/dev/FakeHeadlessBackend";
-import { LocalBackend } from "@/backend/local/LocalBackend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { LocalBackend } from "@/backend/local/local-backend";
 
 async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   const chunks: unknown[] = [];

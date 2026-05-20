@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { commands } from "@/cli/commands/registry";
-import { useAutocompleteNavigation } from "@/cli/hooks/useAutocompleteNavigation";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { settingsManager } from "@/settings-manager";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
@@ -84,7 +84,7 @@ export function SlashCommandAutocomplete({
     (async () => {
       try {
         const { discoverClientSideSkills } = await import(
-          "@/agent/clientSkills"
+          "@/agent/client-skills"
         );
         const { getSkillSources } = await import("@/agent/context");
         const { isUserInvocableSkill } = await import("@/agent/skills");
@@ -212,18 +212,13 @@ export function SlashCommandAutocomplete({
     manageActiveState: false,
   });
 
-  // Manually manage active state to include the "no matches" case
+  // Manually manage active state - only active when there are matches to select
+  // When there are no matches, we don't block submit so the user can still
+  // run commands that aren't in the autocomplete registry (e.g., /help, /reflection)
   useLayoutEffect(() => {
-    const queryLength = queryInfo?.query.length ?? 0;
-    const isActive =
-      !hideAutocomplete && (matches.length > 0 || queryLength > 0);
+    const isActive = !hideAutocomplete && matches.length > 0;
     onActiveChange?.(isActive);
-  }, [
-    hideAutocomplete,
-    matches.length,
-    onActiveChange,
-    queryInfo?.query.length,
-  ]);
+  }, [hideAutocomplete, matches.length, onActiveChange]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {
