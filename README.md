@@ -106,9 +106,8 @@ Constellation decouples where your agent *runs* from where you *interact* with y
 graph TD
     Constellation["⭐ Constellation"]
     Constellation --> A["💻 Your Laptop"]
-    Constellation --> B["☁️ Letta Cloud"]
+    Constellation --> B["☁️ Cloud Sandbox"]
     Constellation --> C["🖥️ Mac Mini"]
-    Constellation --> D["📦 Sandbox"]
 ```
 
 ### Remote environments
