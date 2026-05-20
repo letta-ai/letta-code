@@ -5,7 +5,7 @@
 // Items are identified by key (string), not index.
 
 import { Box, type Key, useInput } from "ink";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useState } from "react";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -29,6 +29,27 @@ export interface SingleSelectPickerProps {
   onSelect: (key: string) => void;
   /** Called when user presses Escape or Ctrl-C */
   onCancel: () => void;
+  /**
+   * Override item rendering. When provided, the picker uses this
+   * instead of its default label + description rendering.
+   * The picker still handles cursor state and input.
+   */
+  renderItem?: (
+    item: SelectableItem,
+    index: number,
+    isSelected: boolean,
+  ) => ReactNode;
+  /**
+   * Called for keys the picker doesn't handle itself
+   * (anything that isn't ↑↓/Enter/Escape/Ctrl-C).
+   * Useful for pagination (←→), shortcuts (N), etc.
+   */
+  onUnhandledKey?: (input: string, key: Key) => void;
+  /**
+   * Override the footer content. When provided, replaces the default
+   * "Enter select · ↑↓ navigate · Esc cancel" hint.
+   */
+  footer?: ReactNode;
 }
 
 export const SingleSelectPicker = memo(function SingleSelectPicker({
@@ -36,6 +57,9 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
   initialCursorIndex = 0,
   onSelect,
   onCancel,
+  renderItem,
+  onUnhandledKey,
+  footer,
 }: SingleSelectPickerProps) {
   const [cursor, setCursor] = useState(initialCursorIndex);
 
@@ -70,8 +94,12 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
         onCancel();
         return;
       }
+      // Pass unhandled keys to the wrapper
+      if (onUnhandledKey) {
+        onUnhandledKey(input, key);
+      }
     },
-    [items, cursor, onCancel, onSelect],
+    [items, cursor, onCancel, onSelect, onUnhandledKey],
   );
 
   useInput(handleInput, { isActive: true });
@@ -80,6 +108,11 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
     <Box flexDirection="column">
       {items.map((item, index) => {
         const isCursor = index === cursor;
+
+        if (renderItem) {
+          return <Box key={item.key}>{renderItem(item, index, isCursor)}</Box>;
+        }
+
         const isCurrent = item.isCurrent ?? false;
         const isDisabled = item.disabled ?? false;
         const isDimLabel = item.dimLabel ?? false;
@@ -115,9 +148,11 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
         );
       })}
 
-      {/* Footer hint */}
-      <Box marginTop={1}>
-        <Text dimColor> Enter select · ↑↓ navigate · Esc cancel</Text>
+      {/* Footer */}
+      <Box marginTop={footer ? 0 : 1}>
+        {footer ?? (
+          <Text dimColor> Enter select · ↑↓ navigate · Esc cancel</Text>
+        )}
       </Box>
     </Box>
   );
