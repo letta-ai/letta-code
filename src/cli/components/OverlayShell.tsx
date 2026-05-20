@@ -44,11 +44,7 @@ export function OverlayShell({
 
       {children}
 
-      {footer && (
-        <Box marginTop={1}>
-          <Text dimColor>{footer}</Text>
-        </Box>
-      )}
+      {footer && <Box marginTop={1}>{footer}</Box>}
     </Box>
   );
 }
