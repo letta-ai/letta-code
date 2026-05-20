@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 describe("queue edit wiring", () => {
   test("QueuedMessage type includes queueItemId", () => {
     const path = fileURLToPath(
-      new URL("../cli/helpers/messageQueueBridge.ts", import.meta.url),
+      new URL("../utils/messageQueueBridge.ts", import.meta.url),
     );
     const source = readFileSync(path, "utf-8");
 
