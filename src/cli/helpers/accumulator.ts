@@ -12,7 +12,7 @@ import {
   runPreToolUseHooks,
 } from "@/hooks";
 import { debugLog } from "@/utils/debug";
-import { extractCompactionSummary } from "./backfill";
+import { extractCompactionSummary } from "./compaction-utils";
 import type { ContextTracker } from "./contextTracker";
 import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";

@@ -13,7 +13,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@/utils/frontmatter";
-import { ALL_SKILL_SOURCES } from "./skillSources";
+import { ALL_SKILL_SOURCES, type SkillSource } from "./skillSources";
 
 /**
  * Get the bundled skills directory path
@@ -33,10 +33,7 @@ function getBundledSkillsPath(): string {
   return join(thisDir, "skills");
 }
 
-/**
- * Source of a skill (for display and override resolution)
- */
-export type SkillSource = "bundled" | "global" | "agent" | "project";
+export type { SkillSource } from "./skillSources";
 
 /**
  * Represents a skill that can be used by the agent

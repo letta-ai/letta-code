@@ -50,28 +50,7 @@ import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
-/**
- * Command IDs that this letta-code version can handle via `execute_command`.
- * Advertised in DeviceStatus.supported_commands so the web UI only shows
- * commands the connected device actually supports.
- *
- * When adding a new case to `handleExecuteCommand`, add the ID here too.
- */
-export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
-  "clear",
-  "doctor",
-  "init",
-  "remember",
-  "goal",
-  "compact",
-  "set-max-context",
-  "channels",
-  "toolset",
-  // /secret opens the EditSecretsDialog and routes reads/writes through the
-  // dedicated secret_list / secret_apply WS commands — not via
-  // execute_command — so it has no case in handleExecuteCommand.
-  "secret",
-];
+export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
 /**
  * Handle an `execute_command` message from the web app.

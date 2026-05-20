@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 
 import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
-import { cliPermissions } from "@/permissions/cli";
+import { cliPermissions } from "@/permissions/cliPermissionsInstance";
 import {
   normalizeScopedPath,
   resolveAllowedMemoryRoots,

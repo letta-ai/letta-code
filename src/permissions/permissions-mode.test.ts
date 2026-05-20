@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { checkPermission } from "@/permissions/checker";
-import { cliPermissions } from "@/permissions/cli";
+import { cliPermissions } from "@/permissions/cliPermissionsInstance";
 import { permissionMode } from "@/permissions/mode";
 import type { PermissionRules } from "@/permissions/types";
 
@@ -1424,7 +1424,7 @@ test("Deny rules override permission mode", () => {
 });
 
 test("Permission mode takes precedence over CLI allowedTools", () => {
-  const { cliPermissions } = require("../permissions/cli");
+  const { cliPermissions } = require("../permissions/cliPermissionsInstance");
   cliPermissions.setAllowedTools("Bash");
 
   permissionMode.setMode("plan");
