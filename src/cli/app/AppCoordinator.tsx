@@ -14,25 +14,92 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { prefetchAvailableModelHandles } from "../../agent/available-models";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { setCurrentAgentId } from "../../agent/context";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { prefetchAvailableModelHandles } from "@/agent/available-models";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { setCurrentAgentId } from "@/agent/context";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
 import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
-} from "../../agent/model";
-import type { PersonalityId } from "../../agent/personality";
-import { shouldRecommendDefaultPrompt } from "../../agent/promptAssets";
-import { reconcileExistingAgentState } from "../../agent/reconcileExistingAgentState";
-import { recordSessionEnd } from "../../agent/sessionHistory";
-import { SessionStats } from "../../agent/stats";
-import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
-import { getBillingTier } from "../../backend/api/metadata";
+} from "@/agent/model";
+import type { PersonalityId } from "@/agent/personality";
+import { shouldRecommendDefaultPrompt } from "@/agent/promptAssets";
+import { reconcileExistingAgentState } from "@/agent/reconcileExistingAgentState";
+import { recordSessionEnd } from "@/agent/sessionHistory";
+import { SessionStats } from "@/agent/stats";
+import {
+  clearSubagentsByIds,
+  getActiveBackgroundAgents,
+  getSubagentByToolCallId,
+  getSnapshot as getSubagentSnapshot,
+  subscribe as subscribeToSubagents,
+} from "@/agent/subagentState";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import { getBillingTier } from "@/backend/api/metadata";
+import {
+  type CommandFinishedEvent,
+  type CommandHandle,
+  createCommandRunner,
+} from "@/cli/commands/runner";
+import type { BtwState } from "@/cli/components/BtwPane";
+import {
+  appendStreamingOutput,
+  type Buffers,
+  createBuffers,
+  type Line,
+  toLines,
+} from "@/cli/helpers/accumulator";
+import { isLocalAgentId } from "@/cli/helpers/appUrls";
+import { backfillBuffers } from "@/cli/helpers/backfill";
+import { chunkLog } from "@/cli/helpers/chunkLog";
+import {
+  createContextTracker,
+  resetContextHistory,
+} from "@/cli/helpers/contextTracker";
+import {
+  generateConversationTitleFromFork,
+  normalizeConversationTitle,
+} from "@/cli/helpers/conversationTitle";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { setErrorContext } from "@/cli/helpers/errorContext";
+import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
+import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
+import {
+  buildContentFromQueueBatch,
+  toQueuedMsg,
+} from "@/cli/helpers/queuedMessageParts";
+import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import {
+  collectFinishedTaskToolCalls,
+  createSubagentGroupItem,
+  hasInProgressTaskToolCalls,
+} from "@/cli/helpers/subagentAggregation";
+import { buildStartupSystemPromptWarning } from "@/cli/helpers/systemPromptWarning.ts";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+import {
+  isFileEditTool,
+  isFileWriteTool,
+  isPatchTool,
+  isShellOutputTool,
+  isShellTool,
+} from "@/cli/helpers/toolNameMapping";
+import { isTaskTool } from "@/cli/helpers/toolNameMapping.js";
+import { getTuiBlockedReason } from "@/cli/helpers/tuiQueueAdapter";
+import {
+  renderWindowTitle,
+  resolveWindowTitleConfig,
+} from "@/cli/helpers/windowTitleConfig";
+import { useConfigurableStatusLine } from "@/cli/hooks/useConfigurableStatusLine";
+import { useSuspend } from "@/cli/hooks/useSuspend/useSuspend.ts";
+import { useSyncedState } from "@/cli/hooks/useSyncedState";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/useTerminalWidth";
 import {
   getTask,
   handleMissedOneShot,
@@ -40,110 +107,52 @@ import {
   readCronFile,
   shouldFireTask,
   updateTask,
-} from "../../cron";
-import { experimentManager } from "../../experiments/manager";
-import { runSessionEndHooks, runSessionStartHooks } from "../../hooks";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import { type PermissionMode, permissionMode } from "../../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
+} from "@/cron";
+import { experimentManager } from "@/experiments/manager";
+import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import { type PermissionMode, permissionMode } from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
   QueueRuntime,
   type TaskNotificationQueueItem,
-} from "../../queue/queueRuntime";
-import { ralphMode } from "../../ralph/mode";
+} from "@/queue/queueRuntime";
+import { ralphMode } from "@/ralph/mode";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
   enqueueToolsetChangeReminder,
   resetSharedReminderState,
-} from "../../reminders/state";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
+} from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 import {
   releaseToolExecutionContext,
   type ToolExecutionResult,
-} from "../../tools/manager";
+} from "@/tools/manager";
 import {
   prepareToolExecutionContextForResolvedTarget,
   prepareToolExecutionContextForScope,
   type ToolsetName,
   type ToolsetPreference,
-} from "../../tools/toolset";
+} from "@/tools/toolset";
 import {
   debugLog,
   debugLogFile,
   debugWarn,
   isDebugEnabled,
-} from "../../utils/debug";
-import { recordTuiPerf } from "../../utils/tuiPerf";
-import {
-  type CommandFinishedEvent,
-  type CommandHandle,
-  createCommandRunner,
-} from "../commands/runner";
-import type { BtwState } from "../components/BtwPane";
-import {
-  appendStreamingOutput,
-  type Buffers,
-  createBuffers,
-  type Line,
-  toLines,
-} from "../helpers/accumulator";
-import { backfillBuffers } from "../helpers/backfill";
-import { chunkLog } from "../helpers/chunkLog";
-import {
-  createContextTracker,
-  resetContextHistory,
-} from "../helpers/contextTracker";
-import {
-  generateConversationTitleFromFork,
-  normalizeConversationTitle,
-} from "../helpers/conversationTitle";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { setErrorContext } from "../helpers/errorContext";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { getReflectionSettings } from "../helpers/memoryReminder";
+} from "@/utils/debug";
 import {
   addToMessageQueue,
   type QueuedMessage,
   setMessageQueueAdder,
-} from "../helpers/messageQueueBridge";
-import { generatePlanFilePath } from "../helpers/planName";
-import {
-  buildContentFromQueueBatch,
-  toQueuedMsg,
-} from "../helpers/queuedMessageParts";
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
-import type { ApprovalRequest } from "../helpers/stream";
-import {
-  collectFinishedTaskToolCalls,
-  createSubagentGroupItem,
-  hasInProgressTaskToolCalls,
-} from "../helpers/subagentAggregation";
-import {
-  clearSubagentsByIds,
-  getActiveBackgroundAgents,
-  getSubagentByToolCallId,
-  getSnapshot as getSubagentSnapshot,
-  subscribe as subscribeToSubagents,
-} from "../helpers/subagentState";
-import { buildStartupSystemPromptWarning } from "../helpers/systemPromptWarning.ts";
-import { appendTaskNotificationEventsToBuffer } from "../helpers/taskNotifications";
-import { getRandomThinkingVerb } from "../helpers/thinkingMessages";
-import {
-  isFileEditTool,
-  isFileWriteTool,
-  isPatchTool,
-  isShellTool,
-} from "../helpers/toolNameMapping";
-import { isTaskTool } from "../helpers/toolNameMapping.js";
-import { getTuiBlockedReason } from "../helpers/tuiQueueAdapter";
-import { useConfigurableStatusLine } from "../hooks/useConfigurableStatusLine";
-import { useSuspend } from "../hooks/useSuspend/useSuspend.ts";
-import { useSyncedState } from "../hooks/useSyncedState";
-import { useTerminalRows, useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/utils/messageQueueBridge";
+import { generatePlanFilePath } from "@/utils/planName";
+import { appendTaskNotificationEventsToBuffer } from "@/utils/taskNotifications";
+import { recordTuiPerf } from "@/utils/tuiPerf";
+import { getVersion } from "@/version";
 import { AppView } from "./AppView";
 import {
   ANIMATION_RESUME_HYSTERESIS_ROWS,
@@ -191,7 +200,7 @@ import { useQueuedApprovalSubmit } from "./useQueuedApprovalSubmit";
 import { useReasoningCycle } from "./useReasoningCycle";
 import { useSubmitHandler } from "./useSubmitHandler";
 
-export default function App({
+export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
   conversationId: initialConversationId,
@@ -238,6 +247,9 @@ export default function App({
 
   // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
+  const [conversationSummary, setConversationSummary] = useState<string | null>(
+    null,
+  );
 
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
@@ -267,7 +279,7 @@ export default function App({
 
   // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
-    | import("../helpers/conversationSwitchAlert").ConversationSwitchContext
+    | import("@/cli/helpers/conversationSwitchAlert").ConversationSwitchContext
     | null
   >(null);
 
@@ -307,14 +319,6 @@ export default function App({
     }
   }, [agentId]);
 
-  // Set terminal title to "{Agent Name} | Letta Code"
-  useEffect(() => {
-    const title = agentState?.name
-      ? `${agentState.name} | Letta Code`
-      : "Letta Code";
-    process.stdout.write(`\x1b]0;${title}\x07`);
-  }, [agentState?.name]);
-
   // Whether a stream is in flight (disables input)
   // Uses synced state to keep ref in sync for reliable async checks
   const [streaming, setStreaming, streamingRef] = useSyncedState(false);
@@ -328,6 +332,11 @@ export default function App({
     permissionMode.getMode(),
   );
   const uiPermissionModeRef = useRef<PermissionMode>(uiPermissionMode);
+
+  // Track which tool call output is expanded (ctrl+o toggles last one)
+  const [expandedToolCallId, setExpandedToolCallId] = useState<string | null>(
+    null,
+  );
 
   // Store the last plan file path for post-approval rendering
   // (needed because plan mode is exited before rendering the result)
@@ -775,6 +784,19 @@ export default function App({
       null
     );
   }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
+
+  // Set terminal title from window title config
+  useEffect(() => {
+    const items = resolveWindowTitleConfig(projectDirectory);
+    const title = renderWindowTitle(items, {
+      agentName: agentState?.name ?? null,
+      appName: "Letta Code",
+      version: getVersion(),
+      conversationSummary,
+    });
+    process.stdout.write(`\x1b]0;${title}\x07`);
+  }, [agentState?.name, conversationSummary, projectDirectory]);
+
   const currentModelProvider = llmConfig?.provider_name ?? null;
   const currentReasoningEffort: ModelReasoningEffort | null =
     currentModelLabel?.startsWith("letta/auto")
@@ -813,8 +835,14 @@ export default function App({
       modelDisplayName: currentModelDisplay ?? undefined,
       billingTier: billingTier ?? undefined,
       modelEndpointType: llmConfig?.model_endpoint_type ?? undefined,
+      modelLabel: currentModelLabel ?? undefined,
     });
-  }, [currentModelDisplay, billingTier, llmConfig?.model_endpoint_type]);
+  }, [
+    currentModelDisplay,
+    billingTier,
+    llmConfig?.model_endpoint_type,
+    currentModelLabel,
+  ]);
 
   // Fetch billing tier once on mount
   useEffect(() => {
@@ -1371,6 +1399,24 @@ export default function App({
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
   // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
+
+  // Queue defer mode: when 'defer', queued messages only fire on end_turn stop reason.
+  // Defer mode is only meaningful in API backend mode (local backend fires end_turn
+  // between each sequential tool call, making defer indistinguishable from immediate).
+  const deferModeSupported = !isLocalAgentId(agentId);
+  // When 'immediate' (default), they fire on any turn end.
+  const [queueMode, setQueueMode] = useState<"immediate" | "defer">(
+    "immediate",
+  );
+  const handleCtrlD = useCallback(() => {
+    if (!deferModeSupported) return;
+    setQueueMode((prev) => (prev === "immediate" ? "defer" : "immediate"));
+  }, [deferModeSupported]);
+  // Ref mirror of queueMode so useConversationLoop can read it without stale closures.
+  const queueModeRef = useRef<"immediate" | "defer">("immediate");
+  queueModeRef.current = queueMode;
+  // Tracks the stop reason of the last completed turn, set by useConversationLoop.
+  const lastStopReasonRef = useRef<string | null>(null);
 
   // Track last dequeued message for restoration on error
   // If an error occurs after dequeue, we restore this to the input field (if input is empty)
@@ -1977,11 +2023,6 @@ export default function App({
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const memfsEnabled = isActiveMemfsEnabled(agentId);
-  const _memfsDirectory =
-    memfsEnabled && agentId && agentId !== "loading"
-      ? getScopedMemoryFilesystemRoot(agentId)
-      : null;
   const statusLine = useConfigurableStatusLine({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
@@ -2634,7 +2675,7 @@ export default function App({
               };
               const sysNorm = normalize(agentSystem);
               const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "../../agent/promptAssets"
+                "@/agent/promptAssets"
               );
 
               // Best-effort preset detection.
@@ -2694,9 +2735,7 @@ export default function App({
 
           // Derive model ID from the configured model handle for ModelSelector.
           const agentModelHandle = getPreferredAgentModelHandle(agent);
-          const { getModelInfoForLlmConfig } = await import(
-            "../../agent/model"
-          );
+          const { getModelInfoForLlmConfig } = await import("@/agent/model");
           const modelInfo = getModelInfoForLlmConfig(
             agentModelHandle || "",
             agent.llm_config as unknown as {
@@ -2718,9 +2757,7 @@ export default function App({
 
           if (persistedToolsetPreference === "auto") {
             if (agentModelHandle) {
-              const { switchToolsetForModel } = await import(
-                "../../tools/toolset"
-              );
+              const { switchToolsetForModel } = await import("@/tools/toolset");
               const derivedToolset = await switchToolsetForModel(
                 agentModelHandle,
                 agentId,
@@ -2730,7 +2767,7 @@ export default function App({
               setCurrentToolset(null);
             }
           } else {
-            const { forceToolsetSwitch } = await import("../../tools/toolset");
+            const { forceToolsetSwitch } = await import("@/tools/toolset");
             await forceToolsetSwitch(persistedToolsetPreference, agentId);
             setCurrentToolset(persistedToolsetPreference);
           }
@@ -2770,6 +2807,7 @@ export default function App({
         cancelled = true;
       };
     }
+    return undefined;
   }, [loadingState, agentId, initialAgentState]);
 
   // Keep effective model state in sync with the active conversation override.
@@ -2991,9 +3029,7 @@ export default function App({
       }
 
       try {
-        const { updateConversationLLMConfig } = await import(
-          "../../agent/modify"
-        );
+        const { updateConversationLLMConfig } = await import("@/agent/modify");
         await updateConversationLLMConfig(
           targetConversationId,
           modelHandle,
@@ -3115,7 +3151,7 @@ export default function App({
       try {
         if (getBackend().capabilities.localMemfs) {
           const { initializeLocalMemoryRepo } = await import(
-            "../../agent/memoryGit"
+            "@/agent/memoryGit"
           );
           await initializeLocalMemoryRepo({
             memoryDir: getScopedMemoryFilesystemRoot(agentId),
@@ -3127,7 +3163,7 @@ export default function App({
         }
 
         const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-          "../../agent/memoryGit"
+          "@/agent/memoryGit"
         );
         if (!isGitRepo(agentId)) {
           await cloneMemoryRepo(agentId);
@@ -3212,6 +3248,7 @@ export default function App({
     clearApprovalToolContext,
     closeTrajectorySegment,
     consumeQueuedMessages,
+    queueModeRef,
     contextTrackerRef,
     conversationBusyRetriesRef,
     conversationGenerationRef,
@@ -3254,6 +3291,7 @@ export default function App({
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
     setNeedsEagerApprovalCheck,
@@ -3262,6 +3300,7 @@ export default function App({
     setRestoreQueueOnCancel,
     setRestoredInput,
     setStreaming,
+    setConversationSummary,
     setTempModelOverride,
     setThinkingMessage,
     setTrajectoryElapsedBaseMs,
@@ -3312,6 +3351,7 @@ export default function App({
     commandRunner,
     commitEligibleLines,
     consumeQueuedMessages,
+    queueModeRef,
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
@@ -3561,6 +3601,7 @@ export default function App({
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setCurrentModelHandle,
     setInterruptRequested,
     setIsExecutingTool,
@@ -3678,6 +3719,7 @@ export default function App({
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setConversationOverrideContextWindowLimit,
     setConversationOverrideModelSettings,
     setCurrentPersonalityId,
@@ -3747,7 +3789,13 @@ export default function App({
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
       !abortControllerRef.current && // Don't dequeue while processConversation is still active
-      !dequeueInFlightRef.current // Don't dequeue while previous dequeue submit is still in flight
+      !dequeueInFlightRef.current && // Don't dequeue while previous dequeue submit is still in flight
+      // In defer mode, only dequeue when the agent is truly done:
+      // - last stop reason was end_turn (not requires_approval or error)
+      // - processingConversationRef === 0 (no nested processConversation calls outstanding)
+      (queueMode === "immediate" ||
+        (lastStopReasonRef.current === "end_turn" &&
+          processingConversationRef.current === 0))
     ) {
       // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
@@ -3780,6 +3828,8 @@ export default function App({
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
+      // Reset to immediate mode after each dequeue — defer is opt-in per batch.
+      setQueueMode("immediate");
       void onSubmitRef.current(concatenatedMessage).finally(() => {
         dequeueInFlightRef.current = false;
         // If more items arrived while in-flight, bump epoch so the effect re-runs.
@@ -3817,6 +3867,7 @@ export default function App({
     anySelectorOpen,
     dequeueEpoch,
     queuedOverlayAction,
+    queueMode,
   ]);
 
   const {
@@ -3827,6 +3878,7 @@ export default function App({
     handleCompactionModeSelect,
     handleToolsetSelect,
     handleExperimentSelect,
+    handleExperimentsConfirm,
   } = useConfigurationHandlers({
     activeOverlay,
     agentId,
@@ -4035,6 +4087,40 @@ export default function App({
       }
     }
   }, [setUiPermissionMode]);
+
+  // Toggle expand/collapse for a specific tool call ID
+  const handleToggleExpandedToolCall = useCallback((id: string) => {
+    setExpandedToolCallId((prev) => (prev === id ? null : id));
+  }, []);
+
+  // The ID of the last finished shell tool call — used for the ctrl+o hint and handler.
+  // lines is intentionally in the dep array to recompute when buffers change (buffersRef is a ref).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
+  const lastShellToolCallId = useMemo(() => {
+    const order = buffersRef.current.order;
+    for (let i = order.length - 1; i >= 0; i--) {
+      const id = order[i];
+      if (!id) continue;
+      const ln = buffersRef.current.byId.get(id);
+      if (
+        ln?.kind === "tool_call" &&
+        ln.phase === "finished" &&
+        ln.resultText &&
+        ln.name &&
+        isShellOutputTool(ln.name)
+      ) {
+        return id;
+      }
+    }
+    return null;
+  }, [lines]);
+
+  // ctrl+o toggles the last shell tool call output
+  const handleCtrlO = useCallback(() => {
+    if (lastShellToolCallId) {
+      handleToggleExpandedToolCall(lastShellToolCallId);
+    }
+  }, [lastShellToolCallId, handleToggleExpandedToolCall]);
 
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
@@ -4352,6 +4438,8 @@ export default function App({
       contextTrackerRef={contextTrackerRef}
       continueSession={continueSession}
       conversationId={conversationId}
+      conversationSummary={conversationSummary}
+      projectDirectory={projectDirectory}
       currentApproval={currentApproval}
       currentApprovalContext={currentApprovalContext}
       currentModelDisplay={currentModelDisplay}
@@ -4363,6 +4451,12 @@ export default function App({
       currentSystemPromptId={currentSystemPromptId}
       currentToolset={currentToolset}
       currentToolsetPreference={currentToolsetPreference}
+      expandedToolCallId={expandedToolCallId}
+      lastShellToolCallId={lastShellToolCallId}
+      handleCtrlO={handleCtrlO}
+      queueMode={queueMode}
+      deferModeSupported={deferModeSupported}
+      handleCtrlD={handleCtrlD}
       emittedIdsRef={emittedIdsRef}
       feedbackPrefill={feedbackPrefill}
       footerUpdateText={footerUpdateText}
@@ -4381,7 +4475,7 @@ export default function App({
       handleEnterPlanModeReject={handleEnterPlanModeReject}
       handleQueueEdit={handleQueueEdit}
       handleExit={handleExit}
-      handleExperimentSelect={handleExperimentSelect}
+      handleExperimentsConfirm={handleExperimentsConfirm}
       handleFeedbackSubmit={handleFeedbackSubmit}
       handleInterrupt={handleInterrupt}
       handleModelSelect={handleModelSelect}
@@ -4439,6 +4533,7 @@ export default function App({
       setCommandRunning={setCommandRunning}
       setConversationAutoTitleEligibility={setConversationAutoTitleEligibility}
       setConversationIdAndRef={setConversationIdAndRef}
+      setConversationSummary={setConversationSummary}
       setLines={setLines}
       setModelReasoningPrompt={setModelReasoningPrompt}
       setModelSelectorOptions={setModelSelectorOptions}

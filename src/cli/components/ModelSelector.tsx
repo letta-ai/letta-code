@@ -6,15 +6,15 @@ import {
   getAvailableModelHandles,
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
-} from "../../agent/available-models";
-import { models } from "../../agent/model";
+} from "@/agent/available-models";
+import { models } from "@/agent/model";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
   listProviders,
-} from "../../providers/byok-providers";
-import { settingsManager } from "../../settings-manager";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/providers/byok-providers";
+import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

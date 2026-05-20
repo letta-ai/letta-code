@@ -3,9 +3,8 @@ import path from "node:path";
 import {
   getConversationWorkingDirectory,
   getWorkingDirectoryScopeKey,
-  setConversationWorkingDirectory,
 } from "./cwd";
-import { emitDeviceStatusUpdate } from "./protocol-outbound";
+import { switchConversationWorkingDirectory } from "./cwd-change";
 import { getConversationRuntime } from "./runtime";
 import type { ListenerRuntime } from "./types";
 import {
@@ -155,12 +154,14 @@ async function runWatchLoop(params: {
     if (debounceTimer) clearTimeout(debounceTimer);
     const filename = event.filename;
     debounceTimer = setTimeout(() => {
-      handleNewWorktree({
+      void handleNewWorktree({
         worktreesDir,
         filename,
         runtime,
         agentId,
         conversationId,
+      }).catch((err) => {
+        console.error("[WorktreeWatcher] failed to handle new worktree:", err);
       });
     }, DEBOUNCE_MS);
   }
@@ -211,29 +212,12 @@ async function handleNewWorktree(params: {
     `[WorktreeWatcher] New worktree detected: ${newWorktreePath} — switching CWD`,
   );
 
-  // Update CWD through the standard path.
-  setConversationWorkingDirectory(
+  await switchConversationWorkingDirectory({
     runtime,
     agentId,
     conversationId,
-    newWorktreePath,
-  );
-
-  // Invalidate session context so the agent gets updated CWD info.
-  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
-  const reminderState = runtime.reminderStateByConversation.get(scopeKey);
-  if (reminderState) {
-    reminderState.hasSentSessionContext = false;
-    reminderState.pendingSessionContextReason = "cwd_changed";
-  }
-
-  // Emit device status update so the web UI reflects the new CWD.
-  if (runtime.socket) {
-    emitDeviceStatusUpdate(runtime.socket, runtime, {
-      agent_id: agentId,
-      conversation_id: conversationId,
-    });
-  }
+    workingDirectory: newWorktreePath,
+  });
 }
 
 /**

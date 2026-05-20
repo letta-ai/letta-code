@@ -1,5 +1,5 @@
 import type { MutableRefObject } from "react";
-import type { Buffers, Line } from "../helpers/accumulator";
+import type { Buffers, Line } from "@/cli/helpers/accumulator";
 
 export type CommandPhase = "running" | "waiting" | "finished";
 

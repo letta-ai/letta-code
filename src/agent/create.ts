@@ -6,11 +6,11 @@ import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import { getBackend } from "../backend";
-import { getClient } from "../backend/api/client";
-import { apiRequest, getApiRequestConfig } from "../backend/api/request";
-import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "../constants";
-import { settingsManager } from "../settings-manager";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
+import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { settingsManager } from "@/settings-manager";
 import { getModelContextWindow } from "./available-models";
 import { getDefaultMemoryBlocks } from "./memory";
 import {

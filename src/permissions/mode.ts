@@ -331,13 +331,10 @@ class PermissionModeManager {
     toolArgs?: Record<string, unknown>,
     workingDirectory: string = process.cwd(),
     modeOverride?: PermissionMode,
-    planFilePathOverride?: string | null,
+    _planFilePathOverride?: string | null,
   ): ModeOverrideResult | null {
     const effectiveMode = modeOverride ?? this.currentMode;
-    const _effectivePlanFilePath =
-      planFilePathOverride !== undefined
-        ? planFilePathOverride
-        : this.getPlanFilePath();
+
     switch (effectiveMode) {
       case "unrestricted":
         // ExitPlanMode always requires human approval, even in unrestricted mode

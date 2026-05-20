@@ -3,8 +3,8 @@
  * Centralizes tool name remapping logic used across the UI.
  */
 
-import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
-import { MEMORY_TOOL_NAMES } from "../../tools/toolset";
+import { isInteractiveApprovalTool } from "@/tools/interactivePolicy";
+import { MEMORY_TOOL_NAMES } from "@/tools/toolset";
 
 /**
  * Maps internal tool names to user-friendly display names.

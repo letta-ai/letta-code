@@ -14,7 +14,7 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import { executeAutoAllowedTools } from "../../agent/approval-execution";
+import { executeAutoAllowedTools } from "@/agent/approval-execution";
 import {
   extractConflictDetail,
   fetchRunErrorDetail,
@@ -28,29 +28,17 @@ import {
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
   shouldAttemptApprovalRecovery,
-} from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { getStreamToolContextId, sendMessageStream } from "../../agent/message";
-import { getModelInfo, getModelInfoForLlmConfig } from "../../agent/model";
-import { INTERRUPT_RECOVERY_ALERT } from "../../agent/promptAssets";
-import type { SessionStats } from "../../agent/stats";
-import { type ConversationMessageStreamBody, getBackend } from "../../backend";
-import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "../../constants";
-import { runStopHooks } from "../../hooks";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import { formatPermissionDenial } from "../../permissions/formatDenial";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import type { QueueRuntime } from "../../queue/queueRuntime";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
+} from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { getStreamToolContextId, sendMessageStream } from "@/agent/message";
+import { getModelInfo, getModelInfoForLlmConfig } from "@/agent/model";
+import { INTERRUPT_RECOVERY_ALERT } from "@/agent/promptAssets";
+import type { SessionStats } from "@/agent/stats";
 import {
-  analyzeToolApproval,
-  type ToolExecutionResult,
-} from "../../tools/manager";
-import type { PreparedScopeToolContext } from "../../tools/toolset";
-import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
+  clearCompletedSubagents,
+  hasActiveSubagents,
+} from "@/agent/subagentState";
+import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
   type Buffers,
   type Line,
@@ -58,52 +46,61 @@ import {
   onChunk,
   setToolCallsRunning,
   toLines,
-} from "../helpers/accumulator";
-import { classifyApprovals } from "../helpers/approvalClassification";
-import type { ContextTracker } from "../helpers/contextTracker";
+} from "@/cli/helpers/accumulator";
+import { classifyApprovals } from "@/cli/helpers/approvalClassification";
+import type { ContextTracker } from "@/cli/helpers/contextTracker";
 import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
   parsePatchToAdvancedDiff,
-} from "../helpers/diff";
+} from "@/cli/helpers/diff";
 import {
   formatErrorDetails,
   formatTelemetryErrorMessage,
   getRetryStatusMessage,
   isEncryptedContentError,
   isProviderStreamDisconnectErrorText,
-} from "../helpers/errorFormatter";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { buildGoalBudgetLimitPrompt } from "../helpers/goalCommand";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
+} from "@/cli/helpers/errorFormatter";
+import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
+import { buildGoalBudgetLimitPrompt } from "@/cli/helpers/goalCommand";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
   getQueuedNotificationSummaries,
-} from "../helpers/queuedMessageParts";
-import { appendTranscriptDeltaJsonl } from "../helpers/reflectionTranscript";
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
+} from "@/cli/helpers/queuedMessageParts";
+import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflectionTranscript";
+import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
 import {
   type ApprovalRequest,
   type DrainResult,
   drainStream,
   drainStreamWithResume,
-} from "../helpers/stream";
-import {
-  clearCompletedSubagents,
-  hasActiveSubagents,
-} from "../helpers/subagentState";
-import { shouldClearCompletedSubagentsOnTurnStart } from "../helpers/subagentTurnStart";
+} from "@/cli/helpers/stream";
+import { shouldClearCompletedSubagentsOnTurnStart } from "@/cli/helpers/subagentTurnStart";
 import {
   getRandomPastTenseVerb,
   getRandomThinkingVerb,
-} from "../helpers/thinkingMessages";
+} from "@/cli/helpers/thinkingMessages";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
-} from "../helpers/toolNameMapping";
-import { alwaysRequiresUserInput } from "../helpers/toolNameMapping.js";
+} from "@/cli/helpers/toolNameMapping";
+import { alwaysRequiresUserInput } from "@/cli/helpers/toolNameMapping.js";
+import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { runStopHooks } from "@/hooks";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import { formatPermissionDenial } from "@/permissions/formatDenial";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import type { QueueRuntime } from "@/queue/queueRuntime";
+import { ralphMode } from "@/ralph/mode";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
+import type { PreparedScopeToolContext } from "@/tools/toolset";
+import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
 
 import {
   CONVERSATION_BUSY_MAX_RETRIES,
@@ -147,6 +144,7 @@ type ConversationLoopContext = {
   clearApprovalToolContext: () => void;
   closeTrajectorySegment: () => void;
   consumeQueuedMessages: () => QueuedMessage[] | null;
+  queueModeRef: MutableRefObject<"immediate" | "defer">;
   contextTrackerRef: MutableRefObject<ContextTracker>;
   conversationBusyRetriesRef: MutableRefObject<number>;
   conversationGenerationRef: MutableRefObject<number>;
@@ -193,6 +191,7 @@ type ConversationLoopContext = {
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setCurrentModelId: Dispatch<SetStateAction<string | null>>;
   setDequeueEpoch: Dispatch<SetStateAction<number>>;
+  lastStopReasonRef: MutableRefObject<string | null>;
   setIsExecutingTool: Dispatch<SetStateAction<boolean>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
@@ -201,6 +200,7 @@ type ConversationLoopContext = {
   setRestoreQueueOnCancel: Dispatch<SetStateAction<boolean>>;
   setRestoredInput: Dispatch<SetStateAction<string | null>>;
   setStreaming: (value: boolean) => void;
+  setConversationSummary: (summary: string | null) => void;
   setTempModelOverride: (next: string | null) => void;
   setThinkingMessage: Dispatch<SetStateAction<string>>;
   setTrajectoryElapsedBaseMs: Dispatch<SetStateAction<number>>;
@@ -239,6 +239,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     clearApprovalToolContext,
     closeTrajectorySegment,
     consumeQueuedMessages,
+    queueModeRef,
     contextTrackerRef,
     conversationBusyRetriesRef,
     conversationGenerationRef,
@@ -281,6 +282,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
     setNeedsEagerApprovalCheck,
@@ -289,6 +291,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setRestoreQueueOnCancel,
     setRestoredInput,
     setStreaming,
+    setConversationSummary,
     setTempModelOverride,
     setThinkingMessage,
     setTrajectoryElapsedBaseMs,
@@ -664,7 +667,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           // This centralizes skill content injection so all approval-send paths
           // automatically get skill SKILL.md content alongside tool results.
           const { consumeQueuedSkillContent } = await import(
-            "../../tools/impl/skillContentRegistry"
+            "@/tools/impl/skillContentRegistry"
           );
           const skillContents = consumeQueuedSkillContent();
           if (skillContents.length > 0) {
@@ -1387,6 +1390,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             stopReasonToHandle = "requires_approval";
           }
 
+          // Record the final stop reason so the dequeue gate can check it.
+          lastStopReasonRef.current = stopReasonToHandle;
+
           // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
             clearApprovalToolContext();
@@ -1522,6 +1528,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   })
                   .then(() => {
                     shouldAutoGenerateConversationTitleRef.current = false;
+                    setConversationSummary(conversationTitle);
                   })
                   .catch((err) => {
                     // Silently ignore - not critical.
@@ -1963,8 +1970,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   return;
                 }
 
-                // Append queued messages if any (from 15s append mode)
-                const queuedItemsToAppend = consumeQueuedMessages();
+                // Append queued messages if any (from 15s append mode).
+                // In defer mode, skip mid-run bundling — let the dequeue gate
+                // handle dispatch after the agent is fully done (end_turn).
+                const queuedItemsToAppend =
+                  queueModeRef.current === "immediate"
+                    ? consumeQueuedMessages()
+                    : null;
                 const queuedNotifications = queuedItemsToAppend
                   ? getQueuedNotificationSummaries(queuedItemsToAppend)
                   : [];
@@ -2785,6 +2797,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
         abortControllerRef.current = null;
 
+        // Decrement BEFORE bumping the epoch so that when the dequeue effect
+        // fires synchronously (Ink legacy mode), processingConversationRef.current
+        // already reflects the true count. The defer gate checks === 0 to confirm
+        // no more nested processConversation calls are outstanding.
+        if (!isStale) {
+          processingConversationRef.current = Math.max(
+            0,
+            processingConversationRef.current - 1,
+          );
+        }
+
         // Trigger dequeue effect now that processConversation is no longer active.
         // The dequeue effect checks abortControllerRef (a ref, not state), so it
         // won't re-run on its own — bump dequeueEpoch to force re-evaluation.
@@ -2793,15 +2816,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         if (!isStale && (tuiQueueRef.current?.length ?? 0) > 0) {
           setDequeueEpoch((e: number) => e + 1);
         }
-
-        // Only decrement ref if this conversation is still current.
-        // If stale (ESC was pressed), handleInterrupt already reset ref to 0.
-        if (!isStale) {
-          processingConversationRef.current = Math.max(
-            0,
-            processingConversationRef.current - 1,
-          );
-        }
       }
     },
     [
@@ -2809,6 +2823,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       refreshDerived,
       refreshDerivedThrottled,
       setStreaming,
+      setConversationSummary,
       currentModelId,
       updateStreamingOutput,
       needsEagerApprovalCheck,

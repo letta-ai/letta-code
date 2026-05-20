@@ -9,9 +9,9 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { DmPolicy } from "../channels/types";
-import type { CronTask } from "../cron";
-import type { ExperimentId, ExperimentSnapshot } from "../experiments/types";
+import type { DmPolicy } from "@/channels/types";
+import type { CronTask } from "@/cron";
+import type { ExperimentId, ExperimentSnapshot } from "@/experiments/types";
 
 /**
  * Runtime identity for all state and delta events.
@@ -152,6 +152,84 @@ export type ChannelId = string;
 
 export type ChannelPluginConfig = Record<string, unknown>;
 
+// ── Channel config schema (declarative plugin UI) ──
+
+export interface ChannelConfigFieldBase {
+  key: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+  restartRequired?: boolean;
+  scope?: "app" | "account";
+}
+
+export interface ChannelConfigTextField extends ChannelConfigFieldBase {
+  type: "text";
+  default?: string;
+  placeholder?: string;
+}
+
+export interface ChannelConfigSecretField extends ChannelConfigFieldBase {
+  type: "secret";
+  placeholder?: string;
+}
+
+export interface ChannelConfigSelectOption {
+  value: string;
+  label: string;
+}
+
+export interface ChannelConfigSelectField extends ChannelConfigFieldBase {
+  type: "select";
+  options: ChannelConfigSelectOption[];
+  default?: string;
+}
+
+export interface ChannelConfigBooleanField extends ChannelConfigFieldBase {
+  type: "boolean";
+  default?: boolean;
+}
+
+export interface ChannelConfigNumberField extends ChannelConfigFieldBase {
+  type: "number";
+  default?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  suffix?: string;
+  placeholder?: string;
+}
+
+export interface ChannelConfigStringArrayField extends ChannelConfigFieldBase {
+  type: "string-array";
+  default?: string[];
+  placeholder?: string;
+}
+
+export interface ChannelConfigKeyValueMapField extends ChannelConfigFieldBase {
+  type: "key-value-map";
+  valueType: "string" | "number";
+  default?: Record<string, string | number>;
+  keyLabel?: string;
+  valueLabel?: string;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+}
+
+export type ChannelConfigField =
+  | ChannelConfigTextField
+  | ChannelConfigSecretField
+  | ChannelConfigSelectField
+  | ChannelConfigBooleanField
+  | ChannelConfigNumberField
+  | ChannelConfigStringArrayField
+  | ChannelConfigKeyValueMapField;
+
+export interface ChannelConfigSchema {
+  version: 1;
+  fields: ChannelConfigField[];
+}
+
 export interface ChannelSummary {
   channel_id: ChannelId;
   display_name: string;
@@ -162,6 +240,8 @@ export interface ChannelSummary {
   pending_pairings_count: number;
   approved_users_count: number;
   routes_count: number;
+  /** Declarative config schema for dynamic settings UI, or null. */
+  config_schema: ChannelConfigSchema | null;
 }
 
 export interface ChannelConfigSnapshot {
@@ -1504,6 +1584,24 @@ export interface ExecuteCommandCommand {
 }
 
 // ─────────────────────────────────────────────────
+//  Queue item commands
+// ─────────────────────────────────────────────────
+
+/**
+ * Remove a specific item from the queue by ID.
+ * Used by desktop to implement queue editing (load into input, remove from queue).
+ */
+export interface RemoveQueueItemCommand {
+  type: "remove_queue_item";
+  /** Correlation id (echoed back in the response for request correlation). */
+  request_id: string;
+  /** Runtime scope — identifies which agent + conversation this targets. */
+  runtime: RuntimeScope;
+  /** The queue item ID to remove. */
+  item_id: string;
+}
+
+// ─────────────────────────────────────────────────
 //  Git branch commands
 // ─────────────────────────────────────────────────
 
@@ -1615,6 +1713,13 @@ export interface SecretApplyResponse {
   error?: string;
 }
 
+export interface RemoveQueueItemResponse {
+  type: "remove_queue_item_response";
+  request_id: string;
+  success: boolean;
+  item_id: string;
+}
+
 export type WsProtocolCommand =
   | InputCommand
   | ChangeDeviceStateCommand
@@ -1678,6 +1783,7 @@ export type WsProtocolCommand =
   | ChannelRouteRemoveCommand
   | ChannelRouteUpdateCommand
   | ExecuteCommandCommand
+  | RemoveQueueItemCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
   | SecretListCommand
@@ -1720,6 +1826,7 @@ export type WsProtocolMessage =
   | ChannelRoutesUpdatedMessage
   | ChannelTargetsUpdatedMessage
   | SecretListResponse
-  | SecretApplyResponse;
+  | SecretApplyResponse
+  | RemoveQueueItemResponse;
 
 export type { StopReasonType };

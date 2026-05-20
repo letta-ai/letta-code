@@ -12,9 +12,9 @@ import {
   type AgentMessageListBody,
   type ConversationMessageListBody,
   getBackend,
-} from "../backend";
-import type { ApprovalRequest } from "../cli/helpers/stream";
-import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
+} from "@/backend";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 
 // Backfill should feel like "the last turn(s)", not "the last N raw messages".
 // Fetch every renderable message type so the TUI can reconstruct the transcript.

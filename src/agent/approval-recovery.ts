@@ -6,7 +6,7 @@
  * helper (`fetchRunErrorDetail`) that requires network access.
  */
 
-import { getBackend } from "../backend";
+import { getBackend } from "@/backend";
 
 export interface RunErrorInfo {
   error_type?: string;

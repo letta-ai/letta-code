@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -181,7 +181,7 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       stdout?: string;
     };
     const code = typeof err.code === "number" ? err.code : undefined;
-    const _stdout = typeof err.stdout === "string" ? err.stdout : "";
+
     const message =
       typeof err.message === "string" ? err.message : "Unknown error";
     if (code === 1) {

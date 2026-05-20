@@ -5,14 +5,14 @@
 
 import { Box, useInput } from "ink";
 import { memo, useCallback, useState } from "react";
-import { getClient } from "../../backend/api/client";
+import { getClient } from "@/backend/api/client";
 import {
   connectMcpServer,
   type McpConnectConfig,
   type McpTool,
   OauthStreamEvent,
-} from "../helpers/mcpOauth";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/cli/helpers/mcpOauth";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { Text } from "./Text";

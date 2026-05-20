@@ -1,4 +1,4 @@
-import { debugWarn } from "../../utils/debug";
+import { debugWarn } from "@/utils/debug";
 import { apiRequest } from "./request";
 
 export interface ProviderResponse {

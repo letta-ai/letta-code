@@ -1,14 +1,14 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { resolveModel } from "../agent/model";
-import { getBackend } from "../backend";
-import { getClient } from "../backend/api/client";
-import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
-import { getSupportedChannelIds } from "../channels/pluginRegistry";
-import { getChannelRegistry } from "../channels/registry";
-import { getRoutesForChannel, loadRoutes } from "../channels/routing";
-import type { SupportedChannelId } from "../channels/types";
-import type { RuntimeContextSnapshot } from "../runtime-context";
-import { settingsManager } from "../settings-manager";
+import { resolveModel } from "@/agent/model";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import type { MessageChannelToolDiscoveryScope } from "@/channels/messageTool";
+import { getSupportedChannelIds } from "@/channels/pluginRegistry";
+import { getChannelRegistry } from "@/channels/registry";
+import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
+import type { SupportedChannelId } from "@/channels/types";
+import type { RuntimeContextSnapshot } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import { toolFilter } from "./filter";
 import {
   ANTHROPIC_DEFAULT_TOOLS,

@@ -1,4 +1,7 @@
-import { DEFAULT_PI_PROVIDER, type PiProvider } from "../dev/PiModelFactory";
+import {
+  DEFAULT_PI_PROVIDER,
+  type PiProvider,
+} from "@/backend/dev/PiModelFactory";
 import {
   getPiProviderSpec,
   listCatalogModelsForProvider,
@@ -6,7 +9,7 @@ import {
   localModelHandle,
   localProviderType,
   resolveLocalModel,
-} from "../dev/PiProviderRegistry";
+} from "@/backend/dev/PiProviderRegistry";
 import {
   type LocalProviderRecord,
   listLocalProviderRecords,

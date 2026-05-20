@@ -13,7 +13,7 @@
 
 import { homedir } from "node:os";
 import { canonicalToolName, isShellToolName } from "./canonical";
-import { cliPermissions } from "./cli";
+import { cliPermissions } from "./cliPermissionsInstance";
 import {
   deriveAgentId,
   normalizeScopedPath,

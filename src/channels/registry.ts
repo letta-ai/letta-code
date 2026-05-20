@@ -10,9 +10,9 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
-import { getClient } from "../backend/api/client";
-import type { ApprovalResponseBody } from "../types/protocol_v2";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { getClient } from "@/backend/api/client";
+import type { ApprovalResponseBody } from "@/types/protocol_v2";
 import {
   getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,
@@ -20,6 +20,7 @@ import {
   loadChannelAccounts,
 } from "./accounts";
 import { tryHandleChannelSlashCommand } from "./commands";
+import { isDiscordGuildChannelAllowed } from "./discord/channelGating";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
@@ -845,6 +846,36 @@ export class ChannelRegistry {
       if (!discordResult) {
         return;
       }
+
+      // Delivery-time re-check: if allowed_channels changed since route creation,
+      // drop the message (route cleanup, if desired, is handled separately by
+      // reconcile + removeStaleRoutes).
+      if (msg.chatType === "channel" && config.allowedChannels) {
+        const isAllowed = isDiscordGuildChannelAllowed({
+          channelId: msg.chatId,
+          parentChannelId: msg.parentChannelId ?? null,
+          isThread: !!(msg.threadId && msg.threadId === msg.chatId),
+          allowedChannels: config.allowedChannels,
+        });
+        if (!isAllowed) {
+          const resolvedParentId = msg.parentChannelId ?? null;
+          const isThread = !!(msg.threadId && msg.threadId === msg.chatId);
+          console.log(
+            "[Discord] Delivery blocked by allowed_channels policy:",
+            JSON.stringify({
+              accountId: msg.accountId ?? config.accountId,
+              chatId: msg.chatId,
+              threadId: msg.threadId,
+              resolvedParentId,
+              reason: isThread
+                ? `Thread "${msg.chatId}" parent channel "${resolvedParentId}" is not in allowed_channels`
+                : `Guild channel "${msg.chatId}" is not in allowed_channels`,
+            }),
+          );
+          return;
+        }
+      }
+
       const preparedMessage = adapter.prepareInboundMessage
         ? await adapter.prepareInboundMessage(msg, {
             isFirstRouteTurn: discordResult.isFirstRouteTurn,
@@ -1127,11 +1158,13 @@ export class ChannelRegistry {
     isFirstRouteTurn: boolean;
   } | null> {
     if (!config.agentId) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "This Discord bot isn't connected to a Letta agent yet.\n\n" +
-          "Open Channels > Discord in Letta Code, choose which agent this bot should represent, and try again.",
-      );
+      if (msg.chatType === "direct" || msg.isMention === true) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "This Discord bot isn't connected to a Letta agent yet.\n\n" +
+            "Open Channels > Discord in Letta Code, choose which agent this bot should represent, and try again.",
+        );
+      }
       return null;
     }
 
@@ -1169,9 +1202,10 @@ export class ChannelRegistry {
       return { route, isFirstRouteTurn: false };
     }
 
-    // In guild channels, only create routes from explicit mentions.
+    // In guild channels, only create routes from explicit mentions or
+    // policy-permitted open-channel traffic.
     // Existing routed threads continue above via the route lookup path.
-    if (msg.chatType === "channel" && !msg.isMention) {
+    if (msg.chatType === "channel" && !msg.isMention && !msg.isOpenChannel) {
       return null;
     }
 

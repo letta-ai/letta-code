@@ -1,11 +1,11 @@
 import { Box, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { parsePatchToAdvancedDiff } from "../helpers/diff";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { useProgressIndicator } from "../hooks/useProgressIndicator";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { useTextInputCursor } from "../hooks/useTextInputCursor";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { parsePatchToAdvancedDiff } from "@/cli/helpers/diff";
+import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
+import { useProgressIndicator } from "@/cli/hooks/useProgressIndicator";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTextInputCursor } from "@/cli/hooks/useTextInputCursor";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
 import { Text } from "./Text";

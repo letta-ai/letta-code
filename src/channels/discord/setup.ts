@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "../accounts";
-import type { DiscordChannelAccount, DmPolicy } from "../types";
+import { upsertChannelAccount } from "@/channels/accounts";
+import type {
+  DiscordChannelAccount,
+  DiscordChannelMode,
+  DmPolicy,
+} from "@/channels/types";
 import { ensureDiscordRuntimeInstalled } from "./runtime";
 
 function isValidBotToken(token: string): boolean {
@@ -64,6 +68,73 @@ export async function runDiscordSetup(): Promise<boolean> {
         .filter(Boolean);
     }
 
+    console.log("\nGuild channel behavior — when should the bot respond?\n");
+    console.log(
+      "  mention-only — Respond only when @mentioned, or in an existing routed thread (recommended)",
+    );
+    console.log(
+      "  open         — Respond to every message in selected channels\n",
+    );
+    const modeInput = await rl.question("Guild channel mode [mention-only]: ");
+    const channelMode = (modeInput.trim() ||
+      "mention-only") as DiscordChannelMode;
+    if (!["mention-only", "open"].includes(channelMode)) {
+      console.error(`Invalid guild channel mode "${channelMode}".`);
+      return false;
+    }
+
+    let allowedChannels: DiscordChannelAccount["allowedChannels"] | undefined;
+    if (channelMode === "open") {
+      const channelsInput = await rl.question(
+        "Discord channel IDs to run in open mode (comma-separated, required): ",
+      );
+      const channelIds = channelsInput
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (channelIds.length === 0) {
+        console.error("At least one channel ID is required for open mode.");
+        return false;
+      }
+      allowedChannels = Object.fromEntries(
+        channelIds.map((channelId) => [channelId, "open"]),
+      );
+    } else {
+      const channelsInput = await rl.question(
+        "Optional Discord channel IDs to allowlist for mention-only mode (comma-separated, blank for all): ",
+      );
+      const channelIds = channelsInput
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      allowedChannels = channelIds.length > 0 ? channelIds : undefined;
+    }
+
+    const autoThreadInput = await rl.question(
+      "\nAuto-create a thread when @mentioned in a guild channel? [y/N]: ",
+    );
+    const autoThreadOnMention = /^(y|yes)$/i.test(autoThreadInput.trim());
+
+    const debounceInput = await rl.question(
+      "Inbound debounce for open-channel messages in ms [0]: ",
+    );
+    const parsedDebounce = Number(debounceInput.trim() || "0");
+    if (!Number.isFinite(parsedDebounce) || parsedDebounce < 0) {
+      console.error("Invalid debounce window. Use a non-negative number.");
+      return false;
+    }
+    const inboundDebounceMs = Math.trunc(Math.min(parsedDebounce, 10000));
+
+    const reactionsInput = await rl.question(
+      "Send 👀/✅ reaction acknowledgments? [y/N]: ",
+    );
+    const acknowledgeMessageReaction = /^(y|yes)$/i.test(reactionsInput.trim());
+
+    const transcriptionInput = await rl.question(
+      "Auto-transcribe audio attachments when OPENAI_API_KEY is set? [y/N]: ",
+    );
+    const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
+
     // Agent binding — required for account-bound DMs and guild @mentions.
     // Without this, the bot won't know which agent to create conversations for.
     const envAgentId = process.env.LETTA_AGENT_ID || "";
@@ -107,6 +178,11 @@ export async function runDiscordSetup(): Promise<boolean> {
       defaultPermissionMode: "standard",
       dmPolicy: policy,
       allowedUsers,
+      allowedChannels,
+      autoThreadOnMention,
+      inboundDebounceMs,
+      acknowledgeMessageReaction,
+      transcribeVoice,
       createdAt: now,
       updatedAt: now,
     };
@@ -116,9 +192,15 @@ export async function runDiscordSetup(): Promise<boolean> {
     console.log("Config written to: ~/.letta/channels/discord/accounts.json\n");
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels discord");
-    console.log(
-      "  2. DM the bot or @mention it in a Discord server to start chatting\n",
-    );
+    if (channelMode === "open") {
+      console.log(
+        "  2. Send a message in one of the configured open Discord channels\n",
+      );
+    } else {
+      console.log(
+        "  2. DM the bot or @mention it in a Discord server to start chatting\n",
+      );
+    }
 
     return true;
   } finally {

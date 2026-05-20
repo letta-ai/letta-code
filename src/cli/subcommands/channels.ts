@@ -17,36 +17,37 @@ import {
   getChannelAccount,
   listChannelAccounts,
   upsertChannelAccount,
-} from "../../channels/accounts";
+} from "@/channels/accounts";
 import {
   getApprovedUsers,
   getPendingPairings,
   loadPairingStore,
-} from "../../channels/pairing";
+} from "@/channels/pairing";
 import {
   getChannelDisplayName,
   getSupportedChannelIds,
   isSupportedChannelId,
   loadChannelPlugin,
-} from "../../channels/pluginRegistry";
-import { completePairing } from "../../channels/registry";
+} from "@/channels/pluginRegistry";
+import { reconcileRoutesForChannel } from "@/channels/reconcile";
+import { completePairing } from "@/channels/registry";
 import {
   addRoute,
   getAllRoutes,
   getRoutesForChannel,
   loadRoutes,
   removeRoute,
-} from "../../channels/routing";
+} from "@/channels/routing";
 import {
   getChannelRuntimeDir,
   isChannelRuntimeInstalled,
-} from "../../channels/runtimeDeps";
-import { listChannelAccountSnapshots } from "../../channels/service";
+} from "@/channels/runtimeDeps";
+import { listChannelAccountSnapshots } from "@/channels/service";
 import type {
   ChannelRoute,
   SlackChannelAccount,
   SupportedChannelId,
-} from "../../channels/types";
+} from "@/channels/types";
 
 // ── Usage ───────────────────────────────────────────────────────────
 
@@ -60,6 +61,7 @@ Usage:
   letta channels route list [--channel <ch>]  Show routing table
   letta channels route add [options]          Add a route
   letta channels route remove [options]       Remove a route
+  letta channels route reconcile [options]    Detect route/config drift
   letta channels bind [options]               Bind a Slack app to an agent
   letta channels pair [options]               Approve pairing + bind to agent
 
@@ -74,6 +76,11 @@ Route add options:
   --chat-id <id>         Chat/conversation ID on the platform
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID)
+
+Route reconcile options:
+  --channel <name>       Channel name (e.g. "discord")
+  --account-id <id>      Channel account ID (optional; inferred when only one account exists)
+  --apply                Apply cleanup (removes stale routes only); gated by remove_stale_routes
 
 Pair options:
   --channel <name>       Channel name (e.g. "telegram")
@@ -117,6 +124,7 @@ const CHANNELS_OPTIONS = {
   agent: { type: "string" },
   conversation: { type: "string" },
   code: { type: "string" },
+  apply: { type: "boolean", default: false },
 } as const;
 
 function parseChannelsArgs(argv: string[]) {
@@ -208,9 +216,7 @@ async function handleInstall(channel: string): Promise<number> {
   }
 
   try {
-    const { installChannelRuntime } = await import(
-      "../../channels/runtimeDeps"
-    );
+    const { installChannelRuntime } = await import("@/channels/runtimeDeps");
     await installChannelRuntime(channelId);
     console.log(
       JSON.stringify(
@@ -437,6 +443,40 @@ function handleRouteRemove(
   return removed ? 0 : 1;
 }
 
+function handleRouteReconcile(
+  values: ReturnType<typeof parseChannelsArgs>["values"],
+): number {
+  const channelId = values.channel;
+  const accountId = values["account-id"];
+  const shouldApply = values.apply === true;
+
+  if (!channelId) {
+    console.error("Error: --channel is required.");
+    return 1;
+  }
+  if (!isSupportedChannelId(channelId)) {
+    console.error(
+      `Unknown channel: "${channelId}". Supported: ${getSupportedChannelIds().join(", ")}`,
+    );
+    return 1;
+  }
+
+  let resolvedAccountId: string;
+  try {
+    resolvedAccountId = resolveSelectedAccountId(channelId, accountId);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+
+  const result = reconcileRoutesForChannel(channelId, resolvedAccountId, {
+    apply: shouldApply,
+  });
+
+  console.log(JSON.stringify(result, null, 2));
+  return result.staleRoutes.length === 0 ? 0 : 1;
+}
+
 async function handlePair(
   values: ReturnType<typeof parseChannelsArgs>["values"],
 ): Promise<number> {
@@ -469,9 +509,7 @@ async function handlePair(
 
   // Load existing state
   loadRoutes(channelId);
-  const { loadPairingStore: loadPairing } = await import(
-    "../../channels/pairing"
-  );
+  const { loadPairingStore: loadPairing } = await import("@/channels/pairing");
   loadPairing(channelId);
 
   const result = completePairing(
@@ -594,9 +632,11 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
           return handleRouteAdd(values);
         case "remove":
           return handleRouteRemove(values);
+        case "reconcile":
+          return handleRouteReconcile(values);
         default:
           console.error(
-            `Unknown route action: "${routeAction}". Use: list, add, remove`,
+            `Unknown route action: "${routeAction}". Use: list, add, remove, reconcile`,
           );
           return 1;
       }

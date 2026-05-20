@@ -11,7 +11,7 @@ import {
   getAllSubagentConfigs,
   getBuiltinSubagentNames,
   type SubagentConfig,
-} from "../../agent/subagents";
+} from "@/agent/subagents";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

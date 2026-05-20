@@ -1,9 +1,9 @@
-import type { ApprovalContext } from "../../permissions/analyzer";
+import type { ApprovalContext } from "@/permissions/analyzer";
 import {
   checkToolPermission,
   getToolSchema,
   type PermissionModeState,
-} from "../../tools/manager";
+} from "@/tools/manager";
 import { safeJsonParseOr } from "./safeJsonParse";
 import type { ApprovalRequest } from "./streamProcessor";
 

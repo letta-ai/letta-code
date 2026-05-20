@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { permissionMode } from "../../permissions/mode";
+import { permissionMode } from "@/permissions/mode";
 
 // Check if plan file exists
 export function planFileExists(fallbackPlanFilePath?: string | null): boolean {

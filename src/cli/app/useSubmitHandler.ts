@@ -16,63 +16,44 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ApprovalResult } from "../../agent/approval-execution";
+import type { ApprovalResult } from "@/agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-} from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
+} from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
-} from "../../agent/memoryFilesystem";
+} from "@/agent/memoryFilesystem";
 import {
   getActiveMemoryDirectory,
   isActiveMemfsEnabled,
   isLocalMemfsActive,
-} from "../../agent/memoryRuntime";
-import type { ModelReasoningEffort } from "../../agent/model";
+} from "@/agent/memoryRuntime";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   detectPersonalityFromPersonaFile,
   type PersonalityId,
-} from "../../agent/personality";
-import { recordSessionEnd } from "../../agent/sessionHistory";
-import type { SessionStats } from "../../agent/stats";
-import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
+} from "@/agent/personality";
+import { recordSessionEnd } from "@/agent/sessionHistory";
+import type { SessionStats } from "@/agent/stats";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import type { CommandHandle } from "@/cli/commands/runner";
+import { validateAgentName } from "@/cli/components/PinDialog";
+import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/appUrls";
 import {
-  DEFAULT_SUMMARIZATION_MODEL,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "../../constants";
-import {
-  runPreCompactHooks,
-  runSessionStartHooks,
-  runUserPromptSubmitHooks,
-} from "../../hooks";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import type { QueueRuntime } from "../../queue/queueRuntime";
-import { DEFAULT_COMPLETION_PROMISE, ralphMode } from "../../ralph/mode";
-import { buildSharedReminderParts } from "../../reminders/engine";
-import { getPlanModeReminder } from "../../reminders/planModeReminder";
-import {
-  type SharedReminderState,
-  syncReminderStateFromContextTracker,
-} from "../../reminders/state";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import type { ToolsetName } from "../../tools/toolset";
-import { debugLog, debugWarn } from "../../utils/debug";
-import type { CommandHandle } from "../commands/runner";
-import { validateAgentName } from "../components/PinDialog";
-import { type Buffers, type Line, toLines } from "../helpers/accumulator";
-import { buildChatUrl, isLocalAgentId } from "../helpers/appUrls";
-import type { ContextTracker } from "../helpers/contextTracker";
-import { resetContextHistory } from "../helpers/contextTracker";
-import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
-import { formatErrorDetails } from "../helpers/errorFormatter";
+  CHDIR_USAGE,
+  parseChdirCommand,
+  resolveChdirTarget,
+} from "@/cli/helpers/chdirCommand";
+import type { ContextTracker } from "@/cli/helpers/contextTracker";
+import { resetContextHistory } from "@/cli/helpers/contextTracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversationSwitchAlert";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
 import {
   buildGoalReminder,
   formatGoalSummary,
@@ -81,34 +62,60 @@ import {
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
-} from "../helpers/goalCommand";
+} from "@/cli/helpers/goalCommand";
 import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
-} from "../helpers/initCommand";
-import { buildLogoutSuccessMessage } from "../helpers/logoutMessage";
-import { getReflectionSettings } from "../helpers/memoryReminder";
-import { handleMemorySubagentCompletion } from "../helpers/memorySubagentCompletion";
+} from "@/cli/helpers/initCommand";
+import { buildLogoutSuccessMessage } from "@/cli/helpers/logoutMessage";
+import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memorySubagentCompletion";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
-} from "../helpers/pasteRegistry";
-import { generatePlanFilePath } from "../helpers/planName";
-import { resolveReasoningTabToggleCommand } from "../helpers/reasoningTabToggle";
+} from "@/cli/helpers/pasteRegistry";
+import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoningTabToggle";
 import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
-} from "../helpers/reflectionTranscript";
-import type { ApprovalRequest } from "../helpers/stream";
+} from "@/cli/helpers/reflectionTranscript";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
-} from "../helpers/systemPromptWarning.ts";
-import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
-import { getRandomThinkingVerb } from "../helpers/thinkingMessages";
+} from "@/cli/helpers/systemPromptWarning.ts";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+import {
+  DEFAULT_SUMMARIZATION_MODEL,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "@/constants";
+import {
+  runPreCompactHooks,
+  runSessionStartHooks,
+  runUserPromptSubmitHooks,
+} from "@/hooks";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import type { QueueRuntime } from "@/queue/queueRuntime";
+import { DEFAULT_COMPLETION_PROMISE, ralphMode } from "@/ralph/mode";
+import { buildSharedReminderParts } from "@/reminders/engine";
+import { getPlanModeReminder } from "@/reminders/planModeReminder";
+import {
+  type SharedReminderState,
+  syncReminderStateFromContextTracker,
+} from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import type { ToolsetName } from "@/tools/toolset";
+import { debugLog, debugWarn } from "@/utils/debug";
+import { generatePlanFilePath } from "@/utils/planName";
+import { extractTaskNotificationsForDisplay } from "@/utils/taskNotifications";
+import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
 import { isInteractiveCommand, isNonStateCommand } from "./commandRouting";
 import { AUTO_REFLECTION_DESCRIPTION } from "./constants";
@@ -252,6 +259,7 @@ type SubmitHandlerContext = {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setConversationOverrideContextWindowLimit: Dispatch<
     SetStateAction<number | null>
   >;
@@ -731,6 +739,25 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        if (trimmed === "/title") {
+          if (isAgentBusy()) {
+            const cmd = commandRunner.start(
+              "/title",
+              "Cannot configure title while the agent is running.",
+            );
+            cmd.fail("Wait for the current turn to finish and try again.");
+            return { submitted: true };
+          }
+          startOverlayCommand(
+            "window-title",
+            "/title",
+            "Opening title configurator...",
+            "Title configurator dismissed",
+          );
+          setActiveOverlay("window-title");
+          return { submitted: true };
+        }
+
         if (trimmed === "/reload") {
           if (isAgentBusy()) {
             const cmd = commandRunner.start(
@@ -758,6 +785,39 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           } else {
             const cmd = commandRunner.start("/reload", "Reload not available");
             cmd.fail("Reload is not available in this context");
+          }
+          return { submitted: true };
+        }
+
+        const chdirCommand = parseChdirCommand(trimmed);
+        if (chdirCommand) {
+          const cmd = commandRunner.start(
+            chdirCommand.command,
+            "Changing working directory...",
+          );
+          if (!chdirCommand.pathArg) {
+            cmd.fail(CHDIR_USAGE);
+            return { submitted: true };
+          }
+
+          try {
+            const nextWorkingDirectory = await resolveChdirTarget(
+              chdirCommand.pathArg,
+              getCurrentWorkingDirectory(),
+            );
+            await switchCurrentRuntimeWorkingDirectory(nextWorkingDirectory);
+            sharedReminderStateRef.current.hasSentSessionContext = false;
+            sharedReminderStateRef.current.pendingSessionContextReason =
+              "cwd_changed";
+            triggerStatusLineRefresh();
+            cmd.finish(
+              `Working directory changed to ${nextWorkingDirectory}`,
+              true,
+            );
+          } catch (error) {
+            const errorDetails =
+              error instanceof Error ? error.message : String(error);
+            cmd.fail(`Failed to change working directory: ${errorDetails}`);
           }
           return { submitted: true };
         }
@@ -881,7 +941,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           const { generateAndOpenMemoryViewer } = await import(
-            "../../web/generate-memory-viewer"
+            "@/web/generate-memory-viewer"
           );
           generateAndOpenMemoryViewer(agentId, {
             agentName: agentName ?? undefined,
@@ -997,7 +1057,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           try {
             const currentConversationId = conversationIdRef.current;
             const { recompileAgentSystemPrompt } = await import(
-              "../../agent/modify"
+              "@/agent/modify"
             );
             const compiledSystemPrompt = await recompileAgentSystemPrompt(
               currentConversationId,
@@ -1040,13 +1100,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           setCommandRunning(true);
 
           try {
-            const { settingsManager } = await import("../../settings-manager");
+            const { settingsManager } = await import("@/settings-manager");
             const currentSettings =
               await settingsManager.getSettingsWithSecureTokens();
 
             // Revoke refresh token on server if we have one
             if (currentSettings.refreshToken) {
-              const { revokeToken } = await import("../../auth/oauth");
+              const { revokeToken } = await import("@/auth/oauth");
               await revokeToken(currentSettings.refreshToken);
             }
 
@@ -1186,7 +1246,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setTokenStreamingEnabled(newValue);
 
             // Save to settings
-            const { settingsManager } = await import("../../settings-manager");
+            const { settingsManager } = await import("@/settings-manager");
             settingsManager.updateSettings({ tokenStreaming: newValue });
 
             // Update the same command with final result
@@ -2073,7 +2133,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         // Special handling for /bg command - show background shell processes
         if (msg.trim() === "/bg") {
           const { backgroundProcesses } = await import(
-            "../../tools/impl/process_manager"
+            "@/tools/impl/process_manager"
           );
           const cmd = commandRunner.start(
             msg.trim(),
@@ -2127,7 +2187,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
 
             // Package skills from agent/project/global directories
-            const { packageSkills } = await import("../../agent/export");
+            const { packageSkills } = await import("@/agent/export");
             const skills = await packageSkills(agentId);
 
             // Export agent via SDK (GET endpoint), then embed skills client-side
@@ -2224,7 +2284,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             try {
               const { applyMemfsFlags } = await import(
-                "../../agent/memoryFilesystem"
+                "@/agent/memoryFilesystem"
               );
               const result = await applyMemfsFlags(agentId, true, false);
               updateMemorySyncCommand(
@@ -2262,7 +2322,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               try {
                 const { initializeLocalMemoryRepo } = await import(
-                  "../../agent/memoryGit"
+                  "@/agent/memoryGit"
                 );
                 await initializeLocalMemoryRepo({
                   memoryDir,
@@ -2293,7 +2353,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setCommandRunning(true);
 
             try {
-              const { pullMemory } = await import("../../agent/memoryGit");
+              const { pullMemory } = await import("@/agent/memoryGit");
               const result = await pullMemory(agentId);
               updateMemorySyncCommand(cmdId, result.summary, true, msg);
             } catch (error) {
@@ -2337,7 +2397,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
               if (getBackend().capabilities.localMemfs) {
                 const { initializeLocalMemoryRepo } = await import(
-                  "../../agent/memoryGit"
+                  "@/agent/memoryGit"
                 );
                 await initializeLocalMemoryRepo({
                   memoryDir,
@@ -2392,15 +2452,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             try {
               // 1. Re-attach memory tool
-              const { reattachMemoryTool } = await import(
-                "../../tools/toolset"
-              );
+              const { reattachMemoryTool } = await import("@/tools/toolset");
               const modelId = currentModelId || "anthropic/claude-sonnet-4";
               await reattachMemoryTool(agentId, modelId);
 
               // 2. Update system prompt to remove memfs section
               const { updateAgentSystemPromptMemfs } = await import(
-                "../../agent/modify"
+                "@/agent/modify"
               );
               await updateAgentSystemPromptMemfs(agentId, false);
 
@@ -2408,9 +2466,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               settingsManager.setMemfsEnabled(agentId, false);
 
               // 4. Remove git-memory-enabled tag from agent
-              const { removeGitMemoryTag } = await import(
-                "../../agent/memoryGit"
-              );
+              const { removeGitMemoryTag } = await import("@/agent/memoryGit");
               await removeGitMemoryTag(agentId);
 
               // 5. Move local memory dir to /tmp (backup, not delete)
@@ -2494,7 +2550,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           try {
             // Import the skill-creation prompt
             const { SKILL_CREATOR_PROMPT } = await import(
-              "../../agent/promptAssets.js"
+              "@/agent/promptAssets.js"
             );
 
             // Build system-reminder content for skill creation
@@ -2554,9 +2610,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           try {
             // Import the remember prompt
-            const { REMEMBER_PROMPT } = await import(
-              "../../agent/promptAssets.js"
-            );
+            const { REMEMBER_PROMPT } = await import("@/agent/promptAssets.js");
 
             // Build system-reminder content for memory request
             const rememberReminder = userText
@@ -2646,7 +2700,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const {
               spawnBackgroundSubagentTask,
               waitForBackgroundSubagentAgentId,
-            } = await import("../../tools/impl/Task");
+            } = await import("@/tools/impl/Task");
             const { subagentId } = spawnBackgroundSubagentTask({
               subagentType: "reflection",
               prompt: reflectionPrompt,
@@ -2769,7 +2823,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
 
             const { forceToolsetSwitch, switchToolsetForModel } = await import(
-              "../../tools/toolset"
+              "@/tools/toolset"
             );
             if (currentToolset) {
               await forceToolsetSwitch(currentToolset, agentId);
@@ -2988,7 +3042,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         // === Custom command handling ===
         // Check BEFORE falling through to executeCommand()
         const { findCustomCommand, substituteArguments, expandBashCommands } =
-          await import("../commands/custom.js");
+          await import("@/cli/commands/custom.js");
         const customCommandName = trimmed.split(/\s+/)[0]?.slice(1) || ""; // e.g., "review" from "/review arg"
         const matchedCustom = await findCustomCommand(customCommandName);
 
@@ -3049,7 +3103,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Check if this is a known command before treating it as a slash command
         const { commands, executeCommand } = await import(
-          "../commands/registry"
+          "@/cli/commands/registry"
         );
         const registryCommandName = trimmed.split(/\s+/)[0] ?? "";
         const isRegistryCommand = Boolean(commands[registryCommandName]);
@@ -3066,10 +3120,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           const skillCommandName = registryCommandName.slice(1);
           const { discoverClientSideSkills } = await import(
-            "../../agent/clientSkills"
+            "@/agent/clientSkills"
           );
-          const { getSkillSources } = await import("../../agent/context");
-          const { isUserInvocableSkill } = await import("../../agent/skills");
+          const { getSkillSources } = await import("@/agent/context");
+          const { isUserInvocableSkill } = await import("@/agent/skills");
           const skillDiscovery = await discoverClientSideSkills({
             agentId,
             skillSources: getSkillSources(),
@@ -3097,7 +3151,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setCommandRunning(true);
             try {
               const { loadRenderedSkillContent, wrapSkillContent } =
-                await import("../../tools/impl/Skill");
+                await import("@/tools/impl/Skill");
               const skillContent = await loadRenderedSkillContent(
                 matchedSkill.id,
                 {
@@ -3139,6 +3193,29 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // Build message content from display value (handles placeholders for text/images)
       const contentParts =
         overrideContentParts ?? buildMessageContentFromDisplay(msg);
+
+      // Append the optimistic user message and trigger a render immediately —
+      // before any async work (reminder building, hooks, etc.) so the user
+      // sees their message appear without delay. Ink uses React legacy mode
+      // which doesn't auto-batch async state updates, so we do this synchronously
+      // while still inside the React event handler to get a single render cycle.
+      const userOtid = createClientOtid();
+      const optimisticUserLineId = appendOptimisticUserLine(
+        buffersRef.current,
+        userTextForInput,
+        userOtid,
+      );
+      buffersRef.current.tokenCount = 0;
+      buffersRef.current.interrupted = false;
+      if (!sessionStatsRef.current.getTrajectorySnapshot()) {
+        trajectoryTokenDisplayRef.current = 0;
+        setTrajectoryTokenBase(0);
+        trajectoryRunTokenStartRef.current = 0;
+      }
+      setThinkingMessage(getRandomThinkingVerb());
+      setStreaming(true);
+      openTrajectorySegment();
+      refreshDerived();
 
       // Prepend ralph mode reminder if in ralph mode
       let ralphModeReminder = "";
@@ -3263,7 +3340,7 @@ ${SYSTEM_REMINDER_CLOSE}
           const {
             spawnBackgroundSubagentTask,
             waitForBackgroundSubagentAgentId,
-          } = await import("../../tools/impl/Task");
+          } = await import("@/tools/impl/Task");
           const { subagentId } = spawnBackgroundSubagentTask({
             subagentType: "reflection",
             prompt: reflectionPrompt,
@@ -3341,7 +3418,7 @@ ${SYSTEM_REMINDER_CLOSE}
         sharedReminderStateRef.current,
         contextTrackerRef.current,
       );
-      const { getSkillSources } = await import("../../agent/context");
+      const { getSkillSources } = await import("@/agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",
         agent: {
@@ -3368,7 +3445,7 @@ ${SYSTEM_REMINDER_CLOSE}
         settingsManager.getSetting("conversationSwitchAlertEnabled")
       ) {
         const { buildConversationSwitchAlert } = await import(
-          "../helpers/conversationSwitchAlert"
+          "@/cli/helpers/conversationSwitchAlert"
         );
         conversationSwitchAlert = buildConversationSwitchAlert(
           pendingConversationSwitchRef.current,
@@ -3396,34 +3473,9 @@ ${SYSTEM_REMINDER_CLOSE}
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
 
-      // Append an optimistic user row now, then reconcile it with the echoed
-      // user_message chunk once the server returns the canonical message.id.
-      const userOtid = createClientOtid();
-      const optimisticUserLineId = appendOptimisticUserLine(
-        buffersRef.current,
-        userTextForInput,
-        userOtid,
-      );
       const transcriptStartLineIndex = userTextForInput
         ? Math.max(0, toLines(buffersRef.current).length - 1)
         : null;
-
-      // Reset token counter for this turn (only count the agent's response)
-      buffersRef.current.tokenCount = 0;
-      // If the previous trajectory ended, ensure the live token display resets.
-      if (!sessionStatsRef.current.getTrajectorySnapshot()) {
-        trajectoryTokenDisplayRef.current = 0;
-        setTrajectoryTokenBase(0);
-        trajectoryRunTokenStartRef.current = 0;
-      }
-      // Clear interrupted flag from previous turn
-      buffersRef.current.interrupted = false;
-      // Rotate to a new thinking message for this turn
-      setThinkingMessage(getRandomThinkingVerb());
-      // Show streaming state immediately for responsiveness (pending approval check takes ~100ms)
-      setStreaming(true);
-      openTrajectorySegment();
-      refreshDerived();
 
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).

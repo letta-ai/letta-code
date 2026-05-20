@@ -5,9 +5,9 @@
  * (commandRunner, processConversation, setCommandRunning, etc.)
  */
 
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { getSnapshot as getSubagentSnapshot } from "@/agent/subagentState";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { gatherGitContextSnapshot } from "./gitContext";
-import { getSnapshot as getSubagentSnapshot } from "./subagentState";
 
 // ── Guard ──────────────────────────────────────────────────
 

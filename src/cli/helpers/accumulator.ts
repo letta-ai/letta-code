@@ -5,17 +5,18 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { INTERRUPTED_BY_USER } from "../../constants";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import {
   runPostToolUseHooks,
   runPreCompactHooks,
   runPreToolUseHooks,
-} from "../../hooks";
-import { debugLog } from "../../utils/debug";
-import { extractCompactionSummary } from "./backfill";
+} from "@/hooks";
+import { debugLog } from "@/utils/debug";
+import { extractCompactionSummary } from "./compaction-utils";
 import type { ContextTracker } from "./contextTracker";
 import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";
+import { trimFinishedReasoningText } from "./reasoningText";
 import { isShellOutputTool } from "./toolNameMapping";
 
 type CompactionSummaryMessageChunk = {
@@ -385,17 +386,32 @@ function markAsFinished(b: Buffers, id: string) {
   const line = b.byId.get(id);
   // console.log(`[MARK_FINISHED] Called for ${id}, line exists: ${!!line}, kind: ${line?.kind}, phase: ${(line as any)?.phase}`);
   if (line && "phase" in line && line.phase === "streaming") {
-    const updatedLine = { ...line, phase: "finished" as const };
+    const updatedLine =
+      line.kind === "reasoning"
+        ? {
+            ...line,
+            text: trimFinishedReasoningText(line.text),
+            phase: "finished" as const,
+          }
+        : { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
     // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
 
     // Track last reasoning content for hooks (PostToolUse and Stop will include it)
-    if (line.kind === "reasoning" && "text" in line && line.text) {
-      b.lastReasoning = line.text;
+    if (
+      updatedLine.kind === "reasoning" &&
+      "text" in updatedLine &&
+      updatedLine.text
+    ) {
+      b.lastReasoning = updatedLine.text;
     }
     // Track last assistant message for hooks (PostToolUse will include it)
-    if (line.kind === "assistant" && "text" in line && line.text) {
-      b.lastAssistantMessage = line.text;
+    if (
+      updatedLine.kind === "assistant" &&
+      "text" in updatedLine &&
+      updatedLine.text
+    ) {
+      b.lastAssistantMessage = updatedLine.text;
     }
   } else {
     // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
@@ -740,8 +756,6 @@ function trySplitContent(
 
   const beforeText = newText.substring(0, splitPoint);
   const afterText = newText.substring(splitPoint);
-  const committedText =
-    kind === "reasoning" ? beforeText.replace(/\n+$/g, "") : beforeText;
 
   // Get or initialize split counter for this original ID
   const counter = b.splitCounters.get(id) ?? 0;
@@ -754,7 +768,8 @@ function trySplitContent(
   const committedLine = {
     kind,
     id: commitId,
-    text: committedText,
+    text:
+      kind === "reasoning" ? trimFinishedReasoningText(beforeText) : beforeText,
     phase: "finished" as const,
     isContinuation: counter > 0, // First split shows bullet, subsequent don't
     messageId:

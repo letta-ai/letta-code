@@ -3,11 +3,8 @@
  * Exits plan mode - the plan is read from the plan file by the UI
  */
 
-import {
-  DEFAULT_PERMISSION_MODE,
-  permissionMode,
-} from "../../permissions/mode";
-import { getExecutionContextPermissionModeState } from "../manager";
+import { DEFAULT_PERMISSION_MODE, permissionMode } from "@/permissions/mode";
+import { getExecutionContextPermissionModeState } from "@/tools/manager";
 
 interface ExitPlanModeArgs {
   /** Injected by executeTool — do not pass manually */

@@ -1,6 +1,6 @@
 import { relative } from "node:path";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
-import { permissionMode } from "../permissions/mode";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { permissionMode } from "@/permissions/mode";
 
 /**
  * Build the plan mode system reminder if plan mode is active.
