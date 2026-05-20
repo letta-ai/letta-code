@@ -524,3 +524,73 @@ test("getShellEnv appends MemFS git proxy config without clobbering existing git
   );
   expect(env.GIT_CONFIG_VALUE_1).toBe("https://api.letta.com/v1/git/");
 });
+
+test("getShellEnv injects hosted MemFS git header for Bash git commands", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_MEMFS_BACKEND: "hosted",
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: undefined,
+      GIT_CONFIG_COUNT: undefined,
+      GIT_CONFIG_KEY_0: undefined,
+      GIT_CONFIG_VALUE_0: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBe("1");
+  expect(env.GIT_CONFIG_KEY_0).toBe(
+    "http.https://api.letta.com/v1/git/.extraHeader",
+  );
+  expect(env.GIT_CONFIG_VALUE_0).toBe("x-letta-memfs-backend: hosted");
+});
+
+test("getShellEnv injects hosted MemFS git header for Desktop proxy git commands", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_MEMFS_BACKEND: "hosted",
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: "http://localhost:57294",
+      GIT_CONFIG_COUNT: undefined,
+      GIT_CONFIG_KEY_0: undefined,
+      GIT_CONFIG_VALUE_0: undefined,
+      GIT_CONFIG_KEY_1: undefined,
+      GIT_CONFIG_VALUE_1: undefined,
+      GIT_CONFIG_KEY_2: undefined,
+      GIT_CONFIG_VALUE_2: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBe("3");
+  expect(env.GIT_CONFIG_KEY_0).toBe(
+    "url.http://localhost:57294/v1/git/.insteadOf",
+  );
+  expect(env.GIT_CONFIG_VALUE_0).toBe("https://api.letta.com/v1/git/");
+  expect(env.GIT_CONFIG_KEY_1).toBe(
+    "http.https://api.letta.com/v1/git/.extraHeader",
+  );
+  expect(env.GIT_CONFIG_VALUE_1).toBe("x-letta-memfs-backend: hosted");
+  expect(env.GIT_CONFIG_KEY_2).toBe(
+    "http.http://localhost:57294/v1/git/.extraHeader",
+  );
+  expect(env.GIT_CONFIG_VALUE_2).toBe("x-letta-memfs-backend: hosted");
+});
+
+test("getShellEnv does not inject hosted MemFS git header for other backends", () => {
+  const env = withTemporaryEnv(
+    {
+      LETTA_MEMFS_BACKEND: "memfs",
+      LETTA_MEMFS_BASE_URL: undefined,
+      LETTA_MEMFS_GIT_PROXY_BASE_URL: undefined,
+      GIT_CONFIG_COUNT: undefined,
+      GIT_CONFIG_KEY_0: undefined,
+      GIT_CONFIG_VALUE_0: undefined,
+    },
+    () => getShellEnv(),
+  );
+
+  expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+  expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+  expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
+});

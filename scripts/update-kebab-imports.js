@@ -8,7 +8,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // Build exact mapping from git staged renames: oldBase -> newBase (no extension)

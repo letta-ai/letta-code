@@ -1,4 +1,4 @@
-import type { DiscordChannelAccount } from "../types";
+import type { DiscordChannelAccount } from "@/channels/types";
 
 const DISCORD_DEBOUNCE_DEFAULT_MS = 0;
 const DISCORD_DEBOUNCE_MAX_MS = 10000;

@@ -351,19 +351,19 @@ async function getAuthToken(): Promise<string> {
 
 /**
  * Header sent on every git smart-HTTP request so cloud-api can route this
- * agent's repo through Pierre instead of the default memfs-py path.
+ * agent's repo through hosted MemFS instead of the default memfs-py path.
  *
- * Opt-in via `LETTA_MEMFS_BACKEND=pierre` in the letta-code process env.
+ * Opt-in via `LETTA_MEMFS_BACKEND=hosted` in the letta-code process env.
  * If unset (or set to anything else), no header is added and cloud-api
  * falls through to the existing Python proxy.
  */
-const PIERRE_BACKEND_HEADER = "x-letta-memfs-backend";
-const PIERRE_BACKEND_VALUE = "pierre";
+const HOSTED_BACKEND_HEADER = "x-letta-memfs-backend";
+const HOSTED_BACKEND_VALUE = "hosted";
 
-function isPierreBackendRequested(
+function isHostedBackendRequested(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return env.LETTA_MEMFS_BACKEND === PIERRE_BACKEND_VALUE;
+  return env.LETTA_MEMFS_BACKEND === HOSTED_BACKEND_VALUE;
 }
 
 export function buildGitAuthArgs(
@@ -378,10 +378,10 @@ export function buildGitAuthArgs(
     "-c",
     `http.extraHeader=Authorization: Basic ${Buffer.from(`letta:${token}`).toString("base64")}`,
   ];
-  if (isPierreBackendRequested(env)) {
+  if (isHostedBackendRequested(env)) {
     args.push(
       "-c",
-      `http.extraHeader=${PIERRE_BACKEND_HEADER}: ${PIERRE_BACKEND_VALUE}`,
+      `http.extraHeader=${HOSTED_BACKEND_HEADER}: ${HOSTED_BACKEND_VALUE}`,
     );
   }
   return args;
