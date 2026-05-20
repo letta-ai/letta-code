@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
-import { registerWithCloud } from "@/websocket/listen-register";
+import {
+  registerWithCloud,
+  registerWithCloudRetry,
+} from "@/websocket/listen-register";
 
 const defaultOpts = {
   serverUrl: "https://api.example.com",
@@ -123,5 +126,79 @@ describe("registerWithCloud", () => {
     await expect(
       registerWithCloud(defaultOpts, mockFetch as unknown as typeof fetch),
     ).rejects.toThrow("missing connectionId or wsUrl");
+  });
+
+  it("uses JSON error fields in rate limit messages", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error:
+            "Rate limit exceeded for this endpoint. Please slow down and retry.",
+          errorCode: "route_rps_rate_limit_exceeded",
+        }),
+        { status: 429, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await expect(
+      registerWithCloud(defaultOpts, mockFetch as unknown as typeof fetch),
+    ).rejects.toThrow("route_rps_rate_limit_exceeded");
+  });
+
+  it("retries rate limited registration instead of treating 429 as fatal", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error:
+              "Rate limit exceeded for this endpoint. Please slow down and retry.",
+            errorCode: "route_rps_rate_limit_exceeded",
+          }),
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "Retry-After": "3",
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            connectionId: "conn-3",
+            wsUrl: "wss://example.com",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const retryEvents: Array<{
+      attempt: number;
+      delayMs: number;
+      message: string;
+    }> = [];
+    const slept: number[] = [];
+    const result = await registerWithCloudRetry(defaultOpts, {
+      fetchImpl: mockFetch as unknown as typeof fetch,
+      sleep: async (delayMs) => {
+        slept.push(delayMs);
+      },
+      onRetry: (attempt, delayMs, error) => {
+        retryEvents.push({ attempt, delayMs, message: error.message });
+      },
+    });
+
+    expect(result.connectionId).toBe("conn-3");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(slept).toEqual([3000]);
+    expect(retryEvents).toEqual([
+      {
+        attempt: 1,
+        delayMs: 3000,
+        message:
+          "HTTP 429: Rate limit exceeded for this endpoint. Please slow down and retry. (route_rps_rate_limit_exceeded)",
+      },
+    ]);
   });
 });

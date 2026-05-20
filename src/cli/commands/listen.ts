@@ -331,6 +331,7 @@ export async function handleListen(
             const reregisterResult = await registerWithCloudRetry(
               { serverUrl, apiKey, deviceId, connectionName },
               {
+                maxDurationMs: Infinity,
                 onRetry: (attempt, delayMs, error) => {
                   updateCommandResult(
                     ctx.buffersRef,
