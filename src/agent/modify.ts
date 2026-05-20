@@ -416,9 +416,9 @@ export async function updateAgentSystemPrompt(
 ): Promise<UpdateSystemPromptResult> {
   try {
     const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "./promptAssets"
+      "@/agent/promptAssets"
     );
-    const { settingsManager } = await import("../settings-manager");
+    const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
     const memoryMode = backend.capabilities.localMemfs
@@ -489,8 +489,10 @@ export async function updateAgentSystemPromptMemfs(
   enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
-    const { settingsManager } = await import("../settings-manager");
-    const { isKnownPreset, buildSystemPrompt } = await import("./promptAssets");
+    const { settingsManager } = await import("@/settings-manager");
+    const { isKnownPreset, buildSystemPrompt } = await import(
+      "@/agent/promptAssets"
+    );
 
     const newMode = enableMemfs
       ? getBackend().capabilities.localMemfs

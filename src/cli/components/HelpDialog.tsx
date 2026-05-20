@@ -33,7 +33,7 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
 
   // Load custom commands once on mount
   useEffect(() => {
-    import("../commands/custom.js").then(({ getCustomCommands }) => {
+    import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         setCustomCommands(
           customs.map((cmd) => ({

@@ -941,7 +941,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           const { generateAndOpenMemoryViewer } = await import(
-            "../../web/generate-memory-viewer"
+            "@/web/generate-memory-viewer"
           );
           generateAndOpenMemoryViewer(agentId, {
             agentName: agentName ?? undefined,
@@ -1057,7 +1057,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           try {
             const currentConversationId = conversationIdRef.current;
             const { recompileAgentSystemPrompt } = await import(
-              "../../agent/modify"
+              "@/agent/modify"
             );
             const compiledSystemPrompt = await recompileAgentSystemPrompt(
               currentConversationId,
@@ -1100,13 +1100,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           setCommandRunning(true);
 
           try {
-            const { settingsManager } = await import("../../settings-manager");
+            const { settingsManager } = await import("@/settings-manager");
             const currentSettings =
               await settingsManager.getSettingsWithSecureTokens();
 
             // Revoke refresh token on server if we have one
             if (currentSettings.refreshToken) {
-              const { revokeToken } = await import("../../auth/oauth");
+              const { revokeToken } = await import("@/auth/oauth");
               await revokeToken(currentSettings.refreshToken);
             }
 
@@ -1246,7 +1246,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setTokenStreamingEnabled(newValue);
 
             // Save to settings
-            const { settingsManager } = await import("../../settings-manager");
+            const { settingsManager } = await import("@/settings-manager");
             settingsManager.updateSettings({ tokenStreaming: newValue });
 
             // Update the same command with final result
@@ -2133,7 +2133,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         // Special handling for /bg command - show background shell processes
         if (msg.trim() === "/bg") {
           const { backgroundProcesses } = await import(
-            "../../tools/impl/process_manager"
+            "@/tools/impl/process_manager"
           );
           const cmd = commandRunner.start(
             msg.trim(),
@@ -2187,7 +2187,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
 
             // Package skills from agent/project/global directories
-            const { packageSkills } = await import("../../agent/export");
+            const { packageSkills } = await import("@/agent/export");
             const skills = await packageSkills(agentId);
 
             // Export agent via SDK (GET endpoint), then embed skills client-side
@@ -2284,7 +2284,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             try {
               const { applyMemfsFlags } = await import(
-                "../../agent/memoryFilesystem"
+                "@/agent/memoryFilesystem"
               );
               const result = await applyMemfsFlags(agentId, true, false);
               updateMemorySyncCommand(
@@ -2322,7 +2322,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               try {
                 const { initializeLocalMemoryRepo } = await import(
-                  "../../agent/memoryGit"
+                  "@/agent/memoryGit"
                 );
                 await initializeLocalMemoryRepo({
                   memoryDir,
@@ -2353,7 +2353,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setCommandRunning(true);
 
             try {
-              const { pullMemory } = await import("../../agent/memoryGit");
+              const { pullMemory } = await import("@/agent/memoryGit");
               const result = await pullMemory(agentId);
               updateMemorySyncCommand(cmdId, result.summary, true, msg);
             } catch (error) {
@@ -2397,7 +2397,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
               if (getBackend().capabilities.localMemfs) {
                 const { initializeLocalMemoryRepo } = await import(
-                  "../../agent/memoryGit"
+                  "@/agent/memoryGit"
                 );
                 await initializeLocalMemoryRepo({
                   memoryDir,
@@ -2452,15 +2452,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             try {
               // 1. Re-attach memory tool
-              const { reattachMemoryTool } = await import(
-                "../../tools/toolset"
-              );
+              const { reattachMemoryTool } = await import("@/tools/toolset");
               const modelId = currentModelId || "anthropic/claude-sonnet-4";
               await reattachMemoryTool(agentId, modelId);
 
               // 2. Update system prompt to remove memfs section
               const { updateAgentSystemPromptMemfs } = await import(
-                "../../agent/modify"
+                "@/agent/modify"
               );
               await updateAgentSystemPromptMemfs(agentId, false);
 
@@ -2468,9 +2466,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               settingsManager.setMemfsEnabled(agentId, false);
 
               // 4. Remove git-memory-enabled tag from agent
-              const { removeGitMemoryTag } = await import(
-                "../../agent/memoryGit"
-              );
+              const { removeGitMemoryTag } = await import("@/agent/memoryGit");
               await removeGitMemoryTag(agentId);
 
               // 5. Move local memory dir to /tmp (backup, not delete)
@@ -2554,7 +2550,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           try {
             // Import the skill-creation prompt
             const { SKILL_CREATOR_PROMPT } = await import(
-              "../../agent/promptAssets.js"
+              "@/agent/promptAssets.js"
             );
 
             // Build system-reminder content for skill creation
@@ -2614,9 +2610,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           try {
             // Import the remember prompt
-            const { REMEMBER_PROMPT } = await import(
-              "../../agent/promptAssets.js"
-            );
+            const { REMEMBER_PROMPT } = await import("@/agent/promptAssets.js");
 
             // Build system-reminder content for memory request
             const rememberReminder = userText
@@ -2706,7 +2700,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const {
               spawnBackgroundSubagentTask,
               waitForBackgroundSubagentAgentId,
-            } = await import("../../tools/impl/Task");
+            } = await import("@/tools/impl/Task");
             const { subagentId } = spawnBackgroundSubagentTask({
               subagentType: "reflection",
               prompt: reflectionPrompt,
@@ -2829,7 +2823,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
 
             const { forceToolsetSwitch, switchToolsetForModel } = await import(
-              "../../tools/toolset"
+              "@/tools/toolset"
             );
             if (currentToolset) {
               await forceToolsetSwitch(currentToolset, agentId);
@@ -3048,7 +3042,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         // === Custom command handling ===
         // Check BEFORE falling through to executeCommand()
         const { findCustomCommand, substituteArguments, expandBashCommands } =
-          await import("../commands/custom.js");
+          await import("@/cli/commands/custom.js");
         const customCommandName = trimmed.split(/\s+/)[0]?.slice(1) || ""; // e.g., "review" from "/review arg"
         const matchedCustom = await findCustomCommand(customCommandName);
 
@@ -3109,7 +3103,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Check if this is a known command before treating it as a slash command
         const { commands, executeCommand } = await import(
-          "../commands/registry"
+          "@/cli/commands/registry"
         );
         const registryCommandName = trimmed.split(/\s+/)[0] ?? "";
         const isRegistryCommand = Boolean(commands[registryCommandName]);
@@ -3126,10 +3120,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           const skillCommandName = registryCommandName.slice(1);
           const { discoverClientSideSkills } = await import(
-            "../../agent/clientSkills"
+            "@/agent/clientSkills"
           );
-          const { getSkillSources } = await import("../../agent/context");
-          const { isUserInvocableSkill } = await import("../../agent/skills");
+          const { getSkillSources } = await import("@/agent/context");
+          const { isUserInvocableSkill } = await import("@/agent/skills");
           const skillDiscovery = await discoverClientSideSkills({
             agentId,
             skillSources: getSkillSources(),
@@ -3157,7 +3151,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setCommandRunning(true);
             try {
               const { loadRenderedSkillContent, wrapSkillContent } =
-                await import("../../tools/impl/Skill");
+                await import("@/tools/impl/Skill");
               const skillContent = await loadRenderedSkillContent(
                 matchedSkill.id,
                 {
@@ -3346,7 +3340,7 @@ ${SYSTEM_REMINDER_CLOSE}
           const {
             spawnBackgroundSubagentTask,
             waitForBackgroundSubagentAgentId,
-          } = await import("../../tools/impl/Task");
+          } = await import("@/tools/impl/Task");
           const { subagentId } = spawnBackgroundSubagentTask({
             subagentType: "reflection",
             prompt: reflectionPrompt,
@@ -3424,7 +3418,7 @@ ${SYSTEM_REMINDER_CLOSE}
         sharedReminderStateRef.current,
         contextTrackerRef.current,
       );
-      const { getSkillSources } = await import("../../agent/context");
+      const { getSkillSources } = await import("@/agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",
         agent: {
@@ -3451,7 +3445,7 @@ ${SYSTEM_REMINDER_CLOSE}
         settingsManager.getSetting("conversationSwitchAlertEnabled")
       ) {
         const { buildConversationSwitchAlert } = await import(
-          "../helpers/conversationSwitchAlert"
+          "@/cli/helpers/conversationSwitchAlert"
         );
         conversationSwitchAlert = buildConversationSwitchAlert(
           pendingConversationSwitchRef.current,

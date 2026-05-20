@@ -484,13 +484,13 @@ export function enqueueChannelTurn(
   const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
   const enqueuedItem = runtime.queueRuntime.enqueue({
     kind: "message",
-    source: "channel" as import("../../types/protocol").QueueItemSource,
+    source: "channel" as import("@/types/protocol").QueueItemSource,
     content: messageContent,
     clientMessageId,
     agentId: route.agentId,
     conversationId: route.conversationId,
   } as Omit<
-    import("../../queue/queueRuntime").MessageQueueItem,
+    import("@/queue/queueRuntime").MessageQueueItem,
     "id" | "enqueuedAt"
   >);
 
@@ -722,7 +722,7 @@ export async function startConnectedListenerRuntime(
       emitStreamDelta(
         transport,
         runtime,
-        event as unknown as import("../../types/protocol_v2").StreamDelta,
+        event as unknown as import("@/types/protocol_v2").StreamDelta,
         subagent?.parentAgentId
           ? {
               agent_id: subagent.parentAgentId,
@@ -759,7 +759,7 @@ export async function startConnectedListenerRuntime(
       conversationId:
         queuedMessage.conversationId ?? targetRuntime.conversationId,
     } as Omit<
-      import("../../queue/queueRuntime").TaskNotificationQueueItem,
+      import("@/queue/queueRuntime").TaskNotificationQueueItem,
       "id" | "enqueuedAt"
     >);
 

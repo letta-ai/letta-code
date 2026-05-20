@@ -23,9 +23,7 @@ export function handleSecretsCommand(
   if (isSecretListCommand(parsed)) {
     runDetachedListenerTask("secret_list", async () => {
       try {
-        const { refreshAndListSecrets } = await import(
-          "../../../utils/secretsStore"
-        );
+        const { refreshAndListSecrets } = await import("@/utils/secretsStore");
         const secrets = await refreshAndListSecrets(parsed.agent_id);
         safeSocketSend(
           socket,
@@ -78,9 +76,7 @@ export function handleSecretsCommand(
       }
 
       try {
-        const { applySecretBatch } = await import(
-          "../../../utils/secretsStore"
-        );
+        const { applySecretBatch } = await import("@/utils/secretsStore");
         const names = await applySecretBatch(
           { set: parsed.set, unset: parsed.unset },
           parsed.agent_id,

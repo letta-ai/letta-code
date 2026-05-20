@@ -254,9 +254,7 @@ export async function handleCreateAgentCommand(
       }
     }
 
-    const { createAgentForPersonality } = await import(
-      "../../../agent/personality"
-    );
+    const { createAgentForPersonality } = await import("@/agent/personality");
     const result = await createAgentForPersonality({
       personalityId: parsed.personality,
       model: parsed.model,

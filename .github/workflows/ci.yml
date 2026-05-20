@@ -171,7 +171,7 @@ jobs:
       - name: Run tests (extended timeout)
         # Unit tests must pass for fork PRs (no secrets). Keep API-dependent tests
         # in a separate gated step.
-        run: bun test src/tests --timeout 15000
+        run: node scripts/run-unit-tests.cjs
 
       - name: Run integration tests (API)
         # Only run on push to main or PRs from the same repo (not forks, to protect secrets)
@@ -235,7 +235,7 @@ jobs:
         if: ${{ runner.os == 'Windows' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun run src/tests/headless-windows.ts --model sonnet-4.6-low
+        run: bun run src/test-utils/headless-windows.ts --model sonnet-4.6-low
 
       - name: Publish dry-run
         if: ${{ github.event_name == 'push' }}
@@ -313,9 +313,9 @@ jobs:
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
         run: |
-          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output text --parallel on
-          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output json --parallel on
-          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
+          bun run src/test-utils/headless-scenario.ts --model "${{ matrix.model }}" --output text --parallel on
+          bun run src/test-utils/headless-scenario.ts --model "${{ matrix.model }}" --output json --parallel on
+          bun run src/test-utils/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
 
   headless-local:
     needs: [classify, check]
@@ -346,9 +346,9 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          bun run src/tests/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output text --parallel on
-          bun run src/tests/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output json --parallel on
-          bun run src/tests/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output stream-json --parallel on
+          bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output text --parallel on
+          bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output json --parallel on
+          bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output stream-json --parallel on
 
   docker:
     needs: [classify, check]

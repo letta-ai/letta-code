@@ -195,7 +195,7 @@ export type ListenerRuntime = {
   /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
   permissionModeByConversation: Map<
     string,
-    import("./permissionMode").ConversationPermissionModeState
+    import("@/websocket/listener/permissionMode").ConversationPermissionModeState
   >;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
@@ -211,7 +211,7 @@ export type ListenerRuntime = {
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,
-    import("./worktree-watcher").WorktreeWatcherState
+    import("@/websocket/listener/worktree-watcher").WorktreeWatcherState
   >;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
   memfsSyncedAgents: Map<string, Promise<void>>;

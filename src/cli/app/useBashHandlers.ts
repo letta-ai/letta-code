@@ -68,7 +68,7 @@ export function useBashHandlers(ctx: BashHandlersContext) {
 
       try {
         // Expand aliases before running
-        const { expandAliases } = await import("../helpers/shellAliases");
+        const { expandAliases } = await import("@/cli/helpers/shellAliases");
         const expanded = expandAliases(command);
 
         // If command uses a shell function, prepend the function definition
@@ -77,8 +77,8 @@ export function useBashHandlers(ctx: BashHandlersContext) {
           : expanded.command;
 
         // Use spawnCommand for actual execution
-        const { spawnCommand } = await import("../../tools/impl/Bash.js");
-        const { getShellEnv } = await import("../../tools/impl/shellEnv.js");
+        const { spawnCommand } = await import("@/tools/impl/Bash.js");
+        const { getShellEnv } = await import("@/tools/impl/shellEnv.js");
 
         const result = await spawnCommand(finalCommand, {
           cwd: process.cwd(),

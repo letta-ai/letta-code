@@ -364,7 +364,7 @@ async function handleClearCommand(
     conversationRuntime.conversationId === "default" &&
     !backend.capabilities.localModelCatalog
   ) {
-    const { getClient } = await import("../../backend/api/client");
+    const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
     await client.agents.messages.reset(agentId, {
       add_default_initial_messages: false,
@@ -828,14 +828,12 @@ async function handleChannelsCommand(
   }
 
   if (subCmd === "status") {
-    const { listChannelAccountSnapshots } = await import(
-      "../../channels/service"
-    );
+    const { listChannelAccountSnapshots } = await import("@/channels/service");
     const { getRoutesForChannel, loadRoutes } = await import(
-      "../../channels/routing"
+      "@/channels/routing"
     );
     const { getPendingPairings, getApprovedUsers, loadPairingStore } =
-      await import("../../channels/pairing");
+      await import("@/channels/pairing");
 
     const channels = ["telegram"];
     const lines: string[] = [];
@@ -871,9 +869,9 @@ async function handleChannelsCommand(
         return "Usage: /channels telegram pair <code>";
       }
 
-      const { completePairing } = await import("../../channels/registry");
-      const { loadRoutes } = await import("../../channels/routing");
-      const { loadPairingStore } = await import("../../channels/pairing");
+      const { completePairing } = await import("@/channels/registry");
+      const { loadRoutes } = await import("@/channels/routing");
+      const { loadPairingStore } = await import("@/channels/pairing");
 
       loadRoutes("telegram");
       loadPairingStore("telegram");
@@ -901,9 +899,9 @@ async function handleChannelsCommand(
       }
 
       const { getChannelAccount, listChannelAccounts } = await import(
-        "../../channels/accounts"
+        "@/channels/accounts"
       );
-      const { addRoute, loadRoutes } = await import("../../channels/routing");
+      const { addRoute, loadRoutes } = await import("@/channels/routing");
 
       let resolvedAccountId = accountId?.trim();
       if (resolvedAccountId) {
@@ -940,7 +938,7 @@ async function handleChannelsCommand(
 
     if (action === "disable") {
       const { removeRoutesForScope, loadRoutes } = await import(
-        "../../channels/routing"
+        "@/channels/routing"
       );
 
       loadRoutes("telegram");

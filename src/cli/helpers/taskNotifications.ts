@@ -120,7 +120,7 @@ export function extractTaskNotificationsForDisplay(message: string): {
  * cycle) appear immediately instead of waiting for the next unrelated render.
  */
 export type NotificationBuffer = Pick<
-  import("./accumulator").Buffers,
+  import("@/cli/helpers/accumulator").Buffers,
   "byId" | "order"
 >;
 

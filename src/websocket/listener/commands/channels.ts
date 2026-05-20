@@ -69,7 +69,7 @@ import type {
 } from "@/websocket/listener/types";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
-type ChannelsServiceModule = typeof import("../../../channels/service");
+type ChannelsServiceModule = typeof import("@/channels/service");
 
 type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
@@ -97,7 +97,7 @@ async function loadChannelsService(): Promise<ChannelsServiceModule> {
   if (channelsServiceLoaderOverride) {
     return channelsServiceLoaderOverride();
   }
-  return import("../../../channels/service");
+  return import("@/channels/service");
 }
 
 export type ChannelsCommand =
@@ -280,9 +280,8 @@ export async function handleChannelsProtocolCommand(
   const mapChannelSummary = (
     summary: ReturnType<typeof listChannelSummaries>[number],
   ) => {
-    let configSchema:
-      | import("../../../types/protocol_v2").ChannelConfigSchema
-      | null = null;
+    let configSchema: import("@/types/protocol_v2").ChannelConfigSchema | null =
+      null;
     try {
       configSchema =
         getChannelPluginMetadata(summary.channelId).configSchema ?? null;

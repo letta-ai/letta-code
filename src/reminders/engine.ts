@@ -93,7 +93,7 @@ async function buildSecretsInfoReminder(
   context.state.hasSentSecretsInfo = true;
 
   try {
-    const { listSecretNames } = await import("../utils/secretsStore");
+    const { listSecretNames } = await import("@/utils/secretsStore");
     const names = listSecretNames();
     if (names.length === 0) {
       return null;

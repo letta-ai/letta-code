@@ -132,7 +132,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           let conversationContextWindowLimit: number | null | undefined;
           let updatedAgent: AgentState | null = null;
           if (isDefaultConversation) {
-            const { updateAgentLLMConfig } = await import("../../agent/modify");
+            const { updateAgentLLMConfig } = await import("@/agent/modify");
             updatedAgent = await updateAgentLLMConfig(
               agentIdRef.current,
               desired.modelHandle,
@@ -142,7 +142,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             );
           } else {
             const { updateConversationLLMConfig } = await import(
-              "../../agent/modify"
+              "@/agent/modify"
             );
             const updatedConversation = await updateConversationLLMConfig(
               conversationIdRef.current,
@@ -241,7 +241,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             }
             reasoningCyclePatchedAgentStateRef.current = false;
 
-            const { getModelInfo } = await import("../../agent/model");
+            const { getModelInfo } = await import("@/agent/model");
             const modelHandle =
               prev.model_endpoint_type && prev.model
                 ? `${
@@ -306,7 +306,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       const currentEffort =
         deriveReasoningEffort(modelSettingsForEffort, current) ?? "none";
 
-      const { models } = await import("../../agent/model");
+      const { models } = await import("@/agent/model");
       const tiers = models
         .filter((m) => m.handle === modelHandle)
         .map((m) => {

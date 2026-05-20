@@ -549,7 +549,7 @@ export function createListenerMessageHandler(
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
             try {
               const { getMemoryFilesystemRoot } = await import(
-                "../../agent/memoryFilesystem"
+                "@/agent/memoryFilesystem"
               );
               const memoryDir = getMemoryFilesystemRoot(agentId);
               const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);

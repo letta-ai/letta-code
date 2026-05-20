@@ -142,7 +142,7 @@ function fireCronTask(
 
   conversationRuntime.queueRuntime.enqueue({
     kind: "cron_prompt",
-    source: "cron" as import("../types/protocol").QueueItemSource,
+    source: "cron" as import("@/types/protocol").QueueItemSource,
     text,
     cronTaskId: task.id,
     agentId: task.agent_id,

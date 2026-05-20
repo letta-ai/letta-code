@@ -667,7 +667,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           // This centralizes skill content injection so all approval-send paths
           // automatically get skill SKILL.md content alongside tool results.
           const { consumeQueuedSkillContent } = await import(
-            "../../tools/impl/skillContentRegistry"
+            "@/tools/impl/skillContentRegistry"
           );
           const skillContents = consumeQueuedSkillContent();
           if (skillContents.length > 0) {
