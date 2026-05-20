@@ -51,6 +51,9 @@ You can also download the [**desktop app**](https://docs.letta.com/letta-code/de
 ## Local mode
 Local mode runs an embedded Letta-compatible backend inside Letta Code. Agents, conversations, memory, provider connections, and secrets are stored on your machine.
 
+> [!TIP]
+> Running Letta Code locally used to be require running a seperate Docker server. This is no longer required, as Letta Code now has a built-in embedded server.
+
 Local mode is a good fit when you want:
 
 * A self-contained agent runtime for local projects
@@ -98,13 +101,8 @@ letta --backend local --new-agent
 
 Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
 
-## Connecting to Constellation
-Letta Code agents are *stateful*: memory, identity, and conversation history persist across sessions. State can live in either:
-
-* **Local mode**: local storage on the current machine, best for local-first or privacy-sensitive work
-* **Constellation**: remote state so agents can follow you across devices, environments, and communication channels
-
-The Constellation allows your agents to work on any machine while maintaining the same cohesive memory, identity, and experience. Agents in the Constellation can be accessed from the CLI, desktop app, browser, mobile, or messaging integrations. Any machine can also be connected as a remote environment by running `letta server` on it.
+## Constellation
+Constellation decouples where your agent *runs* from where you *interact* with your agent. Agents in the Constellation can be accessed from the CLI, desktop app, browser, or mobile, and run on any connected environment (locally, on Letta Cloud, or any machine you connect). 
 
 ```mermaid
 graph TD
@@ -116,27 +114,12 @@ graph TD
 ```
 
 ### Remote environments
-Letta Code agents in the Constellation can connect to remote environments. Run `letta server` on a machine to register it as an environment, then use the CLI, desktop app, web app, or messaging integrations to route agent work there.
-
+Any machine can be connected to Constellation by running: 
 ```bash
 letta server
 letta server --env-name "work-laptop"
 ```
-
-## Philosophy 
-Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
-
-**Claude Code / Codex / Gemini CLI** (Session-Based)
-- Sessions are independent
-- No learning between sessions
-- Context = messages in the current session + `AGENTS.md`
-- Relationship: Every conversation is like meeting a new contractor
-
-**Letta Code** (Agent-Based)
-- Same agent across sessions
-- Persistent memory and learning over time
-- `/new` starts a new conversation (aka "thread" or "session"), but memory persists
-- Relationship: Like having a coworker or mentee that learns and remembers
+Once a machine is connected, you can set it as an environment for your agent to run on whenever interacting with your agent. 
 
 ## Agent Memory & Learning
 If you’re using Letta Code for the first time, you will likely want to run the `/init` command to initialize the agent’s memory system:
@@ -152,6 +135,7 @@ Letta Code works with skills (reusable modules that teach your agent new capabil
 ```bash
 > /skill [optional instructions on what skill to learn]
 ```
+Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
 
 
 ## Messaging Integrations
@@ -160,8 +144,6 @@ Letta Code supports [channels](https://docs.letta.com/letta-code/channels).
 letta channels configure telegram
 letta server --channels telegram
 ```
-
-Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
 
 Community maintained packages are available for Arch Linux users on the [AUR](https://aur.archlinux.org/packages/letta-code):
 ```bash
