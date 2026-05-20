@@ -125,39 +125,80 @@ function createProviderErrorChunks(error: unknown): LettaStreamingResponse[] {
   ];
 }
 
-function contextTokensFromUsage(usage: Usage): number | undefined {
-  if (typeof usage.totalTokens === "number") return usage.totalTokens;
+function positiveUsageNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+}
+
+export function contextTokensFromUsage(usage: Usage): number | undefined {
+  const totalTokens = positiveUsageNumber(usage.totalTokens);
+  if (totalTokens !== undefined) return totalTokens;
+
   const inputTokens = typeof usage.input === "number" ? usage.input : undefined;
   const outputTokens =
     typeof usage.output === "number" ? usage.output : undefined;
   const cacheRead =
     typeof usage.cacheRead === "number" ? usage.cacheRead : undefined;
+  const cacheWrite =
+    typeof usage.cacheWrite === "number" ? usage.cacheWrite : undefined;
   if (
     inputTokens !== undefined ||
     outputTokens !== undefined ||
-    cacheRead !== undefined
+    cacheRead !== undefined ||
+    cacheWrite !== undefined
   ) {
-    return (inputTokens ?? 0) + (outputTokens ?? 0) + (cacheRead ?? 0);
+    const contextTokens =
+      (inputTokens ?? 0) +
+      (outputTokens ?? 0) +
+      (cacheRead ?? 0) +
+      (cacheWrite ?? 0);
+    if (contextTokens > 0) return contextTokens;
   }
   return undefined;
 }
 
+function estimateSerializedTokens(value: unknown): number {
+  if (value === undefined || value === null) return 0;
+  try {
+    const serialized =
+      typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+    return Math.ceil(serialized.length / 4);
+  } catch {
+    return 0;
+  }
+}
+
+export function estimateProviderContextTokens(
+  input: ProviderTurnInput,
+): number | undefined {
+  const systemPromptTokens = estimateSerializedTokens(
+    input.systemPrompt ?? input.agent.system,
+  );
+  const messageTokens = estimateSerializedTokens(input.uiMessages);
+  const toolTokens = estimateSerializedTokens(input.clientTools);
+  const total = systemPromptTokens + messageTokens + toolTokens;
+  return total > 0 ? total : undefined;
+}
+
 function createUsageStatisticsChunk(
   usage: Usage | undefined,
+  contextTokensEstimate?: number,
 ): LettaStreamingResponse | undefined {
-  if (!usage) return undefined;
-  const promptTokens = usage.input;
-  const completionTokens = usage.output;
-  const totalTokens = usage.totalTokens;
-  const contextTokens = contextTokensFromUsage(usage);
-  const cachedInputTokens = usage.cacheRead;
-  const cacheWriteTokens = usage.cacheWrite;
+  const promptTokens = usage?.input;
+  const completionTokens = usage?.output;
+  const totalTokens = usage?.totalTokens;
+  const usageContextTokens = usage ? contextTokensFromUsage(usage) : undefined;
+  const contextTokens = usageContextTokens ?? contextTokensEstimate;
+  const cachedInputTokens = usage?.cacheRead;
+  const cacheWriteTokens = usage?.cacheWrite;
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
     totalTokens === undefined &&
     cachedInputTokens === undefined &&
-    cacheWriteTokens === undefined
+    cacheWriteTokens === undefined &&
+    contextTokens === undefined
   ) {
     return undefined;
   }
@@ -197,6 +238,7 @@ function otidForContentIndex(
 
 function createProviderLettaStream(
   events: AsyncIterable<ProviderStreamEvent>,
+  contextTokensEstimate?: number,
 ): Stream<LettaStreamingResponse> {
   const controller = new AbortController();
   return {
@@ -266,7 +308,10 @@ function createProviderLettaStream(
 
           if (part.type === "done") {
             if (!sawUsageStatistics) {
-              const usageChunk = createUsageStatisticsChunk(part.message.usage);
+              const usageChunk = createUsageStatisticsChunk(
+                part.message.usage,
+                contextTokensEstimate,
+              );
               if (usageChunk) {
                 sawUsageStatistics = true;
                 yield usageChunk;
@@ -310,6 +355,9 @@ export class ProviderTurnExecutor implements HeadlessTurnExecutor {
   async execute(input: HeadlessTurnExecutorInput) {
     const providerInput = buildProviderTurnInput(input);
     const events = await this.adapter.stream(providerInput);
-    return createProviderLettaStream(events);
+    return createProviderLettaStream(
+      events,
+      estimateProviderContextTokens(providerInput),
+    );
   }
 }
