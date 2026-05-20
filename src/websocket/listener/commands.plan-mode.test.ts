@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { settingsManager } from "@/settings-manager";
-import { __testHandlePlanModeCommand } from "@/websocket/listener/commands";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { __testHandlePlanModeCommand } from "@/websocket/listener/commands";
 
 describe("listener plan-mode command", () => {
   afterEach(async () => {

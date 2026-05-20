@@ -126,10 +126,7 @@ export async function handleExecuteCommand(
         break;
 
       case "plan-mode":
-        output = await handlePlanModeCommand(
-          conversationRuntime,
-          trimmedArgs,
-        );
+        output = await handlePlanModeCommand(conversationRuntime, trimmedArgs);
         break;
 
       case "compact":
