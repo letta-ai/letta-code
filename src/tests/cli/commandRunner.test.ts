@@ -2,14 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   handleMcpUsage,
   setActiveCommandId as setActiveMcpCommandId,
-} from "../../cli/commands/mcp";
+} from "@/cli/commands/mcp";
 import {
   addCommandResult,
   setActiveCommandId as setActiveProfileCommandId,
   updateCommandResult,
-} from "../../cli/commands/profile";
-import { createCommandRunner } from "../../cli/commands/runner";
-import { createBuffers } from "../../cli/helpers/accumulator";
+} from "@/cli/commands/profile";
+import { createCommandRunner } from "@/cli/commands/runner";
+import { createBuffers } from "@/cli/helpers/accumulator";
 
 describe("commandRunner", () => {
   test("start/finish writes a single command line", () => {

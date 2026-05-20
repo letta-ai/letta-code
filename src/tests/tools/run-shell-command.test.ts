@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { run_shell_command } from "../../tools/impl/RunShellCommandGemini";
-import { LIMITS } from "../../tools/impl/truncation.js";
+import { run_shell_command } from "@/tools/impl/RunShellCommandGemini";
+import { LIMITS } from "@/tools/impl/truncation.js";
 import { createTempRuntimeScriptCommand } from "./runtimeScript.js";
 
 describe("RunShellCommand tool (Gemini)", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractTelemetryInputText } from "../../telemetry/input";
+import { extractTelemetryInputText } from "@/telemetry/input";
 
 describe("extractTelemetryInputText", () => {
   test("returns plain string input unchanged", () => {

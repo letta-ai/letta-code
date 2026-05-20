@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { read_file_gemini } from "../../tools/impl/ReadFileGemini";
-import { TestDirectory } from "../helpers/testFs";
+import { TestDirectory } from "@/tests/helpers/testFs";
+import { read_file_gemini } from "@/tools/impl/ReadFileGemini";
 
 describe("ReadFileGemini tool", () => {
   let testDir: TestDirectory;

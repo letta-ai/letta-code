@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseFrontmatter } from "../utils/frontmatter";
+import { parseFrontmatter } from "@/utils/frontmatter";
 import { ALL_SKILL_SOURCES } from "./skillSources";
 
 /**

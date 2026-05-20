@@ -4,8 +4,8 @@ import { join } from "node:path";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
-} from "../../agent/subagents/manager";
-import { cliPermissions } from "../../permissions/cli";
+} from "@/agent/subagents/manager";
+import { cliPermissions } from "@/permissions/cli";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;

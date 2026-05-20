@@ -8,31 +8,31 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ModelReasoningEffort } from "../../agent/model";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   applyPersonalityToMemory,
   getPersonalityBlockValues,
   getPersonalityOption,
   type PersonalityId,
-} from "../../agent/personality";
-import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
-import { DEFAULT_SUMMARIZATION_MODEL } from "../../constants";
-import { experimentManager } from "../../experiments/manager";
-import type { ExperimentId } from "../../experiments/types";
-import { settingsManager } from "../../settings-manager";
-import { getToolNames } from "../../tools/manager";
-import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
-import { formatToolsetName } from "../../tools/toolset-labels";
+} from "@/agent/personality";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
 import {
   type ContextTracker,
   resetContextHistory,
-} from "../helpers/contextTracker";
-import { formatErrorDetails } from "../helpers/errorFormatter";
+} from "@/cli/helpers/contextTracker";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
 import {
   persistReflectionSettingsForAgent,
   type ReflectionSettings,
-} from "../helpers/memoryReminder";
+} from "@/cli/helpers/memoryReminder";
+import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
+import type { ExperimentId } from "@/experiments/types";
+import { settingsManager } from "@/settings-manager";
+import { getToolNames } from "@/tools/manager";
+import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import { formatToolsetName } from "@/tools/toolset-labels";
 
 import {
   deriveReasoningEffort,

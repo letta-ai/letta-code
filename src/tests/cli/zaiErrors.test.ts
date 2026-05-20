@@ -4,7 +4,7 @@ import {
   formatZaiError,
   isZaiNonRetryableError,
   parseZaiError,
-} from "../../cli/helpers/zaiErrors";
+} from "@/cli/helpers/zaiErrors";
 
 describe("parseZaiError", () => {
   test("extracts error from Python repr format", () => {

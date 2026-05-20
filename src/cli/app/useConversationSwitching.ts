@@ -20,35 +20,35 @@ import {
   rebuildInputWithFreshDenials,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
-} from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { createAgent } from "../../agent/create";
-import { selectDefaultAgentModel } from "../../agent/defaults";
-import { sendMessageStream } from "../../agent/message";
-import { getBackend } from "../../backend";
-import { getServerUrl } from "../../backend/api/client";
-import { runSessionStartHooks } from "../../hooks";
-import { updateProjectSettings } from "../../settings";
-import { settingsManager } from "../../settings-manager";
-import type { PreparedScopeToolContext } from "../../tools/toolset";
-import { debugLog, debugWarn } from "../../utils/debug";
-import type { BtwState } from "../components/BtwPane";
+} from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { createAgent } from "@/agent/create";
+import { selectDefaultAgentModel } from "@/agent/defaults";
+import { sendMessageStream } from "@/agent/message";
+import { getBackend } from "@/backend";
+import { getServerUrl } from "@/backend/api/client";
+import type { BtwState } from "@/cli/components/BtwPane";
 import {
   type Buffers,
   extractTextPart,
   type Line,
   toLines,
-} from "../helpers/accumulator";
-import { buildAgentReference } from "../helpers/appUrls";
-import { backfillBuffers } from "../helpers/backfill";
+} from "@/cli/helpers/accumulator";
+import { buildAgentReference } from "@/cli/helpers/appUrls";
+import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
   type ContextTracker,
   resetContextHistory,
-} from "../helpers/contextTracker";
-import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
-import { formatErrorDetails } from "../helpers/errorFormatter";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import type { ApprovalRequest } from "../helpers/stream";
+} from "@/cli/helpers/contextTracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversationSwitchAlert";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { runSessionStartHooks } from "@/hooks";
+import { updateProjectSettings } from "@/settings";
+import { settingsManager } from "@/settings-manager";
+import type { PreparedScopeToolContext } from "@/tools/toolset";
+import { debugLog, debugWarn } from "@/utils/debug";
 
 import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
 import { uid } from "./ids";

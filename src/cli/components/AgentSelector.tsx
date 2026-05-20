@@ -1,11 +1,11 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getModelDisplayName } from "../../agent/model";
-import { type Backend, getBackend } from "../../backend";
-import { DEFAULT_AGENT_NAME } from "../../constants";
-import { settingsManager } from "../../settings-manager";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { getModelDisplayName } from "@/agent/model";
+import { type Backend, getBackend } from "@/backend";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { DEFAULT_AGENT_NAME } from "@/constants";
+import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";

@@ -3,15 +3,15 @@ import {
   listSlackChannels,
   openSlackDirectMessage,
   resolveSlackMessageTarget,
-} from "../../channels/slack/targetResolution";
+} from "@/channels/slack/targetResolution";
 import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
   clearTargetStores,
   listChannelTargets,
   upsertChannelTarget,
-} from "../../channels/targets";
-import type { SlackChannelAccount } from "../../channels/types";
+} from "@/channels/targets";
+import type { SlackChannelAccount } from "@/channels/types";
 
 function makeSlackAccount(accountId: string): SlackChannelAccount {
   return {

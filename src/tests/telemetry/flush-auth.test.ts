@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 
 type TelemetryTestState = {
   events: unknown[];

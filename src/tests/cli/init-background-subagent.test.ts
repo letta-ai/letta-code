@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import {
   buildInitMessage,
   buildShallowInitPrompt,
-} from "../../cli/helpers/initCommand";
-import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
+} from "@/cli/helpers/initCommand";
+import { readInteractiveAppSource } from "@/tests/helpers/readInteractiveAppSource";
 
 describe("init wiring", () => {
   const readSource = (relativePath: string) =>

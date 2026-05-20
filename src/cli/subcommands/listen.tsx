@@ -14,16 +14,16 @@ import {
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
-} from "../../auth/oauth";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import { RemoteSessionLog } from "../../websocket/listen-log";
+} from "@/auth/oauth";
+import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
   registerWithCloud,
   registerWithCloudRetry,
-} from "../../websocket/listen-register";
-import { ListenerStatusUI } from "../components/ListenerStatusUI";
+} from "@/websocket/listen-register";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 

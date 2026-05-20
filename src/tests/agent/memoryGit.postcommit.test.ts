@@ -27,7 +27,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { POST_COMMIT_HOOK_SCRIPT } from "../../agent/memoryGit";
+import { POST_COMMIT_HOOK_SCRIPT } from "@/agent/memoryGit";
 
 let sourceDir: string;
 let remoteDir: string;

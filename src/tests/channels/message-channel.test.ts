@@ -5,17 +5,17 @@ import {
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
   upsertChannelAccount,
-} from "../../channels/accounts";
-import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
-import { clearAllRoutes, setRouteInMemory } from "../../channels/routing";
+} from "@/channels/accounts";
+import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
+import { clearAllRoutes, setRouteInMemory } from "@/channels/routing";
 import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
   clearTargetStores,
   upsertChannelTarget,
-} from "../../channels/targets";
-import type { ChannelAdapter } from "../../channels/types";
-import { message_channel } from "../../tools/impl/MessageChannel";
+} from "@/channels/targets";
+import type { ChannelAdapter } from "@/channels/types";
+import { message_channel } from "@/tools/impl/MessageChannel";
 
 describe("MessageChannel", () => {
   afterEach(async () => {

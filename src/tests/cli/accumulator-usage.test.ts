@@ -4,8 +4,8 @@ import {
   createBuffers,
   markCurrentLineAsFinished,
   onChunk,
-} from "../../cli/helpers/accumulator";
-import { createContextTracker } from "../../cli/helpers/contextTracker";
+} from "@/cli/helpers/accumulator";
+import { createContextTracker } from "@/cli/helpers/contextTracker";
 
 function usageChunk(
   fields: Record<string, number | null | undefined>,

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
 
 /**
  * Tests for the model update command logic.

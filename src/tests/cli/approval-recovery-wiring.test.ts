@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/tests/helpers/readInteractiveAppSource";
 
 describe("approval recovery wiring", () => {
   test("pre-stream catch uses shared recovery router and stale input rebuild", () => {

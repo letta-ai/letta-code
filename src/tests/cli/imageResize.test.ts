@@ -8,7 +8,7 @@ import {
   MAX_IMAGE_HEIGHT,
   MAX_IMAGE_WIDTH,
   resizeImageIfNeeded,
-} from "../../cli/helpers/imageResize";
+} from "@/cli/helpers/imageResize";
 
 describe("resizeImageIfNeeded", () => {
   test("returns verified output dimensions for oversized images", async () => {

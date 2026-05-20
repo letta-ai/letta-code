@@ -13,8 +13,8 @@ import {
   isLettaMemfsServer,
   labelFromRelativePath,
   renderMemoryFilesystemTree,
-} from "../../agent/memoryFilesystem";
-import { DIRECTORY_LIMIT_ENV } from "../../utils/directoryLimits";
+} from "@/agent/memoryFilesystem";
+import { DIRECTORY_LIMIT_ENV } from "@/utils/directoryLimits";
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;

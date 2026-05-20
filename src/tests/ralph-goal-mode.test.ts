@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { ralphMode } from "../ralph/mode";
+import { ralphMode } from "@/ralph/mode";
 
 beforeEach(() => {
   ralphMode.deactivate();

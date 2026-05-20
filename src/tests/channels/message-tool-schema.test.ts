@@ -4,9 +4,9 @@ import {
   buildDynamicMessageChannelSchema,
   buildDynamicMessageChannelToolDefinition,
   clearDynamicMessageChannelToolCache,
-} from "../../channels/messageTool";
-import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
-import type { ChannelAdapter } from "../../channels/types";
+} from "@/channels/messageTool";
+import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
+import type { ChannelAdapter } from "@/channels/types";
 
 function createRunningAdapter(
   channelId: "slack" | "telegram",

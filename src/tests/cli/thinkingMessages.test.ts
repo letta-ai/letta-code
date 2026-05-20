@@ -4,7 +4,7 @@ import {
   getRandomThinkingTip,
   SYSTEM_PROMPT_UPGRADE_TIP,
   THINKING_TIPS,
-} from "../../cli/helpers/thinkingMessages";
+} from "@/cli/helpers/thinkingMessages";
 
 describe("Thinking messages", () => {
   test("returns formatted message with agent name", () => {

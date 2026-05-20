@@ -5,12 +5,8 @@ import { join } from "node:path";
 import {
   invalidateClientSkillsPayloadCache,
   invalidateClientSkillsPayloadCacheForAgent,
-} from "../../agent/clientSkills";
-import type {
-  Skill,
-  SkillDiscoveryResult,
-  SkillSource,
-} from "../../agent/skills";
+} from "@/agent/clientSkills";
+import type { Skill, SkillDiscoveryResult, SkillSource } from "@/agent/skills";
 
 /** Normalize path separators so assertions work on Windows too. */
 const normalize = (p: string): string => p.replace(/\\/g, "/");

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
-import { clearAllRoutes, setRouteInMemory } from "../../channels/routing";
-import type { ChannelAdapter } from "../../channels/types";
-import { message_channel } from "../../tools/impl/MessageChannel";
+import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
+import { clearAllRoutes, setRouteInMemory } from "@/channels/routing";
+import type { ChannelAdapter } from "@/channels/types";
+import { message_channel } from "@/tools/impl/MessageChannel";
 
 describe("message_channel (discord)", () => {
   afterEach(async () => {

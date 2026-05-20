@@ -1,8 +1,8 @@
 // src/cli/helpers/memoryReminder.ts
 // Handles periodic memory reminder logic and preference parsing
 
-import { settingsManager } from "../../settings-manager";
-import { debugLog } from "../../utils/debug";
+import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 
 // Memory reminder interval presets
 const MEMORY_INTERVAL_FREQUENT = 5;

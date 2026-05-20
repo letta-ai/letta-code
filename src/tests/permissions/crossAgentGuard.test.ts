@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join, parse } from "node:path";
 
-import { checkPermission } from "../../permissions/checker";
-import { cliPermissions } from "../../permissions/cli";
+import { checkPermission } from "@/permissions/checker";
+import { cliPermissions } from "@/permissions/cli";
 import {
   evaluateCrossAgentGuard,
   extractTargetAgentPaths,
   resolveAllowedAgents,
-} from "../../permissions/crossAgentGuard";
-import { permissionMode } from "../../permissions/mode";
+} from "@/permissions/crossAgentGuard";
+import { permissionMode } from "@/permissions/mode";
 
 const HOME = homedir();
 const SELF = "agent-self";

@@ -13,20 +13,20 @@
 import {
   isSupportedChannelId,
   loadChannelPlugin,
-} from "../../channels/pluginRegistry";
+} from "@/channels/pluginRegistry";
 import type {
   ChannelMessageActionName,
   ChannelMessageActionRequest,
-} from "../../channels/pluginTypes";
-import { getChannelRegistry } from "../../channels/registry";
-import { resolveEligibleProactiveSlackAccount } from "../../channels/slack/proactiveAccounts";
+} from "@/channels/pluginTypes";
+import { getChannelRegistry } from "@/channels/registry";
+import { resolveEligibleProactiveSlackAccount } from "@/channels/slack/proactiveAccounts";
 import type {
   ChannelAdapter,
   ChannelRoute,
   ChannelTurnSource,
   OutboundChannelMessage,
   SupportedChannelId,
-} from "../../channels/types";
+} from "@/channels/types";
 
 const TELEGRAM_CHANNEL_ID = "telegram";
 const TELEGRAM_PLACEHOLDER_PREFIX = "LCTELEGRAMHTMLPLACEHOLDER";

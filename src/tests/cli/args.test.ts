@@ -7,7 +7,7 @@ import {
   parseCliArgs,
   preprocessCliArgs,
   renderCliOptionsHelp,
-} from "../../cli/args";
+} from "@/cli/args";
 
 describe("shared CLI arg schema", () => {
   test("catalog is the single source of truth for parser mapping and mode support", () => {

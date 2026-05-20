@@ -10,7 +10,7 @@ import {
   loadProjectLocalHooks,
   matchesTool,
   mergeHooksConfigs,
-} from "../../hooks/loader";
+} from "@/hooks/loader";
 import {
   type CommandHookConfig,
   type HookCommand,
@@ -19,8 +19,8 @@ import {
   isToolEvent,
   type SimpleHookEvent,
   type ToolHookEvent,
-} from "../../hooks/types";
-import { settingsManager } from "../../settings-manager";
+} from "@/hooks/types";
+import { settingsManager } from "@/settings-manager";
 
 // Type-safe helper to extract command from a hook (tests only use command hooks)
 function asCommand(

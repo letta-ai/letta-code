@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { prependReminderPartsToContent } from "../../reminders/engine";
+import { prependReminderPartsToContent } from "@/reminders/engine";
 
 describe("headless shared reminder content helpers", () => {
   test("prepends reminder text to string user content as parts array", () => {

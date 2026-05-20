@@ -15,43 +15,43 @@ import {
 import {
   type ApprovalResult,
   getDisplayableToolReturn,
-} from "../../agent/approval-execution";
-import type { SessionStats } from "../../agent/stats";
-import type { ApprovalContext } from "../../permissions/analyzer";
+} from "@/agent/approval-execution";
+import type { SessionStats } from "@/agent/stats";
+import {
+  type Buffers,
+  markIncompleteToolsAsCancelled,
+  onChunk,
+  setToolCallsRunning,
+} from "@/cli/helpers/accumulator";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { parseMemoryPreference } from "@/cli/helpers/memoryReminder";
+import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
+import { generatePlanFilePath } from "@/cli/helpers/planName";
+import {
+  buildQueuedContentParts,
+  buildQueuedUserText,
+  getQueuedNotificationSummaries,
+} from "@/cli/helpers/queuedMessageParts";
+import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { flushEligibleLinesBeforeReentry } from "@/cli/helpers/subagentTurnStart";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+import type { ApprovalContext } from "@/permissions/analyzer";
 import {
   DEFAULT_PERMISSION_MODE,
   type PermissionMode,
   permissionMode,
-} from "../../permissions/mode";
+} from "@/permissions/mode";
 import {
   analyzeToolApproval,
   checkToolPermission,
   executeTool,
   savePermissionRule,
   type ToolExecutionResult,
-} from "../../tools/manager";
-import type { PreparedScopeToolContext } from "../../tools/toolset";
-import { debugLog } from "../../utils/debug";
-import {
-  type Buffers,
-  markIncompleteToolsAsCancelled,
-  onChunk,
-  setToolCallsRunning,
-} from "../helpers/accumulator";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { formatErrorDetails } from "../helpers/errorFormatter";
-import { parseMemoryPreference } from "../helpers/memoryReminder";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
-import { generatePlanFilePath } from "../helpers/planName";
-import {
-  buildQueuedContentParts,
-  buildQueuedUserText,
-  getQueuedNotificationSummaries,
-} from "../helpers/queuedMessageParts";
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
-import type { ApprovalRequest } from "../helpers/stream";
-import { flushEligibleLinesBeforeReentry } from "../helpers/subagentTurnStart";
-import { getRandomThinkingVerb } from "../helpers/thinkingMessages";
+} from "@/tools/manager";
+import type { PreparedScopeToolContext } from "@/tools/toolset";
+import { debugLog } from "@/utils/debug";
 
 import { buildApprovalBatchKey } from "./approvalDiffs";
 import { getQuestionsFromApproval } from "./approvalQuestions";

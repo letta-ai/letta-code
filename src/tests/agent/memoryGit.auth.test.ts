@@ -24,11 +24,11 @@ import {
   normalizeCredentialBaseUrl,
   pullMemory,
   shouldConfigurePersistentMemfsCredentialHelper,
-} from "../../agent/memoryGit";
+} from "@/agent/memoryGit";
 import {
   __testOverrideGetClient,
   getMemfsServerUrl,
-} from "../../backend/api/client";
+} from "@/backend/api/client";
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;

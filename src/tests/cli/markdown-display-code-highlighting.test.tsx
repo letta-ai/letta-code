@@ -4,8 +4,8 @@ import { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { render } from "ink";
 import stripAnsi from "strip-ansi";
-import { MarkdownDisplay } from "../../cli/components/MarkdownDisplay";
-import { highlightCode } from "../../cli/components/SyntaxHighlightedCommand";
+import { MarkdownDisplay } from "@/cli/components/MarkdownDisplay";
+import { highlightCode } from "@/cli/components/SyntaxHighlightedCommand";
 
 class CaptureStream extends Writable {
   columns = 100;

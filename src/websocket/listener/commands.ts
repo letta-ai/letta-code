@@ -2,13 +2,13 @@ import type WebSocket from "ws";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
-} from "../../agent/maxContext";
-import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { REMEMBER_PROMPT } from "../../agent/promptAssets";
-import type { ConversationMessageCompactBody } from "../../backend";
-import { getBackend } from "../../backend";
-import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
+} from "@/agent/maxContext";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { REMEMBER_PROMPT } from "@/agent/promptAssets";
+import type { ConversationMessageCompactBody } from "@/backend";
+import { getBackend } from "@/backend";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
 import {
   buildGoalContinuationPrompt,
   formatGoalSummary,
@@ -17,27 +17,27 @@ import {
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
-} from "../../cli/helpers/goalCommand";
+} from "@/cli/helpers/goalCommand";
 import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
-} from "../../cli/helpers/initCommand";
+} from "@/cli/helpers/initCommand";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
-import { runPreCompactHooks } from "../../hooks";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
+} from "@/constants";
+import { runPreCompactHooks } from "@/hooks";
+import { ralphMode } from "@/ralph/mode";
+import { settingsManager } from "@/settings-manager";
+import { trackBoundaryError } from "@/telemetry/errorReporting";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
   SlashCommandStartMessage,
   StreamDelta,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,

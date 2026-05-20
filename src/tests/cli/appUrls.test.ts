@@ -4,7 +4,7 @@ import {
   buildAgentTerminalLink,
   buildChatUrl,
   isLocalAgentId,
-} from "../../cli/helpers/appUrls";
+} from "@/cli/helpers/appUrls";
 
 describe("app URL helpers", () => {
   test("buildChatUrl links API-backed agents to the web app", () => {

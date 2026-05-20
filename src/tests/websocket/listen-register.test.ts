@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
-import { registerWithCloud } from "../../websocket/listen-register";
+import { registerWithCloud } from "@/websocket/listen-register";
 
 const defaultOpts = {
   serverUrl: "https://api.example.com",

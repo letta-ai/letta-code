@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatSkillsAsSystemReminder, type Skill } from "../../agent/skills";
+import { formatSkillsAsSystemReminder, type Skill } from "@/agent/skills";
 
 describe("Skills formatting (system reminder)", () => {
   test("formats skills as system-reminder with id, source, and description", () => {

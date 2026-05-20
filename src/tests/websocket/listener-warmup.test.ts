@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {
   __listenerWarmupTestUtils,
   ensureListenerWarmStateForTurn,
   type ListenerAgentMetadata,
   scheduleListenerWarmupsAfterSync,
-} from "../../websocket/listener/warmup";
+} from "@/websocket/listener/warmup";
 
 const memfsWarmupMock = mock(async () => {});
 const secretsWarmupMock = mock(async () => {});

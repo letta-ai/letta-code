@@ -7,7 +7,7 @@ import {
   estimateStartupContextTokens,
   REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
-} from "../../agent/subagents/contextBudget";
+} from "@/agent/subagents/contextBudget";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
@@ -16,8 +16,8 @@ import {
   filterSystemPromptForReflection,
   finalizeAutoReflectionPayload,
   getReflectionTranscriptPaths,
-} from "../../cli/helpers/reflectionTranscript";
-import { DIRECTORY_LIMIT_ENV } from "../../utils/directoryLimits";
+} from "@/cli/helpers/reflectionTranscript";
+import { DIRECTORY_LIMIT_ENV } from "@/utils/directoryLimits";
 
 const DIRECTORY_LIMIT_ENV_KEYS = Object.values(DIRECTORY_LIMIT_ENV);
 const ORIGINAL_DIRECTORY_ENV = Object.fromEntries(

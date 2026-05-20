@@ -6,7 +6,7 @@ import {
   isConnectOAuthProvider,
   listConnectProvidersForHelp,
   resolveConnectProvider,
-} from "../../cli/commands/connect-normalize";
+} from "@/cli/commands/connect-normalize";
 
 describe("connect provider normalization", () => {
   test("normalizes codex alias to chatgpt provider", () => {

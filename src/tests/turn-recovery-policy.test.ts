@@ -18,7 +18,7 @@ import {
   shouldAttemptApprovalRecovery,
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
-} from "../agent/turn-recovery-policy";
+} from "@/agent/turn-recovery-policy";
 
 // ── Classifier parity ───────────────────────────────────────────────
 

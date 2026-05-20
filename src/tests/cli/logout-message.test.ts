@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildLogoutSuccessMessage } from "../../cli/helpers/logoutMessage";
+import { buildLogoutSuccessMessage } from "@/cli/helpers/logoutMessage";
 
 describe("buildLogoutSuccessMessage", () => {
   test("uses the standard success message when no env API key is set", () => {

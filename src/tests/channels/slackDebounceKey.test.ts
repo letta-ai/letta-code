@@ -3,7 +3,7 @@ import {
   buildSlackDebounceKey,
   buildTopLevelSlackConversationKey,
   resolveSlackInboundDebounceMs,
-} from "../../channels/slack/adapter";
+} from "@/channels/slack/adapter";
 
 const ACCOUNT = "acct-1";
 

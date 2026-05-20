@@ -2,7 +2,7 @@
 // Wraps MultiSelectPicker with experiment-specific logic.
 
 import { memo, useCallback, useMemo } from "react";
-import type { ExperimentId, ExperimentSnapshot } from "../../experiments/types";
+import type { ExperimentId, ExperimentSnapshot } from "@/experiments/types";
 import { MultiSelectPicker } from "./MultiSelectPicker";
 import { OverlayShell } from "./OverlayShell";
 

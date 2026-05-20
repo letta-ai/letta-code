@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { createAgentWithBaseToolsRecovery } from "../../agent/create";
+import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 
 function missingBaseToolsError(): Error & { status: number } {
   return Object.assign(

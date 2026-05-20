@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getAllLettaToolNames } from "../../tools/manager";
+import { getAllLettaToolNames } from "@/tools/manager";
 
 describe("MessageChannel architecture", () => {
   test("exposes one shared channel tool instead of provider-specific tools", () => {

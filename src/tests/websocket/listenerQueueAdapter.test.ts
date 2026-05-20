@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getListenerBlockedReason } from "../../websocket/helpers/listenerQueueAdapter";
+import { getListenerBlockedReason } from "@/websocket/helpers/listenerQueueAdapter";
 
 const allClear = {
   loopStatus: "WAITING_ON_INPUT",

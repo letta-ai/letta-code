@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyMemoryBashDenial } from "../../permissions/memoryDenialReason";
+import { classifyMemoryBashDenial } from "@/permissions/memoryDenialReason";
 
 const memDir = "/Users/test/.letta/agents/agent-1/memory";
 const roots = [memDir];

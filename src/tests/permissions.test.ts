@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { analyzeApprovalContext } from "../permissions/analyzer";
-import { checkPermission } from "../permissions/checker";
-import { permissionMode } from "../permissions/mode";
-import type { PermissionRules } from "../permissions/types";
+import { analyzeApprovalContext } from "@/permissions/analyzer";
+import { checkPermission } from "@/permissions/checker";
+import { permissionMode } from "@/permissions/mode";
+import type { PermissionRules } from "@/permissions/types";
 
 beforeEach(() => {
   permissionMode.setMode("standard");

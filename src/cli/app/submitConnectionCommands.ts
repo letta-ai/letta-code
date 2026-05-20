@@ -1,11 +1,11 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getBackend } from "../../backend";
+import { getBackend } from "@/backend";
 import {
   handleMcpAdd,
   type McpCommandContext,
   setActiveCommandId as setActiveMcpCommandId,
-} from "../commands/mcp";
-import type { Buffers } from "../helpers/accumulator";
+} from "@/cli/commands/mcp";
+import type { Buffers } from "@/cli/helpers/accumulator";
 import type { ActiveOverlay, AppCommandRunner } from "./types";
 
 type SubmitCommandResult = { submitted: boolean };

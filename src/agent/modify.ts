@@ -8,9 +8,9 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { getBackend } from "../backend";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
-import { debugLog } from "../utils/debug";
+import { getBackend } from "@/backend";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { debugLog } from "@/utils/debug";
 import { getModelContextWindow } from "./available-models";
 
 type ModelSettings =

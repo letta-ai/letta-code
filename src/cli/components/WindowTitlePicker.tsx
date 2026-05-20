@@ -2,15 +2,15 @@
 // Wraps MultiSelectPicker with window-title-specific logic.
 
 import { memo, useCallback, useMemo, useState } from "react";
-import { settingsManager } from "../../settings-manager";
-import { getVersion } from "../../version";
 import {
   renderWindowTitle,
   resolveWindowTitleConfig,
   WINDOW_TITLE_FIELD_INFO,
   WINDOW_TITLE_FIELDS,
   type WindowTitleField,
-} from "../helpers/windowTitleConfig";
+} from "@/cli/helpers/windowTitleConfig";
+import { settingsManager } from "@/settings-manager";
+import { getVersion } from "@/version";
 import { MultiSelectPicker } from "./MultiSelectPicker";
 import { OverlayShell } from "./OverlayShell";
 

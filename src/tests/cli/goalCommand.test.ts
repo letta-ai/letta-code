@@ -9,8 +9,8 @@ import {
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
-} from "../../cli/helpers/goalCommand";
-import type { ConversationGoal } from "../../settings-manager";
+} from "@/cli/helpers/goalCommand";
+import type { ConversationGoal } from "@/settings-manager";
 
 function makeGoal(overrides: Partial<ConversationGoal> = {}): ConversationGoal {
   return {

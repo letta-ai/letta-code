@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bash } from "../../tools/impl/Bash";
-import { backgroundProcesses } from "../../tools/impl/process_manager";
-import { task_output } from "../../tools/impl/TaskOutput";
-import { task_stop } from "../../tools/impl/TaskStop";
+import { bash } from "@/tools/impl/Bash";
+import { backgroundProcesses } from "@/tools/impl/process_manager";
+import { task_output } from "@/tools/impl/TaskOutput";
+import { task_stop } from "@/tools/impl/TaskStop";
 
 const isWindows = process.platform === "win32";
 

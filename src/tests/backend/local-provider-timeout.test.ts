@@ -2,15 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveZaiConnection } from "../../backend/dev/PiModelFactory";
+import { resolveZaiConnection } from "@/backend/dev/PiModelFactory";
 import {
   createOrUpdateLocalProvider,
   getLocalProviderByName,
-} from "../../backend/local/LocalProviderAuthStore";
+} from "@/backend/local/LocalProviderAuthStore";
 import {
   createLocalProviderFetch,
   parseLocalProviderTimeout,
-} from "../../backend/local/LocalProviderTimeout";
+} from "@/backend/local/LocalProviderTimeout";
 
 describe("local provider timeout", () => {
   test("parses OpenCode-style provider timeout values", () => {

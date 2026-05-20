@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getInternalToolName, getServerToolName } from "../../tools/manager";
+import { getInternalToolName, getServerToolName } from "@/tools/manager";
 
 describe("Task → Agent server-name mapping", () => {
   test("server-facing name for Task is Agent", () => {

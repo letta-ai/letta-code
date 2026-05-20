@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { checkPermission } from "../permissions/checker";
-import { cliPermissions } from "../permissions/cli";
-import { permissionMode } from "../permissions/mode";
-import type { PermissionRules } from "../permissions/types";
+import { checkPermission } from "@/permissions/checker";
+import { cliPermissions } from "@/permissions/cli";
+import { permissionMode } from "@/permissions/mode";
+import type { PermissionRules } from "@/permissions/types";
 
 beforeEach(() => {
   permissionMode.setMode("standard");

@@ -3,7 +3,7 @@
  * Extracts subagent grouping logic from App.tsx commitEligibleLines.
  */
 
-import type { StaticSubagent } from "../components/SubagentGroupStatic.js";
+import type { StaticSubagent } from "@/cli/components/SubagentGroupStatic.js";
 import type { Line } from "./accumulator.js";
 import {
   getSubagentByToolCallId,

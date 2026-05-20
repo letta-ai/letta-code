@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { getMemoryRepoDir, isGitRepo } from "../../agent/memoryGit";
-import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { getMemoryRepoDir, isGitRepo } from "@/agent/memoryGit";
+import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
 
 function withTemporaryEnv<T>(
   updates: Record<string, string | undefined>,

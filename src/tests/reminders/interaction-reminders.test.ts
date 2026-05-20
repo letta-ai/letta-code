@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   type SharedReminderContext,
   sharedReminderProviders,
-} from "../../reminders/engine";
+} from "@/reminders/engine";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
   enqueueToolsetChangeReminder,
   type SharedReminderState,
-} from "../../reminders/state";
+} from "@/reminders/state";
 
 function baseContext(
   state: SharedReminderState,

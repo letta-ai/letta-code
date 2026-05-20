@@ -3,7 +3,7 @@ import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
-} from "../../websocket/listener/protocol-inbound";
+} from "@/websocket/listener/protocol-inbound";
 
 describe("discord protocol-inbound validators", () => {
   test("valid discord account create passes", () => {

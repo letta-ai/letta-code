@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildSessionContext } from "../cli/helpers/sessionContext";
+import { buildSessionContext } from "@/cli/helpers/sessionContext";
 
 describe("session context reminder", () => {
   test("includes device information section", () => {

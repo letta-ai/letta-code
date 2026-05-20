@@ -14,14 +14,14 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { BidirectionalQueuedInput } from "../../headless";
+import type { BidirectionalQueuedInput } from "@/headless";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
   QueueClearedReason,
   QueueItem,
-} from "../../queue/queueRuntime";
-import { QueueRuntime } from "../../queue/queueRuntime";
+} from "@/queue/queueRuntime";
+import { QueueRuntime } from "@/queue/queueRuntime";
 
 // ── Helpers mirroring production logic ───────────────────────────
 

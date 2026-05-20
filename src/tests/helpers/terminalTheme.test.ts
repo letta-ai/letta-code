@@ -3,7 +3,7 @@ import {
   calculateLuminance,
   detectTerminalThemeSync,
   parseHexComponent,
-} from "../../cli/helpers/terminalTheme";
+} from "@/cli/helpers/terminalTheme";
 
 describe("parseHexComponent", () => {
   test("parses 2-digit hex (standard 8-bit)", () => {

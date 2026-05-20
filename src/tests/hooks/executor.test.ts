@@ -6,7 +6,7 @@ import {
   executeHookCommand,
   executeHooks,
   executeHooksParallel,
-} from "../../hooks/executor";
+} from "@/hooks/executor";
 import {
   type HookCommand,
   HookExitCode,
@@ -15,7 +15,7 @@ import {
   type PreToolUseHookInput,
   type SessionStartHookInput,
   type StopHookInput,
-} from "../../hooks/types";
+} from "@/hooks/types";
 
 // Skip on Windows - test commands use bash syntax (&&, >&2, sleep, etc.)
 // The executor itself is cross-platform, but these test commands are bash-specific

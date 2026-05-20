@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
-import type { SubagentConfig } from "../../agent/subagents";
+import type { SubagentConfig } from "@/agent/subagents";
 import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
-} from "../../agent/subagents/contextBudget";
+} from "@/agent/subagents/contextBudget";
 import {
   buildSubagentArgs,
   buildSubagentPrompt,
@@ -12,7 +12,7 @@ import {
   resolveSubagentLauncher,
   resolveSubagentModel,
   resolveSubagentWorkingDirectory,
-} from "../../agent/subagents/manager";
+} from "@/agent/subagents/manager";
 
 describe("resolveSubagentLauncher", () => {
   test("explicit launcher takes precedence over .ts script autodetection", () => {

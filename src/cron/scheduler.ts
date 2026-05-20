@@ -12,18 +12,18 @@
  * On stop: clears interval, releases lease.
  */
 
-import type { CronPromptQueueItem, DequeuedBatch } from "../queue/queueRuntime";
-import { ensureConversationQueueRuntime } from "../websocket/listener/conversation-runtime";
-import { scheduleQueuePump } from "../websocket/listener/queue";
+import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queueRuntime";
+import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
+import { scheduleQueuePump } from "@/websocket/listener/queue";
 import {
   getActiveRuntime,
   getOrCreateConversationRuntime,
-} from "../websocket/listener/runtime";
-import type { ListenerTransport } from "../websocket/listener/transport";
+} from "@/websocket/listener/runtime";
+import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
   StartListenerOptions,
-} from "../websocket/listener/types";
+} from "@/websocket/listener/types";
 import {
   type CronTask,
   claimSchedulerLease,

@@ -1,7 +1,10 @@
 import type WebSocket from "ws";
-import { isSecretApplyCommand, isSecretListCommand } from "../protocol-inbound";
-import { invalidateSecretsCacheForAgent } from "../secrets-sync";
-import type { ListenerRuntime } from "../types";
+import {
+  isSecretApplyCommand,
+  isSecretListCommand,
+} from "@/websocket/listener/protocol-inbound";
+import { invalidateSecretsCacheForAgent } from "@/websocket/listener/secrets-sync";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 type SecretsCommandContext = {

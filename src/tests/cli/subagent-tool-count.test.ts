@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { Line } from "../../cli/helpers/accumulator";
+import type { Line } from "@/cli/helpers/accumulator";
 import {
   collectFinishedTaskToolCalls,
   createSubagentGroupItem,
-} from "../../cli/helpers/subagentAggregation";
+} from "@/cli/helpers/subagentAggregation";
 import {
   addToolCall,
   clearAllSubagents,
@@ -12,7 +12,7 @@ import {
   getSubagentToolCount,
   registerSubagent,
   updateSubagent,
-} from "../../cli/helpers/subagentState";
+} from "@/cli/helpers/subagentState";
 
 describe("subagent tool count stability", () => {
   beforeEach(() => {

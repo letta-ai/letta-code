@@ -4,8 +4,8 @@ import type SlackApp from "@slack/bolt";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
-} from "../inboundDebounce";
-import { formatChannelControlRequestPrompt } from "../interactive";
+} from "@/channels/inboundDebounce";
+import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -14,7 +14,7 @@ import type {
   InboundChannelMessage,
   OutboundChannelMessage,
   SlackChannelAccount,
-} from "../types";
+} from "@/channels/types";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,

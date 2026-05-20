@@ -7,7 +7,7 @@ import {
   estimateSystemPromptTokensFromMemoryDir,
   estimateSystemTokens,
   SYSTEM_PROMPT_BYTES_PER_TOKEN,
-} from "../../utils/systemPromptSize";
+} from "@/utils/systemPromptSize";
 
 describe("estimateSystemTokens", () => {
   test("returns 0 for empty string", () => {

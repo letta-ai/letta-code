@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { getStringField, parseFrontmatter } from "../../utils/frontmatter.js";
+import { getStringField, parseFrontmatter } from "@/utils/frontmatter.js";
 
 export const COMMANDS_DIR = ".commands";
 export const GLOBAL_COMMANDS_DIR = join(

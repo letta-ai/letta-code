@@ -2,9 +2,9 @@
 // Main permission checking logic
 
 import { relative, resolve } from "node:path";
-import { getCurrentAgentId } from "../agent/context";
-import { runPermissionRequestHooks } from "../hooks";
-import type { PermissionModeState } from "../tools/manager";
+import { getCurrentAgentId } from "@/agent/context";
+import { runPermissionRequestHooks } from "@/hooks";
+import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli";
 import { evaluateCrossAgentGuard, extractFilePath } from "./crossAgentGuard";

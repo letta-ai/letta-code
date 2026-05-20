@@ -1,6 +1,9 @@
-import { migratePermissionMode } from "../../permissions/mode";
-import type { ChannelAccountConfigAdapter } from "../pluginTypes";
-import type { SlackChannelAccount, SlackDefaultPermissionMode } from "../types";
+import type { ChannelAccountConfigAdapter } from "@/channels/pluginTypes";
+import type {
+  SlackChannelAccount,
+  SlackDefaultPermissionMode,
+} from "@/channels/types";
+import { migratePermissionMode } from "@/permissions/mode";
 
 const SLACK_CONFIG_KEYS = new Set([
   "bot_token",

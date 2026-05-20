@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { glob } from "../../tools/impl/Glob";
-import { TestDirectory } from "../helpers/testFs";
+import { TestDirectory } from "@/tests/helpers/testFs";
+import { glob } from "@/tools/impl/Glob";
 
 describe("Glob tool", () => {
   let testDir: TestDirectory;

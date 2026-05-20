@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { grep } from "../../tools/impl/Grep";
-import { TestDirectory } from "../helpers/testFs";
+import { TestDirectory } from "@/tests/helpers/testFs";
+import { grep } from "@/tools/impl/Grep";
 
 describe("Grep tool", () => {
   let testDir: TestDirectory;

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/tests/helpers/readInteractiveAppSource";
 
 test("/approve-always re-analyzes the current tool before saving", () => {
   const source = readInteractiveAppSource();

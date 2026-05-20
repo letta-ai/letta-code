@@ -12,7 +12,7 @@ import {
   permissionMode as globalPermissionMode,
   migratePermissionMode,
   type PermissionMode,
-} from "../../permissions/mode";
+} from "@/permissions/mode";
 import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";

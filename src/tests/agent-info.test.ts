@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   getMemoryFilesystemRoot,
   getScopedMemoryFilesystemRoot,
-} from "../agent/memoryFilesystem";
-import { getLocalBackendMemoryFilesystemRoot } from "../backend/local/paths";
-import { buildAgentInfo } from "../cli/helpers/agentInfo";
-import { settingsManager } from "../settings-manager";
+} from "@/agent/memoryFilesystem";
+import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
+import { buildAgentInfo } from "@/cli/helpers/agentInfo";
+import { settingsManager } from "@/settings-manager";
 
 function withTemporaryEnv<T>(
   updates: Record<string, string | undefined>,

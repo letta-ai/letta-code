@@ -7,40 +7,37 @@ import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { buildConversationMessagesCreateRequestBody } from "../../agent/message";
-import { models } from "../../agent/model";
+import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { buildConversationMessagesCreateRequestBody } from "@/agent/message";
+import { models } from "@/agent/model";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
-} from "../../agent/personality";
-import { __testSetBackend, type AgentCreateBody } from "../../backend";
-import { LocalBackend } from "../../backend/local";
-import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
+} from "@/agent/personality";
+import { __testSetBackend, type AgentCreateBody } from "@/backend";
+import { LocalBackend } from "@/backend/local";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
 import {
   ensureFileIndex,
   getIndexRoot,
   searchFileIndex,
   setIndexRoot,
-} from "../../cli/helpers/fileIndex";
+} from "@/cli/helpers/fileIndex";
 import {
   clearAllSubagents,
   registerSubagent,
-} from "../../cli/helpers/subagentState";
-import { setSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import type { MessageQueueItem } from "../../queue/queueRuntime";
-import type { LocalProjectSettings, Settings } from "../../settings-manager";
-import { settingsManager } from "../../settings-manager";
+} from "@/cli/helpers/subagentState";
+import { setSystemPromptDoctorState } from "@/cli/helpers/systemPromptWarning";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import type { MessageQueueItem } from "@/queue/queueRuntime";
+import type { LocalProjectSettings, Settings } from "@/settings-manager";
+import { settingsManager } from "@/settings-manager";
 import {
   backgroundProcesses,
   backgroundTasks,
-} from "../../tools/impl/process_manager";
-import { LIMITS } from "../../tools/impl/truncation";
-import type {
-  ApprovalResponseBody,
-  ControlRequest,
-} from "../../types/protocol_v2";
+} from "@/tools/impl/process_manager";
+import { LIMITS } from "@/tools/impl/truncation";
+import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,
@@ -48,12 +45,12 @@ import {
   rejectPendingApprovalResolvers,
   requestApprovalOverWS,
   resolvePendingApprovalResolver,
-} from "../../websocket/listen-client";
+} from "@/websocket/listen-client";
 import {
   handleExecuteCommand,
   SUPPORTED_REMOTE_COMMANDS,
-} from "../../websocket/listener/commands";
-import { isEditFileCommand } from "../../websocket/listener/protocol-inbound";
+} from "@/websocket/listener/commands";
+import { isEditFileCommand } from "@/websocket/listener/protocol-inbound";
 import {
   DESKTOP_DEBUG_PANEL_INFO_PREFIX,
   emitLoopErrorNotice,
@@ -62,8 +59,8 @@ import {
   getLoopErrorNoticeDecision,
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
-} from "../../websocket/listener/recoverable-notices";
-import { resetRemoteSettingsCache } from "../../websocket/listener/remote-settings";
+} from "@/websocket/listener/recoverable-notices";
+import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 
 class MockSocket {
   readyState: number;

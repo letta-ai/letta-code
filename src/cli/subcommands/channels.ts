@@ -17,36 +17,36 @@ import {
   getChannelAccount,
   listChannelAccounts,
   upsertChannelAccount,
-} from "../../channels/accounts";
+} from "@/channels/accounts";
 import {
   getApprovedUsers,
   getPendingPairings,
   loadPairingStore,
-} from "../../channels/pairing";
+} from "@/channels/pairing";
 import {
   getChannelDisplayName,
   getSupportedChannelIds,
   isSupportedChannelId,
   loadChannelPlugin,
-} from "../../channels/pluginRegistry";
-import { completePairing } from "../../channels/registry";
+} from "@/channels/pluginRegistry";
+import { completePairing } from "@/channels/registry";
 import {
   addRoute,
   getAllRoutes,
   getRoutesForChannel,
   loadRoutes,
   removeRoute,
-} from "../../channels/routing";
+} from "@/channels/routing";
 import {
   getChannelRuntimeDir,
   isChannelRuntimeInstalled,
-} from "../../channels/runtimeDeps";
-import { listChannelAccountSnapshots } from "../../channels/service";
+} from "@/channels/runtimeDeps";
+import { listChannelAccountSnapshots } from "@/channels/service";
 import type {
   ChannelRoute,
   SlackChannelAccount,
   SupportedChannelId,
-} from "../../channels/types";
+} from "@/channels/types";
 
 // ── Usage ───────────────────────────────────────────────────────────
 

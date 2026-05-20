@@ -20,8 +20,8 @@ import type {
   QueueBlockedReason,
   QueueClearedReason,
   QueueItem,
-} from "../../queue/queueRuntime";
-import { QueueRuntime } from "../../queue/queueRuntime";
+} from "@/queue/queueRuntime";
+import { QueueRuntime } from "@/queue/queueRuntime";
 
 // ── Helpers ───────────────────────────────────────────────────────
 

@@ -8,8 +8,8 @@ import {
   isConversationBusyError,
   isInvalidToolCallIdsError,
   rebuildInputWithFreshDenials,
-} from "../agent/approval-recovery";
-import { extractApprovals } from "../agent/check-approval";
+} from "@/agent/approval-recovery";
+import { extractApprovals } from "@/agent/check-approval";
 
 /**
  * Tests for approval error detection helpers (LET-7101).

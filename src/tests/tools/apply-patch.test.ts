@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apply_patch } from "../../tools/impl/ApplyPatch";
-import { TestDirectory } from "../helpers/testFs";
+import { TestDirectory } from "@/tests/helpers/testFs";
+import { apply_patch } from "@/tools/impl/ApplyPatch";
 
 describe("apply_patch tool", () => {
   let testDir: TestDirectory | undefined;

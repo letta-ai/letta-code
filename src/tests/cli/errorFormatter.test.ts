@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { APIError } from "@letta-ai/letta-client/core/error";
-import {
-  clearErrorContext,
-  setErrorContext,
-} from "../../cli/helpers/errorContext";
+import { clearErrorContext, setErrorContext } from "@/cli/helpers/errorContext";
 import {
   checkChatGptUsageLimitError,
   checkCloudflareEdgeError,
@@ -11,7 +8,7 @@ import {
   getRetryStatusMessage,
   isCloudflareEdge52xErrorText,
   isProviderStreamDisconnectErrorText,
-} from "../../cli/helpers/errorFormatter";
+} from "@/cli/helpers/errorFormatter";
 
 describe("formatErrorDetails", () => {
   beforeEach(() => {

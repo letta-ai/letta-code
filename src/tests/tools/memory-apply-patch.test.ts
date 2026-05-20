@@ -13,7 +13,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { runWithRuntimeContext } from "../../runtime-context";
+import { runWithRuntimeContext } from "@/runtime-context";
 
 const execFile = promisify(execFileCb);
 

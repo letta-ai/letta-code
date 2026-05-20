@@ -3,7 +3,7 @@ import {
   BYOK_PROVIDERS,
   buildByokProviderAliases,
   isByokHandleForSelector,
-} from "../../providers/byok-providers";
+} from "@/providers/byok-providers";
 
 describe("buildByokProviderAliases", () => {
   test("derives default aliases from all built-in BYOK_PROVIDERS", () => {

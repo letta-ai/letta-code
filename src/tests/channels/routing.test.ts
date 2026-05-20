@@ -9,7 +9,7 @@ import {
   getRoutesForChannel,
   removeRoute,
   removeRoutesForScope,
-} from "../../channels/routing";
+} from "@/channels/routing";
 
 describe("routing", () => {
   beforeEach(() => {

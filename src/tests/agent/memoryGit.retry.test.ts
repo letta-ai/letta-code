@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   isMissingCwdGitError,
   isRetryableGitTransientError,
-} from "../../agent/memoryGit";
+} from "@/agent/memoryGit";
 
 describe("isRetryableGitTransientError", () => {
   test("returns true for Cloudflare 52x HTTP errors", () => {

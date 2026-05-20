@@ -8,13 +8,13 @@ import {
   parseContextWindowValue,
   parseSetMaxContextArgs,
   resolveModelJsonContextWindow,
-} from "../../agent/maxContext";
+} from "@/agent/maxContext";
 import {
   __testSetBackend,
   type AgentCreateBody,
   type ConversationCreateBody,
-} from "../../backend";
-import { LocalBackend } from "../../backend/local";
+} from "@/backend";
+import { LocalBackend } from "@/backend/local";
 
 afterEach(() => {
   __testSetBackend(null);

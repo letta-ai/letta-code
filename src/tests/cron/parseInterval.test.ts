@@ -5,7 +5,7 @@ import {
   isValidCron,
   parseAt,
   parseEvery,
-} from "../../cron/parseInterval";
+} from "@/cron/parseInterval";
 
 // ── parseEvery ──────────────────────────────────────────────────────
 

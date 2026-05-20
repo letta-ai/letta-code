@@ -4,7 +4,7 @@ import {
   isMemoryDirCommand,
   isReadOnlyShellCommand,
   isScopedMemoryShellCommand,
-} from "../../permissions/readOnlyShell";
+} from "@/permissions/readOnlyShell";
 
 describe("isReadOnlyShellCommand", () => {
   describe("always safe commands", () => {

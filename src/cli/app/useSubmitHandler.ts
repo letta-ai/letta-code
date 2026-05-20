@@ -16,70 +16,44 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ApprovalResult } from "../../agent/approval-execution";
+import type { ApprovalResult } from "@/agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-} from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
+} from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
-} from "../../agent/memoryFilesystem";
+} from "@/agent/memoryFilesystem";
 import {
   getActiveMemoryDirectory,
   isActiveMemfsEnabled,
   isLocalMemfsActive,
-} from "../../agent/memoryRuntime";
-import type { ModelReasoningEffort } from "../../agent/model";
+} from "@/agent/memoryRuntime";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   detectPersonalityFromPersonaFile,
   type PersonalityId,
-} from "../../agent/personality";
-import { recordSessionEnd } from "../../agent/sessionHistory";
-import type { SessionStats } from "../../agent/stats";
-import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
-import {
-  DEFAULT_SUMMARIZATION_MODEL,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "../../constants";
-import {
-  runPreCompactHooks,
-  runSessionStartHooks,
-  runUserPromptSubmitHooks,
-} from "../../hooks";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import type { QueueRuntime } from "../../queue/queueRuntime";
-import { DEFAULT_COMPLETION_PROMISE, ralphMode } from "../../ralph/mode";
-import { buildSharedReminderParts } from "../../reminders/engine";
-import { getPlanModeReminder } from "../../reminders/planModeReminder";
-import {
-  type SharedReminderState,
-  syncReminderStateFromContextTracker,
-} from "../../reminders/state";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import type { ToolsetName } from "../../tools/toolset";
-import { debugLog, debugWarn } from "../../utils/debug";
-import { switchCurrentRuntimeWorkingDirectory } from "../../websocket/listener/cwd-change";
-import type { CommandHandle } from "../commands/runner";
-import { validateAgentName } from "../components/PinDialog";
-import { type Buffers, type Line, toLines } from "../helpers/accumulator";
-import { buildChatUrl, isLocalAgentId } from "../helpers/appUrls";
+} from "@/agent/personality";
+import { recordSessionEnd } from "@/agent/sessionHistory";
+import type { SessionStats } from "@/agent/stats";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import type { CommandHandle } from "@/cli/commands/runner";
+import { validateAgentName } from "@/cli/components/PinDialog";
+import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/appUrls";
 import {
   CHDIR_USAGE,
   parseChdirCommand,
   resolveChdirTarget,
-} from "../helpers/chdirCommand";
-import type { ContextTracker } from "../helpers/contextTracker";
-import { resetContextHistory } from "../helpers/contextTracker";
-import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
-import { formatErrorDetails } from "../helpers/errorFormatter";
+} from "@/cli/helpers/chdirCommand";
+import type { ContextTracker } from "@/cli/helpers/contextTracker";
+import { resetContextHistory } from "@/cli/helpers/contextTracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversationSwitchAlert";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
 import {
   buildGoalReminder,
   formatGoalSummary,
@@ -88,34 +62,60 @@ import {
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
-} from "../helpers/goalCommand";
+} from "@/cli/helpers/goalCommand";
 import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
-} from "../helpers/initCommand";
-import { buildLogoutSuccessMessage } from "../helpers/logoutMessage";
-import { getReflectionSettings } from "../helpers/memoryReminder";
-import { handleMemorySubagentCompletion } from "../helpers/memorySubagentCompletion";
+} from "@/cli/helpers/initCommand";
+import { buildLogoutSuccessMessage } from "@/cli/helpers/logoutMessage";
+import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memorySubagentCompletion";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
-} from "../helpers/pasteRegistry";
-import { generatePlanFilePath } from "../helpers/planName";
-import { resolveReasoningTabToggleCommand } from "../helpers/reasoningTabToggle";
+} from "@/cli/helpers/pasteRegistry";
+import { generatePlanFilePath } from "@/cli/helpers/planName";
+import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoningTabToggle";
 import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
-} from "../helpers/reflectionTranscript";
-import type { ApprovalRequest } from "../helpers/stream";
+} from "@/cli/helpers/reflectionTranscript";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
-} from "../helpers/systemPromptWarning.ts";
-import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
-import { getRandomThinkingVerb } from "../helpers/thinkingMessages";
+} from "@/cli/helpers/systemPromptWarning.ts";
+import { extractTaskNotificationsForDisplay } from "@/cli/helpers/taskNotifications";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+import {
+  DEFAULT_SUMMARIZATION_MODEL,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "@/constants";
+import {
+  runPreCompactHooks,
+  runSessionStartHooks,
+  runUserPromptSubmitHooks,
+} from "@/hooks";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import type { QueueRuntime } from "@/queue/queueRuntime";
+import { DEFAULT_COMPLETION_PROMISE, ralphMode } from "@/ralph/mode";
+import { buildSharedReminderParts } from "@/reminders/engine";
+import { getPlanModeReminder } from "@/reminders/planModeReminder";
+import {
+  type SharedReminderState,
+  syncReminderStateFromContextTracker,
+} from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import type { ToolsetName } from "@/tools/toolset";
+import { debugLog, debugWarn } from "@/utils/debug";
+import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
 import { isInteractiveCommand, isNonStateCommand } from "./commandRouting";
 import { AUTO_REFLECTION_DESCRIPTION } from "./constants";

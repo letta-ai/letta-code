@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   CONVERSATION_TITLE_MAX_LENGTH,
   normalizeConversationTitle,
-} from "../../cli/helpers/conversationTitle";
+} from "@/cli/helpers/conversationTitle";
 
 describe("normalizeConversationTitle", () => {
   test("returns null for empty input", () => {

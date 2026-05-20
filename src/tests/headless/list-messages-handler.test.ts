@@ -13,8 +13,8 @@
  * No network. No CLI subprocess. No process.stdout.
  */
 import { describe, expect, mock, test } from "bun:test";
-import type { ListMessagesHandlerBackend } from "../../agent/listMessagesHandler";
-import { handleListMessages } from "../../agent/listMessagesHandler";
+import type { ListMessagesHandlerBackend } from "@/agent/listMessagesHandler";
+import { handleListMessages } from "@/agent/listMessagesHandler";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock factory

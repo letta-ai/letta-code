@@ -1,15 +1,15 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { settingsManager } from "../../settings-manager";
-import { type Buffers, type Line, toLines } from "../helpers/accumulator";
-import { backfillBuffers } from "../helpers/backfill";
-import type { ContextTracker } from "../helpers/contextTracker";
-import { resetContextHistory } from "../helpers/contextTracker";
-import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import type { ApprovalRequest } from "../helpers/stream";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import { backfillBuffers } from "@/cli/helpers/backfill";
+import type { ContextTracker } from "@/cli/helpers/contextTracker";
+import { resetContextHistory } from "@/cli/helpers/contextTracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversationSwitchAlert";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { settingsManager } from "@/settings-manager";
 import { uid } from "./ids";
 import type { ActiveOverlay, AppCommandRunner, StaticItem } from "./types";
 

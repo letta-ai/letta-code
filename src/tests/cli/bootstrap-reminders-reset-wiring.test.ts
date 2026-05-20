@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/tests/helpers/readInteractiveAppSource";
 
 describe("bootstrap reminder reset wiring", () => {
   test("defines helper that resets shared reminder state", () => {

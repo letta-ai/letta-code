@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ConversationMessageCreateBody } from "../../backend";
-import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
-import { LocalBackend } from "../../backend/local/LocalBackend";
+import type { ConversationMessageCreateBody } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/FakeHeadlessBackend";
+import { LocalBackend } from "@/backend/local/LocalBackend";
 
 async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   const chunks: unknown[] = [];

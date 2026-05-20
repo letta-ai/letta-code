@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { summarizeShellDisplay } from "../../cli/helpers/shellSemanticDisplay";
+import { summarizeShellDisplay } from "@/cli/helpers/shellSemanticDisplay";
 
 describe("summarizeShellDisplay", () => {
   test("classifies rg search commands", () => {

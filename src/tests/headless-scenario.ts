@@ -18,7 +18,7 @@ import { promisify } from "node:util";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
-} from "../integration-tests/processDiagnostics";
+} from "@/integration-tests/processDiagnostics";
 import { createIsolatedCliTestEnv } from "./testProcessEnv";
 
 const execFile = promisify(execFileCb);

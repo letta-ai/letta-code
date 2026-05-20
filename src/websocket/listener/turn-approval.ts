@@ -8,20 +8,20 @@ import type {
 import {
   type ApprovalResult,
   executeApprovalBatch,
-} from "../../agent/approval-execution";
-import { getChannelRegistry } from "../../channels/registry";
-import type { ChannelTurnSource } from "../../channels/types";
-import { computeDiffPreviews } from "../../helpers/diffPreview";
-import { formatPermissionDenial } from "../../permissions/formatDenial";
+} from "@/agent/approval-execution";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
+import { computeDiffPreviews } from "@/helpers/diffPreview";
+import { formatPermissionDenial } from "@/permissions/formatDenial";
 import {
   getInteractiveApprovalKind,
   isInteractiveApprovalTool,
-} from "../../tools/interactivePolicy";
+} from "@/tools/interactivePolicy";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
   ControlRequest,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   clearPendingApprovalBatchIds,
   collectApprovalResultToolCallIds,

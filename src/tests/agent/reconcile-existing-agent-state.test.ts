@@ -7,7 +7,7 @@ import type { Tool } from "@letta-ai/letta-client/resources/tools";
 import {
   DEFAULT_ATTACHED_BASE_TOOLS,
   reconcileExistingAgentState,
-} from "../../agent/reconcileExistingAgentState";
+} from "@/agent/reconcileExistingAgentState";
 
 function mkTool(id: string, name: string): Tool {
   return { id, name } as Tool;

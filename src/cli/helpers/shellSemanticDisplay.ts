@@ -1,5 +1,5 @@
 import { relative } from "node:path";
-import { unwrapShellLauncherCommand } from "../../permissions/shell-command-normalization.js";
+import { unwrapShellLauncherCommand } from "@/permissions/shell-command-normalization.js";
 
 export type ShellSemanticDisplay = {
   kind: "read" | "list" | "search" | "run";

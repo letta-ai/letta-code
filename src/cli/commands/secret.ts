@@ -8,7 +8,7 @@ import {
   deleteSecretOnServer,
   refreshAndListSecrets,
   setSecretOnServer,
-} from "../../utils/secretsStore";
+} from "@/utils/secretsStore";
 
 export interface SecretCommandResult {
   output: string;

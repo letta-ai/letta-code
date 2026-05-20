@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   getPendingReleaseNotes,
   getPendingReleaseNoteVersions,
-} from "../release-notes";
+} from "@/release-notes";
 
 describe("release notes logic", () => {
   test("shows only the current version note when there is no seen checkpoint", () => {

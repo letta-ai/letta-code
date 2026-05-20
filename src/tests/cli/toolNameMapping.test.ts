@@ -4,7 +4,7 @@ import {
   isMemoryTool,
   isShellOutputTool,
   isTaskTool,
-} from "../../cli/helpers/toolNameMapping";
+} from "@/cli/helpers/toolNameMapping";
 
 describe("toolNameMapping display mappings", () => {
   test("maps memory_apply_patch to a friendly label", () => {

@@ -7,58 +7,58 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { fetchRunErrorInfo } from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { fetchRunErrorInfo } from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
 import {
   getConversationId,
   getCurrentAgentId,
   setConversationId,
   setCurrentAgentId,
-} from "../../agent/context";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+} from "@/agent/context";
+import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
 import {
   getStreamToolContextId,
   type sendMessageStream,
-} from "../../agent/message";
+} from "@/agent/message";
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   normalizeStreamErrorTypeToStopReason,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
-} from "../../agent/turn-recovery-policy";
-import { getBackend } from "../../backend";
-import { createBuffers, toLines } from "../../cli/helpers/accumulator";
-import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
+} from "@/agent/turn-recovery-policy";
+import { getBackend } from "@/backend";
+import { createBuffers, toLines } from "@/cli/helpers/accumulator";
+import { getRetryStatusMessage } from "@/cli/helpers/errorFormatter";
 import {
   getReflectionSettings,
   type ReflectionTrigger,
-} from "../../cli/helpers/memoryReminder";
-import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
+} from "@/cli/helpers/memoryReminder";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memorySubagentCompletion";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
-} from "../../cli/helpers/reflectionTranscript";
-import { drainStreamWithResume } from "../../cli/helpers/stream";
-import { getSubagents } from "../../cli/helpers/subagentState";
+} from "@/cli/helpers/reflectionTranscript";
+import { drainStreamWithResume } from "@/cli/helpers/stream";
+import { getSubagents } from "@/cli/helpers/subagentState";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
-} from "../../reminders/engine";
-import { buildListenReminderContext } from "../../reminders/listenContext";
-import { getPlanModeReminder } from "../../reminders/planModeReminder";
-import { syncReminderStateFromContextTracker } from "../../reminders/state";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { extractTelemetryInputText } from "../../telemetry/input";
-import { prepareToolExecutionContextForScope } from "../../tools/toolset";
-import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
-import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
+} from "@/reminders/engine";
+import { buildListenReminderContext } from "@/reminders/listenContext";
+import { getPlanModeReminder } from "@/reminders/planModeReminder";
+import { syncReminderStateFromContextTracker } from "@/reminders/state";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { extractTelemetryInputText } from "@/telemetry/input";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
+import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
+import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,

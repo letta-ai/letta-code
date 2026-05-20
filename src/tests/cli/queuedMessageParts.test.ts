@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { QueuedMessage } from "../../cli/helpers/messageQueueBridge";
-import { allocateImage } from "../../cli/helpers/pasteRegistry";
+import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
+import { allocateImage } from "@/cli/helpers/pasteRegistry";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
   getQueuedNotificationSummaries,
-} from "../../cli/helpers/queuedMessageParts";
-import { formatTaskNotification } from "../../cli/helpers/taskNotifications";
+} from "@/cli/helpers/queuedMessageParts";
+import { formatTaskNotification } from "@/cli/helpers/taskNotifications";
 
 describe("queuedMessageParts", () => {
   test("buildQueuedUserText only concatenates user messages", () => {

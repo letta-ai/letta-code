@@ -7,11 +7,11 @@ import {
   type Model,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
+import { isContextWindowOverflowError } from "@/backend/dev/contextWindowOverflow";
 import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
-} from "../dev/PiModelFactory";
+} from "@/backend/dev/PiModelFactory";
 import type { LocalMessage } from "./LocalMessage";
 import type { LocalAgentRecord } from "./LocalStore";
 

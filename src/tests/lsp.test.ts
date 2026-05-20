@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { lspManager } from "../lsp/manager";
+import { lspManager } from "@/lsp/manager";
 
 // Check if typescript-language-server is available (precompute to avoid async in skipIf)
 let tsServerAvailable = false;

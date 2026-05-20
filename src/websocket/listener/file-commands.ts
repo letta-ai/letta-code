@@ -7,8 +7,8 @@ import {
   refreshFileIndex,
   searchFileIndex,
   setIndexRoot,
-} from "../../cli/helpers/fileIndex";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
+} from "@/cli/helpers/fileIndex";
+import { trackBoundaryError } from "@/telemetry/errorReporting";
 import { runGrepInFiles } from "./grepInFiles";
 import {
   isEditFileCommand,

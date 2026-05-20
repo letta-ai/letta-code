@@ -11,16 +11,16 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Backend } from "../backend";
+import type { Backend } from "@/backend";
 import {
   getLocalBackendMemoryFilesystemRoot,
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
-} from "../backend/local/paths";
+} from "@/backend/local/paths";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
-} from "../utils/directoryLimits";
+} from "@/utils/directoryLimits";
 import { getCurrentAgentId } from "./context";
 
 export const MEMORY_FS_ROOT = ".letta";

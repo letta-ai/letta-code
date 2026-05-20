@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
-import { recompileAgentSystemPrompt } from "../../agent/modify";
-import { __testSetBackend } from "../../backend";
-import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
+import { recompileAgentSystemPrompt } from "@/agent/modify";
+import { __testSetBackend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/FakeHeadlessBackend";
 
 describe("recompileAgentSystemPrompt", () => {
   test("calls the conversation recompile endpoint with mapped params", async () => {

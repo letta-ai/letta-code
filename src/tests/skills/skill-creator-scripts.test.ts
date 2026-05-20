@@ -8,9 +8,9 @@ import { join } from "node:path";
 import {
   initSkill,
   titleCaseSkillName,
-} from "../../skills/builtin/creating-skills/scripts/init-skill";
-import { packageSkill } from "../../skills/builtin/creating-skills/scripts/package-skill";
-import { validateSkill } from "../../skills/builtin/creating-skills/scripts/validate-skill";
+} from "@/skills/builtin/creating-skills/scripts/init-skill";
+import { packageSkill } from "@/skills/builtin/creating-skills/scripts/package-skill";
+import { validateSkill } from "@/skills/builtin/creating-skills/scripts/validate-skill";
 
 const TEST_DIR = join(import.meta.dir, ".test-skill-creator");
 

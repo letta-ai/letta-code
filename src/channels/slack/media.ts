@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import { getChannelDir } from "../config";
-import type { ChannelMessageAttachment } from "../types";
+import { getChannelDir } from "@/channels/config";
+import type { ChannelMessageAttachment } from "@/channels/types";
 
 const MAX_SLACK_ATTACHMENTS = 8;
 const MAX_SLACK_ATTACHMENT_BYTES = 20 * 1024 * 1024;

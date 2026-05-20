@@ -2,14 +2,14 @@ import WebSocket from "ws";
 import {
   channelPluginConfigShouldRefreshDisplayName,
   getChannelPluginConfig,
-} from "../../../channels/accountConfig";
+} from "@/channels/accountConfig";
 import {
   removeUserPlugin,
   scaffoldUserPlugin,
-} from "../../../channels/custom/scaffolding";
-import { getChannelPluginMetadata } from "../../../channels/pluginRegistry";
-import type { ChannelRegistryEvent } from "../../../channels/registry";
-import type { DequeuedBatch } from "../../../queue/queueRuntime";
+} from "@/channels/custom/scaffolding";
+import { getChannelPluginMetadata } from "@/channels/pluginRegistry";
+import type { ChannelRegistryEvent } from "@/channels/registry";
+import type { DequeuedBatch } from "@/queue/queueRuntime";
 import type {
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -34,11 +34,11 @@ import type {
   ChannelTargetsListCommand,
   ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
   ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
-} from "../../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "../permissionMode";
+} from "@/websocket/listener/permissionMode";
 import {
   isChannelAccountBindCommand,
   isChannelAccountCreateCommand,
@@ -60,13 +60,13 @@ import {
   isChannelsListCommand,
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
-} from "../protocol-inbound";
-import type { ListenerTransport } from "../transport";
+} from "@/websocket/listener/protocol-inbound";
+import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
   ListenerRuntime,
   StartListenerOptions,
-} from "../types";
+} from "@/websocket/listener/types";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 type ChannelsServiceModule = typeof import("../../../channels/service");

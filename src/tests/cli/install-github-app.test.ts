@@ -7,11 +7,11 @@ import {
   parseGitHubRepoFromRemote,
   parseScopesFromGhAuthStatus,
   validateRepoSlug,
-} from "../../cli/commands/install-github-app";
+} from "@/cli/commands/install-github-app";
 import {
   buildProgress,
   buildProgressSteps,
-} from "../../cli/components/InstallGithubAppFlow";
+} from "@/cli/components/InstallGithubAppFlow";
 
 // ---------------------------------------------------------------------------
 // Helper utilities

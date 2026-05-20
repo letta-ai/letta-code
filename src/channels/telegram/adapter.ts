@@ -6,7 +6,7 @@
 
 import type { ReactionType, ReactionTypeEmoji } from "@grammyjs/types";
 import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
-import { formatChannelControlRequestPrompt } from "../interactive";
+import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -15,7 +15,7 @@ import type {
   InboundChannelMessage,
   OutboundChannelMessage,
   TelegramChannelAccount,
-} from "../types";
+} from "@/channels/types";
 import {
   detectTelegramUploadMethod,
   extractTelegramMessageText,

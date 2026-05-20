@@ -7,23 +7,23 @@ import {
   ensureFileIndex,
   getIndexRoot,
   setIndexRoot,
-} from "../../cli/helpers/fileIndex";
+} from "@/cli/helpers/fileIndex";
 import {
   getCurrentWorkingDirectory,
   runWithRuntimeContext,
-} from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
-import { create_worktree } from "../../tools/impl/CreateWorktree";
+} from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { create_worktree } from "@/tools/impl/CreateWorktree";
 import {
   clearToolsWithLock,
   executeTool,
   loadSpecificTools,
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
-} from "../../tools/manager";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
-import { resetRemoteSettingsCache } from "../../websocket/listener/remote-settings";
-import { setActiveRuntime } from "../../websocket/listener/runtime";
+} from "@/tools/manager";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
+import { setActiveRuntime } from "@/websocket/listener/runtime";
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, {

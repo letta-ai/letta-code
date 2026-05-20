@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getOverflowDirectory } from "../../tools/impl/overflow";
+import { getOverflowDirectory } from "@/tools/impl/overflow";
 import {
   truncateArray,
   truncateByChars,
   truncateByLines,
-} from "../../tools/impl/truncation";
+} from "@/tools/impl/truncation";
 
 describe("truncation with overflow support", () => {
   const testWorkingDir = "/test/truncation/path";

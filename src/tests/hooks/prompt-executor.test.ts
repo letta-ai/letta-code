@@ -11,8 +11,8 @@ import {
   HookExitCode,
   type PreToolUseHookInput,
   type StopHookInput,
-} from "../../hooks/types";
-import { runWithRuntimeContext } from "../../runtime-context";
+} from "@/hooks/types";
+import { runWithRuntimeContext } from "@/runtime-context";
 
 interface GenerateOpts {
   body: {

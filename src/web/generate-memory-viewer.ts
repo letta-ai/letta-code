@@ -11,15 +11,15 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { getScopedMemoryFilesystemRoot } from "../agent/memoryFilesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
 import {
   getFileNodes,
   readFileContent,
   scanMemoryFilesystem,
-} from "../agent/memoryScanner";
-import { getAgentContextOverview } from "../backend/api/agents";
-import { getClient, getServerUrl } from "../backend/api/client";
-import { apiRequest } from "../backend/api/request";
+} from "@/agent/memoryScanner";
+import { getAgentContextOverview } from "@/backend/api/agents";
+import { getClient, getServerUrl } from "@/backend/api/client";
+import { apiRequest } from "@/backend/api/request";
 import { collectLocalMemoryContextData } from "./local-memory-context";
 import memoryViewerTemplate from "./memory-viewer-template.txt";
 import type {

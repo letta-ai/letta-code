@@ -3,7 +3,7 @@ import {
   matchesBashPattern,
   matchesFilePattern,
   matchesToolPattern,
-} from "../permissions/matcher";
+} from "@/permissions/matcher";
 
 // ============================================================================
 // File Pattern Matching Tests

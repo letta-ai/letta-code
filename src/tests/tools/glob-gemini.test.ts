@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { glob_gemini } from "../../tools/impl/GlobGemini";
-import { TestDirectory } from "../helpers/testFs";
+import { TestDirectory } from "@/tests/helpers/testFs";
+import { glob_gemini } from "@/tools/impl/GlobGemini";
 
 describe("GlobGemini tool", () => {
   let testDir: TestDirectory;

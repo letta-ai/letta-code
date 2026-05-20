@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 

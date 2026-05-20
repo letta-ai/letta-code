@@ -12,12 +12,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { LIMITS } from "../../tools/impl/truncation";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { LIMITS } from "@/tools/impl/truncation";
 import {
   __listenClientTestUtils,
   rejectPendingApprovalResolvers,
-} from "../../websocket/listen-client";
+} from "@/websocket/listen-client";
 
 const {
   createRuntime,

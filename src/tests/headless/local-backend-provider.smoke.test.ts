@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createIsolatedCliTestEnv } from "../testProcessEnv";
+import { createIsolatedCliTestEnv } from "@/tests/testProcessEnv";
 
 const projectRoot = process.cwd();
 const providerSmokeEnabled = process.env.LETTA_LOCAL_PROVIDER_SMOKE === "true";

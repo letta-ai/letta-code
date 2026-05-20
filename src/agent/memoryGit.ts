@@ -25,12 +25,12 @@ import {
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { getClient } from "../backend/api/client";
+import { getClient } from "@/backend/api/client";
 import {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
-} from "../backend/api/memfs-git-proxy";
-import { debugLog, debugWarn } from "../utils/debug";
+} from "@/backend/api/memfs-git-proxy";
+import { debugLog, debugWarn } from "@/utils/debug";
 import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
 
 const execFile = promisify(execFileCb);

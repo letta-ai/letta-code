@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { startStartupAutoUpdateCheck } from "../startup-auto-update";
+import { startStartupAutoUpdateCheck } from "@/startup-auto-update";
 
 describe("startStartupAutoUpdateCheck", () => {
   test("logs ENOTEMPTY guidance when updater returns enotemptyFailed", async () => {

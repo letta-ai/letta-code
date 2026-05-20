@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatArgsDisplay } from "../../cli/helpers/formatArgsDisplay";
+import { formatArgsDisplay } from "@/cli/helpers/formatArgsDisplay";
 
 describe("formatArgsDisplay compact plan/todo headers", () => {
   test("shows only plan item count for update_plan", () => {

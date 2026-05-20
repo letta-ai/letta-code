@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
-import { resolveChannelApprovalSource } from "../../websocket/listener/turn-approval";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { resolveChannelApprovalSource } from "@/websocket/listener/turn-approval";
 
 describe("resolveChannelApprovalSource", () => {
   test("keeps channel approvals attached when coalesced messages share one logical scope", () => {

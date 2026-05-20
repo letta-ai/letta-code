@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { runWithRuntimeContext } from "../../runtime-context";
-import { __listenClientTestUtils } from "../../websocket/listen-client";
+import { runWithRuntimeContext } from "@/runtime-context";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {
   getConversationRuntime,
   setActiveRuntime,
-} from "../../websocket/listener/runtime";
+} from "@/websocket/listener/runtime";
 import {
   __worktreeOwnershipTestUtils,
   clearExpectedWorktreePath,
   hasExpectedWorktreePath,
   noteExpectedWorktreeForLauncher,
-} from "../../websocket/listener/worktree-ownership";
+} from "@/websocket/listener/worktree-ownership";
 
 describe("worktree ownership tracking", () => {
   test("tracks the expected worktree path for the active conversation", () => {

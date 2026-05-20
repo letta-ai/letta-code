@@ -7,7 +7,7 @@ import {
   loadPermissions,
   resetPermissionLoaderCacheForTests,
   savePermissionRule,
-} from "../permissions/loader";
+} from "@/permissions/loader";
 
 let testDir: string;
 

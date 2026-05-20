@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   formatChannelControlRequestPrompt,
   parseChannelControlRequestResponse,
-} from "../../channels/interactive";
-import type { ChannelControlRequestEvent } from "../../channels/types";
+} from "@/channels/interactive";
+import type { ChannelControlRequestEvent } from "@/channels/types";
 
 function createEvent(
   overrides: Partial<ChannelControlRequestEvent> = {},

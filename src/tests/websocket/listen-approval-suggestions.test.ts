@@ -2,12 +2,12 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import { loadPermissions } from "../../permissions/loader";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import { loadPermissions } from "@/permissions/loader";
 import {
   applySuggestedPermissionsForApproval,
   buildApprovalSuggestionPayload,
-} from "../../websocket/listener/approval-suggestions";
+} from "@/websocket/listener/approval-suggestions";
 
 let testDir: string;
 

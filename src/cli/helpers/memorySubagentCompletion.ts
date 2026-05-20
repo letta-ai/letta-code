@@ -1,4 +1,4 @@
-import { recompileAgentSystemPrompt } from "../../agent/modify";
+import { recompileAgentSystemPrompt } from "@/agent/modify";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,

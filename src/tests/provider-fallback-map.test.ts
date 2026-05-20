@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { PROVIDER_FALLBACK_MAP } from "../cli/app/constants";
+import { PROVIDER_FALLBACK_MAP } from "@/cli/app/constants";
 
 const headlessSource = readFileSync(
   path.resolve(import.meta.dir, "../headless.ts"),

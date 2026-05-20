@@ -9,21 +9,21 @@ import {
 } from "bun:test";
 import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
-import type { ResumeData } from "../../agent/check-approval";
-import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
-import type { ChannelAdapter } from "../../channels/types";
-import { permissionMode } from "../../permissions/mode";
+import type { ResumeData } from "@/agent/check-approval";
+import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
+import type { ChannelAdapter } from "@/channels/types";
+import { permissionMode } from "@/permissions/mode";
 import type {
   MessageQueueItem,
   TaskNotificationQueueItem,
-} from "../../queue/queueRuntime";
-import { sharedReminderProviders } from "../../reminders/engine";
-import { queueSkillContent } from "../../tools/impl/skillContentRegistry";
-import { clearTools, loadSpecificTools } from "../../tools/manager";
-import { shouldProcessInboundMessageDirectly } from "../../websocket/listener/queue";
-import { resolveRecoveredApprovalResponse } from "../../websocket/listener/recovery";
-import { injectQueuedSkillContent } from "../../websocket/listener/skill-injection";
-import type { IncomingMessage } from "../../websocket/listener/types";
+} from "@/queue/queueRuntime";
+import { sharedReminderProviders } from "@/reminders/engine";
+import { queueSkillContent } from "@/tools/impl/skillContentRegistry";
+import { clearTools, loadSpecificTools } from "@/tools/manager";
+import { shouldProcessInboundMessageDirectly } from "@/websocket/listener/queue";
+import { resolveRecoveredApprovalResponse } from "@/websocket/listener/recovery";
+import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
+import type { IncomingMessage } from "@/websocket/listener/types";
 
 type MockStream = {
   conversationId: string;

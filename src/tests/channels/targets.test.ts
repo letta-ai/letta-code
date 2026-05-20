@@ -4,7 +4,7 @@ import {
   getChannelTarget,
   listChannelTargets,
   upsertChannelTarget,
-} from "../../channels/targets";
+} from "@/channels/targets";
 
 describe("channel targets", () => {
   afterEach(() => {

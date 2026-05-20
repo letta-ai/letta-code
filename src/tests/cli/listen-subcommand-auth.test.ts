@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { DeviceCodeResponse, TokenResponse } from "../../auth/oauth";
-import { settingsManager } from "../../settings-manager";
+import type { DeviceCodeResponse, TokenResponse } from "@/auth/oauth";
+import { settingsManager } from "@/settings-manager";
 
 const refreshAccessTokenMock = mock(async (): Promise<TokenResponse> => {
   throw new Error("refreshAccessToken not mocked");

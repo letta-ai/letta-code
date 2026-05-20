@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   clearAvailableModelsCache,
   getAvailableModelHandles,
-} from "../../agent/available-models";
-import { __testSetBackend } from "../../backend";
-import { FakeHeadlessBackend } from "../../backend/dev/FakeHeadlessBackend";
+} from "@/agent/available-models";
+import { __testSetBackend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/FakeHeadlessBackend";
 
 describe("available models backend wiring", () => {
   afterEach(() => {

@@ -3,7 +3,7 @@ import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
   validateRegistryHandleOrThrow,
-} from "../../cli/startupFlagValidation";
+} from "@/cli/startupFlagValidation";
 
 describe("startup flag validation helpers", () => {
   test("conversation default requires agent unless new-agent is set", () => {

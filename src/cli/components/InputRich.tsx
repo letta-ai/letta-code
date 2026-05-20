@@ -18,28 +18,28 @@ import {
   useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
-import type { ModelReasoningEffort } from "../../agent/model";
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
-import {
-  ELAPSED_DISPLAY_THRESHOLD_MS,
-  TOKEN_DISPLAY_THRESHOLD,
-} from "../../constants";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { buildChatUrl } from "../helpers/appUrls.js";
-import { bytesToTokens, formatCompact } from "../helpers/format";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { formatGoalStatusIndicator } from "../helpers/goalCommand";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
+import type { ModelReasoningEffort } from "@/agent/model";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { buildChatUrl } from "@/cli/helpers/appUrls.js";
+import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { formatGoalStatusIndicator } from "@/cli/helpers/goalCommand";
+import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
 import {
   getActiveBackgroundAgents,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
-} from "../helpers/subagentState.js";
-import { getRandomThinkingTip } from "../helpers/thinkingMessages";
+} from "@/cli/helpers/subagentState.js";
+import { getRandomThinkingTip } from "@/cli/helpers/thinkingMessages";
+import {
+  ELAPSED_DISPLAY_THRESHOLD_MS,
+  TOKEN_DISPLAY_THRESHOLD,
+} from "@/constants";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { ralphMode } from "@/ralph/mode";
+import { settingsManager } from "@/settings-manager";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";

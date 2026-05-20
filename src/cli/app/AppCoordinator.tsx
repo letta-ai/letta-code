@@ -14,24 +14,99 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { prefetchAvailableModelHandles } from "../../agent/available-models";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { setCurrentAgentId } from "../../agent/context";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { prefetchAvailableModelHandles } from "@/agent/available-models";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { setCurrentAgentId } from "@/agent/context";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
 import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
-} from "../../agent/model";
-import type { PersonalityId } from "../../agent/personality";
-import { shouldRecommendDefaultPrompt } from "../../agent/promptAssets";
-import { reconcileExistingAgentState } from "../../agent/reconcileExistingAgentState";
-import { recordSessionEnd } from "../../agent/sessionHistory";
-import { SessionStats } from "../../agent/stats";
-import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
-import { getBillingTier } from "../../backend/api/metadata";
+} from "@/agent/model";
+import type { PersonalityId } from "@/agent/personality";
+import { shouldRecommendDefaultPrompt } from "@/agent/promptAssets";
+import { reconcileExistingAgentState } from "@/agent/reconcileExistingAgentState";
+import { recordSessionEnd } from "@/agent/sessionHistory";
+import { SessionStats } from "@/agent/stats";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import { getBillingTier } from "@/backend/api/metadata";
+import {
+  type CommandFinishedEvent,
+  type CommandHandle,
+  createCommandRunner,
+} from "@/cli/commands/runner";
+import type { BtwState } from "@/cli/components/BtwPane";
+import {
+  appendStreamingOutput,
+  type Buffers,
+  createBuffers,
+  type Line,
+  toLines,
+} from "@/cli/helpers/accumulator";
+import { isLocalAgentId } from "@/cli/helpers/appUrls";
+import { backfillBuffers } from "@/cli/helpers/backfill";
+import { chunkLog } from "@/cli/helpers/chunkLog";
+import {
+  createContextTracker,
+  resetContextHistory,
+} from "@/cli/helpers/contextTracker";
+import {
+  generateConversationTitleFromFork,
+  normalizeConversationTitle,
+} from "@/cli/helpers/conversationTitle";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { setErrorContext } from "@/cli/helpers/errorContext";
+import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
+import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
+import {
+  addToMessageQueue,
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/cli/helpers/messageQueueBridge";
+import { generatePlanFilePath } from "@/cli/helpers/planName";
+import {
+  buildContentFromQueueBatch,
+  toQueuedMsg,
+} from "@/cli/helpers/queuedMessageParts";
+import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import {
+  collectFinishedTaskToolCalls,
+  createSubagentGroupItem,
+  hasInProgressTaskToolCalls,
+} from "@/cli/helpers/subagentAggregation";
+import {
+  clearSubagentsByIds,
+  getActiveBackgroundAgents,
+  getSubagentByToolCallId,
+  getSnapshot as getSubagentSnapshot,
+  subscribe as subscribeToSubagents,
+} from "@/cli/helpers/subagentState";
+import { buildStartupSystemPromptWarning } from "@/cli/helpers/systemPromptWarning.ts";
+import { appendTaskNotificationEventsToBuffer } from "@/cli/helpers/taskNotifications";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+import {
+  isFileEditTool,
+  isFileWriteTool,
+  isPatchTool,
+  isShellOutputTool,
+  isShellTool,
+} from "@/cli/helpers/toolNameMapping";
+import { isTaskTool } from "@/cli/helpers/toolNameMapping.js";
+import { getTuiBlockedReason } from "@/cli/helpers/tuiQueueAdapter";
+import {
+  renderWindowTitle,
+  resolveWindowTitleConfig,
+} from "@/cli/helpers/windowTitleConfig";
+import { useConfigurableStatusLine } from "@/cli/hooks/useConfigurableStatusLine";
+import { useSuspend } from "@/cli/hooks/useSuspend/useSuspend.ts";
+import { useSyncedState } from "@/cli/hooks/useSyncedState";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/useTerminalWidth";
 import {
   getTask,
   handleMissedOneShot,
@@ -39,117 +114,45 @@ import {
   readCronFile,
   shouldFireTask,
   updateTask,
-} from "../../cron";
-import { experimentManager } from "../../experiments/manager";
-import { runSessionEndHooks, runSessionStartHooks } from "../../hooks";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import { type PermissionMode, permissionMode } from "../../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
+} from "@/cron";
+import { experimentManager } from "@/experiments/manager";
+import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import { type PermissionMode, permissionMode } from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
   QueueRuntime,
   type TaskNotificationQueueItem,
-} from "../../queue/queueRuntime";
-import { ralphMode } from "../../ralph/mode";
+} from "@/queue/queueRuntime";
+import { ralphMode } from "@/ralph/mode";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
   enqueueToolsetChangeReminder,
   resetSharedReminderState,
-} from "../../reminders/state";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
+} from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 import {
   releaseToolExecutionContext,
   type ToolExecutionResult,
-} from "../../tools/manager";
+} from "@/tools/manager";
 import {
   prepareToolExecutionContextForResolvedTarget,
   prepareToolExecutionContextForScope,
   type ToolsetName,
   type ToolsetPreference,
-} from "../../tools/toolset";
+} from "@/tools/toolset";
 import {
   debugLog,
   debugLogFile,
   debugWarn,
   isDebugEnabled,
-} from "../../utils/debug";
-import { recordTuiPerf } from "../../utils/tuiPerf";
-import { getVersion } from "../../version";
-import {
-  type CommandFinishedEvent,
-  type CommandHandle,
-  createCommandRunner,
-} from "../commands/runner";
-import type { BtwState } from "../components/BtwPane";
-import {
-  appendStreamingOutput,
-  type Buffers,
-  createBuffers,
-  type Line,
-  toLines,
-} from "../helpers/accumulator";
-import { isLocalAgentId } from "../helpers/appUrls";
-import { backfillBuffers } from "../helpers/backfill";
-import { chunkLog } from "../helpers/chunkLog";
-import {
-  createContextTracker,
-  resetContextHistory,
-} from "../helpers/contextTracker";
-import {
-  generateConversationTitleFromFork,
-  normalizeConversationTitle,
-} from "../helpers/conversationTitle";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { setErrorContext } from "../helpers/errorContext";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { getReflectionSettings } from "../helpers/memoryReminder";
-import {
-  addToMessageQueue,
-  type QueuedMessage,
-  setMessageQueueAdder,
-} from "../helpers/messageQueueBridge";
-import { generatePlanFilePath } from "../helpers/planName";
-import {
-  buildContentFromQueueBatch,
-  toQueuedMsg,
-} from "../helpers/queuedMessageParts";
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
-import type { ApprovalRequest } from "../helpers/stream";
-import {
-  collectFinishedTaskToolCalls,
-  createSubagentGroupItem,
-  hasInProgressTaskToolCalls,
-} from "../helpers/subagentAggregation";
-import {
-  clearSubagentsByIds,
-  getActiveBackgroundAgents,
-  getSubagentByToolCallId,
-  getSnapshot as getSubagentSnapshot,
-  subscribe as subscribeToSubagents,
-} from "../helpers/subagentState";
-import { buildStartupSystemPromptWarning } from "../helpers/systemPromptWarning.ts";
-import { appendTaskNotificationEventsToBuffer } from "../helpers/taskNotifications";
-import { getRandomThinkingVerb } from "../helpers/thinkingMessages";
-import {
-  isFileEditTool,
-  isFileWriteTool,
-  isPatchTool,
-  isShellOutputTool,
-  isShellTool,
-} from "../helpers/toolNameMapping";
-import { isTaskTool } from "../helpers/toolNameMapping.js";
-import { getTuiBlockedReason } from "../helpers/tuiQueueAdapter";
-import {
-  renderWindowTitle,
-  resolveWindowTitleConfig,
-} from "../helpers/windowTitleConfig";
-import { useConfigurableStatusLine } from "../hooks/useConfigurableStatusLine";
-import { useSuspend } from "../hooks/useSuspend/useSuspend.ts";
-import { useSyncedState } from "../hooks/useSyncedState";
-import { useTerminalRows, useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/utils/debug";
+import { recordTuiPerf } from "@/utils/tuiPerf";
+import { getVersion } from "@/version";
 import { AppView } from "./AppView";
 import {
   ANIMATION_RESUME_HYSTERESIS_ROWS,

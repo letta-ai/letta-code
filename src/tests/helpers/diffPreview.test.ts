@@ -6,8 +6,8 @@ import type {
   AdvancedDiffFallback,
   AdvancedDiffSuccess,
   AdvancedDiffUnpreviewable,
-} from "../../cli/helpers/diff";
-import { computeDiffPreviews, toDiffPreview } from "../../helpers/diffPreview";
+} from "@/cli/helpers/diff";
+import { computeDiffPreviews, toDiffPreview } from "@/helpers/diffPreview";
 
 describe("toDiffPreview", () => {
   it("converts an AdvancedDiffSuccess to an advanced DiffPreview", () => {

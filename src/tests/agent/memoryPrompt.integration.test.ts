@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { createAgent } from "../../agent/create";
-import { updateAgentSystemPromptMemfs } from "../../agent/modify";
-import { getClient } from "../../backend/api/client";
+import { createAgent } from "@/agent/create";
+import { updateAgentSystemPromptMemfs } from "@/agent/modify";
+import { getClient } from "@/backend/api/client";
 
 const describeIntegration = process.env.LETTA_API_KEY
   ? describe

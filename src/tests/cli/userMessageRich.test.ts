@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   renderBlock,
   splitSystemReminderBlocks,
-} from "../../cli/components/UserMessageRich";
+} from "@/cli/components/UserMessageRich";
 
 describe("splitSystemReminderBlocks", () => {
   test("treats unmatched system-reminder opener as literal user text", () => {

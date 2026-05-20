@@ -2,11 +2,11 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { __testOverrideChannelsRoot } from "../../channels/config";
+import { __testOverrideChannelsRoot } from "@/channels/config";
 import {
   buildDynamicMessageChannelSchema,
   clearDynamicMessageChannelToolCache,
-} from "../../channels/messageTool";
+} from "@/channels/messageTool";
 import {
   __testClearUserChannelPluginCache,
   getChannelDisplayName,
@@ -14,7 +14,7 @@ import {
   getSupportedChannelIds,
   isSupportedChannelId,
   loadChannelPlugin,
-} from "../../channels/pluginRegistry";
+} from "@/channels/pluginRegistry";
 
 let channelsRoot: string;
 

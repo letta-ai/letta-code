@@ -5,20 +5,20 @@ import {
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
   LEGACY_CHANNEL_ACCOUNT_ID,
-} from "../../channels/accounts";
+} from "@/channels/accounts";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
   clearPairingStores,
   createPairingCode,
-} from "../../channels/pairing";
+} from "@/channels/pairing";
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
   addRoute,
   clearAllRoutes,
   getRoute,
-} from "../../channels/routing";
+} from "@/channels/routing";
 import {
   __testOverrideResolveChannelAccountDisplayName,
   bindChannelAccountLive,
@@ -34,13 +34,13 @@ import {
   setChannelConfigLive,
   updateChannelAccountLive,
   updateChannelRouteLive,
-} from "../../channels/service";
+} from "@/channels/service";
 import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
   clearTargetStores,
   upsertChannelTarget,
-} from "../../channels/targets";
+} from "@/channels/targets";
 
 describe("channel service", () => {
   function upsertTargetForRouteTest(chatId: string): string {

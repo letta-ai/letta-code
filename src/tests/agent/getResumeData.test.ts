@@ -5,8 +5,8 @@ import type {
   Message,
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { getResumeData } from "../../agent/check-approval";
-import { __testSetBackend, type Backend } from "../../backend";
+import { getResumeData } from "@/agent/check-approval";
+import { __testSetBackend, type Backend } from "@/backend";
 
 type ResumeAgentState = AgentState & {
   in_context_message_ids?: string[] | null;

@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
-import { __headlessTestUtils } from "../../headless";
-import { telemetry } from "../../telemetry";
+import { __headlessTestUtils } from "@/headless";
+import { telemetry } from "@/telemetry";
 
 describe("headless telemetry input tracking", () => {
   test("tracks text-bearing user content", () => {

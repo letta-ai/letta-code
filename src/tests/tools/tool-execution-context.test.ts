@@ -14,12 +14,12 @@ import {
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
   upsertChannelAccount,
-} from "../../channels/accounts";
-import { clearDynamicMessageChannelToolCache } from "../../channels/messageTool";
-import { ChannelRegistry, getChannelRegistry } from "../../channels/registry";
-import { setRouteInMemory } from "../../channels/routing";
-import type { ChannelAdapter } from "../../channels/types";
-import { runWithRuntimeContext } from "../../runtime-context";
+} from "@/channels/accounts";
+import { clearDynamicMessageChannelToolCache } from "@/channels/messageTool";
+import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
+import { setRouteInMemory } from "@/channels/routing";
+import type { ChannelAdapter } from "@/channels/types";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   captureToolExecutionContext,
   clearCapturedToolExecutionContexts,
@@ -34,8 +34,8 @@ import {
   prepareToolExecutionContextForSpecificTools,
   refreshDynamicChannelToolsInLoadedRegistry,
   registerExternalTools,
-} from "../../tools/manager";
-import { resolveConversationChannelToolScope } from "../../tools/toolset";
+} from "@/tools/manager";
+import { resolveConversationChannelToolScope } from "@/tools/toolset";
 
 function asText(
   toolReturn: Awaited<ReturnType<typeof executeTool>>["toolReturn"],

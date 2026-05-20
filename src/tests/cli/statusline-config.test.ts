@@ -10,9 +10,9 @@ import {
   MIN_STATUS_LINE_DEBOUNCE_MS,
   normalizeStatusLineConfig,
   resolveStatusLineConfig,
-} from "../../cli/helpers/statusLineConfig";
-import { settingsManager } from "../../settings-manager";
-import { setServiceName } from "../../utils/secrets.js";
+} from "@/cli/helpers/statusLineConfig";
+import { settingsManager } from "@/settings-manager";
+import { setServiceName } from "@/utils/secrets.js";
 
 const originalHome = process.env.HOME;
 let testHomeDir: string;

@@ -3,7 +3,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import {
   mergeQueuedTurnInput,
   type QueuedTurnInput,
-} from "../../queue/turnQueueRuntime";
+} from "@/queue/turnQueueRuntime";
 
 describe("turnQueueRuntime", () => {
   test("merges user and task notification entries with separators", () => {

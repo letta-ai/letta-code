@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { getEventListeners, once } from "node:events";
 import { createServer } from "node:http";
-import { createRelayedAbortController } from "../../utils/createRelayedAbortController";
+import { createRelayedAbortController } from "@/utils/createRelayedAbortController";
 
 describe("createRelayedAbortController", () => {
   test("does not accumulate parent abort listeners across repeated fetches", async () => {

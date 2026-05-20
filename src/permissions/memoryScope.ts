@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 
-import { getCurrentAgentId } from "../agent/context";
-import { getMemoryFilesystemRoot } from "../agent/memoryFilesystem";
+import { getCurrentAgentId } from "@/agent/context";
+import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
 import { cliPermissions } from "./cli";
 
 export interface ResolveAllowedMemoryRootsOptions {

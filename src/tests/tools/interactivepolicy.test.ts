@@ -3,7 +3,7 @@ import {
   isHeadlessAutoAllowTool,
   isInteractiveApprovalTool,
   requiresRuntimeUserInput,
-} from "../../tools/interactivePolicy";
+} from "@/tools/interactivePolicy";
 
 describe("interactive tool policy", () => {
   test("marks interactive approval tools", () => {

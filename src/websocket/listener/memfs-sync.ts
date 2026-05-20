@@ -7,7 +7,7 @@
  * correctly — mirroring what the local headless path does during bootstrap.
  */
 
-import { debugLog, debugWarn } from "../../utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 import type { ListenerRuntime } from "./types";
 
 /**

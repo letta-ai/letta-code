@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import { render } from "ink";
 import stripAnsi from "strip-ansi";
-import { parseCreateWorktreeResult } from "../../cli/components/CreateWorktreeResultRenderer";
-import { ToolCallMessage } from "../../cli/components/ToolCallMessageRich";
+import { parseCreateWorktreeResult } from "@/cli/components/CreateWorktreeResultRenderer";
+import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 
 class CaptureStream extends Writable {
   columns = 120;

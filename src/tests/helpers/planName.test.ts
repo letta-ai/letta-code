@@ -1,9 +1,6 @@
 import { expect, test } from "bun:test";
 import { sep } from "node:path";
-import {
-  generatePlanFilePath,
-  generatePlanName,
-} from "../../cli/helpers/planName";
+import { generatePlanFilePath, generatePlanName } from "@/cli/helpers/planName";
 
 test("generatePlanName returns valid format", () => {
   const name = generatePlanName();

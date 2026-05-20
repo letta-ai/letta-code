@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { discoverSkills } from "../../agent/skills";
+import { discoverSkills } from "@/agent/skills";
 
 describe.skipIf(process.platform === "win32")(
   "skills discovery with symlinks",

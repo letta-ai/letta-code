@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { NotificationBuffer } from "../../cli/helpers/taskNotifications";
-import { appendTaskNotificationEventsToBuffer } from "../../cli/helpers/taskNotifications";
-import { readInteractiveAppSource } from "../helpers/readInteractiveAppSource";
+import type { NotificationBuffer } from "@/cli/helpers/taskNotifications";
+import { appendTaskNotificationEventsToBuffer } from "@/cli/helpers/taskNotifications";
+import { readInteractiveAppSource } from "@/tests/helpers/readInteractiveAppSource";
 
 // ---------------------------------------------------------------------------
 // Helper-level behavioral tests

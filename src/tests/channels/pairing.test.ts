@@ -9,7 +9,7 @@ import {
   getPendingPairings,
   isUserApproved,
   rollbackPairingApproval,
-} from "../../channels/pairing";
+} from "@/channels/pairing";
 
 describe("pairing", () => {
   beforeEach(() => {

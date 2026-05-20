@@ -9,13 +9,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { getCurrentAgentId } from "../../agent/context";
-import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
+import { getCurrentAgentId } from "@/agent/context";
+import { resolveScopedMemoryDir } from "@/agent/memoryFilesystem";
 import {
   assertMemoryRepoReadyForWrite,
   commitAndSyncMemoryWrite,
   type MemoryWriteSyncMode,
-} from "../../agent/memoryGit";
+} from "@/agent/memoryGit";
 import { validateRequiredParams } from "./validation";
 
 type MemoryCommand =

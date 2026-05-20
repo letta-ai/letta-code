@@ -4,7 +4,7 @@ import {
   getModelInfo,
   getModelInfoForLlmConfig,
   getReasoningTierOptionsForHandle,
-} from "../agent/model";
+} from "@/agent/model";
 
 describe("getModelInfo", () => {
   test("includes Bedrock Opus 4.7", () => {

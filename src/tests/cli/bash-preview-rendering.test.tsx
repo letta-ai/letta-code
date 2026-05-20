@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import { render } from "ink";
 import stripAnsi from "strip-ansi";
-import { BashPreview } from "../../cli/components/previews/BashPreview";
+import { BashPreview } from "@/cli/components/previews/BashPreview";
 
 class CaptureStream extends Writable {
   columns = 80;

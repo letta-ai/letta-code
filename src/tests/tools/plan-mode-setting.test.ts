@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { settingsManager } from "../../settings-manager";
+import { settingsManager } from "@/settings-manager";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
   clearToolsWithLock,
@@ -12,7 +12,7 @@ import {
   loadTools,
   OPENAI_PASCAL_TOOLS,
   prepareToolExecutionContextForModel,
-} from "../../tools/manager";
+} from "@/tools/manager";
 
 const originalHome = process.env.HOME;
 let testHomeDir: string;

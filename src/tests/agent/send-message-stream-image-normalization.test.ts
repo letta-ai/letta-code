@@ -4,15 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { translatePasteForImages } from "../../cli/helpers/clipboard";
+import { translatePasteForImages } from "@/cli/helpers/clipboard";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
-} from "../../cli/helpers/pasteRegistry";
+} from "@/cli/helpers/pasteRegistry";
 import {
   assertSupportedBase64ImageMediaTypes,
   normalizeMessageImageParts,
-} from "../../utils/messageImageNormalization";
+} from "@/utils/messageImageNormalization";
 
 const TEST_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";

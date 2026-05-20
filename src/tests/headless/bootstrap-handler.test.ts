@@ -16,8 +16,8 @@ import { describe, expect, mock, test } from "bun:test";
 import type {
   BootstrapHandlerBackend,
   BootstrapHandlerSessionContext,
-} from "../../agent/bootstrapHandler";
-import { handleBootstrapSessionState } from "../../agent/bootstrapHandler";
+} from "@/agent/bootstrapHandler";
+import { handleBootstrapSessionState } from "@/agent/bootstrapHandler";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock factory

@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { CommandHookConfig, HookCommand } from "../hooks/types";
-import { runWithRuntimeContext } from "../runtime-context";
-import { settingsManager } from "../settings-manager";
+import type { CommandHookConfig, HookCommand } from "@/hooks/types";
+import { runWithRuntimeContext } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 
 // Type-safe helper to extract command from a hook (tests only use command hooks)
 function asCommand(
@@ -21,7 +21,7 @@ import {
   deleteSecureTokens,
   isKeychainAvailable,
   setServiceName,
-} from "../utils/secrets.js";
+} from "@/utils/secrets.js";
 
 const keychainAvailablePrecompute = await isKeychainAvailable();
 

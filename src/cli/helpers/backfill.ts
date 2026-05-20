@@ -10,7 +10,7 @@ import {
   SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
+} from "@/constants";
 import type { Buffers } from "./accumulator";
 import { trimFinishedReasoningText } from "./reasoningText";
 import { extractTaskNotificationsForDisplay } from "./taskNotifications";

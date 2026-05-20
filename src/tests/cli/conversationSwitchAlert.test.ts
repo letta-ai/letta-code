@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildConversationSwitchAlert } from "../../cli/helpers/conversationSwitchAlert";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { buildConversationSwitchAlert } from "@/cli/helpers/conversationSwitchAlert";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 
 describe("conversationSwitchAlert", () => {
   test("wraps conversation switch context in system-reminder tags", () => {
