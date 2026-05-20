@@ -114,13 +114,6 @@ export function getSkillSources(): SkillSource[] {
 }
 
 /**
- * Backwards-compat helper: returns true when bundled skills are disabled.
- */
-export function getNoSkills(): boolean {
-  return !context.skillSources.includes("bundled");
-}
-
-/**
  * Set the current conversation ID
  * @param conversationId - The conversation ID, or null to clear
  */
