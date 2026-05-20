@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readInteractiveAppSource } from "@/test-utils/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/test-utils/read-interactive-app-source";
 
 describe("resize redraw wiring", () => {
   test("does not define lossy static-item resize cap", () => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { readInteractiveAppSource } from "@/test-utils/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/test-utils/read-interactive-app-source";
 
 function appSource(): string {
   return readInteractiveAppSource();
@@ -108,7 +108,7 @@ describe("local backend command wiring", () => {
 
   test("local memfs helper paths avoid API client-only lookups", () => {
     const memoryGitPath = fileURLToPath(
-      new URL("../agent/memoryGit.ts", import.meta.url),
+      new URL("../agent/memory-git.ts", import.meta.url),
     );
     const memoryGitSource = readFileSync(memoryGitPath, "utf-8");
 
@@ -207,7 +207,7 @@ describe("local backend command wiring", () => {
 
   test("subagent fork and child launch wiring use the active backend", () => {
     const taskPath = fileURLToPath(
-      new URL("../tools/impl/Task.ts", import.meta.url),
+      new URL("../tools/impl/task.ts", import.meta.url),
     );
     const taskSource = readFileSync(taskPath, "utf-8");
     expect(taskSource).toContain('import { getBackend } from "@/backend"');

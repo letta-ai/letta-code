@@ -8,8 +8,11 @@ import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
-import { clearSecretsCache, initSecretsFromServer } from "@/utils/secretsStore";
-import { createTempRuntimeScriptCommand } from "./runtimeScript";
+import {
+  clearSecretsCache,
+  initSecretsFromServer,
+} from "@/utils/secrets-store";
+import { createTempRuntimeScriptCommand } from "./runtime-script";
 
 const AGENT_A = "agent-secret-substitution-a";
 const AGENT_B = "agent-secret-substitution-b";

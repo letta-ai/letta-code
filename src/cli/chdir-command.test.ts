@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   parseChdirCommand,
   resolveChdirTarget,
-} from "@/cli/helpers/chdirCommand";
+} from "@/cli/helpers/chdir-command";
 
 describe("/chdir command", () => {
   test("is registered with /cd alias", () => {
@@ -23,7 +23,7 @@ describe("/chdir command", () => {
 
   test("useSubmitHandler switches local cwd and queues cwd-changed reminder", () => {
     const submitHandlerPath = fileURLToPath(
-      new URL("../cli/app/useSubmitHandler.ts", import.meta.url),
+      new URL("../cli/app/use-submit-handler.ts", import.meta.url),
     );
     const source = readFileSync(submitHandlerPath, "utf-8");
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
-import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { configureBackendMode } from "@/backend";
 import {
   getLocalBackendMemoryFilesystemRoot,
@@ -13,7 +13,7 @@ import {
   ensureLettaShimDir,
   getShellEnv,
   resolveLettaInvocation,
-} from "@/tools/impl/shellEnv";
+} from "@/tools/impl/shell-env";
 
 function withTemporaryAgentEnv<T>(agentId: string, fn: () => T): T {
   const originalAgentId = process.env.AGENT_ID;

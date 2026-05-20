@@ -4,7 +4,7 @@ import type { SubagentConfig } from "@/agent/subagents";
 import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
-} from "@/agent/subagents/contextBudget";
+} from "@/agent/subagents/context-budget";
 import {
   buildSubagentArgs,
   buildSubagentPrompt,

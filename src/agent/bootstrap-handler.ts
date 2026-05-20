@@ -1,0 +1,139 @@
+/**
+ * Extracted handler for the bootstrap_session_state control request.
+ *
+ * Returns a single ControlResponse containing:
+ *  - resolved session metadata (agent_id, conversation_id, model, tools, memfs_enabled)
+ *  - initial history page (messages, next_before, has_more)
+ *  - pending approval flag
+ *  - optional wall-clock timings
+ *
+ * Accepting minimal backend/context interfaces keeps the handler fully testable
+ * without a real network or subprocess.
+ */
+
+import { randomUUID } from "node:crypto";
+import type { Backend, ConversationMessageListBody } from "@/backend";
+import type {
+  BootstrapSessionStatePayload,
+  BootstrapSessionStateRequest,
+  ControlResponse,
+} from "@/types/protocol";
+import { resolveListMessagesRoute } from "./list-messages-routing";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimal interfaces — only what the handler needs
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type BootstrapHandlerBackend = Pick<Backend, "listConversationMessages">;
+
+export interface BootstrapHandlerSessionContext {
+  agentId: string;
+  conversationId: string;
+  model: string | undefined;
+  tools: string[];
+  memfsEnabled: boolean;
+  sessionId: string;
+}
+
+export interface HandleBootstrapParams {
+  bootstrapReq: BootstrapSessionStateRequest;
+  sessionContext: BootstrapHandlerSessionContext;
+  requestId: string;
+  backend: BootstrapHandlerBackend;
+  /** Optional: flag indicating a pending approval is waiting. */
+  hasPendingApproval?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Execute a bootstrap_session_state control request and return the ControlResponse.
+ *
+ * Caller is responsible for serialising + writing to stdout:
+ *   console.log(JSON.stringify(await handleBootstrapSessionState(params)));
+ */
+export async function handleBootstrapSessionState(
+  params: HandleBootstrapParams,
+): Promise<ControlResponse> {
+  const {
+    bootstrapReq,
+    sessionContext,
+    requestId,
+    backend,
+    hasPendingApproval,
+  } = params;
+
+  const bootstrapStart = Date.now();
+
+  const limit = bootstrapReq.limit ?? 50;
+  const order = bootstrapReq.order ?? "desc";
+
+  try {
+    // Reuse the same routing logic as list_messages for consistency
+    const route = resolveListMessagesRoute(
+      { conversation_id: undefined, agent_id: sessionContext.agentId },
+      sessionContext.conversationId,
+      sessionContext.agentId,
+    );
+
+    const listStart = Date.now();
+    const page = await backend.listConversationMessages(route.conversationId, {
+      limit,
+      order,
+      ...(route.agentId ? { agent_id: route.agentId } : {}),
+    } as ConversationMessageListBody);
+    const items = page.getPaginatedItems();
+    const listEnd = Date.now();
+
+    const hasMore = items.length >= limit;
+    // When order=desc, newest first; oldest item is at the end of the array.
+    const oldestId =
+      items.length > 0
+        ? (items[items.length - 1] as { id?: string })?.id
+        : undefined;
+
+    const bootstrapEnd = Date.now();
+
+    const payload: BootstrapSessionStatePayload = {
+      agent_id: sessionContext.agentId,
+      conversation_id: sessionContext.conversationId,
+      model: sessionContext.model,
+      tools: sessionContext.tools,
+      memfs_enabled: sessionContext.memfsEnabled,
+      messages: items,
+      next_before: oldestId ?? null,
+      has_more: hasMore,
+      has_pending_approval: hasPendingApproval ?? false,
+      timings: {
+        resolve_ms: listStart - bootstrapStart,
+        list_messages_ms: listEnd - listStart,
+        total_ms: bootstrapEnd - bootstrapStart,
+      },
+    };
+
+    return {
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: requestId,
+        response: payload as unknown as Record<string, unknown>,
+      },
+      session_id: sessionContext.sessionId,
+      uuid: randomUUID(),
+    };
+  } catch (err) {
+    return {
+      type: "control_response",
+      response: {
+        subtype: "error",
+        request_id: requestId,
+        error:
+          err instanceof Error ? err.message : "bootstrap_session_state failed",
+      },
+      session_id: sessionContext.sessionId,
+      uuid: randomUUID(),
+    };
+  }
+}

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildStatusLinePayload,
   calculateContextPercentages,
-} from "@/cli/helpers/statusLinePayload";
+} from "@/cli/helpers/status-line-payload";
 
 describe("statusLinePayload", () => {
   test("builds payload with all fields", () => {

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 describe("queue edit wiring", () => {
   test("QueuedMessage type includes queueItemId", () => {
     const path = fileURLToPath(
-      new URL("../utils/messageQueueBridge.ts", import.meta.url),
+      new URL("../utils/message-queue-bridge.ts", import.meta.url),
     );
     const source = readFileSync(path, "utf-8");
 
@@ -14,7 +14,7 @@ describe("queue edit wiring", () => {
 
   test("toQueuedMsg propagates queueItemId", () => {
     const path = fileURLToPath(
-      new URL("../cli/helpers/queuedMessageParts.ts", import.meta.url),
+      new URL("../cli/helpers/queued-message-parts.ts", import.meta.url),
     );
     const source = readFileSync(path, "utf-8");
 
@@ -57,7 +57,7 @@ describe("queue edit wiring", () => {
 
   test("QueueRuntime has removeItem method", () => {
     const path = fileURLToPath(
-      new URL("../queue/queueRuntime.ts", import.meta.url),
+      new URL("../queue/queue-runtime.ts", import.meta.url),
     );
     const source = readFileSync(path, "utf-8");
 

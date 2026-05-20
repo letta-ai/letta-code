@@ -1,7 +1,7 @@
 import { Box } from "ink";
 import { memo } from "react";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { TestDirectory } from "@/test-utils/testFs";
-import { search_file_content } from "@/tools/impl/SearchFileContentGemini";
+import { TestDirectory } from "@/test-utils/test-fs";
+import { search_file_content } from "@/tools/impl/search-file-content-gemini";
 
 describe("SearchFileContent tool", () => {
   let testDir: TestDirectory;

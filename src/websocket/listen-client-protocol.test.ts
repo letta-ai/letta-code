@@ -7,20 +7,20 @@ import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
-import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { buildConversationMessagesCreateRequestBody } from "@/agent/message";
 import { models } from "@/agent/model";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
 } from "@/agent/personality";
-import { clearAllSubagents, registerSubagent } from "@/agent/subagentState";
+import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
-import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
-import { setSystemPromptDoctorState } from "@/cli/helpers/systemPromptWarning";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
+import { setSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import type { MessageQueueItem } from "@/queue/queueRuntime";
+import type { MessageQueueItem } from "@/queue/queue-runtime";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -34,7 +34,7 @@ import {
   getIndexRoot,
   searchFileIndex,
   setIndexRoot,
-} from "@/utils/fileIndex";
+} from "@/utils/file-index";
 import {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,

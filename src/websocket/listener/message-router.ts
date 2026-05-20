@@ -4,7 +4,7 @@ import type WebSocket from "ws";
 import {
   estimateSystemPromptTokensFromMemoryDir,
   setSystemPromptDoctorState,
-} from "@/cli/helpers/systemPromptWarning";
+} from "@/cli/helpers/system-prompt-warning";
 import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
@@ -17,7 +17,7 @@ import {
   handleTerminalKill,
   handleTerminalResize,
   handleTerminalSpawn,
-} from "@/websocket/terminalHandler";
+} from "@/websocket/terminal-handler";
 import { handleExecuteCommand } from "./commands";
 import {
   handleChannelsProtocolCommand,
@@ -549,7 +549,7 @@ export function createListenerMessageHandler(
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
             try {
               const { getMemoryFilesystemRoot } = await import(
-                "@/agent/memoryFilesystem"
+                "@/agent/memory-filesystem"
               );
               const memoryDir = getMemoryFilesystemRoot(agentId);
               const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);

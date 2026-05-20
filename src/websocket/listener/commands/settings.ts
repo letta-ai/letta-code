@@ -2,7 +2,7 @@ import type WebSocket from "ws";
 import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
-} from "@/cli/helpers/memoryReminder";
+} from "@/cli/helpers/memory-reminder";
 import { experimentManager } from "@/experiments/manager";
 import type {
   GetExperimentsCommand,

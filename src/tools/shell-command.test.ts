@@ -9,9 +9,9 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { shell_command } from "@/tools/impl/ShellCommand.js";
+import { shell_command } from "@/tools/impl/shell-command.js";
 import { LIMITS } from "@/tools/impl/truncation.js";
-import { createTempRuntimeScriptCommand } from "./runtimeScript.js";
+import { createTempRuntimeScriptCommand } from "./runtime-script.js";
 
 test("shell_command executes basic echo", async () => {
   const result = await shell_command({ command: "echo shell-basic" });

@@ -3,7 +3,7 @@ import {
   installChannelRuntime,
   isChannelRuntimeInstalled,
   loadChannelRuntimeModule,
-} from "@/channels/runtimeDeps";
+} from "@/channels/runtime-deps";
 
 export async function loadGrammyModule(): Promise<typeof import("grammy")> {
   return loadChannelRuntimeModule<typeof import("grammy")>(

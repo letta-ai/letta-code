@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { createIsolatedCliTestEnv } from "@/test-utils/testProcessEnv";
+import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 import type {
   ControlResponse,
   ErrorMessage,
@@ -16,7 +16,7 @@ import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
   summarizeRecentMessages,
-} from "./processDiagnostics";
+} from "./process-diagnostics";
 
 /**
  * Tests for --input-format stream-json bidirectional communication.

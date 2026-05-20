@@ -6,7 +6,7 @@ import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
-import { isActiveMemfsEnabled } from "@/agent/memoryRuntime";
+import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
 import type { SessionStats } from "@/agent/stats";
@@ -60,22 +60,22 @@ import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
   type ContextTracker,
   resetContextHistory,
-} from "@/cli/helpers/contextTracker";
-import type { ConversationSwitchContext } from "@/cli/helpers/conversationSwitchAlert";
+} from "@/cli/helpers/context-tracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getReflectionSettings,
   type ReflectionSettings,
-} from "@/cli/helpers/memoryReminder";
+} from "@/cli/helpers/memory-reminder";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
-} from "@/cli/helpers/toolNameMapping";
-import { isTaskTool } from "@/cli/helpers/toolNameMapping.js";
-import type { StatusLineState } from "@/cli/hooks/useConfigurableStatusLine";
+} from "@/cli/helpers/tool-name-mapping";
+import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import type { StatusLineState } from "@/cli/hooks/use-configurable-status-line";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -83,10 +83,10 @@ import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
-import type { QueuedMessage } from "@/utils/messageQueueBridge";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
-import { _readPlanFile } from "./planFile";
+import { _readPlanFile } from "./plan-file";
 import { StaticTranscript } from "./StaticTranscript";
 import type {
   ActiveOverlay,

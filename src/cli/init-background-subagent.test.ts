@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import {
   buildInitMessage,
   buildShallowInitPrompt,
-} from "@/cli/helpers/initCommand";
-import { readInteractiveAppSource } from "@/test-utils/readInteractiveAppSource";
+} from "@/cli/helpers/init-command";
+import { readInteractiveAppSource } from "@/test-utils/read-interactive-app-source";
 
 describe("init wiring", () => {
   const readSource = (relativePath: string) =>
@@ -38,7 +38,7 @@ describe("init wiring", () => {
   });
 
   test("initCommand.ts exports all helpers", () => {
-    const helperSource = readSource("./helpers/initCommand.ts");
+    const helperSource = readSource("./helpers/init-command.ts");
 
     expect(helperSource).toContain("export function hasActiveInitSubagent(");
     expect(helperSource).toContain("export function gatherInitGitContext()");

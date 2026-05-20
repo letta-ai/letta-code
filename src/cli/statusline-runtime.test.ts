@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { executeStatusLineCommand } from "@/cli/helpers/statusLineRuntime";
+import { executeStatusLineCommand } from "@/cli/helpers/status-line-runtime";
 
 const isWindows = process.platform === "win32";
 

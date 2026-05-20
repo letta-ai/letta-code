@@ -416,7 +416,7 @@ export async function updateAgentSystemPrompt(
 ): Promise<UpdateSystemPromptResult> {
   try {
     const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "@/agent/promptAssets"
+      "@/agent/prompt-assets"
     );
     const { settingsManager } = await import("@/settings-manager");
 
@@ -491,7 +491,7 @@ export async function updateAgentSystemPromptMemfs(
   try {
     const { settingsManager } = await import("@/settings-manager");
     const { isKnownPreset, buildSystemPrompt } = await import(
-      "@/agent/promptAssets"
+      "@/agent/prompt-assets"
     );
 
     const newMode = enableMemfs

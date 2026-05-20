@@ -31,10 +31,14 @@ export interface BackgroundTask {
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
 export const backgroundTasks = new Map<string, BackgroundTask>();
 let bashIdCounter = 1;
-export const getNextBashId = () => `bash_${bashIdCounter++}`;
+export function getNextBashId() {
+  return `bash_${bashIdCounter++}`;
+}
 
 let taskIdCounter = 1;
-export const getNextTaskId = () => `task_${taskIdCounter++}`;
+export function getNextTaskId() {
+  return `task_${taskIdCounter++}`;
+}
 
 interface BackgroundRetentionConfig {
   completedEntryTtlMs: number;

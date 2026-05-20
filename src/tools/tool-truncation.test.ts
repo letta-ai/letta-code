@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bash } from "@/tools/impl/Bash";
-import { bash_output } from "@/tools/impl/BashOutput";
-import { glob } from "@/tools/impl/Glob";
-import { grep } from "@/tools/impl/Grep";
-import { ls } from "@/tools/impl/LS";
-import { read } from "@/tools/impl/Read";
+import { bash } from "@/tools/impl/bash";
+import { bash_output } from "@/tools/impl/bash-output";
+import { glob } from "@/tools/impl/glob";
+import { grep } from "@/tools/impl/grep";
+import { ls } from "@/tools/impl/ls";
+import { read } from "@/tools/impl/read";
 import { LIMITS } from "@/tools/impl/truncation";
 
 describe("tool truncation integration tests", () => {

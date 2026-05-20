@@ -11,8 +11,8 @@ import {
   type McpConnectConfig,
   type McpTool,
   OauthStreamEvent,
-} from "@/cli/helpers/mcpOauth";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+} from "@/cli/helpers/mcp-oauth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { Text } from "./Text";

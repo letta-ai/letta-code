@@ -1,4 +1,4 @@
-import { buildGoalContinuationPrompt } from "@/cli/helpers/goalCommand";
+import { buildGoalContinuationPrompt } from "@/cli/helpers/goal-command";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type { RalphState } from "@/ralph/mode";
 import { settingsManager } from "@/settings-manager";

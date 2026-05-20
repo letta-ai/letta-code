@@ -1,16 +1,16 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { SkillSource } from "@/agent/skills";
-import { buildAgentInfo } from "@/cli/helpers/agentInfo";
+import { buildAgentInfo } from "@/cli/helpers/agent-info";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
   type ReflectionSettings,
   shouldFireStepCountTrigger,
-} from "@/cli/helpers/memoryReminder";
+} from "@/cli/helpers/memory-reminder";
 import {
   buildSessionContext,
   type SessionContextSource,
-} from "@/cli/helpers/sessionContext";
+} from "@/cli/helpers/session-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
@@ -93,7 +93,7 @@ async function buildSecretsInfoReminder(
   context.state.hasSentSecretsInfo = true;
 
   try {
-    const { listSecretNames } = await import("@/utils/secretsStore");
+    const { listSecretNames } = await import("@/utils/secrets-store");
     const names = listSecretNames();
     if (names.length === 0) {
       return null;
