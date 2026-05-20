@@ -191,7 +191,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
     <Box flexDirection="column" padding={1}>
       <AnimatedLogo color={colors.welcome.accent} animate={AUTH_LOGO_ANIMATE} />
       <Text> </Text>
-      <Text bold>Welcome to Letta Code.</Text>
+      <Text bold>Welcome to Letta Code</Text>
       <Text dimColor>
         Sign in to Constellation for remote access via chat.letta.com and other
         devices, or continue locally with agent state stored on this device.

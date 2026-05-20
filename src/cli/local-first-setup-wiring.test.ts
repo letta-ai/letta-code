@@ -24,7 +24,8 @@ describe("local-first setup wiring", () => {
     expect(source).toContain("letta backend api");
     expect(source).toContain("Agents you create are local to this");
     expect(source).toContain("chat.letta.com");
-    expect(source).toContain("Welcome to Letta Code.");
+    expect(source).toContain("Welcome to Letta Code");
+    expect(source).not.toContain("Welcome to Letta Code.");
     expect(source).not.toContain("Welcome to Letta Code!");
     expect(source).not.toContain("How do you want to start?");
     expect(source).not.toContain("Choose where your agents should live");
