@@ -125,6 +125,13 @@ export async function handleExecuteCommand(
         );
         break;
 
+      case "plan-mode":
+        output = await handlePlanModeCommand(
+          conversationRuntime,
+          trimmedArgs,
+        );
+        break;
+
       case "compact":
         output = await handleCompactCommand(conversationRuntime, trimmedArgs);
         break;
@@ -226,6 +233,50 @@ function compactHelpOutput(): string {
     "  /compact help              — show this help",
   ].join("\n");
 }
+
+async function handlePlanModeCommand(
+  conversationRuntime: ConversationRuntime,
+  args?: string,
+): Promise<string> {
+  const arg = args?.split(/\s+/)[0]?.toLowerCase();
+  const enabled = (() => {
+    if (arg === "on" || arg === "true" || arg === "enable") {
+      return true;
+    }
+    if (arg === "off" || arg === "false" || arg === "disable") {
+      return false;
+    }
+    return null;
+  })();
+
+  if (enabled === null) {
+    return "Usage: /plan-mode on|off";
+  }
+
+  settingsManager.setPlanModeEnabled(enabled);
+  await settingsManager.flush();
+
+  if (!enabled) {
+    const state = getOrCreateConversationPermissionModeStateRef(
+      conversationRuntime.listener,
+      conversationRuntime.agentId,
+      conversationRuntime.conversationId,
+    );
+    if (state.mode === "plan") {
+      state.mode = "bypassPermissions";
+      state.planFilePath = null;
+      state.modeBeforePlan = null;
+      persistPermissionModeMapForRuntime(conversationRuntime.listener);
+      emitListenerStatus(conversationRuntime.listener);
+    }
+  }
+
+  return enabled
+    ? "Plan mode enabled. /plan and plan-mode tools are now available."
+    : "Plan mode disabled. /plan is disabled and plan-mode tools are hidden.";
+}
+
+export const __testHandlePlanModeCommand = handlePlanModeCommand;
 
 /** /compact — Summarize conversation history through the active Backend. */
 async function handleCompactCommand(

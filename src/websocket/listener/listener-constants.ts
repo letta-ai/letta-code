@@ -11,6 +11,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "init",
   "remember",
   "goal",
+  "plan-mode",
   "compact",
   "set-max-context",
   "channels",

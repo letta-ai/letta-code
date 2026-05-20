@@ -940,6 +940,7 @@ describe("listen-client parseServerMessage", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("set-max-context");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("plan-mode");
 
     const command = parseServerMessage(
       Buffer.from(
@@ -958,6 +959,62 @@ describe("listen-client parseServerMessage", () => {
       command_id: "set-max-context",
       args: "10000 --override",
     });
+  });
+
+  test("runs remote plan-mode execute_command", async () => {
+    settingsManager.setPlanModeEnabled(false);
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    await handleExecuteCommand(
+      {
+        type: "execute_command",
+        command_id: "plan-mode",
+        request_id: "plan-mode-run-1",
+        runtime: { agent_id: "agent-1", conversation_id: "default" },
+        args: "on",
+      },
+      socket as unknown as WebSocket,
+      runtime,
+      {},
+    );
+
+    expect(settingsManager.isPlanModeEnabled()).toBe(true);
+    expect(socket.sentPayloads.join("\n")).toContain(
+      "Plan mode enabled. /plan and plan-mode tools are now available.",
+    );
+  });
+
+  test("returns usage for invalid remote plan-mode execute_command args", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    await handleExecuteCommand(
+      {
+        type: "execute_command",
+        command_id: "plan-mode",
+        request_id: "plan-mode-run-2",
+        runtime: { agent_id: "agent-1", conversation_id: "default" },
+        args: "maybe",
+      },
+      socket as unknown as WebSocket,
+      runtime,
+      {},
+    );
+
+    expect(socket.sentPayloads.join("\n")).toContain(
+      "Usage: /plan-mode on|off",
+    );
   });
 
   test("runs remote compact execute_command against backend", async () => {
