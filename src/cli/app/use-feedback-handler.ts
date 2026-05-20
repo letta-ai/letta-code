@@ -11,16 +11,16 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLogFile } from "@/utils/debug";
 import { getVersion } from "@/version";
-import type { CommandStarter, OverlayCommandConsumer } from "./types";
+import type { CommandHandle } from "@/cli/commands/runner";
+import type { ActiveOverlay, CommandStarter } from "./types";
 
 type FeedbackHandlerContext = {
   agentDescription: string | null;
   agentId: string;
   agentName: string | null;
   billingTier: string | null;
-  closeOverlay: () => void;
+  completeOverlay: (overlay: NonNullable<ActiveOverlay>) => CommandHandle | null;
   commandRunner: CommandStarter;
-  consumeOverlayCommand: OverlayCommandConsumer;
   currentModelId: string | null;
   sessionStatsRef: MutableRefObject<SessionStats>;
   withCommandLock: (fn: () => Promise<void>) => Promise<void>;
@@ -32,9 +32,8 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
     agentId,
     agentName,
     billingTier,
-    closeOverlay,
+    completeOverlay,
     commandRunner,
-    consumeOverlayCommand,
     currentModelId,
     sessionStatsRef,
     withCommandLock,
@@ -43,10 +42,7 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionStatsRef is stable; .current is read dynamically when feedback is submitted.
   const handleFeedbackSubmit = useCallback(
     async (message: string) => {
-      // Consume command handle BEFORE closing overlay; otherwise closeOverlay()
-      // finishes it as "Feedback dialog dismissed" and we emit a duplicate entry.
-      const overlayCommand = consumeOverlayCommand("feedback");
-      closeOverlay();
+      const overlayCommand = completeOverlay("feedback");
 
       await withCommandLock(async () => {
         const cmd =
@@ -135,9 +131,8 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
       currentModelId,
       billingTier,
       commandRunner,
-      consumeOverlayCommand,
+      completeOverlay,
       withCommandLock,
-      closeOverlay,
     ],
   );
 

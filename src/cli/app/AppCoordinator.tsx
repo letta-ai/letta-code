@@ -2343,6 +2343,38 @@ export function App({
     return pending.command;
   }, []);
 
+  // Combines startOverlayCommand + setActiveOverlay — these are always called together.
+  const openOverlay = useCallback(
+    (
+      overlay: NonNullable<ActiveOverlay>,
+      input: string,
+      openingOutput: string,
+      dismissOutput: string,
+    ) => {
+      const cmd = startOverlayCommand(overlay, input, openingOutput, dismissOutput);
+      setActiveOverlay(overlay);
+      return cmd;
+    },
+    [startOverlayCommand],
+  );
+
+  // Combines consumeOverlayCommand + the UI-reset side of closeOverlay, but WITHOUT
+  // calling cmd.finish(dismissOutput). Use this when the overlay completed successfully
+  // and the caller will finish the command with a real result. Contrast with
+  // closeOverlay() (cancel path) which does finish with the dismiss message.
+  const completeOverlay = useCallback(
+    (overlay: NonNullable<ActiveOverlay>) => {
+      const cmd = consumeOverlayCommand(overlay);
+      setActiveOverlay(null);
+      setFeedbackPrefill("");
+      setSearchQuery("");
+      setModelSelectorOptions({});
+      setModelReasoningPrompt(null);
+      return cmd;
+    },
+    [consumeOverlayCommand],
+  );
+
   useEffect(() => {
     const pending = pendingOverlayCommandRef.current;
     if (!pending || pending.overlay !== activeOverlay) {
@@ -3713,7 +3745,7 @@ export function App({
     sessionHooksRanRef,
     sessionStartFeedbackRef,
     sessionStatsRef,
-    setActiveOverlay,
+    openOverlay,
     setAgentDescription,
     setAgentState,
     setCommandRunning,
@@ -3745,7 +3777,6 @@ export function App({
     setUiRalphActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
-    startOverlayCommand,
     streaming,
     systemInfoReminderEnabled,
     systemPromptRecompileByConversationRef:
@@ -4050,9 +4081,8 @@ export function App({
     agentId,
     agentName,
     billingTier,
-    closeOverlay,
+    completeOverlay,
     commandRunner,
-    consumeOverlayCommand,
     currentModelId,
     sessionStatsRef,
     withCommandLock,
@@ -4434,7 +4464,7 @@ export function App({
       closeOverlay={closeOverlay}
       columns={columns}
       commandRunner={commandRunner}
-      consumeOverlayCommand={consumeOverlayCommand}
+      completeOverlay={completeOverlay}
       contextTrackerRef={contextTrackerRef}
       continueSession={continueSession}
       conversationId={conversationId}
@@ -4545,7 +4575,7 @@ export function App({
       showApprovalPreview={showApprovalPreview}
       showCompactionsEnabled={showCompactionsEnabled}
       showExitStats={showExitStats}
-      startOverlayCommand={startOverlayCommand}
+      openOverlay={openOverlay}
       staticItems={staticItems}
       staticRenderEpoch={staticRenderEpoch}
       statusLine={statusLine}
