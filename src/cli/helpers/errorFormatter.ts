@@ -170,6 +170,27 @@ function hasErrorReason(
   return allReasons.includes(reason.toLowerCase());
 }
 
+function getReasonText(e: APIError): string | undefined {
+  const errorBody = e.error;
+  if (!errorBody || typeof errorBody !== "object") {
+    return undefined;
+  }
+
+  const body = errorBody as Record<string, unknown>;
+  if (typeof body.reason_text === "string") {
+    return body.reason_text;
+  }
+
+  if (body.error && typeof body.error === "object") {
+    const nested = body.error as Record<string, unknown>;
+    if (typeof nested.reason_text === "string") {
+      return nested.reason_text;
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Check if the error is a rate limit error (429 with exceeded-quota)
  * Returns the timeToQuotaResetMs if it's a rate limit error, undefined otherwise
@@ -721,13 +742,21 @@ export function formatErrorDetails(
       return `${resourceLimitMsg}\nUpgrade at: ${LETTA_USAGE_URL}\nDelete ${resourceType} at: ${LETTA_AGENTS_URL}`;
     }
 
-    const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
-    if (lettaHostedQuotaMsg) return lettaHostedQuotaMsg;
-
     // Check for credit exhaustion error - provide a friendly message
     if (isCreditExhaustedError(e, reasons)) {
+      const reasonText = getReasonText(e);
+      if (reasonText) {
+        return reasonText;
+      }
+
+      const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
+      if (lettaHostedQuotaMsg) return lettaHostedQuotaMsg;
+
       return `Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.`;
     }
+
+    const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
+    if (lettaHostedQuotaMsg) return lettaHostedQuotaMsg;
 
     const tierUsageLimitMsg = getTierUsageLimitMessage(reasons);
     if (tierUsageLimitMsg) return tierUsageLimitMsg;
