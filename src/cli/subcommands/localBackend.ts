@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
-import { getLocalBackendStorageDir } from "../../backend/local/paths";
-import { migrateLocalBackendTranscripts } from "../../backend/local/transcriptMigration";
+import { getLocalBackendStorageDir } from "@/backend/local/paths";
+import { migrateLocalBackendTranscripts } from "@/backend/local/transcriptMigration";
 
 function printUsage(): void {
   console.log(

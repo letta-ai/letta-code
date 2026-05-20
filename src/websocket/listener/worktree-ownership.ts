@@ -3,8 +3,8 @@ import {
   extractDashCArgument,
   splitShellSegmentsAllowCommandSubstitution,
   tokenizeShellWords,
-} from "../../permissions/shellAnalysis";
-import { getRuntimeContext } from "../../runtime-context";
+} from "@/permissions/shellAnalysis";
+import { getRuntimeContext } from "@/runtime-context";
 import { getActiveRuntime, getConversationRuntime } from "./runtime";
 import type { ConversationRuntime } from "./types";
 

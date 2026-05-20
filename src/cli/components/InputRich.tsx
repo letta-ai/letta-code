@@ -18,28 +18,28 @@ import {
   useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
-import type { ModelReasoningEffort } from "../../agent/model";
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
-import {
-  ELAPSED_DISPLAY_THRESHOLD_MS,
-  TOKEN_DISPLAY_THRESHOLD,
-} from "../../constants";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { buildChatUrl } from "../helpers/appUrls.js";
-import { bytesToTokens, formatCompact } from "../helpers/format";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { formatGoalStatusIndicator } from "../helpers/goalCommand";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   getActiveBackgroundAgents,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
-} from "../helpers/subagentState.js";
-import { getRandomThinkingTip } from "../helpers/thinkingMessages";
+} from "@/agent/subagentState.js";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { buildChatUrl } from "@/cli/helpers/appUrls.js";
+import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { formatGoalStatusIndicator } from "@/cli/helpers/goalCommand";
+import { getRandomThinkingTip } from "@/cli/helpers/thinkingMessages";
+import {
+  ELAPSED_DISPLAY_THRESHOLD_MS,
+  TOKEN_DISPLAY_THRESHOLD,
+} from "@/constants";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { ralphMode } from "@/ralph/mode";
+import { settingsManager } from "@/settings-manager";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -391,14 +391,12 @@ function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
 
 function StatusLineContent({
   text,
-  _padding,
   modeName,
   modeColor,
   modeGlyph,
   showExitHint,
 }: {
   text: string;
-  _padding: number;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
@@ -451,10 +449,11 @@ const InputFooter = memo(function InputFooter({
   rightColumnWidth,
   statusLineText,
   statusLineRight,
-  statusLinePadding,
   footerNotification,
   goalStatusText,
   hasQueuedMessages = false,
+  queueMode = "immediate",
+  deferModeSupported = false,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -473,10 +472,11 @@ const InputFooter = memo(function InputFooter({
   rightColumnWidth: number;
   statusLineText?: string;
   statusLineRight?: string;
-  statusLinePadding?: number;
   footerNotification?: string | null;
   goalStatusText?: string | null;
   hasQueuedMessages?: boolean;
+  queueMode?: "immediate" | "defer";
+  deferModeSupported?: boolean;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -621,7 +621,6 @@ const InputFooter = memo(function InputFooter({
         ) : statusLineText ? (
           <StatusLineContent
             text={statusLineText}
-            _padding={statusLinePadding ?? 0}
             modeName={modeName}
             modeColor={modeColor}
             modeGlyph={modeGlyph}
@@ -642,7 +641,13 @@ const InputFooter = memo(function InputFooter({
             {footerNotification}
           </Text>
         ) : hasQueuedMessages ? (
-          <Text dimColor>press ↑ to edit queued message</Text>
+          <Text dimColor>
+            {deferModeSupported
+              ? queueMode === "defer"
+                ? "press ↑ to edit queued message · ctrl+d to release queue"
+                : "press ↑ to edit queued message · ctrl+d to hold queue until done"
+              : "press ↑ to edit queued message"}
+          </Text>
         ) : (
           <Text dimColor>Press / for commands</Text>
         )}
@@ -969,6 +974,9 @@ export function Input({
   onExit,
   onInterrupt,
   onCtrlO,
+  onCtrlD,
+  queueMode = "immediate",
+  deferModeSupported = false,
   interruptRequested = false,
   agentId,
   agentName,
@@ -993,7 +1001,6 @@ export function Input({
   shouldAnimate = true,
   statusLineText,
   statusLineRight,
-  statusLinePadding = 0,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
@@ -1015,6 +1022,9 @@ export function Input({
   onExit?: () => void;
   onInterrupt?: () => void;
   onCtrlO?: () => void;
+  onCtrlD?: () => void;
+  queueMode?: "immediate" | "defer";
+  deferModeSupported?: boolean;
   interruptRequested?: boolean;
   agentId?: string;
   agentName?: string | null;
@@ -1039,7 +1049,6 @@ export function Input({
   shouldAnimate?: boolean;
   statusLineText?: string;
   statusLineRight?: string;
-  statusLinePadding?: number;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -1218,6 +1227,7 @@ export function Input({
       const timer = setTimeout(() => setCursorPos(undefined), 0);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [cursorPos]);
 
   // Reset bash exit arming when leaving bash mode
@@ -1330,6 +1340,17 @@ export function Input({
   });
 
   useInput((input, key) => {
+    // Handle CTRL-D to toggle queue defer mode — works even while agent is running
+    // since that's exactly when messages are queued and the toggle is useful.
+    if (
+      input === "d" &&
+      key.ctrl &&
+      (messageQueue?.filter((m) => m.kind === "user").length ?? 0) > 0
+    ) {
+      if (onCtrlD) onCtrlD();
+      return;
+    }
+
     if (!interactionEnabled) return;
 
     // Handle CTRL-O to expand/collapse the last tool call output
@@ -1836,7 +1857,7 @@ export function Input({
       <>
         {/* Queue display - show whenever there are queued messages */}
         {messageQueue && messageQueue.length > 0 && (
-          <QueuedMessages messages={messageQueue} />
+          <QueuedMessages messages={messageQueue} queueMode={queueMode} />
         )}
 
         {interactionEnabled ? (
@@ -1935,13 +1956,14 @@ export function Input({
                 rightColumnWidth={footerRightColumnWidth}
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
-                statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
                 goalStatusText={goalStatusText}
                 hasQueuedMessages={
                   (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
                   0
                 }
+                queueMode={queueMode}
+                deferModeSupported={deferModeSupported}
               />
             )}
           </Box>
@@ -1989,12 +2011,14 @@ export function Input({
     inputChromeHeight,
     statusLineText,
     statusLineRight,
-    statusLinePadding,
+
     footerNotification,
     goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,
+    queueMode,
+    deferModeSupported,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state

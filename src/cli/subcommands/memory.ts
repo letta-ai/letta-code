@@ -2,13 +2,9 @@ import { cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import {
-  getMemoryGitStatus,
-  isGitRepo,
-  pullMemory,
-} from "../../agent/memoryGit";
-import { isLocalBackendEnvEnabled } from "../../backend/local/paths";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memoryGit";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { runMemoryTokensAction } from "./memoryTokens";
 
 function printUsage(): void {

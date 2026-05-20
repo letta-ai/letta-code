@@ -1,6 +1,6 @@
-import type { ReflectionSettings } from "../helpers/memoryReminder";
-import { isReflectionSubagentActive } from "../helpers/reflectionGate";
-import { getSubagents } from "../helpers/subagentState";
+import { getSubagents } from "@/agent/subagentState";
+import type { ReflectionSettings } from "@/cli/helpers/memoryReminder";
+import { isReflectionSubagentActive } from "@/cli/helpers/reflectionGate";
 
 export function formatReflectionSettings(settings: ReflectionSettings): string {
   if (settings.trigger === "off") {

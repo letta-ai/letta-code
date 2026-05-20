@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { settingsManager } from "../../settings-manager";
-import { commands } from "../commands/registry";
-import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { commands } from "@/cli/commands/registry";
+import { useAutocompleteNavigation } from "@/cli/hooks/useAutocompleteNavigation";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { settingsManager } from "@/settings-manager";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
@@ -65,7 +65,7 @@ export function SlashCommandAutocomplete({
 
   // Load custom commands once on mount
   useEffect(() => {
-    import("../commands/custom.js").then(({ getCustomCommands }) => {
+    import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         const matches: CommandMatch[] = customs.map((cmd) => ({
           cmd: `/${cmd.id}`,
@@ -84,10 +84,10 @@ export function SlashCommandAutocomplete({
     (async () => {
       try {
         const { discoverClientSideSkills } = await import(
-          "../../agent/clientSkills"
+          "@/agent/clientSkills"
         );
-        const { getSkillSources } = await import("../../agent/context");
-        const { isUserInvocableSkill } = await import("../../agent/skills");
+        const { getSkillSources } = await import("@/agent/context");
+        const { isUserInvocableSkill } = await import("@/agent/skills");
         const discovery = await discoverClientSideSkills({
           agentId,
           skillSources: getSkillSources(),

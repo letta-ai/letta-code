@@ -1,5 +1,5 @@
 import { relative } from "node:path";
-import { unwrapShellLauncherCommand } from "../../permissions/shell-command-normalization.js";
+import { unwrapShellLauncherCommand } from "@/permissions/shell-command-normalization.js";
 
 export type ShellSemanticDisplay = {
   kind: "read" | "list" | "search" | "run";
@@ -12,15 +12,6 @@ type SequenceContext = {
   contextPath?: string;
   loopVariables: Map<string, string>;
 };
-
-function formatSummaryFields(
-  fields: Array<[label: string, value: string | number | undefined]>,
-): string {
-  return fields
-    .filter(([, value]) => value !== undefined && value !== "")
-    .map(([label, value]) => `${label}: ${String(value)}`)
-    .join(", ");
-}
 
 function quoteSummaryValue(value: string): string {
   return JSON.stringify(value);

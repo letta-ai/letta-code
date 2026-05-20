@@ -1,12 +1,12 @@
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { normalizeApprovalResultsForPersistence } from "../../agent/approval-result-normalization";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { LIMITS, truncateByChars } from "../../tools/impl/truncation";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { normalizeApprovalResultsForPersistence } from "@/agent/approval-result-normalization";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
 import type {
   ClientToolEndMessage,
   ClientToolStartMessage,
-} from "../../types/protocol_v2";
-import { isDebugEnabled } from "../../utils/debug";
+} from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import { collectApprovalResultToolCallIds } from "./approval";
 import {
   createLifecycleMessageBase,

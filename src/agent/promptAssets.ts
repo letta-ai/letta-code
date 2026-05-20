@@ -160,7 +160,7 @@ export async function validateSystemPromptPreset(
   if (validPresets.includes(id)) return;
 
   if (opts?.allowSubagentNames) {
-    const { getAllSubagentConfigs } = await import("./subagents");
+    const { getAllSubagentConfigs } = await import("@/agent/subagents");
     const subagentConfigs = await getAllSubagentConfigs();
     if (subagentConfigs[id]) return;
 
@@ -228,7 +228,7 @@ export async function resolveSystemPrompt(
     return matchedPrompt.content;
   }
 
-  const { getAllSubagentConfigs } = await import("./subagents");
+  const { getAllSubagentConfigs } = await import("@/agent/subagents");
   const subagentConfigs = await getAllSubagentConfigs();
   const matchedSubagent = subagentConfigs[systemPromptPreset];
   if (matchedSubagent) {

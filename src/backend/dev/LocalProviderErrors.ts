@@ -3,7 +3,7 @@ import {
   isQuotaLimitErrorDetail,
   parseRetryAfterHeaderMs,
   shouldRetryPreStreamTransientError,
-} from "../../agent/turn-recovery-policy";
+} from "@/agent/turn-recovery-policy";
 import { isContextWindowOverflowError } from "./contextWindowOverflow";
 
 export interface LocalProviderErrorInfo {

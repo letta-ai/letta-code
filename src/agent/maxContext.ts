@@ -1,5 +1,5 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getBackend } from "../backend";
+import { getBackend } from "@/backend";
 import { getModelInfo, models } from "./model";
 
 export const MIN_CONTEXT_WINDOW_TOKENS = 30_000;

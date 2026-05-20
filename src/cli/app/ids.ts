@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Buffers } from "../helpers/accumulator";
+import type { Buffers } from "@/cli/helpers/accumulator";
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 export function uid(prefix: string) {

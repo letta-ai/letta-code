@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { refreshDynamicChannelToolsInLoadedRegistry } from "../tools/manager";
+import { refreshDynamicChannelToolsInLoadedRegistry } from "@/tools/manager";
 import {
   channelPluginConfigShouldRefreshDisplayName,
   normalizeChannelAccountPatch,

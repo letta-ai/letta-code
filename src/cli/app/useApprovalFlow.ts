@@ -15,43 +15,43 @@ import {
 import {
   type ApprovalResult,
   getDisplayableToolReturn,
-} from "../../agent/approval-execution";
-import type { SessionStats } from "../../agent/stats";
-import type { ApprovalContext } from "../../permissions/analyzer";
+} from "@/agent/approval-execution";
+import type { SessionStats } from "@/agent/stats";
+import {
+  type Buffers,
+  markIncompleteToolsAsCancelled,
+  onChunk,
+  setToolCallsRunning,
+} from "@/cli/helpers/accumulator";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { parseMemoryPreference } from "@/cli/helpers/memoryReminder";
+import {
+  buildQueuedContentParts,
+  buildQueuedUserText,
+  getQueuedNotificationSummaries,
+} from "@/cli/helpers/queuedMessageParts";
+import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { flushEligibleLinesBeforeReentry } from "@/cli/helpers/subagentTurnStart";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+import type { ApprovalContext } from "@/permissions/analyzer";
 import {
   DEFAULT_PERMISSION_MODE,
   type PermissionMode,
   permissionMode,
-} from "../../permissions/mode";
+} from "@/permissions/mode";
 import {
   analyzeToolApproval,
   checkToolPermission,
   executeTool,
   savePermissionRule,
   type ToolExecutionResult,
-} from "../../tools/manager";
-import type { PreparedScopeToolContext } from "../../tools/toolset";
-import { debugLog } from "../../utils/debug";
-import {
-  type Buffers,
-  markIncompleteToolsAsCancelled,
-  onChunk,
-  setToolCallsRunning,
-} from "../helpers/accumulator";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { formatErrorDetails } from "../helpers/errorFormatter";
-import { parseMemoryPreference } from "../helpers/memoryReminder";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
-import { generatePlanFilePath } from "../helpers/planName";
-import {
-  buildQueuedContentParts,
-  buildQueuedUserText,
-  getQueuedNotificationSummaries,
-} from "../helpers/queuedMessageParts";
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
-import type { ApprovalRequest } from "../helpers/stream";
-import { flushEligibleLinesBeforeReentry } from "../helpers/subagentTurnStart";
-import { getRandomThinkingVerb } from "../helpers/thinkingMessages";
+} from "@/tools/manager";
+import type { PreparedScopeToolContext } from "@/tools/toolset";
+import { debugLog } from "@/utils/debug";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
+import { generatePlanFilePath } from "@/utils/planName";
 
 import { buildApprovalBatchKey } from "./approvalDiffs";
 import { getQuestionsFromApproval } from "./approvalQuestions";
@@ -97,6 +97,7 @@ type ApprovalFlowContext = {
     opts?: { deferToolCalls?: boolean },
   ) => void;
   consumeQueuedMessages: () => QueuedMessage[] | null;
+  queueModeRef: MutableRefObject<"immediate" | "defer">;
   conversationGenerationRef: MutableRefObject<number>;
   conversationId: string;
   conversationIdRef: MutableRefObject<string>;
@@ -164,6 +165,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     commandRunner,
     commitEligibleLines,
     consumeQueuedMessages,
+    queueModeRef,
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
@@ -452,7 +454,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
         // Execute approved tools and format results using shared function
         const { executeApprovalBatch } = await import(
-          "../../agent/approval-execution"
+          "@/agent/approval-execution"
         );
         sessionStatsRef.current.startTrajectory();
         const toolRunStart = performance.now();
@@ -572,7 +574,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           waitingForQueueCancelRef.current = false;
           queueSnapshotRef.current = [];
         } else {
-          const queuedItemsToAppend = consumeQueuedMessages();
+          const queuedItemsToAppend =
+            queueModeRef.current === "immediate"
+              ? consumeQueuedMessages()
+              : null;
           const queuedNotifications = queuedItemsToAppend
             ? getQueuedNotificationSummaries(queuedItemsToAppend)
             : [];
@@ -888,7 +893,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           try {
             // Execute ALL decisions together
             const { executeApprovalBatch } = await import(
-              "../../agent/approval-execution"
+              "@/agent/approval-execution"
             );
             const approvalToolContextId =
               approvalToolContextIdRef.current ??

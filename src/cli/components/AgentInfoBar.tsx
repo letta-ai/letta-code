@@ -2,12 +2,12 @@ import { Box } from "ink";
 import Link from "ink-link";
 import { memo, useMemo } from "react";
 import stringWidth from "string-width";
-import type { ModelReasoningEffort } from "../../agent/model";
-import { DEFAULT_AGENT_NAME } from "../../constants";
-import { settingsManager } from "../../settings-manager";
-import { getVersion } from "../../version";
-import { buildAppUrl, buildChatUrl } from "../helpers/appUrls";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { ModelReasoningEffort } from "@/agent/model";
+import { buildAppUrl, buildChatUrl } from "@/cli/helpers/appUrls";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { DEFAULT_AGENT_NAME } from "@/constants";
+import { settingsManager } from "@/settings-manager";
+import { getVersion } from "@/version";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

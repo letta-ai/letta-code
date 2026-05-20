@@ -270,7 +270,7 @@ export class APIBackend implements Backend {
     if (this.getApiClientOverride) {
       return this.getApiClientOverride();
     }
-    const { getClient: resolveClient } = await import("./api/client");
+    const { getClient: resolveClient } = await import("@/backend/api/client");
     return resolveClient();
   }
 
@@ -423,7 +423,7 @@ export class APIBackend implements Backend {
     if (this.forkConversationOverride) {
       return this.forkConversationOverride(conversationId, options);
     }
-    const { forkConversation } = await import("./api/conversations");
+    const { forkConversation } = await import("@/backend/api/conversations");
     return forkConversation(conversationId, options);
   }
 }
@@ -489,9 +489,13 @@ function devBackendStoreOptions() {
 }
 
 async function createPiDevBackend(): Promise<Backend> {
-  const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-  const { PiStreamAdapter } = await import("./dev/PiStreamAdapter");
-  const { ProviderTurnExecutor } = await import("./dev/ProviderTurnExecutor");
+  const { FakeHeadlessBackend } = await import(
+    "@/backend/dev/FakeHeadlessBackend"
+  );
+  const { PiStreamAdapter } = await import("@/backend/dev/PiStreamAdapter");
+  const { ProviderTurnExecutor } = await import(
+    "@/backend/dev/ProviderTurnExecutor"
+  );
   return new FakeHeadlessBackend(
     "agent-fake-headless",
     new ProviderTurnExecutor(new PiStreamAdapter({})),
@@ -502,7 +506,9 @@ async function createPiDevBackend(): Promise<Backend> {
 export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/FakeHeadlessBackend"
+      );
       backend = new FakeHeadlessBackend(
         undefined,
         undefined,
@@ -511,9 +517,11 @@ export async function configureDevBackend(name: string): Promise<void> {
       return;
     }
     case "fake-headless-tool-call": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/FakeHeadlessBackend"
+      );
       const { DeterministicToolCallExecutor } = await import(
-        "./dev/HeadlessTurnExecutor"
+        "@/backend/dev/HeadlessTurnExecutor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
@@ -523,9 +531,11 @@ export async function configureDevBackend(name: string): Promise<void> {
       return;
     }
     case "fake-headless-provider": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/FakeHeadlessBackend"
+      );
       const { ProviderTurnExecutor } = await import(
-        "./dev/ProviderTurnExecutor"
+        "@/backend/dev/ProviderTurnExecutor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",

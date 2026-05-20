@@ -2,8 +2,8 @@ import { execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { getBackend } from "../backend";
-import { settingsManager } from "../settings-manager";
+import { getBackend } from "@/backend";
+import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
 import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
@@ -457,7 +457,7 @@ export async function enableMemfsForCreatedAgent(params: {
   const { agentId, agentTags } = params;
 
   try {
-    const { getClient } = await import("../backend/api/client");
+    const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
     const tags = agentTags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
@@ -477,8 +477,10 @@ export async function createAgentForPersonality(params: {
   description?: string;
   model?: string;
   tags?: string[];
-}): Promise<Awaited<ReturnType<typeof import("./create")["createAgent"]>>> {
-  const { createAgent } = await import("./create");
+}): Promise<
+  Awaited<ReturnType<typeof import("@/agent/create")["createAgent"]>>
+> {
+  const { createAgent } = await import("@/agent/create");
   const result = await createAgent(
     await buildCreateAgentOptionsForPersonality(params),
   );

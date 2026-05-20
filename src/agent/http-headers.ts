@@ -1,1 +1,1 @@
-export * from "../backend/api/http-headers";
+export * from "@/backend/api/http-headers";

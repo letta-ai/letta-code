@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { migratePermissionMode } from "../permissions/mode";
+import { migratePermissionMode } from "@/permissions/mode";
 import type {
   ChannelConfig,
   ChannelDefaultPermissionMode,

@@ -3,7 +3,7 @@
  * Uses the /v1/tools/mcp/servers/connect SSE streaming endpoint.
  */
 
-import { apiFetch, getApiRequestConfig } from "../../backend/api/request";
+import { apiFetch, getApiRequestConfig } from "@/backend/api/request";
 
 // Match backend's OauthStreamEvent enum
 export enum OauthStreamEvent {

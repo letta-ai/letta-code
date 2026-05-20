@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { migratePermissionMode } from "../permissions/mode";
+import { migratePermissionMode } from "@/permissions/mode";
 import {
   getChannelAccountsPath,
   getChannelDir,

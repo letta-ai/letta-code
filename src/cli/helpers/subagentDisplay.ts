@@ -3,8 +3,8 @@
  *
  * Used by both SubagentGroupDisplay (live) and SubagentGroupStatic (frozen).
  */
-import { getModelShortName, resolveModel } from "../../agent/model";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
+import { getModelShortName, resolveModel } from "@/agent/model";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { formatCompact } from "./format";
 
 /**

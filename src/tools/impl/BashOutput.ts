@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   backgroundProcesses,
   backgroundTasks,

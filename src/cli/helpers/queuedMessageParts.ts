@@ -3,11 +3,11 @@ import type {
   DequeuedBatch,
   MessageQueueItem,
   TaskNotificationQueueItem,
-} from "../../queue/queueRuntime";
-import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
-import type { QueuedMessage } from "./messageQueueBridge";
+} from "@/queue/queueRuntime";
+import { mergeQueuedTurnInput } from "@/queue/turnQueueRuntime";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
+import { extractTaskNotificationsForDisplay } from "@/utils/taskNotifications";
 import { buildMessageContentFromDisplay } from "./pasteRegistry";
-import { extractTaskNotificationsForDisplay } from "./taskNotifications";
 
 export function getQueuedNotificationSummaries(
   queued: QueuedMessage[],

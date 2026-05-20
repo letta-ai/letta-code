@@ -9,14 +9,14 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getBackend } from "../../backend";
-import { getErrorMessage } from "../../utils/error";
+import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "@/agent/memory";
+import { getBackend } from "@/backend";
+import { getErrorMessage } from "@/utils/error";
 import {
   getStringField,
   parseCommaSeparatedList,
   parseFrontmatter,
-} from "../../utils/frontmatter";
-import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
+} from "@/utils/frontmatter";
 // Built-in subagent definitions (embedded at build time)
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";

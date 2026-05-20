@@ -2,7 +2,7 @@ import {
   type ByokProvider,
   type ByokProviderId,
   getProviderConfig,
-} from "../../providers/byok-providers";
+} from "@/providers/byok-providers";
 
 export type ConnectProviderCanonical =
   | "chatgpt"
