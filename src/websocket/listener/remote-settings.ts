@@ -18,6 +18,8 @@ export interface PersistedPermissionModeState {
 
 export interface RemoteSettings {
   cwdMap?: Record<string, string>;
+  /** Per-device default working directory, keyed by deviceId. Survives restarts. */
+  deviceCwdMap?: Record<string, string>;
   permissionModeMap?: Record<string, PersistedPermissionModeState>;
 }
 
@@ -62,6 +64,17 @@ export function loadRemoteSettings(): RemoteSettings {
       }
     }
     loaded.cwdMap = validCwdMap;
+  }
+
+  // Validate deviceCwdMap entries — filter out stale paths.
+  if (loaded.deviceCwdMap) {
+    const validDeviceCwdMap: Record<string, string> = {};
+    for (const [key, value] of Object.entries(loaded.deviceCwdMap)) {
+      if (typeof value === "string" && existsSync(value)) {
+        validDeviceCwdMap[key] = value;
+      }
+    }
+    loaded.deviceCwdMap = validDeviceCwdMap;
   }
 
   // One-time migration: load legacy cwd-cache.json if cwdMap not present.

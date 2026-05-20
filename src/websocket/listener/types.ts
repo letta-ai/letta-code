@@ -85,6 +85,7 @@ export interface ModeChangePayload {
 export interface ChangeCwdMessage {
   agentId?: string | null;
   conversationId?: string | null;
+  deviceId?: string | null;
   cwd: string;
 }
 
@@ -192,6 +193,8 @@ export type ListenerRuntime = {
   reminderState: SharedReminderState;
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
+  /** Per-device default working directory. Keyed by deviceId. */
+  deviceDefaultCwdByDeviceId: Map<string, string>;
   /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
   permissionModeByConversation: Map<
     string,
@@ -206,6 +209,8 @@ export type ListenerRuntime = {
   queuedSystemPromptRecompileByConversation: Set<string>;
   connectionId: string | null;
   connectionName: string | null;
+  /** Device ID of the connected desktop client, if available. */
+  deviceId: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
   approvalRuntimeKeyByRequestId: Map<string, string>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */

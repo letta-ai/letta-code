@@ -149,6 +149,7 @@ export async function handleReflectionSettingsCommand(
     listener,
     parsed.runtime.agent_id,
     parsed.runtime.conversation_id,
+    listener.deviceId,
   );
 
   if (parsed.type === "get_reflection_settings") {

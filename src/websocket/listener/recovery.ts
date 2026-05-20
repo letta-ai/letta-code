@@ -500,6 +500,7 @@ export async function resolveRecoveredApprovalResponse(
     runtime.listener,
     recovered.agentId,
     recovered.conversationId,
+    runtime.listener.deviceId,
   );
   const respondedEntry = recovered.approvalsByRequestId.get(requestId);
   if (
