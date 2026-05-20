@@ -201,6 +201,7 @@ describe("PiStreamAdapter", () => {
     }
 
     expect(capturedContext).toBeDefined();
+    // biome-ignore lint/style/noNonNullAssertion: capturedContext is asserted defined on the line above
     const messages = capturedContext!.messages;
     // The trailing assistant message should be stripped
     expect(messages.at(-1)?.role).toBe("user");
