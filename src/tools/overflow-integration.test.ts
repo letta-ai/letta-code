@@ -73,7 +73,7 @@ describe("overflow integration tests", () => {
       // Search for a common pattern that will have many results
       const result = await grep({
         pattern: "test",
-        path: "src/tests",
+        path: "src/cli",
         output_mode: "files_with_matches",
       });
 

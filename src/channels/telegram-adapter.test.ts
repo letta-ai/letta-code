@@ -109,7 +109,7 @@ class FakeBot {
   }
 }
 
-mock.module("../../channels/telegram/runtime", () => ({
+mock.module("./telegram/runtime", () => ({
   ensureTelegramRuntimeInstalled: async () => false,
   installTelegramRuntime: async () => {},
   isTelegramRuntimeInstalled: () => true,

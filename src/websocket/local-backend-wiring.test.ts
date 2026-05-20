@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 function source(relativePath: string): string {
   return readFileSync(
-    fileURLToPath(new URL(`../../${relativePath}`, import.meta.url)),
+    fileURLToPath(new URL(`../${relativePath}`, import.meta.url)),
     "utf-8",
   );
 }

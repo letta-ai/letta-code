@@ -171,7 +171,7 @@ jobs:
       - name: Run tests (extended timeout)
         # Unit tests must pass for fork PRs (no secrets). Keep API-dependent tests
         # in a separate gated step.
-        run: bun test src --timeout 15000
+        run: bun test $(find src -name "*.test.ts" -o -name "*.test.tsx" | grep -v "integration-tests" | tr '\n' ' ') --timeout 15000
 
       - name: Run integration tests (API)
         # Only run on push to main or PRs from the same repo (not forks, to protect secrets)
