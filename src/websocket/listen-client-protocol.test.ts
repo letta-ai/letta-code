@@ -926,7 +926,7 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "set_experiment",
           request_id: "experiment-set-1",
-          experiment_id: "desktop_conversation_bootstrap",
+          experiment_id: "node",
           enabled: true,
         }),
       ),
@@ -2441,11 +2441,6 @@ describe("listen-client experiment command handling", () => {
         request_id: "experiments-get-1",
         success: true,
         experiments: expect.arrayContaining([
-          expect.objectContaining({
-            id: "desktop_conversation_bootstrap",
-            enabled: false,
-            source: "default",
-          }),
           expect.objectContaining({
             id: "node",
             enabled: false,

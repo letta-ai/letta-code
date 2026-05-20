@@ -104,27 +104,4 @@ describe("experimentManager", () => {
     });
   });
 
-  test("persists explicit desktop bootstrap overrides", async () => {
-    expect(
-      experimentManager.set("desktop_conversation_bootstrap", true),
-    ).toMatchObject({
-      id: "desktop_conversation_bootstrap",
-      enabled: true,
-      source: "override",
-      override: true,
-    });
-    await settingsManager.flush();
-
-    await settingsManager.reset();
-    await settingsManager.initialize();
-
-    expect(
-      experimentManager.getSnapshot("desktop_conversation_bootstrap"),
-    ).toMatchObject({
-      id: "desktop_conversation_bootstrap",
-      enabled: true,
-      source: "override",
-      override: true,
-    });
-  });
 });
