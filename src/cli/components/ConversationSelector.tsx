@@ -3,16 +3,18 @@ import type {
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { Box, type Key, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Backend, getBackend } from "@/backend";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { colors } from "./colors";
-import { OverlayShell } from "./OverlayShell";
-import type { SelectableItem } from "./SingleSelectPicker";
-import { SingleSelectPicker } from "./SingleSelectPicker";
+import { MarkdownDisplay } from "./MarkdownDisplay";
 import { Text } from "./Text";
+
+// Horizontal line character (matches approval dialogs)
+const SOLID_LINE = "─";
 
 interface ConversationSelectorProps {
   agentId: string;
@@ -236,7 +238,8 @@ export function ConversationSelector({
   const [error, setError] = useState<string | null>(null);
   const [enriching, setEnriching] = useState(false);
 
-  // Pagination state
+  // Selection state
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const [page, setPage] = useState(0);
 
   // Enrich a single conversation with message data, updating state in-place
@@ -363,6 +366,7 @@ export function ConversationSelector({
             : nonEmptyList;
           setConversations(allConversations);
           setPage(0);
+          setSelectedIndex(0);
         }
         setCursor(newCursor);
         setHasMore(newCursor !== null);
@@ -456,35 +460,43 @@ export function ConversationSelector({
     await loadConversations(cursor);
   }, [loadingMore, hasMore, cursor, loadConversations]);
 
-  // Build SelectableItem[] from pageConversations
-  const items: SelectableItem[] = pageConversations.map((enrichedConv) => ({
-    key: enrichedConv.conversation.id,
-    label: "", // Not used — renderItem handles all rendering
-    isCurrent: enrichedConv.conversation.id === currentConversationId,
-  }));
+  useInput((input, key) => {
+    // CTRL-C: immediately cancel
+    if (key.ctrl && input === "c") {
+      onCancel();
+      return;
+    }
 
-  // Handle select
-  const handleSelect = useCallback(
-    (key: string) => {
-      const selected = conversations.find((c) => c.conversation.id === key);
+    if (loading) return;
+
+    if (key.upArrow) {
+      setSelectedIndex((prev) => Math.max(0, prev - 1));
+    } else if (key.downArrow) {
+      setSelectedIndex((prev) =>
+        Math.min(pageConversations.length - 1, prev + 1),
+      );
+    } else if (key.return) {
+      const selected = pageConversations[selectedIndex];
       if (selected?.conversation.id) {
         onSelect(selected.conversation.id, {
           summary: selected.conversation.summary ?? undefined,
           messageCount: selected.messageCount,
         });
       }
-    },
-    [conversations, onSelect],
-  );
-
-  // Handle unhandled keys (←→ for pagination, N for new conversation)
-  const handleUnhandledKey = useCallback(
-    (input: string, key: Key) => {
-      if (loading) return;
-      if (key.leftArrow && page > 0) {
-        setPage((p) => p - 1);
+    } else if (key.escape) {
+      onCancel();
+    } else if (input === "n" || input === "N") {
+      // New conversation
+      onNewConversation();
+    } else if (key.leftArrow) {
+      // Previous page
+      if (page > 0) {
+        setPage((prev) => prev - 1);
+        setSelectedIndex(0);
       }
-      if (key.rightArrow && canGoNext) {
+    } else if (key.rightArrow) {
+      // Next page
+      if (canGoNext) {
         const nextPageIndex = page + 1;
         const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
 
@@ -494,169 +506,150 @@ export function ConversationSelector({
 
         if (nextStartIndex < conversations.length) {
           setPage(nextPageIndex);
+          setSelectedIndex(0);
         }
       }
-      if (input === "n" || input === "N") {
-        onNewConversation();
-      }
-    },
-    [
-      loading,
-      page,
-      canGoNext,
-      conversations.length,
-      hasMore,
-      fetchMore,
-      onNewConversation,
-    ],
-  );
+    }
+  });
 
-  // Render item callback — full multi-line conversation display
-  const renderItem = useCallback(
-    (item: SelectableItem, _index: number, isSelected: boolean) => {
-      const enrichedConv = pageConversations.find(
-        (c) => c.conversation.id === item.key,
-      );
-      if (!enrichedConv) return null;
+  // Render conversation item
+  const renderConversationItem = (
+    enrichedConv: EnrichedConversation,
+    _index: number,
+    isSelected: boolean,
+  ) => {
+    const {
+      conversation: conv,
+      previewLines,
+      lastActiveAt,
+      messageCount,
+    } = enrichedConv;
+    const isCurrent = conv.id === currentConversationId;
 
-      const {
-        conversation: conv,
-        previewLines,
-        lastActiveAt,
-        messageCount,
-      } = enrichedConv;
-      const isCurrent = conv.id === currentConversationId;
+    // Format timestamps
+    const activeTime = formatRelativeTime(lastActiveAt);
+    const createdTime = formatRelativeTime(conv.created_at);
 
-      // Format timestamps
-      const activeTime = formatRelativeTime(lastActiveAt);
-      const createdTime = formatRelativeTime(conv.created_at);
+    // Build preview content: (1) summary if exists, (2) preview lines, (3) message count fallback
+    // Uses L-bracket indentation style for visual hierarchy
+    const renderPreview = () => {
+      const bracket = <Text dimColor>{`${CLI_GLYPHS.result}  `}</Text>;
+      const indent = "   "; // Same width as "└  " for alignment
 
-      // Build preview content: (1) summary if exists, (2) preview lines, (3) message count fallback
-      // Uses L-bracket indentation style for visual hierarchy
-      const renderPreview = () => {
-        const bracket = <Text dimColor>{`${CLI_GLYPHS.result}  `}</Text>;
-        const indent = "   "; // Same width as "└  " for alignment
-
-        // Still loading message data
-        if (previewLines === null) {
-          return (
-            <Box flexDirection="row" marginLeft={2}>
-              {bracket}
-              <Text dimColor italic>
-                Loading preview...
-              </Text>
-            </Box>
-          );
-        }
-
-        // Has preview lines from messages
-        if (previewLines.length > 0) {
-          return (
-            <>
-              {previewLines.map((line, idx) => (
-                <Box
-                  key={`${line.role}-${idx}`}
-                  flexDirection="row"
-                  marginLeft={2}
-                >
-                  {idx === 0 ? bracket : <Text>{indent}</Text>}
-                  <Text dimColor>
-                    {line.role === "assistant" ? "👾 " : "👤 "}
-                  </Text>
-                  <Text dimColor italic>
-                    {line.text}
-                  </Text>
-                </Box>
-              ))}
-            </>
-          );
-        }
-
-        // Priority 3: Message count fallback
-        if (messageCount > 0) {
-          return (
-            <Box flexDirection="row" marginLeft={2}>
-              {bracket}
-              <Text dimColor italic>
-                {messageCount} message{messageCount === 1 ? "" : "s"} (no
-                in-context user/agent messages)
-              </Text>
-            </Box>
-          );
-        }
-
+      // Still loading message data
+      if (previewLines === null) {
         return (
           <Box flexDirection="row" marginLeft={2}>
             {bracket}
             <Text dimColor italic>
-              No in-context messages
+              Loading preview...
             </Text>
           </Box>
         );
-      };
+      }
 
-      const isDefault = conv.id === "default";
+      // Has preview lines from messages
+      if (previewLines.length > 0) {
+        return (
+          <>
+            {previewLines.map((line, idx) => (
+              <Box
+                key={`${line.role}-${idx}`}
+                flexDirection="row"
+                marginLeft={2}
+              >
+                {idx === 0 ? bracket : <Text>{indent}</Text>}
+                <Text dimColor>
+                  {line.role === "assistant" ? "👾 " : "👤 "}
+                </Text>
+                <Text dimColor italic>
+                  {line.text}
+                </Text>
+              </Box>
+            ))}
+          </>
+        );
+      }
+
+      // Priority 3: Message count fallback
+      if (messageCount > 0) {
+        return (
+          <Box flexDirection="row" marginLeft={2}>
+            {bracket}
+            <Text dimColor italic>
+              {messageCount} message{messageCount === 1 ? "" : "s"} (no
+              in-context user/agent messages)
+            </Text>
+          </Box>
+        );
+      }
 
       return (
-        <Box flexDirection="column" marginBottom={1}>
-          <Box flexDirection="row">
-            <Text
-              color={isSelected ? colors.selector.itemHighlighted : undefined}
-            >
-              {isSelected ? ">" : " "}
-            </Text>
-            <Text> </Text>
-            <Text
-              bold={isSelected}
-              color={isSelected ? colors.selector.itemHighlighted : undefined}
-            >
-              {conv.summary
-                ? `${conv.summary.length > 40 ? `${conv.summary.slice(0, 37)}...` : conv.summary} (${conv.id})`
-                : isDefault
-                  ? "default"
-                  : conv.id}
-            </Text>
-            {!conv.summary && isDefault && (
-              <Text dimColor> (agent's default conversation)</Text>
-            )}
-            {isCurrent && (
-              <Text color={colors.selector.itemCurrent}> (current)</Text>
-            )}
-          </Box>
-          {renderPreview()}
-          <Box flexDirection="row" marginLeft={2}>
-            <Text dimColor>
-              Active {activeTime} · Created {createdTime}
-            </Text>
-          </Box>
+        <Box flexDirection="row" marginLeft={2}>
+          {bracket}
+          <Text dimColor italic>
+            No in-context messages
+          </Text>
         </Box>
       );
-    },
-    [pageConversations, currentConversationId],
-  );
+    };
 
-  const showPicker = !loading && !error && conversations.length > 0;
+    const isDefault = conv.id === "default";
 
-  // Handle Ctrl-C/Escape/N when picker is not shown (loading, error, empty states)
-  useInput(
-    (input, key) => {
-      if (key.ctrl && input === "c") {
-        onCancel();
-        return;
-      }
-      if (key.escape) {
-        onCancel();
-        return;
-      }
-      if (!loading && !error && (input === "n" || input === "N")) {
-        onNewConversation();
-      }
-    },
-    { isActive: !showPicker },
-  );
+    return (
+      <Box key={conv.id} flexDirection="column" marginBottom={1}>
+        <Box flexDirection="row">
+          <Text
+            color={isSelected ? colors.selector.itemHighlighted : undefined}
+          >
+            {isSelected ? ">" : " "}
+          </Text>
+          <Text> </Text>
+          <Text
+            bold={isSelected}
+            color={isSelected ? colors.selector.itemHighlighted : undefined}
+          >
+            {conv.summary
+              ? `${conv.summary.length > 40 ? `${conv.summary.slice(0, 37)}...` : conv.summary} (${conv.id})`
+              : isDefault
+                ? "default"
+                : conv.id}
+          </Text>
+          {!conv.summary && isDefault && (
+            <Text dimColor> (agent's default conversation)</Text>
+          )}
+          {isCurrent && (
+            <Text color={colors.selector.itemCurrent}> (current)</Text>
+          )}
+        </Box>
+        {renderPreview()}
+        <Box flexDirection="row" marginLeft={2}>
+          <Text dimColor>
+            Active {activeTime} · Created {createdTime}
+          </Text>
+        </Box>
+      </Box>
+    );
+  };
+
+  const terminalWidth = useTerminalWidth();
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
   return (
-    <OverlayShell command="/resume" title="Resume a previous conversation">
+    <Box flexDirection="column">
+      {/* Command header */}
+      <Text dimColor>{"> /resume"}</Text>
+      <Text dimColor>{solidLine}</Text>
+
+      <Box height={1} />
+
+      {/* Title */}
+      <Box marginBottom={1}>
+        <Text bold color={colors.selector.title}>
+          Resume a previous conversation
+        </Text>
+      </Box>
+
       {/* Error state */}
       {error && (
         <Box flexDirection="column">
@@ -691,29 +684,42 @@ export function ConversationSelector({
         </Box>
       )}
 
-      {/* Picker */}
-      {showPicker && (
-        <SingleSelectPicker
-          key={page}
-          items={items}
-          onSelect={handleSelect}
-          onCancel={onCancel}
-          renderItem={renderItem}
-          onUnhandledKey={handleUnhandledKey}
-          footer={
-            <Box flexDirection="column">
-              <Text dimColor>
-                {"  "}Page {page + 1}
-                {hasMore ? "+" : `/${totalPages || 1}`}
-                {loadingMore ? " (loading...)" : ""}
-              </Text>
-              <Text dimColor>
-                {"  "}Enter select · ↑↓ navigate · ←→ page · N new · Esc cancel
-              </Text>
-            </Box>
-          }
-        />
+      {/* Conversation list */}
+      {!loading && !error && conversations.length > 0 && (
+        <Box flexDirection="column">
+          {pageConversations.map((conv, index) =>
+            renderConversationItem(conv, index, index === selectedIndex),
+          )}
+        </Box>
       )}
-    </OverlayShell>
+
+      {/* Footer */}
+      {!loading &&
+        !error &&
+        conversations.length > 0 &&
+        (() => {
+          const footerWidth = Math.max(0, terminalWidth - 2);
+          const pageText = `Page ${page + 1}${hasMore ? "+" : `/${totalPages || 1}`}${loadingMore ? " (loading...)" : ""}`;
+          const hintsText =
+            "Enter select · ↑↓ navigate · ←→ page · N new · Esc cancel";
+
+          return (
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Box width={2} flexShrink={0} />
+                <Box flexGrow={1} width={footerWidth}>
+                  <MarkdownDisplay text={pageText} dimColor />
+                </Box>
+              </Box>
+              <Box flexDirection="row">
+                <Box width={2} flexShrink={0} />
+                <Box flexGrow={1} width={footerWidth}>
+                  <MarkdownDisplay text={hintsText} dimColor />
+                </Box>
+              </Box>
+            </Box>
+          );
+        })()}
+    </Box>
   );
 }

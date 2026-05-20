@@ -4,7 +4,7 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
-import { LocalBackend } from "./local/LocalBackend";
+import { LocalBackend } from "./local/local-backend";
 import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
   LOCAL_BACKEND_EXPERIMENTAL_ENV,
@@ -490,11 +490,11 @@ function devBackendStoreOptions() {
 
 async function createPiDevBackend(): Promise<Backend> {
   const { FakeHeadlessBackend } = await import(
-    "@/backend/dev/FakeHeadlessBackend"
+    "@/backend/dev/fake-headless-backend"
   );
-  const { PiStreamAdapter } = await import("@/backend/dev/PiStreamAdapter");
+  const { PiStreamAdapter } = await import("@/backend/dev/pi-stream-adapter");
   const { ProviderTurnExecutor } = await import(
-    "@/backend/dev/ProviderTurnExecutor"
+    "@/backend/dev/provider-turn-executor"
   );
   return new FakeHeadlessBackend(
     "agent-fake-headless",
@@ -507,7 +507,7 @@ export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
       const { FakeHeadlessBackend } = await import(
-        "@/backend/dev/FakeHeadlessBackend"
+        "@/backend/dev/fake-headless-backend"
       );
       backend = new FakeHeadlessBackend(
         undefined,
@@ -518,10 +518,10 @@ export async function configureDevBackend(name: string): Promise<void> {
     }
     case "fake-headless-tool-call": {
       const { FakeHeadlessBackend } = await import(
-        "@/backend/dev/FakeHeadlessBackend"
+        "@/backend/dev/fake-headless-backend"
       );
       const { DeterministicToolCallExecutor } = await import(
-        "@/backend/dev/HeadlessTurnExecutor"
+        "@/backend/dev/headless-turn-executor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
@@ -532,10 +532,10 @@ export async function configureDevBackend(name: string): Promise<void> {
     }
     case "fake-headless-provider": {
       const { FakeHeadlessBackend } = await import(
-        "@/backend/dev/FakeHeadlessBackend"
+        "@/backend/dev/fake-headless-backend"
       );
       const { ProviderTurnExecutor } = await import(
-        "@/backend/dev/ProviderTurnExecutor"
+        "@/backend/dev/provider-turn-executor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",

@@ -8,7 +8,7 @@ import {
   isPatchTool,
   isShellTool,
   isTaskTool,
-} from "@/cli/helpers/toolNameMapping.js";
+} from "@/cli/helpers/tool-name-mapping.js";
 import { permissionMode } from "@/permissions/mode";
 import { InlineBashApproval } from "./InlineBashApproval";
 import { InlineEnterPlanModeApproval } from "./InlineEnterPlanModeApproval";

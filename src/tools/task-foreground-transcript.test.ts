@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 describe("Task foreground transcript wiring", () => {
   test("writes foreground transcript start and result output", () => {
     const taskPath = fileURLToPath(
-      new URL("../tools/impl/Task.ts", import.meta.url),
+      new URL("../tools/impl/task.ts", import.meta.url),
     );
     const source = readFileSync(taskPath, "utf-8");
 

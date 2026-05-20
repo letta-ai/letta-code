@@ -11,12 +11,12 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getFileNodes,
   readFileContent,
   scanMemoryFilesystem,
-} from "@/agent/memoryScanner";
+} from "@/agent/memory-scanner";
 import { getAgentContextOverview } from "@/backend/api/agents";
 import { getClient, getServerUrl } from "@/backend/api/client";
 import { apiRequest } from "@/backend/api/request";

@@ -2,13 +2,13 @@ import type WebSocket from "ws";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
-} from "@/agent/maxContext";
+} from "@/agent/max-context";
 import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
-import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
-import { REMEMBER_PROMPT } from "@/agent/promptAssets";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
-import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildGoalContinuationPrompt,
   formatGoalSummary,
@@ -17,12 +17,12 @@ import {
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
-} from "@/cli/helpers/goalCommand";
+} from "@/cli/helpers/goal-command";
 import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
-} from "@/cli/helpers/initCommand";
+} from "@/cli/helpers/init-command";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
@@ -31,7 +31,7 @@ import {
 import { runPreCompactHooks } from "@/hooks";
 import { ralphMode } from "@/ralph/mode";
 import { settingsManager } from "@/settings-manager";
-import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
@@ -41,7 +41,7 @@ import type {
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "./permissionMode";
+} from "./permission-mode";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,

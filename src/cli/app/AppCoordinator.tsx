@@ -18,16 +18,16 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { prefetchAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
 } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
-import { shouldRecommendDefaultPrompt } from "@/agent/promptAssets";
-import { reconcileExistingAgentState } from "@/agent/reconcileExistingAgentState";
-import { recordSessionEnd } from "@/agent/sessionHistory";
+import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
+import { reconcileExistingAgentState } from "@/agent/reconcile-existing-agent-state";
+import { recordSessionEnd } from "@/agent/session-history";
 import { SessionStats } from "@/agent/stats";
 import {
   clearSubagentsByIds,
@@ -35,7 +35,7 @@ import {
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
-} from "@/agent/subagentState";
+} from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
@@ -52,54 +52,54 @@ import {
   type Line,
   toLines,
 } from "@/cli/helpers/accumulator";
-import { isLocalAgentId } from "@/cli/helpers/appUrls";
+import { isLocalAgentId } from "@/cli/helpers/app-urls";
 import { backfillBuffers } from "@/cli/helpers/backfill";
-import { chunkLog } from "@/cli/helpers/chunkLog";
+import { chunkLog } from "@/cli/helpers/chunk-log";
 import {
   createContextTracker,
   resetContextHistory,
-} from "@/cli/helpers/contextTracker";
+} from "@/cli/helpers/context-tracker";
 import {
   generateConversationTitleFromFork,
   normalizeConversationTitle,
-} from "@/cli/helpers/conversationTitle";
+} from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
-import { setErrorContext } from "@/cli/helpers/errorContext";
-import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
-import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
+import { setErrorContext } from "@/cli/helpers/error-context";
+import { parsePatchOperations } from "@/cli/helpers/format-args-display";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import {
   buildContentFromQueueBatch,
   toQueuedMsg,
-} from "@/cli/helpers/queuedMessageParts";
-import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
+} from "@/cli/helpers/queued-message-parts";
+import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   collectFinishedTaskToolCalls,
   createSubagentGroupItem,
   hasInProgressTaskToolCalls,
-} from "@/cli/helpers/subagentAggregation";
-import { buildStartupSystemPromptWarning } from "@/cli/helpers/systemPromptWarning.ts";
-import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+} from "@/cli/helpers/subagent-aggregation";
+import { buildStartupSystemPromptWarning } from "@/cli/helpers/system-prompt-warning.ts";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
   isShellOutputTool,
   isShellTool,
-} from "@/cli/helpers/toolNameMapping";
-import { isTaskTool } from "@/cli/helpers/toolNameMapping.js";
-import { getTuiBlockedReason } from "@/cli/helpers/tuiQueueAdapter";
+} from "@/cli/helpers/tool-name-mapping";
+import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
 import {
   renderWindowTitle,
   resolveWindowTitleConfig,
-} from "@/cli/helpers/windowTitleConfig";
-import { useConfigurableStatusLine } from "@/cli/hooks/useConfigurableStatusLine";
-import { useSuspend } from "@/cli/hooks/useSuspend/useSuspend.ts";
-import { useSyncedState } from "@/cli/hooks/useSyncedState";
+} from "@/cli/helpers/window-title-config";
+import { useConfigurableStatusLine } from "@/cli/hooks/use-configurable-status-line";
+import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
   useTerminalRows,
   useTerminalWidth,
-} from "@/cli/hooks/useTerminalWidth";
+} from "@/cli/hooks/use-terminal-width";
+import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
 import {
   getTask,
   handleMissedOneShot,
@@ -117,7 +117,7 @@ import {
   type MessageQueueItem,
   QueueRuntime,
   type TaskNotificationQueueItem,
-} from "@/queue/queueRuntime";
+} from "@/queue/queue-runtime";
 import { ralphMode } from "@/ralph/mode";
 import {
   createSharedReminderState,
@@ -148,10 +148,10 @@ import {
   addToMessageQueue,
   type QueuedMessage,
   setMessageQueueAdder,
-} from "@/utils/messageQueueBridge";
-import { generatePlanFilePath } from "@/utils/planName";
-import { appendTaskNotificationEventsToBuffer } from "@/utils/taskNotifications";
-import { recordTuiPerf } from "@/utils/tuiPerf";
+} from "@/utils/message-queue-bridge";
+import { generatePlanFilePath } from "@/utils/plan-name";
+import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
+import { recordTuiPerf } from "@/utils/tui-perf";
 import { getVersion } from "@/version";
 import { AppView } from "./AppView";
 import {
@@ -181,7 +181,7 @@ import {
   getPreferredAgentModelHandle,
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
-} from "./modelConfig";
+} from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
   ActiveOverlay,
@@ -189,16 +189,16 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
-import { useApprovalFlow } from "./useApprovalFlow";
-import { useBashHandlers } from "./useBashHandlers";
-import { useConfigurationHandlers } from "./useConfigurationHandlers";
-import { useConversationLoop } from "./useConversationLoop";
-import { useConversationSwitching } from "./useConversationSwitching";
-import { useFeedbackHandler } from "./useFeedbackHandler";
-import { useInterruptHandler } from "./useInterruptHandler";
-import { useQueuedApprovalSubmit } from "./useQueuedApprovalSubmit";
-import { useReasoningCycle } from "./useReasoningCycle";
-import { useSubmitHandler } from "./useSubmitHandler";
+import { useApprovalFlow } from "./use-approval-flow";
+import { useBashHandlers } from "./use-bash-handlers";
+import { useConfigurationHandlers } from "./use-configuration-handlers";
+import { useConversationLoop } from "./use-conversation-loop";
+import { useConversationSwitching } from "./use-conversation-switching";
+import { useFeedbackHandler } from "./use-feedback-handler";
+import { useInterruptHandler } from "./use-interrupt-handler";
+import { useQueuedApprovalSubmit } from "./use-queued-approval-submit";
+import { useReasoningCycle } from "./use-reasoning-cycle";
+import { useSubmitHandler } from "./use-submit-handler";
 
 export function App({
   agentId: initialAgentId,
@@ -279,7 +279,7 @@ export function App({
 
   // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
-    | import("@/cli/helpers/conversationSwitchAlert").ConversationSwitchContext
+    | import("@/cli/helpers/conversation-switch-alert").ConversationSwitchContext
     | null
   >(null);
 
@@ -2675,7 +2675,7 @@ export function App({
               };
               const sysNorm = normalize(agentSystem);
               const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "@/agent/promptAssets"
+                "@/agent/prompt-assets"
               );
 
               // Best-effort preset detection.
@@ -3151,7 +3151,7 @@ export function App({
       try {
         if (getBackend().capabilities.localMemfs) {
           const { initializeLocalMemoryRepo } = await import(
-            "@/agent/memoryGit"
+            "@/agent/memory-git"
           );
           await initializeLocalMemoryRepo({
             memoryDir: getScopedMemoryFilesystemRoot(agentId),
@@ -3163,7 +3163,7 @@ export function App({
         }
 
         const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-          "@/agent/memoryGit"
+          "@/agent/memory-git"
         );
         if (!isGitRepo(agentId)) {
           await cloneMemoryRepo(agentId);

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type WebSocket from "ws";
-import { getGitContext } from "@/cli/helpers/gitContext";
+import { getGitContext } from "@/cli/helpers/git-context";
 import {
   isCheckoutBranchCommand,
   isSearchBranchesCommand,

@@ -13,7 +13,7 @@
  *   bun run src/tests/headless-windows.ts --model haiku
  */
 
-import { createIsolatedCliTestEnv } from "./testProcessEnv";
+import { createIsolatedCliTestEnv } from "./test-process-env";
 
 type Args = {
   model: string;

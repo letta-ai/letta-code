@@ -2,14 +2,14 @@ import WebSocket from "ws";
 import {
   channelPluginConfigShouldRefreshDisplayName,
   getChannelPluginConfig,
-} from "@/channels/accountConfig";
+} from "@/channels/account-config";
 import {
   removeUserPlugin,
   scaffoldUserPlugin,
 } from "@/channels/custom/scaffolding";
-import { getChannelPluginMetadata } from "@/channels/pluginRegistry";
+import { getChannelPluginMetadata } from "@/channels/plugin-registry";
 import type { ChannelRegistryEvent } from "@/channels/registry";
-import type { DequeuedBatch } from "@/queue/queueRuntime";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type {
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -38,7 +38,7 @@ import type {
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "@/websocket/listener/permissionMode";
+} from "@/websocket/listener/permission-mode";
 import {
   isChannelAccountBindCommand,
   isChannelAccountCreateCommand,

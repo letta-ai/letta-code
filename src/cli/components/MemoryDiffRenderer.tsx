@@ -1,7 +1,7 @@
 import * as Diff from "diff";
 import { Box } from "ink";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

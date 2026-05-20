@@ -4,7 +4,7 @@ import {
   getAvailableModelHandles,
 } from "@/agent/available-models";
 import { __testSetBackend } from "@/backend";
-import { FakeHeadlessBackend } from "@/backend/dev/FakeHeadlessBackend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 
 describe("available models backend wiring", () => {
   afterEach(() => {

@@ -4,7 +4,7 @@
  */
 
 import { getRuntimeContext, updateRuntimeContext } from "@/runtime-context";
-import { ALL_SKILL_SOURCES } from "./skillSources";
+import { ALL_SKILL_SOURCES } from "./skill-sources";
 import type { SkillSource } from "./skills";
 
 interface AgentContext {

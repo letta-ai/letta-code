@@ -1,6 +1,6 @@
 import type WebSocket from "ws";
-import { isValidChannelPluginConfigPayload } from "@/channels/accountConfig";
-import { isSupportedChannelId } from "@/channels/pluginRegistry";
+import { isValidChannelPluginConfigPayload } from "@/channels/account-config";
+import { isSupportedChannelId } from "@/channels/plugin-registry";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,

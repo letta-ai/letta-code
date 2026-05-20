@@ -1,6 +1,6 @@
 import { Box } from "ink";
 import { memo } from "react";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
 

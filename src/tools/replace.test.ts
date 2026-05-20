@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { TestDirectory } from "@/test-utils/testFs";
-import { replace } from "@/tools/impl/ReplaceGemini";
+import { TestDirectory } from "@/test-utils/test-fs";
+import { replace } from "@/tools/impl/replace-gemini";
 
 describe("Replace tool (Gemini)", () => {
   let testDir: TestDirectory;

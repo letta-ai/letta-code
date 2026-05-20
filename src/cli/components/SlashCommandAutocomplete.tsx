@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { commands } from "@/cli/commands/registry";
-import { useAutocompleteNavigation } from "@/cli/hooks/useAutocompleteNavigation";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { settingsManager } from "@/settings-manager";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
@@ -84,7 +84,7 @@ export function SlashCommandAutocomplete({
     (async () => {
       try {
         const { discoverClientSideSkills } = await import(
-          "@/agent/clientSkills"
+          "@/agent/client-skills"
         );
         const { getSkillSources } = await import("@/agent/context");
         const { isUserInvocableSkill } = await import("@/agent/skills");

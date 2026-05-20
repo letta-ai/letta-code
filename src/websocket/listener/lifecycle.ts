@@ -4,23 +4,23 @@ import {
   getSubagents,
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
-} from "@/agent/subagentState";
+} from "@/agent/subagent-state";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "@/cron/scheduler";
-import type { DequeuedBatch } from "@/queue/queueRuntime";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
-import { setMessageQueueAdder } from "@/utils/messageQueueBridge";
-import { killAllTerminals } from "@/websocket/terminalHandler";
+import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
@@ -41,7 +41,7 @@ import {
 import { loadPersistedCwdMap } from "./cwd";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
-import { loadPersistedPermissionModeMap } from "./permissionMode";
+import { loadPersistedPermissionModeMap } from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
   emitLoopStatusUpdate,
@@ -490,7 +490,7 @@ export function enqueueChannelTurn(
     agentId: route.agentId,
     conversationId: route.conversationId,
   } as Omit<
-    import("@/queue/queueRuntime").MessageQueueItem,
+    import("@/queue/queue-runtime").MessageQueueItem,
     "id" | "enqueuedAt"
   >);
 
@@ -759,7 +759,7 @@ export async function startConnectedListenerRuntime(
       conversationId:
         queuedMessage.conversationId ?? targetRuntime.conversationId,
     } as Omit<
-      import("@/queue/queueRuntime").TaskNotificationQueueItem,
+      import("@/queue/queue-runtime").TaskNotificationQueueItem,
       "id" | "enqueuedAt"
     >);
 

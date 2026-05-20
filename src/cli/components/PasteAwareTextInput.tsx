@@ -15,7 +15,7 @@ import {
 import {
   allocatePaste,
   resolvePlaceholders,
-} from "@/cli/helpers/pasteRegistry";
+} from "@/cli/helpers/paste-registry";
 
 // Global timestamp for forward delete coordination
 // Use globalThis to ensure singleton across bundle

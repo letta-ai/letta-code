@@ -8,7 +8,7 @@ describe("listen agent-info wiring", () => {
       new URL("../websocket/listener/turn.ts", import.meta.url),
     );
     const listenContextPath = fileURLToPath(
-      new URL("../reminders/listenContext.ts", import.meta.url),
+      new URL("../reminders/listen-context.ts", import.meta.url),
     );
     const warmupPath = fileURLToPath(
       new URL("../websocket/listener/warmup.ts", import.meta.url),

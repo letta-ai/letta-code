@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readInteractiveAppSource } from "@/test-utils/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/test-utils/read-interactive-app-source";
 
 describe("conversation switch ref wiring", () => {
   test("defines helper that syncs conversation state and ref", () => {

@@ -36,12 +36,12 @@ import {
   listPendingControlRequests as listPersistedPendingControlRequests,
   removePendingControlRequest as removePersistedPendingControlRequest,
   upsertPendingControlRequest as upsertPersistedPendingControlRequest,
-} from "./pendingControlRequests";
+} from "./pending-control-requests";
 import {
   getChannelDisplayName,
   isFirstPartyChannelPlugin,
   loadChannelPlugin,
-} from "./pluginRegistry";
+} from "./plugin-registry";
 import {
   addRoute,
   getRoute as getRouteFromStore,
