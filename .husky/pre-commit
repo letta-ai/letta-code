@@ -17,7 +17,11 @@ if [ -n "$STAGED_TS" ]; then
 fi
 
 # Lint staged files only (fast)
-bunx lint-staged
+# Guard: lint-staged v16 exits code 1 when no files match, which would
+# fail the hook even on empty commits. Only run if lintable files are staged.
+if git diff --cached --name-only | grep -qE '\.(ts|tsx|js|jsx|json)$'; then
+  bunx lint-staged
+fi
 
 # Typecheck full project (catches type errors in unchanged files)
 bun run typecheck
