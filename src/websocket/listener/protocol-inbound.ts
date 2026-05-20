@@ -1,7 +1,7 @@
 import type WebSocket from "ws";
-import type { ExperimentId } from "@/experiments/types";
 import { isValidChannelPluginConfigPayload } from "@/channels/account-config";
 import { isSupportedChannelId } from "@/channels/plugin-registry";
+import type { ExperimentId } from "@/experiments/types";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
@@ -84,6 +84,7 @@ const EXPERIMENT_IDS = new Set<ExperimentId>([
 function isExperimentId(value: unknown): value is ExperimentId {
   return typeof value === "string" && EXPERIMENT_IDS.has(value as ExperimentId);
 }
+
 import { isValidApprovalResponseBody } from "./approval";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
