@@ -100,23 +100,23 @@ letta --backend local --new-agent
 Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
 
 ## Constellation
-Constellation decouples where your agent *runs* from where you *interact* with your agent. Agents in the Constellation can be accessed from the CLI, desktop app, browser, or mobile, and run on any connected environment (locally, on Letta Cloud, or any machine you connect). 
+Constellation decouples where your agent *runs* from where you *interact* with your agent. Agents in the Constellation can be accessed from the CLI, desktop app, browser, or mobile, and run on any connected environment. 
 
 ```mermaid
 graph TD
     Constellation["⭐ Constellation"]
     Constellation --> A["💻 Your Laptop"]
-    Constellation --> B["☁️ Cloud Sandbox"]
+    Constellation --> B["☁️ Cloud VM"]
     Constellation --> C["🖥️ Mac Mini"]
+    Constellation --> D["📦 Sandbox"]
 ```
 
-### Remote environments
 Any machine can be connected to Constellation by running: 
 ```bash
 letta server
 letta server --env-name "work-laptop"
 ```
-Once a machine is connected, you can set it as an environment for your agent to run on whenever interacting with your agent. 
+Once a machine is connected, you can set it as an environment for your agent to run on whenever interacting with your agent. See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments. 
 
 ## Agent Memory & Learning
 If you’re using Letta Code for the first time, you will likely want to run the `/init` command to initialize the agent’s memory system:
