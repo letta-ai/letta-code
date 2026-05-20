@@ -139,6 +139,51 @@ function redactCredentialedHttpsUrl(value: string): string {
 }
 
 /**
+ * Redact git auth material from command/error text before it reaches logs.
+ *
+ * Node's child_process errors include the full command line in `message`/`cmd`.
+ * MemFS git operations pass API keys through `-c http.extraHeader=...`, so a
+ * failed clone/fetch/pull/push can otherwise print a reusable credential.
+ */
+export function redactGitAuthInText(value: string): string {
+  return value
+    .replace(
+      /(http\.extraHeader=Authorization:\s*(?:Basic|Bearer)\s+)[^\s'"`]+/gi,
+      "$1<redacted>",
+    )
+    .replace(
+      /(Authorization:\s*(?:Basic|Bearer)\s+)[^\s'"`]+/gi,
+      "$1<redacted>",
+    )
+    .replace(/(password=)[^\s'"`;]+/gi, "$1<redacted>")
+    .replace(/sk-let-[A-Za-z0-9_-]+/g, "sk-let-<redacted>");
+}
+
+function redactGitAuthError(error: unknown): Error {
+  if (error instanceof Error) {
+    error.message = redactGitAuthInText(error.message);
+
+    const mutableError = error as Error & Record<string, unknown>;
+    for (const key of [
+      "cmd",
+      "command",
+      "stack",
+      "stdout",
+      "stderr",
+    ] as const) {
+      const value = mutableError[key];
+      if (typeof value === "string") {
+        mutableError[key] = redactGitAuthInText(value);
+      }
+    }
+
+    return error;
+  }
+
+  return new Error(redactGitAuthInText(String(error)));
+}
+
+/**
  * Returns true when a remote URL points to this agent's memfs git endpoint.
  */
 export function isMemfsRemoteUrlForAgent(
@@ -406,12 +451,17 @@ async function runGit(
   }
   debugLog("memfs-git", `git ${loggableArgs.join(" ")} (in ${cwd})`);
 
-  const result = await execFile("git", allArgs, {
-    cwd,
-    env: buildNonInteractiveGitEnv(),
-    maxBuffer: 10 * 1024 * 1024, // 10MB
-    timeout: 60_000, // 60s
-  });
+  let result: Awaited<ReturnType<typeof execFile>>;
+  try {
+    result = await execFile("git", allArgs, {
+      cwd,
+      env: buildNonInteractiveGitEnv(),
+      maxBuffer: 10 * 1024 * 1024, // 10MB
+      timeout: 60_000, // 60s
+    });
+  } catch (error) {
+    throw redactGitAuthError(error);
+  }
 
   return {
     stdout: result.stdout?.toString() ?? "",
@@ -481,7 +531,9 @@ async function runGitWithRetry(
       }
 
       const delayMs = baseDelayMs * 2 ** (attempt - 1);
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = redactGitAuthInText(
+        error instanceof Error ? error.message : String(error),
+      );
       debugWarn(
         "memfs-git",
         `${operation} failed with transient error (attempt ${attempt}/${attempts}): ${msg}. Retrying in ${delayMs}ms`,
