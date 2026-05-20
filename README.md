@@ -99,12 +99,12 @@ letta --backend local --new-agent
 
 Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
 
-## Constellation
+## 🌌 Constellation
 Constellation decouples where your agent *runs* from where you *interact* with your agent. Agents in the Constellation can be accessed from the CLI, desktop app, browser, or mobile, and run on any connected environment. 
 
 ```mermaid
 graph TD
-    Constellation["⭐ Constellation"]
+    Constellation["🌌 Constellation"]
     Constellation --> A["💻 Your Laptop"]
     Constellation --> B["☁️ Cloud VM"]
     Constellation --> C["🖥️ Mac Mini"]
