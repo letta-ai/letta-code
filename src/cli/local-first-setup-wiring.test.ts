@@ -40,19 +40,24 @@ describe("local-first setup wiring", () => {
     expect(source.slice(start, end)).toContain('preferredBackendMode: "api"');
   });
 
-  test("startup honors saved local preference as the default backend", () => {
+  test("startup defaults to local when cloud credentials are absent", () => {
     const source = readSource("../index.ts");
-    const start = source.indexOf('settings.preferredBackendMode === "local"');
+    const start = source.indexOf("const hasCloudCredentials");
     const end = source.indexOf('configureBackendMode("local")', start);
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
 
-    const segment = source.slice(start - 120, end + 60);
+    const segment = source.slice(start, end + 60);
+    expect(segment).toContain(
+      "const hasCloudCredentials = Boolean(apiKey || settings.refreshToken)",
+    );
+    expect(segment).toContain("const shouldUseLocalBackendByDefault");
     expect(segment).toContain("!explicitBackendMode");
     expect(segment).toContain("baseURL === LETTA_CLOUD_API_URL");
-    expect(segment).not.toContain("!apiKey");
-    expect(segment).not.toContain("!settings.refreshToken");
+    expect(segment).toContain('settings.preferredBackendMode === "local"');
+    expect(segment).toContain("!hasCloudCredentials");
+    expect(segment).toContain('settings.preferredBackendMode !== "api"');
   });
 
   test("backend and setup subcommands expose default backend controls", () => {
@@ -64,6 +69,8 @@ describe("local-first setup wiring", () => {
     expect(router).toContain('case "setup"');
     expect(backendCommand).toContain("letta backend api");
     expect(backendCommand).toContain("letta backend local");
+    expect(backendCommand).toContain("resolveSavedDefaultBackend");
+    expect(backendCommand).toContain("!hasCloudCredentials");
     expect(backendCommand).toContain(
       "settingsManager.updateSettings({ preferredBackendMode: backendMode })",
     );

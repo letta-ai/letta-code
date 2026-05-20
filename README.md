@@ -39,12 +39,9 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 ```bash
 npm install -g @letta-ai/letta-code
 ```
-Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)).
+Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)). If you do not already have Letta Cloud credentials configured, Letta Code starts in local mode by default so you can begin without signing in.
 
-On first run, choose how you want to start:
-
-* **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Letta Cloud login.
-* **Login to Constellation** signs you into Letta Cloud so you can access the same agents from `chat.letta.com`, the desktop app, other machines, and messaging integrations.
+To sign into Letta Cloud, run `letta setup` and choose **Login to Constellation**, or set the default backend directly with `letta backend api`. Use Letta Cloud when you want the same agents available from `chat.letta.com`, the desktop app, other machines, and messaging integrations.
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, zAI coding plan, etc.), and use `/model` to swap models.
 
