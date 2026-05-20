@@ -88,12 +88,12 @@ export function toDiffPreview(
 }
 
 type DiffDeps = {
-  computeAdvancedDiff: typeof import("../cli/helpers/diff").computeAdvancedDiff;
-  parsePatchToAdvancedDiff: typeof import("../cli/helpers/diff").parsePatchToAdvancedDiff;
-  isFileWriteTool: typeof import("../cli/helpers/toolNameMapping").isFileWriteTool;
-  isFileEditTool: typeof import("../cli/helpers/toolNameMapping").isFileEditTool;
-  isPatchTool: typeof import("../cli/helpers/toolNameMapping").isPatchTool;
-  parsePatchOperations: typeof import("../cli/helpers/formatArgsDisplay").parsePatchOperations;
+  computeAdvancedDiff: typeof import("@/cli/helpers/diff").computeAdvancedDiff;
+  parsePatchToAdvancedDiff: typeof import("@/cli/helpers/diff").parsePatchToAdvancedDiff;
+  isFileWriteTool: typeof import("@/cli/helpers/toolNameMapping").isFileWriteTool;
+  isFileEditTool: typeof import("@/cli/helpers/toolNameMapping").isFileEditTool;
+  isPatchTool: typeof import("@/cli/helpers/toolNameMapping").isPatchTool;
+  parsePatchOperations: typeof import("@/cli/helpers/formatArgsDisplay").parsePatchOperations;
 };
 
 let cachedDiffDeps: DiffDeps | null = null;
@@ -101,9 +101,9 @@ let cachedDiffDeps: DiffDeps | null = null;
 async function getDiffDeps(): Promise<DiffDeps> {
   if (cachedDiffDeps) return cachedDiffDeps;
   const [diffMod, toolNameMod, formatMod] = await Promise.all([
-    import("../cli/helpers/diff"),
-    import("../cli/helpers/toolNameMapping"),
-    import("../cli/helpers/formatArgsDisplay"),
+    import("@/cli/helpers/diff"),
+    import("@/cli/helpers/toolNameMapping"),
+    import("@/cli/helpers/formatArgsDisplay"),
   ]);
   cachedDiffDeps = {
     computeAdvancedDiff: diffMod.computeAdvancedDiff,

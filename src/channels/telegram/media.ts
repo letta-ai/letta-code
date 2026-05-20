@@ -585,7 +585,7 @@ async function downloadTelegramAttachment(params: {
   // Auto-transcribe voice memos when enabled and an API key is available.
   if (candidate.isVoice && params.transcribeVoice) {
     const { isTranscriptionConfigured, transcribeAudioFile } = await import(
-      "../transcription/index"
+      "@/channels/transcription/index"
     );
     if (isTranscriptionConfigured()) {
       const result = await transcribeAudioFile(localPath);

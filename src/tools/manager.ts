@@ -100,7 +100,7 @@ async function resolveBackendSpecificToolDescription(
 ): Promise<string> {
   let isLocalMemfs = false;
   try {
-    const { getBackend } = await import("../backend");
+    const { getBackend } = await import("@/backend");
     isLocalMemfs = getBackend().capabilities.localMemfs;
   } catch {
     isLocalMemfs = false;
@@ -1144,8 +1144,8 @@ export async function checkToolPermission(
   matchedRule?: string;
   reason?: string;
 }> {
-  const { checkPermissionWithHooks } = await import("../permissions/checker");
-  const { loadPermissions } = await import("../permissions/loader");
+  const { checkPermissionWithHooks } = await import("@/permissions/checker");
+  const { loadPermissions } = await import("@/permissions/loader");
 
   const permissions = await loadPermissions(workingDirectory);
   return runWithRuntimeContext(
@@ -1183,13 +1183,13 @@ export async function savePermissionRule(
 ): Promise<void> {
   // Handle session-only permissions
   if (scope === "session") {
-    const { sessionPermissions } = await import("../permissions/session");
+    const { sessionPermissions } = await import("@/permissions/session");
     sessionPermissions.addRule(rule, ruleType);
     return;
   }
 
   // Handle persisted permissions
-  const { savePermissionRule: save } = await import("../permissions/loader");
+  const { savePermissionRule: save } = await import("@/permissions/loader");
   await save(rule, ruleType, scope, workingDirectory);
 }
 
@@ -1204,8 +1204,8 @@ export async function analyzeToolApproval(
   toolName: string,
   toolArgs: ToolArgs,
   workingDirectory: string = process.cwd(),
-): Promise<import("../permissions/analyzer").ApprovalContext> {
-  const { analyzeApprovalContext } = await import("../permissions/analyzer");
+): Promise<import("@/permissions/analyzer").ApprovalContext> {
+  const { analyzeApprovalContext } = await import("@/permissions/analyzer");
   return analyzeApprovalContext(toolName, toolArgs, workingDirectory);
 }
 
@@ -1247,7 +1247,7 @@ async function buildSpecificToolRegistry(
   toolNames: string[],
   channelToolScope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("./filter");
+  const { toolFilter } = await import("@/tools/filter");
   const newRegistry: ToolRegistry = new Map();
 
   for (const name of toolNames) {
@@ -1315,7 +1315,7 @@ async function resolveBaseToolNamesForModel(
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolName[]> {
-  const { toolFilter } = await import("./filter");
+  const { toolFilter } = await import("@/tools/filter");
   let baseToolNames: ToolName[];
   if (
     !toolFilter.isActive() &&
@@ -1372,7 +1372,7 @@ async function buildRegistryForModel(
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("./filter");
+  const { toolFilter } = await import("@/tools/filter");
   const allSubagentConfigs = await getAllSubagentConfigs();
   const discoveredSubagents = Object.entries(allSubagentConfigs).map(
     ([name, config]) => ({

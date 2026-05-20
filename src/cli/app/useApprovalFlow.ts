@@ -454,7 +454,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
         // Execute approved tools and format results using shared function
         const { executeApprovalBatch } = await import(
-          "../../agent/approval-execution"
+          "@/agent/approval-execution"
         );
         sessionStatsRef.current.startTrajectory();
         const toolRunStart = performance.now();
@@ -893,7 +893,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           try {
             // Execute ALL decisions together
             const { executeApprovalBatch } = await import(
-              "../../agent/approval-execution"
+              "@/agent/approval-execution"
             );
             const approvalToolContextId =
               approvalToolContextIdRef.current ??

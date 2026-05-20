@@ -224,7 +224,7 @@ async function buildMemfsAwareMemoryReminder(
     "memory",
     `${settingsManager.isMemfsEnabled(agentId) ? "Memfs" : "Memory"} check reminder fired (${trigger}, agent ${agentId})`,
   );
-  const { MEMORY_CHECK_REMINDER } = await import("../../agent/promptAssets.js");
+  const { MEMORY_CHECK_REMINDER } = await import("@/agent/promptAssets.js");
   return MEMORY_CHECK_REMINDER;
 }
 

@@ -413,7 +413,7 @@ export async function create_worktree(
         const executionContextId = getStringArg(args, "_executionContextId");
         if (executionContextId) {
           const { updateToolExecutionContextWorkingDirectory } = await import(
-            "../manager"
+            "@/tools/manager"
           );
           updateToolExecutionContextWorkingDirectory(
             executionContextId,

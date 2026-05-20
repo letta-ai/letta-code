@@ -567,7 +567,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
 
         // Set conversation switch context for agent switch
         {
-          const { getModelDisplayName } = await import("../../agent/model");
+          const { getModelDisplayName } = await import("@/agent/model");
           const modelHandle =
             agent.model ||
             (agent.llm_config?.model_endpoint_type && agent.llm_config?.model
@@ -665,7 +665,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       try {
         // Pre-determine memfs mode so the agent is created with the correct prompt.
         const { isLettaCloud, enableMemfsIfCloud } = await import(
-          "../../agent/memoryFilesystem"
+          "@/agent/memoryFilesystem"
         );
         const backend = getBackend();
         const willAutoEnableMemfs = await isLettaCloud();
@@ -753,7 +753,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
             name: agent.name || agent.id,
             description: agent.description ?? undefined,
             model: agentModelHandle
-              ? (await import("../../agent/model")).getModelDisplayName(
+              ? (await import("@/agent/model")).getModelDisplayName(
                   agentModelHandle,
                 ) || agentModelHandle
               : "unknown",

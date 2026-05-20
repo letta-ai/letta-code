@@ -180,7 +180,7 @@ export const HooksManager = memo(function HooksManager({
         if (!getBackend().capabilities.serverSideToolManagement) {
           return;
         }
-        const { getClient } = await import("../../backend/api/client");
+        const { getClient } = await import("@/backend/api/client");
         const client = await getClient();
         // Use dedicated tools endpoint instead of fetching whole agent
         // Pass limit to avoid pagination issues

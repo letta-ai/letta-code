@@ -292,7 +292,7 @@ function getMemoryRemoteUrl(agentId: string): string {
  * (env var → settings → OAuth refresh).
  */
 async function getAuthToken(): Promise<string> {
-  const { getBackend } = await import("../backend");
+  const { getBackend } = await import("@/backend");
   const backend = getBackend();
   if (backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs) {
     return "";
@@ -835,7 +835,7 @@ async function unsetLocalGitConfig(dir: string, key: string): Promise<void> {
 async function fetchAgentDisplayName(agentId: string): Promise<string | null> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { getBackend } = await import("../backend");
+    const { getBackend } = await import("@/backend");
     const agent = await Promise.race([
       getBackend().retrieveAgent(agentId),
       new Promise<null>((resolve) => {
@@ -1859,7 +1859,7 @@ export async function addGitMemoryTag(
   prefetchedAgent?: { tags?: string[] | null },
 ): Promise<void> {
   try {
-    const { getBackend } = await import("../backend");
+    const { getBackend } = await import("@/backend");
     const backend = getBackend();
     const agent = prefetchedAgent ?? (await backend.retrieveAgent(agentId));
     const tags = agent.tags || [];
@@ -1882,7 +1882,7 @@ export async function addGitMemoryTag(
  */
 export async function removeGitMemoryTag(agentId: string): Promise<void> {
   try {
-    const { getBackend } = await import("../backend");
+    const { getBackend } = await import("@/backend");
     const backend = getBackend();
     const agent = await backend.retrieveAgent(agentId);
     const tags = agent.tags || [];

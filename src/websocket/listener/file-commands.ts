@@ -571,8 +571,8 @@ export function createFileCommandSession(params: {
       );
       runDetachedListenerTask("write_file", async () => {
         try {
-          const { edit } = await import("../../tools/impl/Edit");
-          const { write } = await import("../../tools/impl/Write");
+          const { edit } = await import("@/tools/impl/Edit");
+          const { write } = await import("@/tools/impl/Write");
           const { readFile } = await import("node:fs/promises");
 
           // Read current content so we can use edit for an atomic
@@ -739,7 +739,7 @@ export function createFileCommandSession(params: {
       runDetachedListenerTask("edit_file", async () => {
         try {
           const { readFile } = await import("node:fs/promises");
-          const { edit } = await import("../../tools/impl/Edit");
+          const { edit } = await import("@/tools/impl/Edit");
 
           console.log(
             `[Listen] Executing edit: old_string="${parsed.old_string.slice(0, 50)}${parsed.old_string.length > 50 ? "..." : ""}"`,

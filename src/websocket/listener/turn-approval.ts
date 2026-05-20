@@ -125,7 +125,7 @@ export function resolveChannelApprovalSource(
 
 async function maybeReadPlanPreview(
   toolName: string,
-  turnPermissionModeState: import("../../tools/manager").PermissionModeState,
+  turnPermissionModeState: import("@/tools/manager").PermissionModeState,
 ): Promise<{ planFilePath?: string; planContent?: string }> {
   if (toolName !== "ExitPlanMode" || !turnPermissionModeState.planFilePath) {
     return {};
@@ -158,7 +158,7 @@ export async function handleApprovalStop(params: {
   agentId: string;
   conversationId: string;
   turnWorkingDirectory: string;
-  turnPermissionModeState: import("../../tools/manager").PermissionModeState;
+  turnPermissionModeState: import("@/tools/manager").PermissionModeState;
   dequeuedBatchId: string;
   runId?: string;
   msgRunIds: string[];

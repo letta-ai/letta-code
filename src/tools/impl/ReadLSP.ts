@@ -60,7 +60,7 @@ export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
 
   try {
     // Import LSP manager dynamically
-    const { lspManager } = await import("../../lsp/manager.js");
+    const { lspManager } = await import("@/lsp/manager.js");
     const path = await import("node:path");
 
     // Resolve the path

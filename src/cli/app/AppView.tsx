@@ -910,7 +910,7 @@ export function AppView(props: AppViewProps) {
                   const {
                     handleConnect,
                     setActiveCommandId: setActiveConnectCommandId,
-                  } = await import("../commands/connect");
+                  } = await import("@/cli/commands/connect");
                   setActiveConnectCommandId(cmd.id);
                   try {
                     await handleConnect(

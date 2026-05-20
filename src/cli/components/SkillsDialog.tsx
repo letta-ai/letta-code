@@ -49,11 +49,9 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
   useEffect(() => {
     (async () => {
       try {
-        const { discoverSkills, SKILLS_DIR } = await import(
-          "../../agent/skills"
-        );
+        const { discoverSkills, SKILLS_DIR } = await import("@/agent/skills");
         const { getSkillsDirectory, getSkillSources } = await import(
-          "../../agent/context"
+          "@/agent/context"
         );
         const { join } = await import("node:path");
         const skillsDir =

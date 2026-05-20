@@ -60,7 +60,7 @@ export async function importAgentFromFile(
     const updateArgs = getModelUpdateArgs(options.modelOverride);
     await updateAgentLLMConfig(agentId, options.modelOverride, updateArgs);
     // Ensure the correct memory tool is attached for the new model
-    const { ensureCorrectMemoryTool } = await import("../tools/toolset");
+    const { ensureCorrectMemoryTool } = await import("@/tools/toolset");
     await ensureCorrectMemoryTool(agentId, options.modelOverride);
     agent = await client.agents.retrieve(agentId);
   }
@@ -69,7 +69,7 @@ export async function importAgentFromFile(
   let skills: string[] | undefined;
 
   if (!options.stripSkills) {
-    const { getAgentSkillsDir } = await import("./skills");
+    const { getAgentSkillsDir } = await import("@/agent/skills");
     const skillsDir = getAgentSkillsDir(agentId);
     skills = await extractSkillsFromAf(resolvedPath, skillsDir);
   }
@@ -179,7 +179,7 @@ async function fetchSkillFromUrl(
   const path = parts.slice(3).join("/");
 
   // Fetch contents using shared GitHub util
-  const { fetchGitHubContents } = await import("./github-utils");
+  const { fetchGitHubContents } = await import("@/agent/github-utils");
   const entries = await fetchGitHubContents(owner, repo, branch, path);
 
   if (!Array.isArray(entries)) {
@@ -201,7 +201,7 @@ async function downloadGitHubDirectory(
   branch: string,
   basePath: string,
 ): Promise<void> {
-  const { fetchGitHubContents } = await import("./github-utils");
+  const { fetchGitHubContents } = await import("@/agent/github-utils");
 
   for (const entry of entries) {
     if (entry.type === "file") {

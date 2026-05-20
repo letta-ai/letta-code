@@ -172,7 +172,7 @@ export async function ensureDefaultAgents(
   try {
     // Pre-determine memfs mode so the agent is created with the correct prompt.
     const { isLettaCloud, enableMemfsIfCloud } = await import(
-      "./memoryFilesystem"
+      "@/agent/memoryFilesystem"
     );
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs && (await isLettaCloud());

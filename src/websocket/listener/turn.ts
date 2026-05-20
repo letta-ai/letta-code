@@ -236,7 +236,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       });
 
       const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("../../tools/impl/Task");
+        await import("@/tools/impl/Task");
       const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,
@@ -460,7 +460,9 @@ export async function handleIncomingMessage(
       onStatusChange?.("processing", connectionId);
     }
 
-    const { normalizeInboundMessages } = await import("./queue");
+    const { normalizeInboundMessages } = await import(
+      "@/websocket/listener/queue"
+    );
     const normalizedMessages = await normalizeInboundMessages(
       msg.messages,
       undefined,

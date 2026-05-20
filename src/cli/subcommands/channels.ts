@@ -208,9 +208,7 @@ async function handleInstall(channel: string): Promise<number> {
   }
 
   try {
-    const { installChannelRuntime } = await import(
-      "../../channels/runtimeDeps"
-    );
+    const { installChannelRuntime } = await import("@/channels/runtimeDeps");
     await installChannelRuntime(channelId);
     console.log(
       JSON.stringify(
@@ -469,9 +467,7 @@ async function handlePair(
 
   // Load existing state
   loadRoutes(channelId);
-  const { loadPairingStore: loadPairing } = await import(
-    "../../channels/pairing"
-  );
+  const { loadPairingStore: loadPairing } = await import("@/channels/pairing");
   loadPairing(channelId);
 
   const result = completePairing(

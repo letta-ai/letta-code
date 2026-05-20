@@ -108,7 +108,7 @@ export async function handleListen(
   // Handle /listen off - stop the listener
   if (msg.trim() === "/remote off") {
     const { stopListenerClient, isListenerActive } = await import(
-      "../../websocket/listen-client"
+      "@/websocket/listen-client"
     );
 
     if (!isListenerActive()) {
@@ -250,9 +250,7 @@ export async function handleListen(
     );
 
     // Import and start WebSocket client
-    const { startListenerClient } = await import(
-      "../../websocket/listen-client"
-    );
+    const { startListenerClient } = await import("@/websocket/listen-client");
 
     // Helper to start client with given connection details
     const startClient = async (

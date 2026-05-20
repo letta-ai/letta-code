@@ -44,7 +44,7 @@ interface Hunk {
 }
 
 async function getMemoryWriteSyncMode(): Promise<MemoryWriteSyncMode> {
-  const { getBackend } = await import("../../backend");
+  const { getBackend } = await import("@/backend");
   return getBackend().capabilities.localMemfs ? "local" : "remote";
 }
 
@@ -91,7 +91,7 @@ async function getAgentIdentity(): Promise<{
 
   let agentName = "";
   try {
-    const { getBackend } = await import("../../backend");
+    const { getBackend } = await import("@/backend");
     const agent = await getBackend().retrieveAgent(agentId);
     agentName = (agent.name || "").trim();
   } catch {

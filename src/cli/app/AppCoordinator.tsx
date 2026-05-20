@@ -279,7 +279,7 @@ export function App({
 
   // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
-    | import("../helpers/conversationSwitchAlert").ConversationSwitchContext
+    | import("@/cli/helpers/conversationSwitchAlert").ConversationSwitchContext
     | null
   >(null);
 
@@ -2675,7 +2675,7 @@ export function App({
               };
               const sysNorm = normalize(agentSystem);
               const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "../../agent/promptAssets"
+                "@/agent/promptAssets"
               );
 
               // Best-effort preset detection.
@@ -2735,9 +2735,7 @@ export function App({
 
           // Derive model ID from the configured model handle for ModelSelector.
           const agentModelHandle = getPreferredAgentModelHandle(agent);
-          const { getModelInfoForLlmConfig } = await import(
-            "../../agent/model"
-          );
+          const { getModelInfoForLlmConfig } = await import("@/agent/model");
           const modelInfo = getModelInfoForLlmConfig(
             agentModelHandle || "",
             agent.llm_config as unknown as {
@@ -2759,9 +2757,7 @@ export function App({
 
           if (persistedToolsetPreference === "auto") {
             if (agentModelHandle) {
-              const { switchToolsetForModel } = await import(
-                "../../tools/toolset"
-              );
+              const { switchToolsetForModel } = await import("@/tools/toolset");
               const derivedToolset = await switchToolsetForModel(
                 agentModelHandle,
                 agentId,
@@ -2771,7 +2767,7 @@ export function App({
               setCurrentToolset(null);
             }
           } else {
-            const { forceToolsetSwitch } = await import("../../tools/toolset");
+            const { forceToolsetSwitch } = await import("@/tools/toolset");
             await forceToolsetSwitch(persistedToolsetPreference, agentId);
             setCurrentToolset(persistedToolsetPreference);
           }
@@ -3033,9 +3029,7 @@ export function App({
       }
 
       try {
-        const { updateConversationLLMConfig } = await import(
-          "../../agent/modify"
-        );
+        const { updateConversationLLMConfig } = await import("@/agent/modify");
         await updateConversationLLMConfig(
           targetConversationId,
           modelHandle,
@@ -3157,7 +3151,7 @@ export function App({
       try {
         if (getBackend().capabilities.localMemfs) {
           const { initializeLocalMemoryRepo } = await import(
-            "../../agent/memoryGit"
+            "@/agent/memoryGit"
           );
           await initializeLocalMemoryRepo({
             memoryDir: getScopedMemoryFilesystemRoot(agentId),
@@ -3169,7 +3163,7 @@ export function App({
         }
 
         const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-          "../../agent/memoryGit"
+          "@/agent/memoryGit"
         );
         if (!isGitRepo(agentId)) {
           await cloneMemoryRepo(agentId);
