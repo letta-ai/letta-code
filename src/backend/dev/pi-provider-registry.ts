@@ -1,9 +1,4 @@
-import type {
-  Api,
-  KnownProvider,
-  Model,
-  Provider,
-} from "@earendil-works/pi-ai";
+import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
@@ -325,12 +320,6 @@ export function stripProviderHandlePrefix(
   return prefix ? model.slice(prefix.length) : model;
 }
 
-export function hasKnownProviderHandlePrefix(model: string): boolean {
-  return PI_PROVIDER_SPECS.some((provider) =>
-    provider.handlePrefixes.some((prefix) => model.startsWith(prefix)),
-  );
-}
-
 export function localProviderType(provider: PiProvider): string {
   return getPiProviderSpec(provider).providerTypes[0] ?? "openai";
 }
@@ -397,13 +386,4 @@ export function piProviderFromModel(
     resolveProviderFromModelHandle(modelHandle) ??
     resolveProviderFromProviderType(modelSettings.provider_type)
   );
-}
-
-export function piProviderNameForModel(
-  modelHandle: string,
-  modelSettings: Record<string, unknown>,
-): Provider | undefined {
-  const provider = piProviderFromModel(modelHandle, modelSettings);
-  const spec = provider ? getPiProviderSpec(provider) : undefined;
-  return spec?.piProvider;
 }

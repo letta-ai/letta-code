@@ -100,21 +100,3 @@ function parseIniFile(
     }
   }
 }
-
-/**
- * Get a specific profile by name
- */
-export async function getAwsProfile(
-  profileName: string,
-): Promise<AwsProfile | null> {
-  const profiles = await parseAwsCredentials();
-  return profiles.find((p) => p.name === profileName) || null;
-}
-
-/**
- * Get list of available profile names
- */
-export async function getAwsProfileNames(): Promise<string[]> {
-  const profiles = await parseAwsCredentials();
-  return profiles.map((p) => p.name);
-}
