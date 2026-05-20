@@ -49,18 +49,7 @@ Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, 
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
 
 ## Local mode
-Local mode runs an embedded Letta-compatible backend inside Letta Code. Agents, conversations, memory, provider connections, and secrets are stored on your machine.
-
-> [!TIP]
-> Running Letta Code locally used to be require running a seperate Docker server. This is no longer required, as Letta Code now has a built-in embedded server.
-
-Local mode is a good fit when you want:
-
-* A self-contained agent runtime for local projects
-* Disposable agents for experiments or development
-* Inspectable state stored as ordinary local files
-* Local git-backed MemFS memory
-* Direct provider connections from your machine
+Local mode runs an embedded stateful agent server inside Letta Code. Agents, conversations, memory, provider connections, and secrets are stored on your machine.
 
 You can enter local mode from the first-run setup menu, or explicitly with:
 
