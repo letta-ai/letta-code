@@ -95,6 +95,14 @@ graph TD
     Constellation --> D["📦 Sandbox"]
 ```
 
+### Remote environments
+Letta Code agents in the Constellation can connect to remote environments. Run `letta server` on a machine to register it as an environment, then use the CLI, desktop app, web app, or messaging integrations to route agent work there.
+
+```bash
+letta server
+letta server --env-name "work-laptop"
+```
+
 ## Philosophy 
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
 
@@ -125,13 +133,6 @@ Letta Code works with skills (reusable modules that teach your agent new capabil
 > /skill [optional instructions on what skill to learn]
 ```
 
-## Remote environments
-Letta Code agents in the Constellation can connect to remote environments. Run `letta server` on a machine to register it as an environment, then use the CLI, desktop app, web app, or messaging integrations to route agent work there.
-
-```bash
-letta server
-letta server --env-name "work-laptop"
-```
 
 ## Messaging Integrations
 Letta Code supports [channels](https://docs.letta.com/letta-code/channels). 
