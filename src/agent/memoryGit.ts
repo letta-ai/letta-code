@@ -164,7 +164,13 @@ function redactGitAuthError(error: unknown): Error {
     error.message = redactGitAuthInText(error.message);
 
     const mutableError = error as Error & Record<string, unknown>;
-    for (const key of ["cmd", "command", "stdout", "stderr"] as const) {
+    for (const key of [
+      "cmd",
+      "command",
+      "stack",
+      "stdout",
+      "stderr",
+    ] as const) {
       const value = mutableError[key];
       if (typeof value === "string") {
         mutableError[key] = redactGitAuthInText(value);

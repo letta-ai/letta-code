@@ -371,7 +371,7 @@ describe("git auth hardening", () => {
 
   test("redacts bearer headers and credential helper passwords", () => {
     const secret = "sk-let-test-secret-456";
-    const message = `Authorization: Bearer ${secret}\ngit config credential.https://api.letta.com.helper !f() { echo "username=letta"; echo "password=${secret}"; }; f`;
+    const message = `Error: Authorization: Bearer ${secret}\ngit config credential.https://api.letta.com.helper !f() { echo "username=letta"; echo "password=${secret}"; }; f\n    at runGit (memoryGit.ts:1:1)`;
 
     const redacted = redactGitAuthInText(message);
 
