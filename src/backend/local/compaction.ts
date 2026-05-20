@@ -13,7 +13,7 @@ import {
   resolvePiModelForAgent,
 } from "@/backend/dev/PiModelFactory";
 import type { LocalMessage } from "./LocalMessage";
-import type { LocalAgentRecord } from "./LocalStore";
+import type { LocalAgentRecord } from "./local-types";
 
 const ALL_WORD_LIMIT = 500;
 const SLIDING_WORD_LIMIT = 300;

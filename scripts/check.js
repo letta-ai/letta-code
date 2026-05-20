@@ -7,6 +7,19 @@ console.log("🔍 Running lint and type checks...\n");
 
 let failed = false;
 
+// Check for circular dependencies
+console.log("🔄 Checking for circular dependencies...");
+try {
+  await $`bun run check:cycles --no-spinner`;
+  console.log("✅ No circular dependencies\n");
+} catch (error) {
+  console.error("❌ Circular dependencies detected\n");
+  console.error(
+    "Fix the cycles shown above before merging. Run 'bun run check:cycles' locally.\n",
+  );
+  failed = true;
+}
+
 // Run test mock isolation check
 console.log("🧪 Checking Bun module mock isolation...");
 try {

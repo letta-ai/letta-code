@@ -30,7 +30,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
-import { cliPermissions } from "@/permissions/cli";
+import { cliPermissions } from "@/permissions/cliPermissionsInstance";
 import {
   parseScopeList,
   resolveAllowedMemoryRoots,

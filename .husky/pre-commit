@@ -17,6 +17,14 @@ if [ -n "$STAGED_TS" ]; then
   fi
 fi
 
+# Check for circular dependencies
+if ! bun run check:cycles --no-spinner 2>/dev/null; then
+  echo ""
+  echo "❌ Circular dependencies detected — run 'bun run check:cycles' to see them."
+  echo "Fix the cycle before committing."
+  exit 1
+fi
+
 # Lint staged files only (fast)
 # Guard: lint-staged v16 exits code 1 when no files match, which would
 # fail the hook even on empty commits. Only run if lintable files are staged.

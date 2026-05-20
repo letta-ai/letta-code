@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { checkPermission } from "@/permissions/checker";
-import { cliPermissions } from "@/permissions/cli";
+import { cliPermissions } from "@/permissions/cliPermissionsInstance";
 import { permissionMode } from "@/permissions/mode";
 import type { PermissionRules } from "@/permissions/types";
 

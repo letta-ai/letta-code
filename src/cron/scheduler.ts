@@ -27,7 +27,6 @@ import type {
 import {
   type CronTask,
   claimSchedulerLease,
-  cronMatchesTime,
   garbageCollect,
   getActiveTasks,
   getCronFileMtime,
@@ -35,7 +34,8 @@ import {
   releaseSchedulerLease,
   updateTask,
   verifySchedulerLease,
-} from "./index";
+} from "./cronFile";
+import { cronMatchesTime } from "./parseInterval";
 
 // ── Types ───────────────────────────────────────────────────────────
 

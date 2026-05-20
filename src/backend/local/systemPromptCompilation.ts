@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, relative } from "node:path";
 import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
 import { parseFrontmatter } from "@/utils/frontmatter";
-import type { LocalAgentRecord } from "./LocalStore";
+import type { LocalAgentRecord } from "./local-types";
 
 const CORE_MEMORY_VARIABLE = "{CORE_MEMORY}";
 const MEMORY_DIR_PLACEHOLDER = "$" + "{MEMORY_DIR}";

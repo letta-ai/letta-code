@@ -3,7 +3,8 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 import { getCurrentAgentId } from "@/agent/context";
 import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
-import { cliPermissions } from "./cli";
+import { cliPermissions } from "./cliPermissionsInstance";
+import { parseScopeList } from "./cli";
 
 export interface ResolveAllowedMemoryRootsOptions {
   env?: NodeJS.ProcessEnv;
@@ -84,17 +85,7 @@ function addRootAndSiblingWorktree(root: string, acc: Set<string>): void {
   }
 }
 
-/**
- * Parse a comma- or whitespace-separated list of agent IDs.
- * Used for both `LETTA_MEMORY_SCOPE` env var and `--memory-scope` CLI flag.
- */
-export function parseScopeList(value: string | undefined | null): string[] {
-  if (!value) return [];
-  return value
-    .split(/[\s,]+/)
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
-}
+export { parseScopeList } from "./cli";
 
 interface ExplicitEnvRoots {
   roots: string[];

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join, parse } from "node:path";
 
 import { checkPermission } from "@/permissions/checker";
-import { cliPermissions } from "@/permissions/cli";
+import { cliPermissions } from "@/permissions/cliPermissionsInstance";
 import {
   evaluateCrossAgentGuard,
   extractTargetAgentPaths,

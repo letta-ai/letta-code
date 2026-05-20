@@ -36,7 +36,7 @@ import type {
   WsProtocolMessage,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
-import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
+import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { getConversationPermissionModeState } from "./permissionMode";

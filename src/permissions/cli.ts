@@ -7,14 +7,23 @@ import {
   isFileToolName,
   isShellToolName,
 } from "./canonical";
-import { parseScopeList } from "./memoryScope";
+// parseScopeList is defined here (not in memoryScope.ts) to avoid a circular
+// dependency: cli.ts → memoryScope.ts → cliPermissionsInstance.ts → cli.ts.
+// memoryScope.ts re-exports it from here.
+export function parseScopeList(value: string | undefined | null): string[] {
+  if (!value) return [];
+  return value
+    .split(/[\s,]+/)
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+}
 import { normalizePermissionRule } from "./rule-normalization";
 
 /**
  * CLI permission overrides that are set via --allowedTools and --disallowedTools flags.
  * These rules override settings.json permissions for the current session.
  */
-class CliPermissions {
+export class CliPermissions {
   private allowedTools: string[] = [];
   private disallowedTools: string[] = [];
   private memoryScope: string[] = [];
@@ -169,5 +178,4 @@ class CliPermissions {
   }
 }
 
-// Singleton instance
-export const cliPermissions = new CliPermissions();
+

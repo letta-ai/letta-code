@@ -9,7 +9,7 @@ import type {
   LocalToolResultMessage,
   LocalUserMessage,
 } from "./LocalMessage";
-import type { StoredMessage } from "./LocalStore";
+import type { StoredMessage } from "./local-types";
 
 type AssistantContent = LocalAssistantMessage["content"][number];
 
