@@ -18,28 +18,28 @@ import {
   useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
-import type { ModelReasoningEffort } from "../../agent/model";
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
-import {
-  ELAPSED_DISPLAY_THRESHOLD_MS,
-  TOKEN_DISPLAY_THRESHOLD,
-} from "../../constants";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { buildChatUrl } from "../helpers/appUrls.js";
-import { bytesToTokens, formatCompact } from "../helpers/format";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { formatGoalStatusIndicator } from "../helpers/goalCommand";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   getActiveBackgroundAgents,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
-} from "../helpers/subagentState.js";
-import { getRandomThinkingTip } from "../helpers/thinkingMessages";
+} from "@/agent/subagentState.js";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { buildChatUrl } from "@/cli/helpers/appUrls.js";
+import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { formatGoalStatusIndicator } from "@/cli/helpers/goalCommand";
+import { getRandomThinkingTip } from "@/cli/helpers/thinkingMessages";
+import {
+  ELAPSED_DISPLAY_THRESHOLD_MS,
+  TOKEN_DISPLAY_THRESHOLD,
+} from "@/constants";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { ralphMode } from "@/ralph/mode";
+import { settingsManager } from "@/settings-manager";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -391,14 +391,12 @@ function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
 
 function StatusLineContent({
   text,
-  _padding,
   modeName,
   modeColor,
   modeGlyph,
   showExitHint,
 }: {
   text: string;
-  _padding: number;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
@@ -451,7 +449,6 @@ const InputFooter = memo(function InputFooter({
   rightColumnWidth,
   statusLineText,
   statusLineRight,
-  statusLinePadding,
   footerNotification,
   goalStatusText,
   hasQueuedMessages = false,
@@ -475,7 +472,6 @@ const InputFooter = memo(function InputFooter({
   rightColumnWidth: number;
   statusLineText?: string;
   statusLineRight?: string;
-  statusLinePadding?: number;
   footerNotification?: string | null;
   goalStatusText?: string | null;
   hasQueuedMessages?: boolean;
@@ -625,7 +621,6 @@ const InputFooter = memo(function InputFooter({
         ) : statusLineText ? (
           <StatusLineContent
             text={statusLineText}
-            _padding={statusLinePadding ?? 0}
             modeName={modeName}
             modeColor={modeColor}
             modeGlyph={modeGlyph}
@@ -1006,7 +1001,6 @@ export function Input({
   shouldAnimate = true,
   statusLineText,
   statusLineRight,
-  statusLinePadding = 0,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
@@ -1055,7 +1049,6 @@ export function Input({
   shouldAnimate?: boolean;
   statusLineText?: string;
   statusLineRight?: string;
-  statusLinePadding?: number;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -1234,6 +1227,7 @@ export function Input({
       const timer = setTimeout(() => setCursorPos(undefined), 0);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [cursorPos]);
 
   // Reset bash exit arming when leaving bash mode
@@ -1962,7 +1956,6 @@ export function Input({
                 rightColumnWidth={footerRightColumnWidth}
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
-                statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
                 goalStatusText={goalStatusText}
                 hasQueuedMessages={
@@ -2018,7 +2011,7 @@ export function Input({
     inputChromeHeight,
     statusLineText,
     statusLineRight,
-    statusLinePadding,
+
     footerNotification,
     goalStatusText,
     promptChar,

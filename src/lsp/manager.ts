@@ -47,7 +47,7 @@ export class LSPManager {
     this.enabled = true;
 
     // Load server definitions
-    const { SERVERS } = await import("./servers/index.js");
+    const { SERVERS } = await import("@/lsp/servers/index.js");
     this.serverDefinitions = SERVERS;
 
     console.log(`[LSP] Initialized for project: ${projectRoot}`);

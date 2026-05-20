@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { exists, readFile, writeFile } from "../utils/fs.js";
+import { exists, readFile, writeFile } from "@/utils/fs.js";
 import {
   normalizePermissionRule,
   permissionRulesEquivalent,

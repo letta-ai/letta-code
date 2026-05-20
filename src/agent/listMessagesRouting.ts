@@ -8,7 +8,7 @@
  * conversation_id stays "default" and agent_id is passed as query param.
  */
 
-import type { ListMessagesControlRequest } from "../types/protocol";
+import type { ListMessagesControlRequest } from "@/types/protocol";
 
 export type ListMessagesRoute = {
   kind: "conversations";

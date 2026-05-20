@@ -1,5 +1,5 @@
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
-import { type Settings, settingsManager } from "../../settings-manager";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { type Settings, settingsManager } from "@/settings-manager";
 
 function isLocalhostUrl(value: string | undefined): boolean {
   if (!value) return false;

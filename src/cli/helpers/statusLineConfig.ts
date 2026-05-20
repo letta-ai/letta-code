@@ -1,9 +1,9 @@
 // Config resolution for user-defined status line commands.
 // Precedence: local project > project > global settings.
 
-import type { StatusLineConfig } from "../../settings-manager";
-import { settingsManager } from "../../settings-manager";
-import { debugLog } from "../../utils/debug";
+import type { StatusLineConfig } from "@/settings-manager";
+import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 import { CLI_GLYPHS } from "./glyphs";
 
 /** Minimum allowed polling interval (1 second). */

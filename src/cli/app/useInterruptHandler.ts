@@ -6,15 +6,15 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { getBackend } from "../../backend";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import type { Buffers } from "../helpers/accumulator";
-import { markIncompleteToolsAsCancelled } from "../helpers/accumulator";
-import { formatErrorDetails } from "../helpers/errorFormatter";
-import type { ApprovalRequest } from "../helpers/stream";
-import { interruptActiveSubagents } from "../helpers/subagentState";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { interruptActiveSubagents } from "@/agent/subagentState";
+import { getBackend } from "@/backend";
+import type { Buffers } from "@/cli/helpers/accumulator";
+import { markIncompleteToolsAsCancelled } from "@/cli/helpers/accumulator";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import type { ApprovalContext } from "@/permissions/analyzer";
 
 import { EAGER_CANCEL, INTERRUPT_MESSAGE } from "./constants";
 import { extractErrorMeta } from "./errors";

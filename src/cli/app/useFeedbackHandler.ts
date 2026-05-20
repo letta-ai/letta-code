@@ -1,16 +1,16 @@
 // src/cli/app/useFeedbackHandler.ts
 
 import { type MutableRefObject, useCallback } from "react";
-import type { SessionStats } from "../../agent/stats";
-import { submitFeedbackMetadata } from "../../backend/api/metadata";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import { debugLogFile } from "../../utils/debug";
-import { getVersion } from "../../version";
-import { chunkLog } from "../helpers/chunkLog";
-import { formatErrorDetails } from "../helpers/errorFormatter";
-import { resolvePlaceholders } from "../helpers/pasteRegistry";
-import { getDeviceType, getLocalTime } from "../helpers/sessionContext";
+import type { SessionStats } from "@/agent/stats";
+import { submitFeedbackMetadata } from "@/backend/api/metadata";
+import { chunkLog } from "@/cli/helpers/chunkLog";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { resolvePlaceholders } from "@/cli/helpers/pasteRegistry";
+import { getDeviceType, getLocalTime } from "@/cli/helpers/sessionContext";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { debugLogFile } from "@/utils/debug";
+import { getVersion } from "@/version";
 import type { CommandStarter, OverlayCommandConsumer } from "./types";
 
 type FeedbackHandlerContext = {

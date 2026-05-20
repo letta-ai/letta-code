@@ -1,4 +1,4 @@
-import type { ReflectionSettings } from "../cli/helpers/memoryReminder";
+import type { ReflectionSettings } from "@/cli/helpers/memoryReminder";
 import type { SharedReminderContext } from "./engine";
 import type { SessionContextReason, SharedReminderState } from "./state";
 

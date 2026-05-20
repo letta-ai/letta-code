@@ -1,6 +1,6 @@
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { shouldRetryRunMetadataError } from "../../agent/approval-recovery";
-import { getBackend } from "../../backend";
+import { shouldRetryRunMetadataError } from "@/agent/approval-recovery";
+import { getBackend } from "@/backend";
 
 // Check if error is retriable based on stop reason and run metadata
 export async function isRetriableError(

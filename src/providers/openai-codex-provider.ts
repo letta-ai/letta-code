@@ -4,7 +4,7 @@
  * tokens in the local provider auth file and uses a local fetch shim at runtime.
  */
 
-import { getBalanceMetadata } from "../backend/api/metadata";
+import { getBalanceMetadata } from "@/backend/api/metadata";
 import {
   createProvider,
   deleteProvider,

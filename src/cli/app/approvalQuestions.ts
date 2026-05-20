@@ -1,5 +1,5 @@
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
-import type { ApprovalRequest } from "../helpers/stream";
+import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 
 // Extract questions from AskUserQuestion tool args
 export function getQuestionsFromApproval(approval: ApprovalRequest) {

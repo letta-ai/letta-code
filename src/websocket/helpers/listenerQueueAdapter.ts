@@ -1,5 +1,5 @@
-import type { QueueBlockedReason } from "../../queue/queueRuntime";
-import type { LoopStatus } from "../../types/protocol_v2";
+import type { QueueBlockedReason } from "@/queue/queueRuntime";
+import type { LoopStatus } from "@/types/protocol_v2";
 
 export type ListenerQueueGatingConditions = {
   loopStatus: LoopStatus;

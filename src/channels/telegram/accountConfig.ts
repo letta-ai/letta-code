@@ -1,5 +1,5 @@
-import type { ChannelAccountConfigAdapter } from "../pluginTypes";
-import type { TelegramChannelAccount } from "../types";
+import type { ChannelAccountConfigAdapter } from "@/channels/pluginTypes";
+import type { TelegramChannelAccount } from "@/channels/types";
 
 const TELEGRAM_CONFIG_KEYS = new Set(["token", "transcribe_voice"]);
 

@@ -2,10 +2,7 @@
 // Wraps SingleSelectPicker with personality-specific logic.
 
 import { memo, useMemo } from "react";
-import {
-  PERSONALITY_OPTIONS,
-  type PersonalityId,
-} from "../../agent/personality";
+import { PERSONALITY_OPTIONS, type PersonalityId } from "@/agent/personality";
 import { OverlayShell } from "./OverlayShell";
 import type { SelectableItem } from "./SingleSelectPicker";
 import { SingleSelectPicker } from "./SingleSelectPicker";

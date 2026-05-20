@@ -8,11 +8,11 @@ import type {
 import {
   type ApprovalDecision,
   executeApprovalBatch,
-} from "../../agent/approval-execution";
+} from "@/agent/approval-execution";
 import {
   getResumeDataFromBackend,
   type ResumeData,
-} from "../../agent/check-approval";
+} from "@/agent/check-approval";
 import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
@@ -21,18 +21,18 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
-} from "../../agent/turn-recovery-policy";
-import { getBackend } from "../../backend";
-import { createBuffers } from "../../cli/helpers/accumulator";
-import { drainStreamWithResume } from "../../cli/helpers/stream";
-import { formatPermissionDenial } from "../../permissions/formatDenial";
-import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
-import { prepareToolExecutionContextForScope } from "../../tools/toolset";
+} from "@/agent/turn-recovery-policy";
+import { getBackend } from "@/backend";
+import { createBuffers } from "@/cli/helpers/accumulator";
+import { drainStreamWithResume } from "@/cli/helpers/stream";
+import { formatPermissionDenial } from "@/permissions/formatDenial";
+import { isInteractiveApprovalTool } from "@/tools/interactivePolicy";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
   StopReasonType,
   StreamDelta,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,

@@ -15,7 +15,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { GrepInFilesMatch } from "../../types/protocol_v2";
+import type { GrepInFilesMatch } from "@/types/protocol_v2";
 
 // ── Ripgrep binary resolution ──────────────────────────────────────
 

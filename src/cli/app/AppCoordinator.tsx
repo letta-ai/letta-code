@@ -14,25 +14,92 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { prefetchAvailableModelHandles } from "../../agent/available-models";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { setCurrentAgentId } from "../../agent/context";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { prefetchAvailableModelHandles } from "@/agent/available-models";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { setCurrentAgentId } from "@/agent/context";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
 import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
-} from "../../agent/model";
-import type { PersonalityId } from "../../agent/personality";
-import { shouldRecommendDefaultPrompt } from "../../agent/promptAssets";
-import { reconcileExistingAgentState } from "../../agent/reconcileExistingAgentState";
-import { recordSessionEnd } from "../../agent/sessionHistory";
-import { SessionStats } from "../../agent/stats";
-import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
-import { getBillingTier } from "../../backend/api/metadata";
+} from "@/agent/model";
+import type { PersonalityId } from "@/agent/personality";
+import { shouldRecommendDefaultPrompt } from "@/agent/promptAssets";
+import { reconcileExistingAgentState } from "@/agent/reconcileExistingAgentState";
+import { recordSessionEnd } from "@/agent/sessionHistory";
+import { SessionStats } from "@/agent/stats";
+import {
+  clearSubagentsByIds,
+  getActiveBackgroundAgents,
+  getSubagentByToolCallId,
+  getSnapshot as getSubagentSnapshot,
+  subscribe as subscribeToSubagents,
+} from "@/agent/subagentState";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import { getBillingTier } from "@/backend/api/metadata";
+import {
+  type CommandFinishedEvent,
+  type CommandHandle,
+  createCommandRunner,
+} from "@/cli/commands/runner";
+import type { BtwState } from "@/cli/components/BtwPane";
+import {
+  appendStreamingOutput,
+  type Buffers,
+  createBuffers,
+  type Line,
+  toLines,
+} from "@/cli/helpers/accumulator";
+import { isLocalAgentId } from "@/cli/helpers/appUrls";
+import { backfillBuffers } from "@/cli/helpers/backfill";
+import { chunkLog } from "@/cli/helpers/chunkLog";
+import {
+  createContextTracker,
+  resetContextHistory,
+} from "@/cli/helpers/contextTracker";
+import {
+  generateConversationTitleFromFork,
+  normalizeConversationTitle,
+} from "@/cli/helpers/conversationTitle";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { setErrorContext } from "@/cli/helpers/errorContext";
+import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
+import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
+import {
+  buildContentFromQueueBatch,
+  toQueuedMsg,
+} from "@/cli/helpers/queuedMessageParts";
+import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import {
+  collectFinishedTaskToolCalls,
+  createSubagentGroupItem,
+  hasInProgressTaskToolCalls,
+} from "@/cli/helpers/subagentAggregation";
+import { buildStartupSystemPromptWarning } from "@/cli/helpers/systemPromptWarning.ts";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+import {
+  isFileEditTool,
+  isFileWriteTool,
+  isPatchTool,
+  isShellOutputTool,
+  isShellTool,
+} from "@/cli/helpers/toolNameMapping";
+import { isTaskTool } from "@/cli/helpers/toolNameMapping.js";
+import { getTuiBlockedReason } from "@/cli/helpers/tuiQueueAdapter";
+import {
+  renderWindowTitle,
+  resolveWindowTitleConfig,
+} from "@/cli/helpers/windowTitleConfig";
+import { useConfigurableStatusLine } from "@/cli/hooks/useConfigurableStatusLine";
+import { useSuspend } from "@/cli/hooks/useSuspend/useSuspend.ts";
+import { useSyncedState } from "@/cli/hooks/useSyncedState";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/useTerminalWidth";
 import {
   getTask,
   handleMissedOneShot,
@@ -40,117 +107,52 @@ import {
   readCronFile,
   shouldFireTask,
   updateTask,
-} from "../../cron";
-import { experimentManager } from "../../experiments/manager";
-import { runSessionEndHooks, runSessionStartHooks } from "../../hooks";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import { type PermissionMode, permissionMode } from "../../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
+} from "@/cron";
+import { experimentManager } from "@/experiments/manager";
+import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import { type PermissionMode, permissionMode } from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
   QueueRuntime,
   type TaskNotificationQueueItem,
-} from "../../queue/queueRuntime";
-import { ralphMode } from "../../ralph/mode";
+} from "@/queue/queueRuntime";
+import { ralphMode } from "@/ralph/mode";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
   enqueueToolsetChangeReminder,
   resetSharedReminderState,
-} from "../../reminders/state";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
+} from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 import {
   releaseToolExecutionContext,
   type ToolExecutionResult,
-} from "../../tools/manager";
+} from "@/tools/manager";
 import {
   prepareToolExecutionContextForResolvedTarget,
   prepareToolExecutionContextForScope,
   type ToolsetName,
   type ToolsetPreference,
-} from "../../tools/toolset";
+} from "@/tools/toolset";
 import {
   debugLog,
   debugLogFile,
   debugWarn,
   isDebugEnabled,
-} from "../../utils/debug";
-import { recordTuiPerf } from "../../utils/tuiPerf";
-import { getVersion } from "../../version";
-import {
-  type CommandFinishedEvent,
-  type CommandHandle,
-  createCommandRunner,
-} from "../commands/runner";
-import type { BtwState } from "../components/BtwPane";
-import {
-  appendStreamingOutput,
-  type Buffers,
-  createBuffers,
-  type Line,
-  toLines,
-} from "../helpers/accumulator";
-import { isLocalAgentId } from "../helpers/appUrls";
-import { backfillBuffers } from "../helpers/backfill";
-import { chunkLog } from "../helpers/chunkLog";
-import {
-  createContextTracker,
-  resetContextHistory,
-} from "../helpers/contextTracker";
-import {
-  generateConversationTitleFromFork,
-  normalizeConversationTitle,
-} from "../helpers/conversationTitle";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { setErrorContext } from "../helpers/errorContext";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { getReflectionSettings } from "../helpers/memoryReminder";
+} from "@/utils/debug";
 import {
   addToMessageQueue,
   type QueuedMessage,
   setMessageQueueAdder,
-} from "../helpers/messageQueueBridge";
-import { generatePlanFilePath } from "../helpers/planName";
-import {
-  buildContentFromQueueBatch,
-  toQueuedMsg,
-} from "../helpers/queuedMessageParts";
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
-import type { ApprovalRequest } from "../helpers/stream";
-import {
-  collectFinishedTaskToolCalls,
-  createSubagentGroupItem,
-  hasInProgressTaskToolCalls,
-} from "../helpers/subagentAggregation";
-import {
-  clearSubagentsByIds,
-  getActiveBackgroundAgents,
-  getSubagentByToolCallId,
-  getSnapshot as getSubagentSnapshot,
-  subscribe as subscribeToSubagents,
-} from "../helpers/subagentState";
-import { buildStartupSystemPromptWarning } from "../helpers/systemPromptWarning.ts";
-import { appendTaskNotificationEventsToBuffer } from "../helpers/taskNotifications";
-import { getRandomThinkingVerb } from "../helpers/thinkingMessages";
-import {
-  isFileEditTool,
-  isFileWriteTool,
-  isPatchTool,
-  isShellOutputTool,
-  isShellTool,
-} from "../helpers/toolNameMapping";
-import { isTaskTool } from "../helpers/toolNameMapping.js";
-import { getTuiBlockedReason } from "../helpers/tuiQueueAdapter";
-import {
-  renderWindowTitle,
-  resolveWindowTitleConfig,
-} from "../helpers/windowTitleConfig";
-import { useConfigurableStatusLine } from "../hooks/useConfigurableStatusLine";
-import { useSuspend } from "../hooks/useSuspend/useSuspend.ts";
-import { useSyncedState } from "../hooks/useSyncedState";
-import { useTerminalRows, useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/utils/messageQueueBridge";
+import { generatePlanFilePath } from "@/utils/planName";
+import { appendTaskNotificationEventsToBuffer } from "@/utils/taskNotifications";
+import { recordTuiPerf } from "@/utils/tuiPerf";
+import { getVersion } from "@/version";
 import { AppView } from "./AppView";
 import {
   ANIMATION_RESUME_HYSTERESIS_ROWS,
@@ -198,7 +200,7 @@ import { useQueuedApprovalSubmit } from "./useQueuedApprovalSubmit";
 import { useReasoningCycle } from "./useReasoningCycle";
 import { useSubmitHandler } from "./useSubmitHandler";
 
-export default function App({
+export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
   conversationId: initialConversationId,
@@ -277,7 +279,7 @@ export default function App({
 
   // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
-    | import("../helpers/conversationSwitchAlert").ConversationSwitchContext
+    | import("@/cli/helpers/conversationSwitchAlert").ConversationSwitchContext
     | null
   >(null);
 
@@ -2021,11 +2023,6 @@ export default function App({
   // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const memfsEnabled = isActiveMemfsEnabled(agentId);
-  const _memfsDirectory =
-    memfsEnabled && agentId && agentId !== "loading"
-      ? getScopedMemoryFilesystemRoot(agentId)
-      : null;
   const statusLine = useConfigurableStatusLine({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
@@ -2678,7 +2675,7 @@ export default function App({
               };
               const sysNorm = normalize(agentSystem);
               const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "../../agent/promptAssets"
+                "@/agent/promptAssets"
               );
 
               // Best-effort preset detection.
@@ -2738,9 +2735,7 @@ export default function App({
 
           // Derive model ID from the configured model handle for ModelSelector.
           const agentModelHandle = getPreferredAgentModelHandle(agent);
-          const { getModelInfoForLlmConfig } = await import(
-            "../../agent/model"
-          );
+          const { getModelInfoForLlmConfig } = await import("@/agent/model");
           const modelInfo = getModelInfoForLlmConfig(
             agentModelHandle || "",
             agent.llm_config as unknown as {
@@ -2762,9 +2757,7 @@ export default function App({
 
           if (persistedToolsetPreference === "auto") {
             if (agentModelHandle) {
-              const { switchToolsetForModel } = await import(
-                "../../tools/toolset"
-              );
+              const { switchToolsetForModel } = await import("@/tools/toolset");
               const derivedToolset = await switchToolsetForModel(
                 agentModelHandle,
                 agentId,
@@ -2774,7 +2767,7 @@ export default function App({
               setCurrentToolset(null);
             }
           } else {
-            const { forceToolsetSwitch } = await import("../../tools/toolset");
+            const { forceToolsetSwitch } = await import("@/tools/toolset");
             await forceToolsetSwitch(persistedToolsetPreference, agentId);
             setCurrentToolset(persistedToolsetPreference);
           }
@@ -2814,6 +2807,7 @@ export default function App({
         cancelled = true;
       };
     }
+    return undefined;
   }, [loadingState, agentId, initialAgentState]);
 
   // Keep effective model state in sync with the active conversation override.
@@ -3035,9 +3029,7 @@ export default function App({
       }
 
       try {
-        const { updateConversationLLMConfig } = await import(
-          "../../agent/modify"
-        );
+        const { updateConversationLLMConfig } = await import("@/agent/modify");
         await updateConversationLLMConfig(
           targetConversationId,
           modelHandle,
@@ -3159,7 +3151,7 @@ export default function App({
       try {
         if (getBackend().capabilities.localMemfs) {
           const { initializeLocalMemoryRepo } = await import(
-            "../../agent/memoryGit"
+            "@/agent/memoryGit"
           );
           await initializeLocalMemoryRepo({
             memoryDir: getScopedMemoryFilesystemRoot(agentId),
@@ -3171,7 +3163,7 @@ export default function App({
         }
 
         const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-          "../../agent/memoryGit"
+          "@/agent/memoryGit"
         );
         if (!isGitRepo(agentId)) {
           await cloneMemoryRepo(agentId);

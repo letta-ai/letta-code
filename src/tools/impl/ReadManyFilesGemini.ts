@@ -74,7 +74,6 @@ export async function read_many_files(
 
   for (const filePath of sortedFiles) {
     try {
-      const _relativePath = path.relative(cwd, filePath);
       const separator = `--- ${filePath} ---`;
 
       // Use our Read tool to read the file

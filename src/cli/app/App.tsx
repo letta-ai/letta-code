@@ -6,4 +6,4 @@
  * need without paging through the full TUI coordinator.
  */
 
-export { default } from "./AppCoordinator";
+export { App } from "./AppCoordinator";

@@ -1,5 +1,8 @@
-import type { ChannelConfigSchema, ChannelPlugin } from "../pluginTypes";
-import type { ChannelAccount, CustomChannelAccount } from "../types";
+import type {
+  ChannelConfigSchema,
+  ChannelPlugin,
+} from "@/channels/pluginTypes";
+import type { ChannelAccount, CustomChannelAccount } from "@/channels/types";
 import { createCustomAdapter } from "./adapter";
 
 /**
