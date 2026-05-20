@@ -8,7 +8,7 @@ import {
   getCachedModelHandles,
 } from "@/agent/available-models";
 import { models } from "@/agent/model";
-import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
@@ -16,10 +16,9 @@ import {
 } from "@/providers/byok-providers";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
+import { OverlayShell } from "./OverlayShell";
+import { TabBar } from "./TabBar";
 import { Text } from "./Text";
-
-// Horizontal line character (matches approval dialogs)
-const SOLID_LINE = "─";
 
 const VISIBLE_ITEMS = 8;
 
@@ -129,8 +128,6 @@ export function ModelSelector({
   isSelfHosted,
   localModelCatalog,
 }: ModelSelectorProps) {
-  const terminalWidth = useTerminalWidth();
-  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
 
   // For self-hosted and local backends, only show the active backend's model catalog.
@@ -742,55 +739,43 @@ export function ModelSelector({
     return "All Letta API models currently available for this account";
   };
 
-  // Render tab bar (matches AgentSelector style)
-  const renderTabBar = () => (
-    <Box flexDirection="row" gap={2}>
-      {modelCategories.map((cat) => {
-        const isActive = cat === category;
-        return (
-          <Text
-            key={cat}
-            backgroundColor={
-              isActive ? colors.selector.itemHighlighted : undefined
-            }
-            color={isActive ? "white" : undefined}
-            bold={isActive}
-          >
-            {` ${getCategoryLabel(cat)} `}
-          </Text>
-        );
-      })}
-    </Box>
-  );
-
   return (
-    <Box flexDirection="column">
-      {/* Command header */}
-      <Text dimColor>{"> /model"}</Text>
-      <Text dimColor>{solidLine}</Text>
-
-      <Box height={1} />
-
-      {/* Title and tabs */}
-      <Box flexDirection="column" gap={1} marginBottom={1}>
-        <Text bold color={colors.selector.title}>
-          Swap your agent's model
-        </Text>
-        {!isLoading && (
-          <Box flexDirection="column" paddingLeft={1}>
-            {renderTabBar()}
-            <Text dimColor> {getCategoryDescription(category)}</Text>
-            <Text>
-              <Text dimColor> Search: </Text>
-              {searchQuery ? (
-                <Text>{searchQuery}</Text>
-              ) : (
-                <Text dimColor>(type to filter)</Text>
-              )}
+    <OverlayShell
+      command="/model"
+      title="Swap your agent's model"
+      footer={
+        !isLoading && currentList.length > 0 ? (
+          <Box flexDirection="column">
+            <Text dimColor>
+              {"  "}
+              {currentList.length} models{isCached ? " · cached" : ""}
+              {refreshing ? " · refreshing..." : " · R to refresh list"}
+            </Text>
+            <Text dimColor>
+              {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel
             </Text>
           </Box>
-        )}
-      </Box>
+        ) : undefined
+      }
+    >
+      {!isLoading && (
+        <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
+          <TabBar
+            tabs={modelCategories}
+            activeTab={category}
+            getLabel={getCategoryLabel}
+          />
+          <Text dimColor> {getCategoryDescription(category)}</Text>
+          <Text>
+            <Text dimColor> Search: </Text>
+            {searchQuery ? (
+              <Text>{searchQuery}</Text>
+            ) : (
+              <Text dimColor>(type to filter)</Text>
+            )}
+          </Text>
+        </Box>
+      )}
 
       {/* Loading states */}
       {isLoading && (
@@ -870,20 +855,6 @@ export function ModelSelector({
           <Text> </Text>
         ) : null}
       </Box>
-
-      {/* Footer */}
-      {!isLoading && currentList.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>
-            {"  "}
-            {currentList.length} models{isCached ? " · cached" : ""}
-            {refreshing ? " · refreshing..." : " · R to refresh list"}
-          </Text>
-          <Text dimColor>
-            {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel
-          </Text>
-        </Box>
-      )}
-    </Box>
+    </OverlayShell>
   );
 }
