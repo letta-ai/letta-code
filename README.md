@@ -23,7 +23,7 @@ You can interact with Letta Code agents through:
 | [MemFS](https://docs.letta.com/letta-code/memfs) | All context (including [memory blocks](https://www.letta.com/blog/memory-blocks)) are tracked via git. Sync context to a custom GitHub repository by setting `/memory-repository set git@github.com:...` |
 | [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS) |
 | [Subagents & Multi-agent](https://docs.letta.com/letta-code/subagents) | Call built-in subagents (general-purpose, forked, recall, history-analyzer) async or sync. Agents can all any other agent (including themselves) as subagents  |
-| [Agent messaging](https://docs.letta.com/letta-code/agent-messaging) | Chat with the same agent from Slack, Telegram, your browser (chat.letta.com) including mobile, and through custom channels |
+| [Messaging Integrations](https://docs.letta.com/letta-code/channels) | Chat with the same agent from Slack, Telegram, your browser (chat.letta.com) including mobile, and through custom channels |
 | [Hooks](https://docs.letta.com/letta-code/hooks) | Configure deterministic code to run on certain events |
 | [Permissions](https://docs.letta.com/letta-code/permissions) | Customize what actions are auto-approved or auto-denied. |
 | [Crons/Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats of crons, and let agents work across time with self-managed schedules |
@@ -61,8 +61,6 @@ Local mode is a good fit when you want:
 * Inspectable state stored as ordinary local files
 * Local git-backed MemFS memory
 * Direct provider connections from your machine
-
-Local mode means local **state**, not necessarily local **inference**. If you connect a remote provider like OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, or ChatGPT/Codex, prompts still go to that provider. For a fully local loop, connect a local inference provider like Ollama, LM Studio, or llama.cpp.
 
 You can enter local mode from the first-run setup menu, or explicitly with:
 
@@ -137,13 +135,6 @@ Letta Code works with skills (reusable modules that teach your agent new capabil
 ```
 Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
 
-
-## Messaging Integrations
-Letta Code supports [channels](https://docs.letta.com/letta-code/channels). 
-```bash
-letta channels configure telegram
-letta server --channels telegram
-```
 
 Community maintained packages are available for Arch Linux users on the [AUR](https://aur.archlinux.org/packages/letta-code):
 ```bash
