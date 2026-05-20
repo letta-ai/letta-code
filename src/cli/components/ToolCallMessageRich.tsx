@@ -2,16 +2,14 @@
 // is shown via StaticPlanApproval during approval, not in tool result
 import { Box } from "ink";
 import { Fragment, memo, type ReactNode } from "react";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { clipToolReturn } from "../../tools/manager.js";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
+import { getSubagentByToolCallId } from "@/agent/subagentState.js";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
   formatArgsDisplay,
   parsePatchInput,
   parsePatchOperations,
-} from "../helpers/formatArgsDisplay.js";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { getSubagentByToolCallId } from "../helpers/subagentState.js";
+} from "@/cli/helpers/formatArgsDisplay.js";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getDisplayToolName,
   isFileEditTool,
@@ -26,7 +24,9 @@ import {
   isShellTool,
   isTaskTool,
   isTodoTool,
-} from "../helpers/toolNameMapping.js";
+} from "@/cli/helpers/toolNameMapping.js";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { clipToolReturn } from "@/tools/manager.js";
 import { Text } from "./Text";
 
 /**
@@ -85,8 +85,8 @@ function colorizeArgs(argsStr: string): ReactNode {
   return <>{parts}</>;
 }
 
-import type { StreamingState } from "../helpers/accumulator";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { StreamingState } from "@/cli/helpers/accumulator";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";

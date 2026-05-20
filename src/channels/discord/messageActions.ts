@@ -1,7 +1,7 @@
 import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
-} from "../pluginTypes";
+} from "@/channels/pluginTypes";
 
 async function sendDiscordMessage(
   ctx: ChannelMessageActionContext,

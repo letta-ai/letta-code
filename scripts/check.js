@@ -7,6 +7,32 @@ console.log("🔍 Running lint and type checks...\n");
 
 let failed = false;
 
+// Check for circular dependencies
+console.log("🔄 Checking for circular dependencies...");
+try {
+  await $`bun run check:cycles --no-spinner`;
+  console.log("✅ No circular dependencies\n");
+} catch (error) {
+  console.error("❌ Circular dependencies detected\n");
+  console.error(
+    "Fix the cycles shown above before merging. Run 'bun run check:cycles' locally.\n",
+  );
+  failed = true;
+}
+
+// Check architectural layer boundaries
+console.log("🏗️  Checking layer boundaries...");
+try {
+  await $`bun run check:boundaries`;
+  console.log("✅ Layer boundaries clean\n");
+} catch (error) {
+  console.error("❌ Layer boundary violations found\n");
+  console.error(
+    "Fix by moving the import to a shared layer (utils/, types/) or inverting the dependency.\n",
+  );
+  failed = true;
+}
+
 // Run test mock isolation check
 console.log("🧪 Checking Bun module mock isolation...");
 try {

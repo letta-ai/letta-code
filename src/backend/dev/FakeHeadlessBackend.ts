@@ -12,13 +12,13 @@ import type {
   ConversationMessageListBody,
   ConversationMessageStreamBody,
   RunMessageStreamBody,
-} from "../backend";
+} from "@/backend/backend";
 import {
   LocalBackendNotFoundError,
   LocalStore,
   type LocalStoreOptions,
-} from "../local/LocalStore";
-import { isLocalStateChunkOnly } from "../local/LocalStreamChunks";
+} from "@/backend/local/LocalStore";
+import { isLocalStateChunkOnly } from "@/backend/local/LocalStreamChunks";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,

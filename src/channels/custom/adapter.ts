@@ -3,7 +3,7 @@ import type {
   ChannelAdapter,
   CustomChannelAccount,
   OutboundChannelMessage,
-} from "../types";
+} from "@/channels/types";
 
 /**
  * Outbound-only adapter for the first-party "custom" channel.

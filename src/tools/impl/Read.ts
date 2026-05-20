@@ -4,10 +4,10 @@ import type {
   ImageContent,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { debugLog } from "../../utils/debug.js";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { debugLog } from "@/utils/debug.js";
+import { resizeImageIfNeeded } from "@/utils/imageResize.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";

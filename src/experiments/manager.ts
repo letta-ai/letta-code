@@ -1,4 +1,4 @@
-import { settingsManager } from "../settings-manager";
+import { settingsManager } from "@/settings-manager";
 import type {
   ExperimentDefinition,
   ExperimentId,

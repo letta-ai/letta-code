@@ -2,7 +2,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 import {
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
-} from "../../agent/memoryGit";
+} from "@/agent/memoryGit";
 import type {
   AgentCreateBody,
   Backend,
@@ -13,15 +13,18 @@ import type {
   ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationRecompileBody,
-} from "../backend";
-import { HeadlessBackend } from "../dev/HeadlessBackend";
+} from "@/backend/backend";
+import { HeadlessBackend } from "@/backend/dev/HeadlessBackend";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
-} from "../dev/HeadlessTurnExecutor";
-import { PiStreamAdapter, type PiStreamFunction } from "../dev/PiStreamAdapter";
-import type { ProviderTurnInput } from "../dev/ProviderTurnExecutor";
-import { ProviderTurnExecutor } from "../dev/ProviderTurnExecutor";
+} from "@/backend/dev/HeadlessTurnExecutor";
+import {
+  PiStreamAdapter,
+  type PiStreamFunction,
+} from "@/backend/dev/PiStreamAdapter";
+import type { ProviderTurnInput } from "@/backend/dev/ProviderTurnExecutor";
+import { ProviderTurnExecutor } from "@/backend/dev/ProviderTurnExecutor";
 import {
   estimateLocalMessageTokens,
   isLocalSlidingWindowCompactionPlanningError,

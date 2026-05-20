@@ -1,5 +1,5 @@
-import { getBackend } from "../../backend";
-import { debugWarn } from "../../utils/debug";
+import { getBackend } from "@/backend";
+import { debugWarn } from "@/utils/debug";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import type { ListenerRuntime } from "./types";

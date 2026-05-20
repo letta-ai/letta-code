@@ -2,7 +2,7 @@
  * LSP Server Registry
  */
 
-import type { LSPServerInfo } from "../types.js";
+import type { LSPServerInfo } from "@/lsp/types.js";
 import { PythonServer } from "./python.js";
 import { TypeScriptServer } from "./typescript.js";
 

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { noteExpectedWorktreeForLauncher } from "../../websocket/listener/worktree-ownership";
+import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 
 export class ShellExecutionError extends Error {
   code?: string;

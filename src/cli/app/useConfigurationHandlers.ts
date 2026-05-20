@@ -8,31 +8,31 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ModelReasoningEffort } from "../../agent/model";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   applyPersonalityToMemory,
   getPersonalityBlockValues,
   getPersonalityOption,
   type PersonalityId,
-} from "../../agent/personality";
-import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
-import { DEFAULT_SUMMARIZATION_MODEL } from "../../constants";
-import { experimentManager } from "../../experiments/manager";
-import type { ExperimentId } from "../../experiments/types";
-import { settingsManager } from "../../settings-manager";
-import { getToolNames } from "../../tools/manager";
-import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
-import { formatToolsetName } from "../../tools/toolset-labels";
+} from "@/agent/personality";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
 import {
   type ContextTracker,
   resetContextHistory,
-} from "../helpers/contextTracker";
-import { formatErrorDetails } from "../helpers/errorFormatter";
+} from "@/cli/helpers/contextTracker";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
 import {
   persistReflectionSettingsForAgent,
   type ReflectionSettings,
-} from "../helpers/memoryReminder";
+} from "@/cli/helpers/memoryReminder";
+import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
+import type { ExperimentId } from "@/experiments/types";
+import { settingsManager } from "@/settings-manager";
+import { getToolNames } from "@/tools/manager";
+import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import { formatToolsetName } from "@/tools/toolset-labels";
 
 import {
   deriveReasoningEffort,
@@ -164,7 +164,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
       try {
         const { getReasoningTierOptionsForHandle, models } = await import(
-          "../../agent/model"
+          "@/agent/model"
         );
         const pickPreferredModelForHandle = (handle: string) => {
           const candidates = models.filter((m) => m.handle === handle);
@@ -200,7 +200,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
         if (!selectedModel && modelId.includes("/")) {
           const { getModelContextWindow } = await import(
-            "../../agent/available-models"
+            "@/agent/available-models"
           );
           const apiContextWindow = await getModelContextWindow(modelId);
 
@@ -320,7 +320,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           let conversationContextWindowLimit: number | null | undefined;
           let updatedAgent: AgentState | null = null;
           if (isDefaultConversation) {
-            const { updateAgentLLMConfig } = await import("../../agent/modify");
+            const { updateAgentLLMConfig } = await import("@/agent/modify");
             updatedAgent = await updateAgentLLMConfig(
               agentIdRef.current,
               modelHandle,
@@ -329,7 +329,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             conversationModelSettings = updatedAgent?.model_settings;
           } else {
             const { updateConversationLLMConfig } = await import(
-              "../../agent/modify"
+              "@/agent/modify"
             );
             const updatedConversation = await updateConversationLLMConfig(
               conversationIdRef.current,
@@ -429,9 +429,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           let toolsetNoticeLine: string | null = null;
 
           if (persistedToolsetPreference === "auto") {
-            const { switchToolsetForModel } = await import(
-              "../../tools/toolset"
-            );
+            const { switchToolsetForModel } = await import("@/tools/toolset");
             const toolsetName = await switchToolsetForModel(
               modelHandle,
               agentId,
@@ -453,7 +451,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               });
             }
           } else {
-            const { forceToolsetSwitch } = await import("../../tools/toolset");
+            const { forceToolsetSwitch } = await import("@/tools/toolset");
             if (currentToolset !== persistedToolsetPreference) {
               await forceToolsetSwitch(persistedToolsetPreference, agentId);
               setCurrentToolset(persistedToolsetPreference);
@@ -535,7 +533,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         | undefined;
 
       try {
-        const { SYSTEM_PROMPTS } = await import("../../agent/promptAssets");
+        const { SYSTEM_PROMPTS } = await import("@/agent/promptAssets");
         selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
 
         if (!selectedPrompt) {
@@ -583,9 +581,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             phase: "running",
           });
 
-          const { updateAgentSystemPrompt } = await import(
-            "../../agent/modify"
-          );
+          const { updateAgentSystemPrompt } = await import("@/agent/modify");
           const result = await updateAgentSystemPrompt(agentId, promptId);
 
           if (result.success) {
@@ -990,7 +986,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
         try {
           const { forceToolsetSwitch, switchToolsetForModel } = await import(
-            "../../tools/toolset"
+            "@/tools/toolset"
           );
           const previousToolsetSnapshot = currentToolset;
           const previousToolNamesSnapshot = getToolNames();
@@ -1134,6 +1130,76 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     ],
   );
 
+  const handleExperimentsConfirm = useCallback(
+    async (
+      changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
+    ) => {
+      if (changes.length === 0) {
+        setActiveOverlay(null);
+        return;
+      }
+
+      const overlayCommand = consumeOverlayCommand("experiment");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        // For batch changes we can only queue one action; queue the first change.
+        const first = changes[0];
+        if (first) {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/experiments",
+              "Experiment changes queued – will update after current task completes",
+            );
+          cmd.update({
+            output:
+              "Experiment changes queued – will update after current task completes",
+            phase: "running",
+          });
+          setQueuedOverlayAction({
+            type: "set_experiment",
+            experimentId: first.experimentId,
+            enabled: first.enabled,
+            commandId: cmd.id,
+          });
+        }
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/experiments", "Updating experiments...");
+        cmd.update({ output: "Updating experiments...", phase: "running" });
+
+        try {
+          const results = changes.map(({ experimentId, enabled }) =>
+            experimentManager.set(experimentId, enabled),
+          );
+          const summary = results
+            .map((s) => `"${s.label}" ${s.enabled ? "enabled" : "disabled"}`)
+            .join(", ");
+          cmd.finish(`Experiments updated: ${summary}`, true);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to update experiments: ${errorDetails}`);
+        } finally {
+          setActiveOverlay(null);
+        }
+      });
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+      setActiveOverlay,
+      setQueuedOverlayAction,
+    ],
+  );
+
   return {
     handleModelSelect,
     handleSystemPromptSelect,
@@ -1142,5 +1208,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     handleCompactionModeSelect,
     handleToolsetSelect,
     handleExperimentSelect,
+    handleExperimentsConfirm,
   };
 }

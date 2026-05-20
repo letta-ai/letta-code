@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import * as path from "node:path";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
 import { ShellExecutionError, spawnWithLauncher } from "./shellRunner.js";

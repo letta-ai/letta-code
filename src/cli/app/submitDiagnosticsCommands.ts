@@ -4,32 +4,32 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
-} from "../../agent/maxContext";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import type { ModelReasoningEffort } from "../../agent/model";
-import type { SessionStats } from "../../agent/stats";
-import { getAgentContextOverview } from "../../backend/api/agents";
-import { getBalanceMetadata } from "../../backend/api/metadata";
-import type { PermissionMode } from "../../permissions/mode";
-import type { SharedReminderState } from "../../reminders/state";
-import { settingsManager } from "../../settings-manager";
-import type { ToolsetName } from "../../tools/toolset";
-import { formatUsageStats } from "../components/SessionStats";
+} from "@/agent/maxContext";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import type { ModelReasoningEffort } from "@/agent/model";
+import type { SessionStats } from "@/agent/stats";
+import { getAgentContextOverview } from "@/backend/api/agents";
+import { getBalanceMetadata } from "@/backend/api/metadata";
+import { formatUsageStats } from "@/cli/components/SessionStats";
 import {
   type ContextWindowOverview,
   renderContextUsage,
-} from "../helpers/contextChart";
-import type { ContextTracker } from "../helpers/contextTracker";
-import { resetContextHistory } from "../helpers/contextTracker";
-import { formatErrorDetails } from "../helpers/errorFormatter";
-import { getReflectionSettings } from "../helpers/memoryReminder";
+} from "@/cli/helpers/contextChart";
+import type { ContextTracker } from "@/cli/helpers/contextTracker";
+import { resetContextHistory } from "@/cli/helpers/contextTracker";
+import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
 import {
   resolvePromptChar,
   resolveStatusLineConfig,
-} from "../helpers/statusLineConfig";
-import { formatStatusLineHelp } from "../helpers/statusLineHelp";
-import { buildStatusLinePayload } from "../helpers/statusLinePayload";
-import { executeStatusLineCommand } from "../helpers/statusLineRuntime";
+} from "@/cli/helpers/statusLineConfig";
+import { formatStatusLineHelp } from "@/cli/helpers/statusLineHelp";
+import { buildStatusLinePayload } from "@/cli/helpers/statusLinePayload";
+import { executeStatusLineCommand } from "@/cli/helpers/statusLineRuntime";
+import type { PermissionMode } from "@/permissions/mode";
+import type { SharedReminderState } from "@/reminders/state";
+import { settingsManager } from "@/settings-manager";
+import type { ToolsetName } from "@/tools/toolset";
 import type { AppCommandRunner } from "./types";
 
 type SubmitCommandResult = { submitted: boolean };

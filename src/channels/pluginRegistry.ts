@@ -41,7 +41,9 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       firstParty: true,
     },
     load: async () => {
-      const { telegramChannelPlugin } = await import("./telegram/plugin");
+      const { telegramChannelPlugin } = await import(
+        "@/channels/telegram/plugin"
+      );
       return telegramChannelPlugin;
     },
   },
@@ -55,7 +57,7 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       firstParty: true,
     },
     load: async () => {
-      const { slackChannelPlugin } = await import("./slack/plugin");
+      const { slackChannelPlugin } = await import("@/channels/slack/plugin");
       return slackChannelPlugin;
     },
   },
@@ -69,7 +71,9 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       firstParty: true,
     },
     load: async () => {
-      const { discordChannelPlugin } = await import("./discord/plugin");
+      const { discordChannelPlugin } = await import(
+        "@/channels/discord/plugin"
+      );
       return discordChannelPlugin;
     },
   },
@@ -84,7 +88,7 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       configSchema: CUSTOM_CHANNEL_CONFIG_SCHEMA,
     },
     load: async () => {
-      const { customChannelPlugin } = await import("./custom/plugin");
+      const { customChannelPlugin } = await import("@/channels/custom/plugin");
       return customChannelPlugin;
     },
   },

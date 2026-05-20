@@ -1,4 +1,7 @@
-import type { SkillSource } from "./skills";
+/**
+ * Source of a skill (for display and override resolution)
+ */
+export type SkillSource = "bundled" | "global" | "agent" | "project";
 
 export const ALL_SKILL_SOURCES: SkillSource[] = [
   "bundled",

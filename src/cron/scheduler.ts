@@ -12,22 +12,21 @@
  * On stop: clears interval, releases lease.
  */
 
-import type { CronPromptQueueItem, DequeuedBatch } from "../queue/queueRuntime";
-import { ensureConversationQueueRuntime } from "../websocket/listener/conversation-runtime";
-import { scheduleQueuePump } from "../websocket/listener/queue";
+import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queueRuntime";
+import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
+import { scheduleQueuePump } from "@/websocket/listener/queue";
 import {
   getActiveRuntime,
   getOrCreateConversationRuntime,
-} from "../websocket/listener/runtime";
-import type { ListenerTransport } from "../websocket/listener/transport";
+} from "@/websocket/listener/runtime";
+import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
   StartListenerOptions,
-} from "../websocket/listener/types";
+} from "@/websocket/listener/types";
 import {
   type CronTask,
   claimSchedulerLease,
-  cronMatchesTime,
   garbageCollect,
   getActiveTasks,
   getCronFileMtime,
@@ -35,7 +34,8 @@ import {
   releaseSchedulerLease,
   updateTask,
   verifySchedulerLease,
-} from "./index";
+} from "./cronFile";
+import { cronMatchesTime } from "./parseInterval";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -142,7 +142,7 @@ function fireCronTask(
 
   conversationRuntime.queueRuntime.enqueue({
     kind: "cron_prompt",
-    source: "cron" as import("../types/protocol").QueueItemSource,
+    source: "cron" as import("@/types/protocol").QueueItemSource,
     text,
     cronTaskId: task.id,
     agentId: task.agent_id,

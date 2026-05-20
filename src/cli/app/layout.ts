@@ -1,4 +1,4 @@
-import type { AdvancedDiffSuccess } from "../helpers/diff";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 
 export function countWrappedLines(text: string, width: number): number {
   if (!text) return 0;

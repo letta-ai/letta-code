@@ -8,7 +8,7 @@ import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 
 async function runUpdateSubcommand(): Promise<number> {
-  const { manualUpdate } = await import("../../updater/auto-update");
+  const { manualUpdate } = await import("@/updater/auto-update");
   const result = await manualUpdate();
   console.log(result.message);
   return result.success ? 0 : 1;

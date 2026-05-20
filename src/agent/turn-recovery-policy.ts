@@ -9,9 +9,9 @@
 import { randomUUID } from "node:crypto";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { isCloudflareEdge52xErrorText } from "../cli/helpers/errorFormatter";
-import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
-import type { StopReasonType } from "../types/protocol_v2";
+import { isCloudflareEdge52xErrorText } from "@/cli/helpers/errorFormatter";
+import { isZaiNonRetryableError } from "@/cli/helpers/zaiErrors";
+import type { StopReasonType } from "@/types/protocol_v2";
 
 // ── Error fragment constants ────────────────────────────────────────
 
