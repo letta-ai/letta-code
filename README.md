@@ -23,12 +23,12 @@ You can interact with Letta Code agents through:
 | [MemFS](https://docs.letta.com/letta-code/memfs) | All context (including [memory blocks](https://www.letta.com/blog/memory-blocks)) are tracked via git. Sync context to a custom GitHub repository by setting `/memory-repository set git@github.com:...` |
 | [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS) |
 | [Subagents & Multi-agent](https://docs.letta.com/letta-code/subagents) | Call built-in subagents (general-purpose, forked, recall, history-analyzer) async or sync. Agents can all any other agent (including themselves) as subagents  |
-| [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) | Agents work across multiple environments. Make any machine available as a remote environment by running `letta server --env-name "..."`|
 | [Agent messaging](https://docs.letta.com/letta-code/agent-messaging) | Chat with the same agent from Slack, Telegram, your browser (chat.letta.com) including mobile, and through custom channels |
 | [Hooks](https://docs.letta.com/letta-code/hooks) | Configure deterministic code to run on certain events |
 | [Permissions](https://docs.letta.com/letta-code/permissions) | Customize what actions are auto-approved or auto-denied. |
-| [Secrets](https://docs.letta.com/letta-code/secrets) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
 | [Crons/Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats of crons, and let agents work across time with self-managed schedules |
+| [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) (requires Constellation login) | Agents work across multiple environments. Make any machine available as a remote environment by running `letta server --env-name "..."`|
+| [Secrets](https://docs.letta.com/letta-code/secrets) (requires Constellation login) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
 
 See the full list of slash commands on our [documentation](https://docs.letta.com/letta-code/slash-commands). 
 
