@@ -4,8 +4,8 @@
  * and cached in memory for fast $SECRET_NAME substitution in shell commands.
  */
 
-import { getCurrentAgentId } from "../agent/context";
-import { getBackend } from "../backend";
+import { getCurrentAgentId } from "@/agent/context";
+import { getBackend } from "@/backend";
 
 type SecretsBackend = {
   capabilities: { serverSecrets: boolean };

@@ -9,15 +9,15 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getConversationId, getCurrentAgentId } from "../../agent/context";
+import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import {
   getMemoryFilesystemRoot,
   resolveScopedMemoryDir,
-} from "../../agent/memoryFilesystem";
-import { getServerUrl } from "../../backend/api/client";
-import { isLocalBackendNoMemfsEnvEnabled } from "../../backend/local/paths";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
+} from "@/agent/memoryFilesystem";
+import { getServerUrl } from "@/backend/api/client";
+import { isLocalBackendNoMemfsEnvEnabled } from "@/backend/local/paths";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 
 /**
  * Get the directory containing the bundled ripgrep binary.

@@ -13,7 +13,7 @@
  *   /memory-repository help         Show usage
  */
 
-import { getCurrentAgentId } from "../../agent/context";
+import { getCurrentAgentId } from "@/agent/context";
 import {
   getMemoryRepositoryUrl,
   type MemoryRepositoryPushResult,
@@ -21,7 +21,7 @@ import {
   readMemoryRepositoryPushLog,
   setMemoryRepositoryUrl,
   unsetMemoryRepositoryUrl,
-} from "../../agent/memoryGit";
+} from "@/agent/memoryGit";
 
 export interface MemoryRepositoryCommandResult {
   output: string;

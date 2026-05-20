@@ -13,8 +13,8 @@
 
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "../accounts";
-import type { DmPolicy, TelegramChannelAccount } from "../types";
+import { upsertChannelAccount } from "@/channels/accounts";
+import type { DmPolicy, TelegramChannelAccount } from "@/channels/types";
 import { validateTelegramToken } from "./adapter";
 import { ensureTelegramRuntimeInstalled } from "./runtime";
 

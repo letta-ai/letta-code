@@ -8,43 +8,43 @@
  */
 
 import { spawn } from "node:child_process";
-import {
-  type BackendMode,
-  getBackend,
-  getLocalBackendStorageDir,
-} from "../../backend";
-import { getBillingTier } from "../../backend/api/metadata";
-import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
-import { buildAgentReference } from "../../cli/helpers/appUrls";
+import { getAvailableModelHandles } from "@/agent/available-models";
+import { getCurrentAgentId } from "@/agent/context";
+import { getDefaultModelForTier, resolveModel } from "@/agent/model";
+import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import {
   addToolCall,
   emitStreamEvent,
   updateSubagent,
-} from "../../cli/helpers/subagentState.js";
+} from "@/agent/subagentState.js";
+import {
+  type BackendMode,
+  getBackend,
+  getLocalBackendStorageDir,
+} from "@/backend";
+import { getBillingTier } from "@/backend/api/metadata";
+import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
+import { buildAgentReference } from "@/cli/helpers/appUrls";
 import {
   INTERRUPTED_BY_USER,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
-import { cliPermissions } from "../../permissions/cli";
+} from "@/constants";
+import { cliPermissions } from "@/permissions/cliPermissionsInstance";
 import {
   parseScopeList,
   resolveAllowedMemoryRoots,
-} from "../../permissions/memoryScope";
-import { permissionMode } from "../../permissions/mode";
-import { sessionPermissions } from "../../permissions/session";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
+} from "@/permissions/memoryScope";
+import { permissionMode } from "@/permissions/mode";
+import { sessionPermissions } from "@/permissions/session";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
-} from "../../tools/impl/shellEnv";
-import { debugLog, debugWarn } from "../../utils/debug";
-import { getErrorMessage } from "../../utils/error";
-import { getAvailableModelHandles } from "../available-models";
-import { getCurrentAgentId } from "../context";
-import { getDefaultModelForTier, resolveModel } from "../model";
-import recallSubagentPrompt from "../prompts/recall_subagent.md";
+} from "@/tools/impl/shellEnv";
+import { debugLog, debugWarn } from "@/utils/debug";
+import { getErrorMessage } from "@/utils/error";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 import {
   estimateStartupContextTokens,

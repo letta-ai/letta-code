@@ -1,6 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { consumeQueuedSkillContent } from "../../tools/impl/skillContentRegistry";
+import { consumeQueuedSkillContent } from "@/tools/impl/skillContentRegistry";
 
 /**
  * Append queued Skill tool content as a trailing user message.

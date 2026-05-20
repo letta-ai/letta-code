@@ -1,9 +1,9 @@
-import { getServerUrl } from "../backend/api/client";
-import { getServerHealth } from "../backend/api/health";
-import { submitTelemetryMetadata } from "../backend/api/metadata";
-import { settingsManager } from "../settings-manager";
-import { debugLogFile } from "../utils/debug";
-import { getVersion } from "../version";
+import { getServerUrl } from "@/backend/api/client";
+import { getServerHealth } from "@/backend/api/health";
+import { submitTelemetryMetadata } from "@/backend/api/metadata";
+import { settingsManager } from "@/settings-manager";
+import { debugLogFile } from "@/utils/debug";
+import { getVersion } from "@/version";
 
 export type TelemetrySurface = "tui" | "headless" | "websocket";
 

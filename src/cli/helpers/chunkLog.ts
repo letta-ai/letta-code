@@ -22,7 +22,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { debugWarn } from "../../utils/debug";
+import { debugWarn } from "@/utils/debug";
 
 const MAX_ENTRIES = 100;
 const CONTENT_TRUNCATE_LEN = 200;

@@ -5,21 +5,21 @@ import {
   deleteTask as deleteCronTask,
   getTask as getCronTask,
   listTasks as listCronTasks,
-} from "../../../cron";
+} from "@/cron";
 import type {
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
-} from "../../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   isCronAddCommand,
   isCronDeleteAllCommand,
   isCronDeleteCommand,
   isCronGetCommand,
   isCronListCommand,
-} from "../protocol-inbound";
+} from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type CronCommand =

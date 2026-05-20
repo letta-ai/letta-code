@@ -1,6 +1,6 @@
-import { getConversationId } from "../../agent/context";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
+import { getConversationId } from "@/agent/context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 
 export async function create_goal(
   args: Record<string, unknown>,

@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { read, type ToolReturnContent } from "./Read";
 import { validateRequiredParams } from "./validation.js";
 

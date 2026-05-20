@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
-import { useAnimation } from "../contexts/AnimationContext.js";
-import { CLI_GLYPHS } from "../helpers/glyphs";
+import { useAnimation } from "@/cli/contexts/AnimationContext.js";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
 

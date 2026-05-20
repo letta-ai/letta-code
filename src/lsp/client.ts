@@ -24,7 +24,6 @@ export interface LSPClientOptions {
  * LSP Client that communicates with an LSP server via JSON-RPC over STDIO
  */
 export class LSPClient extends EventEmitter {
-  private serverID: string;
   private process: LSPServerProcess;
   private rootUri: string;
   private stdin: Writable;
@@ -42,7 +41,7 @@ export class LSPClient extends EventEmitter {
 
   constructor(options: LSPClientOptions) {
     super();
-    this.serverID = options.serverID;
+
     this.process = options.server;
     this.rootUri = options.rootUri;
 

@@ -1,4 +1,4 @@
-import { getVersion } from "../../version";
+import { getVersion } from "@/version";
 
 export interface StatusLinePayloadBuildInput {
   modelId?: string | null;

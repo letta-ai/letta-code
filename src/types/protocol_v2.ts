@@ -9,9 +9,9 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { DmPolicy } from "../channels/types";
-import type { CronTask } from "../cron";
-import type { ExperimentId, ExperimentSnapshot } from "../experiments/types";
+import type { DmPolicy } from "@/channels/types";
+import type { CronTask } from "@/cron";
+import type { ExperimentId, ExperimentSnapshot } from "@/experiments/types";
 
 /**
  * Runtime identity for all state and delta events.
