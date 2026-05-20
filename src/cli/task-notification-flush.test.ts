@@ -85,4 +85,3 @@ describe("appendTaskNotificationEventsToBuffer", () => {
     expect(buffer.order).toHaveLength(1);
   });
 });
-
