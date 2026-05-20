@@ -133,7 +133,9 @@ type AppViewProps = {
   closeOverlay: () => void;
   columns: number;
   commandRunner: AppCommandRunner;
-  consumeOverlayCommand: (overlay: ActiveOverlay) => CommandHandle | null;
+  completeOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
+  ) => CommandHandle | null;
   contextTrackerRef: RefObject<ContextTracker>;
   continueSession: boolean;
   conversationId: string;
@@ -290,8 +292,8 @@ type AppViewProps = {
   showApprovalPreview: boolean;
   showCompactionsEnabled: boolean;
   showExitStats: boolean;
-  startOverlayCommand: (
-    overlay: ActiveOverlay,
+  openOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
     input: string,
     openingOutput: string,
     dismissOutput: string,
@@ -324,7 +326,7 @@ export function AppView(props: AppViewProps) {
     closeOverlay,
     columns,
     commandRunner,
-    consumeOverlayCommand,
+    completeOverlay,
     contextTrackerRef,
     continueSession,
     conversationId,
@@ -433,7 +435,7 @@ export function AppView(props: AppViewProps) {
     showApprovalPreview,
     showCompactionsEnabled,
     showExitStats,
-    startOverlayCommand,
+    openOverlay,
     staticItems,
     staticRenderEpoch,
     statusLine,
@@ -822,9 +824,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "install-github-app" && (
               <InstallGithubAppFlow
                 onComplete={(result) => {
-                  const overlayCommand =
-                    consumeOverlayCommand("install-github-app");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("install-github-app");
 
                   const cmd =
                     overlayCommand ??
@@ -901,9 +901,7 @@ export function AppView(props: AppViewProps) {
               <ProviderSelector
                 onCancel={closeOverlay}
                 onStartOAuth={async () => {
-                  const overlayCommand = consumeOverlayCommand("connect");
-                  // Close selector and start OAuth flow
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
                     commandRunner.start("/connect", "Starting connection...");
@@ -923,13 +921,12 @@ export function AppView(props: AppViewProps) {
                             filterProvider: "chatgpt-plus-pro",
                             forceRefresh: true,
                           });
-                          startOverlayCommand(
+                          openOverlay(
                             "model",
                             "/model",
                             "Opening model selector...",
                             "Models dialog dismissed",
                           );
-                          setActiveOverlay("model");
                         },
                       },
                       "/connect chatgpt",
@@ -987,16 +984,14 @@ export function AppView(props: AppViewProps) {
               <AgentSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
-                  const overlayCommand = consumeOverlayCommand("resume");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("resume");
                   await handleAgentSelect(id, {
                     commandId: overlayCommand?.id,
                   });
                 }}
                 onCancel={closeOverlay}
                 onCreateNewAgent={(name: string) => {
-                  const overlayCommand = consumeOverlayCommand("resume");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("resume");
                   void handleCreateNewAgent(name, {
                     commandId: overlayCommand?.id,
                   });
@@ -1011,8 +1006,7 @@ export function AppView(props: AppViewProps) {
                 agentName={agentName ?? undefined}
                 currentConversationId={conversationId}
                 onSelect={async (convId, selectorContext) => {
-                  const overlayCommand = consumeOverlayCommand("conversations");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("conversations");
 
                   // Skip if already on this conversation
                   if (convId === conversationId) {
@@ -1189,8 +1183,7 @@ export function AppView(props: AppViewProps) {
                   }
                 }}
                 onNewConversation={async () => {
-                  const overlayCommand = consumeOverlayCommand("conversations");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("conversations");
 
                   // Lock input for async operation
                   setCommandRunning(true);
@@ -1278,8 +1271,7 @@ export function AppView(props: AppViewProps) {
                   targetConvId,
                   searchContext,
                 ) => {
-                  const overlayCommand = consumeOverlayCommand("search");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("search");
 
                   // Different agent: use handleAgentSelect (which supports optional conversationId)
                   if (targetAgentId !== agentId) {
@@ -1495,8 +1487,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "mcp-connect" && (
               <McpConnectFlow
                 onComplete={(serverName, serverId, toolCount) => {
-                  const overlayCommand = consumeOverlayCommand("mcp-connect");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("mcp-connect");
                   const cmd =
                     overlayCommand ??
                     commandRunner.start(
@@ -1534,8 +1525,7 @@ export function AppView(props: AppViewProps) {
                 currentName={agentName || ""}
                 local={pinDialogLocal}
                 onSubmit={async (newName) => {
-                  const overlayCommand = consumeOverlayCommand("pin");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("pin");
                   setCommandRunning(true);
 
                   const cmd =

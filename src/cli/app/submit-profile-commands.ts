@@ -35,14 +35,13 @@ type ProfileCommandRouterContext = {
     },
   ) => Promise<void>;
   refreshDerived: () => void;
-  setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
   setCommandRunning: (value: boolean) => void;
   setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
-  startOverlayCommand: (
-    overlay: ActiveOverlay,
+  openOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
     input: string,
     openingOutput: string,
     dismissOutput: string,
@@ -62,11 +61,10 @@ export async function handleProfileCommand(
     commandRunner,
     handleAgentSelect,
     refreshDerived,
-    setActiveOverlay,
     setCommandRunning,
     setPinDialogLocal,
     setProfileConfirmPending,
-    startOverlayCommand,
+    openOverlay,
     updateAgentName,
   } = ctx;
 
@@ -86,13 +84,12 @@ export async function handleProfileCommand(
     };
 
     if (!subcommand) {
-      startOverlayCommand(
+      openOverlay(
         "resume",
         "/profile",
         "Opening agent browser...",
         "Agent browser dismissed",
       );
-      setActiveOverlay("resume");
       return { submitted: true };
     }
 
@@ -185,13 +182,12 @@ export async function handleProfileCommand(
 
     if (!hasNameArg) {
       setPinDialogLocal(isLocal);
-      startOverlayCommand(
+      openOverlay(
         "pin",
         "/pin",
         "Opening pin dialog...",
         "Pin dialog dismissed",
       );
-      setActiveOverlay("pin");
       return { submitted: true };
     }
 

@@ -253,7 +253,12 @@ type SubmitHandlerContext = {
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
-  setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
+  openOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
+    input: string,
+    openingOutput: string,
+    dismissOutput: string,
+  ) => CommandHandle;
   setAgentDescription: Dispatch<SetStateAction<string | null>>;
   setAgentState: Dispatch<SetStateAction<AgentState | null | undefined>>;
   setCommandRunning: (value: boolean) => void;
@@ -291,12 +296,7 @@ type SubmitHandlerContext = {
   setUiRalphActive: Dispatch<SetStateAction<boolean>>;
   sharedReminderStateRef: MutableRefObject<SharedReminderState>;
   shouldAutoGenerateConversationTitleRef: MutableRefObject<boolean>;
-  startOverlayCommand: (
-    overlay: ActiveOverlay,
-    input: string,
-    openingOutput: string,
-    dismissOutput: string,
-  ) => CommandHandle;
+
   streaming: boolean;
   systemInfoReminderEnabled: boolean;
   systemPromptRecompileByConversationRef: MutableRefObject<
@@ -390,7 +390,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     sessionHooksRanRef,
     sessionStartFeedbackRef,
     sessionStatsRef,
-    setActiveOverlay,
+    openOverlay,
     setAgentDescription,
     setAgentState,
     setCommandRunning,
@@ -421,7 +421,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setUiRalphActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
-    startOverlayCommand,
+
     streaming,
     systemInfoReminderEnabled,
     systemPromptRecompileByConversationRef,
@@ -659,14 +659,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
-          startOverlayCommand(
+          setModelSelectorOptions({}); // Clear any filters from previous connection
+          openOverlay(
             "model",
             "/model",
             "Opening model selector...",
             "Models dialog dismissed",
           );
-          setModelSelectorOptions({}); // Clear any filters from previous connection
-          setActiveOverlay("model");
           return { submitted: true };
         }
 
@@ -682,60 +681,55 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
             return { submitted: true };
           }
-          startOverlayCommand(
+          openOverlay(
             "install-github-app",
             "/install-github-app",
             "Opening GitHub App installer...",
             "GitHub App installer dismissed",
           );
-          setActiveOverlay("install-github-app");
           return { submitted: true };
         }
 
         // Special handling for /sleeptime command - opens reflection settings
         if (trimmed === "/sleeptime") {
-          startOverlayCommand(
+          openOverlay(
             "sleeptime",
             "/sleeptime",
             "Opening sleeptime settings...",
             "Sleeptime settings dismissed",
           );
-          setActiveOverlay("sleeptime");
           return { submitted: true };
         }
 
         // Special handling for /compaction command - opens compaction mode settings
         if (trimmed === "/compaction") {
-          startOverlayCommand(
+          openOverlay(
             "compaction",
             "/compaction",
             "Opening compaction settings...",
             "Compaction settings dismissed",
           );
-          setActiveOverlay("compaction");
           return { submitted: true };
         }
 
         // Special handling for /toolset command - opens selector
         if (trimmed === "/toolset") {
-          startOverlayCommand(
+          openOverlay(
             "toolset",
             "/toolset",
             "Opening toolset selector...",
             "Toolset dialog dismissed",
           );
-          setActiveOverlay("toolset");
           return { submitted: true };
         }
 
         if (trimmed === "/experiments") {
-          startOverlayCommand(
+          openOverlay(
             "experiment",
             "/experiments",
             "Opening experiments selector...",
             "Experiments dialog dismissed",
           );
-          setActiveOverlay("experiment");
           return { submitted: true };
         }
 
@@ -748,13 +742,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             cmd.fail("Wait for the current turn to finish and try again.");
             return { submitted: true };
           }
-          startOverlayCommand(
+          openOverlay(
             "window-title",
             "/title",
             "Opening title configurator...",
             "Title configurator dismissed",
           );
-          setActiveOverlay("window-title");
           return { submitted: true };
         }
 
@@ -852,19 +845,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
-          startOverlayCommand(
+          openOverlay(
             "system",
             "/system",
             "Opening system prompt selector...",
             "System prompt dialog dismissed",
           );
-          setActiveOverlay("system");
           return { submitted: true };
         }
 
         // Special handling for /personality command - opens personality selector
         if (trimmed === "/personality") {
-          startOverlayCommand(
+          openOverlay(
             "personality",
             "/personality",
             "Opening personality selector...",
@@ -897,31 +889,28 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setCurrentPersonalityId(null);
           }
 
-          setActiveOverlay("personality");
           return { submitted: true };
         }
 
         // Special handling for /subagents command - opens subagent manager
         if (trimmed === "/subagents") {
-          startOverlayCommand(
+          openOverlay(
             "subagent",
             "/subagents",
             "Opening subagent manager...",
             "Subagent manager dismissed",
           );
-          setActiveOverlay("subagent");
           return { submitted: true };
         }
 
         // Special handling for /memory command - opens memory viewer overlay
         if (trimmed === "/memory") {
-          startOverlayCommand(
+          openOverlay(
             "memory",
             "/memory",
             "Opening memory viewer...",
             "Memory viewer dismissed",
           );
-          setActiveOverlay("memory");
           return { submitted: true };
         }
 
@@ -974,10 +963,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             commandRunner,
             conversationIdRef,
             refreshDerived,
-            setActiveOverlay,
+            openOverlay,
             setCommandRunning,
             setModelSelectorOptions,
-            startOverlayCommand,
           },
         );
         if (connectionCommandResult) {
@@ -986,25 +974,23 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
-          startOverlayCommand(
+          openOverlay(
             "help",
             "/help",
             "Opening help...",
             "Help dialog dismissed",
           );
-          setActiveOverlay("help");
           return { submitted: true };
         }
 
         // Special handling for /hooks command - opens hooks manager
         if (trimmed === "/hooks") {
-          startOverlayCommand(
+          openOverlay(
             "hooks",
             "/hooks",
             "Opening hooks manager...",
             "Hooks manager dismissed",
           );
-          setActiveOverlay("hooks");
           return { submitted: true };
         }
 
@@ -2098,7 +2084,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetBootstrapReminderState,
           resetDeferredToolCallCommits,
           resetTrajectoryBases,
-          setActiveOverlay,
+          openOverlay,
           setCommandRunning,
           setConversationAutoTitleEligibility,
           setConversationIdAndRef,
@@ -2106,7 +2092,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           setSearchQuery,
           setStaticItems,
           setStaticRenderEpoch,
-          startOverlayCommand,
         });
         if (navigationCommandResult) {
           return navigationCommandResult;
@@ -2119,11 +2104,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           commandRunner,
           handleAgentSelect,
           refreshDerived,
-          setActiveOverlay,
+          openOverlay,
           setCommandRunning,
           setPinDialogLocal,
           setProfileConfirmPending,
-          startOverlayCommand,
           updateAgentName,
         });
         if (profileCommandResult) {
@@ -2512,13 +2496,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         // /skills - browse available skills overlay
         if (trimmed === "/skills") {
-          startOverlayCommand(
+          openOverlay(
             "skills",
             "/skills",
             "Opening skills browser...",
             "Skills browser dismissed",
           );
-          setActiveOverlay("skills");
           return { submitted: true };
         }
 
@@ -2944,13 +2927,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         if (trimmed.startsWith("/feedback")) {
           const maybeMsg = msg.slice("/feedback".length).trim();
           setFeedbackPrefill(maybeMsg);
-          startOverlayCommand(
+          openOverlay(
             "feedback",
             "/feedback",
             "Opening feedback dialog...",
             "Feedback dialog dismissed",
           );
-          setActiveOverlay("feedback");
           return { submitted: true };
         }
 
@@ -3577,7 +3559,7 @@ ${SYSTEM_REMINDER_CLOSE}
       pendingApprovals,
       profileConfirmPending,
       handleAgentSelect,
-      startOverlayCommand,
+      openOverlay,
       tokenStreamingEnabled,
       isAgentBusy,
       setStreaming,

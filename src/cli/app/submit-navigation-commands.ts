@@ -32,7 +32,6 @@ type NavigationCommandContext = {
   resetBootstrapReminderState: () => void;
   resetDeferredToolCallCommits: () => void;
   resetTrajectoryBases: () => void;
-  setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
@@ -40,8 +39,8 @@ type NavigationCommandContext = {
   setSearchQuery: Dispatch<SetStateAction<string>>;
   setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
   setStaticRenderEpoch: Dispatch<SetStateAction<number>>;
-  startOverlayCommand: (
-    overlay: ActiveOverlay,
+  openOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
     input: string,
     openingOutput: string,
     dismissOutput: string,
@@ -66,7 +65,6 @@ export async function handleNavigationCommand(
     resetBootstrapReminderState,
     resetDeferredToolCallCommits,
     resetTrajectoryBases,
-    setActiveOverlay,
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
@@ -74,7 +72,7 @@ export async function handleNavigationCommand(
     setSearchQuery,
     setStaticItems,
     setStaticRenderEpoch,
-    startOverlayCommand,
+    openOverlay,
   } = ctx;
 
   // Special handling for /agents command - show agent browser
@@ -83,13 +81,12 @@ export async function handleNavigationCommand(
     trimmed === "/pinned" ||
     trimmed === "/profiles"
   ) {
-    startOverlayCommand(
+    openOverlay(
       "resume",
       "/agents",
       "Opening agent browser...",
       "Agent browser dismissed",
     );
-    setActiveOverlay("resume");
     return { submitted: true };
   }
 
@@ -236,13 +233,12 @@ export async function handleNavigationCommand(
       return { submitted: true };
     }
 
-    startOverlayCommand(
+    openOverlay(
       "conversations",
       "/resume",
       "Opening conversation selector...",
       "Conversation selector dismissed",
     );
-    setActiveOverlay("conversations");
     return { submitted: true };
   }
 
@@ -251,13 +247,12 @@ export async function handleNavigationCommand(
     const [, ...rest] = trimmed.split(/\s+/);
     const query = rest.join(" ").trim();
     setSearchQuery(query);
-    startOverlayCommand(
+    openOverlay(
       "search",
       "/search",
       "Opening message search...",
       "Message search dismissed",
     );
-    setActiveOverlay("search");
     return { submitted: true };
   }
 
