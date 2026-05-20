@@ -10,7 +10,7 @@ import { runMessagesSubcommand } from "./messages";
 import { runSetupSubcommand } from "./setup";
 
 async function runUpdateSubcommand(): Promise<number> {
-  const { manualUpdate } = await import("../../updater/auto-update");
+  const { manualUpdate } = await import("@/updater/auto-update");
   const result = await manualUpdate();
   console.log(result.message);
   return result.success ? 0 : 1;

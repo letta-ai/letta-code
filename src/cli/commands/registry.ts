@@ -465,8 +465,8 @@ export const commands: Record<string, Command> = {
         getKeybindingsPath,
         installKeybinding,
         removeKeybinding,
-      } = await import("../utils/terminalKeybindingInstaller");
-      const { updateSettings } = await import("../../settings");
+      } = await import("@/cli/utils/terminalKeybindingInstaller");
+      const { updateSettings } = await import("@/settings");
 
       const isRevert = args.includes("--revert") || args.includes("--remove");
       const terminal = detectTerminalType();

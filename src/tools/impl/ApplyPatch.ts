@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { validateRequiredParams } from "./validation.js";
 
 interface ApplyPatchArgs {

@@ -3,13 +3,13 @@
  * Uses same heuristic as context_doctor to estimate system prompt token count on startup
  */
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { isActiveMemfsEnabled } from "../../agent/memoryRuntime";
-import { debugWarn } from "../../utils/debug";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { isActiveMemfsEnabled } from "@/agent/memoryRuntime";
+import { debugWarn } from "@/utils/debug";
 import {
   estimateSystemPromptTokensFromMemoryDir,
   estimateSystemTokens,
-} from "../../utils/systemPromptSize";
+} from "@/utils/systemPromptSize";
 
 export { estimateSystemPromptTokensFromMemoryDir, estimateSystemTokens };
 

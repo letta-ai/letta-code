@@ -3,7 +3,7 @@ import type {
   ErrorMessage,
   ResultMessage,
   ResultSubtype,
-} from "../types/protocol";
+} from "@/types/protocol";
 
 /**
  * Tests for error handling in headless mode.

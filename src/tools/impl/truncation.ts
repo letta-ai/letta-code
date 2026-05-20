@@ -4,7 +4,7 @@
  * When outputs exceed limits, full content can be written to overflow files.
  */
 
-import { debugLog } from "../../utils/debug.js";
+import { debugLog } from "@/utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 
 // Limits based on Claude Code's proven production values

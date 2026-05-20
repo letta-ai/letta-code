@@ -1,7 +1,7 @@
 import { Box, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
-import type { ModelReasoningEffort } from "../../agent/model";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { ModelReasoningEffort } from "@/agent/model";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

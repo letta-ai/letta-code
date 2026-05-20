@@ -1,5 +1,6 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import {
   type AuthMethod,
   BYOK_PROVIDERS,
@@ -10,13 +11,9 @@ import {
   type ProviderField,
   type ProviderResponse,
   removeProviderByName,
-} from "../../providers/byok-providers";
-import {
-  type AwsProfile,
-  parseAwsCredentials,
-} from "../../utils/aws-credentials";
-import { debugLog } from "../../utils/debug";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/providers/byok-providers";
+import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
+import { debugLog } from "@/utils/debug";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

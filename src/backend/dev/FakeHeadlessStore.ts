@@ -3,8 +3,8 @@ export type {
   LocalStoreOptions as FakeHeadlessStoreOptions,
   StoredMessage,
   StoredTurnInput,
-} from "../local/LocalStore";
+} from "@/backend/local/LocalStore";
 export {
   LocalBackendNotFoundError,
   LocalStore as FakeHeadlessStore,
-} from "../local/LocalStore";
+} from "@/backend/local/LocalStore";

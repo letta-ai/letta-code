@@ -1,9 +1,9 @@
-import { migratePermissionMode } from "../../permissions/mode";
-import type { ChannelAccountConfigAdapter } from "../pluginTypes";
+import type { ChannelAccountConfigAdapter } from "@/channels/pluginTypes";
 import type {
   ChannelDefaultPermissionMode,
   DiscordChannelAccount,
-} from "../types";
+} from "@/channels/types";
+import { migratePermissionMode } from "@/permissions/mode";
 
 const DISCORD_CONFIG_KEYS = new Set([
   "token",

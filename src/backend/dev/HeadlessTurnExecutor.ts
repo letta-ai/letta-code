@@ -3,9 +3,12 @@ import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/ag
 import type {
   ConversationMessageCreateBody,
   ConversationMessageStreamBody,
-} from "../backend";
-import type { LocalMessage } from "../local/LocalMessage";
-import type { LocalAgentRecord, StoredMessage } from "../local/LocalStore";
+} from "@/backend/backend";
+import type { LocalMessage } from "@/backend/local/LocalMessage";
+import type {
+  LocalAgentRecord,
+  StoredMessage,
+} from "@/backend/local/LocalStore";
 
 export type HeadlessTurnBody =
   | ConversationMessageCreateBody

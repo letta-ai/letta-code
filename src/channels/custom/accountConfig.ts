@@ -1,5 +1,5 @@
-import type { ChannelAccountConfigAdapter } from "../pluginTypes";
-import type { CustomChannelAccount } from "../types";
+import type { ChannelAccountConfigAdapter } from "@/channels/pluginTypes";
+import type { CustomChannelAccount } from "@/channels/types";
 
 /**
  * Account config adapter for the first-party "custom" channel.
@@ -75,7 +75,7 @@ export const customAccountConfigAdapter: ChannelAccountConfigAdapter<CustomChann
       // everything is preserved on the generic `config` bag via mergeAccountPatch.
       // Returning {} signals "no specific field changes" — the caller already
       // applies `patch.config` directly to `account.config`.
-      const _ = config;
+      void config;
       return {};
     },
 

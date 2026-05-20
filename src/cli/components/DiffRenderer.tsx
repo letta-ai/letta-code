@@ -1,7 +1,7 @@
 import { relative } from "node:path";
 import { Box } from "ink";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { colors } from "./colors";
 import {
   highlightCode,

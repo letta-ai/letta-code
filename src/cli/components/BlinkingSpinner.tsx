@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import stringWidth from "string-width";
-import { useAnimation } from "../contexts/AnimationContext.js";
+import { useAnimation } from "@/cli/contexts/AnimationContext.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
 

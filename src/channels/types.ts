@@ -7,7 +7,7 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
-import type { PermissionMode } from "../permissions/mode";
+import type { PermissionMode } from "@/permissions/mode";
 
 export const FIRST_PARTY_CHANNEL_IDS = [
   "telegram",

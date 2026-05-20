@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { getDirectoryLimits } from "../../utils/directoryLimits.js";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { getDirectoryLimits } from "@/utils/directoryLimits.js";
 import { validateRequiredParams } from "./validation.js";
 
 const MAX_ENTRY_LENGTH = 500;

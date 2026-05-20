@@ -1,26 +1,26 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
-import { getChannelRegistry } from "../../channels/registry";
-import type { ChannelTurnSource } from "../../channels/types";
-import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
-} from "../../cli/helpers/subagentState";
+} from "@/agent/subagentState";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
 import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
-} from "../../cron/scheduler";
-import type { DequeuedBatch } from "../../queue/queueRuntime";
-import { createSharedReminderState } from "../../reminders/state";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { loadTools } from "../../tools/manager";
-import { isDebugEnabled } from "../../utils/debug";
-import { killAllTerminals } from "../terminalHandler";
+} from "@/cron/scheduler";
+import type { DequeuedBatch } from "@/queue/queueRuntime";
+import { createSharedReminderState } from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { loadTools } from "@/tools/manager";
+import { isDebugEnabled } from "@/utils/debug";
+import { setMessageQueueAdder } from "@/utils/messageQueueBridge";
+import { killAllTerminals } from "@/websocket/terminalHandler";
 import { rejectPendingApprovalResolvers } from "./approval";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
@@ -484,13 +484,13 @@ export function enqueueChannelTurn(
   const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
   const enqueuedItem = runtime.queueRuntime.enqueue({
     kind: "message",
-    source: "channel" as import("../../types/protocol").QueueItemSource,
+    source: "channel" as import("@/types/protocol").QueueItemSource,
     content: messageContent,
     clientMessageId,
     agentId: route.agentId,
     conversationId: route.conversationId,
   } as Omit<
-    import("../../queue/queueRuntime").MessageQueueItem,
+    import("@/queue/queueRuntime").MessageQueueItem,
     "id" | "enqueuedAt"
   >);
 
@@ -722,7 +722,7 @@ export async function startConnectedListenerRuntime(
       emitStreamDelta(
         transport,
         runtime,
-        event as unknown as import("../../types/protocol_v2").StreamDelta,
+        event as unknown as import("@/types/protocol_v2").StreamDelta,
         subagent?.parentAgentId
           ? {
               agent_id: subagent.parentAgentId,
@@ -759,7 +759,7 @@ export async function startConnectedListenerRuntime(
       conversationId:
         queuedMessage.conversationId ?? targetRuntime.conversationId,
     } as Omit<
-      import("../../queue/queueRuntime").TaskNotificationQueueItem,
+      import("@/queue/queueRuntime").TaskNotificationQueueItem,
       "id" | "enqueuedAt"
     >);
 

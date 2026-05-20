@@ -1,5 +1,5 @@
-import { getCurrentAgentId } from "../../agent/context";
-import { isMemoryDirCommand } from "../../permissions/readOnlyShell";
+import { getCurrentAgentId } from "@/agent/context";
+import { isMemoryDirCommand } from "@/permissions/readOnlyShell";
 import { resolveShellWorkdir, type ShellResult, shell } from "./Shell.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
 import { ShellExecutionError } from "./shellRunner.js";

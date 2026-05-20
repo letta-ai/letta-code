@@ -25,12 +25,12 @@ import {
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { getClient } from "../backend/api/client";
+import { getClient } from "@/backend/api/client";
 import {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
-} from "../backend/api/memfs-git-proxy";
-import { debugLog, debugWarn } from "../utils/debug";
+} from "@/backend/api/memfs-git-proxy";
+import { debugLog, debugWarn } from "@/utils/debug";
 import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
 
 const execFile = promisify(execFileCb);
@@ -136,6 +136,51 @@ function redactCredentialedHttpsUrl(value: string): string {
   return value.replace(/https?:\/\/([^:\s/@]+):([^@\s]+)@/gi, (match) =>
     match.replace(/:([^:@]+)@$/, ":***@"),
   );
+}
+
+/**
+ * Redact git auth material from command/error text before it reaches logs.
+ *
+ * Node's child_process errors include the full command line in `message`/`cmd`.
+ * MemFS git operations pass API keys through `-c http.extraHeader=...`, so a
+ * failed clone/fetch/pull/push can otherwise print a reusable credential.
+ */
+export function redactGitAuthInText(value: string): string {
+  return value
+    .replace(
+      /(http\.extraHeader=Authorization:\s*(?:Basic|Bearer)\s+)[^\s'"`]+/gi,
+      "$1<redacted>",
+    )
+    .replace(
+      /(Authorization:\s*(?:Basic|Bearer)\s+)[^\s'"`]+/gi,
+      "$1<redacted>",
+    )
+    .replace(/(password=)[^\s'"`;]+/gi, "$1<redacted>")
+    .replace(/sk-let-[A-Za-z0-9_-]+/g, "sk-let-<redacted>");
+}
+
+function redactGitAuthError(error: unknown): Error {
+  if (error instanceof Error) {
+    error.message = redactGitAuthInText(error.message);
+
+    const mutableError = error as Error & Record<string, unknown>;
+    for (const key of [
+      "cmd",
+      "command",
+      "stack",
+      "stdout",
+      "stderr",
+    ] as const) {
+      const value = mutableError[key];
+      if (typeof value === "string") {
+        mutableError[key] = redactGitAuthInText(value);
+      }
+    }
+
+    return error;
+  }
+
+  return new Error(redactGitAuthInText(String(error)));
 }
 
 /**
@@ -292,7 +337,7 @@ function getMemoryRemoteUrl(agentId: string): string {
  * (env var → settings → OAuth refresh).
  */
 async function getAuthToken(): Promise<string> {
-  const { getBackend } = await import("../backend");
+  const { getBackend } = await import("@/backend");
   const backend = getBackend();
   if (backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs) {
     return "";
@@ -406,12 +451,17 @@ async function runGit(
   }
   debugLog("memfs-git", `git ${loggableArgs.join(" ")} (in ${cwd})`);
 
-  const result = await execFile("git", allArgs, {
-    cwd,
-    env: buildNonInteractiveGitEnv(),
-    maxBuffer: 10 * 1024 * 1024, // 10MB
-    timeout: 60_000, // 60s
-  });
+  let result: Awaited<ReturnType<typeof execFile>>;
+  try {
+    result = await execFile("git", allArgs, {
+      cwd,
+      env: buildNonInteractiveGitEnv(),
+      maxBuffer: 10 * 1024 * 1024, // 10MB
+      timeout: 60_000, // 60s
+    });
+  } catch (error) {
+    throw redactGitAuthError(error);
+  }
 
   return {
     stdout: result.stdout?.toString() ?? "",
@@ -481,7 +531,9 @@ async function runGitWithRetry(
       }
 
       const delayMs = baseDelayMs * 2 ** (attempt - 1);
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = redactGitAuthInText(
+        error instanceof Error ? error.message : String(error),
+      );
       debugWarn(
         "memfs-git",
         `${operation} failed with transient error (attempt ${attempt}/${attempts}): ${msg}. Retrying in ${delayMs}ms`,
@@ -835,7 +887,7 @@ async function unsetLocalGitConfig(dir: string, key: string): Promise<void> {
 async function fetchAgentDisplayName(agentId: string): Promise<string | null> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { getBackend } = await import("../backend");
+    const { getBackend } = await import("@/backend");
     const agent = await Promise.race([
       getBackend().retrieveAgent(agentId),
       new Promise<null>((resolve) => {
@@ -1859,7 +1911,7 @@ export async function addGitMemoryTag(
   prefetchedAgent?: { tags?: string[] | null },
 ): Promise<void> {
   try {
-    const { getBackend } = await import("../backend");
+    const { getBackend } = await import("@/backend");
     const backend = getBackend();
     const agent = prefetchedAgent ?? (await backend.retrieveAgent(agentId));
     const tags = agent.tags || [];
@@ -1882,7 +1934,7 @@ export async function addGitMemoryTag(
  */
 export async function removeGitMemoryTag(agentId: string): Promise<void> {
   try {
-    const { getBackend } = await import("../backend");
+    const { getBackend } = await import("@/backend");
     const backend = getBackend();
     const agent = await backend.retrieveAgent(agentId);
     const tags = agent.tags || [];

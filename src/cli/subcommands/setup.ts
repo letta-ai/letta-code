@@ -1,5 +1,5 @@
-import { runSetup } from "../../auth/setup";
-import { settingsManager } from "../../settings-manager";
+import { runSetup } from "@/auth/setup";
+import { settingsManager } from "@/settings-manager";
 
 function printUsage(): void {
   console.log(

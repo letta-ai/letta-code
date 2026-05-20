@@ -2,6 +2,7 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { ensureFileIndex } from "@/utils/fileIndex";
 import {
   getResumeDataFromBackend,
   type ResumeData,
@@ -52,7 +53,6 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flagUtils";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
-import { ensureFileIndex } from "./cli/helpers/fileIndex";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminalTheme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
@@ -198,9 +198,9 @@ EXAMPLES
  */
 async function printInfo() {
   const { join } = await import("node:path");
-  const { getVersion } = await import("./version");
-  const { SKILLS_DIR } = await import("./agent/skills");
-  const { exists } = await import("./utils/fs");
+  const { getVersion } = await import("@/version");
+  const { SKILLS_DIR } = await import("@/agent/skills");
+  const { exists } = await import("@/utils/fs");
 
   const cwd = process.cwd();
   const skillsDir = join(cwd, SKILLS_DIR);
@@ -550,7 +550,7 @@ async function main(): Promise<void> {
   // Bootstrap base tools for subcommands that have LETTA_API_KEY set (e.g., remote via code-desktop)
   if (process.env.LETTA_API_KEY) {
     const { bootstrapBaseToolsIfNeeded } = await import(
-      "./agent/bootstrap-tools"
+      "@/agent/bootstrap-tools"
     );
     await bootstrapBaseToolsIfNeeded();
   }
@@ -558,7 +558,7 @@ async function main(): Promise<void> {
   // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {
     try {
-      const { lspManager } = await import("./lsp/manager.js");
+      const { lspManager } = await import("@/lsp/manager.js");
       await lspManager.initialize(process.cwd());
     } catch (error) {
       trackCliBoundaryError("lsp_init_failed", error, "tui_startup_lsp_init");
@@ -567,7 +567,7 @@ async function main(): Promise<void> {
   }
 
   // Check for updates on startup (non-blocking)
-  const { checkAndAutoUpdate } = await import("./updater/auto-update");
+  const { checkAndAutoUpdate } = await import("@/updater/auto-update");
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
@@ -625,7 +625,7 @@ async function main(): Promise<void> {
 
   // Handle version flag
   if (values.version) {
-    const { getVersion } = await import("./version");
+    const { getVersion } = await import("@/version");
     console.log(`${getVersion()} (Letta Code)`);
     process.exit(0);
   }
@@ -758,10 +758,10 @@ async function main(): Promise<void> {
 
   if (!isHeadless) {
     // TUI-only startup tasks: keep headless runs free of extra background work.
-    const { startDockerVersionCheck } = await import("./startup-docker-check");
+    const { startDockerVersionCheck } = await import("@/startup-docker-check");
     startDockerVersionCheck().catch(() => {});
 
-    const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
+    const { cleanupOldOverflowFiles } = await import("@/tools/impl/overflow");
     Promise.resolve().then(() => {
       try {
         cleanupOldOverflowFiles(process.cwd());
@@ -844,7 +844,7 @@ async function main(): Promise<void> {
   // Known preset IDs are always accepted. Subagent names are only accepted
   // for internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent).
   if (systemPromptPreset) {
-    const { validateSystemPromptPreset } = await import("./agent/promptAssets");
+    const { validateSystemPromptPreset } = await import("@/agent/promptAssets");
     const allowSubagentNames = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
     try {
       await validateSystemPromptPreset(systemPromptPreset, {
@@ -1040,7 +1040,7 @@ async function main(): Promise<void> {
       !apiKey
     ) {
       // For interactive mode, show setup flow
-      const { runSetup } = await import("./auth/setup");
+      const { runSetup } = await import("@/auth/setup");
       await runSetup();
       // After setup, restart main flow
       return main().catch((err: unknown) => {
@@ -1059,14 +1059,14 @@ async function main(): Promise<void> {
     if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
       // For interactive mode, show setup flow
       console.log("No credentials found. Let's get you set up!\n");
-      const { runSetup } = await import("./auth/setup");
+      const { runSetup } = await import("@/auth/setup");
       await runSetup();
       // After setup, restart main flow
       return main();
     }
 
     // Validate credentials by checking health endpoint
-    const { validateCredentials } = await import("./auth/oauth");
+    const { validateCredentials } = await import("@/auth/oauth");
     const isValid = await validateCredentials(baseURL, apiKey ?? "");
     markMilestone("CREDENTIALS_VALIDATED");
 
@@ -1074,7 +1074,7 @@ async function main(): Promise<void> {
     // Must run after credentials are validated so OAuth tokens are available.
     if (isValid) {
       const { bootstrapBaseToolsIfNeeded } = await import(
-        "./agent/bootstrap-tools"
+        "@/agent/bootstrap-tools"
       );
       await bootstrapBaseToolsIfNeeded();
     }
@@ -1100,7 +1100,7 @@ async function main(): Promise<void> {
         "Your credentials may be invalid or the server may be unreachable.",
       );
       console.log("Let's reconfigure your setup.\n");
-      const { runSetup } = await import("./auth/setup");
+      const { runSetup } = await import("@/auth/setup");
       await runSetup();
       // After setup, restart main flow
       return main();
@@ -1139,13 +1139,15 @@ async function main(): Promise<void> {
 
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
-    const { toolFilter } = await import("./tools/filter");
+    const { toolFilter } = await import("@/tools/filter");
     toolFilter.setEnabledTools(values.tools);
   }
 
   // Set CLI permission overrides if provided
   if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
-    const { cliPermissions } = await import("./permissions/cli");
+    const { cliPermissions } = await import(
+      "@/permissions/cliPermissionsInstance"
+    );
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
     }
@@ -1196,7 +1198,7 @@ async function main(): Promise<void> {
         ? { ...values, agent: specifiedAgentId }
         : values;
 
-    const { handleHeadlessCommand } = await import("./headless");
+    const { handleHeadlessCommand } = await import("@/headless");
     await handleHeadlessCommand(
       { values: headlessValues, positionals },
       specifiedModel,
@@ -1213,7 +1215,7 @@ async function main(): Promise<void> {
   // In VS Code/xterm.js this typically requires a short handshake (query + enable).
   try {
     const { detectAndEnableKittyProtocol } = await import(
-      "./cli/utils/kittyProtocolDetector"
+      "@/cli/utils/kittyProtocolDetector"
     );
     await detectAndEnableKittyProtocol();
   } catch {
@@ -1225,8 +1227,8 @@ async function main(): Promise<void> {
   const React = await import("react");
   const { render } = await import("ink");
   const { useState, useEffect, useCallback } = React;
-  const AppModule = await import("./cli/App");
-  const App = AppModule.default;
+  const AppModule = await import("@/cli/App");
+  const App = AppModule.App;
 
   function LoadingApp({
     forceNew,
@@ -1335,8 +1337,8 @@ async function main(): Promise<void> {
           getKeybindingsPath,
           keybindingExists,
           installKeybinding,
-        } = await import("./cli/utils/terminalKeybindingInstaller");
-        const { loadSettings, updateSettings } = await import("./settings");
+        } = await import("@/cli/utils/terminalKeybindingInstaller");
+        const { loadSettings, updateSettings } = await import("@/settings");
 
         const terminal = detectTerminalType();
         if (!terminal) {
@@ -1375,8 +1377,8 @@ async function main(): Promise<void> {
           wezTermDeleteFixExists,
           getWezTermConfigPath,
           installWezTermDeleteFix,
-        } = await import("./cli/utils/terminalKeybindingInstaller");
-        const { loadSettings, updateSettings } = await import("./settings");
+        } = await import("@/cli/utils/terminalKeybindingInstaller");
+        const { loadSettings, updateSettings } = await import("@/settings");
 
         if (!isWezTerm()) return;
 
@@ -1403,7 +1405,7 @@ async function main(): Promise<void> {
     // Check for release notes to display (runs once on mount)
     useEffect(() => {
       async function checkNotes() {
-        const { checkReleaseNotes } = await import("./release-notes");
+        const { checkReleaseNotes } = await import("@/release-notes");
         const notes = await checkReleaseNotes();
         setReleaseNotes(notes);
       }
@@ -1433,7 +1435,7 @@ async function main(): Promise<void> {
         if (isSelfHosted) {
           setSelfHostedBaseUrl(baseURL);
           try {
-            const { getDefaultModel } = await import("./agent/model");
+            const { getDefaultModel } = await import("@/agent/model");
             const defaultModel = getDefaultModel();
             setSelfHostedDefaultModel(defaultModel);
             const modelsList = await backend.listModels();
@@ -1641,7 +1643,7 @@ async function main(): Promise<void> {
           ? await getLocalBackendStartupFallbackSession(backend)
           : null;
         const { resolveStartupTarget } = await import(
-          "./agent/resolve-startup-agent"
+          "@/agent/resolve-startup-agent"
         );
         const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
@@ -1672,7 +1674,7 @@ async function main(): Promise<void> {
             setLoadingState("selecting_global");
             return;
           case "create": {
-            const { ensureDefaultAgents } = await import("./agent/defaults");
+            const { ensureDefaultAgents } = await import("@/agent/defaults");
             try {
               const defaultAgent = await ensureDefaultAgents(getBackend(), {
                 preferredModel: model,
@@ -1833,7 +1835,7 @@ async function main(): Promise<void> {
         await loadTools(modelForTools);
 
         setLoadingState("initializing");
-        const { createAgent } = await import("./agent/create");
+        const { createAgent } = await import("@/agent/create");
 
         let agent: AgentState | null = null;
         let autoEnableMemfsForFreshAgent = false;
@@ -1845,7 +1847,7 @@ async function main(): Promise<void> {
 
           if (isRegistryImport) {
             // Import from letta-ai/agent-file registry
-            const { importAgentFromRegistry } = await import("./agent/import");
+            const { importAgentFromRegistry } = await import("@/agent/import");
             result = await importAgentFromRegistry({
               handle: fromAfFile,
               modelOverride: model,
@@ -1854,7 +1856,7 @@ async function main(): Promise<void> {
             });
           } else {
             // Import from local file
-            const { importAgentFromFile } = await import("./agent/import");
+            const { importAgentFromFile } = await import("@/agent/import");
             result = await importAgentFromFile({
               filePath: fromAfFile,
               modelOverride: model,
@@ -1877,7 +1879,7 @@ async function main(): Promise<void> {
 
           // Display extracted skills summary
           if (result.skills && result.skills.length > 0) {
-            const { getAgentSkillsDir } = await import("./agent/skills");
+            const { getAgentSkillsDir } = await import("@/agent/skills");
             const skillsDir = getAgentSkillsDir(agent.id);
             console.log(
               `\n📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}\n`,
@@ -1922,13 +1924,13 @@ async function main(): Promise<void> {
             !backend.capabilities.localModelCatalog
           ) {
             // On Letta API without explicit model - check billing tier for appropriate default
-            const { getDefaultModelForTier } = await import("./agent/model");
+            const { getDefaultModelForTier } = await import("@/agent/model");
             const billingTier = await getBillingTier();
             effectiveModel = getDefaultModelForTier(billingTier);
           }
 
           // Pre-determine memfs mode so the agent is created with the correct prompt.
-          const { isLettaCloud } = await import("./agent/memoryFilesystem");
+          const { isLettaCloud } = await import("@/agent/memoryFilesystem");
           const willAutoEnableMemfs =
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
           const effectiveMemoryMode: MemoryPromptMode | undefined = backend
@@ -2013,7 +2015,7 @@ async function main(): Promise<void> {
 
         if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
           const { hydrateMemfsSettingFromAgent } = await import(
-            "./agent/memoryFilesystem"
+            "@/agent/memoryFilesystem"
           );
           const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
           if (!memfsEnabled) {
@@ -2033,7 +2035,7 @@ async function main(): Promise<void> {
           : memfsFlag;
         const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
         const memfsSyncPromise = backend.capabilities.remoteMemfs
-          ? import("./agent/memoryFilesystem").then(({ applyMemfsFlags }) =>
+          ? import("@/agent/memoryFilesystem").then(({ applyMemfsFlags }) =>
               applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
                 pullOnExistingRepo: true,
                 agentTags,
@@ -2075,7 +2077,7 @@ async function main(): Promise<void> {
         }
 
         // Init secrets cache — runs in parallel with memfs sync below.
-        const secretsInitPromise = import("./utils/secretsStore").then(
+        const secretsInitPromise = import("@/utils/secretsStore").then(
           ({ initSecretsFromServer }) =>
             initSecretsFromServer(agentId, agent ?? undefined),
         );
@@ -2276,7 +2278,7 @@ async function main(): Promise<void> {
         try {
           await secretsInitPromise;
         } catch (error) {
-          import("./utils/debug").then(({ debugLog }) =>
+          import("@/utils/debug").then(({ debugLog }) =>
             debugLog(
               "secrets",
               `Failed to init secrets: ${error instanceof Error ? error.message : String(error)}`,
@@ -2303,7 +2305,7 @@ async function main(): Promise<void> {
 
           if (storedPreset && storedPreset !== "custom") {
             const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
-              await import("./agent/promptAssets");
+              await import("@/agent/promptAssets");
             if (isKnown(storedPreset)) {
               const memoryMode = settingsManager.isMemfsEnabled(agent.id)
                 ? "memfs"

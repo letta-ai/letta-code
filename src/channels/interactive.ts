@@ -1,7 +1,7 @@
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
-} from "../types/protocol_v2";
+} from "@/types/protocol_v2";
 import type { ChannelControlRequestEvent } from "./types";
 
 type AskUserQuestionInput = {

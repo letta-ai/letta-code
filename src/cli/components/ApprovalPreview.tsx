@@ -1,8 +1,8 @@
 import { Box } from "ink";
 import { memo } from "react";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
 import { BashPreview } from "./previews/BashPreview";

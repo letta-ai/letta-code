@@ -1,5 +1,5 @@
-import { settingsManager } from "../../settings-manager";
-import { type CliBackendMode, parseBackendModeFlag } from "../args";
+import { type CliBackendMode, parseBackendModeFlag } from "@/cli/args";
+import { settingsManager } from "@/settings-manager";
 
 function printUsage(): void {
   console.log(

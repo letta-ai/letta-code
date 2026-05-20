@@ -2,7 +2,7 @@
 // Executes a status-line shell command, pipes JSON to stdin, collects stdout.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { buildShellLaunchers } from "../../tools/impl/shellLaunchers";
+import { buildShellLaunchers } from "@/tools/impl/shellLaunchers";
 
 /** Maximum stdout bytes collected (4 KB). */
 const MAX_STDOUT_BYTES = 4096;

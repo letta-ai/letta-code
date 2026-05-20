@@ -1,8 +1,8 @@
 import { relative } from "node:path";
-import { generatePlanFilePath } from "../../cli/helpers/planName";
-import { permissionMode } from "../../permissions/mode";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { getExecutionContextPermissionModeState } from "../manager";
+import { permissionMode } from "@/permissions/mode";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { getExecutionContextPermissionModeState } from "@/tools/manager";
+import { generatePlanFilePath } from "@/utils/planName";
 
 interface EnterPlanModeArgs {
   /** Injected by executeTool — do not pass manually */

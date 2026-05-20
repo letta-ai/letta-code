@@ -1,10 +1,10 @@
 // src/cli/helpers/agentInfo.ts
 // Generates agent info system reminder (agent identity, memory dir)
 
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { isLocalBackendEnvEnabled } from "../../backend/local/paths";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import { settingsManager } from "../../settings-manager";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { settingsManager } from "@/settings-manager";
 
 export interface AgentInfo {
   id: string;

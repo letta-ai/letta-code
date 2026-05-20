@@ -5,11 +5,11 @@
 import { hostname } from "node:os";
 import { Box, useApp, useInput } from "ink";
 import { useState } from "react";
-import { configureBackendMode } from "../backend";
-import { AnimatedLogo } from "../cli/components/AnimatedLogo";
-import { colors } from "../cli/components/colors";
-import { Text } from "../cli/components/Text";
-import { settingsManager } from "../settings-manager";
+import { configureBackendMode } from "@/backend";
+import { AnimatedLogo } from "@/cli/components/AnimatedLogo";
+import { colors } from "@/cli/components/colors";
+import { Text } from "@/cli/components/Text";
+import { settingsManager } from "@/settings-manager";
 import { pollForToken, requestDeviceCode } from "./oauth";
 
 type SetupMode = "menu" | "device-code" | "auth-code" | "self-host" | "done";

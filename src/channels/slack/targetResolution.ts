@@ -1,10 +1,10 @@
-import type { ChannelResolvedMessageTarget } from "../pluginTypes";
+import type { ChannelResolvedMessageTarget } from "@/channels/pluginTypes";
 import {
   listChannelTargets,
   loadTargetStore,
   upsertChannelTarget,
-} from "../targets";
-import type { SlackChannelAccount } from "../types";
+} from "@/channels/targets";
+import type { SlackChannelAccount } from "@/channels/types";
 import { createSlackWebApiClient } from "./webApiClient";
 
 const SLACK_CHANNEL_ID_PATTERN = /^[CG][A-Z0-9]+$/;

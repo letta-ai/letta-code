@@ -6,17 +6,17 @@
 // - Optional polling when refreshIntervalMs is configured
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CLI_GLYPHS } from "../helpers/glyphs";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   type NormalizedStatusLineConfig,
   resolvePromptChar,
   resolveStatusLineConfig,
-} from "../helpers/statusLineConfig";
+} from "@/cli/helpers/statusLineConfig";
 import {
   buildStatusLinePayload,
   type StatusLinePayloadBuildInput,
-} from "../helpers/statusLinePayload";
-import { executeStatusLineCommand } from "../helpers/statusLineRuntime";
+} from "@/cli/helpers/statusLinePayload";
+import { executeStatusLineCommand } from "@/cli/helpers/statusLineRuntime";
 
 /** Inputs supplied by App.tsx to build the payload and triggers. */
 export interface StatusLineInputs {
