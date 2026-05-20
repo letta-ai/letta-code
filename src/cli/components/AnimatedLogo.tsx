@@ -110,6 +110,11 @@ let tick = 0;
 const listeners = new Set<() => void>();
 let tickerInterval: ReturnType<typeof setInterval> | null = null;
 
+const FRAME_SEQUENCE = [
+  0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 8, 9, 10, 11, 12, 13,
+] as const;
+const FRAME_INTERVAL_MS = 75;
+
 function subscribe(callback: () => void): () => void {
   listeners.add(callback);
   // Start ticker on first subscriber
@@ -119,7 +124,7 @@ function subscribe(callback: () => void): () => void {
       for (const cb of listeners) {
         cb();
       }
-    }, 100);
+    }, FRAME_INTERVAL_MS);
   }
   return () => {
     listeners.delete(callback);
@@ -135,6 +140,23 @@ function getSnapshot(): number {
   return tick;
 }
 
+function renderLogoLine(line: string, faceColor: string) {
+  return Array.from(line).map((char, idx) => {
+    const glyphColor =
+      char === "░" ? "#5454B8" : char === "▓" ? "#7272E5" : faceColor;
+
+    return (
+      <Text
+        // biome-ignore lint/suspicious/noArrayIndexKey: Logo glyphs are fixed per line
+        key={idx}
+        color={char === " " ? undefined : glyphColor}
+      >
+        {char}
+      </Text>
+    );
+  });
+}
+
 interface AnimatedLogoProps {
   color?: string;
   /** When false, show static frame 1 (logo with shadow). Defaults to true. */
@@ -146,7 +168,8 @@ export function AnimatedLogo({
   animate = true,
 }: AnimatedLogoProps) {
   const tick = useSyncExternalStore(subscribe, getSnapshot);
-  const frame = animate ? tick % normalizedLogoFrames.length : 1;
+  const sequenceIndex = tick % FRAME_SEQUENCE.length;
+  const frame = animate ? (FRAME_SEQUENCE[sequenceIndex] ?? 0) : 1;
 
   const logoLines = normalizedLogoFrames[frame]?.split("\n") ?? [];
 
@@ -154,8 +177,8 @@ export function AnimatedLogo({
     <>
       {logoLines.map((line, idx) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: Logo lines are static and never reorder
-        <Text key={idx} bold color={color}>
-          {line}
+        <Text key={idx} bold>
+          {renderLogoLine(line, color)}
         </Text>
       ))}
     </>
