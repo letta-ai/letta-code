@@ -2808,6 +2808,7 @@ export default function App({
         cancelled = true;
       };
     }
+    return undefined;
   }, [loadingState, agentId, initialAgentState]);
 
   // Keep effective model state in sync with the active conversation override.

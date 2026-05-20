@@ -711,6 +711,7 @@ export function PasteAwareTextInput({
       const t = setTimeout(() => setNudgeCursorOffset(undefined), 0);
       return () => clearTimeout(t);
     }
+    return undefined;
   }, [nudgeCursorOffset]);
 
   return (

@@ -1227,6 +1227,7 @@ export function Input({
       const timer = setTimeout(() => setCursorPos(undefined), 0);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [cursorPos]);
 
   // Reset bash exit arming when leaving bash mode
