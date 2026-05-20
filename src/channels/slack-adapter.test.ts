@@ -1234,6 +1234,47 @@ test("slack adapter dedupes lifecycle error posts by reply destination", async (
   });
 });
 
+test("slack adapter hides raw generic lifecycle errors", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-raw-error",
+    outcome: "error",
+    error: "Unexpected stop reason: error",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000501",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```",
+    thread_ts: "1712790000.000050",
+  });
+});
+
 test("slack adapter does not post an extra lifecycle message for cancelled turns", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,

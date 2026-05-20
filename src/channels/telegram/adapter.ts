@@ -7,6 +7,7 @@
 import type { ReactionType, ReactionTypeEmoji } from "@grammyjs/types";
 import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycleError";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -211,7 +212,7 @@ function getTelegramLifecycleErrorReplyKey(
 }
 
 function formatTelegramLifecycleErrorMessage(errorText: string): string {
-  const normalized = errorText.trim() || "Unknown error";
+  const normalized = normalizeChannelLifecycleErrorMessage(errorText);
   const truncated =
     normalized.length > TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX
       ? `${normalized
