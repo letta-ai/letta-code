@@ -2,7 +2,7 @@ import { Box } from "ink";
 import { memo } from "react";
 import type { StreamingState } from "@/cli/helpers/accumulator";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { clipToolReturn } from "@/tools/manager";
 import { BlinkDot } from "./BlinkDot.js";

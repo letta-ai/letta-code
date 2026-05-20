@@ -205,8 +205,8 @@ export async function expandBashCommands(content: string): Promise<string> {
   }
 
   // Import spawnCommand from Bash tool (same as bash mode uses)
-  const { spawnCommand } = await import("@/tools/impl/Bash.js");
-  const { getShellEnv } = await import("@/tools/impl/shellEnv.js");
+  const { spawnCommand } = await import("@/tools/impl/bash.js");
+  const { getShellEnv } = await import("@/tools/impl/shell-env.js");
 
   let result = content;
 

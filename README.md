@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@letta-ai/letta-code.svg?style=flat-square)](https://www.npmjs.com/package/@letta-ai/letta-code) [![Discord](https://img.shields.io/badge/discord-join-blue?style=flat-square&logo=discord)](https://discord.gg/letta)
 
-Letta Code is a memory-first agent harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more). 
+Letta Code is a memory-first agent harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more).
 
 You can interact with Letta Code agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
@@ -10,13 +10,13 @@ You can interact with Letta Code agents through:
 * Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
 * Messaging integrations, including [Telegram](https://docs.letta.com/letta-code/channels#telegram-cli), [Slack](https://docs.letta.com/letta-code/channels#slack-cli), [Discord](https://docs.letta.com/letta-code/channels#discord-cli), and [custom channels](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md)
 
-Letta Code is a frontier coding agent and can also be used as a long-lived personal agent. 
+Letta Code is a frontier coding agent and can also be used as a long-lived personal agent.
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
-## Feature Overview 
+## Feature Overview
 > [!TIP]
-> Letta Code agents are designed to be self-configuring. If you want to configure something (e.g. skills, behavior, hooks, permissions), try asking your agent to do it for you. 
+> Letta Code agents are designed to be self-configuring. If you want to configure something (e.g. skills, behavior, hooks, permissions), try asking your agent to do it for you.
 
 | Feature | Description |
 |---|---|
@@ -39,7 +39,7 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 ```bash
 npm install -g @letta-ai/letta-code
 ```
-Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
+Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)).
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, zAI coding plan, etc.), and use `/model` to swap models.
 
@@ -53,7 +53,7 @@ Timeouts are stored per local provider in milliseconds; pass `--no-timeout` or `
 
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
 
-## Philosophy 
+## Philosophy
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
 
 **Claude Code / Codex / Gemini CLI** (Session-Based)
@@ -78,7 +78,7 @@ Over time, the agent will update its memory as it learns. To actively guide your
 ```bash
 > /remember [optional instructions on what to remember]
 ```
-Letta Code works with skills (reusable modules that teach your agent new capabilities in a `.skills` directory), but additionally supports [skill learning](https://www.letta.com/blog/skill-learning). You can ask your agent to learn a skill from its current trajectory with the command: 
+Letta Code works with skills (reusable modules that teach your agent new capabilities in a `.skills` directory), but additionally supports [skill learning](https://www.letta.com/blog/skill-learning). You can ask your agent to learn a skill from its current trajectory with the command:
 ```bash
 > /skill [optional instructions on what skill to learn]
 ```

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { run_shell_command } from "@/tools/impl/RunShellCommandGemini";
+import { run_shell_command } from "@/tools/impl/run-shell-command-gemini";
 import { LIMITS } from "@/tools/impl/truncation.js";
-import { createTempRuntimeScriptCommand } from "./runtimeScript.js";
+import { createTempRuntimeScriptCommand } from "./runtime-script.js";
 
 describe("RunShellCommand tool (Gemini)", () => {
   test("executes simple command", async () => {

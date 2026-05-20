@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { createIsolatedCliTestEnv } from "@/test-utils/testProcessEnv";
+import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 import {
   formatCapturedOutput,
   summarizeRecentMessages,
-} from "./processDiagnostics";
+} from "./process-diagnostics";
 
 const TOOL_TRIGGER_PROMPT =
   "Use the Bash tool exactly once with command: echo test123. Do not ask clarifying questions.";

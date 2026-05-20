@@ -15,7 +15,7 @@ import type { PersonalityId } from "@/agent/personality";
 import type { CommandHandle, createCommandRunner } from "@/cli/commands/runner";
 import type { Line } from "@/cli/helpers/accumulator";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
-import type { ReflectionSettings } from "@/cli/helpers/memoryReminder";
+import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ExperimentId } from "@/experiments/types";
 import type { ToolExecutionResult } from "@/tools/manager";

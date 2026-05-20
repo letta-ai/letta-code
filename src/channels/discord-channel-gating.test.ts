@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { isDiscordGuildChannelAllowed } from "@/channels/discord/channelGating";
+import { isDiscordGuildChannelAllowed } from "@/channels/discord/channel-gating";
 
 describe("isDiscordGuildChannelAllowed", () => {
   test("returns true when allowedChannels is undefined", () => {

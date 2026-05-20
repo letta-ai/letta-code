@@ -4,7 +4,7 @@
  */
 
 import { getRuntimeContext, updateRuntimeContext } from "@/runtime-context";
-import { ALL_SKILL_SOURCES } from "./skillSources";
+import { ALL_SKILL_SOURCES } from "./skill-sources";
 import type { SkillSource } from "./skills";
 
 interface AgentContext {
@@ -111,13 +111,6 @@ export function getSkillSources(): SkillSource[] {
     return [...runtimeContext.skillSources];
   }
   return [...context.skillSources];
-}
-
-/**
- * Backwards-compat helper: returns true when bundled skills are disabled.
- */
-export function getNoSkills(): boolean {
-  return !context.skillSources.includes("bundled");
 }
 
 /**

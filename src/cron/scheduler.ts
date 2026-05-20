@@ -12,7 +12,7 @@
  * On stop: clears interval, releases lease.
  */
 
-import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queueRuntime";
+import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
 import {
@@ -34,8 +34,8 @@ import {
   releaseSchedulerLease,
   updateTask,
   verifySchedulerLease,
-} from "./cronFile";
-import { cronMatchesTime } from "./parseInterval";
+} from "./cron-file";
+import { cronMatchesTime } from "./parse-interval";
 
 // ── Types ───────────────────────────────────────────────────────────
 

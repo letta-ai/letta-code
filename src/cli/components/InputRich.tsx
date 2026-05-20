@@ -23,13 +23,13 @@ import {
   getActiveBackgroundAgents,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
-} from "@/agent/subagentState.js";
+} from "@/agent/subagent-state.js";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { buildChatUrl } from "@/cli/helpers/appUrls.js";
+import { buildChatUrl } from "@/cli/helpers/app-urls.js";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { formatGoalStatusIndicator } from "@/cli/helpers/goalCommand";
-import { getRandomThinkingTip } from "@/cli/helpers/thinkingMessages";
+import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
+import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
@@ -39,7 +39,7 @@ import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { ralphMode } from "@/ralph/mode";
 import { settingsManager } from "@/settings-manager";
-import type { QueuedMessage } from "@/utils/messageQueueBridge";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";

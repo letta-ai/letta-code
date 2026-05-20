@@ -16,7 +16,7 @@ import {
   addToolCall,
   emitStreamEvent,
   updateSubagent,
-} from "@/agent/subagentState.js";
+} from "@/agent/subagent-state.js";
 import {
   type BackendMode,
   getBackend,
@@ -24,17 +24,17 @@ import {
 } from "@/backend";
 import { getBillingTier } from "@/backend/api/metadata";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
-import { buildAgentReference } from "@/cli/helpers/appUrls";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
   INTERRUPTED_BY_USER,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
-import { cliPermissions } from "@/permissions/cliPermissionsInstance";
+import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import {
   parseScopeList,
   resolveAllowedMemoryRoots,
-} from "@/permissions/memoryScope";
+} from "@/permissions/memory-scope";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -42,7 +42,7 @@ import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
-} from "@/tools/impl/shellEnv";
+} from "@/tools/impl/shell-env";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
@@ -50,7 +50,7 @@ import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
-} from "./contextBudget";
+} from "./context-budget";
 
 // ============================================================================
 // Constants

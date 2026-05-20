@@ -4,7 +4,7 @@
 
 import { Box } from "ink";
 import type { ReactNode } from "react";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -44,11 +44,7 @@ export function OverlayShell({
 
       {children}
 
-      {footer && (
-        <Box marginTop={1}>
-          <Text dimColor>{footer}</Text>
-        </Box>
-      )}
+      {footer && <Box marginTop={1}>{footer}</Box>}
     </Box>
   );
 }

@@ -3,7 +3,7 @@ import {
   installChannelRuntime,
   isChannelRuntimeInstalled,
   loadChannelRuntimeModule,
-} from "@/channels/runtimeDeps";
+} from "@/channels/runtime-deps";
 
 export interface DiscordGatewayIntentBitsLike {
   Guilds: unknown;

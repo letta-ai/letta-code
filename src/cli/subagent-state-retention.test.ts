@@ -6,7 +6,7 @@ import {
   completeSubagent,
   getSubagentByToolCallId,
   registerSubagent,
-} from "@/agent/subagentState";
+} from "@/agent/subagent-state";
 
 describe("subagentState retention", () => {
   afterEach(() => {

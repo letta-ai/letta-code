@@ -11,7 +11,7 @@ import { LocalBackend } from "@/backend/local";
 import {
   searchMessagesForBackend,
   warmMessageSearchCacheForBackend,
-} from "@/backend/messageSearch";
+} from "@/backend/message-search";
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {

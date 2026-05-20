@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { handleMemorySubagentCompletion } from "@/cli/helpers/memorySubagentCompletion";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   estimateSystemTokens,
   getSystemPromptDoctorState,
-} from "@/cli/helpers/systemPromptWarning";
+} from "@/cli/helpers/system-prompt-warning";
 
 const recompileAgentSystemPromptMock = mock(
   (_conversationId: string, _agentId: string, _dryRun?: boolean) =>

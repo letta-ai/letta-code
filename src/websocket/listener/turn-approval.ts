@@ -11,12 +11,12 @@ import {
 } from "@/agent/approval-execution";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
-import { computeDiffPreviews } from "@/helpers/diffPreview";
-import { formatPermissionDenial } from "@/permissions/formatDenial";
+import { computeDiffPreviews } from "@/helpers/diff-preview";
+import { formatPermissionDenial } from "@/permissions/format-denial";
 import {
   getInteractiveApprovalKind,
   isInteractiveApprovalTool,
-} from "@/tools/interactivePolicy";
+} from "@/tools/interactive-policy";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
@@ -48,7 +48,7 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
-import type { ProviderFallbackState } from "./providerFallback";
+import type { ProviderFallbackState } from "./provider-fallback";
 import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { debugLogApprovalResumeState } from "./recovery";

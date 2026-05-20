@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { grep_files } from "@/tools/impl/GrepFiles.js";
+import { grep_files } from "@/tools/impl/grep-files.js";
 
 describe("grep_files codex tool", () => {
   async function createTempDirWithFiles(
