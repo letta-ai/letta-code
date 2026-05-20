@@ -18,7 +18,7 @@ describe("websocket listener local backend wiring", () => {
     const memfsSync = source("websocket/listener/memfs-sync.ts");
 
     for (const file of [turn, send, recovery, warmup, memfsSync]) {
-      expect(file).not.toContain("../../backend/api/client");
+      expect(file).not.toContain("@/backend/api/client");
       expect(file).not.toContain("client.agents.retrieve");
     }
 

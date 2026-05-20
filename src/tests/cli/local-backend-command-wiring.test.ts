@@ -23,7 +23,7 @@ describe("local backend command wiring", () => {
   test("new, fork, clear, and resume route conversation operations through Backend", () => {
     const source = appSource();
     expect(source).toContain("getResumeDataFromBackend");
-    expect(source).not.toContain('from "../backend/api/conversations"');
+    expect(source).not.toContain('from "@/backend/api/conversations"');
 
     const newSegment = segmentBetween(
       source,
@@ -162,7 +162,7 @@ describe("local backend command wiring", () => {
     );
     const messageSearchSource = readFileSync(messageSearchPath, "utf-8");
     expect(messageSearchSource).toContain("searchMessagesForBackend");
-    expect(messageSearchSource).not.toContain("../../backend/api/search");
+    expect(messageSearchSource).not.toContain("@/backend/api/search");
 
     const messagesSubcommandPath = fileURLToPath(
       new URL("../../cli/subcommands/messages.ts", import.meta.url),
@@ -212,7 +212,7 @@ describe("local backend command wiring", () => {
     const taskSource = readFileSync(taskPath, "utf-8");
     expect(taskSource).toContain('import { getBackend } from "@/backend"');
     expect(taskSource).toContain("await getBackend().forkConversation(");
-    expect(taskSource).not.toContain('from "../../backend/api/conversations"');
+    expect(taskSource).not.toContain('from "@/backend/api/conversations"');
 
     const managerPath = fileURLToPath(
       new URL("../../agent/subagents/manager.ts", import.meta.url),
