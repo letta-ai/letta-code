@@ -234,7 +234,7 @@ mock.module("../backend/api/client", () => ({
   consumeLastSDKDiagnostic: () => null,
 }));
 
-mock.module("../cli/helpers/approvalClassification", () => ({
+mock.module("../cli/helpers/approval-classification", () => ({
   classifyApprovals: classifyApprovalsMock,
 }));
 
