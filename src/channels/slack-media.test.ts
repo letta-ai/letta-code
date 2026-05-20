@@ -2,7 +2,7 @@ import { expect, mock, test } from "bun:test";
 
 async function loadSlackMediaModule() {
   return import(
-    `../../channels/slack/media.ts?slack-media-test=${Date.now()}-${Math.random()}`
+    `./slack/media.ts?slack-media-test=${Date.now()}-${Math.random()}`
   );
 }
 
