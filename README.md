@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@letta-ai/letta-code.svg?style=flat-square)](https://www.npmjs.com/package/@letta-ai/letta-code) [![Discord](https://img.shields.io/badge/discord-join-blue?style=flat-square&logo=discord)](https://discord.gg/letta)
 
-Letta Code is a memory-first coding harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more). Agents automatically reconfigure themselves through updating their skills, memory, and system prompt to adapt what they know and how they act. 
+Letta Code is a memory-first agent harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more). 
 
 You can interact with Letta Code agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
@@ -18,7 +18,7 @@ You can interact with Letta Code agents through:
 
 | Feature | Description |
 |---|---|
-| [Self-improvement](https://docs.letta.com/letta-code/self-improvement) | Agents programmatically rewrite themselves to improve their own memory, prompting, and skills |
+| [Self-improvement](https://docs.letta.com/letta-code/self-improvement) | Agents programmatically rewrite themselves to improve their own memory, prompting, and [learning skills](https://www.letta.com/blog/skill-learning) |
 | [Message search](https://docs.letta.com/letta-code/conversation-search) | Search across all messages and agents with `/search` or ask your agent to |
 | [MemFS](https://docs.letta.com/letta-code/memfs) | All context (including [memory blocks](https://www.letta.com/blog/memory-blocks)) are tracked via git. Sync context to a custom GitHub repository by setting `/memory-repository set git@github.com:...` |
 | [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS) |
@@ -42,7 +42,7 @@ Navigate to your project directory and run `letta` (see command-line options [in
 On first run, choose how you want to start:
 
 * **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Constellation login.
-* **Login to Constellation** syncs agent state through the Constellation so you can access the same agents from `chat.letta.com`, the desktop app, other machines, and messaging integrations.
+* **Login to Constellation** syncs agent state through the Constellation so you can access the same agents from `chat.letta.com`, the desktop app, and other machines - and agents can work across multiple machines.  
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, zAI coding plan, etc.), and use `/model` to swap models.
 
@@ -118,23 +118,10 @@ letta server --env-name "work-laptop"
 ```
 Once a machine is connected, you can set it as an environment for your agent to run on whenever interacting with your agent. See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments. 
 
-## Agent Memory & Learning
-If you’re using Letta Code for the first time, you will likely want to run the `/init` command to initialize the agent’s memory system:
-```bash
-> /init
-```
+## Research
+Letta Code is developed by the creators of [MemGPT](https://arxiv.org/abs/2310.08560) and [sleep-time compute](https://arxiv.org/abs/2504.13171) (now called "dreaming"), and drive by our [research](https://www.letta.com/research) in AI memory and continual learning. 
 
-Over time, the agent will update its memory as it learns. To actively guide your agents memory, you can use the `/remember` command:
-```bash
-> /remember [optional instructions on what to remember]
-```
-Letta Code works with skills (reusable modules that teach your agent new capabilities in a `.skills` directory), but additionally supports [skill learning](https://www.letta.com/blog/skill-learning). You can ask your agent to learn a skill from its current trajectory with the command: 
-```bash
-> /skill [optional instructions on what skill to learn]
-```
-Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
-
-
+## Other
 Community maintained packages are available for Arch Linux users on the [AUR](https://aur.archlinux.org/packages/letta-code):
 ```bash
 yay -S letta-code # release
