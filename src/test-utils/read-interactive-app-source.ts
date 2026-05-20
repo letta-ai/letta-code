@@ -4,22 +4,22 @@ import { fileURLToPath } from "node:url";
 
 const APP_DIR = fileURLToPath(new URL("../cli/app", import.meta.url));
 const LEGACY_ORDER = [
-  "useSubmitHandler.ts",
-  "useConversationLoop.ts",
-  "useConfigurationHandlers.ts",
-  "useInterruptHandler.ts",
+  "use-submit-handler.ts",
+  "use-conversation-loop.ts",
+  "use-configuration-handlers.ts",
+  "use-interrupt-handler.ts",
   "AppCoordinator.tsx",
   "AppView.tsx",
-  "useReasoningCycle.ts",
-  "useApprovalFlow.ts",
-  "useConversationSwitching.ts",
-  "useBashHandlers.ts",
-  "useQueuedApprovalSubmit.ts",
-  "useFeedbackHandler.ts",
-  "submitDiagnosticsCommands.ts",
-  "submitConnectionCommands.ts",
-  "submitNavigationCommands.ts",
-  "submitProfileCommands.ts",
+  "use-reasoning-cycle.ts",
+  "use-approval-flow.ts",
+  "use-conversation-switching.ts",
+  "use-bash-handlers.ts",
+  "use-queued-approval-submit.ts",
+  "use-feedback-handler.ts",
+  "submit-diagnostics-commands.ts",
+  "submit-connection-commands.ts",
+  "submit-navigation-commands.ts",
+  "submit-profile-commands.ts",
 ];
 
 function collectSourceFiles(dir: string): string[] {

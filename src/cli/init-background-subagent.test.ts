@@ -38,7 +38,7 @@ describe("init wiring", () => {
   });
 
   test("initCommand.ts exports all helpers", () => {
-    const helperSource = readSource("./helpers/initCommand.ts");
+    const helperSource = readSource("./helpers/init-command.ts");
 
     expect(helperSource).toContain("export function hasActiveInitSubagent(");
     expect(helperSource).toContain("export function gatherInitGitContext()");

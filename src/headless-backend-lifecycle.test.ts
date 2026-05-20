@@ -94,7 +94,7 @@ describe("headless backend lifecycle wiring", () => {
   });
 
   test("memfs flag application skips remote operations for local backends", () => {
-    const source = readSource("./agent/memoryFilesystem.ts");
+    const source = readSource("./agent/memory-filesystem.ts");
 
     const capabilityGuardIndex = source.indexOf(
       "!backend.capabilities.remoteMemfs",
