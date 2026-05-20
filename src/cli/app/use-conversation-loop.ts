@@ -395,12 +395,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             : "";
 
         // Check for completion promise
-        const goalCompletedByTool =
-          ralphState.mode === "goal" &&
-          settingsManager.getConversationGoal(conversationIdRef.current)
-            ?.status === "complete";
+        const goalStatusAfterTool =
+          ralphState.mode === "goal"
+            ? settingsManager.getConversationGoal(conversationIdRef.current)
+                ?.status
+            : null;
+        const goalStoppedByTool =
+          goalStatusAfterTool === "complete" ||
+          goalStatusAfterTool === "blocked";
         if (
-          goalCompletedByTool ||
+          goalStoppedByTool ||
           ralphMode.checkForCompletion(lastAssistantText)
         ) {
           // Promise matched - exit ralph mode
@@ -411,7 +415,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           if (wasGoal) {
             settingsManager.updateConversationGoalStatus(
               conversationIdRef.current,
-              "complete",
+              goalStatusAfterTool === "blocked" ? "blocked" : "complete",
             );
           }
           if (wasYolo) {
@@ -426,7 +430,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             id: statusId,
             lines: [
               wasGoal
-                ? `✅ Goal complete after ${ralphState.currentIteration} iteration(s)`
+                ? goalStatusAfterTool === "blocked"
+                  ? `⚠️ Goal blocked after ${ralphState.currentIteration} iteration(s)`
+                  : `✅ Goal complete after ${ralphState.currentIteration} iteration(s)`
                 : `✅ Ralph loop complete: promise detected after ${ralphState.currentIteration} iteration(s)`,
             ],
           });

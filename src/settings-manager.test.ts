@@ -1634,6 +1634,23 @@ describe("Settings Manager - Conversation Goals", () => {
     expect(resumed?.activeStartedAt).not.toBeNull();
   });
 
+  test("updateConversationGoalStatus transitions active -> blocked", async () => {
+    await initGoalTest();
+    settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    const updated = settingsManager.updateConversationGoalStatus(
+      "conv-1",
+      "blocked",
+      testProjectDir,
+    );
+    expect(updated).not.toBeNull();
+    expect(updated?.status).toBe("blocked");
+    expect(updated?.activeStartedAt).toBeNull();
+  });
+
   test("updateConversationGoalStatus returns null for missing conversation", async () => {
     await initGoalTest();
     const result = settingsManager.updateConversationGoalStatus(
