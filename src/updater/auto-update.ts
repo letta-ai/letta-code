@@ -433,6 +433,7 @@ export async function checkAndAutoUpdate(): Promise<
       return { updateApplied: true, latestVersion: result.latestVersion };
     }
   }
+  return undefined;
 }
 
 export async function manualUpdate(): Promise<{
