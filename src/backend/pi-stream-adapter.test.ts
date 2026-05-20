@@ -201,7 +201,7 @@ describe("PiStreamAdapter", () => {
     }
 
     expect(capturedContext).toBeDefined();
-    const messages = capturedContext?.messages;
+    const messages = capturedContext!.messages;
     // The trailing assistant message should be stripped
     expect(messages.at(-1)?.role).toBe("user");
     expect(messages).toHaveLength(1);

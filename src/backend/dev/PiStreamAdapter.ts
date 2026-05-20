@@ -143,7 +143,7 @@ function toPiMessages(messages: LocalMessage[]): Message[] {
   // and the retry sends no new user input, leaving the partial assistant
   // response as the last message.
   let trimmed = messages;
-  while (trimmed.length > 0 && trimmed.at(-1)?.role === "assistant") {
+  while (trimmed.length > 0 && trimmed.at(-1)!.role === "assistant") {
     trimmed = trimmed.slice(0, -1);
   }
 
