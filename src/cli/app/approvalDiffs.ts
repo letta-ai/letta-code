@@ -1,16 +1,16 @@
-import type { ClassifiedApproval } from "../helpers/approvalClassification";
+import type { ClassifiedApproval } from "@/cli/helpers/approvalClassification";
 import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
   parsePatchToAdvancedDiff,
-} from "../helpers/diff";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import type { ApprovalRequest } from "../helpers/stream";
+} from "@/cli/helpers/diff";
+import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
-} from "../helpers/toolNameMapping";
+} from "@/cli/helpers/toolNameMapping";
 
 export function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {
   return approvals

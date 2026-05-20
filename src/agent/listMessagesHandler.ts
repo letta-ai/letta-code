@@ -7,12 +7,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Backend, ConversationMessageListBody } from "../backend";
+import type { Backend, ConversationMessageListBody } from "@/backend";
 import type {
   ControlResponse,
   ListMessagesControlRequest,
   ListMessagesResponsePayload,
-} from "../types/protocol";
+} from "@/types/protocol";
 import { resolveListMessagesRoute } from "./listMessagesRouting";
 
 // ─────────────────────────────────────────────────────────────────────────────

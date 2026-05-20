@@ -5,14 +5,14 @@ import {
   type OpenAITokens,
   startLocalOAuthServer,
   startOpenAIOAuth,
-} from "../../auth/openai-oauth";
+} from "@/auth/openai-oauth";
 import {
   type ChatGPTOAuthConfig,
   createOrUpdateOpenAICodexProvider,
   getOpenAICodexProvider,
   OPENAI_CODEX_PROVIDER_NAME,
-} from "../../providers/openai-codex-provider";
-import { settingsManager } from "../../settings-manager";
+} from "@/providers/openai-codex-provider";
+import { settingsManager } from "@/settings-manager";
 
 interface OAuthCodeServerResult {
   result: {

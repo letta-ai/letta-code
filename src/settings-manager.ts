@@ -46,6 +46,10 @@ export interface StatusLineConfig {
   prompt?: string; // Custom input prompt character (default "›")
 }
 
+export interface WindowTitleConfig {
+  items: string[]; // Ordered list of enabled field keys (e.g. ["agent-name", "model-name"])
+}
+
 /**
  * Per-agent settings stored in a flat array.
  * baseUrl is omitted/undefined for Letta API (api.letta.com).
@@ -106,6 +110,7 @@ export interface Settings {
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
   statusLine?: StatusLineConfig; // Configurable status line command
+  windowTitle?: WindowTitleConfig; // Configurable terminal window title
   env?: Record<string, string>;
   experiments?: Partial<Record<ExperimentId, boolean>>;
   // Server-indexed settings (agent IDs are server-specific)
@@ -132,6 +137,7 @@ export interface Settings {
 export interface ProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   statusLine?: StatusLineConfig; // Project-specific status line command
+  windowTitle?: WindowTitleConfig; // Project-specific terminal window title
 }
 
 export interface LocalProjectSettings {
@@ -140,6 +146,7 @@ export interface LocalProjectSettings {
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Project-specific hook commands
   statusLine?: StatusLineConfig; // Local project-specific status line command
+  windowTitle?: WindowTitleConfig; // Local project-specific terminal window title
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
@@ -767,6 +774,7 @@ class SettingsManager {
       const projectSettings: ProjectSettings = {
         hooks: rawSettings.hooks as HooksConfig | undefined,
         statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
+        windowTitle: rawSettings.windowTitle as WindowTitleConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);
@@ -810,6 +818,9 @@ class SettingsManager {
       }
       if ("statusLine" in updates) {
         globalUpdates.statusLine = updates.statusLine;
+      }
+      if ("windowTitle" in updates) {
+        globalUpdates.windowTitle = updates.windowTitle;
       }
       if (Object.keys(globalUpdates).length > 0) {
         this.updateSettings(globalUpdates);

@@ -4,11 +4,11 @@ import {
   getLocalChatGPTApiKey,
   getLocalProviderRecordByName,
   type LocalProviderRecord,
-} from "../local/LocalProviderAuthStore";
+} from "@/backend/local/LocalProviderAuthStore";
 import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
-} from "../local/LocalProviderTimeout";
+} from "@/backend/local/LocalProviderTimeout";
 import {
   expectedPiProviderList,
   getPiProviderSpec,

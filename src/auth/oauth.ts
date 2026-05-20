@@ -4,7 +4,7 @@
  */
 
 import Letta from "@letta-ai/letta-client";
-import { trackBoundaryError } from "../telemetry/errorReporting";
+import { trackBoundaryError } from "@/telemetry/errorReporting";
 
 export const LETTA_CLOUD_API_URL = "https://api.letta.com";
 

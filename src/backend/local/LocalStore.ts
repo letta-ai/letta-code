@@ -9,12 +9,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  LettaStreamingResponse,
-  Message,
-} from "@letta-ai/letta-client/resources/agents/messages";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { INTERRUPTED_BY_USER } from "../../constants";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -26,7 +22,8 @@ import type {
   ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationUpdateBody,
-} from "../backend";
+} from "@/backend/backend";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import type { LocalCompactionStats } from "./compaction";
 import {
   emptyLocalUsage,
@@ -51,33 +48,15 @@ import {
   getAttachedLocalMessage,
   isLocalStateChunkOnly,
 } from "./LocalStreamChunks";
+import type { LocalAgentRecord, StoredMessage } from "./local-types";
 import type { LocalCompiledSystemPrompt } from "./systemPromptCompilation";
-
-export type StoredMessage = Message & {
-  id: string;
-  message_type: string;
-  date: string;
-  content?: unknown;
-  agent_id: string;
-  conversation_id: string;
-};
+export type { LocalAgentRecord, StoredMessage };
 
 type StoredConversation = Conversation & {
   id: string;
   agent_id: string;
   in_context_message_ids: string[];
 };
-
-export interface LocalAgentRecord {
-  id: string;
-  name: string;
-  description?: string | null;
-  system: string;
-  tags: string[];
-  model: string;
-  model_settings: Record<string, unknown>;
-  compaction_settings?: Record<string, unknown> | null;
-}
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
 const DEFAULT_LOCAL_MODEL = "local/default";

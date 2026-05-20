@@ -4,14 +4,9 @@ import type {
   ChannelAccountConfigAdapter,
   ChannelAccountPatch,
   ChannelConfigPatch,
-  ChannelConfigSchema,
   ChannelPluginAccountPatch,
   ChannelProtocolConfig,
 } from "./pluginTypes";
-import {
-  redactConfigForSnapshot,
-  validateConfigAgainstSchema,
-} from "./schemaConfig";
 import { slackAccountConfigAdapter } from "./slack/accountConfig";
 import { telegramAccountConfigAdapter } from "./telegram/accountConfig";
 import type { ChannelAccount } from "./types";
@@ -96,35 +91,6 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-/**
- * Build a {@link ChannelAccountConfigAdapter} from a declared
- * {@link ChannelConfigSchema}. Used as a fallback for user-installed plugins
- * that don't ship a hand-written adapter.
- */
-function _buildSchemaAdapter(
-  schema: ChannelConfigSchema,
-): ChannelAccountConfigAdapter<ChannelAccount> {
-  return {
-    isValidConfig(config) {
-      return validateConfigAgainstSchema(schema, config).ok;
-    },
-    toAccountPatch() {
-      return {};
-    },
-    toAccountConfig(account) {
-      const config = isCustomChannelAccount(account) ? account.config : {};
-      return redactConfigForSnapshot(schema, config);
-    },
-    toConfigSnapshotConfig(account) {
-      const config = isCustomChannelAccount(account) ? account.config : {};
-      return redactConfigForSnapshot(schema, config);
-    },
-    shouldRefreshDisplayName() {
-      return false;
-    },
-  };
-}
-
 export function getChannelAccountConfigAdapter(
   channelId: string,
 ): ChannelAccountConfigAdapter<ChannelAccount> {
@@ -140,10 +106,7 @@ export function getChannelAccountConfigAdapter(
   // but not yet routed here — the dialog always sends the custom shape,
   // so validating against a plugin-specific schema would reject the
   // save (timeouts) until the dialog opts a plugin in.
-  //
-  // Schema-driven adapter retained for future use:
-  //   const metadata = getChannelPluginMetadata(channelId);
-  //   if (metadata.configSchema) return buildSchemaAdapter(metadata.configSchema);
+
   return customChannelAccountConfigAdapter;
 }
 

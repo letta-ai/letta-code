@@ -2,7 +2,7 @@ import {
   estimateSystemPromptSize,
   type FileEstimate,
   type SystemPromptSizeEstimate,
-} from "../../utils/systemPromptSize";
+} from "@/utils/systemPromptSize";
 
 const DEFAULT_TOP = 20;
 const USAGE_EXIT = 64;

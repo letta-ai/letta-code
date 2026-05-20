@@ -1,14 +1,14 @@
 import { parseArgs } from "node:util";
 import type { AgentListParams } from "@letta-ai/letta-client/resources/agents/agents";
-import { type CreateAgentOptions, createAgent } from "../../agent/create";
+import { type CreateAgentOptions, createAgent } from "@/agent/create";
 import {
   buildCreateAgentOptionsForPersonality,
   createAgentForPersonality,
   enableMemfsForCreatedAgent,
   resolvePersonalityId,
-} from "../../agent/personality";
-import { getBackend } from "../../backend";
-import { settingsManager } from "../../settings-manager";
+} from "@/agent/personality";
+import { getBackend } from "@/backend";
+import { settingsManager } from "@/settings-manager";
 
 function printUsage(): void {
   console.log(

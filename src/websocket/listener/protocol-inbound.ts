@@ -1,6 +1,6 @@
 import type WebSocket from "ws";
-import { isValidChannelPluginConfigPayload } from "../../channels/accountConfig";
-import { isSupportedChannelId } from "../../channels/pluginRegistry";
+import { isValidChannelPluginConfigPayload } from "@/channels/accountConfig";
+import { isSupportedChannelId } from "@/channels/pluginRegistry";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
@@ -71,7 +71,7 @@ import type {
   WriteFileCommand,
   WriteMemoryFileCommand,
   WsProtocolCommand,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import { isValidApprovalResponseBody } from "./approval";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 

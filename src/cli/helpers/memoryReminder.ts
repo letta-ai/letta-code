@@ -1,8 +1,8 @@
 // src/cli/helpers/memoryReminder.ts
 // Handles periodic memory reminder logic and preference parsing
 
-import { settingsManager } from "../../settings-manager";
-import { debugLog } from "../../utils/debug";
+import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 
 // Memory reminder interval presets
 const MEMORY_INTERVAL_FREQUENT = 5;
@@ -224,7 +224,7 @@ async function buildMemfsAwareMemoryReminder(
     "memory",
     `${settingsManager.isMemfsEnabled(agentId) ? "Memfs" : "Memory"} check reminder fired (${trigger}, agent ${agentId})`,
   );
-  const { MEMORY_CHECK_REMINDER } = await import("../../agent/promptAssets.js");
+  const { MEMORY_CHECK_REMINDER } = await import("@/agent/promptAssets.js");
   return MEMORY_CHECK_REMINDER;
 }
 

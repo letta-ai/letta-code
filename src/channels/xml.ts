@@ -6,8 +6,8 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getLocalTime } from "../cli/helpers/sessionContext";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../constants";
+import { getLocalTime } from "@/cli/helpers/sessionContext";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type {
   ChannelMessageAttachment,
   ChannelThreadContextEntry,

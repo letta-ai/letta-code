@@ -1,8 +1,11 @@
-import { getChannelAccount, LEGACY_CHANNEL_ACCOUNT_ID } from "../accounts";
-import { getChannelRegistry } from "../registry";
-import { getRoutesForChannel, loadRoutes } from "../routing";
-import type { ChannelAdapter, SlackChannelAccount } from "../types";
-import { isSlackChannelAccount } from "../types";
+import {
+  getChannelAccount,
+  LEGACY_CHANNEL_ACCOUNT_ID,
+} from "@/channels/accounts";
+import { getChannelRegistry } from "@/channels/registry";
+import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
+import type { ChannelAdapter, SlackChannelAccount } from "@/channels/types";
+import { isSlackChannelAccount } from "@/channels/types";
 
 export interface EligibleProactiveSlackAccount {
   account: SlackChannelAccount;

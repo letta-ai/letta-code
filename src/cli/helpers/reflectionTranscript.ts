@@ -8,10 +8,10 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { MEMORY_SYSTEM_DIR } from "../../agent/memoryFilesystem";
-import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "../../agent/subagents/contextBudget";
-import { getDirectoryLimits } from "../../utils/directoryLimits";
-import { parseFrontmatter } from "../../utils/frontmatter";
+import { MEMORY_SYSTEM_DIR } from "@/agent/memoryFilesystem";
+import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "@/agent/subagents/contextBudget";
+import { getDirectoryLimits } from "@/utils/directoryLimits";
+import { parseFrontmatter } from "@/utils/frontmatter";
 import type { Line } from "./accumulator";
 
 const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";

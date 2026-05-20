@@ -1,5 +1,5 @@
-import { getBackend } from "../backend";
-import { refreshByokProviders } from "../backend/api/providers";
+import { getBackend } from "@/backend";
+import { refreshByokProviders } from "@/backend/api/providers";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 

@@ -5,8 +5,8 @@ import type {
   QueueItemDroppedReason,
   QueueItemKind,
   QueueItemSource,
-} from "../types/protocol";
-import { isDebugEnabled } from "../utils/debug";
+} from "@/types/protocol";
+import { isDebugEnabled } from "@/utils/debug";
 
 export type { QueueBlockedReason, QueueClearedReason, QueueItemKind };
 

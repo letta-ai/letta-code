@@ -8,20 +8,20 @@ import type {
 import {
   type ApprovalResult,
   executeApprovalBatch,
-} from "../../agent/approval-execution";
-import { getChannelRegistry } from "../../channels/registry";
-import type { ChannelTurnSource } from "../../channels/types";
-import { computeDiffPreviews } from "../../helpers/diffPreview";
-import { formatPermissionDenial } from "../../permissions/formatDenial";
+} from "@/agent/approval-execution";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
+import { computeDiffPreviews } from "@/helpers/diffPreview";
+import { formatPermissionDenial } from "@/permissions/formatDenial";
 import {
   getInteractiveApprovalKind,
   isInteractiveApprovalTool,
-} from "../../tools/interactivePolicy";
+} from "@/tools/interactivePolicy";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
   ControlRequest,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   clearPendingApprovalBatchIds,
   collectApprovalResultToolCallIds,
@@ -125,7 +125,7 @@ export function resolveChannelApprovalSource(
 
 async function maybeReadPlanPreview(
   toolName: string,
-  turnPermissionModeState: import("../../tools/manager").PermissionModeState,
+  turnPermissionModeState: import("@/tools/manager").PermissionModeState,
 ): Promise<{ planFilePath?: string; planContent?: string }> {
   if (toolName !== "ExitPlanMode" || !turnPermissionModeState.planFilePath) {
     return {};
@@ -158,7 +158,7 @@ export async function handleApprovalStop(params: {
   agentId: string;
   conversationId: string;
   turnWorkingDirectory: string;
-  turnPermissionModeState: import("../../tools/manager").PermissionModeState;
+  turnPermissionModeState: import("@/tools/manager").PermissionModeState;
   dequeuedBatchId: string;
   runId?: string;
   msgRunIds: string[];

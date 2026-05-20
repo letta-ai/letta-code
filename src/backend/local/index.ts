@@ -1,4 +1,4 @@
-export { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
+export { isContextWindowOverflowError } from "@/backend/dev/contextWindowOverflow";
 export {
   formatLocalMessagesForSummary,
   isLocalSlidingWindowCompactionPlanningError,

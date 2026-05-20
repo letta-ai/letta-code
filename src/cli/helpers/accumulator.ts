@@ -5,14 +5,14 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { INTERRUPTED_BY_USER } from "../../constants";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import {
   runPostToolUseHooks,
   runPreCompactHooks,
   runPreToolUseHooks,
-} from "../../hooks";
-import { debugLog } from "../../utils/debug";
-import { extractCompactionSummary } from "./backfill";
+} from "@/hooks";
+import { debugLog } from "@/utils/debug";
+import { extractCompactionSummary } from "./compaction-utils";
 import type { ContextTracker } from "./contextTracker";
 import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";
