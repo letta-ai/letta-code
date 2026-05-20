@@ -12,6 +12,23 @@ You can interact with Letta Code agents through:
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
+## Feature Overview 
+> [!TIP]
+> If you want to configure something (e.g. skills, behavior, hooks, permissions), try asking your agent to do it for you. Letta Code agents are designed to be self-configuring. 
+
+| Feature | Description |
+|---|---|
+| [Self-improvement](https://docs.letta.com/letta-code/self-improvement) | Agents programmatically rewrite themselves to improve their own memory, prompting, and skills |
+| [Message search](https://docs.letta.com/letta-code/conversation-search) | Search across all messages and agents |
+| [MemFS](https://docs.letta.com/letta-code/memfs) | All context (memory blocks) are tracked via git. Agents bring their memory with them across environments. |
+| [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS) |
+| [Subagents](https://docs.letta.com/letta-code/subagents) | Call specialized subagents (recall, …) |
+| [Multi-agent](https://docs.letta.com/letta-code/multi-agent) | Agents can discover and message each other |
+| [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) | Agents work across multiple enviornmnets.  |
+| [Agent messaging](https://docs.letta.com/letta-code/agent-messaging) | Chat with the same agent from Slack, Telegram, your browser (chat.letta.com) including mobile, and through custom channels |
+| [Hooks](https://docs.letta.com/letta-code/agent-messaging) | Configure deterministic code to run on certain events |
+| [Permissions](https://docs.letta.com/letta-code/agent-messaging) | Customize what actions are auto-approved or auto-denied. |
+
 ## Get started
 Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm):
 ```bash
