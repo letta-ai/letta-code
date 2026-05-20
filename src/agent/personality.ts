@@ -12,6 +12,7 @@ import {
   GIT_MEMORY_ENABLED_TAG,
   getMemoryRepoDir,
   pullMemory,
+  withHostedMemoryBackendTag,
 } from "./memory-git";
 import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./prompt-assets";
 
@@ -473,9 +474,13 @@ export async function enableMemfsForCreatedAgent(params: {
     const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
     const tags = agentTags || [];
-    if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
+    const nextTags = withHostedMemoryBackendTag([
+      ...tags,
+      GIT_MEMORY_ENABLED_TAG,
+    ]);
+    if (tags.join("\0") !== nextTags.join("\0")) {
       await client.agents.update(agentId, {
-        tags: [...tags, GIT_MEMORY_ENABLED_TAG],
+        tags: nextTags,
       });
     }
     settingsManager.setMemfsEnabled(agentId, true);

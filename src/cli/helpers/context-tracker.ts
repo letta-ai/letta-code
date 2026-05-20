@@ -20,6 +20,8 @@ export type ContextTracker = {
   pendingReflectionTrigger: boolean;
   /** Set when compaction completes; consumed to refresh conversation search metadata */
   pendingConversationDescriptionRegeneration: boolean;
+  /** Set when compaction happens; hosted/Pierre memory should recompile after stream completion. */
+  pendingHostedRecompile: boolean;
 };
 
 export function createContextTracker(): ContextTracker {
@@ -30,6 +32,7 @@ export function createContextTracker(): ContextTracker {
     pendingCompaction: false,
     pendingReflectionTrigger: false,
     pendingConversationDescriptionRegeneration: false,
+    pendingHostedRecompile: false,
   };
 }
 
@@ -40,4 +43,5 @@ export function resetContextHistory(ct: ContextTracker): void {
   ct.pendingCompaction = false;
   ct.pendingReflectionTrigger = false;
   ct.pendingConversationDescriptionRegeneration = false;
+  ct.pendingHostedRecompile = false;
 }

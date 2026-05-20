@@ -13,6 +13,7 @@ import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { getModelContextWindow } from "./available-models";
 import { getDefaultMemoryBlocks } from "./memory";
+import { withHostedMemoryBackendTag } from "./memory-git";
 import {
   formatAvailableModels,
   getDefaultModel,
@@ -324,6 +325,7 @@ export async function createAgent(
   if (options.tags && Array.isArray(options.tags)) {
     tags.push(...options.tags);
   }
+  const agentTags = withHostedMemoryBackendTag(tags);
 
   const agentDescription =
     options.description ?? `Letta Code agent created in ${process.cwd()}`;
@@ -341,7 +343,7 @@ export async function createAgent(
       filteredMemoryBlocks.length > 0 ? filteredMemoryBlocks : undefined,
     // Referenced block IDs (existing blocks to attach)
     block_ids: referencedBlockIds.length > 0 ? referencedBlockIds : undefined,
-    tags,
+    tags: agentTags,
     ...(isSubagent && { hidden: true }),
     // should be default off, but just in case
     include_base_tools: false,

@@ -36,6 +36,7 @@ import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 const execFile = promisify(execFileCb);
 
 export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
+export const HOSTED_MEMORY_BACKEND_TAG = "memfs-backend:hosted";
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:520|521|522|523|524)\b|The requested URL returned error:\s*(?:520|521|522|523|524))/i;
@@ -360,10 +361,24 @@ async function getAuthToken(): Promise<string> {
 const HOSTED_BACKEND_HEADER = "x-letta-memfs-backend";
 const HOSTED_BACKEND_VALUE = "hosted";
 
-function isHostedBackendRequested(
+export function isHostedBackendRequested(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return env.LETTA_MEMFS_BACKEND === HOSTED_BACKEND_VALUE;
+}
+
+export function withHostedMemoryBackendTag(
+  tags: readonly string[] | null | undefined,
+): string[] {
+  const out = [...new Set(tags ?? [])];
+  if (
+    isHostedBackendRequested() &&
+    out.includes(GIT_MEMORY_ENABLED_TAG) &&
+    !out.includes(HOSTED_MEMORY_BACKEND_TAG)
+  ) {
+    out.push(HOSTED_MEMORY_BACKEND_TAG);
+  }
+  return out;
 }
 
 export function buildGitAuthArgs(
@@ -1937,10 +1952,14 @@ export async function addGitMemoryTag(
     const { getBackend } = await import("@/backend");
     const backend = getBackend();
     const agent = prefetchedAgent ?? (await backend.retrieveAgent(agentId));
-    const tags = agent.tags || [];
-    if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
+    const currentTags = agent.tags || [];
+    const tags = withHostedMemoryBackendTag([
+      ...currentTags,
+      GIT_MEMORY_ENABLED_TAG,
+    ]);
+    if (currentTags.join("\0") !== tags.join("\0")) {
       await backend.updateAgent(agentId, {
-        tags: [...tags, GIT_MEMORY_ENABLED_TAG],
+        tags,
       });
       debugLog("memfs-git", `Added ${GIT_MEMORY_ENABLED_TAG} tag`);
     }
@@ -1963,7 +1982,10 @@ export async function removeGitMemoryTag(agentId: string): Promise<void> {
     const tags = agent.tags || [];
     if (tags.includes(GIT_MEMORY_ENABLED_TAG)) {
       await backend.updateAgent(agentId, {
-        tags: tags.filter((t) => t !== GIT_MEMORY_ENABLED_TAG),
+        tags: tags.filter(
+          (t) =>
+            t !== GIT_MEMORY_ENABLED_TAG && t !== HOSTED_MEMORY_BACKEND_TAG,
+        ),
       });
       debugLog("memfs-git", `Removed ${GIT_MEMORY_ENABLED_TAG} tag`);
     }

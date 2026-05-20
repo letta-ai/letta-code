@@ -1988,6 +1988,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // post-compaction reflection reminder/auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
             void generateConversationDescription({ force: true });
+            contextTrackerRef.current.pendingHostedRecompile = true;
           } catch (error) {
             const apiError = error as {
               status?: number;
