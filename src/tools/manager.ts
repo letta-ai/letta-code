@@ -1117,16 +1117,6 @@ export function getToolPermissions(toolName: string) {
 }
 
 /**
- * Check if a tool requires approval before execution.
- * @param toolName - The name of the tool
- * @returns true if the tool requires approval, false otherwise
- * @deprecated Use checkToolPermission instead for full permission system support
- */
-export function requiresApproval(toolName: string): boolean {
-  return TOOL_PERMISSIONS[toolName as ToolName]?.requiresApproval ?? false;
-}
-
-/**
  * Check permission for a tool execution using the full permission system.
  * @param toolName - Name of the tool
  * @param toolArgs - Tool arguments

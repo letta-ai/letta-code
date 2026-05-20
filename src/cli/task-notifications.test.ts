@@ -8,7 +8,6 @@ import {
 } from "@/utils/message-queue-bridge";
 import {
   formatTaskNotification,
-  formatTaskNotifications,
   type TaskNotification,
 } from "@/utils/task-notifications";
 
@@ -118,41 +117,6 @@ describe("taskNotifications", () => {
       expect(formatted).toContain("tool_uses: 4");
       expect(formatted).toContain("duration_ms: 5678");
       expect(formatted).toContain("</usage>");
-    });
-  });
-
-  describe("formatTaskNotifications", () => {
-    test("formats multiple notifications", () => {
-      const notifications: TaskNotification[] = [
-        {
-          taskId: "task_1",
-          status: "completed",
-          summary: 'Agent "Task1" completed',
-          result: "Result 1",
-          outputFile: "/tmp/task_1.log",
-        },
-        {
-          taskId: "task_2",
-          status: "failed",
-          summary: 'Agent "Task2" failed',
-          result: "Error occurred",
-          outputFile: "/tmp/task_2.log",
-        },
-      ];
-
-      const formatted = formatTaskNotifications(notifications);
-
-      // Should have two notification blocks
-      expect(formatted.split("<task-notification>").length).toBe(3); // 2 blocks + 1 empty prefix
-      expect(formatted).toContain("<task-id>task_1</task-id>");
-      expect(formatted).toContain("<task-id>task_2</task-id>");
-      expect(formatted).toContain("<status>completed</status>");
-      expect(formatted).toContain("<status>failed</status>");
-    });
-
-    test("returns empty string for empty array", () => {
-      const formatted = formatTaskNotifications([]);
-      expect(formatted).toBe("");
     });
   });
 });
