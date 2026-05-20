@@ -197,7 +197,7 @@ import { useQueuedApprovalSubmit } from "./useQueuedApprovalSubmit";
 import { useReasoningCycle } from "./useReasoningCycle";
 import { useSubmitHandler } from "./useSubmitHandler";
 
-export default function App({
+export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
   conversationId: initialConversationId,
