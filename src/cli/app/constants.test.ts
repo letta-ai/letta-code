@@ -5,7 +5,7 @@ import path from "node:path";
 import { PROVIDER_FALLBACK_MAP } from "@/cli/app/constants";
 
 const headlessSource = readFileSync(
-  path.resolve(import.meta.dir, "../headless.ts"),
+  path.resolve(import.meta.dir, "../../headless.ts"),
   "utf8",
 );
 
