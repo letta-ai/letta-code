@@ -89,7 +89,7 @@ letta --backend local --new-agent
 Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
 
 ## 🌌 Constellation
-Constellation decouples where your agent *runs* from where you *interact* with your agent. Agents in the Constellation can be accessed from the CLI, desktop app, browser, or mobile, and run on any connected environment. 
+Agents created with Constellation can be accessed from any machine: your laptop, [Github Actions](https://github.com/letta-ai/letta-code-action), a sandbox, remote VM, or a Mac Mini. You can also chat with agents through [chat.letta.com](https://chat.letta.com/) or through the desktop app. 
 
 ```mermaid
 graph TD
@@ -100,12 +100,13 @@ graph TD
     Constellation --> D["📦 Sandbox"]
 ```
 
-Any machine can be connected to Constellation by running: 
+### Remote environments
+If you're interacting with an agent from desktop or chat.letta.com, you set agents to run on any available environment. Any machine can be made into an available environment by running:
 ```bash
 letta server
 letta server --env-name "work-laptop"
 ```
-Once a machine is connected, you can set it as an environment for your agent to run on whenever interacting with your agent. See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments. 
+See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments. 
 
 ## Research
 Letta Code is developed by the creators of [MemGPT](https://arxiv.org/abs/2310.08560) and [sleep-time compute](https://arxiv.org/abs/2504.13171) (now called "dreaming"), and drive by our [research](https://www.letta.com/research) in AI memory and continual learning. 
