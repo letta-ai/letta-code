@@ -1,8 +1,8 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { getModelInfo, type ModelReasoningEffort } from "../../agent/model";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
+import { getModelInfo, type ModelReasoningEffort } from "@/agent/model";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { ERROR_FEEDBACK_HINT, PROVIDER_STATUS_PAGES } from "./constants";
 
 /**

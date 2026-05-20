@@ -9,8 +9,8 @@ import {
   type ProfileCommandContext,
   setActiveCommandId as setActiveProfileCommandId,
   validateProfileLoad,
-} from "../commands/profile";
-import type { Buffers } from "../helpers/accumulator";
+} from "@/cli/commands/profile";
+import type { Buffers } from "@/cli/helpers/accumulator";
 import type { ActiveOverlay, AppCommandRunner } from "./types";
 
 type SubmitCommandResult = { submitted: boolean };

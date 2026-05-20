@@ -1,9 +1,9 @@
 import { basename } from "node:path";
-import { isDebugEnabled } from "../../utils/debug";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
-} from "../inboundDebounce";
+} from "@/channels/inboundDebounce";
+import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycleError";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -11,7 +11,8 @@ import type {
   DiscordChannelAccount,
   InboundChannelMessage,
   OutboundChannelMessage,
-} from "../types";
+} from "@/channels/types";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   isDiscordGuildChannelAllowed,
   resolveDiscordChannelMode,
@@ -300,7 +301,7 @@ export function buildDiscordReplyOptions(
 }
 
 function formatDiscordLifecycleErrorMessage(errorText: string): string {
-  const normalized = errorText.trim() || "Unknown error";
+  const normalized = normalizeChannelLifecycleErrorMessage(errorText);
   const truncated =
     normalized.length > DISCORD_LIFECYCLE_ERROR_TEXT_MAX
       ? `${normalized

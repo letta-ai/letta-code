@@ -1,8 +1,8 @@
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { getCurrentAgentId, getSkillsDirectory } from "../../agent/context";
-import { resolveScopedMemoryDir } from "../../agent/memoryFilesystem";
+import { getCurrentAgentId, getSkillsDirectory } from "@/agent/context";
+import { resolveScopedMemoryDir } from "@/agent/memoryFilesystem";
 import {
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
@@ -10,9 +10,9 @@ import {
   getFrontmatterBoolean,
   getFrontmatterStringList,
   SKILLS_DIR,
-} from "../../agent/skills";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { parseFrontmatter } from "../../utils/frontmatter";
+} from "@/agent/skills";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { parseFrontmatter } from "@/utils/frontmatter";
 import { queueSkillContent } from "./skillContentRegistry";
 import { validateRequiredParams } from "./validation.js";
 

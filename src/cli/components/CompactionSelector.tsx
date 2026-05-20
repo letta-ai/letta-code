@@ -1,22 +1,23 @@
-import { Box, useInput } from "ink";
-import { useMemo, useState } from "react";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { colors } from "./colors";
-import { Text } from "./Text";
+// Compaction mode selector.
+// Wraps SingleSelectPicker with compaction-specific logic.
 
-const SOLID_LINE = "─";
+import { memo, useMemo } from "react";
+import { OverlayShell } from "./OverlayShell";
+import { SingleSelectPicker } from "./SingleSelectPicker";
 
 type CompactionMode =
   | "all"
   | "sliding_window"
   | "self_compact_all"
   | "self_compact_sliding_window";
+
 const MODE_OPTIONS: CompactionMode[] = [
   "all",
   "sliding_window",
   "self_compact_all",
   "self_compact_sliding_window",
 ];
+
 const MODE_LABELS: Record<CompactionMode, string> = {
   all: "All",
   sliding_window: "Sliding Window",
@@ -24,18 +25,24 @@ const MODE_LABELS: Record<CompactionMode, string> = {
   self_compact_sliding_window: "Self Compact Sliding Window",
 };
 
-function cycleOption<T extends string>(
-  options: readonly T[],
-  current: T,
-  direction: -1 | 1,
-): T {
-  if (options.length === 0) {
-    return current;
+const MODE_DESCRIPTIONS: Record<CompactionMode, string> = {
+  all: "Compact the entire context window each time.",
+  sliding_window: "Compact older messages to stay within a token limit.",
+  self_compact_all: "Agent self-compacts the entire context window each time.",
+  self_compact_sliding_window:
+    "Agent self-compacts older messages to stay within a token limit.",
+};
+
+function parseMode(raw: string | null | undefined): CompactionMode {
+  if (
+    raw === "all" ||
+    raw === "sliding_window" ||
+    raw === "self_compact_all" ||
+    raw === "self_compact_sliding_window"
+  ) {
+    return raw;
   }
-  const currentIndex = options.indexOf(current);
-  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-  const nextIndex = (safeIndex + direction + options.length) % options.length;
-  return options[nextIndex] ?? current;
+  return "sliding_window";
 }
 
 interface CompactionSelectorProps {
@@ -44,85 +51,34 @@ interface CompactionSelectorProps {
   onCancel: () => void;
 }
 
-export function CompactionSelector({
+export const CompactionSelector = memo(function CompactionSelector({
   initialMode,
   onSave,
   onCancel,
 }: CompactionSelectorProps) {
-  const terminalWidth = useTerminalWidth();
-  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
+  const currentMode = useMemo(() => parseMode(initialMode), [initialMode]);
 
-  const parsedInitialMode = useMemo((): CompactionMode => {
-    if (
-      initialMode === "all" ||
-      initialMode === "sliding_window" ||
-      initialMode === "self_compact_all" ||
-      initialMode === "self_compact_sliding_window"
-    ) {
-      return initialMode as CompactionMode;
-    }
-    return "sliding_window";
-  }, [initialMode]);
+  const items = useMemo(
+    () =>
+      MODE_OPTIONS.map((mode) => ({
+        key: mode,
+        label: MODE_LABELS[mode],
+        description: MODE_DESCRIPTIONS[mode],
+        isCurrent: mode === currentMode,
+      })),
+    [currentMode],
+  );
 
-  const [mode, setMode] = useState<CompactionMode>(parsedInitialMode);
-
-  useInput((input, key) => {
-    if (key.ctrl && input === "c") {
-      onCancel();
-      return;
-    }
-
-    if (key.escape) {
-      onCancel();
-      return;
-    }
-
-    if (key.return) {
-      onSave(mode);
-      return;
-    }
-
-    if (key.leftArrow || key.rightArrow || key.tab) {
-      const direction: -1 | 1 = key.leftArrow ? -1 : 1;
-      setMode((prev) => cycleOption(MODE_OPTIONS, prev, direction));
-    }
-  });
+  const initialCursorIndex = MODE_OPTIONS.indexOf(currentMode);
 
   return (
-    <Box flexDirection="column">
-      <Text dimColor>{"> /compaction"}</Text>
-      <Text dimColor>{solidLine}</Text>
-
-      <Box height={1} />
-
-      <Text bold color={colors.selector.title}>
-        Configure compaction mode
-      </Text>
-
-      <Box height={1} />
-
-      <Box flexDirection="row">
-        <Text>{"> "}</Text>
-        <Text bold>Mode:</Text>
-        <Text>{"   "}</Text>
-        {MODE_OPTIONS.map((opt) => (
-          <Box key={opt} flexDirection="row">
-            <Text
-              backgroundColor={
-                mode === opt ? colors.selector.itemHighlighted : undefined
-              }
-              color={mode === opt ? "black" : undefined}
-              bold={mode === opt}
-            >
-              {` ${MODE_LABELS[opt]} `}
-            </Text>
-            <Text> </Text>
-          </Box>
-        ))}
-      </Box>
-
-      <Box height={1} />
-      <Text dimColor>{"  Enter to save · ←→/Tab options · Esc cancel"}</Text>
-    </Box>
+    <OverlayShell command="/compaction" title="Configure compaction mode">
+      <SingleSelectPicker
+        items={items}
+        initialCursorIndex={initialCursorIndex}
+        onSelect={(key) => onSave(key as CompactionMode)}
+        onCancel={onCancel}
+      />
+    </OverlayShell>
   );
-}
+});

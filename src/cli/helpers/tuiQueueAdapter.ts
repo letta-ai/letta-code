@@ -5,7 +5,7 @@
  * without importing React or App.tsx.
  */
 
-import type { QueueBlockedReason } from "../../types/protocol";
+import type { QueueBlockedReason } from "@/types/protocol";
 
 export type TuiQueueGatingConditions = {
   streaming: boolean;

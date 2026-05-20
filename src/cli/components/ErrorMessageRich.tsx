@@ -1,6 +1,6 @@
 import { Box } from "ink";
 import { memo } from "react";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import { Text } from "./Text";
 
 type ErrorLine = {

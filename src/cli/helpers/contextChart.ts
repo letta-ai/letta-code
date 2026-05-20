@@ -1,4 +1,4 @@
-import { brandColors, colors, hexToFgAnsi } from "../components/colors";
+import { brandColors, colors, hexToFgAnsi } from "@/cli/components/colors";
 import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { formatCompact } from "./format";
 

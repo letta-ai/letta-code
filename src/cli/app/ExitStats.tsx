@@ -1,10 +1,10 @@
 import { Box } from "ink";
-import type { SessionStatsSnapshot } from "../../agent/stats";
-import { settingsManager } from "../../settings-manager";
-import { colors } from "../components/colors";
-import { formatDuration } from "../components/SessionStats";
-import { Text } from "../components/Text";
-import { formatCompact } from "../helpers/format";
+import type { SessionStatsSnapshot } from "@/agent/stats";
+import { colors } from "@/cli/components/colors";
+import { formatDuration } from "@/cli/components/SessionStats";
+import { Text } from "@/cli/components/Text";
+import { formatCompact } from "@/cli/helpers/format";
+import { settingsManager } from "@/settings-manager";
 
 export function ExitStats({
   stats,

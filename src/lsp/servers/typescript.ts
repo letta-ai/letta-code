@@ -2,7 +2,7 @@
  * TypeScript/JavaScript LSP Server Definition
  */
 
-import type { LSPServerInfo } from "../types.js";
+import type { LSPServerInfo } from "@/lsp/types.js";
 
 /**
  * TypeScript Language Server

@@ -2,7 +2,7 @@
  * Secret handling for shell tool arguments and output.
  */
 
-import { loadSecrets } from "../utils/secretsStore";
+import { loadSecrets } from "@/utils/secretsStore";
 
 /**
  * Pattern to match $SECRET_NAME where SECRET_NAME is uppercase with underscores.

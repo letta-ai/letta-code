@@ -1,9 +1,9 @@
 import { Box, useInput } from "ink";
 import { memo, useCallback, useState } from "react";
-import { generateAndOpenPlanViewer } from "../../web/generate-plan-viewer";
-import { useProgressIndicator } from "../hooks/useProgressIndicator";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { useTextInputCursor } from "../hooks/useTextInputCursor";
+import { useProgressIndicator } from "@/cli/hooks/useProgressIndicator";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTextInputCursor } from "@/cli/hooks/useTextInputCursor";
+import { generateAndOpenPlanViewer } from "@/web/generate-plan-viewer";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

@@ -1,4 +1,4 @@
-import type { RuntimeScope } from "../../types/protocol_v2";
+import type { RuntimeScope } from "@/types/protocol_v2";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
 function getOnlyConversationRuntime(

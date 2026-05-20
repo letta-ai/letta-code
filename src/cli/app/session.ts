@@ -1,5 +1,5 @@
-import { getCurrentAgentId } from "../../agent/context";
-import { settingsManager } from "../../settings-manager";
+import { getCurrentAgentId } from "@/agent/context";
+import { settingsManager } from "@/settings-manager";
 
 // Save current agent + conversation as last session before exiting.
 // This ensures subagent overwrites during the session don't persist,

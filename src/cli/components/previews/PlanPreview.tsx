@@ -1,9 +1,9 @@
 import { Box } from "ink";
 import { memo } from "react";
-import { useTerminalWidth } from "../../hooks/useTerminalWidth";
-import { colors } from "../colors";
-import { MarkdownDisplay } from "../MarkdownDisplay";
-import { Text } from "../Text";
+import { colors } from "@/cli/components/colors";
+import { MarkdownDisplay } from "@/cli/components/MarkdownDisplay";
+import { Text } from "@/cli/components/Text";
+import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 
 const SOLID_LINE = "─";
 const DOTTED_LINE = "╌";

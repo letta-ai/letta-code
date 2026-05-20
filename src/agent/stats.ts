@@ -1,4 +1,4 @@
-import type { Buffers } from "../cli/helpers/accumulator";
+import type { Buffers } from "@/cli/helpers/accumulator";
 
 export interface UsageStats {
   promptTokens: number;

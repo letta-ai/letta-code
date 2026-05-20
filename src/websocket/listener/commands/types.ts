@@ -1,5 +1,8 @@
 import type WebSocket from "ws";
-import type { ConversationRuntime, ListenerRuntime } from "../types";
+import type {
+  ConversationRuntime,
+  ListenerRuntime,
+} from "@/websocket/listener/types";
 
 export type SafeSocketSend = (
   socket: WebSocket,

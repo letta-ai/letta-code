@@ -1,4 +1,4 @@
-import type { ChannelMessageActionAdapter } from "../pluginTypes";
+import type { ChannelMessageActionAdapter } from "@/channels/pluginTypes";
 
 export const telegramMessageActions: ChannelMessageActionAdapter = {
   describeMessageTool() {

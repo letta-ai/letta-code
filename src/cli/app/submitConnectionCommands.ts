@@ -1,11 +1,11 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getBackend } from "../../backend";
+import { getBackend } from "@/backend";
 import {
   handleMcpAdd,
   type McpCommandContext,
   setActiveCommandId as setActiveMcpCommandId,
-} from "../commands/mcp";
-import type { Buffers } from "../helpers/accumulator";
+} from "@/cli/commands/mcp";
+import type { Buffers } from "@/cli/helpers/accumulator";
 import type { ActiveOverlay, AppCommandRunner } from "./types";
 
 type SubmitCommandResult = { submitted: boolean };
@@ -143,7 +143,7 @@ export async function handleConnectionCommand(
   if (trimmed.startsWith("/connect ")) {
     const cmd = commandRunner.start(msg, "Starting connection...");
     const { handleConnect, setActiveCommandId: setActiveConnectCommandId } =
-      await import("../commands/connect");
+      await import("@/cli/commands/connect");
     setActiveConnectCommandId(cmd.id);
     try {
       await handleConnect(
@@ -176,7 +176,7 @@ export async function handleConnectionCommand(
   if (trimmed.startsWith("/disconnect")) {
     const cmd = commandRunner.start(msg, "Disconnecting...");
     const { handleDisconnect, setActiveCommandId: setActiveConnectCommandId } =
-      await import("../commands/connect");
+      await import("@/cli/commands/connect");
     setActiveConnectCommandId(cmd.id);
     try {
       await handleDisconnect(
@@ -219,7 +219,7 @@ export async function handleConnectionCommand(
 
     const cmd = commandRunner.start(msg, "Starting listener...");
     const { handleListen, setActiveCommandId: setActiveListenCommandId } =
-      await import("../commands/listen");
+      await import("@/cli/commands/listen");
     setActiveListenCommandId(cmd.id);
     try {
       await handleListen(

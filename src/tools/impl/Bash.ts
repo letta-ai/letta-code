@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { noteExpectedWorktreeForLauncher } from "../../websocket/listener/worktree-ownership";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,

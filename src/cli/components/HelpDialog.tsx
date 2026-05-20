@@ -1,7 +1,7 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getVersion } from "../../version";
-import { commands } from "../commands/registry";
+import { commands } from "@/cli/commands/registry";
+import { getVersion } from "@/version";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -33,7 +33,7 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
 
   // Load custom commands once on mount
   useEffect(() => {
-    import("../commands/custom.js").then(({ getCustomCommands }) => {
+    import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         setCustomCommands(
           customs.map((cmd) => ({
