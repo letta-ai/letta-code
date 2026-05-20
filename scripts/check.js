@@ -20,6 +20,19 @@ try {
   failed = true;
 }
 
+// Check architectural layer boundaries
+console.log("🏗️  Checking layer boundaries...");
+try {
+  await $`bun run check:boundaries`;
+  console.log("✅ Layer boundaries clean\n");
+} catch (error) {
+  console.error("❌ Layer boundary violations found\n");
+  console.error(
+    "Fix by moving the import to a shared layer (utils/, types/) or inverting the dependency.\n",
+  );
+  failed = true;
+}
+
 // Run test mock isolation check
 console.log("🧪 Checking Bun module mock isolation...");
 try {
