@@ -727,14 +727,11 @@ async function main(): Promise<void> {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
-  const hasCloudCredentials = Boolean(apiKey || settings.refreshToken);
-  const shouldUseLocalBackendByDefault =
+  if (
     !explicitBackendMode &&
-    baseURL === LETTA_CLOUD_API_URL &&
-    (settings.preferredBackendMode === "local" ||
-      (!hasCloudCredentials && settings.preferredBackendMode !== "api"));
-
-  if (shouldUseLocalBackendByDefault) {
+    settings.preferredBackendMode === "local" &&
+    baseURL === LETTA_CLOUD_API_URL
+  ) {
     configureBackendMode("local");
   }
 

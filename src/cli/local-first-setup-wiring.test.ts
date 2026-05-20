@@ -41,24 +41,26 @@ describe("local-first setup wiring", () => {
     expect(source.slice(start, end)).toContain('preferredBackendMode: "api"');
   });
 
-  test("startup defaults to local when cloud credentials are absent", () => {
+  test("startup shows setup for new users while honoring saved local preference", () => {
     const source = readSource("../index.ts");
-    const start = source.indexOf("const hasCloudCredentials");
+    const start = source.indexOf('settings.preferredBackendMode === "local"');
     const end = source.indexOf('configureBackendMode("local")', start);
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
 
-    const segment = source.slice(start, end + 60);
-    expect(segment).toContain(
-      "const hasCloudCredentials = Boolean(apiKey || settings.refreshToken)",
-    );
-    expect(segment).toContain("const shouldUseLocalBackendByDefault");
+    const segment = source.slice(start - 120, end + 60);
     expect(segment).toContain("!explicitBackendMode");
     expect(segment).toContain("baseURL === LETTA_CLOUD_API_URL");
     expect(segment).toContain('settings.preferredBackendMode === "local"');
-    expect(segment).toContain("!hasCloudCredentials");
-    expect(segment).toContain('settings.preferredBackendMode !== "api"');
+    expect(segment).not.toContain("!apiKey");
+    expect(segment).not.toContain("!settings.refreshToken");
+
+    const setupStart = source.indexOf("!settings.refreshToken");
+    const setupEnd = source.indexOf("return main().catch", setupStart);
+    expect(setupStart).toBeGreaterThan(-1);
+    expect(setupEnd).toBeGreaterThan(setupStart);
+    expect(source.slice(setupStart, setupEnd)).toContain("await runSetup()");
   });
 
   test("backend and setup subcommands expose default backend controls", () => {
@@ -70,8 +72,8 @@ describe("local-first setup wiring", () => {
     expect(router).toContain('case "setup"');
     expect(backendCommand).toContain("letta backend api");
     expect(backendCommand).toContain("letta backend local");
-    expect(backendCommand).toContain("resolveSavedDefaultBackend");
-    expect(backendCommand).toContain("!hasCloudCredentials");
+    expect(backendCommand).toContain("resolveStartupBackendDisplay");
+    expect(backendCommand).toContain("Proceed locally selected");
     expect(backendCommand).toContain(
       "settingsManager.updateSettings({ preferredBackendMode: backendMode })",
     );

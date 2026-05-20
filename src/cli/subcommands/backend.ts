@@ -17,12 +17,18 @@ the saved default.
   );
 }
 
+type StartupBackendDisplay = CliBackendMode | "setup";
+
 function formatBackendName(mode: CliBackendMode | undefined): string {
   return mode === "local" ? "local mode" : "Letta Cloud";
 }
 
-async function resolveSavedDefaultBackend(): Promise<CliBackendMode> {
+async function resolveStartupBackendDisplay(): Promise<StartupBackendDisplay> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
+  if (settings.preferredBackendMode) {
+    return settings.preferredBackendMode;
+  }
+
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   const baseURL =
     process.env.LETTA_BASE_URL ||
@@ -30,12 +36,8 @@ async function resolveSavedDefaultBackend(): Promise<CliBackendMode> {
     LETTA_CLOUD_API_URL;
   const hasCloudCredentials = Boolean(apiKey || settings.refreshToken);
 
-  if (
-    baseURL === LETTA_CLOUD_API_URL &&
-    (settings.preferredBackendMode === "local" ||
-      (!hasCloudCredentials && settings.preferredBackendMode !== "api"))
-  ) {
-    return "local";
+  if (baseURL === LETTA_CLOUD_API_URL && !hasCloudCredentials) {
+    return "setup";
   }
 
   return "api";
@@ -52,7 +54,15 @@ export async function runBackendSubcommand(argv: string[]): Promise<number> {
   await settingsManager.initialize();
 
   if (!modeArg) {
-    const mode = await resolveSavedDefaultBackend();
+    const mode = await resolveStartupBackendDisplay();
+    if (mode === "setup") {
+      console.log("Default backend: setup menu (Proceed locally selected)");
+      console.log(
+        "Run `letta` to choose, or `letta backend api` / `letta backend local` to save a default.",
+      );
+      return 0;
+    }
+
     console.log(`Default backend: ${formatBackendName(mode)} (${mode})`);
     console.log(
       "Run `letta backend api` or `letta backend local` to change it.",
