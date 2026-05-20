@@ -139,7 +139,10 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Plain assistant text is not delivered to that external user.",
     );
     expect(resolved.description).toContain(
-      "final action for the turn must be one MessageChannel call",
+      "If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call",
+    );
+    expect(resolved.description).toContain(
+      "If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.",
     );
     expect(resolved.description).not.toContain("Telegram");
     expect(properties.channel?.enum).toEqual(["slack"]);
