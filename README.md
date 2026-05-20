@@ -8,7 +8,9 @@ You can interact with Letta Code agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
 * The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for MacOS, Windows, and Linux
 * Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
-* Messaging integrations, including Telegram, Slack, WhatsApp, and custom connectors
+* Messaging integrations, including [Telegram](https://docs.letta.com/letta-code/channels#telegram-cli), [Slack](https://docs.letta.com/letta-code/channels#slack-cli), [Discord](https://docs.letta.com/letta-code/channels#discord-cli), and [custom channels](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md)
+
+Letta Code is a frontier coding agent and can also be used as a long-lived personal agent. 
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
@@ -23,7 +25,7 @@ You can interact with Letta Code agents through:
 | [MemFS](https://docs.letta.com/letta-code/memfs) | All context (including memory blocks) is tracked via git. Sync context to a custom GitHub repository by setting `/memory-repository set git@github.com:...` |
 | [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS). View skills with `/skills` and create with `/skill-creator` |
 | [Subagents & Multi-agent](https://docs.letta.com/letta-code/subagents) | Call built-in subagents (general-purpose, forked, recall, history-analyzer) async or sync. Agents can all any other agent (including themselves) as subagents  |
-| [Messaging Integrations](https://docs.letta.com/letta-code/channels) | Chat with the same agent from Slack, Telegram, your browser (chat.letta.com) including mobile, and through custom channels |
+| [Messaging Integrations](https://docs.letta.com/letta-code/channels) | Chat with the same agent from Slack, Telegram, your browser (chat.letta.com) including mobile, and through [custom channels](https://github.com/letta-ai/skills/blob/main/letta/creating-letta-code-channels/SKILL.md) |
 | [Hooks](https://docs.letta.com/letta-code/hooks) | Run custom scripts at key points of agent execution to automate workflows |
 | [Permissions](https://docs.letta.com/letta-code/permissions) | Set permission modes and customize what actions are auto-approved or auto-denied |
 | [Crons & Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats of crons, and let agents work across time with self-managed schedules |
