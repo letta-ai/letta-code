@@ -212,18 +212,13 @@ export function SlashCommandAutocomplete({
     manageActiveState: false,
   });
 
-  // Manually manage active state to include the "no matches" case
+  // Manually manage active state - only active when there are matches to select
+  // When there are no matches, we don't block submit so the user can still
+  // run commands that aren't in the autocomplete registry (e.g., /help, /reflection)
   useLayoutEffect(() => {
-    const queryLength = queryInfo?.query.length ?? 0;
-    const isActive =
-      !hideAutocomplete && (matches.length > 0 || queryLength > 0);
+    const isActive = !hideAutocomplete && matches.length > 0;
     onActiveChange?.(isActive);
-  }, [
-    hideAutocomplete,
-    matches.length,
-    onActiveChange,
-    queryInfo?.query.length,
-  ]);
+  }, [hideAutocomplete, matches.length, onActiveChange]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {
