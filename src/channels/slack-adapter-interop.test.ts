@@ -47,7 +47,7 @@ class FakeSlackApp {
   error(): void {}
 }
 
-mock.module("../../channels/slack/runtime", () => ({
+mock.module("./slack/runtime", () => ({
   ensureSlackRuntimeInstalled: async () => false,
   installSlackRuntime: async () => {},
   isSlackRuntimeInstalled: () => true,
@@ -66,7 +66,7 @@ mock.module("../../channels/slack/runtime", () => ({
   }),
 }));
 
-mock.module("../../channels/slack/media", () => ({
+mock.module("./slack/media", () => ({
   resolveSlackChannelHistory: async () => [],
   resolveSlackInboundAttachments: async () => [],
   resolveSlackThreadStarter: async () => null,
@@ -75,7 +75,7 @@ mock.module("../../channels/slack/media", () => ({
 
 test("resolveSlackAccountDisplayName supports nested default Slack Bolt exports", async () => {
   const adapterModuleUrl = new URL(
-    "../../channels/slack/adapter.ts?interop=nested-default",
+    "./slack/adapter.ts?interop=nested-default",
     import.meta.url,
   ).href;
   const { resolveSlackAccountDisplayName } = await import(adapterModuleUrl);

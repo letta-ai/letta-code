@@ -189,7 +189,7 @@ describe("listen-mode session context", () => {
   );
 
   test("listen mode is included in session-context and agent-info catalog modes", () => {
-    const { SHARED_REMINDER_CATALOG } = require("../../reminders/catalog");
+    const { SHARED_REMINDER_CATALOG } = require("./catalog");
     const sessionCtx = SHARED_REMINDER_CATALOG.find(
       (e: { id: string }) => e.id === "session-context",
     );
@@ -201,7 +201,7 @@ describe("listen-mode session context", () => {
   });
 
   test("listen mode is included in reflection catalog modes", () => {
-    const { SHARED_REMINDER_CATALOG } = require("../../reminders/catalog");
+    const { SHARED_REMINDER_CATALOG } = require("./catalog");
     const stepCount = SHARED_REMINDER_CATALOG.find(
       (e: { id: string }) => e.id === "reflection-step-count",
     );

@@ -38,7 +38,7 @@ describe("init wiring", () => {
   });
 
   test("initCommand.ts exports all helpers", () => {
-    const helperSource = readSource("../../cli/helpers/initCommand.ts");
+    const helperSource = readSource("./helpers/initCommand.ts");
 
     expect(helperSource).toContain("export function hasActiveInitSubagent(");
     expect(helperSource).toContain("export function gatherInitGitContext()");
@@ -47,7 +47,7 @@ describe("init wiring", () => {
   });
 
   test("init.md exists as a builtin subagent", () => {
-    const content = readSource("../../agent/subagents/builtin/init.md");
+    const content = readSource("../agent/subagents/builtin/init.md");
 
     expect(content).toContain("name: init");
     expect(content).toContain("model: auto-fast");
@@ -55,7 +55,7 @@ describe("init wiring", () => {
   });
 
   test("init subagent is registered in BUILTIN_SOURCES", () => {
-    const indexSource = readSource("../../agent/subagents/index.ts");
+    const indexSource = readSource("../agent/subagents/index.ts");
 
     expect(indexSource).toContain(
       'import initAgentMd from "./builtin/init.md"',
@@ -64,7 +64,7 @@ describe("init wiring", () => {
   });
 
   test("init.md uses auto-fast model and no skills", () => {
-    const content = readSource("../../agent/subagents/builtin/init.md");
+    const content = readSource("../agent/subagents/builtin/init.md");
 
     expect(content).toContain("name: init");
     expect(content).toContain("model: auto-fast");

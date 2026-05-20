@@ -196,7 +196,7 @@ const realExecuteApprovalBatch =
 const realApprovalRecoveryModule = await import("@/agent/approval-recovery");
 const realFetchRunErrorDetail = realApprovalRecoveryModule.fetchRunErrorDetail;
 
-mock.module("../../agent/message", () => ({
+mock.module("../agent/message", () => ({
   sendMessageStream: sendMessageStreamMock,
   getStreamToolContextId: getStreamToolContextIdMock,
   getStreamRequestContext: () => undefined,
@@ -222,27 +222,27 @@ mock.module("../../agent/message", () => ({
   }),
 }));
 
-mock.module("../../cli/helpers/stream", () => ({
+mock.module("../cli/helpers/stream", () => ({
   ...realStreamModule,
   drainStreamWithResume: drainStreamWithResumeMock,
 }));
 
-mock.module("../../backend/api/client", () => ({
+mock.module("../backend/api/client", () => ({
   getClient: getClientMock,
   getServerUrl: () => "https://example.test",
   clearLastSDKDiagnostic: () => {},
   consumeLastSDKDiagnostic: () => null,
 }));
 
-mock.module("../../cli/helpers/approvalClassification", () => ({
+mock.module("../cli/helpers/approvalClassification", () => ({
   classifyApprovals: classifyApprovalsMock,
 }));
 
-mock.module("../../agent/approval-execution", () => ({
+mock.module("../agent/approval-execution", () => ({
   executeApprovalBatch: executeApprovalBatchMock,
 }));
 
-mock.module("../../agent/approval-recovery", () => ({
+mock.module("../agent/approval-recovery", () => ({
   fetchRunErrorDetail: fetchRunErrorDetailMock,
 }));
 

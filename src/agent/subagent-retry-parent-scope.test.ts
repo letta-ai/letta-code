@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const managerSource = readFileSync(
-  path.resolve(import.meta.dir, "../../agent/subagents/manager.ts"),
+  path.resolve(import.meta.dir, "./subagents/manager.ts"),
   "utf8",
 );
 

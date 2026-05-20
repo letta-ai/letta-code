@@ -11,7 +11,7 @@ function readSource(relativePath: string): string {
 
 describe("listener tool prep metadata reuse", () => {
   test("tool prep accepts cached agent and effective model inputs", () => {
-    const source = readSource("../../tools/toolset.ts");
+    const source = readSource("./toolset.ts");
 
     expect(source).toContain("cachedAgent?: AgentState | null;");
     expect(source).toContain("cachedEffectiveModel?: string | null;");
@@ -20,7 +20,7 @@ describe("listener tool prep metadata reuse", () => {
   });
 
   test("listener turn passes cached agent metadata into reflection and tool prep", () => {
-    const source = readSource("../../websocket/listener/turn.ts");
+    const source = readSource("../websocket/listener/turn.ts");
 
     expect(source).toContain("cachedAgent: AgentState | null = null;");
     expect(source).toContain(

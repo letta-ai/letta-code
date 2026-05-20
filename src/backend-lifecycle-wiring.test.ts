@@ -12,7 +12,7 @@ function readSource(relativePath: string): string {
 
 describe("headless backend lifecycle wiring", () => {
   test("headless startup and approval recovery route lifecycle SDK calls through Backend", () => {
-    const source = readSource("../../headless.ts");
+    const source = readSource("./headless.ts");
 
     expect(source).toContain("const backend = getBackend();");
     const backendReadyIndex = source.indexOf("const backend = getBackend();");
@@ -34,7 +34,7 @@ describe("headless backend lifecycle wiring", () => {
   });
 
   test("resume data probes use Backend instead of raw SDK clients", () => {
-    const source = readSource("../../agent/check-approval.ts");
+    const source = readSource("./agent/check-approval.ts");
 
     expect(source).toContain("getBackend().retrieveConversation");
     expect(source).toContain("getBackend().listConversationMessages");
@@ -47,7 +47,7 @@ describe("headless backend lifecycle wiring", () => {
   });
 
   test("interactive startup routes lifecycle SDK calls through Backend", () => {
-    const source = readSource("../../index.ts");
+    const source = readSource("./index.ts");
 
     expect(source).toContain("const backend = getBackend();");
     expect(source).toContain("backend.retrieveAgent(");
@@ -63,7 +63,7 @@ describe("headless backend lifecycle wiring", () => {
   });
 
   test("interactive profile picker resolves agents through Backend", () => {
-    const source = readSource("../../cli/profile-selection.tsx");
+    const source = readSource("./cli/profile-selection.tsx");
 
     expect(source).toContain('import { getBackend } from "@/backend"');
     expect(source).toContain("backend.retrieveAgent(");
@@ -94,7 +94,7 @@ describe("headless backend lifecycle wiring", () => {
   });
 
   test("memfs flag application skips remote operations for local backends", () => {
-    const source = readSource("../../agent/memoryFilesystem.ts");
+    const source = readSource("./agent/memoryFilesystem.ts");
 
     const capabilityGuardIndex = source.indexOf(
       "!backend.capabilities.remoteMemfs",

@@ -27,7 +27,7 @@ import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
 
 const createConversation = mock(async () => ({ id: "conv-discord" }));
 
-mock.module("../../backend/api/client", () => ({
+mock.module("../backend/api/client", () => ({
   getClient: async () => ({
     conversations: {
       create: createConversation,

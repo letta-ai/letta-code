@@ -38,7 +38,7 @@ const mockPost = mock(
     }) as Promise<Record<string, unknown>>,
 );
 
-mock.module("../../backend/api/generate", () => ({
+mock.module("../backend/api/generate", () => ({
   generateAgentResponse: mockPost,
 }));
 

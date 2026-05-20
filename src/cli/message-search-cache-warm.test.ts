@@ -8,7 +8,7 @@ const warmSearchCacheMock = mock((_body: Record<string, unknown>) =>
   }),
 );
 
-mock.module("../../backend/api/search", () => ({
+mock.module("../backend/api/search", () => ({
   searchMessages: mock(() => Promise.resolve([])),
   warmSearchCache: warmSearchCacheMock,
 }));

@@ -69,7 +69,7 @@ function getMockMemfsGitProxyRewriteConfig(
   };
 }
 
-mock.module("../../backend/api/client", () => ({
+mock.module("../backend/api/client", () => ({
   getClient: mockGetClient,
   getServerUrl: () => "http://localhost:8283",
   getMemfsServerUrl: getMockMemfsServerUrl,

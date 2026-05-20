@@ -218,7 +218,7 @@ describe("listen-client parseServerMessage", () => {
           } as never,
           provenance: "created",
         }));
-        mock.module("../../agent/personality", () => ({
+        mock.module("../agent/personality", () => ({
           createAgentForPersonality: createAgentForPersonalityMock,
         }));
 
@@ -270,7 +270,7 @@ describe("listen-client parseServerMessage", () => {
         } as never,
         provenance: "created",
       }));
-      mock.module("../../agent/personality", () => ({
+      mock.module("../agent/personality", () => ({
         createAgentForPersonality: createAgentForPersonalityMock,
       }));
 

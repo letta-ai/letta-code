@@ -164,7 +164,7 @@ const resolveSlackChannelHistoryMock = mock(
   > => [],
 );
 
-mock.module("../../channels/slack/runtime", () => ({
+mock.module("./slack/runtime", () => ({
   ensureSlackRuntimeInstalled: async () => false,
   installSlackRuntime: async () => {},
   isSlackRuntimeInstalled: () => true,
@@ -182,7 +182,7 @@ mock.module("../../channels/slack/runtime", () => ({
   }),
 }));
 
-mock.module("../../channels/slack/media", () => ({
+mock.module("./slack/media", () => ({
   resolveSlackChannelHistory: resolveSlackChannelHistoryMock,
   resolveSlackInboundAttachments: resolveSlackInboundAttachmentsMock,
   resolveSlackThreadStarter: resolveSlackThreadStarterMock,

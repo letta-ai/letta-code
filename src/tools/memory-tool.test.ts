@@ -73,7 +73,7 @@ function getMockMemfsGitProxyRewriteConfig() {
   };
 }
 
-mock.module("../../backend/api/client", () => ({
+mock.module("../backend/api/client", () => ({
   __testOverrideGetClient: (factory: (() => Promise<unknown>) | null) => {
     mockClientOverride = factory;
   },
