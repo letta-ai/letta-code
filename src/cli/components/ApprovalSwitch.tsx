@@ -1,7 +1,6 @@
 import { memo } from "react";
-import { permissionMode } from "../../permissions/mode";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import type { ApprovalRequest } from "../helpers/stream";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
@@ -9,7 +8,8 @@ import {
   isPatchTool,
   isShellTool,
   isTaskTool,
-} from "../helpers/toolNameMapping.js";
+} from "@/cli/helpers/tool-name-mapping.js";
+import { permissionMode } from "@/permissions/mode";
 import { InlineBashApproval } from "./InlineBashApproval";
 import { InlineEnterPlanModeApproval } from "./InlineEnterPlanModeApproval";
 import { InlineFileEditApproval } from "./InlineFileEditApproval";
@@ -212,7 +212,12 @@ function getMemoryInfo(approval: ApprovalRequest): MemoryInfo | null {
     return {
       command,
       reason: typeof args.reason === "string" ? args.reason : undefined,
-      path: typeof args.path === "string" ? args.path : undefined,
+      path:
+        typeof args.file_path === "string"
+          ? args.file_path
+          : typeof args.path === "string"
+            ? args.path
+            : undefined,
       oldPath: typeof args.old_path === "string" ? args.old_path : undefined,
       newPath: typeof args.new_path === "string" ? args.new_path : undefined,
       oldString:
@@ -265,7 +270,12 @@ function getMemoryFileEditInfo(
     }
 
     const command = typeof args.command === "string" ? args.command : "";
-    const relPath = typeof args.path === "string" ? args.path : "";
+    const relPath =
+      typeof args.file_path === "string"
+        ? args.file_path
+        : typeof args.path === "string"
+          ? args.path
+          : "";
     const absPath = memoryDir && relPath ? `${memoryDir}/${relPath}` : relPath;
     const display = memoryDisplayPath(relPath);
 

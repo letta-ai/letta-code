@@ -1,4 +1,4 @@
-export { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
+export { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 export {
   formatLocalMessagesForSummary,
   isLocalSlidingWindowCompactionPlanningError,
@@ -11,12 +11,12 @@ export {
   LocalSlidingWindowCompactionPlanningError,
   planLocalSlidingWindowCompaction,
 } from "./compaction";
-export { LocalBackend, type LocalBackendOptions } from "./LocalBackend";
+export { LocalBackend, type LocalBackendOptions } from "./local-backend";
 export type {
   LocalMessage,
   LocalMessageMetadata,
   LocalMessageProviderMetadata,
-} from "./LocalMessage";
+} from "./local-message";
 export {
   type LocalModelConfig,
   listLocalModels,
@@ -25,7 +25,7 @@ export {
   resolveLocalModel,
   resolveLocalModelConfig,
   resolveLocalProvider,
-} from "./LocalModelConfig";
+} from "./local-model-config";
 export {
   createOrUpdateLocalProvider,
   deleteLocalProvider,
@@ -41,6 +41,7 @@ export {
   LOCAL_CHATGPT_PROVIDER_NAME,
   LOCAL_GOOGLE_AI_PROVIDER_NAME,
   LOCAL_KIMI_CODE_PROVIDER_NAME,
+  LOCAL_LLAMA_CPP_PROVIDER_NAME,
   LOCAL_LMSTUDIO_PROVIDER_NAME,
   LOCAL_MINIMAX_PROVIDER_NAME,
   LOCAL_MOONSHOT_PROVIDER_NAME,
@@ -57,7 +58,7 @@ export {
   removeLocalProviderByName,
   setLocalChatGPTOAuth,
   updateLocalProvider,
-} from "./LocalProviderAuthStore";
+} from "./local-provider-auth-store";
 export {
   type LocalAgentRecord,
   LocalBackendNotFoundError,
@@ -65,8 +66,8 @@ export {
   type LocalStoreOptions,
   type StoredMessage,
   type StoredTurnInput,
-} from "./LocalStore";
-export type { ProviderStreamPart } from "./LocalStreamChunks";
+} from "./local-store";
+export type { ProviderStreamPart } from "./local-stream-chunks";
 export {
   getLocalBackendMemoryFilesystemRoot,
   getLocalBackendStorageDir,

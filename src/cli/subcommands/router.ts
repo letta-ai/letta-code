@@ -3,11 +3,12 @@ import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
 import { runListenSubcommand } from "./listen.tsx";
+import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 
 async function runUpdateSubcommand(): Promise<number> {
-  const { manualUpdate } = await import("../../updater/auto-update");
+  const { manualUpdate } = await import("@/updater/auto-update");
   const result = await manualUpdate();
   console.log(result.message);
   return result.success ? 0 : 1;
@@ -40,6 +41,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runCronSubcommand(rest);
     case "channels":
       return runChannelsSubcommand(rest);
+    case "local-backend":
+      return runLocalBackendSubcommand(rest);
     default:
       return null;
   }

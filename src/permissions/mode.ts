@@ -4,17 +4,17 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { canonicalToolName } from "./canonical";
-import { extractApplyPatchPaths } from "./crossAgentGuard";
-import { classifyMemoryBashDenial } from "./memoryDenialReason";
+import { extractApplyPatchPaths } from "./cross-agent-guard";
+import { classifyMemoryBashDenial } from "./memory-denial-reason";
 import {
   isPathWithinRoots,
   resolveAllowedMemoryRoots,
   resolveScopedTargetPath,
-} from "./memoryScope";
+} from "./memory-scope";
 import {
   isReadOnlyShellCommand,
   isScopedMemoryShellCommand,
-} from "./readOnlyShell";
+} from "./read-only-shell";
 import { unwrapShellLauncherCommand } from "./shell-command-normalization";
 
 export type PermissionMode =
@@ -331,13 +331,10 @@ class PermissionModeManager {
     toolArgs?: Record<string, unknown>,
     workingDirectory: string = process.cwd(),
     modeOverride?: PermissionMode,
-    planFilePathOverride?: string | null,
+    _planFilePathOverride?: string | null,
   ): ModeOverrideResult | null {
     const effectiveMode = modeOverride ?? this.currentMode;
-    const _effectivePlanFilePath =
-      planFilePathOverride !== undefined
-        ? planFilePathOverride
-        : this.getPlanFilePath();
+
     switch (effectiveMode) {
       case "unrestricted":
         // ExitPlanMode always requires human approval, even in unrestricted mode

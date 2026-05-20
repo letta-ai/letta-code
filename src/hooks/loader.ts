@@ -3,8 +3,8 @@
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { settingsManager } from "../settings-manager";
-import { debugLog } from "../utils/debug";
+import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 import {
   type HookCommand,
   type HookEvent,

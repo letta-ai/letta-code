@@ -13,9 +13,9 @@ import {
   type ProviderResponse,
   removeProviderByName as removeProviderByNameRequest,
   updateProvider as updateProviderRequest,
-} from "../backend/api/providers";
-import { getBackend } from "../backend/backend";
-import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "../backend/dev/AISDKProviderRegistry";
+} from "@/backend/api/providers";
+import { getBackend } from "@/backend/backend";
+import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "@/backend/dev/pi-provider-registry";
 import {
   createOrUpdateLocalProvider,
   deleteLocalProvider,
@@ -24,9 +24,15 @@ import {
   listLocalProviders,
   removeLocalProviderByName,
   updateLocalProvider,
-} from "../backend/local/LocalProviderAuthStore";
+} from "@/backend/local/local-provider-auth-store";
+import type { LocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 
-export type { ProviderResponse } from "../backend/api/providers";
+export type { ProviderResponse } from "@/backend/api/providers";
+
+export interface ProviderConnectionOptions {
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
+}
 
 // Field definition for multi-field providers (like Bedrock)
 export interface ProviderField {
@@ -139,6 +145,15 @@ export const BYOK_PROVIDERS = [
     description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
     providerType: "lmstudio",
     providerName: "lc-lmstudio",
+    requiresApiKey: false,
+    defaultApiKey: "not-needed",
+  },
+  {
+    id: "llama-cpp",
+    displayName: "llama.cpp (local)",
+    description: "Connect local llama.cpp at http://localhost:8080/v1",
+    providerType: "llama_cpp",
+    providerName: "lc-llama-cpp",
     requiresApiKey: false,
     defaultApiKey: "not-needed",
   },
@@ -339,6 +354,7 @@ export async function createProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  options: ProviderConnectionOptions = {},
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
     return createOrUpdateLocalProvider({
@@ -348,6 +364,8 @@ export async function createProvider(
       accessKey,
       region,
       profile,
+      baseURL: options.baseURL,
+      timeout: options.timeout,
     });
   }
   return createProviderRequest(
@@ -369,9 +387,18 @@ export async function updateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  options: ProviderConnectionOptions = {},
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
-    return updateLocalProvider(providerId, apiKey, accessKey, region, profile);
+    return updateLocalProvider(
+      providerId,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+      undefined,
+      options,
+    );
   }
   return updateProviderRequest(providerId, apiKey, accessKey, region, profile);
 }
@@ -398,6 +425,7 @@ export async function createOrUpdateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  options: ProviderConnectionOptions = {},
 ): Promise<ProviderResponse> {
   if (isLocalProviderStoreEnabled()) {
     return createOrUpdateLocalProvider({
@@ -407,6 +435,8 @@ export async function createOrUpdateProvider(
       accessKey,
       region,
       profile,
+      baseURL: options.baseURL,
+      timeout: options.timeout,
     });
   }
   return createOrUpdateProviderRequest(

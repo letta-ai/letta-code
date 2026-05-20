@@ -15,13 +15,13 @@
 
 import { Box } from "ink";
 import { memo } from "react";
-import { CLI_GLYPHS } from "../helpers/glyphs";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   formatStats,
   getSubagentModelDisplay,
   getTreeChars,
-} from "../helpers/subagentDisplay.js";
-import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
+} from "@/cli/helpers/subagent-display.js";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
 

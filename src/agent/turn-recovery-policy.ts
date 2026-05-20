@@ -9,9 +9,9 @@
 import { randomUUID } from "node:crypto";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { isCloudflareEdge52xErrorText } from "../cli/helpers/errorFormatter";
-import { isZaiNonRetryableError } from "../cli/helpers/zaiErrors";
-import type { StopReasonType } from "../types/protocol_v2";
+import { isCloudflareEdge52xErrorText } from "@/cli/helpers/error-formatter";
+import { isZaiNonRetryableError } from "@/cli/helpers/zai-errors";
+import type { StopReasonType } from "@/types/protocol_v2";
 
 // ── Error fragment constants ────────────────────────────────────────
 
@@ -37,6 +37,27 @@ const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "Request timed out",
   "overloaded",
   "api_error",
+  "server_error",
+  "server error",
+  "internal_error",
+  "internal error",
+  "service_unavailable",
+  "service unavailable",
+  "You can retry your request",
+  "retry your request",
+  "WebSocket closed",
+  "websocket closed",
+  "WebSocket error",
+  "websocket error",
+  "Connection ended",
+  "connection ended",
+  "connection lost",
+  "other side closed",
+  "fetch failed",
+  "socket hang up",
+  "ended without",
+  "http2 request did not get a response",
+  "terminated",
 ];
 const NON_RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "invalid api key",

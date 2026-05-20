@@ -1,14 +1,14 @@
 import { Box } from "ink";
 import { memo } from "react";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   SYSTEM_ALERT_CLOSE,
   SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/constants";
+import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -72,11 +72,49 @@ function inkStringWidth(text: string): number {
  */
 function wordWrap(text: string, width: number): string[] {
   if (width <= 0) return [text];
+
+  const hardWrap = (value: string): string[] => {
+    const chunks: string[] = [];
+    let current = "";
+    let currentWidth = 0;
+
+    for (let index = 0; index < value.length; ) {
+      const codePoint = value.codePointAt(index);
+      if (codePoint === undefined) break;
+      const character = String.fromCodePoint(codePoint);
+      const characterWidth = inkStringWidth(character);
+
+      if (current && currentWidth + characterWidth > width) {
+        chunks.push(current);
+        current = "";
+        currentWidth = 0;
+      }
+
+      current += character;
+      currentWidth += characterWidth;
+      index += character.length;
+    }
+
+    if (current) {
+      chunks.push(current);
+    }
+    return chunks.length > 0 ? chunks : [""];
+  };
+
   const words = text.split(" ");
   const lines: string[] = [];
   let current = "";
 
   for (const word of words) {
+    if (inkStringWidth(word) > width) {
+      if (current !== "") {
+        lines.push(current);
+        current = "";
+      }
+      lines.push(...hardWrap(word));
+      continue;
+    }
+
     if (current === "") {
       current = word;
     } else {

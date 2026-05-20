@@ -157,13 +157,15 @@ curl -X PATCH "https://api.letta.com/v1/agents/$LETTA_AGENT_ID" \
   -H "Authorization: Bearer $LETTA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "llm_config": {
-      "model": "claude-sonnet-4.5",
-      "model_endpoint_type": "anthropic",
-      "context_window": 200000
-    }
+    "model": "anthropic/claude-sonnet-4-5-20250929",
+    "context_window_limit": 200000
   }'
 ```
+
+Do not patch `llm_config` directly; the Letta API rejects deprecated
+`llm_config` updates. Use `model` and `context_window_limit` instead. After the
+patch, read the agent back and verify the effective `llm_config.context_window`
+reported by the server.
 
 **Rename yourself:**
 ```bash
@@ -218,8 +220,8 @@ Find your own entry by matching `agentId === $LETTA_AGENT_ID`, then edit the fie
 | Gate edits with LLM | `add_hook.py --event PreToolUse --matcher "Edit|Write" --type prompt --prompt '...' --scope user` |
 | Notify when done | `add_hook.py --event Stop --type command --command 'say done' --scope user` |
 | Show config | `python3 <skill-dir>/scripts/show_config.py` |
-| Change model | `PATCH /v1/agents/$LETTA_AGENT_ID` with `llm_config.model` |
-| Change context window | `PATCH /v1/agents/$LETTA_AGENT_ID` with `llm_config.context_window` |
+| Change model | `PATCH /v1/agents/$LETTA_AGENT_ID` with `model` |
+| Change context window | `PATCH /v1/agents/$LETTA_AGENT_ID` with `context_window_limit`; verify returned `llm_config.context_window` |
 | Rename | `PATCH /v1/agents/$LETTA_AGENT_ID` with `name` |
 | Update description | `PATCH /v1/agents/$LETTA_AGENT_ID` with `description` |
 | Change toolset | Edit `agents[].toolset` in `~/.letta/settings.json` |

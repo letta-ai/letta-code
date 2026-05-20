@@ -3,8 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   ReflectionSettings,
   ReflectionTrigger,
-} from "../helpers/memoryReminder";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/cli/helpers/memory-reminder";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

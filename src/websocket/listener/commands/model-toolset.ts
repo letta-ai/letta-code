@@ -1,35 +1,41 @@
 import type WebSocket from "ws";
-import { getAvailableModelHandles } from "../../../agent/available-models";
-import { getModelInfo, models } from "../../../agent/model";
+import { getAvailableModelHandles } from "@/agent/available-models";
+import { getModelInfo, models } from "@/agent/model";
 import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
-} from "../../../agent/modify";
+} from "@/agent/modify";
 import {
   buildByokProviderAliases,
   listProviders,
-} from "../../../providers/byok-providers";
-import { settingsManager } from "../../../settings-manager";
+} from "@/providers/byok-providers";
+import { settingsManager } from "@/settings-manager";
 import {
   ensureCorrectMemoryTool,
   prepareToolExecutionContextForScope,
   type ToolsetName,
   type ToolsetPreference,
-} from "../../../tools/toolset";
-import { formatToolsetName } from "../../../tools/toolset-labels";
+} from "@/tools/toolset";
+import { formatToolsetName } from "@/tools/toolset-labels";
 import type {
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   UpdateModelResponseMessage,
   UpdateToolsetResponseMessage,
-} from "../../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   isListModelsCommand,
   isUpdateModelCommand,
   isUpdateToolsetCommand,
-} from "../protocol-inbound";
-import { emitRuntimeStateUpdates, emitStatusDelta } from "../protocol-outbound";
-import type { ConversationRuntime, ListenerRuntime } from "../types";
+} from "@/websocket/listener/protocol-inbound";
+import {
+  emitRuntimeStateUpdates,
+  emitStatusDelta,
+} from "@/websocket/listener/protocol-outbound";
+import type {
+  ConversationRuntime,
+  ListenerRuntime,
+} from "@/websocket/listener/types";
 import type {
   GetOrCreateScopedRuntime,
   RunDetachedListenerTask,

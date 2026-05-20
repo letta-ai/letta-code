@@ -1,13 +1,28 @@
 import * as Diff from "diff";
 import { Box } from "ink";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
 interface MemoryDiffRendererProps {
   argsText: string;
   toolName: string;
+}
+
+function stringArg(
+  args: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function memoryBlockName(path: string): string {
+  return path.split("/").pop() || path;
 }
 
 /**
@@ -21,7 +36,7 @@ export function MemoryDiffRenderer({
   const columns = useTerminalWidth();
 
   try {
-    const args = JSON.parse(argsText);
+    const args = JSON.parse(argsText) as Record<string, unknown>;
 
     // Handle memory_apply_patch tool (codex-style apply_patch input)
     if (toolName === "memory_apply_patch") {
@@ -33,15 +48,15 @@ export function MemoryDiffRenderer({
 
     // Handle memory tool (command-based)
     const command = args.command as string;
-    const path = args.path || args.old_path || "unknown";
+    const path = stringArg(args, "file_path", "path", "old_path") ?? "unknown";
 
     // Extract just the block name from the path (e.g., "/memories/project" -> "project")
-    const blockName = path.split("/").pop() || path;
+    const blockName = memoryBlockName(path);
 
     switch (command) {
       case "str_replace": {
-        const oldStr = args.old_string || args.old_str || "";
-        const newStr = args.new_string || args.new_str || "";
+        const oldStr = stringArg(args, "old_string", "old_str") ?? "";
+        const newStr = stringArg(args, "new_string", "new_str") ?? "";
         return (
           <MemoryStrReplaceDiff
             blockName={blockName}
@@ -53,7 +68,7 @@ export function MemoryDiffRenderer({
       }
 
       case "insert": {
-        const insertText = args.insert_text || "";
+        const insertText = stringArg(args, "insert_text") ?? "";
         const insertLine = args.insert_line;
         const prefixWidth = 4; // "    " indent
         const contentWidth = Math.max(0, columns - prefixWidth);
@@ -100,8 +115,8 @@ export function MemoryDiffRenderer({
       }
 
       case "create": {
-        const description = args.description || "";
-        const fileText = args.file_text || "";
+        const description = stringArg(args, "description") ?? "";
+        const fileText = stringArg(args, "file_text") ?? "";
         const prefixWidth = 4; // "    " indent
         const contentWidth = Math.max(0, columns - prefixWidth);
         return (
@@ -180,8 +195,8 @@ export function MemoryDiffRenderer({
       }
 
       case "rename": {
-        const newPath = args.new_path || "";
-        const newBlockName = newPath.split("/").pop() || newPath;
+        const newPath = stringArg(args, "new_path") ?? "";
+        const newBlockName = memoryBlockName(newPath);
         const description = args.description;
         const prefixWidth = 4;
         const contentWidth = Math.max(0, columns - prefixWidth);

@@ -2,18 +2,18 @@ import { execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { getBackend } from "../backend";
-import { settingsManager } from "../settings-manager";
+import { getBackend } from "@/backend";
+import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
-import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
+import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import {
   commitAndSyncMemoryWrite,
   GIT_MEMORY_ENABLED_TAG,
   getMemoryRepoDir,
   pullMemory,
-} from "./memoryGit";
-import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./promptAssets";
+} from "./memory-git";
+import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./prompt-assets";
 
 const execFile = promisify(execFileCb);
 
@@ -23,7 +23,7 @@ const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
 
 export interface PersonalityOption {
-  id: "kawaii" | "codex" | "claude" | "linus" | "memo";
+  id: "blank" | "kawaii" | "codex" | "claude" | "linus" | "memo";
   label: string;
   description: string;
   /** Model ID from models.json to use when no explicit model is provided. */
@@ -35,6 +35,11 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
     id: "memo",
     label: "Letta Code",
     description: "The memory-first agent",
+  },
+  {
+    id: "blank",
+    label: "Blank",
+    description: "Blank starter — you provide the personality",
   },
   {
     id: "linus",
@@ -63,6 +68,7 @@ export type PersonalityId = PersonalityOption["id"];
 
 export const DEFAULT_CREATE_AGENT_PERSONALITIES = [
   "memo",
+  "blank",
   "linus",
   "kawaii",
 ] as const;
@@ -94,6 +100,19 @@ export interface PersonalityBlockDefinition {
   value: string;
   description?: string;
   templatePromptAssetName: string;
+}
+
+export const ONBOARDING_PERSONALITIES = [
+  "linus",
+  "kawaii",
+] as const satisfies readonly PersonalityId[];
+
+export function supportsOnboardingBlock(
+  personalityId: PersonalityId,
+): personalityId is (typeof ONBOARDING_PERSONALITIES)[number] {
+  return (ONBOARDING_PERSONALITIES as readonly PersonalityId[]).includes(
+    personalityId,
+  );
 }
 
 const FRONTMATTER_REGEX = /^(---\n[\s\S]*?\n---)\n*/;
@@ -267,6 +286,10 @@ export function getPersonalityContent(personalityId: PersonalityId): string {
     return getPromptBody("persona_memo.mdx");
   }
 
+  if (personalityId === "blank") {
+    return getPromptBody("persona_blank.mdx");
+  }
+
   if (personalityId === "kawaii") {
     return getPromptBody("persona_kawaii.mdx");
   }
@@ -301,6 +324,10 @@ export function getPersonalityHumanContent(
     return getPromptBody("human_kawaii.mdx");
   }
 
+  if (personalityId === "blank") {
+    return getDefaultHumanContent();
+  }
+
   return getDefaultHumanContent();
 }
 
@@ -318,15 +345,18 @@ export function getPersonalityBlockValues(personalityId: PersonalityId): {
 export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
   persona: PersonalityBlockDefinition;
   human: PersonalityBlockDefinition;
+  onboarding?: PersonalityBlockDefinition;
 } {
   const personaTemplatePromptAssetName =
     personalityId === "memo"
       ? "persona_memo.mdx"
-      : personalityId === "kawaii"
-        ? "persona_kawaii.mdx"
-        : personalityId === "linus"
-          ? "persona_linus.mdx"
-          : "persona.mdx";
+      : personalityId === "blank"
+        ? "persona_blank.mdx"
+        : personalityId === "kawaii"
+          ? "persona_kawaii.mdx"
+          : personalityId === "linus"
+            ? "persona_linus.mdx"
+            : "persona.mdx";
   const humanTemplatePromptAssetName =
     personalityId === "memo"
       ? "human_memo.mdx"
@@ -349,6 +379,16 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
         .description,
       templatePromptAssetName: humanTemplatePromptAssetName,
     },
+    ...(supportsOnboardingBlock(personalityId)
+      ? {
+          onboarding: {
+            value: getPromptBody("onboarding.mdx"),
+            description:
+              getEditablePromptFrontmatter("onboarding.mdx").description,
+            templatePromptAssetName: "onboarding.mdx",
+          },
+        }
+      : {}),
   };
 }
 
@@ -364,41 +404,49 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   const blockDefinitions = getPersonalityBlockDefinitions(personalityId);
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
 
+  const memoryBlocks = defaultMemoryBlocks.map((block) => {
+    if (block.label === "persona") {
+      return {
+        label: block.label,
+        value: blockDefinitions.persona.value,
+        description:
+          blockDefinitions.persona.description ??
+          block.description ??
+          undefined,
+      };
+    }
+
+    if (block.label === "human") {
+      return {
+        label: block.label,
+        value: blockDefinitions.human.value,
+        description:
+          blockDefinitions.human.description ?? block.description ?? undefined,
+      };
+    }
+
+    return {
+      label: block.label,
+      value: block.value,
+      description: block.description ?? undefined,
+    };
+  });
+
+  if (blockDefinitions.onboarding) {
+    memoryBlocks.push({
+      label: "onboarding",
+      value: blockDefinitions.onboarding.value,
+      description: blockDefinitions.onboarding.description,
+    });
+  }
+
   return {
     name: name ?? personality.label,
     description: description ?? personality.description,
     model: model ?? personality.defaultModel,
     tags,
     memoryPromptMode: "memfs",
-    memoryBlocks: defaultMemoryBlocks.map((block) => {
-      if (block.label === "persona") {
-        return {
-          label: block.label,
-          value: blockDefinitions.persona.value,
-          description:
-            blockDefinitions.persona.description ??
-            block.description ??
-            undefined,
-        };
-      }
-
-      if (block.label === "human") {
-        return {
-          label: block.label,
-          value: blockDefinitions.human.value,
-          description:
-            blockDefinitions.human.description ??
-            block.description ??
-            undefined,
-        };
-      }
-
-      return {
-        label: block.label,
-        value: block.value,
-        description: block.description ?? undefined,
-      };
-    }),
+    memoryBlocks,
   };
 }
 
@@ -409,7 +457,7 @@ export async function enableMemfsForCreatedAgent(params: {
   const { agentId, agentTags } = params;
 
   try {
-    const { getClient } = await import("../backend/api/client");
+    const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
     const tags = agentTags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
@@ -429,8 +477,10 @@ export async function createAgentForPersonality(params: {
   description?: string;
   model?: string;
   tags?: string[];
-}): Promise<Awaited<ReturnType<typeof import("./create")["createAgent"]>>> {
-  const { createAgent } = await import("./create");
+}): Promise<
+  Awaited<ReturnType<typeof import("@/agent/create")["createAgent"]>>
+> {
+  const { createAgent } = await import("@/agent/create");
   const result = await createAgent(
     await buildCreateAgentOptionsForPersonality(params),
   );

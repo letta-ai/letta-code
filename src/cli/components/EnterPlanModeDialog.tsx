@@ -1,6 +1,6 @@
 import { Box, useInput } from "ink";
 import { memo, useState } from "react";
-import { useProgressIndicator } from "../hooks/useProgressIndicator";
+import { useProgressIndicator } from "@/cli/hooks/use-progress-indicator";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

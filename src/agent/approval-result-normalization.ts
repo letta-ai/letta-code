@@ -1,7 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { INTERRUPTED_BY_USER } from "../constants";
-import type { ToolReturnContent } from "../tools/manager";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import type { ToolReturnContent } from "@/tools/manager";
 import type { ApprovalResult } from "./approval-execution";
 
 type OutgoingMessage = MessageCreate | ApprovalCreate;
@@ -71,13 +71,19 @@ function isToolReturnContent(value: unknown): value is ToolReturnContent {
   );
 }
 
+function coerceToolReturnContent(value: unknown): ToolReturnContent {
+  if (isToolReturnContent(value)) return value;
+  return normalizeToolReturnText(value);
+}
+
 function prependApprovalComment(
-  toolReturn: ToolReturnContent,
+  toolReturn: unknown,
   reason: string | undefined,
 ): ToolReturnContent {
+  const normalizedToolReturn = coerceToolReturnContent(toolReturn);
   const trimmedReason = reason?.trim();
   if (!trimmedReason) {
-    return toolReturn;
+    return normalizedToolReturn;
   }
 
   const commentPart = {
@@ -85,11 +91,13 @@ function prependApprovalComment(
     text: `${APPROVAL_COMMENT_PREFIX} "${trimmedReason}"`,
   };
 
-  if (typeof toolReturn === "string") {
-    return [commentPart, { type: "text" as const, text: toolReturn }];
+  if (typeof normalizedToolReturn === "string") {
+    return normalizedToolReturn.length > 0
+      ? [commentPart, { type: "text" as const, text: normalizedToolReturn }]
+      : [commentPart];
   }
 
-  return [commentPart, ...toolReturn];
+  return [commentPart, ...normalizedToolReturn];
 }
 
 export function normalizeApprovalResultsForPersistence(
@@ -108,8 +116,7 @@ export function normalizeApprovalResultsForPersistence(
       approval.type === "approval" &&
       "approve" in approval &&
       approval.approve === true &&
-      "tool_return" in approval &&
-      isToolReturnContent(approval.tool_return)
+      "tool_return" in approval
     ) {
       return {
         type: "tool",
@@ -118,7 +125,7 @@ export function normalizeApprovalResultsForPersistence(
           typeof approval.tool_call_id === "string"
             ? approval.tool_call_id
             : "",
-        tool_return: approval.tool_return,
+        tool_return: coerceToolReturnContent(approval.tool_return),
         status:
           "status" in approval && approval.status === "error"
             ? "error"
@@ -148,7 +155,7 @@ export function normalizeApprovalResultsForPersistence(
         ? approval.tool_call_id
         : "";
     const toolReturn = prependApprovalComment(
-      approval.tool_return as ToolReturnContent,
+      "tool_return" in approval ? approval.tool_return : "",
       "reason" in approval && typeof approval.reason === "string"
         ? approval.reason
         : undefined,

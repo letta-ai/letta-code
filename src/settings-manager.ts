@@ -4,11 +4,15 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  getLocalBackendStorageDir,
+  isLocalBackendEnvEnabled,
+} from "./backend/local/paths";
 import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { getRuntimeContext } from "./runtime-context";
-import { trackBoundaryError } from "./telemetry/errorReporting";
+import { trackBoundaryError } from "./telemetry/error-reporting";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
@@ -40,6 +44,10 @@ export interface StatusLineConfig {
   refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
   disabled?: boolean; // Disable at this level
   prompt?: string; // Custom input prompt character (default "›")
+}
+
+export interface WindowTitleConfig {
+  items: string[]; // Ordered list of enabled field keys (e.g. ["agent-name", "model-name"])
 }
 
 /**
@@ -82,6 +90,9 @@ export interface Settings {
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
+  planModeEnabled: boolean; // Enables plan-mode tools and /plan command when true
+  includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
+  recentModels: string[]; // Recently used model IDs (most recent first, max 5)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionStepCount: number;
@@ -99,6 +110,7 @@ export interface Settings {
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
   statusLine?: StatusLineConfig; // Configurable status line command
+  windowTitle?: WindowTitleConfig; // Configurable terminal window title
   env?: Record<string, string>;
   experiments?: Partial<Record<ExperimentId, boolean>>;
   // Server-indexed settings (agent IDs are server-specific)
@@ -125,6 +137,7 @@ export interface Settings {
 export interface ProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   statusLine?: StatusLineConfig; // Project-specific status line command
+  windowTitle?: WindowTitleConfig; // Project-specific terminal window title
 }
 
 export interface LocalProjectSettings {
@@ -133,6 +146,7 @@ export interface LocalProjectSettings {
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Project-specific hook commands
   statusLine?: StatusLineConfig; // Local project-specific status line command
+  windowTitle?: WindowTitleConfig; // Local project-specific terminal window title
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
@@ -162,6 +176,9 @@ const DEFAULT_SETTINGS: Settings = {
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
   autoSwapOnQuotaLimit: true,
+  planModeEnabled: false,
+  includeWorktreeTool: true,
+  recentModels: [],
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
@@ -200,13 +217,23 @@ function normalizeBaseUrl(baseUrl: string): string {
   return normalized;
 }
 
+function getLocalBackendSettingsKey(): string {
+  return `local:${resolve(getLocalBackendStorageDir())}`;
+}
+
 /**
  * Get the current server key for indexing settings.
- * Uses LETTA_BASE_URL env var or settings.env.LETTA_BASE_URL, defaults to api.letta.com.
+ * Uses the local backend storage path when local backend mode is active,
+ * otherwise LETTA_BASE_URL env var or settings.env.LETTA_BASE_URL, defaulting
+ * to api.letta.com.
  * @param settings - Optional settings object to check for env overrides
- * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
+ * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283", "local:/path/to/store")
  */
 function getCurrentServerKey(settings?: Settings | null): string {
+  if (isLocalBackendEnvEnabled()) {
+    return getLocalBackendSettingsKey();
+  }
+
   const baseUrl =
     process.env.LETTA_BASE_URL ||
     settings?.env?.LETTA_BASE_URL ||
@@ -221,6 +248,10 @@ function getCurrentServerKey(settings?: Settings | null): string {
  * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
  */
 function getCurrentMemfsServerKey(settings?: Settings | null): string {
+  if (isLocalBackendEnvEnabled()) {
+    return getLocalBackendSettingsKey();
+  }
+
   const baseUrl =
     process.env.LETTA_MEMFS_BASE_URL ||
     settings?.env?.LETTA_MEMFS_BASE_URL ||
@@ -547,6 +578,32 @@ class SettingsManager {
     return this.getSettings()[key];
   }
 
+  isPlanModeEnabled(): boolean {
+    return this.getSettings().planModeEnabled === true;
+  }
+
+  setPlanModeEnabled(enabled: boolean): void {
+    this.updateSettings({ planModeEnabled: enabled });
+  }
+
+  shouldIncludeWorktreeTool(): boolean {
+    return this.getSettings().includeWorktreeTool !== false;
+  }
+
+  setIncludeWorktreeTool(enabled: boolean): void {
+    this.updateSettings({ includeWorktreeTool: enabled });
+  }
+
+  getRecentModels(): string[] {
+    return this.getSettings().recentModels ?? [];
+  }
+
+  addRecentModel(modelId: string): void {
+    const current = this.getRecentModels().filter((id) => id !== modelId);
+    const updated = [modelId, ...current].slice(0, 5);
+    this.updateSettings({ recentModels: updated });
+  }
+
   getCachedSecureTokens(): SecureTokens {
     return { ...this.secureTokensCache };
   }
@@ -717,6 +774,7 @@ class SettingsManager {
       const projectSettings: ProjectSettings = {
         hooks: rawSettings.hooks as HooksConfig | undefined,
         statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
+        windowTitle: rawSettings.windowTitle as WindowTitleConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);
@@ -760,6 +818,9 @@ class SettingsManager {
       }
       if ("statusLine" in updates) {
         globalUpdates.statusLine = updates.statusLine;
+      }
+      if ("windowTitle" in updates) {
+        globalUpdates.windowTitle = updates.windowTitle;
       }
       if (Object.keys(globalUpdates).length > 0) {
         this.updateSettings(globalUpdates);
@@ -2110,6 +2171,17 @@ class SettingsManager {
       console.error("Error during logout:", error);
       throw error;
     }
+  }
+
+  /**
+   * Clear in-memory caches so the next read re-loads from disk.
+   * Unlike reset(), this preserves the initialized state and pending writes.
+   * Used by /reload to pick up settings changes without a full restart.
+   */
+  clearCaches(): void {
+    this.localProjectSettings.clear();
+    this.projectSettings.clear();
+    this.clearSecureTokensCache();
   }
 
   /**

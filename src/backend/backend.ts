@@ -4,7 +4,7 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
-import { LocalBackend } from "./local/LocalBackend";
+import { LocalBackend } from "./local/local-backend";
 import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
   LOCAL_BACKEND_EXPERIMENTAL_ENV,
@@ -270,7 +270,7 @@ export class APIBackend implements Backend {
     if (this.getApiClientOverride) {
       return this.getApiClientOverride();
     }
-    const { getClient: resolveClient } = await import("./api/client");
+    const { getClient: resolveClient } = await import("@/backend/api/client");
     return resolveClient();
   }
 
@@ -423,7 +423,7 @@ export class APIBackend implements Backend {
     if (this.forkConversationOverride) {
       return this.forkConversationOverride(conversationId, options);
     }
-    const { forkConversation } = await import("./api/conversations");
+    const { forkConversation } = await import("@/backend/api/conversations");
     return forkConversation(conversationId, options);
   }
 }
@@ -446,7 +446,7 @@ function createExperimentalLocalBackend(): Backend {
     executionMode:
       process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "deterministic"
         ? "deterministic"
-        : "ai-sdk",
+        : "pi",
   });
 }
 
@@ -467,9 +467,10 @@ function createInitialBackend(): Backend {
   return createBackendForMode(resolveBackendMode());
 }
 
-let backend: Backend = createInitialBackend();
+let backend: Backend | null = null;
 
 export function getBackend(): Backend {
+  backend ??= createInitialBackend();
   return backend;
 }
 
@@ -487,13 +488,17 @@ function devBackendStoreOptions() {
   return { storageDir: process.env.LETTA_CODE_DEV_BACKEND_DIR };
 }
 
-async function createAISDKDevBackend(): Promise<Backend> {
-  const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-  const { AISDKStreamAdapter } = await import("./dev/AISDKStreamAdapter");
-  const { ProviderTurnExecutor } = await import("./dev/ProviderTurnExecutor");
+async function createPiDevBackend(): Promise<Backend> {
+  const { FakeHeadlessBackend } = await import(
+    "@/backend/dev/fake-headless-backend"
+  );
+  const { PiStreamAdapter } = await import("@/backend/dev/pi-stream-adapter");
+  const { ProviderTurnExecutor } = await import(
+    "@/backend/dev/provider-turn-executor"
+  );
   return new FakeHeadlessBackend(
     "agent-fake-headless",
-    new ProviderTurnExecutor(new AISDKStreamAdapter({})),
+    new ProviderTurnExecutor(new PiStreamAdapter({})),
     devBackendStoreOptions(),
   );
 }
@@ -501,7 +506,9 @@ async function createAISDKDevBackend(): Promise<Backend> {
 export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/fake-headless-backend"
+      );
       backend = new FakeHeadlessBackend(
         undefined,
         undefined,
@@ -510,9 +517,11 @@ export async function configureDevBackend(name: string): Promise<void> {
       return;
     }
     case "fake-headless-tool-call": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/fake-headless-backend"
+      );
       const { DeterministicToolCallExecutor } = await import(
-        "./dev/HeadlessTurnExecutor"
+        "@/backend/dev/headless-turn-executor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
@@ -522,9 +531,11 @@ export async function configureDevBackend(name: string): Promise<void> {
       return;
     }
     case "fake-headless-provider": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/fake-headless-backend"
+      );
       const { ProviderTurnExecutor } = await import(
-        "./dev/ProviderTurnExecutor"
+        "@/backend/dev/provider-turn-executor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
@@ -533,8 +544,8 @@ export async function configureDevBackend(name: string): Promise<void> {
       );
       return;
     }
-    case "fake-headless-ai-sdk": {
-      backend = await createAISDKDevBackend();
+    case "fake-headless-pi": {
+      backend = await createPiDevBackend();
       return;
     }
     default:

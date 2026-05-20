@@ -1,19 +1,19 @@
 import { Box, Static } from "ink";
-import { ApprovalPreview } from "../components/ApprovalPreview";
-import { AssistantMessage } from "../components/AssistantMessageRich";
-import { BashCommandMessage } from "../components/BashCommandMessage";
-import { CommandMessage } from "../components/CommandMessage";
-import { ErrorMessage } from "../components/ErrorMessageRich";
-import { EventMessage } from "../components/EventMessage";
-import { ReasoningMessage } from "../components/ReasoningMessageRich";
-import { StatusMessage } from "../components/StatusMessage";
-import { SubagentGroupStatic } from "../components/SubagentGroupStatic";
-import { Text } from "../components/Text";
-import { ToolCallMessage } from "../components/ToolCallMessageRich";
-import { TrajectorySummary } from "../components/TrajectorySummary";
-import { UserMessage } from "../components/UserMessageRich";
-import { WelcomeScreen } from "../components/WelcomeScreen";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
+import { ApprovalPreview } from "@/cli/components/ApprovalPreview";
+import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
+import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
+import { CommandMessage } from "@/cli/components/CommandMessage";
+import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
+import { EventMessage } from "@/cli/components/EventMessage";
+import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
+import { StatusMessage } from "@/cli/components/StatusMessage";
+import { SubagentGroupStatic } from "@/cli/components/SubagentGroupStatic";
+import { Text } from "@/cli/components/Text";
+import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
+import { TrajectorySummary } from "@/cli/components/TrajectorySummary";
+import { UserMessage } from "@/cli/components/UserMessageRich";
+import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { StaticItem } from "./types";
 
 export function StaticTranscript({
@@ -24,6 +24,8 @@ export function StaticTranscript({
   showCompactionsEnabled,
   precomputedDiffs,
   lastPlanFilePath,
+  hiddenToolCallId,
+  lastShellToolCallId,
 }: {
   renderEpoch: number;
   items: StaticItem[];
@@ -32,9 +34,20 @@ export function StaticTranscript({
   showCompactionsEnabled: boolean;
   precomputedDiffs: Map<string, AdvancedDiffSuccess>;
   lastPlanFilePath: string | null;
+  hiddenToolCallId?: string;
+  /** Used to show ctrl+o hint on the last committed tool call.
+   *  Intentionally NOT included in the Static key — passing it here without
+   *  keying on it means the hint shows correctly when an item first commits,
+   *  and may be stale on older items (minor cosmetic issue, much better than
+   *  remounting on every tool call and re-printing history). */
+  lastShellToolCallId?: string;
 }) {
   return (
-    <Static key={renderEpoch} items={items} style={{ flexDirection: "column" }}>
+    <Static
+      key={`${renderEpoch}-${hiddenToolCallId ?? ""}`}
+      items={items}
+      style={{ flexDirection: "column" }}
+    >
       {(item: StaticItem, index: number) => {
         try {
           return (
@@ -52,6 +65,8 @@ export function StaticTranscript({
                   line={item}
                   precomputedDiffs={precomputedDiffs}
                   lastPlanFilePath={lastPlanFilePath}
+                  expandedToolCallId={hiddenToolCallId}
+                  lastShellToolCallId={lastShellToolCallId}
                 />
               ) : item.kind === "subagent_group" ? (
                 <SubagentGroupStatic agents={item.agents} />

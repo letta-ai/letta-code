@@ -14,16 +14,16 @@ import {
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
-} from "../../auth/oauth";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import { RemoteSessionLog } from "../../websocket/listen-log";
+} from "@/auth/oauth";
+import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
   registerWithCloud,
   registerWithCloudRetry,
-} from "../../websocket/listen-register";
-import { ListenerStatusUI } from "../components/ListenerStatusUI";
+} from "@/websocket/listen-register";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
@@ -378,7 +378,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   ): Promise<never> => {
     // Stop channel adapters on actual process exit
     try {
-      const { getChannelRegistry } = await import("../../channels/registry");
+      const { getChannelRegistry } = await import("@/channels/registry");
       const registry = getChannelRegistry();
       if (registry) {
         await registry.stopAll();
@@ -401,16 +401,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         .map((s) => s.trim())
         .filter(Boolean)
     : process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1"
-      ? (await import("../../channels/service")).listEnabledChannelIds()
+      ? (await import("@/channels/service")).listEnabledChannelIds()
       : [];
 
   if (channelNames.length > 0) {
     if (values.channels && values["install-channel-runtimes"]) {
       const { ensureChannelRuntimeInstalled } = await import(
-        "../../channels/runtimeDeps"
+        "@/channels/runtime-deps"
       );
       const { isSupportedChannelId } = await import(
-        "../../channels/pluginRegistry"
+        "@/channels/plugin-registry"
       );
 
       for (const channelName of channelNames) {
@@ -424,7 +424,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       }
     }
 
-    const { initializeChannels } = await import("../../channels/registry");
+    const { initializeChannels } = await import("@/channels/registry");
     await initializeChannels(channelNames);
   }
 
@@ -504,7 +504,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       console.log("Skipping environment registration. Press Ctrl+C to stop.\n");
 
       const { startLocalChannelListener } = await import(
-        "../../websocket/listen-client"
+        "@/websocket/listen-client"
       );
 
       await startLocalChannelListener({
@@ -591,9 +591,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     // Import and start WebSocket client
-    const { startListenerClient } = await import(
-      "../../websocket/listen-client"
-    );
+    const { startListenerClient } = await import("@/websocket/listen-client");
 
     // Re-register helper with retry for transient errors (e.g. 521).
     // Uses exponential backoff so a temporary server outage doesn't

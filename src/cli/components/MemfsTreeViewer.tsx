@@ -1,18 +1,18 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { isGitRepo } from "../../agent/memoryGit";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getFileNodes,
   readFileContent,
   scanMemoryFilesystem,
   type TreeNode,
-} from "../../agent/memoryScanner";
-import { generateAndOpenMemoryViewer } from "../../web/generate-memory-viewer";
-import { buildChatUrl, isLocalAgentId } from "../helpers/appUrls";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/agent/memory-scanner";
+import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { generateAndOpenMemoryViewer } from "@/web/generate-memory-viewer";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -66,9 +66,12 @@ export function MemfsTreeViewer({
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Get memory filesystem root
-  const memoryRoot = getMemoryFilesystemRoot(agentId);
+  const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
   const memoryExists = existsSync(memoryRoot);
-  const hasGitRepo = useMemo(() => isGitRepo(agentId), [agentId]);
+  const hasGitRepo = useMemo(
+    () => existsSync(join(memoryRoot, ".git")),
+    [memoryRoot],
+  );
 
   function showStatus(msg: string, durationMs: number) {
     if (statusTimerRef.current) clearTimeout(statusTimerRef.current);

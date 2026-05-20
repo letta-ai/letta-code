@@ -3,8 +3,8 @@ import { realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { trackBoundaryError } from "../telemetry/errorReporting";
-import { getVersion } from "../version";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { getVersion } from "@/version";
 
 const execFileAsync = promisify(execFile);
 
@@ -433,6 +433,7 @@ export async function checkAndAutoUpdate(): Promise<
       return { updateApplied: true, latestVersion: result.latestVersion };
     }
   }
+  return undefined;
 }
 
 export async function manualUpdate(): Promise<{

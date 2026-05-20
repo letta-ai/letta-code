@@ -1,23 +1,20 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getChannelRegistry } from "../../channels/registry";
-import type {
-  ChannelTurnOutcome,
-  ChannelTurnSource,
-} from "../../channels/types";
-import { resizeImageIfNeeded } from "../../cli/helpers/imageResize";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
   QueueItem,
-} from "../../queue/queueRuntime";
-import { isCoalescable } from "../../queue/queueRuntime";
-import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
+} from "@/queue/queue-runtime";
+import { isCoalescable } from "@/queue/queue-runtime";
+import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { resizeImageIfNeeded } from "@/utils/image-resize";
 import {
   type ImageNormalizationFailureMode,
   normalizeMessageContentImages as normalizeSharedMessageContentImages,
-} from "../../utils/messageImageNormalization";
-import { getListenerBlockedReason } from "../helpers/listenerQueueAdapter";
+} from "@/utils/message-image-normalization";
+import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
   emitListenerStatus,
@@ -257,11 +254,30 @@ function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
   return null;
 }
 
+/**
+ * Picks an acting cloud user id to attribute the outbound
+ * createMessage to. When a batch coalesces messages from multiple
+ * users we use the **last enqueued** sender — matches user intuition
+ * ("whoever just hit send pays") and matches the seq order the queue
+ * already preserves. Returns undefined when no item in the batch
+ * carries an actingUserId (self-hosted / pre-channel-split flow).
+ */
+export function pickBatchActingUserId(items: QueueItem[]): string | undefined {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const actingUserId = items[i]?.actingUserId;
+    if (actingUserId) {
+      return actingUserId;
+    }
+  }
+  return undefined;
+}
+
 function buildQueuedTurnMessage(
   runtime: ConversationRuntime,
   batch: DequeuedBatch,
 ): IncomingMessage | null {
   const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
+  const actingUserId = pickBatchActingUserId(batch.items);
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
     // No user message in the batch — this is a notification-only batch.
@@ -282,6 +298,7 @@ function buildQueuedTurnMessage(
       agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
       ...(channelTurnSources ? { channelTurnSources } : {}),
+      ...(actingUserId ? { actingUserId } : {}),
       messages: [
         {
           role: "user",
@@ -325,6 +342,7 @@ function buildQueuedTurnMessage(
   return {
     ...template,
     ...(channelTurnSources ? { channelTurnSources } : {}),
+    ...(actingUserId ? { actingUserId } : {}),
     messages,
   };
 }

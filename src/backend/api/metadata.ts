@@ -1,4 +1,4 @@
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { apiRequest } from "./request";
 
 export interface BalanceMetadata {

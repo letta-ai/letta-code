@@ -7,61 +7,62 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { fetchRunErrorInfo } from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { fetchRunErrorInfo } from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
 import {
   getConversationId,
   getCurrentAgentId,
   setConversationId,
   setCurrentAgentId,
-} from "../../agent/context";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+} from "@/agent/context";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getStreamToolContextId,
   type sendMessageStream,
-} from "../../agent/message";
+} from "@/agent/message";
+import { getSubagents } from "@/agent/subagent-state";
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   normalizeStreamErrorTypeToStopReason,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
-} from "../../agent/turn-recovery-policy";
-import { getBackend } from "../../backend";
-import { createBuffers, toLines } from "../../cli/helpers/accumulator";
-import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
+} from "@/agent/turn-recovery-policy";
+import { getBackend } from "@/backend";
+import { createBuffers, toLines } from "@/cli/helpers/accumulator";
+import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
   type ReflectionTrigger,
-} from "../../cli/helpers/memoryReminder";
-import { handleMemorySubagentCompletion } from "../../cli/helpers/memorySubagentCompletion";
+} from "@/cli/helpers/memory-reminder";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
-} from "../../cli/helpers/reflectionTranscript";
-import { drainStreamWithResume } from "../../cli/helpers/stream";
-import { getSubagents } from "../../cli/helpers/subagentState";
+} from "@/cli/helpers/reflection-transcript";
+import { drainStreamWithResume } from "@/cli/helpers/stream";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
-} from "../../reminders/engine";
-import { buildListenReminderContext } from "../../reminders/listenContext";
-import { getPlanModeReminder } from "../../reminders/planModeReminder";
-import { syncReminderStateFromContextTracker } from "../../reminders/state";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { extractTelemetryInputText } from "../../telemetry/input";
-import { prepareToolExecutionContextForScope } from "../../tools/toolset";
-import type { StopReasonType, StreamDelta } from "../../types/protocol_v2";
-import { debugLog, debugWarn, isDebugEnabled } from "../../utils/debug";
+} from "@/reminders/engine";
+import { buildListenReminderContext } from "@/reminders/listen-context";
+import { getPlanModeReminder } from "@/reminders/plan-mode-reminder";
+import { syncReminderStateFromContextTracker } from "@/reminders/state";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { extractTelemetryInputText } from "@/telemetry/input";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
+import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
+import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
+  PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -76,7 +77,7 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
   pruneConversationPermissionModeStateIfDefault,
-} from "./permissionMode";
+} from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
   emitDeviceStatusIfOpen,
@@ -86,6 +87,10 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
+import {
+  createProviderFallbackState,
+  maybeApplyProviderFallback,
+} from "./provider-fallback";
 import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
@@ -226,18 +231,18 @@ function buildMaybeLaunchReflectionSubagent(params: {
       const memoryDir = getMemoryFilesystemRoot(agentId);
       const parentMemory = await buildParentMemorySnapshot(memoryDir);
       const reflectionPrompt = buildReflectionSubagentPrompt({
-        transcriptPath: autoPayload.payloadPath,
         memoryDir,
         parentMemory,
       });
 
       const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("../../tools/impl/Task");
+        await import("@/tools/impl/task");
       const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,
         description: AUTO_REFLECTION_DESCRIPTION,
         silentCompletion: true,
+        transcriptPath: autoPayload.payloadPath,
         parentScope: { agentId, conversationId },
         onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
           telemetry.trackReflectionEnd(triggerSource, success, {
@@ -455,7 +460,9 @@ export async function handleIncomingMessage(
       onStatusChange?.("processing", connectionId);
     }
 
-    const { normalizeInboundMessages } = await import("./queue");
+    const { normalizeInboundMessages } = await import(
+      "@/websocket/listener/queue"
+    );
     const normalizedMessages = await normalizeInboundMessages(
       msg.messages,
       undefined,
@@ -586,6 +593,7 @@ export async function handleIncomingMessage(
     }
 
     let currentInput = messagesToSend;
+    const providerFallback = createProviderFallbackState(cachedAgent);
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
     ];
@@ -609,6 +617,14 @@ export async function handleIncomingMessage(
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
       skipImageNormalization: true,
+      ...(providerFallback.overrideModel
+        ? { overrideModel: providerFallback.overrideModel }
+        : {}),
+      // Forward cloud-api's per-WS acting user id so the outbound
+      // createMessage HTTP call carries X-Letta-Acting-User-Id and
+      // cloud can attribute credits to the actual sender on
+      // multi-user sandboxes.
+      ...(msg.actingUserId ? { actingUserId: msg.actingUserId } : {}),
       ...(pendingNormalizationInterruptedToolCallIds.length > 0
         ? {
             approvalNormalization: {
@@ -630,6 +646,7 @@ export async function handleIncomingMessage(
           socket,
           runtime,
           turnAbortSignal,
+          { providerFallback },
         )
       : await sendMessageStreamWithRetry(
           conversationId,
@@ -638,6 +655,7 @@ export async function handleIncomingMessage(
           socket,
           runtime,
           turnAbortSignal,
+          { providerFallback },
         );
     currentInput = currentInputWithSkillContent;
     if (!stream) {
@@ -863,6 +881,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -871,6 +890,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -948,6 +968,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -956,6 +977,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -981,14 +1003,21 @@ export async function handleIncomingMessage(
         if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           llmApiErrorRetries += 1;
           const attempt = llmApiErrorRetries;
-          const delayMs = getRetryDelayMs({
-            category: "transient_provider",
+          const fallbackHandle = maybeApplyProviderFallback(
+            providerFallback,
             attempt,
-            detail: errorDetail,
-          });
-          const retryMessage =
-            getRetryStatusMessage(errorDetail) ||
-            `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
+          );
+          const delayMs = fallbackHandle
+            ? 0
+            : getRetryDelayMs({
+                category: "transient_provider",
+                attempt,
+                detail: errorDetail,
+              });
+          const retryMessage = fallbackHandle
+            ? PROVIDER_FALLBACK_NOTICE
+            : getRetryStatusMessage(errorDetail) ||
+              `LLM API error encountered, retrying (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`;
           emitRecoverableRetryNotice(socket, runtime, {
             kind: "transient_provider_retry",
             message: retryMessage,
@@ -1001,7 +1030,9 @@ export async function handleIncomingMessage(
             conversationId,
           });
 
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          if (!fallbackHandle) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
@@ -1023,6 +1054,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               )
             : await sendMessageStreamWithRetry(
                 conversationId,
@@ -1031,6 +1063,7 @@ export async function handleIncomingMessage(
                 socket,
                 runtime,
                 turnAbortSignal,
+                { providerFallback },
               );
           currentInput = retryInputWithSkillContent;
           if (!stream) {
@@ -1106,6 +1139,7 @@ export async function handleIncomingMessage(
         pendingNormalizationInterruptedToolCallIds,
         turnToolContextId,
         buildSendOptions,
+        providerFallback,
       });
       if (approvalResult.terminated || !approvalResult.stream) {
         return;

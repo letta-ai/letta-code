@@ -53,7 +53,7 @@ jobs:
             sleep 10
           done
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
 
       - name: React with eyes (review starting)
         id: eyes_reaction
@@ -72,14 +72,14 @@ jobs:
           echo "Eyes reaction ID: $REACTION_ID"
           echo "reaction_id=$REACTION_ID" >> $GITHUB_OUTPUT
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
 
       - uses: letta-ai/letta-code-action@daa80f29e345315623ff759f5ecf5018946bbc15
         id: letta_review
         if: steps.lint_wait.outputs.skipped != 'true'
         with:
           letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
           agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
           track_progress: ""
           tracking_comment: "false"
@@ -91,10 +91,11 @@ jobs:
 
             1. Read your review-knowledge.md memory file — it has the detailed codebase footguns, bug patterns, and provider-specific traps
             2. Run `gh pr view $PR_NUMBER --json title,body,comments` to get the PR title, description, and comments
-            3. Run `gh pr diff $PR_NUMBER` to read the full diff
-            4. Assess whether the PR introduces real risk
-            5. If nothing to flag, respond with exactly: `LGTM`
-            6. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
+            3. Resolve any previously addressed comments — see "Resolving addressed comments" below
+            4. Run `gh pr diff $PR_NUMBER` to read the full diff
+            5. Assess whether the PR introduces real risk
+            6. If nothing to flag, respond with exactly: `LGTM`
+            7. If something to flag, leave inline review comments, then respond with exactly: `Left comments`
 
             **Default posture: signal-only.** Most PRs are fine. Only speak when there's something worth saying.
 
@@ -138,6 +139,70 @@ jobs:
             - ✅ `show_full_output: "true"` leaks tool output (potentially secrets) into CI logs.
             - ❌ The `track_progress` option is set to "true" in this workflow, but the letta-code-action's `validateTrackProgressEvent` function explicitly rejects the `workflow_dispatch` event type when track_progress is enabled. This means every manual dispatch will throw an error. You should either remove track_progress and handle tracking yourself in the prompt, or split into two jobs — one for pull_request (with track_progress) and one for workflow_dispatch (without it).
 
+            ## Suggested patches
+
+            For high-confidence, surgical fixes (wrong operator, wrong fallback value, missing guard, clear typo), include a suggested patch directly in the comment body using GitHub's suggestion syntax. The author can apply it in one click.
+
+            **When to use suggestions:** The fix is unambiguous, confined to the flagged lines, and you are certain it is correct. Do NOT suggest if the fix requires broader context, multiple files, or architectural judgment.
+
+            **Before writing a suggestion:** Read the current file content at the flagged path to get the exact lines. The suggestion block must contain the complete replacement for the covered lines — GitHub diffs it against the original automatically.
+
+            **Single-line suggestion:**
+            ```bash
+            gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
+              -X POST \
+              -f event="COMMENT" \
+              -f body="" \
+              -f 'comments[][path]=<file>' \
+              -f 'comments[][line]=<line-number>' \
+              -f 'comments[][body]=<one sentence stating the risk>
+
+            ```suggestion
+            <replacement line>
+            ```'
+            ```
+
+            **Multi-line suggestion** (add `start_line` to cover a range):
+            ```bash
+            gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
+              -X POST \
+              -f event="COMMENT" \
+              -f body="" \
+              -f 'comments[][path]=<file>' \
+              -f 'comments[][start_line]=<first-line>' \
+              -f 'comments[][line]=<last-line>' \
+              -f 'comments[][body]=<one sentence stating the risk>
+
+            ```suggestion
+            <replacement lines>
+            ```'
+            ```
+
+            Example — wrong operator on a single line:
+            ```
+            `&&` should be `||` — requires both vars set, breaking `LETTA_DEBUG=1` alone.
+
+            ```suggestion
+              return lettaDebug === "1" || lettaDebug === "true" || legacyDebug === "1" || legacyDebug === "true";
+            ```
+            ```
+
+            ## Resolving addressed comments
+
+            Before reviewing the new diff, check if any of your previous review comments have been addressed. If they have, resolve the thread so the author doesn't have to.
+
+            1. Fetch unresolved review threads you left:
+               ```bash
+               OWNER=$(echo $GITHUB_REPOSITORY | cut -d/ -f1)
+               REPO=$(echo $GITHUB_REPOSITORY | cut -d/ -f2)
+               gh api graphql -f query="{ repository(owner: \"$OWNER\", name: \"$REPO\") { pullRequest(number: $PR_NUMBER) { reviewThreads(first: 50) { nodes { id isResolved comments(first: 1) { nodes { author { login } databaseId body path line } } } } } } }" --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select(.comments.nodes[0].author.login == "amelia-letta-code") | {threadId: .id, commentId: .comments.nodes[0].databaseId, body: .comments.nodes[0].body[0:120], path: .comments.nodes[0].path, line: .comments.nodes[0].line}'
+               ```
+            2. For each unresolved thread, check the current code at that path/line. If the issue has been clearly addressed, resolve it:
+               ```bash
+               gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "THREAD_ID"}) { thread { isResolved } } }'
+               ```
+            3. Only resolve threads where you are the author. Only resolve when the fix clearly addresses your original comment.
+
       - name: React based on review outcome
         if: steps.lint_wait.outputs.skipped != 'true' && steps.letta_review.outputs.execution_file != ''
         run: |
@@ -159,4 +224,4 @@ jobs:
             echo "Comments left — keeping eyes reaction"
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}

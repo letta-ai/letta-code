@@ -1,4 +1,4 @@
-import { settingsManager } from "../settings-manager";
+import { settingsManager } from "@/settings-manager";
 import type {
   ExperimentDefinition,
   ExperimentId,
@@ -19,6 +19,12 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
     label: "node",
     description: "Route API requests through the Letta Node / TS core path.",
     envVar: "LETTA_NODE",
+  },
+  {
+    id: "tui_cron",
+    label: "TUI cron scheduler",
+    description:
+      "Fire scheduled tasks from the CLI when the desktop app isn't running.",
   },
 ] as const;
 

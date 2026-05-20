@@ -2,11 +2,13 @@ import type WebSocket from "ws";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
-} from "../../agent/maxContext";
-import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { REMEMBER_PROMPT } from "../../agent/promptAssets";
-import { getBackend } from "../../backend";
+} from "@/agent/max-context";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
+import type { ConversationMessageCompactBody } from "@/backend";
+import { getBackend } from "@/backend";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildGoalContinuationPrompt,
   formatGoalSummary,
@@ -15,26 +17,31 @@ import {
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
-} from "../../cli/helpers/goalCommand";
+} from "@/cli/helpers/goal-command";
 import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
-} from "../../cli/helpers/initCommand";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
+} from "@/cli/helpers/init-command";
+import {
+  DEFAULT_SUMMARIZATION_MODEL,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "@/constants";
+import { runPreCompactHooks } from "@/hooks";
+import { ralphMode } from "@/ralph/mode";
+import { settingsManager } from "@/settings-manager";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
   SlashCommandStartMessage,
   StreamDelta,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "./permissionMode";
+} from "./permission-mode";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
@@ -43,27 +50,7 @@ import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
-/**
- * Command IDs that this letta-code version can handle via `execute_command`.
- * Advertised in DeviceStatus.supported_commands so the web UI only shows
- * commands the connected device actually supports.
- *
- * When adding a new case to `handleExecuteCommand`, add the ID here too.
- */
-export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
-  "clear",
-  "doctor",
-  "init",
-  "remember",
-  "goal",
-  "set-max-context",
-  "channels",
-  "toolset",
-  // /secret opens the EditSecretsDialog and routes reads/writes through the
-  // dedicated secret_list / secret_apply WS commands — not via
-  // execute_command — so it has no case in handleExecuteCommand.
-  "secret",
-];
+export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
 /**
  * Handle an `execute_command` message from the web app.
@@ -138,6 +125,10 @@ export async function handleExecuteCommand(
         );
         break;
 
+      case "compact":
+        output = await handleCompactCommand(conversationRuntime, trimmedArgs);
+        break;
+
       case "set-max-context":
         output = await handleSetMaxContextCommand(
           conversationRuntime,
@@ -207,6 +198,120 @@ function emitSlashCommandEnd(
   emitCanonicalMessageDelta(socket, runtime, endDelta as StreamDelta, scope);
 }
 
+type CompactMode =
+  | "all"
+  | "sliding_window"
+  | "self_compact_all"
+  | "self_compact_sliding_window";
+
+const VALID_COMPACT_MODES = new Set<CompactMode>([
+  "all",
+  "sliding_window",
+  "self_compact_all",
+  "self_compact_sliding_window",
+]);
+
+function compactHelpOutput(): string {
+  return [
+    "/compact help",
+    "",
+    "Summarize conversation history (compaction).",
+    "",
+    "USAGE",
+    "  /compact                   — compact with default mode",
+    "  /compact all               — compact all messages",
+    "  /compact sliding_window    — compact with sliding window",
+    "  /compact self_compact_all  — compact with self compact all",
+    "  /compact self_compact_sliding_window  — compact with self compact sliding window",
+    "  /compact help              — show this help",
+  ].join("\n");
+}
+
+/** /compact — Summarize conversation history through the active Backend. */
+async function handleCompactCommand(
+  conversationRuntime: ConversationRuntime,
+  args: string | undefined,
+): Promise<string> {
+  const agentId = conversationRuntime.agentId;
+  if (!agentId) {
+    throw new Error("No agent ID available for /compact command");
+  }
+
+  const rawModeArg = args?.trim().split(/\s+/)[0];
+  if (rawModeArg === "help") {
+    return compactHelpOutput();
+  }
+
+  const modeArg = rawModeArg as CompactMode | undefined;
+  if (modeArg && !VALID_COMPACT_MODES.has(modeArg)) {
+    throw new Error(`Invalid mode "${modeArg}". Run /compact help for usage.`);
+  }
+
+  const preCompactResult = await runPreCompactHooks(
+    undefined,
+    undefined,
+    agentId,
+    conversationRuntime.conversationId,
+  );
+  if (preCompactResult.blocked) {
+    const feedback = preCompactResult.feedback.join("\n") || "Blocked by hook";
+    throw new Error(`Compact blocked: ${feedback}`);
+  }
+
+  const backend = getBackend();
+  const modeDisplay = modeArg ? ` (mode: ${modeArg})` : "";
+
+  try {
+    let compactParams: ConversationMessageCompactBody | undefined;
+    if (modeArg) {
+      const agent = await backend.retrieveAgent(agentId);
+      compactParams = {
+        compaction_settings: {
+          mode: modeArg,
+          model:
+            agent.compaction_settings?.model?.trim() ||
+            DEFAULT_SUMMARIZATION_MODEL,
+        },
+      } as ConversationMessageCompactBody;
+    }
+
+    const compactBody =
+      conversationRuntime.conversationId === "default"
+        ? ({
+            agent_id: agentId,
+            ...(compactParams ?? {}),
+          } as ConversationMessageCompactBody)
+        : compactParams;
+
+    const result = await backend.compactConversationMessages(
+      conversationRuntime.conversationId,
+      compactBody,
+    );
+
+    conversationRuntime.contextTracker.pendingReflectionTrigger = true;
+
+    return [
+      `Compaction completed${modeDisplay}. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
+      "",
+      `Summary: ${result.summary}`,
+    ].join("\n");
+  } catch (error) {
+    const apiError = error as {
+      status?: number;
+      error?: { detail?: string };
+    };
+    const detail = apiError?.error?.detail;
+    if (
+      apiError?.status === 400 &&
+      detail?.includes("Summarization failed to reduce the number of messages")
+    ) {
+      return "Compaction run, but the number of messages is the same";
+    }
+
+    throw new Error(formatErrorDetails(error, agentId));
+  }
+}
+
 /**
  * /clear — Reset agent messages and create a new conversation.
  *
@@ -238,7 +343,7 @@ async function handleClearCommand(
     conversationRuntime.conversationId === "default" &&
     !backend.capabilities.localModelCatalog
   ) {
-    const { getClient } = await import("../../backend/api/client");
+    const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
     await client.agents.messages.reset(agentId, {
       add_default_initial_messages: false,
@@ -702,14 +807,12 @@ async function handleChannelsCommand(
   }
 
   if (subCmd === "status") {
-    const { listChannelAccountSnapshots } = await import(
-      "../../channels/service"
-    );
+    const { listChannelAccountSnapshots } = await import("@/channels/service");
     const { getRoutesForChannel, loadRoutes } = await import(
-      "../../channels/routing"
+      "@/channels/routing"
     );
     const { getPendingPairings, getApprovedUsers, loadPairingStore } =
-      await import("../../channels/pairing");
+      await import("@/channels/pairing");
 
     const channels = ["telegram"];
     const lines: string[] = [];
@@ -745,9 +848,9 @@ async function handleChannelsCommand(
         return "Usage: /channels telegram pair <code>";
       }
 
-      const { completePairing } = await import("../../channels/registry");
-      const { loadRoutes } = await import("../../channels/routing");
-      const { loadPairingStore } = await import("../../channels/pairing");
+      const { completePairing } = await import("@/channels/registry");
+      const { loadRoutes } = await import("@/channels/routing");
+      const { loadPairingStore } = await import("@/channels/pairing");
 
       loadRoutes("telegram");
       loadPairingStore("telegram");
@@ -775,9 +878,9 @@ async function handleChannelsCommand(
       }
 
       const { getChannelAccount, listChannelAccounts } = await import(
-        "../../channels/accounts"
+        "@/channels/accounts"
       );
-      const { addRoute, loadRoutes } = await import("../../channels/routing");
+      const { addRoute, loadRoutes } = await import("@/channels/routing");
 
       let resolvedAccountId = accountId?.trim();
       if (resolvedAccountId) {
@@ -814,7 +917,7 @@ async function handleChannelsCommand(
 
     if (action === "disable") {
       const { removeRoutesForScope, loadRoutes } = await import(
-        "../../channels/routing"
+        "@/channels/routing"
       );
 
       loadRoutes("telegram");

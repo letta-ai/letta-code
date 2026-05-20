@@ -2,7 +2,7 @@ import {
   type ByokProvider,
   type ByokProviderId,
   getProviderConfig,
-} from "../../providers/byok-providers";
+} from "@/providers/byok-providers";
 
 export type ConnectProviderCanonical =
   | "chatgpt"
@@ -18,6 +18,7 @@ export type ConnectProviderCanonical =
   | "ollama"
   | "ollama-cloud"
   | "lmstudio"
+  | "llama-cpp"
   | "bedrock";
 
 const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
@@ -35,6 +36,9 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   ollama: "ollama",
   "ollama-cloud": "ollama-cloud",
   lmstudio: "lmstudio",
+  "llama-cpp": "llama-cpp",
+  "llama.cpp": "llama-cpp",
+  llamacpp: "llama-cpp",
   bedrock: "bedrock",
 };
 
@@ -52,6 +56,7 @@ const CANONICAL_ORDER: ConnectProviderCanonical[] = [
   "ollama",
   "ollama-cloud",
   "lmstudio",
+  "llama-cpp",
   "bedrock",
 ];
 

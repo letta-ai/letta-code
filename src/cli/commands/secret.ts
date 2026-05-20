@@ -6,9 +6,9 @@
 
 import {
   deleteSecretOnServer,
-  listSecretNames,
+  refreshAndListSecrets,
   setSecretOnServer,
-} from "../../utils/secretsStore";
+} from "@/utils/secrets-store";
 
 export interface SecretCommandResult {
   output: string;
@@ -58,7 +58,15 @@ export async function handleSecretCommand(
     }
 
     case "list": {
-      const names = listSecretNames();
+      let names: string[];
+      try {
+        const secrets = await refreshAndListSecrets();
+        names = secrets.map((secret) => secret.key);
+      } catch (error) {
+        return {
+          output: `Failed to list secrets: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
 
       if (names.length === 0) {
         return {

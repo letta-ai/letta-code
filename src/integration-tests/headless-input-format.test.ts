@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 import type {
   ControlResponse,
   ErrorMessage,
@@ -11,12 +11,12 @@ import type {
   StreamEvent,
   SystemInitMessage,
   WireMessage,
-} from "../types/protocol";
+} from "@/types/protocol";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
   summarizeRecentMessages,
-} from "./processDiagnostics";
+} from "./process-diagnostics";
 
 /**
  * Tests for --input-format stream-json bidirectional communication.
@@ -656,6 +656,8 @@ describe("input-format stream-json", () => {
                 role: "user",
                 content:
                   "You MUST use the Agent tool with subagent_type='general-purpose' to recursively find all TypeScript files (*.ts) in the current working directory. " +
+                  "Use a recursive search pattern such as **/*.ts; a top-level-only search is incomplete. " +
+                  "The correct result includes both alpha.ts and nested/beta.ts. " +
                   "Return only the matching relative file paths, one per line, and do not mention any non-TypeScript files.",
               },
             }),

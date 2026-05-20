@@ -4,26 +4,26 @@ import type WebSocket from "ws";
 import type {
   ApprovalDecision,
   ApprovalResult,
-} from "../../agent/approval-execution";
-import type { ChannelTurnSource } from "../../channels/types";
-import type { ContextTracker } from "../../cli/helpers/contextTracker";
-import type { ApprovalRequest } from "../../cli/helpers/stream";
-import type { ApprovalContext } from "../../permissions/analyzer";
+} from "@/agent/approval-execution";
+import type { ChannelTurnSource } from "@/channels/types";
+import type { ContextTracker } from "@/cli/helpers/context-tracker";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import type { ApprovalContext } from "@/permissions/analyzer";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
   QueueItem,
   QueueRuntime,
-} from "../../queue/queueRuntime";
-import type { SharedReminderState } from "../../reminders/state";
-import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
+} from "@/queue/queue-runtime";
+import type { SharedReminderState } from "@/reminders/state";
+import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
   ControlRequest,
   LoopStatus,
   RuntimeScope,
   WsProtocolCommand,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import type { ListenerTransport } from "./transport";
 
 export interface StartListenerOptions {
@@ -62,6 +62,15 @@ export interface IncomingMessage {
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
+  /**
+   * Cloud user id of the human who actually pressed "send", forwarded
+   * from cloud-api's status WS. When set, the listener echoes it on
+   * the outbound createMessage HTTP call (X-Letta-Acting-User-Id) so
+   * cloud attributes credits + rate limits to the actual sender, not
+   * to whoever spawned the sandbox / desktop runtime. Undefined for
+   * self-hosted, single-user, or pre-channel-split flows.
+   */
+  actingUserId?: string;
 }
 
 export type ProcessQueuedTurn = (
@@ -186,7 +195,7 @@ export type ListenerRuntime = {
   /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
   permissionModeByConversation: Map<
     string,
-    import("./permissionMode").ConversationPermissionModeState
+    import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
@@ -202,7 +211,7 @@ export type ListenerRuntime = {
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,
-    import("./worktree-watcher").WorktreeWatcherState
+    import("@/websocket/listener/worktree-watcher").WorktreeWatcherState
   >;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
   memfsSyncedAgents: Map<string, Promise<void>>;

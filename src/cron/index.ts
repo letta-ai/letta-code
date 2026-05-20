@@ -13,6 +13,7 @@ export {
   getActiveTasks,
   getCronFileMtime,
   getTask,
+  isProcessAlive,
   listTasks,
   readCronFile,
   releaseSchedulerLease,
@@ -20,7 +21,7 @@ export {
   updateTask,
   verifySchedulerLease,
   withLock,
-} from "./cronFile";
+} from "./cron-file";
 
 export {
   cronMatchesTime,
@@ -30,4 +31,10 @@ export {
   type ParsedInterval,
   parseAt,
   parseEvery,
-} from "./parseInterval";
+} from "./parse-interval";
+
+export {
+  handleMissedOneShot,
+  shouldFireTask,
+  wrapCronPrompt,
+} from "./scheduler";

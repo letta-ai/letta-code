@@ -81,6 +81,7 @@ export const commands: Record<string, Command> = {
   "/reflection": {
     desc: "Alias for /reflect",
     args: "[transcript_file]",
+    hidden: true,
     handler: () => {
       // Handled specially in App.tsx
       return "Launching reflection agent...";
@@ -165,15 +166,6 @@ export const commands: Record<string, Command> = {
       return "Opening provider connection...";
     },
   },
-  // "/remote": {
-  //   desc: "Connect to Letta Cloud (device connect mode)",
-  //   args: "[--env-name <name>]",
-  //   order: 17.5,
-  //   handler: () => {
-  //     // Handled specially in App.tsx
-  //     return "Starting listener...";
-  //   },
-  // },
   "/clear": {
     desc: "Clear in-context messages",
     order: 18,
@@ -181,6 +173,24 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to reset agent messages
       return "Clearing in-context messages...";
+    },
+  },
+  "/chdir": {
+    desc: "Change working directory for this TUI session (/chdir <path>)",
+    args: "<path>",
+    order: 18.5,
+    handler: () => {
+      // Handled specially in App.tsx to switch local cwd
+      return "Changing working directory...";
+    },
+  },
+  "/cd": {
+    desc: "Alias for /chdir",
+    args: "<path>",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to switch local cwd
+      return "Changing working directory...";
     },
   },
 
@@ -268,6 +278,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to open experiments selector
       return "Opening experiments selector...";
+    },
+  },
+  "/reload": {
+    desc: "Reload settings and restart TUI effects",
+    order: 27.2,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in AppCoordinator to trigger a soft restart
+      return "Reloading...";
     },
   },
   "/ade": {
@@ -397,10 +416,19 @@ export const commands: Record<string, Command> = {
       return "Managing status line...";
     },
   },
+  "/title": {
+    desc: "Configure terminal window title",
+    noArgs: true,
+    order: 36.6,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Opening title configurator...";
+    },
+  },
   "/reasoning-tab": {
     desc: "Toggle Tab shortcut for reasoning tiers (/reasoning-tab on|off|status)",
     args: "[on|off|status]",
-    order: 36.6,
+    order: 36.7,
     handler: () => {
       // Handled specially in App.tsx
       return "Managing reasoning Tab shortcut...";
@@ -428,8 +456,8 @@ export const commands: Record<string, Command> = {
         getKeybindingsPath,
         installKeybinding,
         removeKeybinding,
-      } = await import("../utils/terminalKeybindingInstaller");
-      const { updateSettings } = await import("../../settings");
+      } = await import("@/cli/utils/terminal-keybinding-installer");
+      const { updateSettings } = await import("@/settings");
 
       const isRevert = args.includes("--revert") || args.includes("--remove");
       const terminal = detectTerminalType();
@@ -489,6 +517,14 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx
       return "Entering plan mode...";
+    },
+  },
+  "/plan-mode": {
+    desc: "Enable or disable plan mode (/plan-mode on|off)",
+    order: 40.5,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Updating plan mode setting...";
     },
   },
   "/disconnect": {

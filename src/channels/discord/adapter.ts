@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -6,9 +7,9 @@ import type {
   DiscordChannelAccount,
   InboundChannelMessage,
   OutboundChannelMessage,
-} from "../types";
-import { isDiscordGuildChannelAllowed } from "./channelGating";
-import { formatDiscordDeliveryError } from "./errorReply";
+} from "@/channels/types";
+import { isDiscordGuildChannelAllowed } from "./channel-gating";
+import { formatDiscordDeliveryError } from "./error-reply";
 import {
   resolveDiscordInboundAttachments,
   resolveDiscordThreadHistory,
@@ -245,6 +246,18 @@ function resolveDiscordReactionEmoji(value: string): string {
   return nameMap[normalized] ?? normalized;
 }
 
+export function shouldAutoThreadOnDiscordMention(
+  account: Pick<
+    DiscordChannelAccount,
+    "autoThreadOnMention" | "threadPolicyByChannel"
+  >,
+  channelId: string,
+): boolean {
+  const override = account.threadPolicyByChannel?.[channelId];
+  if (typeof override === "boolean") return override;
+  return account.autoThreadOnMention ?? false;
+}
+
 export function buildDiscordIngressMessageKey(
   accountId: string | undefined,
   messageId: string | undefined,
@@ -272,7 +285,7 @@ export function buildDiscordReplyOptions(
 }
 
 function formatDiscordLifecycleErrorMessage(errorText: string): string {
-  const normalized = errorText.trim() || "Unknown error";
+  const normalized = normalizeChannelLifecycleErrorMessage(errorText);
   const truncated =
     normalized.length > DISCORD_LIFECYCLE_ERROR_TEXT_MAX
       ? `${normalized

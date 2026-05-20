@@ -2,8 +2,7 @@ import { Box, useInput } from "ink";
 import Link from "ink-link";
 import RawTextInput from "ink-text-input";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { getCurrentAgentId } from "../../agent/context";
-import { settingsManager } from "../../settings-manager";
+import { getCurrentAgentId } from "@/agent/context";
 import {
   getDefaultWorkflowPath,
   getRepoSetupState,
@@ -11,8 +10,9 @@ import {
   installGithubApp,
   runGhPreflight,
   validateRepoSlug,
-} from "../commands/install-github-app";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/cli/commands/install-github-app";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { Text } from "./Text";

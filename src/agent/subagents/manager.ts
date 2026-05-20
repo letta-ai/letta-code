@@ -8,48 +8,69 @@
  */
 
 import { spawn } from "node:child_process";
-import {
-  type BackendMode,
-  getBackend,
-  getLocalBackendStorageDir,
-} from "../../backend";
-import { getBillingTier } from "../../backend/api/metadata";
-import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
-import { buildAgentReference } from "../../cli/helpers/appUrls";
+import { getAvailableModelHandles } from "@/agent/available-models";
+import { getCurrentAgentId } from "@/agent/context";
+import { getDefaultModelForTier, resolveModel } from "@/agent/model";
+import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import {
   addToolCall,
   emitStreamEvent,
   updateSubagent,
-} from "../../cli/helpers/subagentState.js";
+} from "@/agent/subagent-state.js";
+import {
+  type BackendMode,
+  getBackend,
+  getLocalBackendStorageDir,
+} from "@/backend";
+import { getBillingTier } from "@/backend/api/metadata";
+import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
   INTERRUPTED_BY_USER,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
-import { cliPermissions } from "../../permissions/cli";
+} from "@/constants";
+import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import {
   parseScopeList,
   resolveAllowedMemoryRoots,
-} from "../../permissions/memoryScope";
-import { permissionMode } from "../../permissions/mode";
-import { sessionPermissions } from "../../permissions/session";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
+} from "@/permissions/memory-scope";
+import { permissionMode } from "@/permissions/mode";
+import { sessionPermissions } from "@/permissions/session";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
-} from "../../tools/impl/shellEnv";
-import { getErrorMessage } from "../../utils/error";
-import { getAvailableModelHandles } from "../available-models";
-import { getCurrentAgentId } from "../context";
-import { getDefaultModelForTier, resolveModel } from "../model";
-import recallSubagentPrompt from "../prompts/recall_subagent.md";
+} from "@/tools/impl/shell-env";
+import { debugLog, debugWarn } from "@/utils/debug";
+import { getErrorMessage } from "@/utils/error";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
-} from "./contextBudget";
+} from "./context-budget";
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Subagent types that don't need server-side base tools (web_search,
+ * fetch_webpage). These agents operate on local memory/git state and have
+ * no use for internet access. Spawning them with `--base-tools none`
+ * keeps their tool list minimal.
+ *
+ * fork/recall are excluded because they deploy the parent agent and
+ * never trigger fresh agent creation, so base tools are out of scope.
+ */
+const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
+  "reflection",
+  "memory",
+  "history-analyzer",
+  "init",
+]);
 
 // ============================================================================
 // Types
@@ -177,12 +198,21 @@ export async function resolveSubagentModel(options: {
   billingTier?: string | null;
   availableHandles?: Set<string>;
   subagentType?: string;
+  backendMode?: BackendMode;
 }): Promise<string | null> {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
   const isFreeTier = billingTier?.toLowerCase() === "free";
 
   if (userModel) return userModel;
+
+  // Local backend has no server-side auto router. If the parent agent is
+  // already running successfully on a local model, spawned subagents should use
+  // that exact model instead of resolving auto/auto-memory to a provider
+  // default that may not match the active session.
+  if (options.backendMode === "local" && parentModelHandle) {
+    return parentModelHandle;
+  }
 
   if (options.subagentType === "reflection") {
     if (recommendedModel && recommendedModel !== "inherit") {
@@ -464,6 +494,13 @@ function parseResultFromStdout(
   const lines = stdout.trim().split("\n");
   const lastLine = lines[lines.length - 1] ?? "";
 
+  if (stdout.trim().length === 0) {
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: stdout is empty (agentId=${agentId})`,
+    );
+  }
+
   try {
     const result = JSON.parse(lastLine);
 
@@ -476,6 +513,10 @@ function parseResultFromStdout(
       };
     }
 
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: last line parsed as JSON but type=${result.type}, not "result" (agentId=${agentId})`,
+    );
     return {
       agentId: agentId || "",
       report: "",
@@ -483,6 +524,11 @@ function parseResultFromStdout(
       error: "Unexpected output format from subagent",
     };
   } catch (parseError) {
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: JSON.parse failed on last line (${lastLine.length} chars): ${getErrorMessage(parseError)}. ` +
+        `Total stdout: ${stdout.length} chars, ${lines.length} lines. Last line: ${lastLine.slice(0, 200)}`,
+    );
     return {
       agentId: agentId || "",
       report: "",
@@ -597,6 +643,11 @@ export interface ComposeSubagentChildEnvOptions {
   inheritedApiKey?: string | null;
   /** Forwarded base URL to avoid per-subagent settings lookups. */
   inheritedBaseUrl?: string | null;
+  /** Optional path to a transcript payload file, exposed to the child as
+   * the TRANSCRIPT_PATH env var. Used by reflection subagents so the prompt
+   * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
+   * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
+  transcriptPath?: string | null;
 }
 
 /**
@@ -632,6 +683,7 @@ export function composeSubagentChildEnv(
     inheritedPrimaryRoot,
     inheritedApiKey,
     inheritedBaseUrl,
+    transcriptPath,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -640,6 +692,7 @@ export function composeSubagentChildEnv(
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
+    ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
 
   if (backendMode === "local") {
@@ -790,6 +843,19 @@ function capReflectionStartupPrompt(
   return hardTruncateReflectionPrompt(userPrompt, allowedPromptChars);
 }
 
+export function buildSubagentPrompt(
+  type: string,
+  config: SubagentConfig,
+  userPrompt: string,
+): string {
+  return capReflectionStartupPrompt(type, config.systemPrompt, userPrompt);
+}
+
+interface BuildSubagentArgsOptions {
+  backendMode?: BackendMode;
+  promptTransport?: "argv" | "stdin";
+}
+
 /**
  * Build CLI arguments for spawning a subagent
  */
@@ -801,7 +867,7 @@ export function buildSubagentArgs(
   existingAgentId?: string,
   existingConversationId?: string,
   maxTurns?: number,
-  options: { backendMode?: BackendMode } = {},
+  options: BuildSubagentArgsOptions = {},
 ): string[] {
   const args: string[] = [];
   const isDeployingExisting = Boolean(
@@ -842,14 +908,17 @@ export function buildSubagentArgs(
       args.push("--no-system-info-reminder");
       args.push("--no-skills");
     }
+
+    // Skip server-side base tools (web_search, fetch_webpage) for subagents
+    // that operate purely on local memory/git state.
+    if (NO_BASE_TOOL_SUBAGENT_TYPES.has(type)) {
+      args.push("--base-tools", "none");
+    }
   }
 
-  const boundedUserPrompt = capReflectionStartupPrompt(
-    type,
-    config.systemPrompt,
-    userPrompt,
-  );
-  args.push("-p", boundedUserPrompt);
+  if (options.promptTransport !== "stdin") {
+    args.push("-p", buildSubagentPrompt(type, config, userPrompt));
+  }
   args.push("--output-format", "stream-json");
 
   // Use subagent's configured permission mode, or inherit from parent
@@ -931,6 +1000,7 @@ async function executeSubagent(
   existingConversationId?: string,
   maxTurns?: number,
   parentAgentIdOverride?: string,
+  transcriptPath?: string,
 ): Promise<SubagentResult> {
   // Check if already aborted before starting
   if (signal?.aborted) {
@@ -952,6 +1022,7 @@ async function executeSubagent(
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
       ? "local"
       : "api";
+    const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -960,7 +1031,7 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       maxTurns,
-      { backendMode },
+      { backendMode, promptTransport: "stdin" },
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
@@ -1016,12 +1087,15 @@ async function executeSubagent(
       inheritedPrimaryRoot,
       inheritedApiKey,
       inheritedBaseUrl,
+      transcriptPath,
     });
 
     const proc = spawn(launcher.command, launcher.args, {
       cwd: subagentWorkingDirectory,
       env: childEnv,
     });
+    proc.stdin.on("error", () => {});
+    proc.stdin.end(boundedUserPrompt);
 
     // Consider execution "running" once the child process has successfully spawned.
     // This avoids waiting on subagent init events (e.g. agentURL) to reflect progress.
@@ -1120,6 +1194,7 @@ async function executeSubagent(
             undefined, // existingConversationId
             maxTurns,
             parentAgentIdOverride,
+            transcriptPath,
           );
         }
       }
@@ -1150,6 +1225,11 @@ async function executeSubagent(
 
     // Return error if captured
     if (state.finalError) {
+      debugWarn(
+        "subagent",
+        `Subagent ${subagentId} (agentId=${state.agentId}) exited with captured error: ${state.finalError}. ` +
+          `exitCode=${exitCode}, stderr=${stderr.length} bytes`,
+      );
       return {
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
@@ -1160,9 +1240,30 @@ async function executeSubagent(
       };
     }
 
+    // No result or error captured during streaming — this is unusual
+    debugWarn(
+      "subagent",
+      `Subagent ${subagentId} (agentId=${state.agentId}) exited cleanly (exitCode=${exitCode}) ` +
+        `but no result event was captured during streaming. ` +
+        `stdout=${Buffer.concat(stdoutChunks).length} bytes, stderr=${stderr.length} bytes`,
+    );
+
     // Fallback: parse from stdout
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
-    return parseResultFromStdout(stdout, state.agentId);
+    debugLog(
+      "subagent",
+      `Falling back to parseResultFromStdout for ${subagentId} (agentId=${state.agentId}). ` +
+        `stdout=${stdout.length} bytes, stderr=${stderr.length} bytes, exitCode=${exitCode}`,
+    );
+    const result = parseResultFromStdout(stdout, state.agentId);
+    if (!result.success) {
+      debugWarn(
+        "subagent",
+        `parseResultFromStdout failed for ${subagentId}: ${result.error}. ` +
+          `stdout first 500 chars: ${stdout.slice(0, 500)}`,
+      );
+    }
+    return result;
   } catch (error) {
     return {
       agentId: "",
@@ -1266,6 +1367,7 @@ export async function spawnSubagent(
   maxTurns?: number,
   forkedContext?: boolean,
   parentAgentId?: string,
+  transcriptPath?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -1283,6 +1385,10 @@ export async function spawnSubagent(
     existingAgentId || existingConversationId,
   );
 
+  const activeBackend = getBackend();
+  const backendMode: BackendMode = activeBackend.capabilities.localMemfs
+    ? "local"
+    : "api";
   const { handle: parentModelHandle, agent: parentAgent } =
     await getPrimaryAgentModelHandle();
   const billingTier = await getCurrentBillingTier();
@@ -1296,6 +1402,7 @@ export async function spawnSubagent(
         parentModelHandle,
         billingTier,
         subagentType: type,
+        backendMode,
       });
   const baseURL = getBaseURL();
 
@@ -1347,6 +1454,7 @@ export async function spawnSubagent(
     existingConversationId,
     maxTurns,
     resolvedParentAgentId,
+    transcriptPath,
   );
 
   return result;

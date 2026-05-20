@@ -8,20 +8,20 @@ import type {
 import {
   type ApprovalResult,
   executeApprovalBatch,
-} from "../../agent/approval-execution";
-import { getChannelRegistry } from "../../channels/registry";
-import type { ChannelTurnSource } from "../../channels/types";
-import { computeDiffPreviews } from "../../helpers/diffPreview";
-import { formatPermissionDenial } from "../../permissions/formatDenial";
+} from "@/agent/approval-execution";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
+import { computeDiffPreviews } from "@/helpers/diff-preview";
+import { formatPermissionDenial } from "@/permissions/format-denial";
 import {
   getInteractiveApprovalKind,
   isInteractiveApprovalTool,
-} from "../../tools/interactivePolicy";
+} from "@/tools/interactive-policy";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
   ControlRequest,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   clearPendingApprovalBatchIds,
   collectApprovalResultToolCallIds,
@@ -48,6 +48,7 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
+import type { ProviderFallbackState } from "./provider-fallback";
 import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { debugLogApprovalResumeState } from "./recovery";
@@ -124,7 +125,7 @@ export function resolveChannelApprovalSource(
 
 async function maybeReadPlanPreview(
   toolName: string,
-  turnPermissionModeState: import("../../tools/manager").PermissionModeState,
+  turnPermissionModeState: import("@/tools/manager").PermissionModeState,
 ): Promise<{ planFilePath?: string; planContent?: string }> {
   if (toolName !== "ExitPlanMode" || !turnPermissionModeState.planFilePath) {
     return {};
@@ -157,7 +158,7 @@ export async function handleApprovalStop(params: {
   agentId: string;
   conversationId: string;
   turnWorkingDirectory: string;
-  turnPermissionModeState: import("../../tools/manager").PermissionModeState;
+  turnPermissionModeState: import("@/tools/manager").PermissionModeState;
   dequeuedBatchId: string;
   runId?: string;
   msgRunIds: string[];
@@ -167,6 +168,7 @@ export async function handleApprovalStop(params: {
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
+  providerFallback?: ProviderFallbackState;
 }): Promise<ApprovalBranchResult> {
   const {
     approvals,
@@ -182,6 +184,7 @@ export async function handleApprovalStop(params: {
     currentInput,
     turnToolContextId,
     buildSendOptions,
+    providerFallback,
   } = params;
   const abortController = runtime.activeAbortController;
 
@@ -586,6 +589,7 @@ export async function handleApprovalStop(params: {
       socket,
       runtime,
       abortController.signal,
+      { providerFallback },
     );
   } catch (error) {
     if (shouldInterrupt()) {

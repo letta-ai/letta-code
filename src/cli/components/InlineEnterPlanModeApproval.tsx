@@ -1,7 +1,7 @@
 import { Box, useInput } from "ink";
 import { memo, useState } from "react";
-import { useProgressIndicator } from "../hooks/useProgressIndicator";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useProgressIndicator } from "@/cli/hooks/use-progress-indicator";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
