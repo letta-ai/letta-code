@@ -34,6 +34,10 @@ import { getStreamToolContextId, sendMessageStream } from "@/agent/message";
 import { getModelInfo, getModelInfoForLlmConfig } from "@/agent/model";
 import { INTERRUPT_RECOVERY_ALERT } from "@/agent/promptAssets";
 import type { SessionStats } from "@/agent/stats";
+import {
+  clearCompletedSubagents,
+  hasActiveSubagents,
+} from "@/agent/subagentState";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
   type Buffers,
@@ -59,7 +63,6 @@ import {
 } from "@/cli/helpers/errorFormatter";
 import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
 import { buildGoalBudgetLimitPrompt } from "@/cli/helpers/goalCommand";
-import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
@@ -73,10 +76,6 @@ import {
   drainStream,
   drainStreamWithResume,
 } from "@/cli/helpers/stream";
-import {
-  clearCompletedSubagents,
-  hasActiveSubagents,
-} from "@/cli/helpers/subagentState";
 import { shouldClearCompletedSubagentsOnTurnStart } from "@/cli/helpers/subagentTurnStart";
 import {
   getRandomPastTenseVerb,
@@ -101,6 +100,7 @@ import { telemetry } from "@/telemetry";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
 
 import {
   CONVERSATION_BUSY_MAX_RETRIES,

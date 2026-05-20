@@ -15,7 +15,7 @@ import {
   refreshFileIndex,
   searchFileIndex,
   setIndexRoot,
-} from "@/cli/helpers/fileIndex";
+} from "@/utils/fileIndex";
 
 const TEST_DIR = join(process.cwd(), ".test-fileindex");
 let originalCwd: string;

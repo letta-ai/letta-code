@@ -19,17 +19,16 @@ import {
 } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
+import {
+  getActiveBackgroundAgents,
+  getSnapshot as getSubagentSnapshot,
+  subscribe as subscribeToSubagents,
+} from "@/agent/subagentState.js";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { buildChatUrl } from "@/cli/helpers/appUrls.js";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goalCommand";
-import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
-import {
-  getActiveBackgroundAgents,
-  getSnapshot as getSubagentSnapshot,
-  subscribe as subscribeToSubagents,
-} from "@/cli/helpers/subagentState.js";
 import { getRandomThinkingTip } from "@/cli/helpers/thinkingMessages";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -40,6 +39,7 @@ import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { ralphMode } from "@/ralph/mode";
 import { settingsManager } from "@/settings-manager";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";

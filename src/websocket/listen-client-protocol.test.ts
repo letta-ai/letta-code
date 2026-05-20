@@ -14,19 +14,10 @@ import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
 } from "@/agent/personality";
+import { clearAllSubagents, registerSubagent } from "@/agent/subagentState";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
 import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
-import {
-  ensureFileIndex,
-  getIndexRoot,
-  searchFileIndex,
-  setIndexRoot,
-} from "@/cli/helpers/fileIndex";
-import {
-  clearAllSubagents,
-  registerSubagent,
-} from "@/cli/helpers/subagentState";
 import { setSystemPromptDoctorState } from "@/cli/helpers/systemPromptWarning";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import type { MessageQueueItem } from "@/queue/queueRuntime";
@@ -38,6 +29,12 @@ import {
 } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
+import {
+  ensureFileIndex,
+  getIndexRoot,
+  searchFileIndex,
+  setIndexRoot,
+} from "@/utils/fileIndex";
 import {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,

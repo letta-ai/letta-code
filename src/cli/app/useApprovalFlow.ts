@@ -26,8 +26,6 @@ import {
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
 import { parseMemoryPreference } from "@/cli/helpers/memoryReminder";
-import type { QueuedMessage } from "@/cli/helpers/messageQueueBridge";
-import { generatePlanFilePath } from "@/cli/helpers/planName";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
@@ -52,6 +50,8 @@ import {
 } from "@/tools/manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog } from "@/utils/debug";
+import type { QueuedMessage } from "@/utils/messageQueueBridge";
+import { generatePlanFilePath } from "@/utils/planName";
 
 import { buildApprovalBatchKey } from "./approvalDiffs";
 import { getQuestionsFromApproval } from "./approvalQuestions";

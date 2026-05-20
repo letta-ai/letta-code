@@ -75,7 +75,6 @@ import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
 } from "@/cli/helpers/pasteRegistry";
-import { generatePlanFilePath } from "@/cli/helpers/planName";
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoningTabToggle";
 import {
   buildAutoReflectionPayload,
@@ -88,7 +87,6 @@ import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/systemPromptWarning.ts";
-import { extractTaskNotificationsForDisplay } from "@/cli/helpers/taskNotifications";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
@@ -115,6 +113,8 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import type { ToolsetName } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { generatePlanFilePath } from "@/utils/planName";
+import { extractTaskNotificationsForDisplay } from "@/utils/taskNotifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
 import { isInteractiveCommand, isNonStateCommand } from "./commandRouting";

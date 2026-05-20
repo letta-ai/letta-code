@@ -17,6 +17,13 @@
 
 import { Box, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
+import {
+  getSnapshot,
+  getSubagentToolCount,
+  type SubagentState,
+  subscribe,
+  toggleExpanded,
+} from "@/agent/subagentState.js";
 import { useAnimation } from "@/cli/contexts/AnimationContext.js";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
@@ -24,13 +31,6 @@ import {
   getSubagentModelDisplay,
   getTreeChars,
 } from "@/cli/helpers/subagentDisplay.js";
-import {
-  getSnapshot,
-  getSubagentToolCount,
-  type SubagentState,
-  subscribe,
-  toggleExpanded,
-} from "@/cli/helpers/subagentState.js";
 import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";

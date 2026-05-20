@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-import type { SubagentState } from "@/cli/helpers/subagentState";
-import { clearAllSubagents } from "@/cli/helpers/subagentState";
+import type { SubagentState } from "@/agent/subagentState";
+import { clearAllSubagents } from "@/agent/subagentState";
 import {
   __resetBackgroundRetentionConfigForTests,
   backgroundTasks,

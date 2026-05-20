@@ -6,7 +6,7 @@ import {
   type FileMatch,
   getIndexRoot,
   searchFileIndex,
-} from "./fileIndex";
+} from "@/utils/fileIndex";
 import { shouldHardExcludeEntry } from "./fileSearchConfig";
 
 export function debounce<T extends (...args: never[]) => unknown>(

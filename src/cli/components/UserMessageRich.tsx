@@ -1,7 +1,6 @@
 import { Box } from "ink";
 import { memo } from "react";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { extractTaskNotificationsForDisplay } from "@/cli/helpers/taskNotifications";
 import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
 import {
   SYSTEM_ALERT_CLOSE,
@@ -9,6 +8,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { extractTaskNotificationsForDisplay } from "@/utils/taskNotifications";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

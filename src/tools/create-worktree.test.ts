@@ -4,11 +4,6 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
-  ensureFileIndex,
-  getIndexRoot,
-  setIndexRoot,
-} from "@/cli/helpers/fileIndex";
-import {
   getCurrentWorkingDirectory,
   runWithRuntimeContext,
 } from "@/runtime-context";
@@ -21,6 +16,7 @@ import {
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
 } from "@/tools/manager";
+import { ensureFileIndex, getIndexRoot, setIndexRoot } from "@/utils/fileIndex";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 import { setActiveRuntime } from "@/websocket/listener/runtime";

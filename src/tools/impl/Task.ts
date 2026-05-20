@@ -7,23 +7,23 @@
 
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import {
+  completeSubagent,
+  generateSubagentId,
+  getSnapshot as getSubagentSnapshot,
+  getSubagentToolCount,
+  registerSubagent,
+} from "@/agent/subagentState.js";
+import {
   clearSubagentConfigCache,
   discoverSubagents,
   getAllSubagentConfigs,
 } from "@/agent/subagents";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
-import { addToMessageQueue } from "@/cli/helpers/messageQueueBridge.js";
-import {
-  completeSubagent,
-  generateSubagentId,
-  getSnapshot as getSubagentSnapshot,
-  getSubagentToolCount,
-  registerSubagent,
-} from "@/cli/helpers/subagentState.js";
-import { formatTaskNotification } from "@/cli/helpers/taskNotifications.js";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { addToMessageQueue } from "@/utils/messageQueueBridge.js";
+import { formatTaskNotification } from "@/utils/taskNotifications.js";
 import {
   appendToOutputFile,
   assertBackgroundTaskCapacity,

@@ -1,7 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
-import { resizeImageIfNeeded } from "@/cli/helpers/imageResize";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -10,6 +9,7 @@ import type {
 import { isCoalescable } from "@/queue/queueRuntime";
 import { mergeQueuedTurnInput } from "@/queue/turnQueueRuntime";
 import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { resizeImageIfNeeded } from "@/utils/imageResize";
 import {
   type ImageNormalizationFailureMode,
   normalizeMessageContentImages as normalizeSharedMessageContentImages,

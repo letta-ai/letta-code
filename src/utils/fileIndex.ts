@@ -11,9 +11,9 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, relative, sep } from "node:path";
+import { shouldExcludeEntry } from "@/cli/helpers/fileSearchConfig";
 import { debugLog } from "@/utils/debug";
 import { readIntSetting } from "@/utils/lettaSettings";
-import { shouldExcludeEntry } from "./fileSearchConfig";
 
 interface FileIndexEntry {
   path: string;

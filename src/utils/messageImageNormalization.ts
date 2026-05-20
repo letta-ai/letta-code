@@ -1,6 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
-import { resizeImageIfNeeded } from "@/cli/helpers/imageResize";
+import { resizeImageIfNeeded } from "@/utils/imageResize";
 
 export const SUPPORTED_BASE64_IMAGE_MEDIA_TYPES = new Set([
   "image/jpeg",
