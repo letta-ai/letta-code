@@ -47,10 +47,7 @@ const RULES = [
 
 // Matches: import ... from "@/forbidden/..." (static imports only)
 function buildPattern(forbidden) {
-  return new RegExp(
-    `from\\s+["'\`]@/(${forbidden.join("|")})/`,
-    "g",
-  );
+  return new RegExp(`from\\s+["'\`]@/(${forbidden.join("|")})/`, "g");
 }
 
 let violations = 0;

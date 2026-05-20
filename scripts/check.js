@@ -13,12 +13,12 @@ function parseFileCount(output) {
 }
 
 const checks = [
-  { name: "circular dependencies",   script: ["check:cycles", "--no-spinner"] },
-  { name: "layer boundaries",        script: ["check:boundaries"] },
+  { name: "circular dependencies", script: ["check:cycles", "--no-spinner"] },
+  { name: "layer boundaries", script: ["check:boundaries"] },
   { name: "exported function style", script: ["check:exported-functions"] },
-  { name: "test mock isolation",     script: ["check:test-mock-isolation"] },
-  { name: "biome",                   script: ["lint"] },
-  { name: "typescript",              script: ["typecheck"] },
+  { name: "test mock isolation", script: ["check:test-mock-isolation"] },
+  { name: "biome", script: ["lint"] },
+  { name: "typescript", script: ["typecheck"] },
 ];
 
 const N = checks.length;
@@ -53,7 +53,10 @@ for (let i = 0; i < N; i++) {
 
   if (!ok) {
     failed++;
-    const lines = combined.trim().split("\n").filter((l) => l.trim());
+    const lines = combined
+      .trim()
+      .split("\n")
+      .filter((l) => l.trim());
     for (const line of lines) {
       process.stderr.write(`       ${line}\n`);
     }
