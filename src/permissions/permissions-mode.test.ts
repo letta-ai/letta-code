@@ -1424,7 +1424,7 @@ test("Deny rules override permission mode", () => {
 });
 
 test("Permission mode takes precedence over CLI allowedTools", () => {
-  const { cliPermissions } = require("../permissions/cli");
+  const { cliPermissions } = require("../permissions/cliPermissionsInstance");
   cliPermissions.setAllowedTools("Bash");
 
   permissionMode.setMode("plan");
