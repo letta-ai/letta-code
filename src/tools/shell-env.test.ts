@@ -525,7 +525,7 @@ test("getShellEnv appends MemFS git proxy config without clobbering existing git
   expect(env.GIT_CONFIG_VALUE_1).toBe("https://api.letta.com/v1/git/");
 });
 
-test("getShellEnv injects Pierre MemFS git header for Bash git commands", () => {
+test("getShellEnv injects hosted MemFS git header for Bash git commands", () => {
   const env = withTemporaryEnv(
     {
       LETTA_MEMFS_BACKEND: "hosted",
@@ -545,7 +545,7 @@ test("getShellEnv injects Pierre MemFS git header for Bash git commands", () => 
   expect(env.GIT_CONFIG_VALUE_0).toBe("x-letta-memfs-backend: hosted");
 });
 
-test("getShellEnv injects Pierre MemFS git header for Desktop proxy git commands", () => {
+test("getShellEnv injects hosted MemFS git header for Desktop proxy git commands", () => {
   const env = withTemporaryEnv(
     {
       LETTA_MEMFS_BACKEND: "hosted",
@@ -577,7 +577,7 @@ test("getShellEnv injects Pierre MemFS git header for Desktop proxy git commands
   expect(env.GIT_CONFIG_VALUE_2).toBe("x-letta-memfs-backend: hosted");
 });
 
-test("getShellEnv does not inject Pierre MemFS git header for other backends", () => {
+test("getShellEnv does not inject hosted MemFS git header for other backends", () => {
   const env = withTemporaryEnv(
     {
       LETTA_MEMFS_BACKEND: "memfs",

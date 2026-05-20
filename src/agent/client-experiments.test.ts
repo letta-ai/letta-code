@@ -76,9 +76,9 @@ describe("getClient experiment headers", () => {
     expect(getClientDefaultHeaders()["x-letta-node"]).toBeUndefined();
   });
 
-  test("sends Pierre backend header when requested", async () => {
-    process.env.LETTA_MEMFS_BACKEND = "pierre";
+  test("sends hosted backend header when requested", async () => {
+    process.env.LETTA_MEMFS_BACKEND = "hosted";
 
-    expect(getClientDefaultHeaders()["x-letta-memfs-backend"]).toBe("pierre");
+    expect(getClientDefaultHeaders()["x-letta-memfs-backend"]).toBe("hosted");
   });
 });

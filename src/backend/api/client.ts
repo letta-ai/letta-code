@@ -141,8 +141,8 @@ export function getClientDefaultHeaders(): Record<string, string> {
       : nodeExperiment.enabled
         ? { "x-letta-node": "1" }
         : {}),
-    ...(process.env.LETTA_MEMFS_BACKEND === "pierre"
-      ? { "x-letta-memfs-backend": "pierre" }
+    ...(process.env.LETTA_MEMFS_BACKEND === "hosted"
+      ? { "x-letta-memfs-backend": "hosted" }
       : {}),
   };
 }

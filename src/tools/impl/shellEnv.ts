@@ -188,8 +188,8 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
 
 const LETTA_CLOUD_MEMFS_GIT_BASE_URL = "https://api.letta.com";
 const LETTA_MEMFS_GIT_PROXY_BASE_URL_ENV = "LETTA_MEMFS_GIT_PROXY_BASE_URL";
-const PIERRE_BACKEND_HEADER = "x-letta-memfs-backend";
-const PIERRE_BACKEND_VALUE = "hosted";
+const HOSTED_BACKEND_HEADER = "x-letta-memfs-backend";
+const HOSTED_BACKEND_VALUE = "hosted";
 
 function isLocalhostUrl(value: string | undefined): boolean {
   if (!value) return false;
@@ -266,17 +266,17 @@ function applyMemfsGitProxyEnv(env: NodeJS.ProcessEnv): void {
   env.SSH_ASKPASS = "";
 }
 
-function isPierreMemfsBackendRequested(env: NodeJS.ProcessEnv): boolean {
-  return env.LETTA_MEMFS_BACKEND === PIERRE_BACKEND_VALUE;
+function isHostedMemfsBackendRequested(env: NodeJS.ProcessEnv): boolean {
+  return env.LETTA_MEMFS_BACKEND === HOSTED_BACKEND_VALUE;
 }
 
-function applyPierreMemfsGitHeaderEnv(env: NodeJS.ProcessEnv): void {
-  if (!isPierreMemfsBackendRequested(env)) {
+function applyHostedMemfsGitHeaderEnv(env: NodeJS.ProcessEnv): void {
+  if (!isHostedMemfsBackendRequested(env)) {
     return;
   }
 
   const memfsPrefix = `${trimBaseUrl(getShellMemfsBaseUrl(env))}/v1/git/`;
-  const headerValue = `${PIERRE_BACKEND_HEADER}: ${PIERRE_BACKEND_VALUE}`;
+  const headerValue = `${HOSTED_BACKEND_HEADER}: ${HOSTED_BACKEND_VALUE}`;
 
   appendGitConfigEnv(env, `http.${memfsPrefix}.extraHeader`, headerValue);
 
@@ -448,7 +448,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
   // ephemeral localhost URL into the memory repo's git config.
   applyMemfsGitProxyEnv(env);
-  applyPierreMemfsGitHeaderEnv(env);
+  applyHostedMemfsGitHeaderEnv(env);
 
   return env;
 }
