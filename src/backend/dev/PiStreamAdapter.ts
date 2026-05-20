@@ -137,7 +137,17 @@ function toPiTools(clientTools: unknown[]): Tool[] | undefined {
 }
 
 function toPiMessages(messages: LocalMessage[]): Message[] {
-  return messages.map((message) => {
+  // Strip trailing assistant messages — providers like Anthropic require the
+  // conversation to end with a user or tool-result message. A trailing
+  // assistant message can appear when a stream errors mid-turn (e.g. timeout)
+  // and the retry sends no new user input, leaving the partial assistant
+  // response as the last message.
+  let trimmed = messages;
+  while (trimmed.length > 0 && trimmed.at(-1)!.role === "assistant") {
+    trimmed = trimmed.slice(0, -1);
+  }
+
+  return trimmed.map((message) => {
     if (message.role === "user") {
       return {
         role: "user",

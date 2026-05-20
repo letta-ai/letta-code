@@ -155,6 +155,58 @@ describe("PiStreamAdapter", () => {
     }
   });
 
+  test("strips trailing assistant messages from context before calling provider", async () => {
+    let capturedContext: Context | undefined;
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      context: Context,
+    ) => {
+      capturedContext = context;
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({ stream });
+
+    // Simulate the retry scenario: conversation ends with a partial assistant
+    // message (e.g. after a timeout), and the retry sends no new user input.
+    const inputWithTrailingAssistant: ProviderTurnInput = {
+      ...input(),
+      uiMessages: [
+        {
+          id: "ui-msg-1",
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+          timestamp: Date.now(),
+        },
+        {
+          id: "ui-msg-2",
+          role: "assistant",
+          content: [{ type: "text", text: "partial response" }],
+          api: "anthropic" as never,
+          provider: "anthropic" as never,
+          model: "claude-sonnet-4-6",
+          usage: emptyLocalUsage(),
+          stopReason: "stop",
+          timestamp: Date.now(),
+        } as never,
+      ],
+    };
+
+    for await (const _event of adapter.stream(inputWithTrailingAssistant)) {
+      // drain
+    }
+
+    expect(capturedContext).toBeDefined();
+    const messages = capturedContext!.messages;
+    // The trailing assistant message should be stripped
+    expect(messages.at(-1)?.role).toBe("user");
+    expect(messages).toHaveLength(1);
+  });
+
   test("retries retryable Codex transport errors before model output", async () => {
     let calls = 0;
     const stream: PiStreamFunction = () => {
