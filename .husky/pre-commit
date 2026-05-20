@@ -5,3 +5,16 @@ bunx lint-staged
 
 # Typecheck full project (catches type errors in unchanged files)
 bun run typecheck
+
+# Ban relative parent imports — use @/ instead of ../
+# Exempts package.json imports which must remain relative (they live above src/)
+STAGED_TS=$(git diff --cached --name-only | grep -E '\.(ts|tsx)$')
+if [ -n "$STAGED_TS" ]; then
+  VIOLATIONS=$(echo "$STAGED_TS" | xargs grep -l 'from "\.\.' 2>/dev/null | xargs grep 'from "\.\.' 2>/dev/null | grep -v 'package\.json')
+  if [ -n "$VIOLATIONS" ]; then
+    echo ""
+    echo "❌ Relative parent imports found — use @/ instead of ../:"
+    echo "$VIOLATIONS"
+    exit 1
+  fi
+fi
