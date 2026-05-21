@@ -30,7 +30,20 @@ export interface DiscordRuntimeModuleLike {
   Partials: DiscordPartialsLike;
 }
 
+let loadDiscordModuleOverride:
+  | (() => Promise<DiscordRuntimeModuleLike>)
+  | null = null;
+
+export function __testOverrideLoadDiscordModule(
+  override: (() => Promise<DiscordRuntimeModuleLike>) | null,
+): void {
+  loadDiscordModuleOverride = override;
+}
+
 export async function loadDiscordModule(): Promise<DiscordRuntimeModuleLike> {
+  if (loadDiscordModuleOverride) {
+    return loadDiscordModuleOverride();
+  }
   return loadChannelRuntimeModule<DiscordRuntimeModuleLike>(
     "discord",
     "discord.js",
