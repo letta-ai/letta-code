@@ -35,7 +35,7 @@ Add Letta Code as a flake input and enable the module:
     homeConfigurations.example = home-manager.lib.homeManagerConfiguration {
       pkgs = import nixpkgs { system = "x86_64-linux"; };
       modules = [
-        letta-code.homeModules.default
+        letta-code.homeManagerModules.default
         {
           programs.letta-code.enable = true;
         }
@@ -89,7 +89,7 @@ The flake exposes:
 
 - `packages.<system>.default` / `packages.<system>.letta-code`
 - `apps.<system>.default` / `apps.<system>.letta`
-- `homeModules.default`
+- `homeManagerModules.default` and the compatibility alias `homeModules.default`
 - `nixosModules.default`
 
 The package builds the Letta Code CLI from this repository with the checked-in `package-lock.json`, wraps the resulting `letta` binary with common runtime tools, and leaves agent configuration and credentials in the normal Letta Code locations.

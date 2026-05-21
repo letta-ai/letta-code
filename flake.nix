@@ -83,6 +83,8 @@
 
       nixosModules.default = import ./nix/modules/nixos.nix { inherit self; };
       nixosModules.letta-code = self.nixosModules.default;
+      homeManagerModules.default = import ./nix/modules/home-manager.nix { inherit self; };
+      homeManagerModules.letta-code = self.homeManagerModules.default;
       homeModules.default = import ./nix/modules/home-manager.nix { inherit self; };
       homeModules.letta-code = self.homeModules.default;
     };
