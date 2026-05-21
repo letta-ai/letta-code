@@ -363,9 +363,19 @@ export class HeadlessBackend implements Backend {
     // was called, orphaned tool_use blocks remain in the history. Anthropic rejects
     // any subsequent turn that includes them, so we add synthetic error results here
     // before assembling the context for the new turn.
-    this.store.settleInterruptedToolCalls(conversationId, {
-      reason: TURN_DID_NOT_COMPLETE,
-    });
+    //
+    // Skip when the incoming turn is an approval — that means the previous turn
+    // ended with requires_approval and the tool call is intentionally pending,
+    // waiting for the user's approval response in this very turn.
+    const messages = (body as { messages?: unknown[] }).messages ?? [];
+    const isApprovalTurn = messages.some(
+      (m) => (m as { type?: string }).type === "approval",
+    );
+    if (!isApprovalTurn) {
+      this.store.settleInterruptedToolCalls(conversationId, {
+        reason: TURN_DID_NOT_COMPLETE,
+      });
+    }
 
     const turnInput = this.store.appendTurnInput(conversationId, body);
     const run = this.startRun(
