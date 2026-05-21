@@ -4101,6 +4101,7 @@ export function App({
     completeOverlay,
     commandRunner,
     currentModelId,
+    lastRunIdRef,
     sessionStatsRef,
     withCommandLock,
   });
