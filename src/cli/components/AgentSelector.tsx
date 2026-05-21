@@ -147,11 +147,13 @@ export function AgentSelector({
     return getLocalBackendInstance();
   }, []);
 
-  // Whether the user has cloud credentials (gates cloud tab content)
+  // Whether the user has cloud credentials (gates cloud tab content).
+  // Check env vars, settings env block, and the secure token cache (keychain).
   const hasCloudCredentials = Boolean(
     process.env.LETTA_API_KEY ||
       settingsManager.getSettings().env?.LETTA_API_KEY ||
-      settingsManager.getSettings().refreshToken,
+      settingsManager.getCachedSecureTokens().apiKey ||
+      settingsManager.getCachedSecureTokens().refreshToken,
   );
 
   // Local tab state — loaded eagerly at mount to decide whether to show the tab
