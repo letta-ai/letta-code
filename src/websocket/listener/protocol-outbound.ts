@@ -8,6 +8,7 @@ import { getSubagents } from "@/agent/subagent-state";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
@@ -768,22 +769,82 @@ export function emitQueueUpdate(
   emitProtocolV2Message(socket, runtime, message, resolvedScope);
 }
 
-export function isSystemReminderPart(part: unknown): boolean {
-  if (!part || typeof part !== "object") return false;
-  if (!("type" in part) || (part as { type: string }).type !== "text") {
-    return false;
-  }
-  if (
-    !("text" in part) ||
-    typeof (part as { text: string }).text !== "string"
-  ) {
-    return false;
-  }
-  const trimmed = (part as { text: string }).text.trim();
+function isTextContentPart(
+  part: unknown,
+): part is { type: "text"; text: string } {
   return (
-    trimmed.startsWith("<system-reminder>") &&
-    trimmed.endsWith("</system-reminder>")
+    !!part &&
+    typeof part === "object" &&
+    "type" in part &&
+    (part as { type: unknown }).type === "text" &&
+    "text" in part &&
+    typeof (part as { text: unknown }).text === "string"
   );
+}
+
+export function isSystemReminderPart(part: unknown): boolean {
+  if (!isTextContentPart(part)) return false;
+  const trimmed = part.text.trim();
+  return (
+    trimmed.startsWith(SYSTEM_REMINDER_OPEN) &&
+    trimmed.endsWith(SYSTEM_REMINDER_CLOSE)
+  );
+}
+
+function unwrapSystemReminderText(text: string): string | null {
+  const trimmed = text.trim();
+  if (
+    trimmed.startsWith(SYSTEM_REMINDER_OPEN) &&
+    trimmed.endsWith(SYSTEM_REMINDER_CLOSE)
+  ) {
+    return trimmed
+      .slice(SYSTEM_REMINDER_OPEN.length, -SYSTEM_REMINDER_CLOSE.length)
+      .trim();
+  }
+  return null;
+}
+
+function formatCronPromptForDisplay(text: string): string {
+  const unwrapped = unwrapSystemReminderText(text) ?? text.trim();
+  const lines = unwrapped.split(/\r?\n/);
+  if (lines[1]?.startsWith("Description: ")) {
+    lines.splice(1, 1);
+  }
+  return lines.join("\n").trim();
+}
+
+function getCronPromptDisplayForText(
+  text: string,
+  batch: DequeuedBatch,
+): string | null {
+  for (const item of batch.items) {
+    if (item.kind !== "cron_prompt") {
+      continue;
+    }
+    if (text === item.text || text.trim() === item.text.trim()) {
+      return formatCronPromptForDisplay(item.text);
+    }
+  }
+  return null;
+}
+
+function replaceCronPromptsForDisplay(
+  text: string,
+  batch: DequeuedBatch,
+): string {
+  let displayText = text;
+  for (const item of batch.items) {
+    if (item.kind !== "cron_prompt") {
+      continue;
+    }
+    const display = formatCronPromptForDisplay(item.text);
+    if (displayText.trim() === item.text.trim()) {
+      displayText = display;
+      continue;
+    }
+    displayText = displayText.split(item.text).join(display);
+  }
+  return displayText;
 }
 
 export function emitDequeuedUserMessage(
@@ -802,9 +863,19 @@ export function emitDequeuedUserMessage(
   let content: MessageCreate["content"];
 
   if (typeof rawContent === "string") {
-    content = rawContent.replace(SYSTEM_REMINDER_RE, "").trim();
+    content = replaceCronPromptsForDisplay(rawContent, batch)
+      .replace(SYSTEM_REMINDER_RE, "")
+      .trim();
   } else if (Array.isArray(rawContent)) {
-    content = rawContent.filter((part) => !isSystemReminderPart(part));
+    content = rawContent.flatMap((part) => {
+      if (isTextContentPart(part)) {
+        const cronDisplay = getCronPromptDisplayForText(part.text, batch);
+        if (cronDisplay !== null) {
+          return [{ ...part, text: cronDisplay }];
+        }
+      }
+      return isSystemReminderPart(part) ? [] : [part];
+    }) as MessageCreate["content"];
   } else {
     return;
   }
