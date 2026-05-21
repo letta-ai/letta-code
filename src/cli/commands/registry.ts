@@ -140,6 +140,15 @@ export const commands: Record<string, Command> = {
       return "Opening compaction settings...";
     },
   },
+  "/context-limit": {
+    desc: "Set or reset the max context window",
+    args: "[tokens] [--override]",
+    order: 15.7,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Setting max context window...";
+    },
+  },
   "/memfs": {
     desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
     args: "[enable|disable|sync|reset]",
@@ -600,7 +609,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/set-max-context": {
-    desc: "Set or reset the max context window",
+    desc: "Alias for /context-limit",
     args: "[tokens] [--override]",
     hidden: true,
     handler: () => {

@@ -936,8 +936,9 @@ describe("listen-client parseServerMessage", () => {
     expect(setExperiment?.type).toBe("set_experiment");
   });
 
-  test("advertises and parses remote set-max-context execute_command", () => {
-    expect(SUPPORTED_REMOTE_COMMANDS).toContain("set-max-context");
+  test("advertises context-limit and parses the legacy set-max-context alias", () => {
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("context-limit");
+    expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
 
@@ -945,8 +946,8 @@ describe("listen-client parseServerMessage", () => {
       Buffer.from(
         JSON.stringify({
           type: "execute_command",
-          command_id: "set-max-context",
-          request_id: "set-max-context-1",
+          command_id: "context-limit",
+          request_id: "context-limit-1",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
           args: "10000 --override",
         }),
@@ -955,8 +956,26 @@ describe("listen-client parseServerMessage", () => {
 
     expect(command).toMatchObject({
       type: "execute_command",
-      command_id: "set-max-context",
+      command_id: "context-limit",
       args: "10000 --override",
+    });
+
+    const legacyCommand = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "execute_command",
+          command_id: "set-max-context",
+          request_id: "set-max-context-1",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          args: "12000 --override",
+        }),
+      ),
+    );
+
+    expect(legacyCommand).toMatchObject({
+      type: "execute_command",
+      command_id: "set-max-context",
+      args: "12000 --override",
     });
   });
 
@@ -1081,7 +1100,7 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
-  test("runs remote set-max-context execute_command", async () => {
+  test("runs remote context-limit and legacy set-max-context execute_command", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "ws-max-context-"));
     try {
       const backend = new LocalBackend({
@@ -1104,8 +1123,8 @@ describe("listen-client parseServerMessage", () => {
       await handleExecuteCommand(
         {
           type: "execute_command",
-          command_id: "set-max-context",
-          request_id: "set-max-context-run-1",
+          command_id: "context-limit",
+          request_id: "context-limit-run-1",
           runtime: { agent_id: agent.id, conversation_id: "default" },
           args: "10000 --override",
         },
@@ -1123,6 +1142,30 @@ describe("listen-client parseServerMessage", () => {
       ).toBe(10_000);
       expect(socket.sentPayloads.join("\n")).toContain(
         "Agent max context set to 10,000 tokens with override.",
+      );
+
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "set-max-context",
+          request_id: "set-max-context-run-1",
+          runtime: { agent_id: agent.id, conversation_id: "default" },
+          args: "12000 --override",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+
+      expect(
+        (
+          (await backend.retrieveAgent(agent.id)) as {
+            llm_config?: { context_window?: number };
+          }
+        ).llm_config?.context_window,
+      ).toBe(12_000);
+      expect(socket.sentPayloads.join("\n")).toContain(
+        "Agent max context set to 12,000 tokens with override.",
       );
     } finally {
       await rm(storageDir, { recursive: true, force: true });

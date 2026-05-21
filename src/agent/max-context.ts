@@ -92,7 +92,7 @@ export function parseSetMaxContextArgs(
   }
 
   if (values.length > 1) {
-    throw new Error("Usage: /set-max-context [tokens] [--override]");
+    throw new Error("Usage: /context-limit [tokens] [--override]");
   }
 
   if (values.length === 0) {
