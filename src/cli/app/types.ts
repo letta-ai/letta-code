@@ -74,6 +74,7 @@ export type ActiveOverlay =
   | "connect"
   | "skills"
   | "window-title"
+  | "login"
   | null;
 
 export type QueuedOverlayAction =

@@ -1079,6 +1079,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        // Special handling for /login command - sign in to Letta Constellation
+        if (trimmed === "/login") {
+          openOverlay("login", "/login", "Opening login...", "Login dismissed");
+          return { submitted: true };
+        }
+
         // Special handling for /logout command - clear credentials and exit
         if (trimmed === "/logout") {
           const cmd = commandRunner.start(msg.trim(), "Logging out...");

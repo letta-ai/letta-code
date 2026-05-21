@@ -32,7 +32,7 @@ describe("local-first setup wiring", () => {
   });
 
   test("successful cloud login records the api backend preference", () => {
-    const source = readSource("../auth/setup-ui.tsx");
+    const source = readSource("../auth/ConstellationLoginView.tsx");
     const start = source.indexOf("settingsManager.updateSettings({");
     const end = source.indexOf("await settingsManager.flush();", start);
 
