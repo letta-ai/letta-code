@@ -19,6 +19,7 @@ import {
   type LocalStoreOptions,
 } from "@/backend/local/local-store";
 import { isLocalStateChunkOnly } from "@/backend/local/local-stream-chunks";
+import { TURN_DID_NOT_COMPLETE } from "@/constants";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
@@ -357,6 +358,15 @@ export class HeadlessBackend implements Backend {
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
   ) {
+    // Settle any tool calls left without results from a prior interrupted turn.
+    // If the process was killed or the stream errored out before cancelConversation
+    // was called, orphaned tool_use blocks remain in the history. Anthropic rejects
+    // any subsequent turn that includes them, so we add synthetic error results here
+    // before assembling the context for the new turn.
+    this.store.settleInterruptedToolCalls(conversationId, {
+      reason: TURN_DID_NOT_COMPLETE,
+    });
+
     const turnInput = this.store.appendTurnInput(conversationId, body);
     const run = this.startRun(
       turnInput.conversationId,
