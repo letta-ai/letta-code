@@ -44,6 +44,10 @@ import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
+import {
+  contextTierFromRatio,
+  spinnerWidthForTier,
+} from "./spinners/animations.js";
 import { StreamingStatusSpinner } from "./spinners/StreamingStatusSpinner.js";
 import { Text } from "./Text";
 
@@ -711,6 +715,8 @@ const StreamingStatus = memo(function StreamingStatus({
   streaming,
   visible,
   tokenCount,
+  usedContextTokens,
+  contextWindowSize,
   elapsedBaseMs,
   thinkingMessage,
   includeSystemPromptUpgradeTip,
@@ -723,6 +729,8 @@ const StreamingStatus = memo(function StreamingStatus({
   streaming: boolean;
   visible: boolean;
   tokenCount: number;
+  usedContextTokens: number;
+  contextWindowSize: number | null | undefined;
   elapsedBaseMs: number;
   thinkingMessage: string;
   includeSystemPromptUpgradeTip: boolean;
@@ -763,6 +771,28 @@ const StreamingStatus = memo(function StreamingStatus({
   }, []);
 
   const animate = shouldAnimate && !isResizing;
+
+  // Context-usage tier drives both the spinner animation and its column
+  // width — wider as the conversation fills up.
+  const contextRatio =
+    contextWindowSize && contextWindowSize > 0
+      ? usedContextTokens / contextWindowSize
+      : 0;
+  const contextTier = contextTierFromRatio(contextRatio);
+  const spinnerColumnWidth = spinnerWidthForTier(contextTier) + 1;
+
+  // Bump a counter on each false→true streaming edge so the spinner
+  // remounts (via key={}) and re-picks from its tier pool. Without this
+  // the useState initializer can persist a pick across messages when
+  // the JSX shape and tier value are unchanged between streams.
+  const [streamSeed, setStreamSeed] = useState(0);
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    if (streaming && !prevStreamingRef.current) {
+      setStreamSeed((s) => s + 1);
+    }
+    prevStreamingRef.current = streaming;
+  }, [streaming]);
 
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -842,7 +872,10 @@ const StreamingStatus = memo(function StreamingStatus({
   // Avoid painting into the terminal's last column; some terminals will soft-wrap
   // padded Ink rows at the edge which breaks Ink's line-clearing accounting and
   // leaves duplicate status rows behind during streaming/resizes.
-  const statusContentWidth = Math.max(0, terminalWidth - 3);
+  const statusContentWidth = Math.max(
+    0,
+    terminalWidth - 1 - spinnerColumnWidth,
+  );
   const minMessageWidth = 12;
   const statusHintParts = useMemo(() => {
     const parts: string[] = [];
@@ -910,9 +943,16 @@ const StreamingStatus = memo(function StreamingStatus({
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box flexDirection="row">
-        <Box width={2} flexShrink={0}>
+        <Box width={spinnerColumnWidth} flexShrink={0}>
           <Text color={colors.status.processing}>
-            {animate ? <StreamingStatusSpinner /> : CLI_GLYPHS.bullet}
+            {animate ? (
+              <StreamingStatusSpinner
+                tier={contextTier}
+                streamSeed={streamSeed}
+              />
+            ) : (
+              CLI_GLYPHS.bullet
+            )}
           </Text>
         </Box>
         <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
@@ -933,7 +973,7 @@ const StreamingStatus = memo(function StreamingStatus({
         </Box>
       </Box>
       <Box flexDirection="row">
-        <Box width={2} flexShrink={0} />
+        <Box width={spinnerColumnWidth} flexShrink={0} />
         <Box width={statusContentWidth} flexShrink={0}>
           <Text color={colors.subagent.hint} wrap="truncate-end">
             {tipLineText}
@@ -956,6 +996,8 @@ export function Input({
   visible = true,
   streaming,
   tokenCount,
+  usedContextTokens = 0,
+  contextWindowSize,
   elapsedBaseMs = 0,
   thinkingMessage,
   includeSystemPromptUpgradeTip = true,
@@ -1004,6 +1046,8 @@ export function Input({
   visible?: boolean;
   streaming: boolean;
   tokenCount: number;
+  usedContextTokens?: number;
+  contextWindowSize?: number | null;
   elapsedBaseMs?: number;
   thinkingMessage: string;
   includeSystemPromptUpgradeTip?: boolean;
@@ -2028,6 +2072,8 @@ export function Input({
         streaming={streaming}
         visible={visible}
         tokenCount={tokenCount}
+        usedContextTokens={usedContextTokens}
+        contextWindowSize={contextWindowSize}
         elapsedBaseMs={elapsedBaseMs}
         thinkingMessage={thinkingMessage}
         includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}

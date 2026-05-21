@@ -305,6 +305,8 @@ type AppViewProps = {
   stubDescriptions: Map<string, string>;
   thinkingMessage: string;
   trajectoryTokenDisplay: number;
+  usedContextTokens: number;
+  contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
   uiRalphActive: boolean;
   updateAgentName: (name: string) => void;
@@ -443,6 +445,8 @@ export function AppView(props: AppViewProps) {
     stubDescriptions,
     thinkingMessage,
     trajectoryTokenDisplay,
+    usedContextTokens,
+    contextWindowSize,
     uiPermissionMode,
     uiRalphActive,
     updateAgentName,
@@ -700,6 +704,8 @@ export function AppView(props: AppViewProps) {
                 visible={inputVisible}
                 streaming={streaming}
                 tokenCount={trajectoryTokenDisplay}
+                usedContextTokens={usedContextTokens}
+                contextWindowSize={contextWindowSize}
                 elapsedBaseMs={liveTrajectoryElapsedBaseMs}
                 thinkingMessage={thinkingMessage}
                 includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}

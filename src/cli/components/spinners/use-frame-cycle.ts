@@ -15,6 +15,7 @@ export function useFrameCycle(
   const [frameIndex, setFrameIndex] = useState(0);
 
   useEffect(() => {
+    setFrameIndex(0);
     if (!enabled || frames.length === 0) return;
 
     const timer = setInterval(() => {
