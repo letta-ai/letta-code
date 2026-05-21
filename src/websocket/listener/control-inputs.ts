@@ -1,23 +1,23 @@
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type WebSocket from "ws";
-import { getBackend } from "../../backend";
-import {
-  ensureFileIndex,
-  getIndexRoot,
-  setIndexRoot,
-} from "../../cli/helpers/fileIndex";
-import { generatePlanFilePath } from "../../cli/helpers/planName";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { migratePermissionMode } from "../../permissions/mode";
-import { settingsManager } from "../../settings-manager";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
+import { getBackend } from "@/backend";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { migratePermissionMode } from "@/permissions/mode";
+import { settingsManager } from "@/settings-manager";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
-} from "../../types/protocol_v2";
-import { isDebugEnabled } from "../../utils/debug";
+} from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
+import {
+  ensureFileIndex,
+  getIndexRoot,
+  setIndexRoot,
+} from "@/utils/file-index";
+import { generatePlanFilePath } from "@/utils/plan-name";
 import {
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
@@ -32,7 +32,7 @@ import { stashRecoveredApprovalInterrupts } from "./interrupts";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "./permissionMode";
+} from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
   emitInterruptedStatusDelta,

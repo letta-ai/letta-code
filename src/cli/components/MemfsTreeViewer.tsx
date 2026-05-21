@@ -3,16 +3,16 @@ import { join } from "node:path";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getFileNodes,
   readFileContent,
   scanMemoryFilesystem,
   type TreeNode,
-} from "../../agent/memoryScanner";
-import { generateAndOpenMemoryViewer } from "../../web/generate-memory-viewer";
-import { buildChatUrl, isLocalAgentId } from "../helpers/appUrls";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/agent/memory-scanner";
+import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { generateAndOpenMemoryViewer } from "@/web/generate-memory-viewer";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

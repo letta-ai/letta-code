@@ -5,15 +5,17 @@
 import { hostname } from "node:os";
 import { Box, useApp, useInput } from "ink";
 import { useState } from "react";
-import { AnimatedLogo } from "../cli/components/AnimatedLogo";
-import { colors } from "../cli/components/colors";
-import { Text } from "../cli/components/Text";
-import { settingsManager } from "../settings-manager";
+import { configureBackendMode } from "@/backend";
+import { AnimatedLogo } from "@/cli/components/AnimatedLogo";
+import { colors } from "@/cli/components/colors";
+import { Text } from "@/cli/components/Text";
+import { settingsManager } from "@/settings-manager";
 import { pollForToken, requestDeviceCode } from "./oauth";
 
 type SetupMode = "menu" | "device-code" | "auth-code" | "self-host" | "done";
 
-const AUTH_LOGIN_LABEL = "Login to Letta Code";
+const AUTH_LOGIN_LABEL = "Login to Constellation";
+const LOCAL_MODE_LABEL = "Proceed locally";
 const AUTH_LOGO_ANIMATE = false;
 
 interface SetupUIProps {
@@ -22,8 +24,9 @@ interface SetupUIProps {
 
 export function SetupUI({ onComplete }: SetupUIProps) {
   const [mode, setMode] = useState<SetupMode>("menu");
-  const [selectedOption, setSelectedOption] = useState(0);
+  const [selectedOption, setSelectedOption] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [doneMessage, setDoneMessage] = useState("Starting Letta Code...");
   const [_deviceCode, setDeviceCode] = useState<string | null>(null);
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
@@ -40,10 +43,12 @@ export function SetupUI({ onComplete }: SetupUIProps) {
           setSelectedOption((prev) => Math.min(2, prev + 1));
         } else if (key.return) {
           if (selectedOption === 0) {
-            // Login to Letta Cloud - start device code flow
+            // Login to Constellation - start device code flow
             setMode("device-code");
             startDeviceCodeFlow();
           } else if (selectedOption === 1) {
+            proceedLocally();
+          } else if (selectedOption === 2) {
             exit();
           }
         }
@@ -102,6 +107,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
               },
               refreshToken: tokens.refresh_token,
               tokenExpiresAt: now + tokens.expires_in * 1000,
+              preferredBackendMode: "api",
             });
 
             // Wait for all pending writes (keychain, disk) to complete before continuing
@@ -122,11 +128,26 @@ export function SetupUI({ onComplete }: SetupUIProps) {
     }
   };
 
+  const proceedLocally = async () => {
+    try {
+      configureBackendMode("local");
+      settingsManager.updateSettings({ preferredBackendMode: "local" });
+      await settingsManager.flush();
+      setDoneMessage(
+        "Local mode enabled. Agents you create now will be stored on this device. To sign into Letta Cloud later, run `letta setup` or `letta backend api`.",
+      );
+      setMode("done");
+      setTimeout(() => onComplete(), 500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   if (mode === "done") {
     return (
       <Box flexDirection="column" padding={1}>
         <Text color="green">✓ Setup complete!</Text>
-        <Text dimColor>Starting Letta Code...</Text>
+        <Text dimColor>{doneMessage}</Text>
       </Box>
     );
   }
@@ -170,9 +191,11 @@ export function SetupUI({ onComplete }: SetupUIProps) {
     <Box flexDirection="column" padding={1}>
       <AnimatedLogo color={colors.welcome.accent} animate={AUTH_LOGO_ANIMATE} />
       <Text> </Text>
-      <Text bold>Welcome to Letta Code!</Text>
-      <Text> </Text>
-      <Text>Let's get you authenticated:</Text>
+      <Text bold>Welcome to Letta Code</Text>
+      <Text dimColor>
+        Sign in to Constellation for remote access via chat.letta.com and other
+        devices, or continue locally with agent state stored on this device.
+      </Text>
       <Text> </Text>
       <Box>
         <Text
@@ -184,13 +207,35 @@ export function SetupUI({ onComplete }: SetupUIProps) {
           {AUTH_LOGIN_LABEL}
         </Text>
       </Box>
+      <Box paddingLeft={2}>
+        <Text dimColor>
+          Access hosted agents remotely from chat.letta.com and connected
+          devices.
+        </Text>
+      </Box>
       <Box>
         <Text
           color={
             selectedOption === 1 ? colors.selector.itemHighlighted : undefined
           }
         >
-          {selectedOption === 1 ? "> " : "  "}Exit
+          {selectedOption === 1 ? "> " : "  "}
+          {LOCAL_MODE_LABEL} (default)
+        </Text>
+      </Box>
+      <Box paddingLeft={2}>
+        <Text dimColor>
+          Store agent state on this device. Agents you create are local to this
+          machine.
+        </Text>
+      </Box>
+      <Box>
+        <Text
+          color={
+            selectedOption === 2 ? colors.selector.itemHighlighted : undefined
+          }
+        >
+          {selectedOption === 2 ? "> " : "  "}Exit
         </Text>
       </Box>
       <Text> </Text>

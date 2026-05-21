@@ -1,0 +1,225 @@
+import { describe, expect, test } from "bun:test";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type { HeadlessTurnExecutorInput } from "@/backend/dev/headless-turn-executor";
+import {
+  type ProviderStreamAdapter,
+  ProviderTurnExecutor,
+  providerLocalMessage,
+  providerStreamPart,
+} from "@/backend/dev/provider-turn-executor";
+import {
+  emptyLocalUsage,
+  type LocalMessage,
+} from "@/backend/local/local-message";
+import {
+  getAttachedLocalMessage,
+  isLocalStateChunkOnly,
+  type ProviderStreamPart,
+} from "@/backend/local/local-stream-chunks";
+
+function part(value: Record<string, unknown>): ProviderStreamPart {
+  return value as unknown as ProviderStreamPart;
+}
+
+function input(): HeadlessTurnExecutorInput {
+  return {
+    conversationId: "local-conv-1",
+    agentId: "agent-local-1",
+    agent: {
+      id: "agent-local-1",
+      name: "Local",
+      description: null,
+      system: "",
+      tags: [],
+      model: "openai/gpt-5.5",
+      model_settings: {},
+    },
+    body: { messages: [] } as never,
+    history: [],
+    uiMessages: [],
+  };
+}
+
+async function collect(
+  stream: AsyncIterable<LettaStreamingResponse>,
+): Promise<LettaStreamingResponse[]> {
+  const chunks: LettaStreamingResponse[] = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return chunks;
+}
+
+function assistantMessage(): LocalMessage {
+  return {
+    id: "local-assistant-final",
+    role: "assistant",
+    content: [{ type: "text", text: "done" }],
+    api: "openai-responses",
+    provider: "openai",
+    model: "gpt-5.5",
+    usage: emptyLocalUsage(),
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
+
+describe("ProviderTurnExecutor", () => {
+  test("maps pi text, thinking, tool call, usage, and done events", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        const message = assistantMessage();
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "hello",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "thinking_delta",
+            contentIndex: 1,
+            delta: "think",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "toolcall_end",
+            contentIndex: 2,
+            toolCall: {
+              type: "toolCall",
+              id: "call-1",
+              name: "Read",
+              arguments: { path: "README.md" },
+            },
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({ type: "done", reason: "toolUse", message }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "assistant_message",
+      "reasoning_message",
+      "approval_request_message",
+      "usage_statistics",
+      "stop_reason",
+    ]);
+    expect(
+      (chunks.at(-1) as { stop_reason?: string } | undefined)?.stop_reason,
+    ).toBe("requires_approval");
+  });
+
+  test("uses pi contentIndex to keep interleaved live blocks separate", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        const message = assistantMessage();
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "first-a",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 2,
+            delta: "second",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "first-b",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "thinking_delta",
+            contentIndex: 1,
+            delta: "think-a",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "thinking_delta",
+            contentIndex: 3,
+            delta: "think-b",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    const assistantOtids = chunks
+      .filter((chunk) => chunk.message_type === "assistant_message")
+      .map((chunk) => (chunk as { otid?: string }).otid);
+    expect(assistantOtids[0]).toBe(assistantOtids[2]);
+    expect(assistantOtids[0]).not.toBe(assistantOtids[1]);
+
+    const reasoningOtids = chunks
+      .filter((chunk) => chunk.message_type === "reasoning_message")
+      .map((chunk) => (chunk as { otid?: string }).otid);
+    expect(reasoningOtids[0]).not.toBe(reasoningOtids[1]);
+  });
+
+  test("emits final local assistant messages as state-only chunks before stop_reason", async () => {
+    const finalMessage = assistantMessage();
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerLocalMessage(finalMessage);
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message: finalMessage }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    expect(
+      chunks.map((chunk) => (chunk as { message_type?: string }).message_type),
+    ).toEqual(["local_message", "usage_statistics", "stop_reason"]);
+    expect(isLocalStateChunkOnly(chunks[0])).toBe(true);
+    expect(getAttachedLocalMessage(chunks[0])).toEqual(finalMessage);
+    expect(
+      (chunks.at(-1) as { stop_reason?: string } | undefined)?.stop_reason,
+    ).toBe("end_turn");
+  });
+
+  test("normalizes provider errors into local error chunks", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield { type: "error", error: new Error("provider exploded") };
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "error_message",
+      "stop_reason",
+    ]);
+    expect(JSON.stringify(chunks)).toContain("provider exploded");
+  });
+});

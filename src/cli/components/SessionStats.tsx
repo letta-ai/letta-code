@@ -1,6 +1,6 @@
-import type { SessionStatsSnapshot } from "../../agent/stats";
-import { buildAppUrl } from "../helpers/appUrls";
-import { formatCompact } from "../helpers/format";
+import type { SessionStatsSnapshot } from "@/agent/stats";
+import { buildAppUrl } from "@/cli/helpers/app-urls";
+import { formatCompact } from "@/cli/helpers/format";
 
 export function formatDuration(ms: number): string {
   if (ms < 1000) {

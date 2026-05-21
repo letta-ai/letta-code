@@ -21,7 +21,7 @@ import {
   listTasks,
   parseAt,
   parseEvery,
-} from "../../cron";
+} from "@/cron";
 
 // ── Usage ───────────────────────────────────────────────────────────
 

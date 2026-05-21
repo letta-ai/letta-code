@@ -3,19 +3,19 @@ import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { getGitContext } from "../../cli/helpers/gitContext";
-import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
-import { getSubagents } from "../../cli/helpers/subagentState";
-import { getSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
-import { experimentManager } from "../../experiments/manager";
-import { permissionMode } from "../../permissions/mode";
-import type { DequeuedBatch } from "../../queue/queueRuntime";
-import { settingsManager } from "../../settings-manager";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getSubagents } from "@/agent/subagent-state";
+import { getGitContext } from "@/cli/helpers/git-context";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
+import { experimentManager } from "@/experiments/manager";
+import { permissionMode } from "@/permissions/mode";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
+import { settingsManager } from "@/settings-manager";
 import {
   backgroundProcesses,
   backgroundTasks,
-} from "../../tools/impl/process_manager";
+} from "@/tools/impl/process_manager";
 import type {
   BackgroundProcessSummary,
   DeviceStatus,
@@ -34,12 +34,12 @@ import type {
   SubagentSnapshot,
   SubagentStateUpdateMessage,
   WsProtocolMessage,
-} from "../../types/protocol_v2";
-import { isDebugEnabled } from "../../utils/debug";
-import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
+} from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { getConversationPermissionModeState } from "./permissionMode";
+import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
+import { getConversationPermissionModeState } from "./permission-mode";
 import {
   getConversationRuntime,
   getPendingControlRequests,

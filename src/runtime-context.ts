@@ -14,6 +14,7 @@ export interface RuntimeContextSnapshot {
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   workingDirectory?: string | null;
+  toolContextId?: string | null;
   permissionMode?: RuntimePermissionMode;
   planFilePath?: string | null;
   modeBeforePlan?: RuntimePermissionMode | null;

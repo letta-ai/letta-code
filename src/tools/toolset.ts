@@ -1,14 +1,14 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { resolveModel } from "../agent/model";
-import { getBackend } from "../backend";
-import { getClient } from "../backend/api/client";
-import type { MessageChannelToolDiscoveryScope } from "../channels/messageTool";
-import { getSupportedChannelIds } from "../channels/pluginRegistry";
-import { getChannelRegistry } from "../channels/registry";
-import { getRoutesForChannel, loadRoutes } from "../channels/routing";
-import type { SupportedChannelId } from "../channels/types";
-import type { RuntimeContextSnapshot } from "../runtime-context";
-import { settingsManager } from "../settings-manager";
+import { resolveModel } from "@/agent/model";
+import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
+import { getSupportedChannelIds } from "@/channels/plugin-registry";
+import { getChannelRegistry } from "@/channels/registry";
+import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
+import type { SupportedChannelId } from "@/channels/types";
+import type { RuntimeContextSnapshot } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import { toolFilter } from "./filter";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
@@ -27,7 +27,7 @@ import {
   prepareToolExecutionContextForModel,
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
-import type { ToolName } from "./toolDefinitions";
+import type { ToolName } from "./tool-definitions";
 
 // Toolset definitions from manager.ts (single source of truth)
 // Keep these as direct references at call-sites (not top-level aliases) to avoid

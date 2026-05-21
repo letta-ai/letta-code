@@ -4,8 +4,9 @@ import type SlackApp from "@slack/bolt";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
-} from "../inboundDebounce";
-import { formatChannelControlRequestPrompt } from "../interactive";
+} from "@/channels/inbound-debounce";
+import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -14,7 +15,7 @@ import type {
   InboundChannelMessage,
   OutboundChannelMessage,
   SlackChannelAccount,
-} from "../types";
+} from "@/channels/types";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -22,7 +23,7 @@ import {
   resolveSlackThreadStarter,
 } from "./media";
 import { loadSlackBoltModule } from "./runtime";
-import { createSlackWebApiClient } from "./webApiClient";
+import { createSlackWebApiClient } from "./web-api-client";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
 type SlackBoltModule = typeof import("@slack/bolt") & {
@@ -710,7 +711,7 @@ export function createSlackAdapter(
   }
 
   function formatSlackLifecycleErrorMessage(errorText: string): string {
-    const normalized = errorText.trim();
+    const normalized = normalizeChannelLifecycleErrorMessage(errorText);
     const truncated =
       normalized.length > SLACK_LIFECYCLE_ERROR_TEXT_MAX
         ? `${normalized.slice(0, SLACK_LIFECYCLE_ERROR_TEXT_MAX - 1).trimEnd()}…`

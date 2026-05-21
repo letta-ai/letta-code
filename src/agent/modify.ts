@@ -8,9 +8,9 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { getBackend } from "../backend";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
-import { debugLog } from "../utils/debug";
+import { getBackend } from "@/backend";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { debugLog } from "@/utils/debug";
 import { getModelContextWindow } from "./available-models";
 
 type ModelSettings =
@@ -416,9 +416,9 @@ export async function updateAgentSystemPrompt(
 ): Promise<UpdateSystemPromptResult> {
   try {
     const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "./promptAssets"
+      "@/agent/prompt-assets"
     );
-    const { settingsManager } = await import("../settings-manager");
+    const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
     const memoryMode = backend.capabilities.localMemfs
@@ -489,8 +489,10 @@ export async function updateAgentSystemPromptMemfs(
   enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
-    const { settingsManager } = await import("../settings-manager");
-    const { isKnownPreset, buildSystemPrompt } = await import("./promptAssets");
+    const { settingsManager } = await import("@/settings-manager");
+    const { isKnownPreset, buildSystemPrompt } = await import(
+      "@/agent/prompt-assets"
+    );
 
     const newMode = enableMemfs
       ? getBackend().capabilities.localMemfs

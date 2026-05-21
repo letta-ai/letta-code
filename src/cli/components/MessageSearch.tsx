@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   searchMessagesForBackend,
   warmMessageSearchCacheForBackend,
-} from "../../backend/messageSearch";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/backend/message-search";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

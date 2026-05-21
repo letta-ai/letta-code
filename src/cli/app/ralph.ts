@@ -1,7 +1,7 @@
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
-import type { RalphState } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { buildGoalContinuationPrompt } from "../helpers/goalCommand";
+import { buildGoalContinuationPrompt } from "@/cli/helpers/goal-command";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import type { RalphState } from "@/ralph/mode";
+import { settingsManager } from "@/settings-manager";
 
 // Parse /ralph or /yolo-ralph command arguments
 export function parseRalphArgs(input: string): {

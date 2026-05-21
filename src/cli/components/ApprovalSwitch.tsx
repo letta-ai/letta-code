@@ -1,7 +1,6 @@
 import { memo } from "react";
-import { permissionMode } from "../../permissions/mode";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import type { ApprovalRequest } from "../helpers/stream";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
@@ -9,7 +8,8 @@ import {
   isPatchTool,
   isShellTool,
   isTaskTool,
-} from "../helpers/toolNameMapping.js";
+} from "@/cli/helpers/tool-name-mapping.js";
+import { permissionMode } from "@/permissions/mode";
 import { InlineBashApproval } from "./InlineBashApproval";
 import { InlineEnterPlanModeApproval } from "./InlineEnterPlanModeApproval";
 import { InlineFileEditApproval } from "./InlineFileEditApproval";
