@@ -8,6 +8,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import { projectLocalAgentState } from "@/backend/local";
 import type { LocalAgentRecord } from "@/backend/local/local-types";
 import { getLocalBackendStorageDir } from "@/backend/local/paths";
 
@@ -30,7 +31,15 @@ export function listLocalAgentsFromDisk(): AgentState[] {
       const raw = readFileSync(filePath, "utf8");
       const record = JSON.parse(raw) as LocalAgentRecord;
       const mtime = statSync(filePath).mtimeMs;
-      agents.push({ agent: projectLocalAgent(record, mtime), mtime });
+      agents.push({
+        agent: projectLocalAgentState(
+          record,
+          [],
+          [],
+          new Date(mtime).toISOString(),
+        ),
+        mtime,
+      });
     } catch {
       // Skip malformed agent files
     }
@@ -40,39 +49,4 @@ export function listLocalAgentsFromDisk(): AgentState[] {
   agents.sort((a, b) => b.mtime - a.mtime);
 
   return agents.map((a) => a.agent);
-}
-
-/**
- * Project a LocalAgentRecord to an AgentState (subset of fields needed for display).
- * Mirrors projectAgentState from local-store.ts but simplified for listing.
- */
-function projectLocalAgent(
-  record: LocalAgentRecord,
-  mtimeMs?: number,
-): AgentState {
-  return {
-    id: record.id,
-    name: record.name,
-    description: record.description,
-    system: record.system,
-    tools: [],
-    tags: record.tags,
-    model: record.model,
-    model_settings: record.model_settings,
-    ...(record.compaction_settings !== undefined
-      ? { compaction_settings: record.compaction_settings }
-      : {}),
-    llm_config: {
-      model: record.model,
-      model_endpoint_type: "openai",
-      model_endpoint: "https://example.invalid/v1",
-      context_window:
-        typeof record.model_settings.context_window_limit === "number"
-          ? record.model_settings.context_window_limit
-          : 128000,
-    },
-    ...(mtimeMs
-      ? { last_run_completion: new Date(mtimeMs).toISOString() }
-      : {}),
-  } as unknown as AgentState;
 }
