@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { MEMORY_CHECK_REMINDER } from "@/agent/prompt-assets";
 import {
   buildCompactionMemoryReminder,
@@ -8,6 +11,7 @@ import {
   reflectionSettingsToLegacyMode,
   shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
+import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import {
   type SharedReminderContext,
   sharedReminderProviders,
@@ -23,6 +27,7 @@ const originalLoadLocalProjectSettings =
 const originalUpdateLocalProjectSettings =
   settingsManager.updateLocalProjectSettings;
 const originalUpdateSettings = settingsManager.updateSettings;
+const originalTranscriptRoot = process.env.LETTA_TRANSCRIPT_ROOT;
 
 afterEach(() => {
   (settingsManager as typeof settingsManager).getLocalProjectSettings =
@@ -36,6 +41,11 @@ afterEach(() => {
     originalUpdateLocalProjectSettings;
   (settingsManager as typeof settingsManager).updateSettings =
     originalUpdateSettings;
+  if (originalTranscriptRoot === undefined) {
+    delete process.env.LETTA_TRANSCRIPT_ROOT;
+  } else {
+    process.env.LETTA_TRANSCRIPT_ROOT = originalTranscriptRoot;
+  }
 });
 
 describe("memoryReminder", () => {
@@ -207,7 +217,7 @@ describe("memoryReminder", () => {
     expect(reminder).toBe(MEMORY_CHECK_REMINDER);
   });
 
-  test("evaluates step-count trigger based on effective settings", () => {
+  test("evaluates step-count trigger from turns since successful reflection", () => {
     expect(
       shouldFireStepCountTrigger(10, {
         trigger: "step-count",
@@ -215,9 +225,9 @@ describe("memoryReminder", () => {
       }),
     ).toBe(true);
     expect(
-      shouldFireStepCountTrigger(10, {
+      shouldFireStepCountTrigger(4, {
         trigger: "step-count",
-        stepCount: 6,
+        stepCount: 5,
       }),
     ).toBe(false);
     expect(
@@ -289,6 +299,48 @@ describe("memoryReminder", () => {
 describe("reflection trigger orchestration", () => {
   const stepProvider = sharedReminderProviders["reflection-step-count"];
   const compactionProvider = sharedReminderProviders["reflection-compaction"];
+  const orchestrationAgentId = "test-agent";
+  const orchestrationConversationId = "test-conversation";
+
+  async function withTranscriptRoot<T>(fn: () => Promise<T>): Promise<T> {
+    const testRoot = await mkdtemp(join(tmpdir(), "letta-reminder-test-"));
+    const previousRoot = process.env.LETTA_TRANSCRIPT_ROOT;
+    process.env.LETTA_TRANSCRIPT_ROOT = testRoot;
+    try {
+      return await fn();
+    } finally {
+      if (previousRoot === undefined) {
+        delete process.env.LETTA_TRANSCRIPT_ROOT;
+      } else {
+        process.env.LETTA_TRANSCRIPT_ROOT = previousRoot;
+      }
+      await rm(testRoot, { recursive: true, force: true });
+    }
+  }
+
+  async function appendCompletedTurns(count: number): Promise<void> {
+    for (let index = 0; index < count; index += 1) {
+      await appendTranscriptDeltaJsonl(
+        orchestrationAgentId,
+        orchestrationConversationId,
+        [
+          {
+            kind: "user",
+            id: `u${index}`,
+            text: `turn ${index}`,
+            messageId: `msg-u${index}`,
+          },
+          {
+            kind: "assistant",
+            id: `a${index}`,
+            text: `response ${index}`,
+            phase: "finished",
+            messageId: `msg-a${index}`,
+          },
+        ],
+      );
+    }
+  }
 
   function buildReflectionContext(
     overrides: Partial<{
@@ -325,7 +377,11 @@ describe("reflection trigger orchestration", () => {
 
     return {
       mode: "interactive",
-      agent: { id: "test-agent", name: "test" },
+      agent: {
+        id: orchestrationAgentId,
+        name: "test",
+        conversationId: orchestrationConversationId,
+      },
       state,
       systemInfoReminderEnabled: false,
       reflectionSettings: {
@@ -339,28 +395,56 @@ describe("reflection trigger orchestration", () => {
   }
 
   test("memfs step-count trigger launches reflection callback and returns no reminder", async () => {
-    const launches: Array<"step-count" | "compaction-event"> = [];
-    const context = buildReflectionContext({
-      memfsEnabled: true,
-      callback: async (trigger) => {
-        launches.push(trigger);
-        return true;
-      },
-    });
+    await withTranscriptRoot(async () => {
+      await appendCompletedTurns(1);
+      const launches: Array<"step-count" | "compaction-event"> = [];
+      const context = buildReflectionContext({
+        memfsEnabled: true,
+        callback: async (trigger) => {
+          launches.push(trigger);
+          return true;
+        },
+      });
 
-    const reminder = await stepProvider(context);
-    expect(reminder).toBeNull();
-    expect(launches).toEqual(["step-count"]);
+      const reminder = await stepProvider(context);
+      expect(reminder).toBeNull();
+      expect(launches).toEqual(["step-count"]);
+    });
   });
 
   test("memfs step-count trigger with no callback does not emit reminder text", async () => {
-    const context = buildReflectionContext({
-      memfsEnabled: true,
-      callback: undefined,
-    });
+    await withTranscriptRoot(async () => {
+      await appendCompletedTurns(1);
+      const context = buildReflectionContext({
+        memfsEnabled: true,
+        callback: undefined,
+      });
 
-    const reminder = await stepProvider(context);
-    expect(reminder).toBeNull();
+      const reminder = await stepProvider(context);
+      expect(reminder).toBeNull();
+    });
+  });
+
+  test("memfs step-count trigger uses transcript counter instead of reminder turn count", async () => {
+    await withTranscriptRoot(async () => {
+      const launches: Array<"step-count" | "compaction-event"> = [];
+      const context = buildReflectionContext({
+        turnCount: 100,
+        stepCount: 2,
+        memfsEnabled: true,
+        callback: async (trigger) => {
+          launches.push(trigger);
+          return true;
+        },
+      });
+
+      await stepProvider(context);
+      expect(launches).toEqual([]);
+
+      await appendCompletedTurns(2);
+      await stepProvider(context);
+      expect(launches).toEqual(["step-count"]);
+    });
   });
 
   test("non-memfs step-count trigger falls back to memory-check reminder", async () => {
