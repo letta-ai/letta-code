@@ -1,10 +1,10 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getModelDisplayName } from "@/agent/model";
 import {
-  APIBackend,
   type Backend,
+  getApiBackendInstance,
   getLocalBackendInstance,
   isLocalBackendEnabled,
 } from "@/backend";
@@ -137,10 +137,8 @@ export function AgentSelector({
 
   // Per-backend instances for listing — independent of the app-level active backend.
   // Cloud tabs always use the API backend; Local tab always uses the local backend.
-  const cloudBackendRef = useRef<Backend | null>(null);
   const getCloudBackend = useCallback((): Backend => {
-    cloudBackendRef.current ??= new APIBackend();
-    return cloudBackendRef.current;
+    return getApiBackendInstance();
   }, []);
 
   const getLocalBackend = useCallback((): Backend => {
@@ -165,9 +163,16 @@ export function AgentSelector({
   const [localError, setLocalError] = useState<string | null>(null);
   const [hasLocalAgents, setHasLocalAgents] = useState(false);
 
-  // Tab state — default to Local if currently in local mode and local agents exist
+  // Tab state — default to Local if currently in local mode
   const defaultTab: TabId = isLocalBackendEnabled() ? "local" : "pinned";
   const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
+
+  // Auto-switch away from Local tab if it disappears (no local agents found)
+  useEffect(() => {
+    if (activeTab === "local" && !hasLocalAgents && !localLoading) {
+      setActiveTab("pinned");
+    }
+  }, [activeTab, hasLocalAgents, localLoading]);
 
   // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
