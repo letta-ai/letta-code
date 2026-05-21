@@ -27,24 +27,28 @@ const ORBIT: BrailleAnimation = {
   cellWidth: 1,
 };
 
-/** Cell fills from a single dot to all 8, holds, then deflates back. */
+/**
+ * Center-outward bloom: middle cells fill first (rows 1-2), then corner cells
+ * (rows 0 and 3); on exit, corners drain first and the middle dots collapse
+ * back to the center. Fully time-symmetric (exhale = inhale reversed).
+ */
 const BREATHE: BrailleAnimation = {
   frames: [
     "⠀",
     "⠂",
-    "⠌",
-    "⡑",
-    "⢕",
-    "⢝",
-    "⣫",
-    "⣟",
+    "⠢",
+    "⠲",
+    "⠶",
+    "⠷",
+    "⢷",
+    "⢿",
     "⣿",
-    "⣟",
-    "⣫",
-    "⢝",
-    "⢕",
-    "⡑",
-    "⠌",
+    "⢿",
+    "⢷",
+    "⠷",
+    "⠶",
+    "⠲",
+    "⠢",
     "⠂",
     "⠀",
   ],
@@ -52,12 +56,19 @@ const BREATHE: BrailleAnimation = {
   cellWidth: 1,
 };
 
-/** 4-cell tail traversing a serpentine path through a 4x4 grid. */
+/**
+ * 4-cell tail traversing a continuous 60-cell loop through a 4x4 grid:
+ *   phase 1 - row zigzag down
+ *   phase 2 - column zigzag up
+ *   phase 3 - row zigzag up (inverted phase 1)
+ *   phase 4 - column zigzag down (inverted phase 2)
+ * End connects back to start via an adjacent step — no jumps.
+ */
 const SNAKE: BrailleAnimation = {
   frames: [
-    "⣁⡀",
-    "⣉⠀",
-    "⡉⠁",
+    "⡇⠀",
+    "⠏⠀",
+    "⠋⠁",
     "⠉⠉",
     "⠈⠙",
     "⠀⠛",
@@ -71,6 +82,50 @@ const SNAKE: BrailleAnimation = {
     "⠀⣤",
     "⢀⣠",
     "⣀⣀",
+    "⣄⡀",
+    "⣆⠀",
+    "⡇⠀",
+    "⠏⠀",
+    "⠛⠀",
+    "⠹⠀",
+    "⢸⠀",
+    "⢰⡀",
+    "⢠⡄",
+    "⢀⡆",
+    "⠀⡇",
+    "⠀⠏",
+    "⠀⠛",
+    "⠀⠹",
+    "⠀⢸",
+    "⠀⣰",
+    "⢀⣠",
+    "⣀⣀",
+    "⣄⡀",
+    "⣤⠀",
+    "⡤⠄",
+    "⠤⠤",
+    "⠠⠴",
+    "⠀⠶",
+    "⠐⠲",
+    "⠒⠒",
+    "⠓⠂",
+    "⠛⠀",
+    "⠋⠁",
+    "⠉⠉",
+    "⠈⠙",
+    "⠀⠹",
+    "⠀⢸",
+    "⠀⣰",
+    "⠀⣤",
+    "⠀⣆",
+    "⠀⡇",
+    "⠈⠇",
+    "⠘⠃",
+    "⠸⠁",
+    "⢸⠀",
+    "⣰⠀",
+    "⣤⠀",
+    "⣆⠀",
   ],
   intervalMs: 80,
   cellWidth: 2,
@@ -220,44 +275,43 @@ const DIAGSWIPE: BrailleAnimation = {
   cellWidth: 2,
 };
 
-/** Two-phase checkerboard pattern across a 6x4 grid. */
+/**
+ * Two-dot-wide diagonal stripes flowing continuously downward-right.
+ * Pattern: `floor((r + c + offset) / 2) % 2 === 0`. Period of 4 — each
+ * frame shifts the pattern by one dot along the (1,1) diagonal.
+ */
 const CHECKERBOARD: BrailleAnimation = {
-  frames: ["⢕⢕⢕", "⡪⡪⡪", "⢊⠔⡡", "⡡⢊⠔"],
-  intervalMs: 250,
+  frames: ["⢋⡴⢋", "⣡⠞⣡", "⡴⢋⡴", "⠞⣡⠞"],
+  intervalMs: 80,
   cellWidth: 3,
 };
 
-/** Each column fills bottom-up, then the whole row empties. */
+/**
+ * Sine-wave bars traveling continuously across a 6x4 grid. Each column is a
+ * histogram bar whose height oscillates with a sine wave; columns are phase-
+ * shifted by a half-period each, so a wave appears to travel left-to-right
+ * with no reset/empty frame in the cycle.
+ */
 const COLUMNS: BrailleAnimation = {
   frames: [
-    "⡀⠀⠀",
-    "⡄⠀⠀",
-    "⡆⠀⠀",
-    "⡇⠀⠀",
-    "⣇⠀⠀",
-    "⣧⠀⠀",
-    "⣷⠀⠀",
-    "⣿⠀⠀",
-    "⣿⡀⠀",
-    "⣿⡄⠀",
-    "⣿⡆⠀",
-    "⣿⡇⠀",
-    "⣿⣇⠀",
-    "⣿⣧⠀",
-    "⣿⣷⠀",
-    "⣿⣿⠀",
-    "⣿⣿⡀",
-    "⣿⣿⡄",
-    "⣿⣿⡆",
-    "⣿⣿⡇",
-    "⣿⣿⣇",
-    "⣿⣿⣧",
-    "⣿⣿⣷",
-    "⣿⣿⣿",
-    "⣿⣿⣿",
-    "⠀⠀⠀",
+    "⣄⢀⣴",
+    "⣆⠀⣰",
+    "⣦⡀⣠",
+    "⣷⡀⢀",
+    "⣷⣄⢀",
+    "⣿⣆⠀",
+    "⣾⣦⡀",
+    "⣾⣷⡀",
+    "⣴⣷⣄",
+    "⣰⣿⣆",
+    "⣠⣾⣦",
+    "⢀⣾⣷",
+    "⢀⣴⣷",
+    "⠀⣰⣿",
+    "⡀⣠⣾",
+    "⡀⢀⣾",
   ],
-  intervalMs: 60,
+  intervalMs: 100,
   cellWidth: 3,
 };
 
