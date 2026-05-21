@@ -16,9 +16,9 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
   },
   {
     id: "desktop_conversation_bootstrap",
-    label: "desktop conversation bootstrap",
+    label: "conversation bootstrap",
     description:
-      "Desktop-only: inject lightweight prior-conversation context into the first turn of brand-new desktop conversations.",
+      "Inject lightweight prior-conversation context into the first turn of brand-new Letta Code conversations.",
   },
   {
     id: "node",

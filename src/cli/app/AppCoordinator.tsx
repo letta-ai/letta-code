@@ -124,6 +124,7 @@ import {
   enqueueCommandIoReminder,
   enqueueToolsetChangeReminder,
   resetSharedReminderState,
+  type SharedReminderState,
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -1008,7 +1009,13 @@ export function App({
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
-  const sharedReminderStateRef = useRef(createSharedReminderState());
+  const sharedReminderStateRef = useRef<SharedReminderState>(
+    (() => {
+      const state = createSharedReminderState();
+      state.pendingConversationBootstrap = !resumedExistingConversation;
+      return state;
+    })(),
+  );
   const _systemPromptRecompileByConversationRef = useRef(
     new Map<string, Promise<void>>(),
   );
@@ -1079,9 +1086,14 @@ export function App({
       return fallback;
     }
   }, [deriveAutoConversationTitle]);
-  const resetBootstrapReminderState = useCallback(() => {
-    resetSharedReminderState(sharedReminderStateRef.current);
-  }, []);
+  const resetBootstrapReminderState = useCallback(
+    (pendingConversationBootstrap = false) => {
+      resetSharedReminderState(sharedReminderStateRef.current);
+      sharedReminderStateRef.current.pendingConversationBootstrap =
+        pendingConversationBootstrap;
+    },
+    [],
+  );
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
 

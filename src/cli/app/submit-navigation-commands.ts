@@ -29,7 +29,7 @@ type NavigationCommandContext = {
     approvals: ApprovalRequest[],
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
-  resetBootstrapReminderState: () => void;
+  resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetTrajectoryBases: () => void;
   setCommandRunning: (value: boolean) => void;

@@ -89,7 +89,7 @@ type ConversationSwitchingContext = {
     approvals: ApprovalRequest[],
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
-  resetBootstrapReminderState: () => void;
+  resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
@@ -765,7 +765,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         resetContextHistory(contextTrackerRef.current);
 
         // Ensure bootstrap reminders are re-injected after creating a new agent.
-        resetBootstrapReminderState();
+        resetBootstrapReminderState(true);
 
         const separator = {
           kind: "separator" as const,

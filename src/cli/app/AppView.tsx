@@ -266,7 +266,7 @@ type AppViewProps = {
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
   refreshDerived: () => void;
-  resetBootstrapReminderState: () => void;
+  resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetTrajectoryBases: () => void;
   restoredInput: string | null;
@@ -1239,7 +1239,7 @@ export function AppView(props: AppViewProps) {
                     buffersRef.current.order = [];
                     buffersRef.current.tokenCount = 0;
                     resetContextHistory(contextTrackerRef.current);
-                    resetBootstrapReminderState();
+                    resetBootstrapReminderState(true);
                     emittedIdsRef.current.clear();
                     resetDeferredToolCallCommits();
                     setStaticItems([]);
