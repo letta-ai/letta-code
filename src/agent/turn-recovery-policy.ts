@@ -18,6 +18,7 @@ import type { StopReasonType } from "@/types/protocol_v2";
 const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
 const CONVERSATION_BUSY_DETAIL_FRAGMENT = "is currently being processed";
+const CONVERSATION_BUSY_RUN_ID_PATTERN = /\brun_id=([A-Za-z0-9_-]+)/i;
 const EMPTY_RESPONSE_DETAIL_FRAGMENT = "empty content in";
 const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "Anthropic API error",
@@ -135,6 +136,15 @@ export function isApprovalPendingError(detail: unknown): boolean {
 export function isConversationBusyError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(CONVERSATION_BUSY_DETAIL_FRAGMENT);
+}
+
+/** Extract the server-reported blocking run id from a conversation-busy error. */
+export function extractConversationBusyRunId(detail: unknown): string | null {
+  if (typeof detail !== "string" || !isConversationBusyError(detail)) {
+    return null;
+  }
+
+  return detail.match(CONVERSATION_BUSY_RUN_ID_PATTERN)?.[1] ?? null;
 }
 
 /**

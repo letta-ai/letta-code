@@ -11,6 +11,7 @@ import { sendMessageStream } from "@/agent/message";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
+  extractConversationBusyRunId,
   getPreStreamErrorAction,
   getRetryDelayMs,
   parseRetryAfterHeaderMs,
@@ -52,6 +53,12 @@ import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime } from "./types";
 
+const ACTIVE_BLOCKING_RUN_STATUSES = new Set(["created", "running", "pending"]);
+const DEFAULT_BUSY_RUN_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+const BUSY_RUN_POLL_INTERVAL_MS = 5000;
+
+type BlockingRunWaitResult = "settled" | "timed_out" | "unavailable";
+
 export function isApprovalOnlyInput(
   input: Array<MessageCreate | ApprovalCreate>,
 ): boolean {
@@ -77,6 +84,119 @@ function isBackendNotFoundError(err: unknown): boolean {
     (err instanceof APIError && (err.status === 404 || err.status === 422)) ||
     (err instanceof Error && err.name === "LocalBackendNotFoundError")
   );
+}
+
+function isBlockingRunActive(status: unknown): boolean {
+  return typeof status === "string" && ACTIVE_BLOCKING_RUN_STATUSES.has(status);
+}
+
+function getBusyRunWaitTimeoutMs(): number {
+  const configured = Number(process.env.LETTA_BUSY_RUN_WAIT_TIMEOUT_MS);
+  if (Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+  return DEFAULT_BUSY_RUN_WAIT_TIMEOUT_MS;
+}
+
+async function sleepWithAbort(
+  delayMs: number,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  if (delayMs <= 0) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    function cleanup() {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      abortSignal?.removeEventListener("abort", onAbort);
+    }
+
+    function onAbort() {
+      cleanup();
+      reject(new Error("Cancelled by user"));
+    }
+
+    if (abortSignal?.aborted) {
+      onAbort();
+      return;
+    }
+
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+  });
+}
+
+async function waitForBlockingRunToSettle(
+  runId: string,
+  abortSignal?: AbortSignal,
+): Promise<BlockingRunWaitResult> {
+  const timeoutMs = getBusyRunWaitTimeoutMs();
+  const startedAt = Date.now();
+
+  while (true) {
+    if (abortSignal?.aborted) {
+      throw new Error("Cancelled by user");
+    }
+
+    let run: Awaited<ReturnType<ReturnType<typeof getBackend>["retrieveRun"]>>;
+    try {
+      run = await getBackend().retrieveRun(runId);
+    } catch {
+      return "unavailable";
+    }
+
+    if (!isBlockingRunActive(run.status)) {
+      return "settled";
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= timeoutMs) {
+      return "timed_out";
+    }
+
+    await sleepWithAbort(
+      Math.min(BUSY_RUN_POLL_INTERVAL_MS, timeoutMs - elapsedMs),
+      abortSignal,
+    );
+  }
+}
+
+async function maybeWaitForBlockingRun(params: {
+  runId: string | null;
+  retriedAfterSettled: Set<string>;
+  abortSignal?: AbortSignal;
+}): Promise<"retry_now" | "fall_back"> {
+  const { runId, retriedAfterSettled, abortSignal } = params;
+  if (!runId) {
+    return "fall_back";
+  }
+
+  const waitResult = await waitForBlockingRunToSettle(runId, abortSignal);
+
+  if (waitResult === "settled") {
+    if (retriedAfterSettled.has(runId)) {
+      return "fall_back";
+    }
+    retriedAfterSettled.add(runId);
+    return "retry_now";
+  }
+
+  if (waitResult === "timed_out") {
+    throw new Error(
+      `Conversation is still busy because run ${runId} remained active after ${getBusyRunWaitTimeoutMs()}ms`,
+    );
+  }
+
+  return "fall_back";
 }
 
 /**
@@ -255,6 +375,7 @@ export async function sendMessageStreamWithRetry(
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
   let currentOpts = opts;
+  const retriedAfterBlockingRunSettled = new Set<string>();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -392,7 +513,9 @@ export async function sendMessageStreamWithRetry(
         continue;
       }
 
-      if (action === "retry_conversation_busy") {
+      const blockingRunId = extractConversationBusyRunId(errorDetail);
+
+      if (action === "retry_conversation_busy" || blockingRunId) {
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
           agent_id: runtime.agentId,
@@ -445,12 +568,15 @@ export async function sendMessageStreamWithRetry(
           }
         }
 
+        const retryBudgetAvailable = action === "retry_conversation_busy";
         const attempt = conversationBusyRetries + 1;
+        if (retryBudgetAvailable) {
+          conversationBusyRetries = attempt;
+        }
         const delayMs = getRetryDelayMs({
           category: "conversation_busy",
           attempt,
         });
-        conversationBusyRetries = attempt;
 
         emitRetryDelta(socket, runtime, {
           message: "Conversation is busy, waiting and retrying…",
@@ -462,10 +588,19 @@ export async function sendMessageStreamWithRetry(
           conversationId,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        if (abortSignal?.aborted) {
-          throw new Error("Cancelled by user");
+        const blockingRunDisposition = await maybeWaitForBlockingRun({
+          runId: blockingRunId,
+          retriedAfterSettled: retriedAfterBlockingRunSettled,
+          abortSignal,
+        });
+        if (blockingRunDisposition === "retry_now") {
+          continue;
         }
+        if (!retryBudgetAvailable) {
+          throw preStreamError;
+        }
+
+        await sleepWithAbort(delayMs, abortSignal);
         continue;
       }
 
@@ -492,6 +627,7 @@ export async function sendApprovalContinuationWithRetry(
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
   let currentOpts = opts;
+  const retriedAfterBlockingRunSettled = new Set<string>();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -641,8 +777,14 @@ export async function sendApprovalContinuationWithRetry(
         continue;
       }
 
-      if (action === "retry_conversation_busy") {
-        conversationBusyRetries += 1;
+      const blockingRunId = extractConversationBusyRunId(errorDetail);
+
+      if (action === "retry_conversation_busy" || blockingRunId) {
+        const retryBudgetAvailable = action === "retry_conversation_busy";
+        const attempt = conversationBusyRetries + 1;
+        if (retryBudgetAvailable) {
+          conversationBusyRetries = attempt;
+        }
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
           agent_id: runtime.agentId,
@@ -698,23 +840,32 @@ export async function sendApprovalContinuationWithRetry(
 
         const retryDelayMs = getRetryDelayMs({
           category: "conversation_busy",
-          attempt: conversationBusyRetries,
+          attempt,
         });
 
         emitRetryDelta(socket, runtime, {
           message: "Conversation is busy, waiting and retrying…",
           reason: "error",
-          attempt: conversationBusyRetries,
+          attempt,
           maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
           delayMs: retryDelayMs,
           agentId: runtime.agentId ?? undefined,
           conversationId,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-        if (abortSignal?.aborted) {
-          throw new Error("Cancelled by user");
+        const blockingRunDisposition = await maybeWaitForBlockingRun({
+          runId: blockingRunId,
+          retriedAfterSettled: retriedAfterBlockingRunSettled,
+          abortSignal,
+        });
+        if (blockingRunDisposition === "retry_now") {
+          continue;
         }
+        if (!retryBudgetAvailable) {
+          throw preStreamError;
+        }
+
+        await sleepWithAbort(retryDelayMs, abortSignal);
         continue;
       }
 

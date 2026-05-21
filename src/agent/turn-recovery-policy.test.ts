@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyPreStreamConflict,
   extractConflictDetail,
+  extractConversationBusyRunId,
   getPreStreamErrorAction,
   getRetryDelayMs,
   getTransientRetryDelayMs,
@@ -70,6 +71,22 @@ describe("isConversationBusyError", () => {
     expect(isConversationBusyError("The agent is waiting for approval")).toBe(
       false,
     );
+  });
+});
+
+describe("extractConversationBusyRunId", () => {
+  test("extracts run id from conversation-busy errors", () => {
+    expect(
+      extractConversationBusyRunId(
+        "Cannot send a new message: Another request (run_id=run-46b3f831-88d4-4d53-a9d1-591967bf711d) is currently being processed for this conversation.",
+      ),
+    ).toBe("run-46b3f831-88d4-4d53-a9d1-591967bf711d");
+  });
+
+  test("ignores unrelated run ids", () => {
+    expect(
+      extractConversationBusyRunId("run_id=run-abc but no busy text"),
+    ).toBe(null);
   });
 });
 
