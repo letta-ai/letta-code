@@ -24,6 +24,7 @@ type FeedbackHandlerContext = {
   ) => CommandHandle | null;
   commandRunner: CommandStarter;
   currentModelId: string | null;
+  lastRunIdRef: MutableRefObject<string | null>;
   sessionStatsRef: MutableRefObject<SessionStats>;
   withCommandLock: (fn: () => Promise<void>) => Promise<void>;
 };
@@ -37,6 +38,7 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
     completeOverlay,
     commandRunner,
     currentModelId,
+    lastRunIdRef,
     sessionStatsRef,
     withCommandLock,
   } = ctx;
@@ -78,6 +80,7 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
               feature: "letta-code",
               agent_id: agentId,
               session_id: telemetry.getSessionId(),
+              run_id: lastRunIdRef.current ?? undefined,
               version: getVersion(),
               platform: process.platform,
               settings: JSON.stringify(safeSettings),
@@ -132,6 +135,7 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
       agentDescription,
       currentModelId,
       billingTier,
+      lastRunIdRef,
       commandRunner,
       completeOverlay,
       withCommandLock,

@@ -111,10 +111,7 @@ import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/error-reporting";
 import { extractTelemetryInputText } from "./telemetry/input";
-import {
-  isHeadlessAutoAllowTool,
-  isInteractiveApprovalTool,
-} from "./tools/interactive-policy";
+import { isInteractiveApprovalTool } from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -1789,10 +1786,6 @@ ${SYSTEM_REMINDER_CLOSE}
     workingDirectory: getCurrentWorkingDirectory(),
     reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
-    resolvePlanModeReminder: async () => {
-      const { PLAN_MODE_REMINDER } = await import("@/agent/prompt-assets");
-      return PLAN_MODE_REMINDER;
-    },
   });
   for (const part of sharedReminderParts) {
     pushPart(part.text);
@@ -2347,14 +2340,7 @@ ${SYSTEM_REMINDER_CLOSE}
           })),
           ...needsUserInput.map((ac) => {
             // One-shot headless mode has no control channel for interactive
-            // approvals. Auto-allow plan-mode entry/exit tools, while denying
-            // tools that need runtime user responses.
-            if (isHeadlessAutoAllowTool(ac.approval.toolName)) {
-              return {
-                type: "approve" as const,
-                approval: ac.approval,
-              };
-            }
+            // approvals, so deny tools that need runtime user responses.
             return {
               type: "deny" as const,
               approval: ac.approval,
@@ -3793,12 +3779,6 @@ async function runBidirectionalMode(
           workingDirectory: getCurrentWorkingDirectory(),
           reflectionSettings,
           skillSources,
-          resolvePlanModeReminder: async () => {
-            const { PLAN_MODE_REMINDER } = await import(
-              "@/agent/prompt-assets"
-            );
-            return PLAN_MODE_REMINDER;
-          },
         });
         const enrichedContent = prependReminderPartsToContent(
           userContent,

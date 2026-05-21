@@ -14,8 +14,6 @@ describe("listener permission mode helpers", () => {
 
     const legacyState = {
       mode: "acceptEdits" as const,
-      planFilePath: null,
-      modeBeforePlan: null,
     };
     listener.permissionModeByConversation.set(legacyKey, legacyState);
 

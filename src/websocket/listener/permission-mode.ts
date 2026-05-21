@@ -19,8 +19,6 @@ import type { ListenerRuntime } from "./types";
 
 export type ConversationPermissionModeState = {
   mode: PermissionMode;
-  planFilePath: string | null;
-  modeBeforePlan: PermissionMode | null;
 };
 
 export function getPermissionModeScopeKey(
@@ -38,19 +36,13 @@ export function getPermissionModeScopeKey(
 function createDefaultPermissionModeState(): ConversationPermissionModeState {
   return {
     mode: globalPermissionMode.getMode(),
-    planFilePath: null,
-    modeBeforePlan: null,
   };
 }
 
 function isPrunableDefaultState(
   state: ConversationPermissionModeState,
 ): boolean {
-  return (
-    state.mode === globalPermissionMode.getMode() &&
-    state.planFilePath === null &&
-    state.modeBeforePlan === null
-  );
+  return state.mode === globalPermissionMode.getMode();
 }
 
 /**
@@ -156,9 +148,7 @@ export function pruneConversationPermissionModeStateIfDefault(
 
 /**
  * Load the persisted permission mode map from remote-settings.json.
- * Converts PersistedPermissionModeState → ConversationPermissionModeState,
- * restoring planFilePath as null (ephemeral — not persisted across restarts).
- * If persisted mode was "plan", restores modeBeforePlan instead.
+ * Converts PersistedPermissionModeState → ConversationPermissionModeState.
  */
 export function loadPersistedPermissionModeMap(): Map<
   string,
@@ -174,18 +164,8 @@ export function loadPersistedPermissionModeMap(): Map<
       // Migrate legacy mode values ("default" → "standard", "bypassPermissions" → "unrestricted").
       const rawMode =
         migratePermissionMode(persisted.mode) ?? DEFAULT_PERMISSION_MODE;
-      const rawModeBeforePlan = persisted.modeBeforePlan
-        ? (migratePermissionMode(persisted.modeBeforePlan) ?? null)
-        : null;
-      // If "plan" was somehow saved, restore to the pre-plan mode.
-      const restoredMode: PermissionMode =
-        rawMode === "plan"
-          ? (rawModeBeforePlan ?? DEFAULT_PERMISSION_MODE)
-          : rawMode;
       map.set(key, {
-        mode: restoredMode,
-        planFilePath: null,
-        modeBeforePlan: null,
+        mode: rawMode,
       });
     }
     return map;
@@ -205,37 +185,21 @@ export function persistPermissionModeMapForRuntime(
 
 /**
  * Serialize the permission mode map and persist to remote-settings.json.
- * Strips planFilePath (ephemeral). Converts "plan" mode to modeBeforePlan.
  * Skips entries that match the current global default mode (lean map).
  */
 function persistPermissionModeMap(
   map: Map<string, ConversationPermissionModeState>,
 ): void {
-  const permissionModeMap: Record<
-    string,
-    { mode: PermissionMode; modeBeforePlan: PermissionMode | null }
-  > = {};
+  const permissionModeMap: Record<string, { mode: PermissionMode }> = {};
 
   for (const [key, state] of map) {
-    // If currently in plan mode, persist the effective mode as modeBeforePlan
-    // so we don't restore into plan mode (plan file path is ephemeral).
-    const modeToSave: PermissionMode =
-      state.mode === "plan"
-        ? (state.modeBeforePlan ?? DEFAULT_PERMISSION_MODE)
-        : state.mode;
-
     // Skip entries that are just the default starting mode with no context — lean map.
-    if (
-      modeToSave === DEFAULT_PERMISSION_MODE &&
-      state.modeBeforePlan === null
-    ) {
+    if (state.mode === DEFAULT_PERMISSION_MODE) {
       continue;
     }
 
     permissionModeMap[key] = {
-      mode: modeToSave,
-      modeBeforePlan:
-        state.mode === "plan" ? null : (state.modeBeforePlan ?? null),
+      mode: state.mode,
     };
   }
 

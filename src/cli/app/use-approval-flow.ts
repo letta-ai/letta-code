@@ -1,8 +1,6 @@
 // src/cli/app/useApprovalFlow.ts
 
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
-import { join, relative } from "node:path";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import {
@@ -12,10 +10,7 @@ import {
   useCallback,
   useEffect,
 } from "react";
-import {
-  type ApprovalResult,
-  getDisplayableToolReturn,
-} from "@/agent/approval-execution";
+import type { ApprovalResult } from "@/agent/approval-execution";
 import type { SessionStats } from "@/agent/stats";
 import {
   type Buffers,
@@ -36,29 +31,22 @@ import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { flushEligibleLinesBeforeReentry } from "@/cli/helpers/subagent-turn-start";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import type { ApprovalContext } from "@/permissions/analyzer";
-import {
-  DEFAULT_PERMISSION_MODE,
-  type PermissionMode,
-  permissionMode,
-} from "@/permissions/mode";
+import type { PermissionMode } from "@/permissions/mode";
 import {
   analyzeToolApproval,
   checkToolPermission,
-  executeTool,
   savePermissionRule,
   type ToolExecutionResult,
 } from "@/tools/manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
-import { generatePlanFilePath } from "@/utils/plan-name";
 
 import { buildApprovalBatchKey } from "./approval-diffs";
 import { getQuestionsFromApproval } from "./approval-questions";
 import { extractErrorMeta } from "./errors";
-import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
+import { appendOptimisticUserLine, createClientOtid } from "./ids";
 import { sendDesktopNotification } from "./notifications";
-import { planFileExists } from "./plan-file";
 import type {
   AppCommandRunner,
   AppendError,
@@ -88,7 +76,6 @@ type ApprovalFlowContext = {
   autoDeniedApprovals: AutoDeniedApproval[];
   autoHandledResults: AutoHandledToolResult[];
   buffersRef: MutableRefObject<Buffers>;
-  cacheLastPlanFilePath: (planFilePath: string | null) => void;
   clearApprovalToolContext: () => void;
   closeTrajectorySegment: () => void;
   commandRunner: AppCommandRunner;
@@ -104,9 +91,6 @@ type ApprovalFlowContext = {
   executingToolCallIdsRef: MutableRefObject<string[]>;
   interruptQueuedRef: MutableRefObject<boolean>;
   isExecutingTool: boolean;
-  lastAutoApprovedEnterPlanToolCallIdRef: MutableRefObject<string | null>;
-  lastAutoHandledExitPlanToolCallIdRef: MutableRefObject<string | null>;
-  lastPlanFilePathRef: MutableRefObject<string | null>;
   loadingState: AppLoadingState;
   openTrajectorySegment: () => void;
   pendingApprovals: ApprovalRequest[];
@@ -159,7 +143,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     autoDeniedApprovals,
     autoHandledResults,
     buffersRef,
-    cacheLastPlanFilePath,
     clearApprovalToolContext,
     closeTrajectorySegment,
     commandRunner,
@@ -172,9 +155,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     executingToolCallIdsRef,
     interruptQueuedRef,
     isExecutingTool,
-    lastAutoApprovedEnterPlanToolCallIdRef,
-    lastAutoHandledExitPlanToolCallIdRef,
-    lastPlanFilePathRef,
     loadingState,
     openTrajectorySegment,
     pendingApprovals,
@@ -1097,240 +1077,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     setPendingApprovals,
   ]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: plan approval refs are stable; .current is read dynamically.
-  const handlePlanApprove = useCallback(
-    async (acceptEdits: boolean = false) => {
-      const currentIndex = approvalResults.length;
-      const approval = pendingApprovals[currentIndex];
-      if (!approval) return;
-
-      const isLast = currentIndex + 1 >= pendingApprovals.length;
-
-      // Capture plan file path BEFORE exiting plan mode (for post-approval rendering)
-      const planFilePath =
-        permissionMode.getPlanFilePath() ?? lastPlanFilePathRef.current;
-      if (planFilePath) {
-        lastPlanFilePathRef.current = planFilePath;
-      }
-
-      // Exit plan mode — if user already cycled out (e.g., Shift+Tab to
-      // acceptEdits/yolo), keep their chosen mode instead of downgrading.
-      const currentMode = permissionMode.getMode();
-      if (currentMode === "plan") {
-        const previousMode = permissionMode.getModeBeforePlan();
-        const restoreMode =
-          // If the user was in YOLO before entering plan mode, always restore it.
-          previousMode === "unrestricted"
-            ? "unrestricted"
-            : acceptEdits
-              ? "acceptEdits"
-              : previousMode === "memory"
-                ? DEFAULT_PERMISSION_MODE
-                : (previousMode ?? DEFAULT_PERMISSION_MODE);
-        permissionMode.setMode(restoreMode);
-        setUiPermissionMode(restoreMode);
-      } else {
-        setUiPermissionMode(currentMode);
-      }
-
-      try {
-        // Execute ExitPlanMode tool to get the result
-        const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-          approval.toolArgs,
-          {},
-        );
-        const toolResult = await executeTool("ExitPlanMode", parsedArgs);
-
-        // Update buffers with tool return
-        onChunk(buffersRef.current, {
-          message_type: "tool_return_message",
-          id: "dummy",
-          date: new Date().toISOString(),
-          tool_call_id: approval.toolCallId,
-          tool_return: getDisplayableToolReturn(toolResult.toolReturn),
-          status: toolResult.status,
-          stdout: toolResult.stdout,
-          stderr: toolResult.stderr,
-        });
-
-        setThinkingMessage(getRandomThinkingVerb());
-        refreshDerived();
-
-        const decision = {
-          type: "approve" as const,
-          approval,
-          precomputedResult: toolResult,
-        };
-
-        if (isLast) {
-          setIsExecutingTool(true);
-          await sendAllResults(decision);
-        } else {
-          setApprovalResults((prev) => [...prev, decision]);
-        }
-      } catch (e) {
-        const errorDetails = formatErrorDetails(e, agentId);
-        appendError(errorDetails, {
-          ...extractErrorMeta(e),
-          context: "approval_send",
-        });
-        setStreaming(false);
-      }
-    },
-    [
-      agentId,
-      pendingApprovals,
-      approvalResults,
-      sendAllResults,
-      appendError,
-      refreshDerived,
-      setStreaming,
-      setUiPermissionMode,
-      lastPlanFilePathRef,
-      setApprovalResults,
-      setIsExecutingTool,
-      setThinkingMessage,
-    ],
-  );
-
-  const handlePlanKeepPlanning = useCallback(
-    async (reason: string) => {
-      const currentIndex = approvalResults.length;
-      const approval = pendingApprovals[currentIndex];
-      if (!approval) return;
-
-      const isLast = currentIndex + 1 >= pendingApprovals.length;
-
-      // Stay in plan mode
-      const denialReason =
-        reason ||
-        "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
-
-      const decision = {
-        type: "deny" as const,
-        approval,
-        reason: denialReason,
-      };
-
-      if (isLast) {
-        setIsExecutingTool(true);
-        await sendAllResults(decision);
-      } else {
-        setApprovalResults((prev) => [...prev, decision]);
-      }
-    },
-    [
-      pendingApprovals,
-      approvalResults,
-      sendAllResults,
-      setApprovalResults,
-      setIsExecutingTool,
-    ],
-  );
-
-  // Guard ExitPlanMode:
-  // - If not in plan mode, allow graceful continuation when we still have a known plan file path
-  // - Otherwise reject with an expiry message
-  // - If in plan mode but no plan file exists, keep planning
-  // biome-ignore lint/correctness/useExhaustiveDependencies: approval refs are stable; .current is read dynamically while this effect is triggered by approval state.
-  useEffect(() => {
-    const currentIndex = approvalResults.length;
-    const approval = pendingApprovals[currentIndex];
-    if (approval?.toolName === "ExitPlanMode") {
-      if (
-        lastAutoHandledExitPlanToolCallIdRef.current === approval.toolCallId
-      ) {
-        return;
-      }
-
-      const mode = permissionMode.getMode();
-      const activePlanPath = permissionMode.getPlanFilePath();
-      const fallbackPlanPath = lastPlanFilePathRef.current;
-      const hasUsablePlan = planFileExists(fallbackPlanPath);
-
-      if (mode !== "plan") {
-        if (hasUsablePlan) {
-          // Keep approval flow alive and let user manually approve.
-          return;
-        }
-
-        if (mode === "unrestricted") {
-          // YOLO mode but no plan file yet — tell agent to write it first.
-          const planFilePath = activePlanPath ?? fallbackPlanPath;
-          const plansDir = join(homedir(), ".letta", "plans");
-          handlePlanKeepPlanning(
-            `You must write your plan to a plan file before exiting plan mode.\n` +
-              (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
-              `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
-          );
-          return;
-        }
-
-        // Plan mode state was lost and no plan file is recoverable (e.g., CLI restart)
-        const statusId = uid("status");
-        buffersRef.current.byId.set(statusId, {
-          kind: "status",
-          id: statusId,
-          lines: ["⚠️ Plan mode session expired (use /plan to re-enter)"],
-        });
-        buffersRef.current.order.push(statusId);
-
-        // Queue denial to send with next message (same pattern as handleCancelApprovals)
-        lastAutoHandledExitPlanToolCallIdRef.current = approval.toolCallId;
-        const denialResults = [
-          {
-            type: "approval" as const,
-            tool_call_id: approval.toolCallId,
-            approve: false,
-            reason:
-              "Plan mode session expired (CLI restarted or no recoverable plan file). Use EnterPlanMode to re-enter plan mode, or request the user to re-enter plan mode.",
-          },
-        ];
-        queueApprovalResults(denialResults);
-
-        // Mark tool as cancelled in buffers
-        markIncompleteToolsAsCancelled(
-          buffersRef.current,
-          true,
-          "internal_cancel",
-        );
-        refreshDerived();
-
-        // Clear all approval state (same as handleCancelApprovals)
-        setPendingApprovals([]);
-        setApprovalContexts([]);
-        setApprovalResults([]);
-        setAutoHandledResults([]);
-        setAutoDeniedApprovals([]);
-        return;
-      }
-
-      // Mode is plan: require an existing plan file (active or fallback)
-      if (!hasUsablePlan) {
-        lastAutoHandledExitPlanToolCallIdRef.current = approval.toolCallId;
-        const planFilePath = activePlanPath ?? fallbackPlanPath;
-        const plansDir = join(homedir(), ".letta", "plans");
-        handlePlanKeepPlanning(
-          `You must write your plan to a plan file before exiting plan mode.\n` +
-            (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
-            `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
-        );
-      }
-    }
-  }, [
-    pendingApprovals,
-    approvalResults.length,
-    handlePlanKeepPlanning,
-    refreshDerived,
-    queueApprovalResults,
-    lastAutoHandledExitPlanToolCallIdRef,
-    setApprovalContexts,
-    setApprovalResults,
-    setAutoDeniedApprovals,
-    setAutoHandledResults,
-    setPendingApprovals,
-  ]);
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
@@ -1401,149 +1147,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     ],
   );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
-  const handleEnterPlanModeApprove = useCallback(
-    async (preserveMode: boolean = false) => {
-      const currentIndex = approvalResults.length;
-      const approval = pendingApprovals[currentIndex];
-      if (!approval) return;
-
-      const isLast = currentIndex + 1 >= pendingApprovals.length;
-
-      // Generate plan file path
-      const planFilePath = generatePlanFilePath();
-      const applyPatchRelativePath = relative(
-        process.cwd(),
-        planFilePath,
-      ).replace(/\\/g, "/");
-
-      // Store plan file path
-      permissionMode.setPlanFilePath(planFilePath);
-      cacheLastPlanFilePath(planFilePath);
-
-      if (!preserveMode) {
-        // Normal flow: switch to plan mode
-        permissionMode.setMode("plan");
-        setUiPermissionMode("plan");
-      }
-
-      // Get the tool return message from the implementation
-      const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
-
-In plan mode, you should:
-1. Thoroughly explore the codebase to understand existing patterns
-2. Identify similar features and architectural approaches
-3. Consider multiple approaches and their trade-offs
-4. Use AskUserQuestion if you need to clarify the approach
-5. Design a concrete implementation strategy
-6. When ready, use ExitPlanMode to present your plan for approval
-
-Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.
-
-Plan file path: ${planFilePath}
-If using apply_patch, use this exact relative patch path: ${applyPatchRelativePath}`;
-
-      const precomputedResult: ToolExecutionResult = {
-        toolReturn,
-        status: "success",
-      };
-
-      // Update buffers with tool return
-      onChunk(buffersRef.current, {
-        message_type: "tool_return_message",
-        id: "dummy",
-        date: new Date().toISOString(),
-        tool_call_id: approval.toolCallId,
-        tool_return: toolReturn,
-        status: "success",
-        stdout: null,
-        stderr: null,
-      });
-
-      setThinkingMessage(getRandomThinkingVerb());
-      refreshDerived();
-
-      const decision = {
-        type: "approve" as const,
-        approval,
-        precomputedResult,
-      };
-
-      if (isLast) {
-        setIsExecutingTool(true);
-        await sendAllResults(decision);
-      } else {
-        setApprovalResults((prev) => [...prev, decision]);
-      }
-    },
-    [
-      pendingApprovals,
-      approvalResults,
-      sendAllResults,
-      refreshDerived,
-      setUiPermissionMode,
-      cacheLastPlanFilePath,
-      setApprovalResults,
-      setIsExecutingTool,
-      setThinkingMessage,
-    ],
-  );
-
-  const handleEnterPlanModeReject = useCallback(async () => {
-    const currentIndex = approvalResults.length;
-    const approval = pendingApprovals[currentIndex];
-    if (!approval) return;
-
-    const isLast = currentIndex + 1 >= pendingApprovals.length;
-
-    const rejectionReason =
-      "User chose to skip plan mode and start implementing directly.";
-
-    const decision = {
-      type: "deny" as const,
-      approval,
-      reason: rejectionReason,
-    };
-
-    if (isLast) {
-      setIsExecutingTool(true);
-      await sendAllResults(decision);
-    } else {
-      setApprovalResults((prev) => [...prev, decision]);
-    }
-  }, [
-    pendingApprovals,
-    approvalResults,
-    sendAllResults,
-    setApprovalResults,
-    setIsExecutingTool,
-  ]);
-
-  // Guard EnterPlanMode:
-  // When in unrestricted (YOLO) mode, auto-approve EnterPlanMode and stay
-  // in YOLO — the agent gets plan instructions but keeps full permissions.
-  // ExitPlanMode still requires explicit user approval.
-  useEffect(() => {
-    const currentIndex = approvalResults.length;
-    const approval = pendingApprovals[currentIndex];
-    if (approval?.toolName === "EnterPlanMode") {
-      if (permissionMode.getMode() === "unrestricted") {
-        if (
-          lastAutoApprovedEnterPlanToolCallIdRef.current === approval.toolCallId
-        ) {
-          return;
-        }
-        lastAutoApprovedEnterPlanToolCallIdRef.current = approval.toolCallId;
-        handleEnterPlanModeApprove(true);
-      }
-    }
-  }, [
-    pendingApprovals,
-    approvalResults.length,
-    handleEnterPlanModeApprove,
-    lastAutoApprovedEnterPlanToolCallIdRef,
-  ]);
-
   // Live area shows only in-progress items
   return {
     recoverRestoredPendingApprovals,
@@ -1551,10 +1154,6 @@ If using apply_patch, use this exact relative patch path: ${applyPatchRelativePa
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handlePlanApprove,
-    handlePlanKeepPlanning,
     handleQuestionSubmit,
-    handleEnterPlanModeApprove,
-    handleEnterPlanModeReject,
   };
 }

@@ -42,7 +42,6 @@ export interface SharedReminderContext {
   systemInfoReminderEnabled: boolean;
   reflectionSettings: ReflectionSettings;
   skillSources: SkillSource[];
-  resolvePlanModeReminder: () => string | Promise<string>;
   maybeLaunchReflectionSubagent?: (
     triggerSource: ReflectionTriggerSource,
   ) => Promise<boolean>;
@@ -171,21 +170,9 @@ async function buildConversationBootstrapReminderPart(
   });
 }
 
-async function buildPlanModeReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (permissionMode.getMode() !== "plan") {
-    return null;
-  }
-
-  const reminder = await context.resolvePlanModeReminder();
-  return reminder || null;
-}
-
 const PERMISSION_MODE_DESCRIPTIONS = {
   standard: "Normal approval flow.",
   acceptEdits: "File edits auto-approved.",
-  plan: "Read-only mode. Focus on exploration and planning.",
   memory:
     "Memory-scoped mode. Reads are broad; mutations are limited to allowed memory roots.",
   unrestricted: "All tools auto-approved. Bias toward action.",
@@ -405,7 +392,6 @@ export const sharedReminderProviders: Record<
   "secrets-info": buildSecretsInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
-  "plan-mode": buildPlanModeReminder,
   "reflection-step-count": buildReflectionStepReminder,
   "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,

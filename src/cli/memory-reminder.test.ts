@@ -389,7 +389,6 @@ describe("reflection trigger orchestration", () => {
         stepCount: overrides.stepCount ?? 1,
       },
       skillSources: [],
-      resolvePlanModeReminder: async () => "",
       maybeLaunchReflectionSubagent: overrides.callback,
     };
   }

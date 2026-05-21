@@ -1,20 +1,13 @@
 // Interactive tool capability policy shared across UI/headless/SDK-compatible paths.
 // This avoids scattering name-based checks throughout approval handling.
 
-const INTERACTIVE_APPROVAL_TOOLS = new Set([
-  "AskUserQuestion",
-  "EnterPlanMode",
-  "ExitPlanMode",
-]);
+const INTERACTIVE_APPROVAL_TOOLS = new Set(["AskUserQuestion"]);
 
-export type InteractiveApprovalKind =
-  | "ask_user_question"
-  | "enter_plan_mode"
-  | "exit_plan_mode";
+export type InteractiveApprovalKind = "ask_user_question";
 
-const RUNTIME_USER_INPUT_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
+const RUNTIME_USER_INPUT_TOOLS = new Set(["AskUserQuestion"]);
 
-const HEADLESS_AUTO_ALLOW_TOOLS = new Set(["EnterPlanMode", "ExitPlanMode"]);
+const HEADLESS_AUTO_ALLOW_TOOLS = new Set<string>();
 
 export function isInteractiveApprovalTool(toolName: string): boolean {
   return INTERACTIVE_APPROVAL_TOOLS.has(toolName);
@@ -26,10 +19,6 @@ export function getInteractiveApprovalKind(
   switch (toolName) {
     case "AskUserQuestion":
       return "ask_user_question";
-    case "EnterPlanMode":
-      return "enter_plan_mode";
-    case "ExitPlanMode":
-      return "exit_plan_mode";
     default:
       return null;
   }

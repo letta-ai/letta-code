@@ -519,23 +519,6 @@ export const commands: Record<string, Command> = {
   },
 
   // === Session management (order 40-49) ===
-  "/plan": {
-    desc: "Enter plan mode",
-    order: 40,
-    noArgs: true,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Entering plan mode...";
-    },
-  },
-  "/plan-mode": {
-    desc: "Enable or disable plan mode (/plan-mode on|off)",
-    order: 40.5,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Updating plan mode setting...";
-    },
-  },
   "/disconnect": {
     desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
     order: 41,
@@ -560,6 +543,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx
       return "Exiting...";
+    },
+  },
+  "/login": {
+    desc: "Sign in to Letta Constellation",
+    order: 43,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in use-submit-handler.ts
+      return "Signing in...";
     },
   },
   "/logout": {
