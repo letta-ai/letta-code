@@ -228,7 +228,7 @@ jobs:
         if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: ./letta.js --prompt "ping" --tools "" --permission-mode plan
+        run: ./letta.js --prompt "ping" --tools "" --permission-mode standard
 
       - name: Windows integration test
         # Only run on Windows, with API key available
@@ -391,7 +391,7 @@ jobs:
         env:
           LETTA_BASE_URL: http://localhost:8283
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: ./letta.js --prompt "ping" --tools "" --permission-mode plan --model haiku
+        run: ./letta.js --prompt "ping" --tools "" --permission-mode standard --model haiku
 
       - name: Docker logs (on failure)
         if: failure()
