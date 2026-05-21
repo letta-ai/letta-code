@@ -245,7 +245,7 @@ type SubmitHandlerContext = {
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
   refreshDerived: () => void;
-  resetBootstrapReminderState: () => void;
+  resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
@@ -1357,7 +1357,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             resetContextHistory(contextTrackerRef.current);
 
             // Ensure bootstrap reminders are re-injected for the new conversation.
-            resetBootstrapReminderState();
+            resetBootstrapReminderState(true);
 
             // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
@@ -1564,7 +1564,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             resetContextHistory(contextTrackerRef.current);
 
             // Ensure bootstrap reminders are re-injected for the new conversation.
-            resetBootstrapReminderState();
+            resetBootstrapReminderState(true);
 
             // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
@@ -3413,6 +3413,8 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId: conversationIdRef.current,
         },
         state: sharedReminderStateRef.current,
+        conversationBootstrapContent:
+          contentParts as unknown as MessageCreate["content"],
         systemInfoReminderEnabled,
         reflectionSettings,
         skillSources: getSkillSources(),

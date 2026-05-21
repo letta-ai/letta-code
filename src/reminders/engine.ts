@@ -1,6 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { SkillSource } from "@/agent/skills";
 import { buildAgentInfo } from "@/cli/helpers/agent-info";
+import { buildConversationBootstrapReminder } from "@/cli/helpers/conversation-bootstrap";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
@@ -13,6 +14,7 @@ import {
   type SessionContextSource,
 } from "@/cli/helpers/session-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
@@ -44,6 +46,7 @@ export interface SharedReminderContext {
   maybeLaunchReflectionSubagent?: (
     triggerSource: ReflectionTriggerSource,
   ) => Promise<boolean>;
+  conversationBootstrapContent?: MessageCreate["content"];
   /** Explicit working directory (overrides process.cwd() in session context). */
   workingDirectory?: string;
   /** Source of the session context (varies intro text). */
@@ -139,6 +142,33 @@ async function buildSessionContextReminder(
   context.state.hasSentSessionContext = true;
   context.state.pendingSessionContextReason = undefined;
   return reminder || null;
+}
+
+async function buildConversationBootstrapReminderPart(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (
+    !context.state.pendingConversationBootstrap ||
+    context.state.hasSentConversationBootstrap ||
+    !experimentManager.isEnabled("desktop_conversation_bootstrap") ||
+    !context.conversationBootstrapContent
+  ) {
+    return null;
+  }
+
+  context.state.hasSentConversationBootstrap = true;
+  context.state.pendingConversationBootstrap = false;
+
+  const conversationId = context.agent.conversationId;
+  if (!conversationId) {
+    return null;
+  }
+
+  return buildConversationBootstrapReminder({
+    agentId: context.agent.id,
+    content: context.conversationBootstrapContent,
+    excludeConversationId: conversationId,
+  });
 }
 
 async function buildPlanModeReminder(
@@ -371,6 +401,7 @@ export const sharedReminderProviders: Record<
   SharedReminderProvider
 > = {
   "agent-info": buildAgentInfoReminder,
+  "conversation-bootstrap": buildConversationBootstrapReminderPart,
   "secrets-info": buildSecretsInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
