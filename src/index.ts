@@ -1146,7 +1146,11 @@ async function main(): Promise<void> {
   }
 
   // Set CLI permission overrides if provided
-  if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
+  if (
+    values.allowedTools ||
+    values.disallowedTools ||
+    values["disable-memory-guard"]
+  ) {
     const { cliPermissions } = await import(
       "@/permissions/cli-permissions-instance"
     );
@@ -1156,8 +1160,8 @@ async function main(): Promise<void> {
     if (values.disallowedTools) {
       cliPermissions.setDisallowedTools(values.disallowedTools);
     }
-    if (values["memory-scope"]) {
-      cliPermissions.setMemoryScope(values["memory-scope"]);
+    if (values["disable-memory-guard"]) {
+      cliPermissions.setMemoryGuardDisabled(true);
     }
   }
 

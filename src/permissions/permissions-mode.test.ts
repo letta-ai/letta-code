@@ -502,11 +502,13 @@ test("memory mode - denies Write outside memory roots", () => {
   }
 });
 
-test("memory mode - allows Write inside parent memory when LETTA_MEMORY_SCOPE grants it", () => {
+test("memory mode - allows Write inside parent memory for subagents", () => {
   permissionMode.setMode("memory");
   const originalMemoryDir = process.env.MEMORY_DIR;
-  const originalMemoryScope = process.env.LETTA_MEMORY_SCOPE;
+  const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
   const originalAgentId = process.env.AGENT_ID;
+  const originalParentAgentId = process.env.LETTA_PARENT_AGENT_ID;
+  const originalAgentRole = process.env.LETTA_CODE_AGENT_ROLE;
   const home = homedir();
   const parentMemoryPath = join(
     home,
@@ -515,9 +517,11 @@ test("memory mode - allows Write inside parent memory when LETTA_MEMORY_SCOPE gr
     "agent-parent",
     "memory",
   );
-  delete process.env.MEMORY_DIR;
-  process.env.LETTA_MEMORY_SCOPE = "agent-parent";
+  process.env.MEMORY_DIR = parentMemoryPath;
+  process.env.LETTA_MEMORY_DIR = parentMemoryPath;
   process.env.AGENT_ID = "agent-self";
+  process.env.LETTA_PARENT_AGENT_ID = "agent-parent";
+  process.env.LETTA_CODE_AGENT_ROLE = "subagent";
 
   try {
     const result = checkPermission(
@@ -531,20 +535,32 @@ test("memory mode - allows Write inside parent memory when LETTA_MEMORY_SCOPE gr
   } finally {
     if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = originalMemoryDir;
-    if (originalMemoryScope === undefined)
-      delete process.env.LETTA_MEMORY_SCOPE;
-    else process.env.LETTA_MEMORY_SCOPE = originalMemoryScope;
+    if (originalLettaMemoryDir === undefined)
+      delete process.env.LETTA_MEMORY_DIR;
+    else process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
     if (originalAgentId === undefined) delete process.env.AGENT_ID;
     else process.env.AGENT_ID = originalAgentId;
+    if (originalParentAgentId === undefined)
+      delete process.env.LETTA_PARENT_AGENT_ID;
+    else process.env.LETTA_PARENT_AGENT_ID = originalParentAgentId;
+    if (originalAgentRole === undefined)
+      delete process.env.LETTA_CODE_AGENT_ROLE;
+    else process.env.LETTA_CODE_AGENT_ROLE = originalAgentRole;
   }
 });
 
 test("memory mode - no roots allows reads but denies mutations", () => {
   permissionMode.setMode("memory");
   const originalMemoryDir = process.env.MEMORY_DIR;
-  const originalMemoryScope = process.env.LETTA_MEMORY_SCOPE;
+  const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
+  const originalAgentId = process.env.AGENT_ID;
+  const originalLettaAgentId = process.env.LETTA_AGENT_ID;
+  const originalParentAgentId = process.env.LETTA_PARENT_AGENT_ID;
   delete process.env.MEMORY_DIR;
-  delete process.env.LETTA_MEMORY_SCOPE;
+  delete process.env.LETTA_MEMORY_DIR;
+  delete process.env.AGENT_ID;
+  delete process.env.LETTA_AGENT_ID;
+  delete process.env.LETTA_PARENT_AGENT_ID;
 
   try {
     const readResult = checkPermission(
@@ -565,9 +581,16 @@ test("memory mode - no roots allows reads but denies mutations", () => {
   } finally {
     if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = originalMemoryDir;
-    if (originalMemoryScope === undefined)
-      delete process.env.LETTA_MEMORY_SCOPE;
-    else process.env.LETTA_MEMORY_SCOPE = originalMemoryScope;
+    if (originalLettaMemoryDir === undefined)
+      delete process.env.LETTA_MEMORY_DIR;
+    else process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+    if (originalAgentId === undefined) delete process.env.AGENT_ID;
+    else process.env.AGENT_ID = originalAgentId;
+    if (originalLettaAgentId === undefined) delete process.env.LETTA_AGENT_ID;
+    else process.env.LETTA_AGENT_ID = originalLettaAgentId;
+    if (originalParentAgentId === undefined)
+      delete process.env.LETTA_PARENT_AGENT_ID;
+    else process.env.LETTA_PARENT_AGENT_ID = originalParentAgentId;
   }
 });
 

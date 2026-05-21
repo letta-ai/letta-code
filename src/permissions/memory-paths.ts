@@ -3,8 +3,6 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 import { getCurrentAgentId } from "@/agent/context";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import { parseScopeList } from "./cli";
-import { cliPermissions } from "./cli-permissions-instance";
 
 export interface ResolveAllowedMemoryRootsOptions {
   env?: NodeJS.ProcessEnv;
@@ -13,13 +11,13 @@ export interface ResolveAllowedMemoryRootsOptions {
   homeDir?: string;
 }
 
-export interface ResolvedMemoryScope {
+export interface ResolvedMemoryRoots {
   roots: string[];
   primaryRoot: string | null;
   usedFallback: boolean;
 }
 
-export function normalizeScopedPath(path: string): string {
+export function normalizeMemoryPath(path: string): string {
   const resolvedPath = resolve(expandHomePath(path));
   const normalized = resolvedPath.replace(/\\/g, "/");
   return normalized.replace(/\/+$/, "") || "/";
@@ -42,7 +40,7 @@ export function expandHomePath(path: string): string {
   return value;
 }
 
-export function resolveScopedTargetPath(
+export function resolveMemoryTargetPath(
   targetPath: string,
   workingDirectory: string,
 ): string | null {
@@ -50,18 +48,18 @@ export function resolveScopedTargetPath(
   if (!trimmedPath) return null;
 
   if (trimmedPath.startsWith("~/") || trimmedPath.startsWith("$HOME/")) {
-    return normalizeScopedPath(trimmedPath);
+    return normalizeMemoryPath(trimmedPath);
   }
   if (isAbsolute(trimmedPath) || /^[a-zA-Z]:[\\/]/.test(trimmedPath)) {
-    return normalizeScopedPath(trimmedPath);
+    return normalizeMemoryPath(trimmedPath);
   }
-  return normalizeScopedPath(resolve(workingDirectory, trimmedPath));
+  return normalizeMemoryPath(resolve(workingDirectory, trimmedPath));
 }
 
 export function isPathWithinRoots(path: string, roots: string[]): boolean {
-  const normalizedPath = normalizeScopedPath(path);
+  const normalizedPath = normalizeMemoryPath(path);
   return roots.some((root) => {
-    const normalizedRoot = normalizeScopedPath(root);
+    const normalizedRoot = normalizeMemoryPath(root);
     return (
       normalizedPath === normalizedRoot ||
       normalizedPath.startsWith(`${normalizedRoot}/`)
@@ -70,7 +68,7 @@ export function isPathWithinRoots(path: string, roots: string[]): boolean {
 }
 
 function addRootAndSiblingWorktree(root: string, acc: Set<string>): void {
-  const normalizedRoot = normalizeScopedPath(root);
+  const normalizedRoot = normalizeMemoryPath(root);
   if (!normalizedRoot) {
     return;
   }
@@ -80,22 +78,17 @@ function addRootAndSiblingWorktree(root: string, acc: Set<string>): void {
   const leaf = basename(normalizedRoot);
   if (leaf === "memory") {
     acc.add(
-      normalizeScopedPath(resolve(dirname(normalizedRoot), "memory-worktrees")),
+      normalizeMemoryPath(resolve(dirname(normalizedRoot), "memory-worktrees")),
     );
   }
 }
-
-export { parseScopeList } from "./cli";
 
 interface ExplicitEnvRoots {
   roots: string[];
   primaryRoot: string | null;
 }
 
-function getExplicitEnvRoots(
-  env: NodeJS.ProcessEnv,
-  homeDir: string,
-): ExplicitEnvRoots {
+function getExplicitEnvRoots(env: NodeJS.ProcessEnv): ExplicitEnvRoots {
   const orderedRoots = [env.MEMORY_DIR, env.LETTA_MEMORY_DIR]
     .map((value) => value?.trim() ?? "")
     .filter((value) => value.length > 0);
@@ -105,22 +98,11 @@ function getExplicitEnvRoots(
     addRootAndSiblingWorktree(root, rootSet);
   }
 
-  // Include memory roots for every agent ID in the cross-agent scope
-  // (env LETTA_MEMORY_SCOPE + CLI --memory-scope). This keeps memory-mode
-  // write permissions aligned with the cross-agent guard.
-  const scopeIds = new Set<string>([
-    ...parseScopeList(env.LETTA_MEMORY_SCOPE),
-    ...cliPermissions.getMemoryScope(),
-  ]);
-  for (const id of scopeIds) {
-    addRootAndSiblingWorktree(getMemoryFilesystemRoot(id, homeDir), rootSet);
-  }
-
   return {
     roots: [...rootSet],
     primaryRoot:
       orderedRoots.length > 0
-        ? normalizeScopedPath(orderedRoots[0] as string)
+        ? normalizeMemoryPath(orderedRoots[0] as string)
         : null,
   };
 }
@@ -160,8 +142,10 @@ function getFallbackRoots(
   const fallbackRoots = new Set<string>();
 
   const resolvedCurrentAgentId = deriveAgentId(env, currentAgentId);
+  const envParentAgentId =
+    env.LETTA_CODE_AGENT_ROLE === "subagent" ? env.LETTA_PARENT_AGENT_ID : "";
   const resolvedParentAgentId =
-    (parentAgentId || env.LETTA_PARENT_AGENT_ID || "").trim() || null;
+    (parentAgentId || envParentAgentId || "").trim() || null;
 
   let primaryRoot: string | null = null;
 
@@ -171,7 +155,7 @@ function getFallbackRoots(
       homeDir,
     );
     addRootAndSiblingWorktree(currentRoot, fallbackRoots);
-    primaryRoot = normalizeScopedPath(currentRoot);
+    primaryRoot = normalizeMemoryPath(currentRoot);
   }
 
   if (
@@ -181,7 +165,7 @@ function getFallbackRoots(
     const parentRoot = getMemoryFilesystemRoot(resolvedParentAgentId, homeDir);
     addRootAndSiblingWorktree(parentRoot, fallbackRoots);
     if (!primaryRoot) {
-      primaryRoot = normalizeScopedPath(parentRoot);
+      primaryRoot = normalizeMemoryPath(parentRoot);
     }
   }
 
@@ -193,11 +177,11 @@ function getFallbackRoots(
 
 export function resolveAllowedMemoryRoots(
   options: ResolveAllowedMemoryRootsOptions = {},
-): ResolvedMemoryScope {
+): ResolvedMemoryRoots {
   const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? homedir();
 
-  const explicit = getExplicitEnvRoots(env, homeDir);
+  const explicit = getExplicitEnvRoots(env);
   if (explicit.roots.length > 0) {
     return {
       roots: explicit.roots,
