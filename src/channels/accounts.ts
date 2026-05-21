@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { migratePermissionMode } from "@/permissions/mode";
+import { isRecord } from "@/utils/type-guards";
 import {
   getChannelAccountsPath,
   getChannelDir,
@@ -78,10 +79,6 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
   }
 
   return cloned;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {

@@ -25,6 +25,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { clipToolReturn } from "@/tools/manager.js";
+import { isRecord } from "@/utils/type-guards";
 import { Text } from "./Text";
 
 /**
@@ -399,10 +400,6 @@ export const ToolCallMessage = memo(
           /\n+$/,
           "",
         );
-
-        // Helper to check if a value is a record
-        const isRecord = (v: unknown): v is Record<string, unknown> =>
-          typeof v === "object" && v !== null;
 
         // Check if this is a todo_write tool with successful result
         if (

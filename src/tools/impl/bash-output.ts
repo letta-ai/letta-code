@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { sleep } from "@/utils/sleep";
 import {
   backgroundProcesses,
   backgroundTasks,
@@ -23,10 +24,6 @@ interface GetTaskOutputResult {
 }
 
 const POLL_INTERVAL_MS = 100;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function readOutputFile(filePath?: string): {
   content: string | null;
