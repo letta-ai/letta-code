@@ -217,6 +217,373 @@ describe("ChannelRegistry", () => {
       "Telegram received /compact now, but that slash command is not supported in channels yet.",
     );
   });
+
+  test("/status replies with route status instead of being delivered to the agent", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        enabled: true,
+        token: "test-token",
+        dmPolicy: "open",
+        allowedUsers: [],
+        binding: { agentId: null, conversationId: null },
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-status",
+      conversationId: "conv-status",
+      enabled: true,
+      createdAt: "2026-05-15T00:00:00.000Z",
+    });
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/status",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "77",
+    });
+    expect(replies[0]?.text).toContain("Telegram status");
+    expect(replies[0]?.text).toContain(
+      "Route: Connected to a Letta agent conversation.",
+    );
+    expect(replies[0]?.text).toContain("Agent: agent-status.");
+    expect(replies[0]?.text).toContain("Conversation: conv-status.");
+  });
+
+  test("/pause and /resume update the current route without agent delivery", async () => {
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-18T00:00:00.000Z",
+      updatedAt: "2026-05-18T00:00:00.000Z",
+    });
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/pause",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies.at(-1)).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "77",
+    });
+    expect(replies.at(-1)?.text).toContain("paused agent routing");
+    expect(getRoute("telegram", "123", "acct-telegram")).toBeNull();
+
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/resume",
+      timestamp: Date.now(),
+      messageId: "78",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies.at(-1)).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "78",
+    });
+    expect(replies.at(-1)?.text).toContain("resumed agent routing");
+    expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
+      "conv-1",
+    );
+  });
+
+  test("/cancel invokes the channel cancel handler for the routed chat", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    const cancellations: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setCancelHandler(async (params) => {
+      cancellations.push(params);
+      return true;
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/cancel",
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(cancellations).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "Slack cancelled the in-progress agent turn for this chat.",
+        replyToMessageId: "1712800000.000200",
+      },
+    ]);
+  });
+
+  test("/cancel reports when the routed chat has no active turn", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    registry.setMessageHandler(() => {});
+    registry.setCancelHandler(async () => false);
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "/cancel",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(replies[0]?.text).toBe(
+      "Telegram received /cancel, but there is no in-progress agent turn to cancel for this chat.",
+    );
+  });
+
+  test("/cancel can target the sole Slack thread route when native commands omit thread metadata", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const cancellations: unknown[] = [];
+    const registry = new ChannelRegistry();
+    registry.setMessageHandler(() => {});
+    registry.setCancelHandler(async (params) => {
+      cancellations.push(params);
+      return true;
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/cancel",
+      timestamp: Date.now(),
+      messageId: "trigger-1",
+      threadId: null,
+      chatType: "channel",
+    });
+
+    expect(cancellations).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies[0]?.text).toBe(
+      "Slack cancelled the in-progress agent turn for this chat.",
+    );
+  });
 });
 
 describe("buildSlackConversationSummary", () => {
@@ -542,6 +909,62 @@ describe("pending channel control requests", () => {
         },
       },
     });
+  });
+
+  test("/cancel bypasses pending channel control prompts", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler(() => {});
+
+    const approvalResponses: unknown[] = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+    const cancellations: unknown[] = [];
+    registry.setCancelHandler(async (params) => {
+      cancellations.push(params);
+      return true;
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    await registry.registerPendingControlRequest(
+      createPendingControlRequestEvent(),
+    );
+
+    await adapter.onMessage?.(createInboundMessage("/cancel"));
+
+    expect(approvalResponses).toHaveLength(0);
+    expect(cancellations).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "Slack cancelled the in-progress agent turn for this chat.",
+        replyToMessageId: "1712800000.000200",
+      },
+    ]);
   });
 
   test("freeform multi-question channel replies approve instead of reprompting", async () => {

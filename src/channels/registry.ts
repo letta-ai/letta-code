@@ -19,7 +19,17 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "./accounts";
-import { tryHandleChannelSlashCommand } from "./commands";
+import {
+  buildChannelAlreadyActiveMessage,
+  buildChannelAlreadyPausedMessage,
+  buildChannelCancelNoActiveTurnMessage,
+  buildChannelCancelUnavailableMessage,
+  buildChannelNoRouteMessage,
+  buildChannelPausedMessage,
+  buildChannelResumedMessage,
+  parseChannelSlashCommand,
+  tryHandleChannelSlashCommand,
+} from "./commands";
 import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
 import {
   formatChannelControlRequestPrompt,
@@ -250,6 +260,13 @@ export type ChannelApprovalResponseHandler = (params: {
   response: ApprovalResponseBody;
 }) => Promise<boolean>;
 
+export type ChannelCancelHandler = (params: {
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+}) => Promise<boolean>;
+
 type PendingChannelControlRequest = {
   event: ChannelControlRequestEvent;
   deliveredThisProcess: boolean;
@@ -289,6 +306,7 @@ export class ChannelRegistry {
   private messageHandler: ChannelMessageHandler | null = null;
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
+  private cancelHandler: ChannelCancelHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
@@ -419,6 +437,10 @@ export class ChannelRegistry {
     handler: ChannelApprovalResponseHandler | null,
   ): void {
     this.approvalResponseHandler = handler;
+  }
+
+  setCancelHandler(handler: ChannelCancelHandler | null): void {
+    this.cancelHandler = handler;
   }
 
   setEventHandler(
@@ -711,6 +733,7 @@ export class ChannelRegistry {
     this.messageHandler = null;
     this.eventHandler = null;
     this.approvalResponseHandler = null;
+    this.cancelHandler = null;
   }
 
   /**
@@ -727,6 +750,7 @@ export class ChannelRegistry {
     this.messageHandler = null;
     this.eventHandler = null;
     this.approvalResponseHandler = null;
+    this.cancelHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
     instance = null;
@@ -738,6 +762,11 @@ export class ChannelRegistry {
     adapter: ChannelAdapter,
     msg: InboundChannelMessage,
   ): Promise<boolean> {
+    const slashCommand = parseChannelSlashCommand(msg.text);
+    if (slashCommand?.name === "cancel") {
+      return false;
+    }
+
     const scopeKey = getChannelApprovalScopeKey({
       channel: msg.channel,
       accountId: msg.accountId,
@@ -797,6 +826,141 @@ export class ChannelRegistry {
     return true;
   }
 
+  private findRawRouteForMessage(
+    msg: InboundChannelMessage,
+  ): ChannelRoute | null {
+    const route =
+      getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ??
+      (msg.threadId
+        ? getRouteRaw(msg.channel, msg.chatId, msg.accountId, null)
+        : undefined);
+    return route ?? null;
+  }
+
+  private loadAndFindRawRouteForMessage(
+    msg: InboundChannelMessage,
+  ): ChannelRoute | null {
+    const route = this.findRawRouteForMessage(msg);
+    if (route) {
+      return route;
+    }
+    loadRoutes(msg.channel);
+    return this.findRawRouteForMessage(msg);
+  }
+
+  private async handlePauseResumeSlashCommand(
+    commandName: "pause" | "resume",
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (commandName === "pause") {
+      if (route.enabled === false) {
+        return {
+          handled: true,
+          text: buildChannelAlreadyPausedMessage(msg.channel),
+        };
+      }
+      const updatedRoute: ChannelRoute = {
+        ...route,
+        enabled: false,
+        updatedAt: new Date().toISOString(),
+      };
+      addRoute(msg.channel, updatedRoute);
+      return {
+        handled: true,
+        text: buildChannelPausedMessage(msg.channel, updatedRoute),
+      };
+    }
+
+    if (route.enabled !== false) {
+      return {
+        handled: true,
+        text: buildChannelAlreadyActiveMessage(msg.channel),
+      };
+    }
+    const updatedRoute: ChannelRoute = {
+      ...route,
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    };
+    addRoute(msg.channel, updatedRoute);
+    return {
+      handled: true,
+      text: buildChannelResumedMessage(msg.channel, updatedRoute),
+    };
+  }
+
+  private async handleCancelSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.getCancelRoute(msg);
+    if (!route?.enabled || !this.cancelHandler) {
+      return {
+        handled: true,
+        text: buildChannelCancelUnavailableMessage(msg.channel),
+      };
+    }
+
+    const cancelled = await this.cancelHandler({
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
+
+    if (!cancelled) {
+      return {
+        handled: true,
+        text: buildChannelCancelNoActiveTurnMessage(msg.channel),
+      };
+    }
+
+    return { handled: true };
+  }
+
+  private getCancelRoute(msg: InboundChannelMessage): ChannelRoute | null {
+    let route = this.getRoute(
+      msg.channel,
+      msg.chatId,
+      msg.accountId,
+      msg.threadId,
+    );
+    if (route) {
+      return route;
+    }
+
+    loadRoutes(msg.channel);
+    route = this.getRoute(msg.channel, msg.chatId, msg.accountId, msg.threadId);
+    if (route) {
+      return route;
+    }
+
+    if (
+      msg.channel !== "slack" ||
+      msg.chatType !== "channel" ||
+      msg.threadId != null
+    ) {
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const matches = getRoutesForChannel(msg.channel, accountId).filter(
+      (candidate) =>
+        candidate.chatId === msg.chatId &&
+        candidate.chatType === "channel" &&
+        candidate.enabled,
+    );
+
+    return matches.length === 1 ? (matches[0] ?? null) : null;
+  }
+
   private async handleInboundMessage(
     msg: InboundChannelMessage,
   ): Promise<void> {
@@ -807,11 +971,46 @@ export class ChannelRegistry {
       return;
     }
 
-    if (await tryHandleChannelSlashCommand(adapter, msg)) {
+    const config = getChannelAccount(msg.channel, accountId);
+
+    const getStatusRoute = (): ChannelRoute | null => {
+      let statusRoute = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        msg.threadId,
+      );
+      if (!statusRoute) {
+        loadRoutes(msg.channel);
+        statusRoute = getRouteFromStore(
+          msg.channel,
+          msg.chatId,
+          accountId,
+          msg.threadId,
+        );
+      }
+      return statusRoute;
+    };
+
+    if (
+      await tryHandleChannelSlashCommand(adapter, msg, {
+        statusContext: {
+          adapterRunning: adapter.isRunning(),
+          accountConfigured: !!config,
+          accountEnabled: config?.enabled,
+          route: getStatusRoute(),
+        },
+        handlers: {
+          cancel: async (_command, commandMsg) =>
+            this.handleCancelSlashCommand(commandMsg),
+          pause: async () => this.handlePauseResumeSlashCommand("pause", msg),
+          resume: async () => this.handlePauseResumeSlashCommand("resume", msg),
+        },
+      })
+    ) {
       return;
     }
 
-    const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
     if (msg.channel === "slack" && isSlackChannelAccount(config)) {

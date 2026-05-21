@@ -404,7 +404,7 @@ export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
-    socket: WebSocket;
+    socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
       connectionId?: string;

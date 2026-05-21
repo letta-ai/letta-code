@@ -439,6 +439,20 @@ export async function wireChannelIngress(
     }),
   );
 
+  registry.setCancelHandler(async ({ runtime }) =>
+    handleAbortMessageInput(listener, {
+      command: {
+        type: "abort_message",
+        runtime,
+        request_id: `channel-cancel-${crypto.randomUUID()}`,
+        run_id: null,
+      },
+      socket,
+      opts,
+      processQueuedTurn,
+    }),
+  );
+
   registry.setReady();
 }
 
