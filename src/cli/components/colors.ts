@@ -9,7 +9,7 @@ import {
   getTerminalBackgroundColor,
   getTerminalTheme,
   type TerminalRgb,
-} from "@/cli/helpers/terminalTheme";
+} from "@/cli/helpers/terminal-theme";
 
 /**
  * Parse a hex color (#RRGGBB) to RGB components.

@@ -15,6 +15,12 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
       "Generate conversation titles from the transcript with letta/auto (uses your credits).",
   },
   {
+    id: "desktop_conversation_bootstrap",
+    label: "desktop conversation bootstrap",
+    description:
+      "Desktop-only: inject lightweight prior-conversation context into the first turn of brand-new desktop conversations.",
+  },
+  {
     id: "node",
     label: "node",
     description: "Route API requests through the Letta Node / TS core path.",

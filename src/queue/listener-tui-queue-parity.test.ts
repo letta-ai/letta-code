@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { DequeuedBatch } from "@/queue/queueRuntime";
-import { QueueRuntime } from "@/queue/queueRuntime";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
+import { QueueRuntime } from "@/queue/queue-runtime";
 
 type QueueItemArrival = { isUserMessage: boolean; queueItemId?: string };
 

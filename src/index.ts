@@ -2,7 +2,7 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-import { ensureFileIndex } from "@/utils/fileIndex";
+import { ensureFileIndex } from "@/utils/file-index";
 import {
   getResumeDataFromBackend,
   type ResumeData,
@@ -24,8 +24,8 @@ import {
   buildCreateAgentOptionsForPersonality,
   resolvePersonalityId,
 } from "./agent/personality";
-import type { MemoryPromptMode } from "./agent/promptAssets";
-import { resolveSkillSourcesSelection } from "./agent/skillSources";
+import type { MemoryPromptMode } from "./agent/prompt-assets";
+import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import {
   type Backend,
@@ -51,16 +51,16 @@ import {
   parseCsvListFlag,
   parseJsonArrayFlag,
   resolveImportFlagAlias,
-} from "./cli/flagUtils";
-import { formatErrorDetails } from "./cli/helpers/errorFormatter";
+} from "./cli/flag-utils";
+import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import type { ApprovalRequest } from "./cli/helpers/stream";
-import { initTerminalTheme } from "./cli/helpers/terminalTheme";
+import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
   validateRegistryHandleOrThrow,
-} from "./cli/startupFlagValidation";
+} from "./cli/startup-flag-validation";
 import { runSubcommand } from "./cli/subcommands/router";
 import {
   migratePermissionMode,
@@ -70,7 +70,7 @@ import {
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
-import { trackBoundaryError } from "./telemetry/errorReporting";
+import { trackBoundaryError } from "./telemetry/error-reporting";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
@@ -135,6 +135,8 @@ USAGE
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta connect ...     Connect providers from terminal
+  letta backend ...     Show or set the default backend
+  letta setup           Re-run first-run setup
 
 OPTIONS
 ${renderCliOptionsHelp()}
@@ -154,6 +156,7 @@ SUBCOMMANDS
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
   letta connect <provider> [options]
+  letta backend [api|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
@@ -509,10 +512,12 @@ async function main(): Promise<void> {
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
+  let explicitBackendMode: "api" | "local" | undefined;
   try {
     const backendSelection = extractBackendFlag(rawCliArgs);
     subcommandArgs = normalizeUpdateCommandAliases(backendSelection.args);
     if (backendSelection.backend) {
+      explicitBackendMode = backendSelection.backend;
       configureBackendMode(backendSelection.backend);
     }
   } catch (error) {
@@ -692,21 +697,6 @@ async function main(): Promise<void> {
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
   const noMemfsFlag = values["no-memfs"];
-  const startupBackend = getBackend();
-  const localNoMemfsRequested = Boolean(
-    startupBackend.capabilities.localMemfs &&
-      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
-  );
-  if (localNoMemfsRequested) {
-    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
-  }
-  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
-    ? "memfs"
-    : noMemfsFlag || localNoMemfsRequested
-      ? "standard"
-      : undefined;
-  const shouldAutoEnableMemfsForNewAgent =
-    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
   const noSkillsFlag = values["no-skills"];
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
@@ -730,6 +720,36 @@ async function main(): Promise<void> {
     fromAfFlagValue: values["from-af"],
   });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const baseURL =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    LETTA_CLOUD_API_URL;
+
+  if (
+    !explicitBackendMode &&
+    settings.preferredBackendMode === "local" &&
+    baseURL === LETTA_CLOUD_API_URL
+  ) {
+    configureBackendMode("local");
+  }
+
+  const startupBackend = getBackend();
+  const localNoMemfsRequested = Boolean(
+    startupBackend.capabilities.localMemfs &&
+      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
+  );
+  if (localNoMemfsRequested) {
+    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
+  }
+  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+    ? "memfs"
+    : noMemfsFlag || localNoMemfsRequested
+      ? "standard"
+      : undefined;
+  const shouldAutoEnableMemfsForNewAgent =
+    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
 
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   // Surface is set here so session_start captures the correct mode.
@@ -824,7 +844,9 @@ async function main(): Promise<void> {
   // Known preset IDs are always accepted. Subagent names are only accepted
   // for internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent).
   if (systemPromptPreset) {
-    const { validateSystemPromptPreset } = await import("@/agent/promptAssets");
+    const { validateSystemPromptPreset } = await import(
+      "@/agent/prompt-assets"
+    );
     const allowSubagentNames = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
     try {
       await validateSystemPromptPreset(systemPromptPreset, {
@@ -988,13 +1010,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Check if API key is configured
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
-
   const isUsingDevBackend =
     isHeadless &&
     typeof values["dev-backend"] === "string" &&
@@ -1133,7 +1148,7 @@ async function main(): Promise<void> {
   // Set CLI permission overrides if provided
   if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
     const { cliPermissions } = await import(
-      "@/permissions/cliPermissionsInstance"
+      "@/permissions/cli-permissions-instance"
     );
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
@@ -1202,7 +1217,7 @@ async function main(): Promise<void> {
   // In VS Code/xterm.js this typically requires a short handshake (query + enable).
   try {
     const { detectAndEnableKittyProtocol } = await import(
-      "@/cli/utils/kittyProtocolDetector"
+      "@/cli/utils/kitty-protocol-detector"
     );
     await detectAndEnableKittyProtocol();
   } catch {
@@ -1324,7 +1339,7 @@ async function main(): Promise<void> {
           getKeybindingsPath,
           keybindingExists,
           installKeybinding,
-        } = await import("@/cli/utils/terminalKeybindingInstaller");
+        } = await import("@/cli/utils/terminal-keybinding-installer");
         const { loadSettings, updateSettings } = await import("@/settings");
 
         const terminal = detectTerminalType();
@@ -1364,7 +1379,7 @@ async function main(): Promise<void> {
           wezTermDeleteFixExists,
           getWezTermConfigPath,
           installWezTermDeleteFix,
-        } = await import("@/cli/utils/terminalKeybindingInstaller");
+        } = await import("@/cli/utils/terminal-keybinding-installer");
         const { loadSettings, updateSettings } = await import("@/settings");
 
         if (!isWezTerm()) return;
@@ -1917,7 +1932,7 @@ async function main(): Promise<void> {
           }
 
           // Pre-determine memfs mode so the agent is created with the correct prompt.
-          const { isLettaCloud } = await import("@/agent/memoryFilesystem");
+          const { isLettaCloud } = await import("@/agent/memory-filesystem");
           const willAutoEnableMemfs =
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
           const effectiveMemoryMode: MemoryPromptMode | undefined = backend
@@ -2002,7 +2017,7 @@ async function main(): Promise<void> {
 
         if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
           const { hydrateMemfsSettingFromAgent } = await import(
-            "@/agent/memoryFilesystem"
+            "@/agent/memory-filesystem"
           );
           const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
           if (!memfsEnabled) {
@@ -2022,7 +2037,7 @@ async function main(): Promise<void> {
           : memfsFlag;
         const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
         const memfsSyncPromise = backend.capabilities.remoteMemfs
-          ? import("@/agent/memoryFilesystem").then(({ applyMemfsFlags }) =>
+          ? import("@/agent/memory-filesystem").then(({ applyMemfsFlags }) =>
               applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
                 pullOnExistingRepo: true,
                 agentTags,
@@ -2064,7 +2079,7 @@ async function main(): Promise<void> {
         }
 
         // Init secrets cache — runs in parallel with memfs sync below.
-        const secretsInitPromise = import("@/utils/secretsStore").then(
+        const secretsInitPromise = import("@/utils/secrets-store").then(
           ({ initSecretsFromServer }) =>
             initSecretsFromServer(agentId, agent ?? undefined),
         );
@@ -2292,7 +2307,7 @@ async function main(): Promise<void> {
 
           if (storedPreset && storedPreset !== "custom") {
             const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
-              await import("@/agent/promptAssets");
+              await import("@/agent/prompt-assets");
             if (isKnown(storedPreset)) {
               const memoryMode = settingsManager.isMemfsEnabled(agent.id)
                 ? "memfs"

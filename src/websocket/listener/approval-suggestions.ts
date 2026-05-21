@@ -2,7 +2,7 @@ import {
   type ApprovalClassification,
   type ClassifyApprovalsOptions,
   classifyApprovals,
-} from "@/cli/helpers/approvalClassification";
+} from "@/cli/helpers/approval-classification";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { analyzeToolApproval, savePermissionRule } from "@/tools/manager";

@@ -3,9 +3,10 @@
  * Enforces architectural import boundaries between top-level modules.
  *
  * Rules:
- *   tools/    must not import from  cli/
- *   backend/  must not import from  cli/  or  websocket/
- *   providers/ must not import from  agent/  or  cli/
+ *   tools/              must not import from  cli/
+ *   backend/            must not import from  cli/  or  websocket/
+ *   providers/          must not import from  agent/  or  cli/
+ *   websocket/listener/ must not import from  backend/api/client  or  backend/api/conversations
  *
  * These are currently violation-free. Adding a rule here means you must
  * also ensure no existing code violates it.
@@ -42,6 +43,18 @@ const RULES = [
     forbidden: ["agent", "cli"],
     description:
       "providers/ are pure LLM adapters — they must not import from agent/ or cli/",
+  },
+  {
+    layer: "websocket/listener",
+    forbidden: ["backend/api/client", "backend/api/conversations"],
+    description:
+      "websocket/listener/ uses the getBackend() abstraction — it must not import the raw API client or conversations module directly",
+  },
+  {
+    layer: "cli/app",
+    forbidden: ["backend/api/conversations"],
+    description:
+      "cli/app/ uses the getBackend() abstraction for conversation operations — it must not import the raw conversations module directly",
   },
 ];
 

@@ -5,7 +5,7 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   getPermissionModeScopeKey,
   pruneConversationPermissionModeStateIfDefault,
-} from "@/websocket/listener/permissionMode";
+} from "@/websocket/listener/permission-mode";
 
 describe("listener permission mode helpers", () => {
   test("getOrCreate ref preserves identity across legacy default-key migration", () => {

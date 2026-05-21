@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GIT_MEMORY_ENABLED_TAG } from "@/agent/memoryGit";
+import { GIT_MEMORY_ENABLED_TAG } from "@/agent/memory-git";
 import type { AgentCreateBody } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { LocalBackend } from "@/backend/local";

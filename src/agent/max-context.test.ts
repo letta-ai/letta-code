@@ -8,7 +8,7 @@ import {
   parseContextWindowValue,
   parseSetMaxContextArgs,
   resolveModelJsonContextWindow,
-} from "@/agent/maxContext";
+} from "@/agent/max-context";
 import {
   __testSetBackend,
   type AgentCreateBody,

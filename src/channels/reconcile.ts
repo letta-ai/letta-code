@@ -23,7 +23,7 @@
  */
 
 import { getChannelAccount, loadChannelAccounts } from "./accounts";
-import { isDiscordGuildChannelAllowed } from "./discord/channelGating";
+import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
 import { getRoutesForChannel, loadRoutes, removeRoute } from "./routing";
 import type { ChannelRoute, DiscordChannelAccount } from "./types";
 

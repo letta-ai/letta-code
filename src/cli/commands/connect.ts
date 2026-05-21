@@ -5,7 +5,7 @@ import {
   formatLocalProviderTimeout,
   type LocalProviderTimeout,
   parseLocalProviderTimeout,
-} from "@/backend/local/LocalProviderTimeout";
+} from "@/backend/local/local-provider-timeout";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import {
   checkProviderApiKey,

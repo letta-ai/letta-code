@@ -13,7 +13,7 @@ import {
   __testOverrideLoadPendingControlRequestStore,
   __testOverrideSavePendingControlRequestStore,
   clearPendingControlRequestStore,
-} from "@/channels/pendingControlRequests";
+} from "@/channels/pending-control-requests";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type {
   ChannelAdapter,

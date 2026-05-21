@@ -1,7 +1,7 @@
-import type { ChannelPlugin } from "@/channels/pluginTypes";
+import type { ChannelPlugin } from "@/channels/plugin-types";
 import type { ChannelAccount, DiscordChannelAccount } from "@/channels/types";
 import { createDiscordAdapter } from "./adapter";
-import { discordMessageActions } from "./messageActions";
+import { discordMessageActions } from "./message-actions";
 import { runDiscordSetup } from "./setup";
 
 export const discordChannelPlugin: ChannelPlugin = {

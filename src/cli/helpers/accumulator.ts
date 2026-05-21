@@ -13,11 +13,11 @@ import {
 } from "@/hooks";
 import { debugLog } from "@/utils/debug";
 import { extractCompactionSummary } from "./compaction-utils";
-import type { ContextTracker } from "./contextTracker";
-import { MAX_CONTEXT_HISTORY } from "./contextTracker";
-import { findLastSafeSplitPoint } from "./markdownSplit";
-import { trimFinishedReasoningText } from "./reasoningText";
-import { isShellOutputTool } from "./toolNameMapping";
+import type { ContextTracker } from "./context-tracker";
+import { MAX_CONTEXT_HISTORY } from "./context-tracker";
+import { findLastSafeSplitPoint } from "./markdown-split";
+import { trimFinishedReasoningText } from "./reasoning-text";
+import { isShellOutputTool } from "./tool-name-mapping";
 
 type CompactionSummaryMessageChunk = {
   message_type: "summary_message";

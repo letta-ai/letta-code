@@ -407,10 +407,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   if (channelNames.length > 0) {
     if (values.channels && values["install-channel-runtimes"]) {
       const { ensureChannelRuntimeInstalled } = await import(
-        "@/channels/runtimeDeps"
+        "@/channels/runtime-deps"
       );
       const { isSupportedChannelId } = await import(
-        "@/channels/pluginRegistry"
+        "@/channels/plugin-registry"
       );
 
       for (const channelName of channelNames) {

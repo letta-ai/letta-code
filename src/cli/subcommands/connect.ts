@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
-import { parseLocalProviderTimeout } from "@/backend/local/LocalProviderTimeout";
+import { parseLocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,

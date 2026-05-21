@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-import type { SubagentState } from "@/agent/subagentState";
-import { clearAllSubagents } from "@/agent/subagentState";
+import type { SubagentState } from "@/agent/subagent-state";
+import { clearAllSubagents } from "@/agent/subagent-state";
 import {
   __resetBackgroundRetentionConfigForTests,
   backgroundTasks,
 } from "@/tools/impl/process_manager";
-import { spawnBackgroundSubagentTask } from "@/tools/impl/Task";
+import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
 
 /**
  * Covers the fix for the async-drift race where `executeSubagent` inside

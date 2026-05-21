@@ -7,8 +7,8 @@ import {
   deleteTask,
   getTask,
   updateTask,
-} from "@/cron/cronFile";
-import { cronMatchesTime } from "@/cron/parseInterval";
+} from "@/cron/cron-file";
+import { cronMatchesTime } from "@/cron/parse-interval";
 
 // ── Test setup ──────────────────────────────────────────────────────
 

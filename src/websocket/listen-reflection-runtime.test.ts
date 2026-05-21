@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createContextTracker } from "@/cli/helpers/contextTracker";
+import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {

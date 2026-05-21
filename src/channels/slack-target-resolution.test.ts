@@ -3,7 +3,7 @@ import {
   listSlackChannels,
   openSlackDirectMessage,
   resolveSlackMessageTarget,
-} from "@/channels/slack/targetResolution";
+} from "@/channels/slack/target-resolution";
 import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,

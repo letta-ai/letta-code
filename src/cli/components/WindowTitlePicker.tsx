@@ -8,7 +8,7 @@ import {
   WINDOW_TITLE_FIELD_INFO,
   WINDOW_TITLE_FIELDS,
   type WindowTitleField,
-} from "@/cli/helpers/windowTitleConfig";
+} from "@/cli/helpers/window-title-config";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version";
 import { MultiSelectPicker } from "./MultiSelectPicker";

@@ -17,9 +17,9 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
-import { getRetryStatusMessage } from "@/cli/helpers/errorFormatter";
+import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
-import { createStreamAbortRelay } from "@/utils/streamAbortRelay";
+import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   rememberPendingApprovalBatchIds,
   resolveRecoveryBatchId,
@@ -30,7 +30,7 @@ import {
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
+import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitDequeuedUserMessage,
   emitRetryDelta,
@@ -39,7 +39,7 @@ import {
 import {
   maybeApplyProviderFallback,
   type ProviderFallbackState,
-} from "./providerFallback";
+} from "./provider-fallback";
 import { consumeQueuedTurn } from "./queue";
 import { emitRecoverableRetryNotice } from "./recoverable-notices";
 import {
