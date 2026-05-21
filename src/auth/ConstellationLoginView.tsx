@@ -31,9 +31,8 @@ export function ConstellationLoginView({
           await settingsManager.getSettingsWithSecureTokens();
         const hasApiKey =
           process.env.LETTA_API_KEY || currentSettings.env?.LETTA_API_KEY;
-        const hasRefreshToken = Boolean(currentSettings.refreshToken);
 
-        if (hasApiKey || hasRefreshToken) {
+        if (hasApiKey) {
           onAlreadyLoggedIn?.();
           return;
         }
