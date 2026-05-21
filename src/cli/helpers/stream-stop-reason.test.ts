@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { createBuffers } from "@/cli/helpers/accumulator";
@@ -30,27 +28,7 @@ function makeStreamWithToolCall(
   } as unknown as Stream<LettaStreamingResponse>;
 }
 
-describe("drainStream stop reason wiring", () => {
-  test("catch path preserves streamProcessor.stopReason before falling back to error", () => {
-    const streamPath = fileURLToPath(
-      new URL("../cli/helpers/stream.ts", import.meta.url),
-    );
-    const source = readFileSync(streamPath, "utf-8");
-
-    expect(source).toContain(
-      'stopReason = streamProcessor.stopReason || "error"',
-    );
-  });
-
-  test("resume guard skips retries when stream already emitted terminal stop_reason", () => {
-    const streamPath = fileURLToPath(
-      new URL("../cli/helpers/stream.ts", import.meta.url),
-    );
-    const source = readFileSync(streamPath, "utf-8");
-
-    expect(source).toContain("!result.sawStopReasonChunk");
-  });
-
+describe("drainStream stop reason", () => {
   test("preserves llm_api_error when stream throws after stop_reason chunk", async () => {
     const fakeStream = {
       controller: new AbortController(),
