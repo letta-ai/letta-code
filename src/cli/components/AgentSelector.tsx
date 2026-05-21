@@ -163,16 +163,14 @@ export function AgentSelector({
   const [localError, setLocalError] = useState<string | null>(null);
   const [hasLocalAgents, setHasLocalAgents] = useState(false);
 
-  // Tab state — default to Local if currently in local mode
-  const defaultTab: TabId = isLocalBackendEnabled() ? "local" : "pinned";
-  const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
+  // Tab state — start at Pinned, jump to Local once agents are confirmed to exist
+  const [activeTab, setActiveTab] = useState<TabId>("pinned");
 
-  // Auto-switch away from Local tab if it disappears (no local agents found)
   useEffect(() => {
-    if (activeTab === "local" && !hasLocalAgents && !localLoading) {
-      setActiveTab("pinned");
+    if (isLocalBackendEnabled() && hasLocalAgents && activeTab === "pinned") {
+      setActiveTab("local");
     }
-  }, [activeTab, hasLocalAgents, localLoading]);
+  }, [hasLocalAgents, activeTab]);
 
   // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
