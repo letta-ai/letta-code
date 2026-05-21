@@ -7,7 +7,10 @@ import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  type EnsureLocalMemfsCheckoutOptions,
+  getMemoryFilesystemRoot,
+} from "@/agent/memory-filesystem";
 import { buildConversationMessagesCreateRequestBody } from "@/agent/message";
 import { models } from "@/agent/model";
 import {
@@ -1450,14 +1453,16 @@ describe("listen-client memory command handling", () => {
   test("bootstraps only the local memfs checkout when memfs is already enabled", async () => {
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
     const socket = new MockSocket(WebSocket.OPEN);
-    const ensureLocalMemfsCheckoutMock = mock(async () => {
-      await mkdir(join(tempRoot, ".git"), { recursive: true });
-      await mkdir(join(tempRoot, "system"), { recursive: true });
-      await writeFile(
-        join(tempRoot, "system", "persona.md"),
-        "---\ndescription: Persona\n---\nHello from memory\n",
-      );
-    });
+    const ensureLocalMemfsCheckoutMock = mock(
+      async (_agentId: string, _options?: EnsureLocalMemfsCheckoutOptions) => {
+        await mkdir(join(tempRoot, ".git"), { recursive: true });
+        await mkdir(join(tempRoot, "system"), { recursive: true });
+        await writeFile(
+          join(tempRoot, "system", "persona.md"),
+          "---\ndescription: Persona\n---\nHello from memory\n",
+        );
+      },
+    );
 
     try {
       await __listenClientTestUtils.handleListMemoryCommand(
@@ -1476,6 +1481,10 @@ describe("listen-client memory command handling", () => {
       );
 
       expect(ensureLocalMemfsCheckoutMock).toHaveBeenCalledTimes(1);
+      expect(ensureLocalMemfsCheckoutMock.mock.calls[0]).toEqual([
+        "agent-1",
+        { pullOnExistingRepo: true },
+      ]);
       const messages = socket.sentPayloads.map((payload) =>
         JSON.parse(payload as string),
       );
@@ -1498,6 +1507,112 @@ describe("listen-client memory command handling", () => {
         }),
       ]);
       expect(messages[0].entries[0]?.content).toContain("Hello from memory");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pulls an existing local memfs checkout before scanning", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const isMemfsEnabledOnServerMock = mock(async () => true);
+    const ensureLocalMemfsCheckoutMock = mock(
+      async (_agentId: string, _options?: EnsureLocalMemfsCheckoutOptions) => {
+        await mkdir(join(tempRoot, "system"), { recursive: true });
+        await writeFile(
+          join(tempRoot, "system", "human.md"),
+          "---\ndescription: Human\n---\nPulled from remote\n",
+        );
+      },
+    );
+
+    try {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-pull-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: isMemfsEnabledOnServerMock,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      expect(isMemfsEnabledOnServerMock).not.toHaveBeenCalled();
+      expect(ensureLocalMemfsCheckoutMock).toHaveBeenCalledTimes(1);
+      expect(ensureLocalMemfsCheckoutMock.mock.calls[0]).toEqual([
+        "agent-1",
+        { pullOnExistingRepo: true },
+      ]);
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-pull-1",
+        success: true,
+        done: true,
+        total: 1,
+        memfs_enabled: true,
+        memfs_initialized: true,
+      });
+      expect(messages[0].entries).toEqual([
+        expect.objectContaining({
+          relative_path: "system/human.md",
+          is_system: true,
+          description: "Human",
+          references: [],
+        }),
+      ]);
+      expect(messages[0].entries[0]?.content).toContain("Pulled from remote");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("returns a failure response when syncing an existing checkout fails", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const ensureLocalMemfsCheckoutMock = mock(async () => {
+      throw new Error("Pull failed: auth rejected");
+    });
+
+    try {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-pull-failed-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => true,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      expect(ensureLocalMemfsCheckoutMock).toHaveBeenCalledTimes(1);
+      const message = JSON.parse(socket.sentPayloads[0] as string);
+      expect(message).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-pull-failed-1",
+        success: false,
+        done: true,
+        total: 0,
+        entries: [],
+        error: "Pull failed: auth rejected",
+      });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
