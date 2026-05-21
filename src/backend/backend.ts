@@ -459,25 +459,51 @@ function resolveBackendMode(): BackendMode {
     : "api";
 }
 
-function createBackendForMode(mode: BackendMode): Backend {
-  return mode === "local" ? createExperimentalLocalBackend() : new APIBackend();
+// Per-mode singletons — lazily created, cached for the process lifetime.
+// Use these when you need a specific backend regardless of the current active mode
+// (e.g. listing agents from both backends simultaneously in the /agents picker).
+let localBackendSingleton: Backend | null = null;
+let apiBackendSingleton: Backend | null = null;
+
+export function getLocalBackendInstance(): Backend {
+  localBackendSingleton ??= createExperimentalLocalBackend();
+  return localBackendSingleton;
 }
 
-function createInitialBackend(): Backend {
-  return createBackendForMode(resolveBackendMode());
+export function getApiBackendInstance(): Backend {
+  apiBackendSingleton ??= new APIBackend();
+  return apiBackendSingleton;
 }
 
+/**
+ * Returns the backend responsible for the given agent ID.
+ * Local agent IDs (agent-local-*) route to the local backend;
+ * all others route to the API backend.
+ */
+export function getBackendForAgent(agentId: string): Backend {
+  return agentId.startsWith("agent-local-")
+    ? getLocalBackendInstance()
+    : getApiBackendInstance();
+}
+
+// The "active" backend — what getBackend() returns. Starts null and is lazily
+// set to whichever singleton matches the resolved startup mode.
 let backend: Backend | null = null;
 
 export function getBackend(): Backend {
-  backend ??= createInitialBackend();
+  backend ??=
+    resolveBackendMode() === "local"
+      ? getLocalBackendInstance()
+      : getApiBackendInstance();
   return backend;
 }
 
 export function configureBackendMode(mode: BackendMode): void {
   configuredBackendMode = mode;
   process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = mode === "local" ? "1" : "0";
-  backend = createBackendForMode(mode);
+  // Point the active backend at the appropriate singleton (creates it if needed).
+  backend =
+    mode === "local" ? getLocalBackendInstance() : getApiBackendInstance();
 }
 
 export function isLocalBackendEnabled(): boolean {
@@ -554,5 +580,9 @@ export async function configureDevBackend(name: string): Promise<void> {
 }
 
 export function __testSetBackend(nextBackend: Backend | null): void {
-  backend = nextBackend ?? createInitialBackend();
+  // Clear per-mode singletons so subsequent getLocalBackendInstance() /
+  // getApiBackendInstance() calls don't return stale instances.
+  localBackendSingleton = null;
+  apiBackendSingleton = null;
+  backend = nextBackend ?? getBackend();
 }

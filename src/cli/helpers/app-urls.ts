@@ -1,8 +1,8 @@
-const APP_BASE = "https://app.letta.com";
+import { isLocalAgentId } from "@/utils/agent-id";
 
-export function isLocalAgentId(agentId: string): boolean {
-  return agentId.startsWith("agent-local-");
-}
+export { isLocalAgentId };
+
+const APP_BASE = "https://app.letta.com";
 
 /**
  * Build a chat URL for an agent, with optional conversation and extra query params.

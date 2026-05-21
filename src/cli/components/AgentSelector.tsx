@@ -2,7 +2,12 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getModelDisplayName } from "@/agent/model";
-import { type Backend, getBackend } from "@/backend";
+import {
+  APIBackend,
+  type Backend,
+  getLocalBackendInstance,
+  isLocalBackendEnabled,
+} from "@/backend";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
@@ -24,7 +29,7 @@ interface AgentSelectorProps {
   command?: string;
 }
 
-type TabId = "pinned" | "letta-code" | "all" | "new";
+type TabId = "pinned" | "letta-code" | "local" | "all" | "new";
 
 type ViewState =
   | { type: "list" }
@@ -37,9 +42,10 @@ interface PinnedAgentData {
   isLocal: boolean;
 }
 
-const TABS: { id: TabId; label: string }[] = [
+const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "pinned", label: "Pinned" },
   { id: "letta-code", label: "Letta Code" },
+  { id: "local", label: "Local" },
   { id: "all", label: "All" },
   { id: "new", label: "New" },
 ];
@@ -47,6 +53,7 @@ const TABS: { id: TabId; label: string }[] = [
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
   pinned: "Save agents for easy access by pinning them with /pin",
   "letta-code": "Displaying agents created inside of Letta Code",
+  local: "Agents stored on this device",
   all: "Displaying all available agents",
   new: "Create a brand new agent",
 };
@@ -54,6 +61,7 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
 const TAB_EMPTY_STATES: Record<TabId, string> = {
   pinned: "No pinned agents, use /pin to save",
   "letta-code": "No agents with tag 'origin:letta-code'",
+  local: "No local agents found",
   all: "No agents found",
   new: "",
 };
@@ -126,15 +134,38 @@ export function AgentSelector({
   command = "/agents",
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
-  const backendRef = useRef<Backend | null>(null);
-  const selectorBackend = useCallback(() => {
-    const backend = backendRef.current ?? getBackend();
-    backendRef.current = backend;
-    return backend;
+
+  // Per-backend instances for listing — independent of the app-level active backend.
+  // Cloud tabs always use the API backend; Local tab always uses the local backend.
+  const cloudBackendRef = useRef<Backend | null>(null);
+  const getCloudBackend = useCallback((): Backend => {
+    cloudBackendRef.current ??= new APIBackend();
+    return cloudBackendRef.current;
   }, []);
 
-  // Tab state
-  const [activeTab, setActiveTab] = useState<TabId>("pinned");
+  const getLocalBackend = useCallback((): Backend => {
+    return getLocalBackendInstance();
+  }, []);
+
+  // Whether the user has cloud credentials (gates cloud tab content)
+  const hasCloudCredentials = Boolean(
+    process.env.LETTA_API_KEY ||
+      settingsManager.getSettings().env?.LETTA_API_KEY ||
+      settingsManager.getSettings().refreshToken,
+  );
+
+  // Local tab state — loaded eagerly at mount to decide whether to show the tab
+  const [localAgents, setLocalAgents] = useState<AgentState[]>([]);
+  const [localHasMore, setLocalHasMore] = useState(true);
+  const [localLoading, setLocalLoading] = useState(true);
+  const [localSelectedIndex, setLocalSelectedIndex] = useState(0);
+  const [localPage, setLocalPage] = useState(0);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [hasLocalAgents, setHasLocalAgents] = useState(false);
+
+  // Tab state — default to Local if currently in local mode and local agents exist
+  const defaultTab: TabId = isLocalBackendEnabled() ? "local" : "pinned";
+  const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
 
   // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
@@ -191,12 +222,14 @@ export function AgentSelector({
         return;
       }
 
-      const backend = selectorBackend();
-
       const pinnedData = await Promise.all(
         mergedPinned.map(async ({ agentId, isLocal }) => {
           try {
-            const agent = await backend.retrieveAgent(agentId, {
+            // Route each pinned agent to its own backend
+            const agentBackend = isLocal
+              ? getLocalBackend()
+              : getCloudBackend();
+            const agent = await agentBackend.retrieveAgent(agentId, {
               include: ["agent.blocks"],
             });
             return { agentId, agent, error: null, isLocal };
@@ -212,17 +245,16 @@ export function AgentSelector({
     } finally {
       setPinnedLoading(false);
     }
-  }, [selectorBackend]);
+  }, [getCloudBackend, getLocalBackend]);
 
-  // Fetch agents for list tabs (Letta Code / All)
+  // Fetch agents for list tabs (Letta Code / All / Local)
   const fetchListAgents = useCallback(
     async (
+      backend: Backend,
       filterLettaCode: boolean,
       afterCursor?: string | null,
       query?: string,
     ) => {
-      const backend = selectorBackend();
-
       const agentList = await backend.listAgents({
         limit: FETCH_PAGE_SIZE,
         ...(filterLettaCode && { tags: ["origin:letta-code"] }),
@@ -240,8 +272,26 @@ export function AgentSelector({
 
       return { agents: agentList.items, nextCursor: cursor };
     },
-    [selectorBackend],
+    [],
   );
+
+  // Load local agents (always from local backend)
+  const loadLocalAgents = useCallback(async () => {
+    setLocalLoading(true);
+    setLocalError(null);
+    try {
+      const result = await fetchListAgents(getLocalBackend(), false, null);
+      setLocalAgents(result.agents);
+      setLocalHasMore(result.nextCursor !== null);
+      setLocalPage(0);
+      setLocalSelectedIndex(0);
+      setHasLocalAgents(result.agents.length > 0);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLocalLoading(false);
+    }
+  }, [fetchListAgents, getLocalBackend]);
 
   // Load Letta Code agents
   const loadLettaCodeAgents = useCallback(
@@ -249,7 +299,12 @@ export function AgentSelector({
       setLettaCodeLoading(true);
       setLettaCodeError(null);
       try {
-        const result = await fetchListAgents(true, null, query);
+        const result = await fetchListAgents(
+          getCloudBackend(),
+          true,
+          null,
+          query,
+        );
         setLettaCodeAgents(result.agents);
         setLettaCodeCursor(result.nextCursor);
         setLettaCodeHasMore(result.nextCursor !== null);
@@ -263,7 +318,7 @@ export function AgentSelector({
         setLettaCodeLoading(false);
       }
     },
-    [fetchListAgents],
+    [fetchListAgents, getCloudBackend],
   );
 
   // Load All agents
@@ -272,7 +327,12 @@ export function AgentSelector({
       setAllLoading(true);
       setAllError(null);
       try {
-        const result = await fetchListAgents(false, null, query);
+        const result = await fetchListAgents(
+          getCloudBackend(),
+          false,
+          null,
+          query,
+        );
         setAllAgents(result.agents);
         setAllCursor(result.nextCursor);
         setAllHasMore(result.nextCursor !== null);
@@ -286,13 +346,18 @@ export function AgentSelector({
         setAllLoading(false);
       }
     },
-    [fetchListAgents],
+    [fetchListAgents, getCloudBackend],
   );
 
   // Load pinned agents on mount
   useEffect(() => {
     loadPinnedAgents();
   }, [loadPinnedAgents]);
+
+  // Load local agents eagerly at mount (needed to decide whether to show the tab)
+  useEffect(() => {
+    loadLocalAgents();
+  }, [loadLocalAgents]);
 
   // Load tab data when switching tabs (only if not already loaded)
   useEffect(() => {
@@ -334,6 +399,7 @@ export function AgentSelector({
     setLettaCodeLoadingMore(true);
     try {
       const result = await fetchListAgents(
+        getCloudBackend(),
         true,
         lettaCodeCursor,
         activeQuery || undefined,
@@ -352,6 +418,7 @@ export function AgentSelector({
     lettaCodeCursor,
     fetchListAgents,
     activeQuery,
+    getCloudBackend,
   ]);
 
   // Fetch more All agents
@@ -361,6 +428,7 @@ export function AgentSelector({
     setAllLoadingMore(true);
     try {
       const result = await fetchListAgents(
+        getCloudBackend(),
         false,
         allCursor,
         activeQuery || undefined,
@@ -373,7 +441,14 @@ export function AgentSelector({
     } finally {
       setAllLoadingMore(false);
     }
-  }, [allLoadingMore, allHasMore, allCursor, fetchListAgents, activeQuery]);
+  }, [
+    allLoadingMore,
+    allHasMore,
+    allCursor,
+    fetchListAgents,
+    activeQuery,
+    getCloudBackend,
+  ]);
 
   // Pagination calculations - Pinned (filter out 404 agents)
   const validPinnedAgents = pinnedAgents.filter((p) => p.agent !== null);
@@ -398,6 +473,15 @@ export function AgentSelector({
   const lettaCodeCanGoNext =
     lettaCodePage < lettaCodeTotalPages - 1 || lettaCodeHasMore;
 
+  // Pagination calculations - Local
+  const localTotalPages = Math.ceil(localAgents.length / DISPLAY_PAGE_SIZE);
+  const localStartIndex = localPage * DISPLAY_PAGE_SIZE;
+  const localPageAgents = localAgents.slice(
+    localStartIndex,
+    localStartIndex + DISPLAY_PAGE_SIZE,
+  );
+  const localCanGoNext = localPage < localTotalPages - 1 || localHasMore;
+
   // Pagination calculations - All
   const allTotalPages = Math.ceil(allAgents.length / DISPLAY_PAGE_SIZE);
   const allStartIndex = allPage * DISPLAY_PAGE_SIZE;
@@ -407,31 +491,44 @@ export function AgentSelector({
   );
   const allCanGoNext = allPage < allTotalPages - 1 || allHasMore;
 
+  // Visible tabs — Local tab only shown when local agents exist
+  const visibleTabs = ALL_TABS.filter(
+    (t) => t.id !== "local" || hasLocalAgents,
+  );
+
   // Current tab's state (computed)
   const currentLoading =
     activeTab === "pinned"
       ? pinnedLoading
       : activeTab === "letta-code"
         ? lettaCodeLoading
-        : allLoading;
+        : activeTab === "local"
+          ? localLoading
+          : allLoading;
   const currentError =
     activeTab === "letta-code"
       ? lettaCodeError
-      : activeTab === "all"
-        ? allError
-        : null;
+      : activeTab === "local"
+        ? localError
+        : activeTab === "all"
+          ? allError
+          : null;
   const currentAgents =
     activeTab === "pinned"
       ? pinnedPageAgents.map((p) => p.agent).filter(Boolean)
       : activeTab === "letta-code"
         ? lettaCodePageAgents
-        : allPageAgents;
+        : activeTab === "local"
+          ? localPageAgents
+          : allPageAgents;
   const setCurrentSelectedIndex =
     activeTab === "pinned"
       ? setPinnedSelectedIndex
       : activeTab === "letta-code"
         ? setLettaCodeSelectedIndex
-        : setAllSelectedIndex;
+        : activeTab === "local"
+          ? setLocalSelectedIndex
+          : setAllSelectedIndex;
 
   // Submit search
   const submitSearch = useCallback(() => {
@@ -458,8 +555,11 @@ export function AgentSelector({
 
     setDeleteLoading(true);
     try {
-      const backend = selectorBackend();
-      await backend.deleteAgent(agentId);
+      // Route delete to the correct backend by agent ID prefix
+      const agentBackend = agentId.startsWith("agent-local-")
+        ? getLocalBackend()
+        : getCloudBackend();
+      await agentBackend.deleteAgent(agentId);
 
       // Reset state and refresh tabs
       setViewState({ type: "list" });
@@ -473,7 +573,13 @@ export function AgentSelector({
     } finally {
       setDeleteLoading(false);
     }
-  }, [viewState, deleteConfirmInput, loadPinnedAgents, selectorBackend]);
+  }, [
+    viewState,
+    deleteConfirmInput,
+    loadPinnedAgents,
+    getLocalBackend,
+    getCloudBackend,
+  ]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -506,11 +612,11 @@ export function AgentSelector({
 
     // List view handlers below
 
-    // Tab key cycles through tabs
+    // Tab key cycles through visible tabs
     if (key.tab) {
-      const currentIndex = TABS.findIndex((t) => t.id === activeTab);
-      const nextIndex = (currentIndex + 1) % TABS.length;
-      setActiveTab(TABS[nextIndex]?.id ?? "pinned");
+      const currentIndex = visibleTabs.findIndex((t) => t.id === activeTab);
+      const nextIndex = (currentIndex + 1) % visibleTabs.length;
+      setActiveTab(visibleTabs[nextIndex]?.id ?? "pinned");
       return;
     }
 
@@ -561,6 +667,11 @@ export function AgentSelector({
         if (selected?.id) {
           onSelect(selected.id);
         }
+      } else if (activeTab === "local") {
+        const selected = localPageAgents[localSelectedIndex];
+        if (selected?.id) {
+          onSelect(selected.id);
+        }
       } else {
         const selected = allPageAgents[allSelectedIndex];
         if (selected?.id) {
@@ -568,14 +679,14 @@ export function AgentSelector({
         }
       }
     } else if (key.escape) {
-      // If typing search (list tabs), clear it first
-      if (activeTab !== "pinned" && searchInput) {
+      // If typing search (cloud list tabs), clear it first
+      if (activeTab !== "pinned" && activeTab !== "local" && searchInput) {
         clearSearch();
         return;
       }
       onCancel();
     } else if (key.backspace || key.delete) {
-      if (activeTab !== "pinned") {
+      if (activeTab !== "pinned" && activeTab !== "local") {
         setSearchInput((prev) => prev.slice(0, -1));
       }
     } else if (key.leftArrow) {
@@ -589,6 +700,11 @@ export function AgentSelector({
         if (lettaCodePage > 0) {
           setLettaCodePage((prev) => prev - 1);
           setLettaCodeSelectedIndex(0);
+        }
+      } else if (activeTab === "local") {
+        if (localPage > 0) {
+          setLocalPage((prev) => prev - 1);
+          setLocalSelectedIndex(0);
         }
       } else {
         if (allPage > 0) {
@@ -614,6 +730,18 @@ export function AgentSelector({
         if (nextStartIndex < lettaCodeAgents.length) {
           setLettaCodePage(nextPageIndex);
           setLettaCodeSelectedIndex(0);
+        }
+      } else if (activeTab === "local" && localCanGoNext) {
+        const nextPageIndex = localPage + 1;
+        const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
+
+        if (nextStartIndex >= localAgents.length && localHasMore) {
+          // Local backend doesn't paginate the same way — just advance page
+        }
+
+        if (nextStartIndex < localAgents.length) {
+          setLocalPage(nextPageIndex);
+          setLocalSelectedIndex(0);
         }
       } else if (activeTab === "all" && allCanGoNext) {
         const nextPageIndex = allPage + 1;
@@ -653,6 +781,9 @@ export function AgentSelector({
       } else if (activeTab === "letta-code") {
         selectedAgent = lettaCodePageAgents[lettaCodeSelectedIndex] ?? null;
         selectedAgentId = selectedAgent?.id ?? null;
+      } else if (activeTab === "local") {
+        selectedAgent = localPageAgents[localSelectedIndex] ?? null;
+        selectedAgentId = selectedAgent?.id ?? null;
       } else {
         selectedAgent = allPageAgents[allSelectedIndex] ?? null;
         selectedAgentId = selectedAgent?.id ?? null;
@@ -669,8 +800,14 @@ export function AgentSelector({
     } else if (input === "n" || input === "N") {
       // Switch to New tab
       setActiveTab("new");
-    } else if (activeTab !== "pinned" && input && !key.ctrl && !key.meta) {
-      // Type to search (list tabs only)
+    } else if (
+      activeTab !== "pinned" &&
+      activeTab !== "local" &&
+      input &&
+      !key.ctrl &&
+      !key.meta
+    ) {
+      // Type to search (cloud list tabs only — local has no search)
       setSearchInput((prev) => prev + input);
     }
   });
@@ -830,6 +967,7 @@ export function AgentSelector({
           (activeTab === "letta-code" &&
             !lettaCodeError &&
             lettaCodeAgents.length > 0) ||
+          (activeTab === "local" && !localError && localAgents.length > 0) ||
           (activeTab === "all" && !allError && allAgents.length > 0))
           ? (() => {
               const footerWidth = Math.max(0, terminalWidth - 2);
@@ -838,7 +976,9 @@ export function AgentSelector({
                   ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
                   : activeTab === "letta-code"
                     ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
-                    : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
+                    : activeTab === "local"
+                      ? `Page ${localPage + 1}/${localTotalPages || 1}`
+                      : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
               const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""} · Esc cancel`;
 
               return (
@@ -863,29 +1003,44 @@ export function AgentSelector({
     >
       <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
         <TabBar
-          tabs={TABS.map((t) => t.id)}
+          tabs={visibleTabs.map((t) => t.id)}
           activeTab={activeTab}
-          getLabel={(tabId) => TABS.find((t) => t.id === tabId)?.label ?? tabId}
+          getLabel={(tabId) =>
+            visibleTabs.find((t) => t.id === tabId)?.label ?? tabId
+          }
         />
         <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
       </Box>
 
-      {/* Search input - list tabs only */}
-      {activeTab !== "pinned" && (searchInput || activeQuery) && (
-        <Box marginBottom={1}>
-          <Text dimColor>Search: </Text>
-          <Text>{searchInput}</Text>
-          {searchInput && searchInput !== activeQuery && (
-            <Text dimColor> (press Enter to search)</Text>
-          )}
-          {activeQuery && searchInput === activeQuery && (
-            <Text dimColor> (Esc to clear)</Text>
-          )}
-        </Box>
-      )}
+      {/* No cloud credentials message for cloud tabs */}
+      {!hasCloudCredentials &&
+        (activeTab === "pinned" ||
+          activeTab === "letta-code" ||
+          activeTab === "all") && (
+          <Box flexDirection="column" paddingLeft={2}>
+            <Text dimColor>Connect to Letta Cloud to see agents here.</Text>
+            <Text dimColor>Run /login to sign in.</Text>
+          </Box>
+        )}
+
+      {/* Search input - list tabs only (not local — local has no search yet) */}
+      {activeTab !== "pinned" &&
+        activeTab !== "local" &&
+        (searchInput || activeQuery) && (
+          <Box marginBottom={1}>
+            <Text dimColor>Search: </Text>
+            <Text>{searchInput}</Text>
+            {searchInput && searchInput !== activeQuery && (
+              <Text dimColor> (press Enter to search)</Text>
+            )}
+            {activeQuery && searchInput === activeQuery && (
+              <Text dimColor> (Esc to clear)</Text>
+            )}
+          </Box>
+        )}
 
       {/* Error state - list tabs */}
-      {activeTab !== "pinned" && currentError && (
+      {activeTab !== "pinned" && activeTab !== "local" && currentError && (
         <Box flexDirection="column">
           <Text color="red">Error: {currentError}</Text>
           <Text dimColor>Press ESC to cancel</Text>
@@ -901,11 +1056,18 @@ export function AgentSelector({
 
       {/* Empty state */}
       {!currentLoading &&
-        ((activeTab === "pinned" && validPinnedAgents.length === 0) ||
+        ((activeTab === "pinned" &&
+          hasCloudCredentials &&
+          validPinnedAgents.length === 0) ||
           (activeTab === "letta-code" &&
+            hasCloudCredentials &&
             !lettaCodeError &&
             lettaCodeAgents.length === 0) ||
-          (activeTab === "all" && !allError && allAgents.length === 0)) && (
+          (activeTab === "local" && !localError && localAgents.length === 0) ||
+          (activeTab === "all" &&
+            hasCloudCredentials &&
+            !allError &&
+            allAgents.length === 0)) && (
           <Box flexDirection="column">
             <Text dimColor>{TAB_EMPTY_STATES[activeTab]}</Text>
             <Text dimColor>Press ESC to cancel</Text>
@@ -931,6 +1093,18 @@ export function AgentSelector({
           <Box flexDirection="column">
             {lettaCodePageAgents.map((agent, index) =>
               renderAgentItem(agent, index, index === lettaCodeSelectedIndex),
+            )}
+          </Box>
+        )}
+
+      {/* Local tab content */}
+      {activeTab === "local" &&
+        !localLoading &&
+        !localError &&
+        localAgents.length > 0 && (
+          <Box flexDirection="column">
+            {localPageAgents.map((agent, index) =>
+              renderAgentItem(agent, index, index === localSelectedIndex),
             )}
           </Box>
         )}

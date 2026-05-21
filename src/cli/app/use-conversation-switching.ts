@@ -25,7 +25,12 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { createAgent } from "@/agent/create";
 import { selectDefaultAgentModel } from "@/agent/defaults";
 import { sendMessageStream } from "@/agent/message";
-import { getBackend } from "@/backend";
+import {
+  configureBackendMode,
+  getBackend,
+  getBackendForAgent,
+  isLocalBackendEnabled,
+} from "@/backend";
 import { getServerUrl } from "@/backend/api/client";
 import type { BtwState } from "@/cli/components/BtwPane";
 import {
@@ -528,8 +533,18 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       cmd.update({ output: "Switching agent...", phase: "running" });
 
       try {
-        // Fetch new agent
-        const agent = await getBackend().retrieveAgent(targetAgentId);
+        // Auto-switch backend if the target agent lives on a different one.
+        const targetIsLocal = targetAgentId.startsWith("agent-local-");
+        if (targetIsLocal !== isLocalBackendEnabled()) {
+          configureBackendMode(targetIsLocal ? "local" : "api");
+          settingsManager.updateSettings({
+            preferredBackendMode: targetIsLocal ? "local" : "api",
+          });
+        }
+
+        // Fetch new agent from the correct backend
+        const agent =
+          await getBackendForAgent(targetAgentId).retrieveAgent(targetAgentId);
 
         // Use specified conversation or default to the agent's default conversation
         const targetConversationId = opts?.conversationId ?? "default";
