@@ -9,7 +9,7 @@ import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { experimentManager } from "@/experiments/manager";
-import { permissionMode } from "@/permissions/mode";
+import { type PermissionMode, permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -18,6 +18,7 @@ import {
 } from "@/tools/impl/process_manager";
 import type {
   BackgroundProcessSummary,
+  DevicePermissionMode,
   DeviceStatus,
   DeviceStatusUpdateMessage,
   LoopState,
@@ -62,12 +63,28 @@ import type {
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 
-function isPlanModeEnabled(): boolean {
-  try {
-    return settingsManager.isPlanModeEnabled();
-  } catch {
-    return false;
+function coerceDevicePermissionMode(
+  mode: PermissionMode | null | undefined,
+): DevicePermissionMode {
+  switch (mode) {
+    case "standard":
+    case "acceptEdits":
+    case "memory":
+    case "unrestricted":
+      return mode;
+    default:
+      return "standard";
   }
+}
+
+function toDevicePermissionMode(
+  mode: PermissionMode,
+  fallback?: PermissionMode | null,
+): DevicePermissionMode {
+  if (mode === "plan") {
+    return coerceDevicePermissionMode(fallback);
+  }
+  return coerceDevicePermissionMode(mode);
 }
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
@@ -386,8 +403,10 @@ export function buildDeviceStatus(
       connection_name: null,
       is_online: false,
       is_processing: false,
-      current_permission_mode: permissionMode.getMode(),
-      plan_mode_enabled: isPlanModeEnabled(),
+      current_permission_mode: toDevicePermissionMode(
+        permissionMode.getMode(),
+        permissionMode.getModeBeforePlan(),
+      ),
       current_working_directory: fallbackCwd,
       git_context: getCachedDeviceGitContext(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
@@ -453,8 +472,10 @@ export function buildDeviceStatus(
     connection_name: listener.connectionName,
     is_online: transport ? isListenerTransportOpen(transport) : false,
     is_processing: !!conversationRuntime?.isProcessing,
-    current_permission_mode: conversationPermissionModeState.mode,
-    plan_mode_enabled: isPlanModeEnabled(),
+    current_permission_mode: toDevicePermissionMode(
+      conversationPermissionModeState.mode,
+      conversationPermissionModeState.modeBeforePlan,
+    ),
     current_working_directory: resolvedCwd,
     git_context: getCachedDeviceGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
@@ -497,17 +518,11 @@ export function buildLoopStatus(
     return {
       status: "WAITING_ON_INPUT",
       active_run_ids: [],
-      plan_file_path: null,
     };
   }
   const scope = getScopeForRuntime(runtime, params);
   const scopedAgentId = resolveScopedAgentId(listener, scope);
   const scopedConversationId = resolveScopedConversationId(listener, scope);
-  const conversationPermissionModeState = getConversationPermissionModeState(
-    listener,
-    scopedAgentId,
-    scopedConversationId,
-  );
   const conversationRuntime = getConversationRuntime(
     listener,
     scopedAgentId,
@@ -534,10 +549,6 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
-    plan_file_path:
-      conversationPermissionModeState.mode === "plan"
-        ? conversationPermissionModeState.planFilePath
-        : null,
   };
 }
 
