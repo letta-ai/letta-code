@@ -160,6 +160,8 @@ export async function registerWithCloud(
 const REGISTER_INITIAL_DELAY_MS = 1_000;
 const REGISTER_MAX_DELAY_MS = 30_000;
 const REGISTER_MAX_DURATION_MS = 2 * 60 * 1_000; // 2 minutes
+const REGISTER_MAX_JITTER_MS = 1_000;
+const REGISTER_JITTER_RATIO = 0.25;
 
 export interface RegisterRetryCallbacks {
   /** Called before each retry attempt. */
@@ -170,11 +172,13 @@ export interface RegisterRetryCallbacks {
   sleep?: (delayMs: number) => Promise<void>;
   /** Test seam for injecting fetch. */
   fetchImpl?: FetchImpl;
+  /** Test seam for deterministic retry jitter. */
+  random?: () => number;
 }
 
 /**
- * Register with Cloud, retrying on transient errors (5xx, network failures)
- * with exponential backoff. Fails immediately on client errors (4xx).
+ * Register with Cloud, retrying on transient errors (429, 5xx, network failures)
+ * with exponential backoff. Fails immediately on other client errors (4xx).
  */
 export async function registerWithCloudRetry(
   opts: RegisterOptions,
@@ -207,12 +211,21 @@ export async function registerWithCloudRetry(
         error instanceof RegistrationError && error.retryAfterMs !== undefined
           ? Math.max(error.retryAfterMs, backoffDelay)
           : backoffDelay;
+      const jitterWindow = Math.min(
+        REGISTER_MAX_JITTER_MS,
+        Math.floor(delay * REGISTER_JITTER_RATIO),
+      );
+      const jitter =
+        jitterWindow > 0
+          ? Math.floor((callbacks?.random ?? Math.random)() * jitterWindow)
+          : 0;
+      const retryDelay = delay + jitter;
 
       if (error instanceof Error) {
-        callbacks?.onRetry?.(attempt, delay, error);
+        callbacks?.onRetry?.(attempt, retryDelay, error);
       }
 
-      await sleep(delay);
+      await sleep(retryDelay);
     }
   }
 }

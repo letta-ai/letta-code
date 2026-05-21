@@ -181,6 +181,7 @@ describe("registerWithCloud", () => {
     const slept: number[] = [];
     const result = await registerWithCloudRetry(defaultOpts, {
       fetchImpl: mockFetch as unknown as typeof fetch,
+      random: () => 0,
       sleep: async (delayMs) => {
         slept.push(delayMs);
       },
@@ -200,5 +201,73 @@ describe("registerWithCloud", () => {
           "HTTP 429: Rate limit exceeded for this endpoint. Please slow down and retry. (route_rps_rate_limit_exceeded)",
       },
     ]);
+  });
+
+  it("retries 429 without Retry-After using exponential backoff", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error:
+              "Rate limit exceeded for this endpoint. Please slow down and retry.",
+            errorCode: "route_rps_rate_limit_exceeded",
+          }),
+          { status: 429, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            connectionId: "conn-4",
+            wsUrl: "wss://example.com",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    const slept: number[] = [];
+
+    const result = await registerWithCloudRetry(defaultOpts, {
+      fetchImpl: mockFetch as unknown as typeof fetch,
+      random: () => 0,
+      sleep: async (delayMs) => {
+        slept.push(delayMs);
+      },
+    });
+
+    expect(result.connectionId).toBe("conn-4");
+    expect(slept).toEqual([1000]);
+  });
+
+  it("adds bounded positive jitter to retry delays", async () => {
+    mockFetch
+      .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            connectionId: "conn-5",
+            wsUrl: "wss://example.com",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    const slept: number[] = [];
+
+    await registerWithCloudRetry(defaultOpts, {
+      fetchImpl: mockFetch as unknown as typeof fetch,
+      random: () => 0.5,
+      sleep: async (delayMs) => {
+        slept.push(delayMs);
+      },
+    });
+
+    expect(slept).toEqual([1125]);
   });
 });
