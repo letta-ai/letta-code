@@ -20,8 +20,8 @@ import {
   formatStats,
   getSubagentModelDisplay,
   getTreeChars,
-} from "@/cli/helpers/subagentDisplay.js";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth.js";
+} from "@/cli/helpers/subagent-display.js";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
 

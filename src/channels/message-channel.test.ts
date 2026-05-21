@@ -15,7 +15,7 @@ import {
   upsertChannelTarget,
 } from "@/channels/targets";
 import type { ChannelAdapter } from "@/channels/types";
-import { message_channel } from "@/tools/impl/MessageChannel";
+import { message_channel } from "@/tools/impl/message-channel";
 
 describe("MessageChannel", () => {
   afterEach(async () => {

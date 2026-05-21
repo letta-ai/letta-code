@@ -14,7 +14,7 @@ import {
   buildDynamicMessageChannelToolDefinition,
   getCachedDynamicMessageChannelToolDefinition,
   type MessageChannelToolDiscoveryScope,
-} from "@/channels/messageTool";
+} from "@/channels/message-tool";
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
@@ -37,12 +37,12 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
-import { refreshFileIndex } from "@/utils/fileIndex";
+import { refreshFileIndex } from "@/utils/file-index";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "./secret-substitution";
-import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
+import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -1114,16 +1114,6 @@ export async function prepareToolExecutionContextForModel(
  */
 export function getToolPermissions(toolName: string) {
   return TOOL_PERMISSIONS[toolName as ToolName] || { requiresApproval: false };
-}
-
-/**
- * Check if a tool requires approval before execution.
- * @param toolName - The name of the tool
- * @returns true if the tool requires approval, false otherwise
- * @deprecated Use checkToolPermission instead for full permission system support
- */
-export function requiresApproval(toolName: string): boolean {
-  return TOOL_PERMISSIONS[toolName as ToolName]?.requiresApproval ?? false;
 }
 
 /**

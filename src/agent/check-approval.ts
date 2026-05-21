@@ -1,7 +1,6 @@
 // src/agent/check-approval.ts
 // Check for pending approvals and retrieve recent message history when resuming an agent/conversation
 
-import type Letta from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -674,16 +673,4 @@ export async function getResumeDataFromBackend(
     console.error("Error getting resume data:", error);
     return { pendingApproval: null, pendingApprovals: [], messageHistory: [] };
   }
-}
-
-/**
- * @deprecated Pass through for older call sites. Resume data is loaded through getBackend().
- */
-export async function getResumeData(
-  _client: Letta,
-  agent: AgentState,
-  conversationId?: string,
-  options: GetResumeDataOptions = {},
-): Promise<ResumeData> {
-  return getResumeDataFromBackend(agent, conversationId, options);
 }

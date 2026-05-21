@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { readInteractiveAppSource } from "@/test-utils/readInteractiveAppSource";
+import { readInteractiveAppSource } from "@/test-utils/read-interactive-app-source";
 
 function readSource(relativePath: string): string {
   return readFileSync(
@@ -94,7 +94,7 @@ describe("headless backend lifecycle wiring", () => {
   });
 
   test("memfs flag application skips remote operations for local backends", () => {
-    const source = readSource("./agent/memoryFilesystem.ts");
+    const source = readSource("./agent/memory-filesystem.ts");
 
     const capabilityGuardIndex = source.indexOf(
       "!backend.capabilities.remoteMemfs",

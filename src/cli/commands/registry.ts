@@ -166,15 +166,6 @@ export const commands: Record<string, Command> = {
       return "Opening provider connection...";
     },
   },
-  // "/remote": {
-  //   desc: "Connect to Letta Cloud (device connect mode)",
-  //   args: "[--env-name <name>]",
-  //   order: 17.5,
-  //   handler: () => {
-  //     // Handled specially in App.tsx
-  //     return "Starting listener...";
-  //   },
-  // },
   "/clear": {
     desc: "Clear in-context messages",
     order: 18,
@@ -465,7 +456,7 @@ export const commands: Record<string, Command> = {
         getKeybindingsPath,
         installKeybinding,
         removeKeybinding,
-      } = await import("@/cli/utils/terminalKeybindingInstaller");
+      } = await import("@/cli/utils/terminal-keybinding-installer");
       const { updateSettings } = await import("@/settings");
 
       const isRevert = args.includes("--revert") || args.includes("--remove");

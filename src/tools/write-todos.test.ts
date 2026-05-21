@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { write_todos } from "@/tools/impl/WriteTodosGemini";
+import { write_todos } from "@/tools/impl/write-todos-gemini";
 
 describe("WriteTodos tool (Gemini)", () => {
   test("accepts valid todos", async () => {

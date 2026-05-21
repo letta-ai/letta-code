@@ -32,6 +32,20 @@ if ! node scripts/check-layer-boundaries.js 2>/dev/null; then
   exit 1
 fi
 
+# Check exported function style (.ts only — .tsx components use memo() which is exempt)
+if ! node scripts/check-exported-functions.js 2>/dev/null; then
+  echo ""
+  echo "❌ Exported arrow function found — run 'bun run check:exported-functions' for details."
+  exit 1
+fi
+
+# Check filename casing for newly staged .ts files
+if ! node scripts/check-filename-casing.js --staged 2>/dev/null; then
+  echo ""
+  echo "❌ Non-kebab-case filename — run 'bun run check:filename-casing' for details."
+  exit 1
+fi
+
 # Lint staged files only (fast)
 # Guard: lint-staged v16 exits code 1 when no files match, which would
 # fail the hook even on empty commits. Only run if lintable files are staged.

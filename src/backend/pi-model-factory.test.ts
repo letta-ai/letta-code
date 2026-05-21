@@ -5,8 +5,8 @@ import { join } from "node:path";
 import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
-} from "@/backend/dev/PiModelFactory";
-import { createOrUpdateLocalProvider } from "@/backend/local/LocalProviderAuthStore";
+} from "@/backend/dev/pi-model-factory";
+import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
 
 function envValue(key: string): string | undefined {
   return process.env[key];

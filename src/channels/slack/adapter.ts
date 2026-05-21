@@ -4,9 +4,9 @@ import type SlackApp from "@slack/bolt";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
-} from "@/channels/inboundDebounce";
+} from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycleError";
+import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -23,7 +23,7 @@ import {
   resolveSlackThreadStarter,
 } from "./media";
 import { loadSlackBoltModule } from "./runtime";
-import { createSlackWebApiClient } from "./webApiClient";
+import { createSlackWebApiClient } from "./web-api-client";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
 type SlackBoltModule = typeof import("@slack/bolt") & {

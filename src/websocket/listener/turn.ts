@@ -16,12 +16,12 @@ import {
   setConversationId,
   setCurrentAgentId,
 } from "@/agent/context";
-import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getStreamToolContextId,
   type sendMessageStream,
 } from "@/agent/message";
-import { getSubagents } from "@/agent/subagentState";
+import { getSubagents } from "@/agent/subagent-state";
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
@@ -31,30 +31,30 @@ import {
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
-import { getRetryStatusMessage } from "@/cli/helpers/errorFormatter";
+import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
   type ReflectionTrigger,
-} from "@/cli/helpers/memoryReminder";
-import { handleMemorySubagentCompletion } from "@/cli/helpers/memorySubagentCompletion";
+} from "@/cli/helpers/memory-reminder";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
-} from "@/cli/helpers/reflectionTranscript";
+} from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
-import { buildListenReminderContext } from "@/reminders/listenContext";
-import { getPlanModeReminder } from "@/reminders/planModeReminder";
+import { buildListenReminderContext } from "@/reminders/listen-context";
+import { getPlanModeReminder } from "@/reminders/plan-mode-reminder";
 import { syncReminderStateFromContextTracker } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
@@ -77,7 +77,7 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
   pruneConversationPermissionModeStateIfDefault,
-} from "./permissionMode";
+} from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
   emitDeviceStatusIfOpen,
@@ -90,7 +90,7 @@ import {
 import {
   createProviderFallbackState,
   maybeApplyProviderFallback,
-} from "./providerFallback";
+} from "./provider-fallback";
 import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
@@ -236,7 +236,7 @@ function buildMaybeLaunchReflectionSubagent(params: {
       });
 
       const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("@/tools/impl/Task");
+        await import("@/tools/impl/task");
       const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,

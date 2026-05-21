@@ -2,7 +2,7 @@ import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Skill, SkillSource } from "@/agent/skills";
 import { estimateTokens } from "@/cli/helpers/format";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

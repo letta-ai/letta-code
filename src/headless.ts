@@ -9,7 +9,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import {
   type QueuedMessage,
   setMessageQueueAdder,
-} from "@/utils/messageQueueBridge";
+} from "@/utils/message-queue-bridge";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -25,11 +25,11 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
-import { handleBootstrapSessionState } from "./agent/bootstrapHandler";
-import { buildClientSkillsPayload } from "./agent/clientSkills";
+import { handleBootstrapSessionState } from "./agent/bootstrap-handler";
+import { buildClientSkillsPayload } from "./agent/client-skills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
-import { handleListMessages } from "./agent/listMessagesHandler";
+import { handleListMessages } from "./agent/list-messages-handler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
@@ -44,8 +44,8 @@ import {
   buildCreateAgentOptionsForPersonality,
   resolvePersonalityId,
 } from "./agent/personality";
-import type { MemoryPromptMode } from "./agent/promptAssets";
-import { resolveSkillSourcesSelection } from "./agent/skillSources";
+import type { MemoryPromptMode } from "./agent/prompt-assets";
+import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
@@ -64,22 +64,22 @@ import {
   parseJsonArrayFlag,
   parsePositiveIntFlag,
   resolveImportFlagAlias,
-} from "./cli/flagUtils";
+} from "./cli/flag-utils";
 import {
   createBuffers,
   type Line,
   markIncompleteToolsAsCancelled,
   toLines,
 } from "./cli/helpers/accumulator";
-import { classifyApprovals } from "./cli/helpers/approvalClassification";
-import { createContextTracker } from "./cli/helpers/contextTracker";
-import { formatErrorDetails } from "./cli/helpers/errorFormatter";
+import { classifyApprovals } from "./cli/helpers/approval-classification";
+import { createContextTracker } from "./cli/helpers/context-tracker";
+import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
   type ReflectionSettings,
   type ReflectionTrigger,
-} from "./cli/helpers/memoryReminder";
+} from "./cli/helpers/memory-reminder";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -88,15 +88,15 @@ import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
   validateRegistryHandleOrThrow,
-} from "./cli/startupFlagValidation";
+} from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
-import { computeDiffPreviews } from "./helpers/diffPreview";
-import { formatPermissionDenial } from "./permissions/formatDenial";
-import { QueueRuntime } from "./queue/queueRuntime";
+import { computeDiffPreviews } from "./helpers/diff-preview";
+import { formatPermissionDenial } from "./permissions/format-denial";
+import { QueueRuntime } from "./queue/queue-runtime";
 import {
   mergeQueuedTurnInput,
   type QueuedTurnInput,
-} from "./queue/turnQueueRuntime";
+} from "./queue/turn-queue-runtime";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -107,14 +107,14 @@ import {
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
-import { writeWireMessage, writeWireMessageAsync } from "./streamJsonWriter";
+import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { telemetry } from "./telemetry";
-import { trackBoundaryError } from "./telemetry/errorReporting";
+import { trackBoundaryError } from "./telemetry/error-reporting";
 import { extractTelemetryInputText } from "./telemetry/input";
 import {
   isHeadlessAutoAllowTool,
   isInteractiveApprovalTool,
-} from "./tools/interactivePolicy";
+} from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -208,6 +208,31 @@ function reportAndExitHeadless(
     error instanceof Error ? `Error: ${error.message}` : String(error),
   );
   process.exit(1);
+}
+
+async function reportStartupErrorAndExit(
+  errorType: string,
+  error: unknown,
+  context: string,
+  outputFormat: string,
+): Promise<never> {
+  trackHeadlessBoundaryError(errorType, error, context);
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (outputFormat === "stream-json") {
+    const errorMsg: ErrorMessage = {
+      type: "error",
+      message,
+      stop_reason: "error",
+      session_id: "startup",
+      uuid: `startup-error-${randomUUID()}`,
+    };
+    await writeWireMessageAsync(errorMsg);
+  } else {
+    console.error(`Error: ${message}`);
+  }
+
+  return await flushAndExit(1);
 }
 
 export type BidirectionalQueuedInput = QueuedTurnInput<
@@ -493,7 +518,7 @@ export async function handleHeadlessCommand(
   // Set CLI permission overrides if provided (inherited from parent agent)
   if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
     const { cliPermissions } = await import(
-      "@/permissions/cliPermissionsInstance"
+      "@/permissions/cli-permissions-instance"
     );
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
@@ -1055,7 +1080,7 @@ export async function handleHeadlessCommand(
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     // Pre-determine memfs mode so the agent is created with the correct prompt.
-    const { isLettaCloud } = await import("@/agent/memoryFilesystem");
+    const { isLettaCloud } = await import("@/agent/memory-filesystem");
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs &&
       shouldAutoEnableMemfsForNewAgent &&
@@ -1093,7 +1118,18 @@ export async function handleHeadlessCommand(
       blockValues,
       tags: personalityOptions?.tags ?? tags,
     };
-    const result = await createAgent(createOptions);
+    let result: Awaited<ReturnType<typeof createAgent>>;
+    try {
+      result = await createAgent(createOptions);
+    } catch (error) {
+      await reportStartupErrorAndExit(
+        "headless_agent_create_failed",
+        error,
+        "headless_startup_agent_create",
+        values["output-format"] || "text",
+      );
+      throw error;
+    }
     agent = result.agent;
     autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
   }
@@ -1197,7 +1233,7 @@ export async function handleHeadlessCommand(
 
   if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
     const { hydrateMemfsSettingFromAgent, isLettaCloud } = await import(
-      "@/agent/memoryFilesystem"
+      "@/agent/memory-filesystem"
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
     if (!memfsEnabled && !noMemfsFlag && (await isLettaCloud())) {
@@ -1213,7 +1249,7 @@ export async function handleHeadlessCommand(
   // Init secrets cache — runs in parallel with memfs sync below.
   const secretsAgentId = agent?.id;
   const secretsInitPromise = secretsAgentId
-    ? import("@/utils/secretsStore").then(({ initSecretsFromServer }) =>
+    ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
         initSecretsFromServer(secretsAgentId, agent ?? undefined),
       )
     : Promise.resolve();
@@ -1232,7 +1268,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "skip") {
     // Run enable/disable logic but skip the git pull.
     try {
-      const { applyMemfsFlags } = await import("@/agent/memoryFilesystem");
+      const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
       await applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
@@ -1251,7 +1287,7 @@ export async function handleHeadlessCommand(
     }
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
-    const { applyMemfsFlags } = await import("@/agent/memoryFilesystem");
+    const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
     memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
@@ -1270,7 +1306,7 @@ export async function handleHeadlessCommand(
   } else {
     // "blocking" — original behaviour.
     try {
-      const { applyMemfsFlags } = await import("@/agent/memoryFilesystem");
+      const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
       const memfsResult = await applyMemfsFlags(
         agent.id,
         startupMemfsFlag,
@@ -1355,7 +1391,7 @@ export async function handleHeadlessCommand(
 
     if (storedPreset && storedPreset !== "custom") {
       const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
-        await import("@/agent/promptAssets");
+        await import("@/agent/prompt-assets");
       if (isKnown(storedPreset)) {
         const memoryMode = settingsManager.isMemfsEnabled(agent.id)
           ? "memfs"
@@ -1643,7 +1679,7 @@ export async function handleHeadlessCommand(
       > = [approvalInput];
       {
         const { consumeQueuedSkillContent } = await import(
-          "@/tools/impl/skillContentRegistry"
+          "@/tools/impl/skill-content-registry"
         );
         const skillContents = consumeQueuedSkillContent();
         if (skillContents.length > 0) {
@@ -1754,7 +1790,7 @@ ${SYSTEM_REMINDER_CLOSE}
     reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
     resolvePlanModeReminder: async () => {
-      const { PLAN_MODE_REMINDER } = await import("@/agent/promptAssets");
+      const { PLAN_MODE_REMINDER } = await import("@/agent/prompt-assets");
       return PLAN_MODE_REMINDER;
     },
   });
@@ -1875,7 +1911,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Inject queued skill content as user message parts (LET-7353)
       {
         const { consumeQueuedSkillContent } = await import(
-          "@/tools/impl/skillContentRegistry"
+          "@/tools/impl/skill-content-registry"
         );
         const skillContents = consumeQueuedSkillContent();
         if (skillContents.length > 0) {
@@ -2979,7 +3015,7 @@ async function runBidirectionalMode(
 
       {
         const { consumeQueuedSkillContent } = await import(
-          "@/tools/impl/skillContentRegistry"
+          "@/tools/impl/skill-content-registry"
         );
         const skillContents = consumeQueuedSkillContent();
         if (skillContents.length > 0) {
@@ -3758,7 +3794,9 @@ async function runBidirectionalMode(
           reflectionSettings,
           skillSources,
           resolvePlanModeReminder: async () => {
-            const { PLAN_MODE_REMINDER } = await import("@/agent/promptAssets");
+            const { PLAN_MODE_REMINDER } = await import(
+              "@/agent/prompt-assets"
+            );
             return PLAN_MODE_REMINDER;
           },
         });
@@ -3784,7 +3822,7 @@ async function runBidirectionalMode(
           // Inject queued skill content as user message parts (LET-7353)
           {
             const { consumeQueuedSkillContent } = await import(
-              "@/tools/impl/skillContentRegistry"
+              "@/tools/impl/skill-content-registry"
             );
             const skillContents = consumeQueuedSkillContent();
             if (skillContents.length > 0) {

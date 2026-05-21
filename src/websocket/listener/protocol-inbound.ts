@@ -1,6 +1,7 @@
 import type WebSocket from "ws";
-import { isValidChannelPluginConfigPayload } from "@/channels/accountConfig";
-import { isSupportedChannelId } from "@/channels/pluginRegistry";
+import { isValidChannelPluginConfigPayload } from "@/channels/account-config";
+import { isSupportedChannelId } from "@/channels/plugin-registry";
+import type { ExperimentId } from "@/experiments/types";
 import type {
   AbortMessageCommand,
   ChangeDeviceStateCommand,
@@ -72,6 +73,18 @@ import type {
   WriteMemoryFileCommand,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
+
+const EXPERIMENT_IDS = new Set<ExperimentId>([
+  "conversation_titles",
+  "desktop_conversation_bootstrap",
+  "node",
+  "tui_cron",
+]);
+
+function isExperimentId(value: unknown): value is ExperimentId {
+  return typeof value === "string" && EXPERIMENT_IDS.has(value as ExperimentId);
+}
+
 import { isValidApprovalResponseBody } from "./approval";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
@@ -925,7 +938,7 @@ export function isSetExperimentCommand(
   return (
     c.type === "set_experiment" &&
     typeof c.request_id === "string" &&
-    c.experiment_id === "node" &&
+    isExperimentId(c.experiment_id) &&
     typeof c.enabled === "boolean"
   );
 }

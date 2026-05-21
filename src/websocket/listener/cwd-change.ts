@@ -2,7 +2,11 @@ import path from "node:path";
 import type WebSocket from "ws";
 import { updateRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { ensureFileIndex, getIndexRoot, setIndexRoot } from "@/utils/fileIndex";
+import {
+  ensureFileIndex,
+  getIndexRoot,
+  setIndexRoot,
+} from "@/utils/file-index";
 import {
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { bash } from "@/tools/impl/Bash";
-import { run_shell_command } from "@/tools/impl/RunShellCommandGemini";
-import { shell_command } from "@/tools/impl/ShellCommand.js";
-import { buildPowerShellCommand } from "@/tools/impl/shellLaunchers";
+import { bash } from "@/tools/impl/bash";
+import { run_shell_command } from "@/tools/impl/run-shell-command-gemini";
+import { shell_command } from "@/tools/impl/shell-command.js";
+import { buildPowerShellCommand } from "@/tools/impl/shell-launchers";
 import {
   executeTool,
   prepareToolExecutionContextForSpecificTools,
@@ -13,7 +13,10 @@ import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
-import { clearSecretsCache, initSecretsFromServer } from "@/utils/secretsStore";
+import {
+  clearSecretsCache,
+  initSecretsFromServer,
+} from "@/utils/secrets-store";
 
 const TEST_AGENT_ID = "agent-shell-secrets";
 

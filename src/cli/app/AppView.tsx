@@ -6,7 +6,7 @@ import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
-import { isActiveMemfsEnabled } from "@/agent/memoryRuntime";
+import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
 import type { SessionStats } from "@/agent/stats";
@@ -60,22 +60,22 @@ import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
   type ContextTracker,
   resetContextHistory,
-} from "@/cli/helpers/contextTracker";
-import type { ConversationSwitchContext } from "@/cli/helpers/conversationSwitchAlert";
+} from "@/cli/helpers/context-tracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getReflectionSettings,
   type ReflectionSettings,
-} from "@/cli/helpers/memoryReminder";
+} from "@/cli/helpers/memory-reminder";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
-} from "@/cli/helpers/toolNameMapping";
-import { isTaskTool } from "@/cli/helpers/toolNameMapping.js";
-import type { StatusLineState } from "@/cli/hooks/useConfigurableStatusLine";
+} from "@/cli/helpers/tool-name-mapping";
+import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import type { StatusLineState } from "@/cli/hooks/use-configurable-status-line";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -83,10 +83,10 @@ import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
-import type { QueuedMessage } from "@/utils/messageQueueBridge";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
-import { _readPlanFile } from "./planFile";
+import { _readPlanFile } from "./plan-file";
 import { StaticTranscript } from "./StaticTranscript";
 import type {
   ActiveOverlay,
@@ -133,7 +133,9 @@ type AppViewProps = {
   closeOverlay: () => void;
   columns: number;
   commandRunner: AppCommandRunner;
-  consumeOverlayCommand: (overlay: ActiveOverlay) => CommandHandle | null;
+  completeOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
+  ) => CommandHandle | null;
   contextTrackerRef: RefObject<ContextTracker>;
   continueSession: boolean;
   conversationId: string;
@@ -264,7 +266,7 @@ type AppViewProps = {
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
   refreshDerived: () => void;
-  resetBootstrapReminderState: () => void;
+  resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetTrajectoryBases: () => void;
   restoredInput: string | null;
@@ -290,8 +292,8 @@ type AppViewProps = {
   showApprovalPreview: boolean;
   showCompactionsEnabled: boolean;
   showExitStats: boolean;
-  startOverlayCommand: (
-    overlay: ActiveOverlay,
+  openOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
     input: string,
     openingOutput: string,
     dismissOutput: string,
@@ -324,7 +326,7 @@ export function AppView(props: AppViewProps) {
     closeOverlay,
     columns,
     commandRunner,
-    consumeOverlayCommand,
+    completeOverlay,
     contextTrackerRef,
     continueSession,
     conversationId,
@@ -433,7 +435,7 @@ export function AppView(props: AppViewProps) {
     showApprovalPreview,
     showCompactionsEnabled,
     showExitStats,
-    startOverlayCommand,
+    openOverlay,
     staticItems,
     staticRenderEpoch,
     statusLine,
@@ -822,9 +824,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "install-github-app" && (
               <InstallGithubAppFlow
                 onComplete={(result) => {
-                  const overlayCommand =
-                    consumeOverlayCommand("install-github-app");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("install-github-app");
 
                   const cmd =
                     overlayCommand ??
@@ -901,9 +901,7 @@ export function AppView(props: AppViewProps) {
               <ProviderSelector
                 onCancel={closeOverlay}
                 onStartOAuth={async () => {
-                  const overlayCommand = consumeOverlayCommand("connect");
-                  // Close selector and start OAuth flow
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
                     commandRunner.start("/connect", "Starting connection...");
@@ -923,13 +921,12 @@ export function AppView(props: AppViewProps) {
                             filterProvider: "chatgpt-plus-pro",
                             forceRefresh: true,
                           });
-                          startOverlayCommand(
+                          openOverlay(
                             "model",
                             "/model",
                             "Opening model selector...",
                             "Models dialog dismissed",
                           );
-                          setActiveOverlay("model");
                         },
                       },
                       "/connect chatgpt",
@@ -987,16 +984,14 @@ export function AppView(props: AppViewProps) {
               <AgentSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
-                  const overlayCommand = consumeOverlayCommand("resume");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("resume");
                   await handleAgentSelect(id, {
                     commandId: overlayCommand?.id,
                   });
                 }}
                 onCancel={closeOverlay}
                 onCreateNewAgent={(name: string) => {
-                  const overlayCommand = consumeOverlayCommand("resume");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("resume");
                   void handleCreateNewAgent(name, {
                     commandId: overlayCommand?.id,
                   });
@@ -1011,8 +1006,7 @@ export function AppView(props: AppViewProps) {
                 agentName={agentName ?? undefined}
                 currentConversationId={conversationId}
                 onSelect={async (convId, selectorContext) => {
-                  const overlayCommand = consumeOverlayCommand("conversations");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("conversations");
 
                   // Skip if already on this conversation
                   if (convId === conversationId) {
@@ -1189,8 +1183,7 @@ export function AppView(props: AppViewProps) {
                   }
                 }}
                 onNewConversation={async () => {
-                  const overlayCommand = consumeOverlayCommand("conversations");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("conversations");
 
                   // Lock input for async operation
                   setCommandRunning(true);
@@ -1246,7 +1239,7 @@ export function AppView(props: AppViewProps) {
                     buffersRef.current.order = [];
                     buffersRef.current.tokenCount = 0;
                     resetContextHistory(contextTrackerRef.current);
-                    resetBootstrapReminderState();
+                    resetBootstrapReminderState(true);
                     emittedIdsRef.current.clear();
                     resetDeferredToolCallCommits();
                     setStaticItems([]);
@@ -1278,8 +1271,7 @@ export function AppView(props: AppViewProps) {
                   targetConvId,
                   searchContext,
                 ) => {
-                  const overlayCommand = consumeOverlayCommand("search");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("search");
 
                   // Different agent: use handleAgentSelect (which supports optional conversationId)
                   if (targetAgentId !== agentId) {
@@ -1495,8 +1487,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "mcp-connect" && (
               <McpConnectFlow
                 onComplete={(serverName, serverId, toolCount) => {
-                  const overlayCommand = consumeOverlayCommand("mcp-connect");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("mcp-connect");
                   const cmd =
                     overlayCommand ??
                     commandRunner.start(
@@ -1534,8 +1525,7 @@ export function AppView(props: AppViewProps) {
                 currentName={agentName || ""}
                 local={pinDialogLocal}
                 onSubmit={async (newName) => {
-                  const overlayCommand = consumeOverlayCommand("pin");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("pin");
                   setCommandRunning(true);
 
                   const cmd =

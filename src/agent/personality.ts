@@ -6,14 +6,14 @@ import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
-import { getScopedMemoryFilesystemRoot } from "./memoryFilesystem";
+import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import {
   commitAndSyncMemoryWrite,
   GIT_MEMORY_ENABLED_TAG,
   getMemoryRepoDir,
   pullMemory,
-} from "./memoryGit";
-import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./promptAssets";
+} from "./memory-git";
+import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./prompt-assets";
 
 const execFile = promisify(execFileCb);
 

@@ -3,7 +3,7 @@ import { memo } from "react";
 import { colors } from "@/cli/components/colors";
 import { MarkdownDisplay } from "@/cli/components/MarkdownDisplay";
 import { Text } from "@/cli/components/Text";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 
 const SOLID_LINE = "─";
 const DOTTED_LINE = "╌";

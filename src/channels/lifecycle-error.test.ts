@@ -4,7 +4,7 @@ import {
   CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE,
   CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
   normalizeChannelLifecycleErrorMessage,
-} from "./lifecycleError";
+} from "./lifecycle-error";
 
 describe("normalizeChannelLifecycleErrorMessage", () => {
   test("keeps useful lifecycle details", () => {

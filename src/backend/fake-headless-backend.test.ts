@@ -3,8 +3,8 @@ import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConversationMessageCreateBody } from "@/backend";
-import { FakeHeadlessBackend } from "@/backend/dev/FakeHeadlessBackend";
-import { DeterministicToolCallExecutor } from "@/backend/dev/HeadlessTurnExecutor";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { DeterministicToolCallExecutor } from "@/backend/dev/headless-turn-executor";
 
 async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   const chunks: unknown[] = [];

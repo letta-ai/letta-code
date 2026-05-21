@@ -1,18 +1,15 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type Letta from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   Message,
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { getResumeData } from "@/agent/check-approval";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { __testSetBackend, type Backend } from "@/backend";
 
 type ResumeAgentState = AgentState & {
   in_context_message_ids?: string[] | null;
 };
-
-const dummyClient = {} as Letta;
 
 function installBackend(overrides: Record<string, unknown>): void {
   __testSetBackend(overrides as unknown as Backend);
@@ -96,7 +93,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(dummyClient, makeAgent(), "conv-abc", {
+    const resume = await getResumeDataFromBackend(makeAgent(), "conv-abc", {
       includeMessageHistory: false,
     });
 
@@ -127,8 +124,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(
-      dummyClient,
+    const resume = await getResumeDataFromBackend(
       makeAgent({
         message_ids: ["msg-last"],
         in_context_message_ids: ["msg-last"],
@@ -156,8 +152,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(
-      dummyClient,
+    const resume = await getResumeDataFromBackend(
       makeAgent({
         message_ids: ["msg-stale"],
         in_context_message_ids: ["msg-live"],
@@ -184,8 +179,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(
-      dummyClient,
+    const resume = await getResumeDataFromBackend(
       makeAgent({ in_context_message_ids: [] }),
       "default",
       { includeMessageHistory: false },
@@ -215,8 +209,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(
-      dummyClient,
+    const resume = await getResumeDataFromBackend(
       makeAgent({ in_context_message_ids: ["msg-last"] }),
       "default",
     );
@@ -278,7 +271,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(dummyClient, makeAgent(), "conv-abc");
+    const resume = await getResumeDataFromBackend(makeAgent(), "conv-abc");
 
     expect(conversationsList).toHaveBeenCalledWith("conv-abc", {
       limit: 200,
@@ -337,8 +330,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(
-      dummyClient,
+    const resume = await getResumeDataFromBackend(
       makeAgent({ in_context_message_ids: ["provider-msg-2"] }),
       "default",
     );
@@ -383,8 +375,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(
-      dummyClient,
+    const resume = await getResumeDataFromBackend(
       makeAgent({
         message_ids: ["provider-msg-2"],
         in_context_message_ids: ["provider-msg-2"],
@@ -440,8 +431,7 @@ describe("getResumeData", () => {
       retrieveMessage: messagesRetrieve,
     });
 
-    const resume = await getResumeData(
-      dummyClient,
+    const resume = await getResumeDataFromBackend(
       makeAgent({
         message_ids: ["ui-msg-122"],
         in_context_message_ids: ["ui-msg-122"],

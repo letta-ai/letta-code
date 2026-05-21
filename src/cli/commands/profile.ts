@@ -3,7 +3,7 @@
 
 import { getBackend } from "@/backend";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
-import { formatErrorDetails } from "@/cli/helpers/errorFormatter";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { settingsManager } from "@/settings-manager";
 
 // tiny helper for unique ids

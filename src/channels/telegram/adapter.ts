@@ -7,7 +7,7 @@
 import type { ReactionType, ReactionTypeEmoji } from "@grammyjs/types";
 import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycleError";
+import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
