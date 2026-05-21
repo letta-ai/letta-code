@@ -25,7 +25,11 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { createAgent } from "@/agent/create";
 import { selectDefaultAgentModel } from "@/agent/defaults";
 import { sendMessageStream } from "@/agent/message";
-import { getBackend } from "@/backend";
+import {
+  configureBackendMode,
+  getBackend,
+  isLocalBackendEnabled,
+} from "@/backend";
 import { getServerUrl } from "@/backend/api/client";
 import type { BtwState } from "@/cli/components/BtwPane";
 import {
@@ -476,6 +480,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         profileName?: string;
         conversationId?: string;
         commandId?: string;
+        backendMode?: "local" | "api";
       },
     ) => {
       const overlayCommand = opts?.commandId
@@ -515,6 +520,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           type: "switch_agent",
           agentId: targetAgentId,
           commandId: cmd.id,
+          backendMode: opts?.backendMode,
         });
         return;
       }
@@ -528,6 +534,15 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       cmd.update({ output: "Switching agent...", phase: "running" });
 
       try {
+        // Switch backend if the target agent belongs to a different backend
+        if (opts?.backendMode) {
+          const currentIsLocal = isLocalBackendEnabled();
+          const targetIsLocal = opts.backendMode === "local";
+          if (currentIsLocal !== targetIsLocal) {
+            configureBackendMode(opts.backendMode);
+          }
+        }
+
         // Fetch new agent
         const agent = await getBackend().retrieveAgent(targetAgentId);
 

@@ -77,7 +77,12 @@ export type ActiveOverlay =
   | null;
 
 export type QueuedOverlayAction =
-  | { type: "switch_agent"; agentId: string; commandId?: string }
+  | {
+      type: "switch_agent";
+      agentId: string;
+      commandId?: string;
+      backendMode?: "local" | "api";
+    }
   | { type: "switch_model"; modelId: string; commandId?: string }
   | {
       type: "set_experiment";

@@ -3978,7 +3978,10 @@ export function App({
       // Process the queued action
       if (action.type === "switch_agent") {
         // Call handleAgentSelect - it will see isAgentBusy() as false now
-        handleAgentSelect(action.agentId, { commandId: action.commandId });
+        handleAgentSelect(action.agentId, {
+          commandId: action.commandId,
+          backendMode: action.backendMode,
+        });
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(action.modelId, action.commandId);
