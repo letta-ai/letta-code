@@ -835,3 +835,29 @@ test("memory mode reason - Bash redirect outside roots names target", () => {
     else process.env.MEMORY_DIR = originalMemoryDir;
   }
 });
+
+test("memory mode reason - existing scoped denials get instructive reason too", () => {
+  // Regression: existing scoped-denial coverage should also surface the
+  // specific category reason, not the generic "Permission mode: memory".
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "Bash",
+      {
+        command:
+          'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "$(touch /tmp/pwn)"',
+      },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("command substitution");
+    expect(result.reason).not.toBe("Permission mode: memory");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});

@@ -96,4 +96,12 @@ describe("formatPermissionDenial", () => {
     });
     expect(result).toBe("Permission denied by rule: Edit(secret.txt) (CLI)");
   });
+
+  test("memory-mode denial shows fuller reason over short label", () => {
+    const result = formatPermissionDenial({
+      reason: "Permission mode: memory",
+      matchedRule: "memory mode",
+    });
+    expect(result).toBe("Permission denied: Permission mode: memory");
+  });
 });
