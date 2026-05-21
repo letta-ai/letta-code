@@ -275,7 +275,7 @@ function normalizeAgentRecord(
   };
 }
 
-function projectAgentState(
+export function projectLocalAgentState(
   record: LocalAgentRecord,
   messageIds: string[] = [],
   inContextMessageIds: string[] = messageIds,
@@ -2057,7 +2057,7 @@ export class LocalStore {
     const inContextMessageIds =
       this.conversations.get(key)?.in_context_message_ids ?? messageIds;
     const lastRunCompletion = defaultMessages.at(-1)?.date ?? null;
-    return projectAgentState(
+    return projectLocalAgentState(
       record,
       messageIds,
       inContextMessageIds,

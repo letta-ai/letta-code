@@ -168,6 +168,7 @@ type AppViewProps = {
       profileName?: string;
       conversationId?: string;
       commandId?: string;
+      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
     },
   ) => Promise<void>;
   handleApproveAlways: (
@@ -983,10 +984,11 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "resume" && (
               <AgentSelector
                 currentAgentId={agentId}
-                onSelect={async (id) => {
+                onSelect={async (id, backendMode) => {
                   const overlayCommand = completeOverlay("resume");
                   await handleAgentSelect(id, {
                     commandId: overlayCommand?.id,
+                    backendMode,
                   });
                 }}
                 onCancel={closeOverlay}
