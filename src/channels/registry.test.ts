@@ -1094,6 +1094,62 @@ describe("pending channel control requests", () => {
     ]);
   });
 
+  test("/reflection bypasses pending channel control prompts", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler(() => {});
+
+    const approvalResponses: unknown[] = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+    const reflections: unknown[] = [];
+    registry.setReflectionHandler(async (params) => {
+      reflections.push(params);
+      return { handled: true, text: "Started a reflection pass." };
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    await registry.registerPendingControlRequest(
+      createPendingControlRequestEvent(),
+    );
+
+    await adapter.onMessage?.(createInboundMessage("/reflection"));
+
+    expect(approvalResponses).toHaveLength(0);
+    expect(reflections).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "Started a reflection pass.",
+        replyToMessageId: "1712800000.000200",
+      },
+    ]);
+  });
+
   test("freeform multi-question channel replies approve instead of reprompting", async () => {
     const replies: Array<{
       chatId: string;

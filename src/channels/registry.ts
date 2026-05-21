@@ -784,7 +784,7 @@ export class ChannelRegistry {
     msg: InboundChannelMessage,
   ): Promise<boolean> {
     const slashCommand = parseChannelSlashCommand(msg.text);
-    if (slashCommand?.name === "cancel") {
+    if (slashCommand) {
       return false;
     }
 
