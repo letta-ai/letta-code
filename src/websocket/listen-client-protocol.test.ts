@@ -57,7 +57,6 @@ import {
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
 } from "@/websocket/listener/recoverable-notices";
-import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 
 class MockSocket {
   readyState: number;
@@ -2511,8 +2510,6 @@ describe("listen-client permission mode scope keys", () => {
       "agent:__unknown__::conversation:default",
       {
         mode: "acceptEdits",
-        planFilePath: null,
-        modeBeforePlan: null,
       },
     );
 
@@ -2561,8 +2558,6 @@ describe("listen-client permission mode scope keys", () => {
       listener.permissionModeByConversation.get("conversation:conv-slack-1"),
     ).toEqual({
       mode: "unrestricted",
-      planFilePath: null,
-      modeBeforePlan: null,
     });
   });
 
@@ -2593,8 +2588,6 @@ describe("listen-client permission mode scope keys", () => {
       listener.permissionModeByConversation.get("conversation:conv-discord-1"),
     ).toEqual({
       mode: "acceptEdits",
-      planFilePath: null,
-      modeBeforePlan: null,
     });
   });
 });
@@ -2941,38 +2934,9 @@ describe("listen-client v2 status builders", () => {
     const loopStatus = __listenClientTestUtils.buildLoopStatus(runtime);
     expect(loopStatus.status).toBe("WAITING_ON_INPUT");
     expect(loopStatus.active_run_ids).toEqual([]);
-    expect(loopStatus.plan_file_path).toBeNull();
     // queue is now separate from loopStatus — verify via buildQueueSnapshot
     const queueSnapshot = __listenClientTestUtils.buildQueueSnapshot(runtime);
     expect(queueSnapshot).toEqual([]);
-  });
-
-  test("buildLoopStatus includes plan file path for scoped plan mode", () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
-      "agent-1",
-      "default",
-    );
-    listener.permissionModeByConversation.set(
-      "agent:agent-1::conversation:default",
-      {
-        mode: "plan",
-        planFilePath: "/tmp/listener-plan.md",
-        modeBeforePlan: "standard",
-      },
-    );
-
-    expect(
-      __listenClientTestUtils.buildLoopStatus(listener, {
-        agent_id: "agent-1",
-        conversation_id: "default",
-      }),
-    ).toEqual({
-      status: "WAITING_ON_INPUT",
-      active_run_ids: [],
-      plan_file_path: "/tmp/listener-plan.md",
-    });
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
@@ -3496,7 +3460,6 @@ describe("listen-client v2 status builders", () => {
     expect(outbound[1].loop_status).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
-      plan_file_path: null,
     });
   });
 
@@ -3636,7 +3599,6 @@ describe("listen-client v2 status builders", () => {
     ).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
-      plan_file_path: null,
     });
   });
 
@@ -4103,143 +4065,6 @@ describe("listen-client capability-gated approval flow", () => {
     expect("error" in response).toBe(true);
     if ("error" in response) {
       expect(response.error).toBe("Internal server error");
-    }
-  });
-
-  test("mode changes reject plan mode when plan mode is disabled", async () => {
-    const originalHome = process.env.HOME;
-    const testHomeDir = await mkdtemp(
-      join(os.tmpdir(), "letta-plan-disabled-"),
-    );
-    await settingsManager.reset();
-    process.env.HOME = testHomeDir;
-    resetRemoteSettingsCache();
-    await settingsManager.initialize();
-
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    listener.socket = socket as unknown as WebSocket;
-
-    const scope = {
-      agent_id: "agent-1",
-      conversation_id: "default",
-    } as const;
-
-    listener.permissionModeByConversation.set(
-      "agent:agent-1::conversation:default",
-      {
-        mode: "standard",
-        planFilePath: null,
-        modeBeforePlan: null,
-      },
-    );
-
-    try {
-      __listenClientTestUtils.handleModeChange(
-        { mode: "plan" },
-        socket as unknown as WebSocket,
-        listener,
-        scope,
-      );
-
-      const outbound = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-      const deviceStatus = outbound.findLast(
-        (payload) => payload.type === "update_device_status",
-      )?.device_status;
-      const loopStatus = outbound.findLast(
-        (payload) => payload.type === "update_loop_status",
-      )?.loop_status;
-      const notice = outbound.findLast(
-        (payload) =>
-          payload.type === "stream_delta" &&
-          payload.delta?.message_type === "loop_error",
-      );
-
-      expect(deviceStatus?.current_permission_mode).toBe("standard");
-      expect(deviceStatus?.plan_mode_enabled).toBe(false);
-      expect(loopStatus?.plan_file_path).toBeNull();
-      expect(notice?.delta?.message).toContain(
-        "Plan mode is disabled in user settings.",
-      );
-    } finally {
-      await settingsManager.reset();
-      await rm(testHomeDir, { recursive: true, force: true });
-      process.env.HOME = originalHome;
-      resetRemoteSettingsCache();
-    }
-  });
-
-  test("mode changes emit fresh loop status plan_file_path on enter exit and re-enter", async () => {
-    const originalHome = process.env.HOME;
-    const testHomeDir = await mkdtemp(join(os.tmpdir(), "letta-plan-ws-"));
-    await settingsManager.reset();
-    process.env.HOME = testHomeDir;
-    resetRemoteSettingsCache();
-    await settingsManager.initialize();
-    settingsManager.setPlanModeEnabled(true);
-
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    listener.socket = socket as unknown as WebSocket;
-
-    const scope = {
-      agent_id: "agent-1",
-      conversation_id: "default",
-    } as const;
-
-    try {
-      __listenClientTestUtils.handleModeChange(
-        { mode: "plan" },
-        socket as unknown as WebSocket,
-        listener,
-        scope,
-      );
-
-      const firstPlanPath = (socket.sentPayloads
-        .map((payload) => JSON.parse(payload as string))
-        .findLast((payload) => payload.type === "update_loop_status")
-        ?.loop_status?.plan_file_path ?? null) as string | null;
-
-      expect(firstPlanPath).toBeTruthy();
-
-      __listenClientTestUtils.handleModeChange(
-        { mode: "unrestricted" },
-        socket as unknown as WebSocket,
-        listener,
-        scope,
-      );
-
-      const afterExitLoopStatus = socket.sentPayloads
-        .map((payload) => JSON.parse(payload as string))
-        .findLast(
-          (payload) =>
-            payload.type === "update_loop_status" &&
-            payload.loop_status?.status === "WAITING_ON_INPUT",
-        );
-
-      expect(afterExitLoopStatus?.loop_status?.plan_file_path).toBeNull();
-
-      __listenClientTestUtils.handleModeChange(
-        { mode: "plan" },
-        socket as unknown as WebSocket,
-        listener,
-        scope,
-      );
-
-      const secondPlanPath = (socket.sentPayloads
-        .map((payload) => JSON.parse(payload as string))
-        .findLast((payload) => payload.type === "update_loop_status")
-        ?.loop_status?.plan_file_path ?? null) as string | null;
-
-      expect(secondPlanPath).toBeTruthy();
-      expect(secondPlanPath).not.toBe(firstPlanPath);
-    } finally {
-      await settingsManager.reset();
-      await rm(testHomeDir, { recursive: true, force: true });
-      process.env.HOME = originalHome;
-      resetRemoteSettingsCache();
     }
   });
 

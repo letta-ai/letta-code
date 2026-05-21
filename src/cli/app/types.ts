@@ -220,7 +220,5 @@ export type StaticItem =
       toolArgs: string;
       // Optional precomputed/cached data for rendering
       precomputedDiff?: AdvancedDiffSuccess;
-      planContent?: string; // For ExitPlanMode
-      planFilePath?: string; // For ExitPlanMode
     }
   | Line;

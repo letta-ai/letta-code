@@ -24,7 +24,6 @@ function baseContext(
       stepCount: 25,
     },
     skillSources: [],
-    resolvePlanModeReminder: () => "",
   };
 }
 

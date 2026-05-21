@@ -244,12 +244,7 @@ describe("composeSubagentChildEnv", () => {
   });
 
   test("LETTA_CODE_AGENT_ROLE is always 'subagent' regardless of mode", () => {
-    for (const permissionMode of [
-      "memory",
-      "default",
-      "plan",
-      undefined,
-    ] as const) {
+    for (const permissionMode of ["memory", "default", undefined] as const) {
       const env = composeSubagentChildEnv({
         parentProcessEnv: {},
         parentAgentId: PARENT_ID,

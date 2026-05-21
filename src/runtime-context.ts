@@ -4,7 +4,6 @@ import type { SkillSource } from "./agent/skills";
 export type RuntimePermissionMode =
   | "standard"
   | "acceptEdits"
-  | "plan"
   | "memory"
   | "unrestricted";
 
@@ -16,8 +15,6 @@ export interface RuntimeContextSnapshot {
   workingDirectory?: string | null;
   toolContextId?: string | null;
   permissionMode?: RuntimePermissionMode;
-  planFilePath?: string | null;
-  modeBeforePlan?: RuntimePermissionMode | null;
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
