@@ -1079,6 +1079,97 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        // Special handling for /login command - sign in to Letta Constellation
+        if (trimmed === "/login") {
+          const cmd = commandRunner.start(msg.trim(), "Signing in...");
+
+          setCommandRunning(true);
+
+          try {
+            const { settingsManager } = await import("@/settings-manager");
+            const currentSettings =
+              await settingsManager.getSettingsWithSecureTokens();
+            const hasApiKey =
+              process.env.LETTA_API_KEY || currentSettings.env?.LETTA_API_KEY;
+            const hasRefreshToken = Boolean(currentSettings.refreshToken);
+
+            // Already logged in — no-op with hint
+            if (hasApiKey || hasRefreshToken) {
+              cmd.finish(
+                "Already signed in to Letta Constellation. Run /logout to sign out.",
+                true,
+              );
+              return { submitted: true };
+            }
+
+            // Run device code flow
+            const { requestDeviceCode, pollForToken } = await import(
+              "@/auth/oauth"
+            );
+            const { configureBackendMode } = await import("@/backend");
+            const { hostname } = await import("node:os");
+
+            const deviceData = await requestDeviceCode();
+
+            cmd.update({
+              output: `Opening browser for authorization...\n\nYour authorization code: ${deviceData.user_code}\nIf browser didn't open, visit: ${deviceData.verification_uri_complete}\n\nWaiting for you to authorize in the browser...`,
+              phase: "running",
+            });
+
+            // Auto-open browser (fire-and-forget)
+            import("open")
+              .then(({ default: open }) =>
+                open(deviceData.verification_uri_complete, { wait: false }),
+              )
+              .then((subprocess) => {
+                subprocess.on("error", () => {});
+              })
+              .catch(() => {});
+
+            // Get or generate device ID
+            const deviceId = settingsManager.getOrCreateDeviceId();
+            const deviceName = hostname();
+
+            // Poll for token
+            const tokens = await pollForToken(
+              deviceData.device_code,
+              deviceData.interval,
+              deviceData.expires_in,
+              deviceId,
+              deviceName,
+            );
+
+            // Save tokens
+            const now = Date.now();
+            settingsManager.updateSettings({
+              env: {
+                ...settingsManager.getSettings().env,
+                LETTA_API_KEY: tokens.access_token,
+              },
+              refreshToken: tokens.refresh_token,
+              tokenExpiresAt: now + tokens.expires_in * 1000,
+              preferredBackendMode: "api",
+            });
+            await settingsManager.flush();
+
+            // Switch to API backend
+            configureBackendMode("api");
+
+            cmd.finish(
+              "Signed in to Letta Constellation. Switch to a Constellation agent with /agents.",
+              true,
+            );
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
+            cmd.fail(`Login failed: ${errorMessage}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /logout command - clear credentials and exit
         if (trimmed === "/logout") {
           const cmd = commandRunner.start(msg.trim(), "Logging out...");
