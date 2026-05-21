@@ -140,6 +140,14 @@ yay -S letta-code # release
 yay -S letta-code-git # nightly
 ```
 
+Nix users can run or install Letta Code through the repository flake:
+```bash
+nix run github:letta-ai/letta-code
+nix profile install github:letta-ai/letta-code
+```
+
+See [docs/nix.md](docs/nix.md) for Home Manager and NixOS service examples.
+
 ---
 
 Made with 💜 in San Francisco
