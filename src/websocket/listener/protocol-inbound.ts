@@ -51,6 +51,7 @@ import type {
   ReadFileCommand,
   ReadMemoryFileCommand,
   RemoveQueueItemCommand,
+  RetrieveCwdMapCommand,
   RuntimeScope,
   SearchBranchesCommand,
   SearchFilesCommand,
@@ -642,6 +643,14 @@ export function isEnableMemfsCommand(
     typeof c.request_id === "string" &&
     typeof c.agent_id === "string"
   );
+}
+
+export function isRetrieveCwdMapCommand(
+  value: unknown,
+): value is RetrieveCwdMapCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; request_id?: unknown };
+  return c.type === "retrieve_cwd_map" && typeof c.request_id === "string";
 }
 
 export function isListModelsCommand(
@@ -1604,6 +1613,7 @@ export function parseServerMessage(
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isRetrieveCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||

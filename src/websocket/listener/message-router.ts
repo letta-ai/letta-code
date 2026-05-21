@@ -530,6 +530,22 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "retrieve_cwd_map") {
+        safeSocketSend(
+          socket,
+          {
+            type: "retrieve_cwd_map_response",
+            request_id: parsed.request_id,
+            success: true,
+            cwd_map: Object.fromEntries(runtime.workingDirectoryByConversation),
+            boot_working_directory: runtime.bootWorkingDirectory,
+          },
+          "retrieve_cwd_map_response_failed",
+          "retrieve_cwd_map_response",
+        );
+        return;
+      }
+
       if (
         handleSettingsProtocolCommand(parsed, {
           socket,

@@ -399,6 +399,8 @@ export function buildDeviceStatus(
       pending_control_requests: [],
       experiments: experimentManager.list(),
       memory_directory: null,
+      cwd_map: {},
+      boot_working_directory: fallbackCwd,
       should_doctor: false,
       reflection_settings: null,
       supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
@@ -473,6 +475,8 @@ export function buildDeviceStatus(
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
+    cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
+    boot_working_directory: listener.bootWorkingDirectory,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
     reflection_settings: scopedAgentId
