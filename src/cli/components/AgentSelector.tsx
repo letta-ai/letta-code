@@ -224,8 +224,20 @@ export function AgentSelector({
         return;
       }
 
+      const cachedTokens = settingsManager.getCachedSecureTokens();
+      const cloudCredentialsAvailable = Boolean(
+        process.env.LETTA_API_KEY ||
+          settingsManager.getSettings().env?.LETTA_API_KEY ||
+          cachedTokens.apiKey ||
+          cachedTokens.refreshToken,
+      );
+
       const pinnedData = await Promise.all(
         mergedPinned.map(async ({ agentId, isLocal }) => {
+          // Skip cloud fetches when not authenticated — cloud backend would throw
+          if (!isLocal && !cloudCredentialsAvailable) {
+            return { agentId, agent: null, error: "Not connected", isLocal };
+          }
           try {
             // Route each pinned agent to its own backend
             const agentBackend = isLocal
@@ -361,14 +373,17 @@ export function AgentSelector({
     loadLocalAgents();
   }, [loadLocalAgents]);
 
-  // Load tab data when switching tabs (only if not already loaded)
+  // Load tab data when switching tabs (only if not already loaded).
+  // Skip cloud tabs entirely when no credentials — cloud backend would throw.
   useEffect(() => {
+    if (!hasCloudCredentials) return;
     if (activeTab === "letta-code" && !lettaCodeLoaded && !lettaCodeLoading) {
       loadLettaCodeAgents();
     } else if (activeTab === "all" && !allLoaded && !allLoading) {
       loadAllAgents();
     }
   }, [
+    hasCloudCredentials,
     activeTab,
     lettaCodeLoaded,
     lettaCodeLoading,
@@ -380,12 +395,14 @@ export function AgentSelector({
 
   // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
+    if (!hasCloudCredentials) return;
     if (activeTab === "letta-code" && activeQuery !== lettaCodeQuery) {
       loadLettaCodeAgents(activeQuery || undefined);
     } else if (activeTab === "all" && activeQuery !== allQuery) {
       loadAllAgents(activeQuery || undefined);
     }
   }, [
+    hasCloudCredentials,
     activeQuery,
     activeTab,
     lettaCodeQuery,
