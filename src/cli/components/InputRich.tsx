@@ -946,7 +946,10 @@ const StreamingStatus = memo(function StreamingStatus({
         <Box width={spinnerColumnWidth} flexShrink={0}>
           <Text color={colors.status.processing}>
             {animate ? (
-              <StreamingStatusSpinner key={streamSeed} tier={contextTier} />
+              <StreamingStatusSpinner
+                tier={contextTier}
+                streamSeed={streamSeed}
+              />
             ) : (
               CLI_GLYPHS.bullet
             )}
