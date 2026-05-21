@@ -5,9 +5,7 @@ import { stdin } from "node:process";
 import chalk from "chalk";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
-import SpinnerLib from "ink-spinner";
 import {
-  type ComponentType,
   memo,
   type ReactNode,
   useCallback,
@@ -46,10 +44,8 @@ import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
+import { StreamingStatusSpinner } from "./spinners/StreamingStatusSpinner.js";
 import { Text } from "./Text";
-
-// Type assertion for ink-spinner compatibility
-const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
@@ -916,7 +912,7 @@ const StreamingStatus = memo(function StreamingStatus({
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
           <Text color={colors.status.processing}>
-            {animate ? <Spinner type="layer" /> : CLI_GLYPHS.bullet}
+            {animate ? <StreamingStatusSpinner /> : CLI_GLYPHS.bullet}
           </Text>
         </Box>
         <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
