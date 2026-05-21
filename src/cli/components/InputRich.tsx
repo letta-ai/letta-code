@@ -781,6 +781,19 @@ const StreamingStatus = memo(function StreamingStatus({
   const contextTier = contextTierFromRatio(contextRatio);
   const spinnerColumnWidth = spinnerWidthForTier(contextTier) + 1;
 
+  // Bump a counter on each false→true streaming edge so the spinner
+  // remounts (via key={}) and re-picks from its tier pool. Without this
+  // the useState initializer can persist a pick across messages when
+  // the JSX shape and tier value are unchanged between streams.
+  const [streamSeed, setStreamSeed] = useState(0);
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    if (streaming && !prevStreamingRef.current) {
+      setStreamSeed((s) => s + 1);
+    }
+    prevStreamingRef.current = streaming;
+  }, [streaming]);
+
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [tipMessage, setTipMessage] = useState("");
@@ -933,7 +946,7 @@ const StreamingStatus = memo(function StreamingStatus({
         <Box width={spinnerColumnWidth} flexShrink={0}>
           <Text color={colors.status.processing}>
             {animate ? (
-              <StreamingStatusSpinner tier={contextTier} />
+              <StreamingStatusSpinner key={streamSeed} tier={contextTier} />
             ) : (
               CLI_GLYPHS.bullet
             )}
