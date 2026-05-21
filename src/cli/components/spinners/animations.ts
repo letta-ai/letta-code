@@ -83,6 +83,252 @@ const PULSE: BrailleAnimation = {
   cellWidth: 3,
 };
 
+/**
+ * "Grains" falling and piling into a single braille cell. Sourced from
+ * `cli-spinners.sand` (not the procedural unicode-animations registry).
+ */
+const SAND: BrailleAnimation = {
+  frames: [
+    "⠁",
+    "⠂",
+    "⠄",
+    "⡀",
+    "⡈",
+    "⡐",
+    "⡠",
+    "⣀",
+    "⣁",
+    "⣂",
+    "⣄",
+    "⣌",
+    "⣔",
+    "⣤",
+    "⣥",
+    "⣦",
+    "⣮",
+    "⣶",
+    "⣷",
+    "⣿",
+    "⡿",
+    "⠿",
+    "⢟",
+    "⠟",
+    "⡛",
+    "⠛",
+    "⠫",
+    "⢋",
+    "⠋",
+    "⠍",
+    "⡉",
+    "⠉",
+    "⠑",
+    "⠡",
+    "⢁",
+  ],
+  intervalMs: 80,
+  cellWidth: 1,
+};
+
+/**
+ * Long looping "wagon wheel" cycle from cli-spinners.dots12.
+ * 56 frames distributed across two adjacent braille cells.
+ */
+const DOTS12: BrailleAnimation = {
+  frames: [
+    "⢀⠀",
+    "⡀⠀",
+    "⠄⠀",
+    "⢂⠀",
+    "⡂⠀",
+    "⠅⠀",
+    "⢃⠀",
+    "⡃⠀",
+    "⠍⠀",
+    "⢋⠀",
+    "⡋⠀",
+    "⠍⠁",
+    "⢋⠁",
+    "⡋⠁",
+    "⠍⠉",
+    "⠋⠉",
+    "⠋⠉",
+    "⠉⠙",
+    "⠉⠙",
+    "⠉⠩",
+    "⠈⢙",
+    "⠈⡙",
+    "⢈⠩",
+    "⡀⢙",
+    "⠄⡙",
+    "⢂⠩",
+    "⡂⢘",
+    "⠅⡘",
+    "⢃⠨",
+    "⡃⢐",
+    "⠍⡐",
+    "⢋⠠",
+    "⡋⢀",
+    "⠍⡁",
+    "⢋⠁",
+    "⡋⠁",
+    "⠍⠉",
+    "⠋⠉",
+    "⠋⠉",
+    "⠉⠙",
+    "⠉⠙",
+    "⠉⠩",
+    "⠈⢙",
+    "⠈⡙",
+    "⠈⠩",
+    "⠀⢙",
+    "⠀⡙",
+    "⠀⠩",
+    "⠀⢘",
+    "⠀⡘",
+    "⠀⠨",
+    "⠀⢐",
+    "⠀⡐",
+    "⠀⠠",
+    "⠀⢀",
+    "⠀⡀",
+  ],
+  intervalMs: 80,
+  cellWidth: 2,
+};
+
+/** Diagonal wipe across a 4x4 grid that fills and unfills. */
+const DIAGSWIPE: BrailleAnimation = {
+  frames: [
+    "⠁⠀",
+    "⠋⠀",
+    "⠟⠁",
+    "⡿⠋",
+    "⣿⠟",
+    "⣿⡿",
+    "⣿⣿",
+    "⣿⣿",
+    "⣾⣿",
+    "⣴⣿",
+    "⣠⣾",
+    "⢀⣴",
+    "⠀⣠",
+    "⠀⢀",
+    "⠀⠀",
+    "⠀⠀",
+  ],
+  intervalMs: 60,
+  cellWidth: 2,
+};
+
+/** Two-phase checkerboard pattern across a 6x4 grid. */
+const CHECKERBOARD: BrailleAnimation = {
+  frames: ["⢕⢕⢕", "⡪⡪⡪", "⢊⠔⡡", "⡡⢊⠔"],
+  intervalMs: 250,
+  cellWidth: 3,
+};
+
+/** Each column fills bottom-up, then the whole row empties. */
+const COLUMNS: BrailleAnimation = {
+  frames: [
+    "⡀⠀⠀",
+    "⡄⠀⠀",
+    "⡆⠀⠀",
+    "⡇⠀⠀",
+    "⣇⠀⠀",
+    "⣧⠀⠀",
+    "⣷⠀⠀",
+    "⣿⠀⠀",
+    "⣿⡀⠀",
+    "⣿⡄⠀",
+    "⣿⡆⠀",
+    "⣿⡇⠀",
+    "⣿⣇⠀",
+    "⣿⣧⠀",
+    "⣿⣷⠀",
+    "⣿⣿⠀",
+    "⣿⣿⡀",
+    "⣿⣿⡄",
+    "⣿⣿⡆",
+    "⣿⣿⡇",
+    "⣿⣿⣇",
+    "⣿⣿⣧",
+    "⣿⣿⣷",
+    "⣿⣿⣿",
+    "⣿⣿⣿",
+    "⠀⠀⠀",
+  ],
+  intervalMs: 60,
+  cellWidth: 3,
+};
+
+/** Sine wave traveling across an 8x4 grid, with sparkle scatter. */
+const WAVEROWS: BrailleAnimation = {
+  frames: [
+    "⠖⠉⠉⠑",
+    "⡠⠖⠉⠉",
+    "⣠⡠⠖⠉",
+    "⣄⣠⡠⠖",
+    "⠢⣄⣠⡠",
+    "⠙⠢⣄⣠",
+    "⠉⠙⠢⣄",
+    "⠊⠉⠙⠢",
+    "⠜⠊⠉⠙",
+    "⡤⠜⠊⠉",
+    "⣀⡤⠜⠊",
+    "⢤⣀⡤⠜",
+    "⠣⢤⣀⡤",
+    "⠑⠣⢤⣀",
+    "⠉⠑⠣⢤",
+    "⠋⠉⠑⠣",
+  ],
+  intervalMs: 90,
+  cellWidth: 4,
+};
+
+/** Falling-drop pattern across 4 cells; cycles every 6 frames. */
+const RAIN: BrailleAnimation = {
+  frames: [
+    "⢁⠂⠔⠈",
+    "⠂⠌⡠⠐",
+    "⠄⡐⢀⠡",
+    "⡈⠠⠀⢂",
+    "⠐⢀⠁⠄",
+    "⠠⠁⠊⡀",
+    "⢁⠂⠔⠈",
+    "⠂⠌⡠⠐",
+    "⠄⡐⢀⠡",
+    "⡈⠠⠀⢂",
+    "⠐⢀⠁⠄",
+    "⠠⠁⠊⡀",
+  ],
+  intervalMs: 100,
+  cellWidth: 4,
+};
+
+/** Two interleaved sine helices crossing the grid. */
+const HELIX: BrailleAnimation = {
+  frames: [
+    "⢌⣉⢎⣉",
+    "⣉⡱⣉⡱",
+    "⣉⢎⣉⢎",
+    "⡱⣉⡱⣉",
+    "⢎⣉⢎⣉",
+    "⣉⡱⣉⡱",
+    "⣉⢎⣉⢎",
+    "⡱⣉⡱⣉",
+    "⢎⣉⢎⣉",
+    "⣉⡱⣉⡱",
+    "⣉⢎⣉⢎",
+    "⡱⣉⡱⣉",
+    "⢎⣉⢎⣉",
+    "⣉⡱⣉⡱",
+    "⣉⢎⣉⢎",
+    "⡱⣉⡱⣉",
+  ],
+  intervalMs: 80,
+  cellWidth: 4,
+};
+
 /** Diagonal sweep across an 8x4 grid. */
 const CASCADE: BrailleAnimation = {
   frames: [
@@ -108,9 +354,17 @@ const CASCADE: BrailleAnimation = {
 export const BRAILLE_ANIMATIONS = {
   orbit: ORBIT,
   breathe: BREATHE,
+  sand: SAND,
   snake: SNAKE,
+  dots12: DOTS12,
+  diagswipe: DIAGSWIPE,
   pulse: PULSE,
+  checkerboard: CHECKERBOARD,
+  columns: COLUMNS,
   cascade: CASCADE,
+  waverows: WAVEROWS,
+  rain: RAIN,
+  helix: HELIX,
 } as const satisfies Readonly<Record<string, BrailleAnimation>>;
 
 export type BrailleAnimationKey = keyof typeof BRAILLE_ANIMATIONS;
@@ -122,6 +376,7 @@ export type BrailleAnimationKey = keyof typeof BRAILLE_ANIMATIONS;
 export const STREAMING_STATUS_ANIMATION_KEYS: readonly BrailleAnimationKey[] = [
   "orbit",
   "breathe",
+  "sand",
 ];
 
 /**
@@ -134,7 +389,12 @@ export const STREAMING_STATUS_ANIMATION_KEYS: readonly BrailleAnimationKey[] = [
  * tier becomes active and holds that choice until the tier changes.
  */
 export const CONTEXT_TIER_ANIMATIONS: readonly (readonly BrailleAnimationKey[])[] =
-  [["orbit", "breathe"], ["snake"], ["pulse"], ["cascade"]];
+  [
+    ["orbit", "breathe", "sand"],
+    ["snake", "dots12", "diagswipe"],
+    ["pulse", "checkerboard", "columns"],
+    ["cascade", "waverows", "rain", "helix"],
+  ];
 
 export const CONTEXT_TIER_COUNT = CONTEXT_TIER_ANIMATIONS.length;
 
