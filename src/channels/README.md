@@ -133,6 +133,23 @@ Plugins that need Slack/Discord-style auto-routing or rich Desktop management
 remain first-party/bundled work for now. Custom plugins can still expose custom
 `MessageChannel` actions and schema fragments via `messageActions`.
 
+## Channel slash commands
+
+Typed slash commands are handled before normal channel ingress so operational
+commands do not get delivered to the agent as regular user messages. The shared
+channel command set is:
+
+- `/status` — show account, listener, route, agent, and conversation state.
+- `/pause` — disable agent replies for the current routed chat.
+- `/resume` — re-enable agent replies for the current routed chat.
+- `/cancel` — abort the in-progress agent turn for the current routed chat.
+- `/chat` — show the Letta web chat link for the current route.
+- `/reflection` — start a memory reflection pass for the current route's agent
+  conversation when MemFS is enabled.
+
+Slack-native slash command payloads currently exist only for `/cancel`; the rest
+are expected to be sent as normal channel messages in the relevant chat/thread.
+
 ## Slack app manifest notes
 
 The bundled Slack channel runs in Socket Mode. The Slack app must still declare

@@ -30,7 +30,15 @@ export type ChannelSlashCommandHandlers = {
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
+  chat?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
   pause?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
+  reflection?: (
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
@@ -77,6 +85,17 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "cancel",
     kind: "agent-scoped",
     summary: "Cancel the in-progress agent turn for this chat.",
+  },
+  {
+    name: "chat",
+    kind: "direct",
+    summary: "Show the Letta web chat link for this channel route.",
+  },
+  {
+    name: "reflection",
+    aliases: ["reflect"],
+    kind: "agent-scoped",
+    summary: "Start a memory reflection pass for this conversation.",
   },
 ];
 
@@ -245,6 +264,34 @@ export function buildChannelCancelAcceptedMessage(channelId: string): string {
   return `${displayName} cancelled the in-progress agent turn for this chat.`;
 }
 
+export function buildChannelChatLinkMessage(
+  channelId: string,
+  route: ChannelRoute,
+  chatUrl: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return [
+    `${displayName} chat for this route: ${chatUrl}`,
+    `Agent: ${route.agentId}.`,
+    `Conversation: ${route.conversationId}.`,
+  ].join("\n");
+}
+
+export function buildChannelChatUnavailableMessage(
+  channelId: string,
+  route: ChannelRoute,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} chat UI is not available for local backend agent ${route.agentId}.`;
+}
+
+export function buildChannelReflectionUnavailableMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot start reflection for this chat because the listener is not ready yet. Try again in a moment.`;
+}
+
 async function handleScopedCommand(params: {
   msg: InboundChannelMessage;
   command: ParsedChannelSlashCommand;
@@ -304,6 +351,19 @@ export async function tryHandleChannelSlashCommand(
           command,
           handler: options.handlers?.cancel,
           defaultText: buildChannelCancelAcceptedMessage(msg.channel),
+        });
+      case "chat":
+        return handleScopedCommand({
+          msg,
+          command,
+          handler: options.handlers?.chat,
+        });
+      case "reflect":
+      case "reflection":
+        return handleScopedCommand({
+          msg,
+          command,
+          handler: options.handlers?.reflection,
         });
       default:
         return buildUnsupportedChannelCommandMessage(msg.channel, command);

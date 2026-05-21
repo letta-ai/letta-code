@@ -12,6 +12,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getClient } from "@/backend/api/client";
+import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
 import {
   getChannelAccount,
@@ -24,8 +25,11 @@ import {
   buildChannelAlreadyPausedMessage,
   buildChannelCancelNoActiveTurnMessage,
   buildChannelCancelUnavailableMessage,
+  buildChannelChatLinkMessage,
+  buildChannelChatUnavailableMessage,
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
+  buildChannelReflectionUnavailableMessage,
   buildChannelResumedMessage,
   parseChannelSlashCommand,
   tryHandleChannelSlashCommand,
@@ -267,6 +271,16 @@ export type ChannelCancelHandler = (params: {
   };
 }) => Promise<boolean>;
 
+export type ChannelReflectionHandler = (params: {
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+}>;
+
 type PendingChannelControlRequest = {
   event: ChannelControlRequestEvent;
   deliveredThisProcess: boolean;
@@ -307,6 +321,7 @@ export class ChannelRegistry {
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
   private cancelHandler: ChannelCancelHandler | null = null;
+  private reflectionHandler: ChannelReflectionHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
@@ -441,6 +456,10 @@ export class ChannelRegistry {
 
   setCancelHandler(handler: ChannelCancelHandler | null): void {
     this.cancelHandler = handler;
+  }
+
+  setReflectionHandler(handler: ChannelReflectionHandler | null): void {
+    this.reflectionHandler = handler;
   }
 
   setEventHandler(
@@ -734,6 +753,7 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.reflectionHandler = null;
   }
 
   /**
@@ -751,6 +771,7 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.reflectionHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
     instance = null;
@@ -925,6 +946,62 @@ export class ChannelRegistry {
     return { handled: true };
   }
 
+  private async handleChatSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (isLocalAgentId(route.agentId)) {
+      return {
+        handled: true,
+        text: buildChannelChatUnavailableMessage(msg.channel, route),
+      };
+    }
+
+    return {
+      handled: true,
+      text: buildChannelChatLinkMessage(
+        msg.channel,
+        route,
+        buildChatUrl(route.agentId, {
+          conversationId: route.conversationId,
+        }),
+      ),
+    };
+  }
+
+  private async handleReflectionSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (!this.reflectionHandler) {
+      return {
+        handled: true,
+        text: buildChannelReflectionUnavailableMessage(msg.channel),
+      };
+    }
+
+    return this.reflectionHandler({
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
+  }
+
   private getCancelRoute(msg: InboundChannelMessage): ChannelRoute | null {
     let route = this.getRoute(
       msg.channel,
@@ -1003,7 +1080,11 @@ export class ChannelRegistry {
         handlers: {
           cancel: async (_command, commandMsg) =>
             this.handleCancelSlashCommand(commandMsg),
+          chat: async (_command, commandMsg) =>
+            this.handleChatSlashCommand(commandMsg),
           pause: async () => this.handlePauseResumeSlashCommand("pause", msg),
+          reflection: async (_command, commandMsg) =>
+            this.handleReflectionSlashCommand(commandMsg),
           resume: async () => this.handlePauseResumeSlashCommand("resume", msg),
         },
       })
