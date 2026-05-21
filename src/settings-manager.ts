@@ -222,6 +222,36 @@ function getLocalBackendSettingsKey(): string {
   return `local:${resolve(getLocalBackendStorageDir())}`;
 }
 
+function isLocalBackendSettingsKey(serverKey: string): boolean {
+  return serverKey.startsWith("local:");
+}
+
+function isLocalBackendAgentId(agentId: string | null | undefined): boolean {
+  return typeof agentId === "string" && agentId.startsWith("agent-local-");
+}
+
+function isSessionCompatibleWithServerKey(
+  session: SessionRef | null | undefined,
+  serverKey: string,
+): session is SessionRef {
+  if (!session) return false;
+  const localKey = isLocalBackendSettingsKey(serverKey);
+  return localKey
+    ? isLocalBackendAgentId(session.agentId)
+    : !isLocalBackendAgentId(session.agentId);
+}
+
+function isAgentIdCompatibleWithServerKey(
+  agentId: string | null | undefined,
+  serverKey: string,
+): agentId is string {
+  if (!agentId) return false;
+  const localKey = isLocalBackendSettingsKey(serverKey);
+  return localKey
+    ? isLocalBackendAgentId(agentId)
+    : !isLocalBackendAgentId(agentId);
+}
+
 /**
  * Get the current server key for indexing settings.
  * Uses the local backend storage path when local backend mode is active,
@@ -1135,8 +1165,10 @@ class SettingsManager {
       return settings.sessionsByServer[serverKey];
     }
 
-    // Fall back to legacy lastSession for migration
-    if (settings.lastSession) {
+    // Fall back to legacy lastSession for migration, but only when it belongs
+    // to the active backend family. Otherwise `--backend local` can try to
+    // resume an API agent id from lastAgent/lastSession, or vice versa.
+    if (isSessionCompatibleWithServerKey(settings.lastSession, serverKey)) {
       return settings.lastSession;
     }
 
@@ -1157,11 +1189,13 @@ class SettingsManager {
       return settings.sessionsByServer[serverKey].agentId;
     }
 
-    // Fall back to legacy for migration
-    if (settings.lastSession) {
+    // Fall back to legacy for migration, but avoid crossing backend families.
+    if (isSessionCompatibleWithServerKey(settings.lastSession, serverKey)) {
       return settings.lastSession.agentId;
     }
-    return settings.lastAgent;
+    return isAgentIdCompatibleWithServerKey(settings.lastAgent, serverKey)
+      ? settings.lastAgent
+      : null;
   }
 
   /**
@@ -1203,8 +1237,12 @@ class SettingsManager {
       return localSettings.sessionsByServer[serverKey];
     }
 
-    // Fall back to legacy lastSession for migration
-    if (localSettings.lastSession) {
+    // Fall back to legacy lastSession for migration, but only when it belongs
+    // to the active backend family. Otherwise `--backend local` can try to
+    // resume an API agent id from cwd-local legacy settings.
+    if (
+      isSessionCompatibleWithServerKey(localSettings.lastSession, serverKey)
+    ) {
       return localSettings.lastSession;
     }
 
@@ -1226,11 +1264,15 @@ class SettingsManager {
       return localSettings.sessionsByServer[serverKey].agentId;
     }
 
-    // Fall back to legacy for migration
-    if (localSettings.lastSession) {
+    // Fall back to legacy for migration, but avoid crossing backend families.
+    if (
+      isSessionCompatibleWithServerKey(localSettings.lastSession, serverKey)
+    ) {
       return localSettings.lastSession.agentId;
     }
-    return localSettings.lastAgent;
+    return isAgentIdCompatibleWithServerKey(localSettings.lastAgent, serverKey)
+      ? localSettings.lastAgent
+      : null;
   }
 
   /**

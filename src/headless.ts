@@ -49,6 +49,7 @@ import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
+  type BackendMode,
   type ConversationCreateBody,
   type ConversationMessageStreamBody,
   getBackend,
@@ -490,6 +491,7 @@ export async function handleHeadlessCommand(
   skillsDirectoryOverride?: string,
   skillSourcesOverride?: SkillSource[],
   systemInfoReminderEnabledOverride?: boolean,
+  startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
   telemetry.setSurface("headless");
@@ -612,6 +614,7 @@ export async function handleHeadlessCommand(
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
+  let specifiedAgentIdFromAmbientBackendSwitch = false;
   const forceNew = values["new-agent"];
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
@@ -739,6 +742,25 @@ export async function handleHeadlessCommand(
       error,
       "headless_startup_conversation_shorthand",
     );
+  }
+
+  const ambientAgentId = (
+    process.env.LETTA_AGENT_ID ||
+    process.env.AGENT_ID ||
+    ""
+  ).trim();
+  if (
+    startupOptions.requestedBackendMode &&
+    ambientAgentId &&
+    !specifiedAgentId &&
+    !specifiedAgentName &&
+    !specifiedConversationId &&
+    !forceNew &&
+    !fromAfFile &&
+    !fromAgentId
+  ) {
+    specifiedAgentId = ambientAgentId;
+    specifiedAgentIdFromAmbientBackendSwitch = true;
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
@@ -1072,6 +1094,24 @@ export async function handleHeadlessCommand(
         include: ["agent.secrets", "agent.tools", "agent.tags"],
       });
     } catch (_error) {
+      if (specifiedAgentIdFromAmbientBackendSwitch) {
+        console.error(
+          `Active agent ${specifiedAgentId} is not available on the ${startupOptions.requestedBackendMode} backend.`,
+        );
+        if (startupOptions.requestedBackendMode === "local") {
+          console.error(
+            "--backend local uses the local backend store and will not silently switch to a different cwd-local agent.",
+          );
+          console.error(
+            "Use --new-agent to create a local agent, or pass --agent <local-agent-id> to choose one explicitly.",
+          );
+        } else {
+          console.error(
+            "Pass --agent <id>, --conversation <id>, or --new-agent to choose the target explicitly.",
+          );
+        }
+        process.exit(1);
+      }
       console.error(`Agent ${specifiedAgentId} not found`);
       process.exit(1);
     }

@@ -78,6 +78,88 @@ function input(): ProviderTurnInput {
 }
 
 describe("PiStreamAdapter", () => {
+  test("removes OpenAI Responses replay item IDs before provider submission", async () => {
+    let sanitizedPayload: unknown;
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      _context: Context,
+      options?: SimpleStreamOptions & Record<string, unknown>,
+    ) => {
+      const payload = {
+        model: "gpt-5.5",
+        input: [
+          {
+            type: "reasoning",
+            id: "rs_0052fa548fed1375016a0e8d5da1cc819bbbf26f40ef48320c",
+            encrypted_content: "opaque",
+          },
+          {
+            type: "message",
+            id: "msg_0052fa548fed1375016a0e8d5da1cc819bbbf26f40ef48320c",
+            role: "assistant",
+            content: [{ type: "output_text", text: "done" }],
+            status: "completed",
+          },
+          {
+            type: "function_call",
+            id: "fc_0052fa548fed1375016a0e8d5da1cc819bbbf26f40ef48320c",
+            call_id: "call_1",
+            name: "Read",
+            arguments: "{}",
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: "next" }],
+          },
+        ],
+      };
+
+      const finalMessage = {
+        ...assistantMessage(),
+        api: "openai-responses",
+        provider: "openai",
+        model: "gpt-5.5",
+      } satisfies AssistantMessage;
+      const doneEvent: AssistantMessageEvent = {
+        type: "done",
+        reason: "stop",
+        message: finalMessage,
+      };
+      async function* iterator() {
+        sanitizedPayload = await options?.onPayload?.(payload, _model);
+        yield doneEvent;
+      }
+      return Object.assign(iterator(), {
+        result: async () => finalMessage,
+      });
+    };
+
+    const adapter = new PiStreamAdapter({ stream });
+    const turnInput = input();
+    for await (const _event of adapter.stream({
+      ...turnInput,
+      agent: {
+        ...turnInput.agent,
+        model: "openai/gpt-5.5",
+        model_settings: { provider_type: "openai" },
+      },
+    })) {
+      // drain
+    }
+
+    expect(sanitizedPayload).toMatchObject({
+      input: [
+        { type: "reasoning", encrypted_content: "opaque" },
+        { type: "message", role: "assistant", status: "completed" },
+        { type: "function_call", call_id: "call_1", name: "Read" },
+        { role: "user" },
+      ],
+    });
+    expect(JSON.stringify(sanitizedPayload)).not.toContain("rs_0052");
+    expect(JSON.stringify(sanitizedPayload)).not.toContain("msg_0052");
+    expect(JSON.stringify(sanitizedPayload)).not.toContain("fc_0052");
+  });
+
   test("forwards Bedrock provider options and restores AWS env overrides", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-stream-bedrock-"));
     const originalAccessKeyId = process.env.AWS_ACCESS_KEY_ID;
