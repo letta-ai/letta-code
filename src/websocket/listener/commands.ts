@@ -129,6 +129,7 @@ export async function handleExecuteCommand(
         output = await handleCompactCommand(conversationRuntime, trimmedArgs);
         break;
 
+      case "context-limit":
       case "set-max-context":
         output = await handleSetMaxContextCommand(
           conversationRuntime,
@@ -760,14 +761,14 @@ async function handleGoalCommand(
   return resultPrefix;
 }
 
-/** /set-max-context — Set or reset the active scope's max context window. */
+/** /context-limit — Set or reset the active scope's max context window. */
 async function handleSetMaxContextCommand(
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {
   const agentId = conversationRuntime.agentId;
   if (!agentId) {
-    throw new Error("No agent ID available for /set-max-context command");
+    throw new Error("No agent ID available for /context-limit command");
   }
 
   const result = await applySetMaxContext({
