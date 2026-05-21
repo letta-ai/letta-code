@@ -19,6 +19,7 @@ import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
 import { BtwPane, type BtwState } from "@/cli/components/BtwPane";
 import { CommandMessage } from "@/cli/components/CommandMessage";
 import { CompactionSelector } from "@/cli/components/CompactionSelector";
+import { ConstellationLoginOverlay } from "@/cli/components/ConstellationLoginOverlay";
 import { ConversationSelector } from "@/cli/components/ConversationSelector";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
@@ -997,6 +998,37 @@ export function AppView(props: AppViewProps) {
                   void handleCreateNewAgent(name, {
                     commandId: overlayCommand?.id,
                   });
+                }}
+              />
+            )}
+
+            {activeOverlay === "login" && (
+              <ConstellationLoginOverlay
+                onComplete={() => {
+                  const overlayCommand = completeOverlay("login");
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/login",
+                      "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                    );
+                  cmd.finish(
+                    "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                    true,
+                  );
+                }}
+                onAlreadyLoggedIn={() => {
+                  const overlayCommand = completeOverlay("login");
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/login",
+                      "Already signed in to Constellation. Run /logout to sign out.",
+                    );
+                  cmd.finish(
+                    "Already signed in to Constellation. Run /logout to sign out.",
+                    true,
+                  );
                 }}
               />
             )}
