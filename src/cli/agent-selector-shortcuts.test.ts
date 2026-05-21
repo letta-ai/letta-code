@@ -14,7 +14,7 @@ describe("agent selector shortcuts", () => {
 
     const deleteShortcutIndex = source.indexOf('} else if (input === "D") {');
     const searchTypingIndex = source.indexOf(
-      '} else if (activeTab !== "pinned" && input && !key.ctrl && !key.meta) {',
+      "// Type to search (cloud list tabs only",
     );
 
     expect(deleteShortcutIndex).toBeGreaterThanOrEqual(0);
