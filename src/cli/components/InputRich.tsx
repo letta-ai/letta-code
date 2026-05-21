@@ -1256,7 +1256,7 @@ export function Input({
     setPreferredColumn(null);
   }, [currentCursorPosition, value.length]);
 
-  // Sync with external mode changes (from plan approval dialog)
+  // Sync with external mode changes.
   useEffect(() => {
     if (externalMode !== undefined) {
       setCurrentMode(externalMode);
@@ -1421,9 +1421,11 @@ export function Input({
       }
 
       // Cycle through permission modes
-      const modes: PermissionMode[] = settingsManager.isPlanModeEnabled()
-        ? ["unrestricted", "acceptEdits", "standard", "plan"]
-        : ["unrestricted", "acceptEdits", "standard"];
+      const modes: PermissionMode[] = [
+        "unrestricted",
+        "acceptEdits",
+        "standard",
+      ];
       const currentIndex = modes.indexOf(currentMode);
       const nextIndex = (currentIndex + 1) % modes.length;
       const nextMode = modes[nextIndex] ?? "unrestricted";
@@ -1789,12 +1791,6 @@ export function Input({
           name: "standard (request approval) mode",
           color: colors.status.processingShimmer,
           glyph: "▶",
-        };
-      case "plan":
-        return {
-          name: "plan (read-only) mode",
-          color: colors.status.success,
-          glyph: "⏸",
         };
       case "unrestricted":
         // Default mode — show nothing so "Press / for commands" renders instead

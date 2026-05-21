@@ -439,7 +439,6 @@ describe("checkPermission integration", () => {
     const modes = [
       "standard",
       "acceptEdits",
-      "plan",
       "memory",
       "unrestricted",
     ] as const;

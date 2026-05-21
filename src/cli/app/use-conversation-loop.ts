@@ -330,7 +330,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       // auto-approvals (YOLO / unrestricted) don't regress after a retry.
       const pinnedPermissionMode = uiPermissionModeRef.current;
       const restorePinnedPermissionMode = () => {
-        if (pinnedPermissionMode === "plan") return;
         if (permissionMode.getMode() !== pinnedPermissionMode) {
           permissionMode.setMode(pinnedPermissionMode);
         }
@@ -1637,9 +1636,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 appendError(INTERRUPT_MESSAGE, true);
               }
 
-              // In ralph mode, ESC interrupts but does NOT exit ralph
-              // User can type additional instructions, which will get ralph prefix prepended
-              // (Similar to how plan mode works)
+              // In ralph mode, ESC interrupts but does NOT exit ralph.
+              // User can type additional instructions, which will get ralph prefix prepended.
               if (ralphMode.getState().isActive) {
                 if (ralphMode.getState().mode === "goal") {
                   settingsManager.updateConversationGoalStatus(

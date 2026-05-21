@@ -1,7 +1,7 @@
 // src/permissions/checker.ts
 // Main permission checking logic
 
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { runPermissionRequestHooks } from "@/hooks";
 import type { PermissionModeState } from "@/tools/manager";
@@ -335,33 +335,14 @@ function checkPermissionForEngine(
   // Use the scoped permission mode state when available (listener/remote mode),
   // otherwise fall back to the global singleton (local/CLI mode).
   const effectiveMode = modeState?.mode ?? permissionMode.getMode();
-  const effectivePlanFilePath =
-    modeState?.planFilePath ?? permissionMode.getPlanFilePath();
   const modeOverride = permissionMode.checkModeOverride(
     toolName,
     toolArgs,
     workingDirectory,
     effectiveMode,
-    effectivePlanFilePath,
   );
   if (modeOverride) {
-    let reason = modeOverride.reason ?? `Permission mode: ${effectiveMode}`;
-    if (
-      effectiveMode === "plan" &&
-      modeOverride.decision === "deny" &&
-      !modeOverride.reason
-    ) {
-      const applyPatchRelativePath = effectivePlanFilePath
-        ? relative(workingDirectory, effectivePlanFilePath).replace(/\\/g, "/")
-        : null;
-      reason =
-        `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
-        `Write your plan to: ${effectivePlanFilePath || "(error: plan file path not configured)"}. ` +
-        (applyPatchRelativePath
-          ? `If using apply_patch, use this exact relative path in patch headers: ${applyPatchRelativePath}. `
-          : "") +
-        `Use ExitPlanMode when your plan is ready for user approval.`;
-    }
+    const reason = modeOverride.reason ?? `Permission mode: ${effectiveMode}`;
     traceEvent(trace, "mode-override", reason);
     return {
       result: {

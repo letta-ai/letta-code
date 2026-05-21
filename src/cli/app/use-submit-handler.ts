@@ -103,7 +103,6 @@ import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
 import { DEFAULT_COMPLETION_PROMISE, ralphMode } from "@/ralph/mode";
 import { buildSharedReminderParts } from "@/reminders/engine";
-import { getPlanModeReminder } from "@/reminders/plan-mode-reminder";
 import {
   type SharedReminderState,
   syncReminderStateFromContextTracker,
@@ -113,7 +112,6 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import type { ToolsetName } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { generatePlanFilePath } from "@/utils/plan-name";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
@@ -180,7 +178,6 @@ type SubmitHandlerContext = {
   appendTaskNotificationEvents: (summaries: string[]) => boolean;
   bashCommandCacheRef: MutableRefObject<BashCommandCacheEntry[]>;
   buffersRef: MutableRefObject<Buffers>;
-  cacheLastPlanFilePath: (planFilePath: string | null) => void;
   checkPendingApprovalsForSlashCommand: () => Promise<
     { blocked: true } | { blocked: false }
   >;
@@ -333,7 +330,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     appendTaskNotificationEvents,
     bashCommandCacheRef,
     buffersRef,
-    cacheLastPlanFilePath,
     checkPendingApprovalsForSlashCommand,
     chromeColumns,
     commandRunner,
@@ -2763,84 +2759,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /plan command - enter plan mode
-        if (trimmed === "/plan") {
-          const cmd = commandRunner.start("/plan", "Entering plan mode...");
-          if (!settingsManager.isPlanModeEnabled()) {
-            cmd.finish("Plan mode is disabled in user settings.", false);
-            return { submitted: true };
-          }
-
-          // Generate plan file path and enter plan mode
-          const planPath = generatePlanFilePath();
-          permissionMode.setPlanFilePath(planPath);
-          cacheLastPlanFilePath(planPath);
-          permissionMode.setMode("plan");
-          setUiPermissionMode("plan");
-
-          cmd.finish(`Plan mode enabled. Plan file: ${planPath}`, true);
-
-          return { submitted: true };
-        }
-
-        if (trimmed === "/plan-mode" || trimmed.startsWith("/plan-mode ")) {
-          const cmd = commandRunner.start(
-            "/plan-mode",
-            "Updating plan mode setting...",
-          );
-          const arg = trimmed.split(/\s+/)[1]?.toLowerCase();
-          const enabled = (() => {
-            if (arg === "on" || arg === "true" || arg === "enable") {
-              return true;
-            }
-            if (arg === "off" || arg === "false" || arg === "disable") {
-              return false;
-            }
-            return null;
-          })();
-
-          if (enabled === null) {
-            cmd.fail("Usage: /plan-mode on|off");
-            return { submitted: true };
-          }
-
-          try {
-            settingsManager.setPlanModeEnabled(enabled);
-            await settingsManager.flush();
-
-            if (!enabled && permissionMode.getMode() === "plan") {
-              permissionMode.setMode("unrestricted");
-              setUiPermissionMode("unrestricted");
-            }
-
-            const { forceToolsetSwitch, switchToolsetForModel } = await import(
-              "@/tools/toolset"
-            );
-            if (currentToolset) {
-              await forceToolsetSwitch(currentToolset, agentId);
-            } else {
-              await switchToolsetForModel(
-                currentModelHandle ??
-                  currentModelId ??
-                  "anthropic/claude-sonnet-4",
-                agentId,
-              );
-            }
-
-            cmd.finish(
-              enabled
-                ? "Plan mode enabled. /plan and plan-mode tools are now available."
-                : "Plan mode disabled. /plan is disabled and plan-mode tools are hidden.",
-              true,
-            );
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed to update plan mode setting: ${errorDetails}`);
-          }
-
-          return { submitted: true };
-        }
-
         // Special handling for /init command
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
@@ -3424,7 +3342,6 @@ ${SYSTEM_REMINDER_CLOSE}
         systemInfoReminderEnabled,
         reflectionSettings,
         skillSources: getSkillSources(),
-        resolvePlanModeReminder: getPlanModeReminder,
         maybeLaunchReflectionSubagent,
       });
       for (const part of sharedReminderParts) {

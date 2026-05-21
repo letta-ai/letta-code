@@ -1,5 +1,3 @@
-// existsSync, readFileSync removed - no longer needed since plan content
-// is shown via StaticPlanApproval during approval, not in tool result
 import { Box } from "ink";
 import { Fragment, memo, type ReactNode } from "react";
 import { getSubagentByToolCallId } from "@/agent/subagent-state.js";
@@ -148,14 +146,12 @@ export const ToolCallMessage = memo(
   ({
     line,
     precomputedDiffs,
-    lastPlanFilePath,
     isStreaming,
     expandedToolCallId,
     lastShellToolCallId,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
-    lastPlanFilePath?: string | null;
     isStreaming?: boolean;
     expandedToolCallId?: string | null;
     lastShellToolCallId?: string | null;
@@ -547,27 +543,6 @@ export const ToolCallMessage = memo(
           if (parseCreateWorktreeResult(extractedText)) {
             return <CreateWorktreeResultRenderer resultText={extractedText} />;
           }
-        }
-
-        // Check if this is ExitPlanMode - just show path, not plan content
-        // The plan content was already shown during approval via StaticPlanApproval
-        // (rendered via Ink's <Static> and is visible in terminal scrollback)
-        if (rawName === "ExitPlanMode" && line.resultOk !== false) {
-          const planFilePath = lastPlanFilePath;
-
-          if (planFilePath) {
-            return (
-              <Box flexDirection="row">
-                <Box width={prefixWidth} flexShrink={0}>
-                  <Text>{prefix}</Text>
-                </Box>
-                <Box flexGrow={1} width={contentWidth}>
-                  <Text dimColor>Plan saved to: {planFilePath}</Text>
-                </Box>
-              </Box>
-            );
-          }
-          // Fall through to default if no plan path
         }
 
         // Check if this is a file edit tool - show diff instead of success message
