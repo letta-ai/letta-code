@@ -42,6 +42,8 @@ export type AppProps = {
   reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
+  startupHasCloudCredentials?: boolean;
+  startupHasAvailableLocalModels?: boolean;
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;

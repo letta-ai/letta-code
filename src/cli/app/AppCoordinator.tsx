@@ -100,7 +100,6 @@ import {
   useTerminalWidth,
 } from "@/cli/hooks/use-terminal-width";
 import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
-import { DEFAULT_AGENT_NAME } from "@/constants";
 import {
   getTask,
   handleMissedOneShot,
@@ -205,14 +204,42 @@ function buildStartupCommandHints(options: {
   isResumingConversation: boolean;
   isPinned: boolean;
   isLocalBackend: boolean;
-  agentName: string | null | undefined;
+  hasMessages: boolean;
+  hasCloudCredentials: boolean;
+  hasAvailableLocalModels: boolean;
 }): string[] {
-  const { isResumingConversation, isPinned, isLocalBackend, agentName } =
-    options;
-  const isDefaultNamedAgent =
-    !agentName ||
-    agentName === DEFAULT_AGENT_NAME ||
-    agentName === "Unnamed Agent";
+  const {
+    isResumingConversation,
+    isPinned,
+    isLocalBackend,
+    hasMessages,
+    hasCloudCredentials,
+    hasAvailableLocalModels,
+  } = options;
+
+  const onboardingHints: string[] = [];
+
+  if (isLocalBackend && !hasAvailableLocalModels) {
+    onboardingHints.push(
+      "→ **/model**     switch models",
+      "→ **/connect**   configure your llm api keys",
+    );
+  }
+
+  if (!hasMessages) {
+    onboardingHints.push(
+      "→ **/rename**    name your agent",
+      "→ **/init**      initialize your agent's memory",
+    );
+  }
+
+  if (!hasCloudCredentials) {
+    onboardingHints.push("→ **/login**     sign in to Constellation");
+  }
+
+  if (onboardingHints.length > 0) {
+    return onboardingHints.slice(0, 5);
+  }
 
   if (isResumingConversation) {
     return [
@@ -221,16 +248,6 @@ function buildStartupCommandHints(options: {
       "→ **/new**       start a new conversation",
       "→ **/init**      initialize your agent's memory",
       "→ **/remember**  teach your agent",
-    ];
-  }
-
-  if (isLocalBackend && !isPinned && isDefaultNamedAgent) {
-    return [
-      "→ **/model**     switch models",
-      "→ **/connect**   configure your llm api keys",
-      "→ **/rename**    name your agent",
-      "→ **/init**      initialize your agent's memory",
-      "→ **/login**     sign in to Constellation",
     ];
   }
 
@@ -267,6 +284,8 @@ export function App({
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
   agentProvenance = null,
+  startupHasCloudCredentials = false,
+  startupHasAvailableLocalModels = true,
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
@@ -2610,7 +2629,9 @@ export function App({
         isResumingConversation,
         isPinned,
         isLocalBackend: isLocalBackendEnabled(),
-        agentName,
+        hasMessages: messageHistory.length > 0,
+        hasCloudCredentials: startupHasCloudCredentials,
+        hasAvailableLocalModels: startupHasAvailableLocalModels,
       });
 
       // Build status lines with optional release notes above header
@@ -2651,6 +2672,8 @@ export function App({
     agentProvenance,
     resumedExistingConversation,
     releaseNotes,
+    startupHasCloudCredentials,
+    startupHasAvailableLocalModels,
     messageHistory,
   ]);
 
@@ -4321,7 +4344,9 @@ export function App({
         isResumingConversation: resumedExistingConversation,
         isPinned,
         isLocalBackend: isLocalBackendEnabled(),
-        agentName,
+        hasMessages: messageHistory.length > 0,
+        hasCloudCredentials: startupHasCloudCredentials,
+        hasAvailableLocalModels: startupHasAvailableLocalModels,
       });
 
       // Build status lines with optional release notes above header
@@ -4362,6 +4387,8 @@ export function App({
     agentState,
     refreshDerived,
     releaseNotes,
+    startupHasCloudCredentials,
+    startupHasAvailableLocalModels,
   ]);
 
   const liveTrajectorySnapshot =

@@ -777,6 +777,22 @@ async function main(): Promise<void> {
     configureBackendMode("local");
   }
 
+  // Local-first new-user flow: if the user has no Letta Cloud credentials and
+  // did not explicitly request a backend, start in local mode immediately so
+  // they can type right away. Existing local agents will be resumed below; if
+  // none exist, startup falls through to local default-agent creation.
+  if (
+    !explicitBackendMode &&
+    !isHeadless &&
+    baseURL === LETTA_CLOUD_API_URL &&
+    !settings.refreshToken &&
+    !apiKey
+  ) {
+    configureBackendMode("local");
+    settingsManager.updateSettings({ preferredBackendMode: "local" });
+    await settingsManager.flush();
+  }
+
   const startupBackend = getBackend();
   const localNoMemfsRequested = Boolean(
     startupBackend.capabilities.localMemfs &&
@@ -1297,7 +1313,7 @@ async function main(): Promise<void> {
   markMilestone("REACT_IMPORT_START");
   const React = await import("react");
   const { render } = await import("ink");
-  const { useState, useEffect, useCallback } = React;
+  const { useState, useEffect, useCallback, useRef } = React;
   const AppModule = await import("@/cli/App");
   const App = AppModule.App;
 
@@ -1353,6 +1369,11 @@ async function main(): Promise<void> {
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
       string | null
     >(null);
+    const startupCreatedAgentRef = useRef<AgentState | null>(null);
+    const [startupHasCloudCredentials, setStartupHasCloudCredentials] =
+      useState(Boolean(settings.refreshToken || apiKey));
+    const [startupHasAvailableLocalModels, setStartupHasAvailableLocalModels] =
+      useState(true);
     // Cache agent object from Phase 1 validation to avoid redundant re-fetch in Phase 2
     const [validatedAgent, setValidatedAgent] = useState<AgentState | null>(
       preResolvedAgent ?? null,
@@ -1501,6 +1522,22 @@ async function main(): Promise<void> {
           settings.env?.LETTA_BASE_URL ||
           LETTA_CLOUD_API_URL;
         const isSelfHosted = !baseURL.includes("api.letta.com");
+        const isCredentiallessLocalStartup =
+          startupBackendMode === "local" &&
+          !isSelfHosted &&
+          !settings.refreshToken &&
+          !apiKey;
+        setStartupHasCloudCredentials(Boolean(settings.refreshToken || apiKey));
+        if (startupBackendMode === "local") {
+          try {
+            const models = await backend.listModels();
+            setStartupHasAvailableLocalModels(models.length > 0);
+          } catch {
+            setStartupHasAvailableLocalModels(false);
+          }
+        } else {
+          setStartupHasAvailableLocalModels(true);
+        }
 
         // Track whether we need model picker (for skipping ensureDefaultAgents)
         let needsModelPicker = false;
@@ -1715,18 +1752,17 @@ async function main(): Promise<void> {
         }
 
         // Step 3: Resolve startup target using pure decision logic
-        const mergedPinned = settingsManager.getMergedPinnedAgents(
-          process.cwd(),
-        );
-        const shouldRepairMissingLocalBackendLru = Boolean(
+        const mergedPinned = isCredentiallessLocalStartup
+          ? settingsManager
+              .getMergedPinnedAgents(process.cwd())
+              .filter((entry) => entry.isLocal)
+          : settingsManager.getMergedPinnedAgents(process.cwd());
+        const fallbackSession =
           startupBackendMode === "local" &&
-            (localAgentId || globalAgentId) &&
-            !localAgentExists &&
-            !globalAgentExists,
-        );
-        const fallbackSession = shouldRepairMissingLocalBackendLru
-          ? await getLocalBackendStartupFallbackSession(backend)
-          : null;
+          !localAgentExists &&
+          !globalAgentExists
+            ? await getLocalBackendStartupFallbackSession(backend)
+            : null;
         const { resolveStartupTarget } = await import(
           "@/agent/resolve-startup-agent"
         );
@@ -1765,6 +1801,9 @@ async function main(): Promise<void> {
                 preferredModel: model,
               });
               if (defaultAgent) {
+                startupCreatedAgentRef.current = defaultAgent;
+                setAgentProvenance({ isNew: true, blocks: [] });
+                setValidatedAgent(defaultAgent);
                 setSelectedGlobalAgentId(defaultAgent.id);
                 setLoadingState("assembling");
                 return;
@@ -1847,8 +1886,17 @@ async function main(): Promise<void> {
         // (validatedAgent React state may not be committed yet).
         let resolvedAgent: AgentState | null = null;
 
+        // Fresh local-first startup may create the default agent during the
+        // initial resolution phase. Carry it across explicitly instead of
+        // depending on selectedGlobalAgentId state having committed in time.
+        if (startupCreatedAgentRef.current) {
+          resolvedAgent = startupCreatedAgentRef.current;
+          resumingAgentId = startupCreatedAgentRef.current.id;
+          startupCreatedAgentRef.current = null;
+        }
+
         // Priority 1: --agent flag
-        if (agentIdArg) {
+        if (!resumingAgentId && agentIdArg) {
           // Use cached agent from name resolution if available
           if (validatedAgent && validatedAgent.id === agentIdArg) {
             resumingAgentId = agentIdArg;
@@ -2549,6 +2597,8 @@ async function main(): Promise<void> {
         reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
         showCompactions: settings.showCompactions,
         agentProvenance,
+        startupHasCloudCredentials,
+        startupHasAvailableLocalModels,
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
       });
@@ -2569,6 +2619,8 @@ async function main(): Promise<void> {
       reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
       showCompactions: settings.showCompactions,
       agentProvenance,
+      startupHasCloudCredentials,
+      startupHasAvailableLocalModels,
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
