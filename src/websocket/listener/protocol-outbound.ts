@@ -64,6 +64,17 @@ type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
+/**
+ * Frozen copy of the supported commands list. Avoids creating a new array on
+ * every `buildDeviceStatus()` call (every 5–30 s per connected web client).
+ * (LET-8948)
+ */
+/**
+ * Pre-computed copy of the supported commands list. Avoids creating a new
+ * array on every `buildDeviceStatus()` call (every 5–30 s per connected
+ * web client). (LET-8948)
+ */
+const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
 const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
 const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
 const PROTOCOL_PERF_ENABLED = PROTOCOL_PERF_ENV_VALUES.has(
@@ -392,7 +403,7 @@ export function buildDeviceStatus(
       memory_directory: null,
       should_doctor: false,
       reflection_settings: null,
-      supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
+      supported_commands: FROZEN_SUPPORTED_COMMANDS,
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -464,7 +475,7 @@ export function buildDeviceStatus(
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
-    supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
+    supported_commands: FROZEN_SUPPORTED_COMMANDS,
     reflection_settings: scopedAgentId
       ? {
           agent_id: scopedAgentId,
@@ -832,12 +843,47 @@ export function emitQueueUpdateIfOpen(
   }
 }
 
+/**
+ * Per-transport, per-scope cache of the last emitted device-status JSON.
+ * When a periodic sync produces the exact same status as the previous one
+ * (common when idle), we skip the WS send entirely — avoiding redundant
+ * JSON serialization, WS framing, and Redis pub/sub in the cloud relay
+ * path. Keyed by transport (WeakMap) so cache is naturally cleaned up when
+ * the socket closes and gets GC'd. (LET-8948)
+ */
+const lastSyncDeviceStatusByTransport = new WeakMap<
+  ListenerTransport,
+  Map<string, string>
+>();
+
 export function emitStateSync(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope: RuntimeScope,
 ): void {
-  emitDeviceStatusUpdate(socket, runtime, scope);
+  const deviceStatus = buildDeviceStatus(runtime, scope);
+  const deviceStatusJson = JSON.stringify(deviceStatus);
+  const cacheKey = `${scope.agent_id ?? ""}:${scope.conversation_id ?? ""}`;
+
+  let scopeCache = lastSyncDeviceStatusByTransport.get(socket);
+  if (!scopeCache) {
+    scopeCache = new Map();
+    lastSyncDeviceStatusByTransport.set(socket, scopeCache);
+  }
+  const prev = scopeCache.get(cacheKey);
+
+  if (deviceStatusJson !== prev) {
+    scopeCache.set(cacheKey, deviceStatusJson);
+    const message: Omit<
+      DeviceStatusUpdateMessage,
+      "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+    > = {
+      type: "update_device_status",
+      device_status: deviceStatus,
+    };
+    emitProtocolV2Message(socket, runtime, message, scope);
+  }
+
   emitLoopStatusUpdate(socket, runtime, scope);
   emitQueueUpdate(socket, runtime, scope);
   emitSubagentStateUpdate(socket, runtime, scope);
