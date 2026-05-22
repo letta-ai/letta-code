@@ -58,6 +58,7 @@ import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
+import { inferBackendModeFromAgentId } from "./cli/startup-backend-mode";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
@@ -730,6 +731,11 @@ async function main(): Promise<void> {
   }
 
   const specifiedAgentName = values.name ?? null;
+  const inferredBackendModeFromAgentId =
+    inferBackendModeFromAgentId(specifiedAgentId);
+  if (!explicitBackendMode && inferredBackendModeFromAgentId) {
+    configureBackendMode(inferredBackendModeFromAgentId);
+  }
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
@@ -771,6 +777,7 @@ async function main(): Promise<void> {
 
   if (
     !explicitBackendMode &&
+    !inferredBackendModeFromAgentId &&
     settings.preferredBackendMode === "local" &&
     baseURL === LETTA_CLOUD_API_URL
   ) {
@@ -783,6 +790,7 @@ async function main(): Promise<void> {
   // none exist, startup falls through to local default-agent creation.
   if (
     !explicitBackendMode &&
+    !inferredBackendModeFromAgentId &&
     !isHeadless &&
     baseURL === LETTA_CLOUD_API_URL &&
     !settings.refreshToken &&
