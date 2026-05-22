@@ -2280,10 +2280,6 @@ class SettingsManager {
         this.markDirty("refreshToken", "tokenExpiresAt", "deviceId", "env");
         await this.persistSettings();
       }
-
-      console.log(
-        "Successfully logged out and cleared all authentication data",
-      );
     } catch (error) {
       trackBoundaryError({
         errorType: "settings_logout_failed",
