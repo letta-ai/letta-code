@@ -27,6 +27,11 @@ import { buildChatUrl } from "@/cli/helpers/app-urls.js";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
+import {
+  type ExecutionPhase,
+  effectiveBaseColor,
+  getPhaseVisual,
+} from "@/cli/helpers/phase-visuals";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -729,6 +734,7 @@ const StreamingStatus = memo(function StreamingStatus({
   agentName,
   interruptRequested,
   networkPhase,
+  executionPhase,
   terminalWidth,
   shouldAnimate,
 }: {
@@ -743,9 +749,11 @@ const StreamingStatus = memo(function StreamingStatus({
   agentName: string | null | undefined;
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
+  executionPhase: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate: boolean;
 }) {
+  const phaseVisual = getPhaseVisual(executionPhase);
   // While the user is actively resizing the terminal, Ink can struggle to
   // clear/redraw rapidly-changing animated output (spinner/shimmer).
   // Freeze animations briefly during resize to keep output stable.
@@ -801,6 +809,9 @@ const StreamingStatus = memo(function StreamingStatus({
   }, [streaming]);
 
   const [shimmerOffset, setShimmerOffset] = useState(-3);
+  const [shimmerBaseColor, setShimmerBaseColor] = useState<string>(
+    phaseVisual.baseColor,
+  );
   const [elapsedMs, setElapsedMs] = useState(0);
   const [tipMessage, setTipMessage] = useState("");
   const streamStartRef = useRef<number | null>(null);
@@ -808,24 +819,33 @@ const StreamingStatus = memo(function StreamingStatus({
   useEffect(() => {
     if (!streaming || !visible || !animate) return;
 
-    const id = setInterval(() => {
-      setShimmerOffset((prev) => {
-        // Include agent name length (+1 for space) in shimmer cycle
-        const prefixLen = agentName ? agentName.length + 1 : 0;
-        const len = prefixLen + thinkingMessage.length;
-        const next = prev + 1;
-        return next > len + 3 ? -3 : next;
-      });
-    }, 120); // Speed of shimmer animation
+    const startedAt = performance.now();
+    const tick = () => {
+      const t = performance.now() - startedAt;
+      // Include agent name length (+1 for space) and trailing ellipsis in cycle
+      const prefixLen = agentName ? agentName.length + 1 : 0;
+      const len = prefixLen + thinkingMessage.length + 1;
+      const cycleLen = len + 20;
+      const step = Math.floor(t / phaseVisual.tickMs);
+      const m = ((step % cycleLen) + cycleLen) % cycleLen;
+      const next = phaseVisual.direction === "ltr" ? m - 10 : len + 10 - m;
+      setShimmerOffset(next);
+      setShimmerBaseColor(
+        effectiveBaseColor(phaseVisual, colors.status.warning, t),
+      );
+    };
 
+    tick();
+    const id = setInterval(tick, phaseVisual.tickMs);
     return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible, agentName, animate]);
+  }, [streaming, thinkingMessage, visible, agentName, animate, phaseVisual]);
 
   useEffect(() => {
     if (!animate) {
       setShimmerOffset(-3);
+      setShimmerBaseColor(phaseVisual.baseColor);
     }
-  }, [animate]);
+  }, [animate, phaseVisual]);
 
   // Elapsed time tracking: pause updates during resize, but do not reset.
   useEffect(() => {
@@ -967,6 +987,8 @@ const StreamingStatus = memo(function StreamingStatus({
               boldPrefix={agentName || undefined}
               message={thinkingMessage}
               shimmerOffset={animate ? shimmerOffset : -3}
+              color={animate ? shimmerBaseColor : phaseVisual.baseColor}
+              shimmerColor={phaseVisual.shimmerColor}
               wrap="truncate-end"
             />
           </Box>
@@ -1040,6 +1062,7 @@ export function Input({
   restoredInput,
   onRestoredInputConsumed,
   networkPhase = null,
+  executionPhase = null,
   terminalWidth,
   shouldAnimate = true,
   statusLineText,
@@ -1089,6 +1112,7 @@ export function Input({
   restoredInput?: string | null;
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
+  executionPhase?: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate?: boolean;
   statusLineText?: string;
@@ -2041,6 +2065,7 @@ export function Input({
         agentName={agentName}
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}
+        executionPhase={executionPhase}
         terminalWidth={columns}
         shouldAnimate={shouldAnimate}
       />

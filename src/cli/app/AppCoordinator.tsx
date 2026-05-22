@@ -67,6 +67,7 @@ import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { setErrorContext } from "@/cli/helpers/error-context";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import {
   buildContentFromQueueBatch,
   toQueuedMsg,
@@ -406,6 +407,7 @@ export function App({
   const [networkPhase, setNetworkPhase] = useState<
     "upload" | "download" | "error" | null
   >(null);
+  const [executionPhase, setExecutionPhase] = useState<ExecutionPhase>(null);
   // Track permission mode changes for UI updates.
   // Keep a ref in sync *synchronously* so async approval classification never
   // reads a stale mode during the render/effect window.
@@ -435,6 +437,7 @@ export function App({
   useEffect(() => {
     if (!streaming) {
       setNetworkPhase(null);
+      setExecutionPhase(null);
     }
   }, [streaming]);
 
@@ -3351,6 +3354,7 @@ export function App({
     setLlmConfig,
     setNeedsEagerApprovalCheck,
     setNetworkPhase,
+    setExecutionPhase,
     setPendingApprovals,
     setRestoreQueueOnCancel,
     setRestoredInput,
@@ -4525,6 +4529,7 @@ export function App({
       modelReasoningPrompt={modelReasoningPrompt}
       modelSelectorOptions={modelSelectorOptions}
       networkPhase={networkPhase}
+      executionPhase={executionPhase}
       onSubmit={onSubmit}
       pendingApprovals={pendingApprovals}
       pendingConversationSwitchRef={pendingConversationSwitchRef}

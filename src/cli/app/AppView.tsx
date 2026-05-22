@@ -66,6 +66,7 @@ import {
   getReflectionSettings,
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
+import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -235,6 +236,7 @@ type AppViewProps = {
   modelReasoningPrompt: ModelReasoningPrompt | null;
   modelSelectorOptions: ModelSelectorOptions;
   networkPhase: "error" | "upload" | "download" | null;
+  executionPhase: ExecutionPhase;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
@@ -384,6 +386,7 @@ export function AppView(props: AppViewProps) {
     modelReasoningPrompt,
     modelSelectorOptions,
     networkPhase,
+    executionPhase,
     onSubmit,
     pendingApprovals,
     pendingConversationSwitchRef,
@@ -699,6 +702,7 @@ export function AppView(props: AppViewProps) {
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
+                executionPhase={executionPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
                 statusLineText={statusLine.text || undefined}
