@@ -274,6 +274,16 @@ describe("getReasoningTierOptionsForHandle", () => {
     }
   });
 
+  test("returns generic reasoning options for discovered Ollama models", () => {
+    const options = getReasoningTierOptionsForHandle("ollama/gpt-oss:20b");
+    expect(options).toEqual([
+      { effort: "none", modelId: "ollama/gpt-oss:20b" },
+      { effort: "low", modelId: "ollama/gpt-oss:20b" },
+      { effort: "medium", modelId: "ollama/gpt-oss:20b" },
+      { effort: "high", modelId: "ollama/gpt-oss:20b" },
+    ]);
+  });
+
   test("returns empty options for models without reasoning tiers", () => {
     const options = getReasoningTierOptionsForHandle(
       "anthropic/claude-haiku-4-5",

@@ -103,6 +103,36 @@ type UiModel = {
   updateArgs?: Record<string, unknown>;
 };
 
+const LOCAL_MODEL_HANDLE_PREFIXES = [
+  "ollama/",
+  "ollama-cloud/",
+  "lmstudio/",
+  "llama.cpp/",
+  "llama-cpp/",
+];
+
+function isLocalModelHandle(handle: string): boolean {
+  return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
+    handle.startsWith(prefix),
+  );
+}
+
+function localModelLabel(handle: string): string {
+  const providerPrefix = LOCAL_MODEL_HANDLE_PREFIXES.find((prefix) =>
+    handle.startsWith(prefix),
+  );
+  return providerPrefix ? handle.slice(providerPrefix.length) : handle;
+}
+
+export function toSelectorModelForHandle(handle: string): UiModel {
+  return {
+    id: handle,
+    handle,
+    label: isLocalModelHandle(handle) ? localModelLabel(handle) : handle,
+    description: "",
+  };
+}
+
 const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
 
 export function filterModelsByAvailabilityForSelector<
@@ -556,12 +586,7 @@ export function ModelSelector({
           handle,
         });
       } else {
-        resolved.push({
-          id: handle,
-          handle,
-          label: handle,
-          description: "",
-        });
+        resolved.push(toSelectorModelForHandle(handle));
       }
     }
     return resolved;
@@ -580,12 +605,7 @@ export function ModelSelector({
         description: "",
       })),
       "server-recommended": serverRecommendedModels,
-      "server-all": serverAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      })),
+      "server-all": serverAllModels.map(toSelectorModelForHandle),
       all: allLettaModels,
     }),
     [

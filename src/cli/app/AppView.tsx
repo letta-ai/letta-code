@@ -196,7 +196,11 @@ type AppViewProps = {
   handleModelSelect: (
     modelId: string,
     commandId?: string | null,
-    opts?: { skipReasoningPrompt?: boolean },
+    opts?: {
+      promptReasoning?: boolean;
+      skipReasoningPrompt?: boolean;
+      reasoningEffort?: ModelReasoningEffort;
+    },
   ) => Promise<void>;
   handlePasteError: (message: string) => void;
   handlePermissionModeChange: (mode: PermissionMode) => void;
@@ -715,10 +719,11 @@ export function AppView(props: AppViewProps) {
                   modelLabel={modelReasoningPrompt.modelLabel}
                   options={modelReasoningPrompt.options}
                   initialModelId={modelReasoningPrompt.initialModelId}
-                  onSelect={(selectedModelId) => {
+                  onSelect={(selectedOption) => {
                     setModelReasoningPrompt(null);
-                    void handleModelSelect(selectedModelId, null, {
+                    void handleModelSelect(selectedOption.modelId, null, {
                       skipReasoningPrompt: true,
+                      reasoningEffort: selectedOption.effort,
                     });
                   }}
                   onCancel={() => setModelReasoningPrompt(null)}
@@ -727,7 +732,11 @@ export function AppView(props: AppViewProps) {
                 <ModelSelector
                   currentModelId={currentModelId ?? undefined}
                   currentModelHandle={currentModelHandle}
-                  onSelect={handleModelSelect}
+                  onSelect={(modelId) => {
+                    void handleModelSelect(modelId, null, {
+                      promptReasoning: true,
+                    });
+                  }}
                   onOpenConnect={() => {
                     const overlayCommand = completeOverlay("model");
                     overlayCommand?.finish("Models dialog dismissed", true);

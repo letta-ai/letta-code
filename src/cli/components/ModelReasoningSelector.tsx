@@ -17,7 +17,7 @@ interface ModelReasoningSelectorProps {
   modelLabel: string;
   options: ReasoningOption[];
   initialModelId: string;
-  onSelect: (modelId: string) => void;
+  onSelect: (option: ReasoningOption) => void;
   onCancel: () => void;
 }
 
@@ -96,7 +96,7 @@ export function ModelReasoningSelector({
 
     if (key.return) {
       if (selectedOption) {
-        onSelect(selectedOption.modelId);
+        onSelect(selectedOption);
       }
       return;
     }
