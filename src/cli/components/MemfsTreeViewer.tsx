@@ -12,6 +12,7 @@ import {
 } from "@/agent/memory-scanner";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import type { ContextUsageSnapshot } from "@/web/context-usage";
 import { generateAndOpenMemoryViewer } from "@/web/generate-memory-viewer";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -29,6 +30,7 @@ interface MemfsTreeViewerProps {
   agentName?: string;
   onClose: () => void;
   conversationId?: string;
+  contextUsage?: ContextUsageSnapshot;
 }
 
 /**
@@ -48,6 +50,7 @@ export function MemfsTreeViewer({
   agentName,
   onClose,
   conversationId,
+  contextUsage,
 }: MemfsTreeViewerProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
@@ -119,7 +122,12 @@ export function MemfsTreeViewer({
     // O: open memory viewer in browser (works in both split and full view)
     if ((input === "o" || input === "O") && hasGitRepo) {
       showStatus("Opening in browser...", 10000);
-      generateAndOpenMemoryViewer(agentId, { agentName })
+      generateAndOpenMemoryViewer(agentId, {
+        agentName,
+        conversationId:
+          conversationId !== "default" ? conversationId : undefined,
+        contextUsage,
+      })
         .then((result) => {
           if (result.opened) {
             showStatus("Opened in browser", 3000);
