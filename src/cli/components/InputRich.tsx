@@ -37,7 +37,6 @@ import {
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
-import { ralphMode } from "@/ralph/mode";
 import { settingsManager } from "@/settings-manager";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
@@ -988,10 +987,8 @@ export function Input({
   onQueueEdit,
   onEscapeCancel,
   inputDisabled = false,
-  ralphActive = false,
-  ralphPending = false,
-  ralphPendingYolo = false,
-  onRalphExit,
+  goalLoopActive = false,
+  onGoalLoopExit,
   conversationId,
   onPasteError,
   restoredInput,
@@ -1036,10 +1033,8 @@ export function Input({
   onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
   inputDisabled?: boolean;
-  ralphActive?: boolean;
-  ralphPending?: boolean;
-  ralphPendingYolo?: boolean;
-  onRalphExit?: () => void;
+  goalLoopActive?: boolean;
+  onGoalLoopExit?: () => void;
   conversationId?: string;
   onPasteError?: (message: string) => void;
   restoredInput?: string | null;
@@ -1388,7 +1383,7 @@ export function Input({
   // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
   // consume the keystroke before it renders (no flicker).
 
-  // Handle Shift+Tab for permission mode cycling (or ralph mode exit)
+  // Handle Shift+Tab for permission mode cycling (or goal loop exit)
   useInput((_input, key) => {
     if (!interactionEnabled) return;
 
@@ -1414,9 +1409,9 @@ export function Input({
     }
 
     if (key.shift && key.tab) {
-      // If ralph mode is active, exit it first (goes to default mode)
-      if (ralphActive && onRalphExit) {
-        onRalphExit();
+      // If a goal loop is active, pause it before cycling permission mode.
+      if (goalLoopActive && onGoalLoopExit) {
+        onGoalLoopExit();
         return;
       }
 
@@ -1736,7 +1731,7 @@ export function Input({
     setCursorPos(selectedCommand.length);
   }, []);
 
-  // Get display name and color for permission mode (ralph modes take precedence)
+  // Get display name and color for permission mode
   // Memoized to prevent unnecessary footer re-renders
   const modeInfo = useMemo<{
     name: string;
@@ -1744,44 +1739,6 @@ export function Input({
     glyph?: string;
     showExitHint?: boolean;
   } | null>(() => {
-    // Check ralph pending first (waiting for task input)
-    if (ralphPending) {
-      if (ralphPendingYolo) {
-        return {
-          name: "yolo-ralph (waiting)",
-          color: "#FF8C00", // dark orange
-        };
-      }
-      return {
-        name: "ralph (waiting)",
-        color: "#FEE19C", // yellow (brandColors.statusWarning)
-      };
-    }
-
-    // Check ralph mode active (using prop for reactivity)
-    if (ralphActive) {
-      const ralph = ralphMode.getState();
-      const iterDisplay =
-        ralph.maxIterations > 0
-          ? `${ralph.currentIteration}/${ralph.maxIterations}`
-          : `${ralph.currentIteration}`;
-
-      if (ralph.mode === "goal") {
-        return null;
-      }
-
-      if (ralph.isYolo) {
-        return {
-          name: `yolo-ralph (iter ${iterDisplay})`,
-          color: "#FF8C00", // dark orange
-        };
-      }
-      return {
-        name: `ralph (iter ${iterDisplay})`,
-        color: "#FEE19C", // yellow (brandColors.statusWarning)
-      };
-    }
-
     // Fall through to permission modes
     switch (currentMode) {
       case "acceptEdits":
@@ -1798,7 +1755,7 @@ export function Input({
       default:
         return null;
     }
-  }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
+  }, [currentMode]);
 
   // Goal status footer text. Stored in state (rather than recomputed every
   // render) so we only trigger a re-render when the displayed string actually
@@ -1934,9 +1891,7 @@ export function Input({
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
-                showExitHint={
-                  modeInfo?.showExitHint ?? (ralphActive || ralphPending)
-                }
+                showExitHint={modeInfo?.showExitHint ?? goalLoopActive}
                 agentName={agentName}
                 currentModel={currentModel}
                 currentReasoningEffort={currentReasoningEffort}
@@ -1995,8 +1950,7 @@ export function Input({
     modeInfo?.color,
     modeInfo?.glyph,
     modeInfo?.showExitHint,
-    ralphActive,
-    ralphPending,
+    goalLoopActive,
     currentModel,
     currentReasoningEffort,
     currentModelProvider,

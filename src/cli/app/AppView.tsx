@@ -103,12 +103,6 @@ type ModelReasoningPrompt = {
   options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
 };
 
-type PendingRalphConfig = {
-  completionPromise: string | null | undefined;
-  maxIterations: number;
-  isYolo: boolean;
-};
-
 type QueuedApprovalDecision = {
   type: "approve" | "deny";
   reason?: string;
@@ -208,7 +202,7 @@ type AppViewProps = {
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
-  handleRalphExit: () => void;
+  handleGoalLoopExit: () => void;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -241,7 +235,6 @@ type AppViewProps = {
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
   pendingIds: Set<string>;
-  pendingRalphConfig: PendingRalphConfig | null;
   pinDialogLocal: boolean;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
   profileConfirmPending: {
@@ -298,7 +291,7 @@ type AppViewProps = {
   thinkingMessage: string;
   trajectoryTokenDisplay: number;
   uiPermissionMode: PermissionMode;
-  uiRalphActive: boolean;
+  uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
 };
 
@@ -366,7 +359,7 @@ export function AppView(props: AppViewProps) {
     handlePersonalitySelect,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
-    handleRalphExit,
+    handleGoalLoopExit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -388,7 +381,6 @@ export function AppView(props: AppViewProps) {
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingIds,
-    pendingRalphConfig,
     pinDialogLocal,
     precomputedDiffsRef,
     profileConfirmPending,
@@ -431,7 +423,7 @@ export function AppView(props: AppViewProps) {
     thinkingMessage,
     trajectoryTokenDisplay,
     uiPermissionMode,
-    uiRalphActive,
+    uiGoalLoopActive,
     updateAgentName,
   } = props;
 
@@ -688,10 +680,8 @@ export function AppView(props: AppViewProps) {
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
                 inputDisabled={btwState.status === "complete"}
-                ralphActive={uiRalphActive}
-                ralphPending={pendingRalphConfig !== null}
-                ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
-                onRalphExit={handleRalphExit}
+                goalLoopActive={uiGoalLoopActive}
+                onGoalLoopExit={handleGoalLoopExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
