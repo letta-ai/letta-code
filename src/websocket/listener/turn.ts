@@ -21,7 +21,6 @@ import {
   getStreamToolContextId,
   type sendMessageStream,
 } from "@/agent/message";
-import { getSubagents } from "@/agent/subagent-state";
 import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
@@ -36,14 +35,11 @@ import {
   getReflectionSettings,
   type ReflectionTrigger,
 } from "@/cli/helpers/memory-reminder";
-import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
-  appendTranscriptDeltaJsonl,
-  buildAutoReflectionPayload,
-  buildParentMemorySnapshot,
-  buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
-} from "@/cli/helpers/reflection-transcript";
+  AUTO_REFLECTION_DESCRIPTION,
+  launchReflectionSubagent,
+} from "@/cli/helpers/reflection-launcher";
+import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import {
   buildSharedReminderParts,
@@ -122,8 +118,6 @@ import type {
 } from "./types";
 import { ensureListenerWarmStateForTurn } from "./warmup";
 
-const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
-
 function trackListenerUserInput(
   messages: InboundMessagePayload[],
   modelId: string,
@@ -146,27 +140,6 @@ export const __listenerTurnTestUtils = {
   trackListenerUserInput,
 };
 
-function hasActiveReflectionSubagent(
-  agentId: string,
-  conversationId: string,
-): boolean {
-  return getSubagents().some((agent) => {
-    if (agent.type.toLowerCase() !== "reflection") {
-      return false;
-    }
-    if (agent.status !== "pending" && agent.status !== "running") {
-      return false;
-    }
-    if (!agent.parentAgentId) {
-      return false;
-    }
-    const parentConversationId = agent.parentConversationId ?? "default";
-    return (
-      agent.parentAgentId === agentId && parentConversationId === conversationId
-    );
-  });
-}
-
 function escapeTaskNotificationSummary(summary: string): string {
   return summary
     .replace(/&/g, "&amp;")
@@ -179,145 +152,49 @@ function buildMaybeLaunchReflectionSubagent(params: {
   socket: ListenerTransport;
   agentId: string;
   conversationId: string;
-  workingDirectory: string;
   cachedAgent?: AgentState | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
     const { runtime, socket, agentId, conversationId, cachedAgent } = params;
 
-    if (!agentId || !settingsManager.isMemfsEnabled(agentId)) {
+    if (!agentId) {
       return false;
     }
 
-    if (hasActiveReflectionSubagent(agentId, conversationId)) {
-      debugLog(
-        "memory",
-        `Skipping auto reflection launch (${triggerSource}) because one is already active`,
-      );
-      return false;
-    }
-
-    try {
-      // Reuse the cached agent snapshot when available so the reflection
-      // payload can include the current system prompt without another fetch.
-      let systemPrompt: string | undefined = cachedAgent?.system ?? undefined;
-      if (!systemPrompt) {
-        try {
-          const agent = await getBackend().retrieveAgent(agentId);
-          systemPrompt = agent.system ?? undefined;
-        } catch {
-          // Non-fatal — the reflection payload will just omit the system prompt.
-          debugLog(
-            "memory",
-            "Failed to fetch agent system prompt for reflection payload",
-          );
-        }
-      }
-
-      const autoPayload = await buildAutoReflectionPayload(
-        agentId,
-        conversationId,
-        systemPrompt,
-      );
-      if (!autoPayload) {
-        debugLog(
-          "memory",
-          `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
+    const result = await launchReflectionSubagent({
+      agentId,
+      conversationId,
+      memoryDir: getMemoryFilesystemRoot(agentId),
+      memfsEnabled: settingsManager.isMemfsEnabled(agentId),
+      triggerSource,
+      description: AUTO_REFLECTION_DESCRIPTION,
+      systemPrompt: cachedAgent?.system ?? undefined,
+      recompileByConversation:
+        runtime.listener.systemPromptRecompileByConversation,
+      recompileQueuedByConversation:
+        runtime.listener.queuedSystemPromptRecompileByConversation,
+      onCompletionMessage: async (completionMessage) => {
+        const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+          completionMessage,
+        )}</summary></task-notification>`;
+        emitCanonicalMessageDelta(
+          socket,
+          runtime,
+          {
+            type: "message",
+            id: `user-msg-${crypto.randomUUID()}`,
+            date: new Date().toISOString(),
+            message_type: "user_message",
+            content: [{ type: "text", text: notificationXml }],
+          } as StreamDelta,
+          {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          },
         );
-        return false;
-      }
-
-      const memoryDir = getMemoryFilesystemRoot(agentId);
-      const parentMemory = await buildParentMemorySnapshot(memoryDir);
-      const reflectionPrompt = buildReflectionSubagentPrompt({
-        memoryDir,
-        parentMemory,
-      });
-
-      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("@/tools/impl/task");
-      const { subagentId } = spawnBackgroundSubagentTask({
-        subagentType: "reflection",
-        prompt: reflectionPrompt,
-        description: AUTO_REFLECTION_DESCRIPTION,
-        silentCompletion: true,
-        transcriptPath: autoPayload.payloadPath,
-        parentScope: { agentId, conversationId },
-        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
-          telemetry.trackReflectionEnd(triggerSource, success, {
-            subagentId: reflectionAgentId ?? undefined,
-            conversationId,
-            error,
-          });
-          await finalizeAutoReflectionPayload(
-            agentId,
-            conversationId,
-            autoPayload.payloadPath,
-            autoPayload.endSnapshotLine,
-            success,
-          );
-
-          const completionMessage = await handleMemorySubagentCompletion(
-            {
-              agentId,
-              conversationId,
-              subagentType: "reflection",
-              success,
-              error,
-            },
-            {
-              recompileByConversation:
-                runtime.listener.systemPromptRecompileByConversation,
-              recompileQueuedByConversation:
-                runtime.listener.queuedSystemPromptRecompileByConversation,
-              logRecompileFailure: (message) => debugWarn("memory", message),
-            },
-          );
-          const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
-            completionMessage,
-          )}</summary></task-notification>`;
-          emitCanonicalMessageDelta(
-            socket,
-            runtime,
-            {
-              type: "message",
-              id: `user-msg-${crypto.randomUUID()}`,
-              date: new Date().toISOString(),
-              message_type: "user_message",
-              content: [{ type: "text", text: notificationXml }],
-            } as StreamDelta,
-            {
-              agent_id: agentId,
-              conversation_id: conversationId,
-            },
-          );
-        },
-      });
-      const reflectionAgentId = await waitForBackgroundSubagentAgentId(
-        subagentId,
-        1000,
-      );
-      telemetry.trackReflectionStart(triggerSource, {
-        subagentId: reflectionAgentId ?? undefined,
-        conversationId,
-        startMessageId: autoPayload.startMessageId,
-        endMessageId: autoPayload.endMessageId,
-      });
-
-      debugLog(
-        "memory",
-        `Auto-launched reflection subagent (${triggerSource})`,
-      );
-      return true;
-    } catch (error) {
-      debugWarn(
-        "memory",
-        `Failed to auto-launch reflection subagent (${triggerSource}): ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return false;
-    }
+      },
+    });
+    return result.launched;
   };
 }
 
@@ -555,7 +432,6 @@ export async function handleIncomingMessage(
                   socket,
                   agentId,
                   conversationId,
-                  workingDirectory: turnWorkingDirectory,
                   cachedAgent,
                 })
               : undefined,

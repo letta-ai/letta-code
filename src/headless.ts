@@ -49,7 +49,6 @@ import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
-import { getSubagents } from "./agent/subagent-state";
 import {
   type ConversationCreateBody,
   type ConversationMessageStreamBody,
@@ -82,15 +81,11 @@ import {
   type ReflectionSettings,
   type ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
-import { handleMemorySubagentCompletion } from "./cli/helpers/memory-subagent-completion";
-import { isReflectionSubagentActive } from "./cli/helpers/reflection-gate";
 import {
-  appendTranscriptDeltaJsonl,
-  buildAutoReflectionPayload,
-  buildParentMemorySnapshot,
-  buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
-} from "./cli/helpers/reflection-transcript";
+  AUTO_REFLECTION_DESCRIPTION,
+  launchReflectionSubagent,
+} from "./cli/helpers/reflection-launcher";
+import { appendTranscriptDeltaJsonl } from "./cli/helpers/reflection-transcript";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -193,8 +188,6 @@ const PROVIDER_FALLBACK_MAP: Record<string, string> = {
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
-const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
-
 function trackHeadlessBoundaryError(
   errorType: string,
   error: unknown,
@@ -2976,116 +2969,18 @@ async function runBidirectionalMode(
   const maybeLaunchReflectionSubagent = async (
     triggerSource: Exclude<ReflectionTrigger, "off">,
   ): Promise<boolean> => {
-    if (!settingsManager.isMemfsEnabled(agent.id)) {
-      return false;
-    }
-
-    if (isReflectionSubagentActive(getSubagents(), agent.id, conversationId)) {
-      debugLog(
-        "memory",
-        `Skipping auto reflection launch (${triggerSource}) because one is already active`,
-      );
-      return false;
-    }
-
-    try {
-      let systemPrompt: string | undefined = agent.system ?? undefined;
-      if (!systemPrompt) {
-        try {
-          const freshAgent = await backend.retrieveAgent(agent.id);
-          systemPrompt = freshAgent.system ?? undefined;
-        } catch {
-          debugLog(
-            "memory",
-            "Failed to fetch agent system prompt for reflection payload",
-          );
-        }
-      }
-
-      const autoPayload = await buildAutoReflectionPayload(
-        agent.id,
-        conversationId,
-        systemPrompt,
-      );
-      if (!autoPayload) {
-        debugLog(
-          "memory",
-          `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
-        );
-        return false;
-      }
-
-      const memoryDir = getMemoryFilesystemRoot(agent.id);
-      const parentMemory = await buildParentMemorySnapshot(memoryDir);
-      const reflectionPrompt = buildReflectionSubagentPrompt({
-        memoryDir,
-        parentMemory,
-      });
-
-      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("@/tools/impl/task");
-      const { subagentId } = spawnBackgroundSubagentTask({
-        subagentType: "reflection",
-        prompt: reflectionPrompt,
-        description: AUTO_REFLECTION_DESCRIPTION,
-        silentCompletion: true,
-        transcriptPath: autoPayload.payloadPath,
-        parentScope: { agentId: agent.id, conversationId },
-        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
-          telemetry.trackReflectionEnd(triggerSource, success, {
-            subagentId: reflectionAgentId ?? undefined,
-            conversationId,
-            error,
-          });
-          await finalizeAutoReflectionPayload(
-            agent.id,
-            conversationId,
-            autoPayload.payloadPath,
-            autoPayload.endSnapshotLine,
-            success,
-          );
-          await handleMemorySubagentCompletion(
-            {
-              agentId: agent.id,
-              conversationId,
-              subagentType: "reflection",
-              success,
-              error,
-            },
-            {
-              recompileByConversation: systemPromptRecompileByConversation,
-              recompileQueuedByConversation:
-                queuedSystemPromptRecompileByConversation,
-              logRecompileFailure: (message) => debugWarn("memory", message),
-            },
-          );
-        },
-      });
-      const reflectionAgentId = await waitForBackgroundSubagentAgentId(
-        subagentId,
-        1000,
-      );
-      telemetry.trackReflectionStart(triggerSource, {
-        subagentId: reflectionAgentId ?? undefined,
-        conversationId,
-        startMessageId: autoPayload.startMessageId,
-        endMessageId: autoPayload.endMessageId,
-      });
-
-      debugLog(
-        "memory",
-        `Auto-launched reflection subagent (${triggerSource})`,
-      );
-      return true;
-    } catch (error) {
-      debugWarn(
-        "memory",
-        `Failed to auto-launch reflection subagent (${triggerSource}): ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return false;
-    }
+    const result = await launchReflectionSubagent({
+      agentId: agent.id,
+      conversationId,
+      memoryDir: getMemoryFilesystemRoot(agent.id),
+      memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+      triggerSource,
+      description: AUTO_REFLECTION_DESCRIPTION,
+      systemPrompt: agent.system ?? undefined,
+      recompileByConversation: systemPromptRecompileByConversation,
+      recompileQueuedByConversation: queuedSystemPromptRecompileByConversation,
+    });
+    return result.launched;
   };
 
   // Resolve pending approvals for this conversation before retrying user input.
