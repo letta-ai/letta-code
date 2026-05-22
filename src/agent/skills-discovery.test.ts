@@ -129,6 +129,53 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe("agent skills discovery", () => {
+  const testDir = join(process.cwd(), ".test-agent-skills-discovery");
+  const projectSkillsDir = join(testDir, ".skills");
+  const originalHome = process.env.HOME;
+
+  beforeEach(() => {
+    mkdirSync(testDir, { recursive: true });
+    process.env.HOME = testDir;
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not discover legacy pre-memfs agent skills", async () => {
+    mkdirSync(projectSkillsDir, { recursive: true });
+    const skillDir = join(
+      testDir,
+      ".letta",
+      "agents",
+      "agent-test",
+      "skills",
+      "legacy-only",
+    );
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: Legacy Only\ndescription: legacy skill\n---\n\n# Legacy Only\n",
+    );
+
+    const result = await discoverSkills(projectSkillsDir, "agent-test", {
+      skipBundled: true,
+      sources: ["agent"],
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.skills).toHaveLength(0);
+  });
+});
+
 describe("skills frontmatter metadata", () => {
   const testDir = join(process.cwd(), ".test-skills-frontmatter");
   const projectSkillsDir = join(testDir, ".skills");
