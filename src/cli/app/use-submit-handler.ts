@@ -102,7 +102,10 @@ import {
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
-import { buildSharedReminderParts } from "@/reminders/engine";
+import {
+  buildSharedReminderParts,
+  prependReminderPartsToContent,
+} from "@/reminders/engine";
 import {
   type SharedReminderState,
   syncReminderStateFromContextTracker,
@@ -3252,10 +3255,10 @@ ${SYSTEM_REMINDER_CLOSE}
       if (currentGoal) {
         pushReminder(buildGoalReminder(currentGoal));
       }
-      const messageContent =
-        reminderParts.length > 0
-          ? [...reminderParts, ...contentParts]
-          : contentParts;
+      const messageContent = prependReminderPartsToContent(
+        contentParts as MessageCreate["content"],
+        reminderParts,
+      );
 
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
