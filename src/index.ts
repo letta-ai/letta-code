@@ -1487,7 +1487,6 @@ async function main(): Promise<void> {
       async function checkAndStart() {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
-        const localSettings = settingsManager.getLocalProjectSettings();
         const backend = getBackend();
 
         // For self-hosted servers, pre-fetch available models
@@ -1575,7 +1574,9 @@ async function main(): Promise<void> {
           const localSession = settingsManager.getLocalLastSession(
             process.cwd(),
           );
-          const localAgentId = localSession?.agentId ?? localSettings.lastAgent;
+          const localAgentId =
+            localSession?.agentId ??
+            settingsManager.getLocalLastAgentId(process.cwd());
 
           // Try local LRU first
           if (localAgentId) {
@@ -1878,12 +1879,11 @@ async function main(): Promise<void> {
 
         // Priority 3: LRU from local settings (if not --new or user explicitly requested new from selector)
         if (!resumingAgentId && !shouldCreateNew) {
-          const localProjectSettings =
-            settingsManager.getLocalProjectSettings();
-          if (localProjectSettings?.lastAgent) {
+          const localLastAgentId = settingsManager.getLocalLastAgentId();
+          if (localLastAgentId) {
             try {
-              await backend.retrieveAgent(localProjectSettings.lastAgent);
-              resumingAgentId = localProjectSettings.lastAgent;
+              await backend.retrieveAgent(localLastAgentId);
+              resumingAgentId = localLastAgentId;
             } catch {
               // LRU agent doesn't exist (wrong org, deleted, etc.)
               // Show selector instead of silently creating a new agent
