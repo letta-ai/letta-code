@@ -26,6 +26,7 @@ interface AgentSelectorProps {
   currentAgentId: string;
   onSelect: (agentId: string, backendMode: AgentBackendMode) => void;
   onCancel: () => void;
+  onLogin?: () => void;
   /** Called when user creates a new agent (from New tab or N shortcut) */
   onCreateNewAgent?: (name: string, backendMode: AgentBackendMode) => void;
   /** The command that triggered this selector (e.g., "/agents" or "/resume") */
@@ -158,6 +159,7 @@ export function AgentSelector({
   currentAgentId,
   onSelect,
   onCancel,
+  onLogin,
   onCreateNewAgent,
   command = "/agents",
 }: AgentSelectorProps) {
@@ -683,6 +685,8 @@ export function AgentSelector({
         const selected = constellationPageAgents[constellationSelectedIndex];
         if (selected?.id) {
           onSelect(selected.id, "api");
+        } else if (hasCloudAuth === false) {
+          onLogin?.();
         }
       }
     } else if (key.escape) {
@@ -914,7 +918,13 @@ export function AgentSelector({
       <Text dimColor>
         Connect to Letta Constellation to see hosted agents here.
       </Text>
-      <Text dimColor>Run /login to sign in.</Text>
+      <Box height={1} />
+      <Box flexDirection="column">
+        <Text color={colors.selector.itemHighlighted}>{"> /login"}</Text>
+        <Box paddingLeft={2}>
+          <Text dimColor>Sign in to Letta Constellation</Text>
+        </Box>
+      </Box>
     </Box>
   );
 
