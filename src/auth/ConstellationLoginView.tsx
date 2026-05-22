@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { Box } from "ink";
+import { Box, useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { configureBackendMode } from "@/backend";
 import { Text } from "@/cli/components/Text";
@@ -9,21 +9,34 @@ import { pollForToken, requestDeviceCode } from "./oauth";
 interface ConstellationLoginViewProps {
   onComplete?: () => void;
   onAlreadyLoggedIn?: () => void;
+  onCancel?: () => void;
 }
 
 export function ConstellationLoginView({
   onComplete,
   onAlreadyLoggedIn,
+  onCancel,
 }: ConstellationLoginViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
   const startedRef = useRef(false);
+  const cancelledRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  useInput((input, key) => {
+    if (key.escape || (key.ctrl && input === "c")) {
+      cancelledRef.current = true;
+      abortControllerRef.current?.abort();
+      onCancel?.();
+    }
+  });
 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
+    abortControllerRef.current = new AbortController();
 
     const run = async () => {
       try {
@@ -56,12 +69,17 @@ export function ConstellationLoginView({
 
         const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();
+        const controller = abortControllerRef.current;
+        if (!controller) {
+          return;
+        }
         const tokens = await pollForToken(
           deviceData.device_code,
           deviceData.interval,
           deviceData.expires_in,
           deviceId,
           deviceName,
+          controller.signal,
         );
 
         const now = Date.now();
@@ -82,11 +100,21 @@ export function ConstellationLoginView({
         );
         setTimeout(() => onComplete?.(), 500);
       } catch (err) {
+        if (
+          cancelledRef.current ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          return;
+        }
         setError(err instanceof Error ? err.message : String(err));
       }
     };
 
     void run();
+    return () => {
+      cancelledRef.current = true;
+      abortControllerRef.current?.abort();
+    };
   }, [onAlreadyLoggedIn, onComplete]);
 
   if (doneMessage) {
@@ -119,6 +147,7 @@ export function ConstellationLoginView({
       <Text dimColor>If browser didn't open, visit: {verificationUri}</Text>
       <Text> </Text>
       <Text dimColor>Waiting for you to authorize in the browser...</Text>
+      <Text dimColor>Press Esc to cancel</Text>
     </Box>
   );
 }
