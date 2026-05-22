@@ -725,6 +725,26 @@ export function AppView(props: AppViewProps) {
                   currentModelId={currentModelId ?? undefined}
                   currentModelHandle={currentModelHandle}
                   onSelect={handleModelSelect}
+                  onOpenConnect={() => {
+                    const overlayCommand = completeOverlay("model");
+                    overlayCommand?.finish("Models dialog dismissed", true);
+                    openOverlay(
+                      "connect",
+                      "/connect",
+                      "Opening provider selector...",
+                      "Connect dialog dismissed",
+                    );
+                  }}
+                  onOpenLogin={() => {
+                    const overlayCommand = completeOverlay("model");
+                    overlayCommand?.finish("Models dialog dismissed", true);
+                    openOverlay(
+                      "login",
+                      "/login",
+                      "Opening login...",
+                      "Login dismissed",
+                    );
+                  }}
                   onCancel={closeOverlay}
                   filterProvider={modelSelectorOptions.filterProvider}
                   forceRefresh={modelSelectorOptions.forceRefresh}
