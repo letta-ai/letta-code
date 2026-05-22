@@ -1787,7 +1787,7 @@ export type WsProtocolCommand =
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
-  | RetrieveCwdMapCommand
+  | GetCwdMapCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | GetExperimentsCommand
@@ -1855,7 +1855,7 @@ export type WsProtocolMessage =
   | ChannelPairingsUpdatedMessage
   | ChannelRoutesUpdatedMessage
   | ChannelTargetsUpdatedMessage
-  | RetrieveCwdMapResponseMessage
+  | GetCwdMapResponseMessage
   | SecretListResponse
   | SecretApplyResponse
   | RemoveQueueItemResponse;

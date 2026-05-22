@@ -530,18 +530,18 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "retrieve_cwd_map") {
+      if (parsed.type === "get_cwd_map") {
         safeSocketSend(
           socket,
           {
-            type: "retrieve_cwd_map_response",
+            type: "get_cwd_map_response",
             request_id: parsed.request_id,
             success: true,
             cwd_map: Object.fromEntries(runtime.workingDirectoryByConversation),
             boot_working_directory: runtime.bootWorkingDirectory,
           },
-          "retrieve_cwd_map_response",
-          "retrieve_cwd_map",
+          "get_cwd_map_response",
+          "get_cwd_map",
         );
         return;
       }
