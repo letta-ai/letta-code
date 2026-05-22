@@ -4,10 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getModelDisplayName } from "@/agent/model";
 import { getBackendForMode } from "@/backend/backend";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
-import {
-  getRecentAgentOptions,
-  type RecentAgentOption,
-} from "@/cli/helpers/recent-agent-options";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
@@ -50,10 +46,6 @@ interface PinnedAgentData {
   isLocal: boolean;
 }
 
-interface PinnedFallbackData extends RecentAgentOption {
-  isPinnedFallback: true;
-}
-
 const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "pinned", label: "Pinned" },
   { id: "constellation", label: "Constellation" },
@@ -77,7 +69,6 @@ const TAB_EMPTY_STATES: Record<TabId, string> = {
 
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
-const PINNED_FALLBACK_DISPLAY_SIZE = 3;
 const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
 
 /**
@@ -191,9 +182,6 @@ export function AgentSelector({
   // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
   const [pinnedLoading, setPinnedLoading] = useState(true);
-  const [pinnedFallbackAgents, setPinnedFallbackAgents] = useState<
-    PinnedFallbackData[]
-  >([]);
   const [pinnedSelectedIndex, setPinnedSelectedIndex] = useState(0);
   const [pinnedPage, setPinnedPage] = useState(0);
 
@@ -284,28 +272,17 @@ export function AgentSelector({
 
       if (validPinnedData.length === 0) {
         setPinnedAgents([]);
-        const recentAgents = await getRecentAgentOptions({
-          includeLocal: true,
-          includeConstellation: hasCloudCredentials(),
-          limit: PINNED_FALLBACK_DISPLAY_SIZE,
-          currentAgentId,
-        });
-        setPinnedFallbackAgents(
-          recentAgents.map((item) => ({ ...item, isPinnedFallback: true })),
-        );
         setPinnedLoading(false);
         return;
       }
 
       setPinnedAgents(pinnedData);
-      setPinnedFallbackAgents([]);
     } catch {
       setPinnedAgents([]);
-      setPinnedFallbackAgents([]);
     } finally {
       setPinnedLoading(false);
     }
-  }, [currentAgentId]);
+  }, []);
 
   // Load local agents from disk
   const loadLocalAgents = useCallback(() => {
@@ -462,19 +439,11 @@ export function AgentSelector({
 
   // Pagination calculations - Pinned (filter out 404 agents)
   const validPinnedAgents = pinnedAgents.filter((p) => p.agent !== null);
-  const showingPinnedFallback =
-    validPinnedAgents.length === 0 && pinnedFallbackAgents.length > 0;
   const pinnedTotalPages = Math.ceil(
-    (showingPinnedFallback
-      ? pinnedFallbackAgents.length
-      : validPinnedAgents.length) / DISPLAY_PAGE_SIZE,
+    validPinnedAgents.length / DISPLAY_PAGE_SIZE,
   );
   const pinnedStartIndex = pinnedPage * DISPLAY_PAGE_SIZE;
   const pinnedPageAgents = validPinnedAgents.slice(
-    pinnedStartIndex,
-    pinnedStartIndex + DISPLAY_PAGE_SIZE,
-  );
-  const pinnedFallbackPageAgents = pinnedFallbackAgents.slice(
     pinnedStartIndex,
     pinnedStartIndex + DISPLAY_PAGE_SIZE,
   );
@@ -521,9 +490,7 @@ export function AgentSelector({
     activeTab === "constellation" ? constellationError : null;
   const currentAgents =
     activeTab === "pinned"
-      ? showingPinnedFallback
-        ? pinnedFallbackPageAgents.map((p) => p.agent)
-        : pinnedPageAgents.map((p) => p.agent).filter(Boolean)
+      ? pinnedPageAgents.map((p) => p.agent).filter(Boolean)
       : activeTab === "local"
         ? localPageAgents
         : constellationPageAgents;
@@ -661,18 +628,10 @@ export function AgentSelector({
 
       // Select agent
       if (activeTab === "pinned") {
-        if (showingPinnedFallback) {
-          const selected = pinnedFallbackPageAgents[pinnedSelectedIndex];
-          if (selected?.agent) {
-            const mode: AgentBackendMode = selected.isLocal ? "local" : "api";
-            onSelect(selected.agent.id, mode);
-          }
-        } else {
-          const selected = pinnedPageAgents[pinnedSelectedIndex];
-          if (selected?.agent) {
-            const mode: AgentBackendMode = selected.isLocal ? "local" : "api";
-            onSelect(selected.agentId, mode);
-          }
+        const selected = pinnedPageAgents[pinnedSelectedIndex];
+        if (selected?.agent) {
+          const mode: AgentBackendMode = selected.isLocal ? "local" : "api";
+          onSelect(selected.agentId, mode);
         }
       } else if (activeTab === "local") {
         const selected = localPageAgents[localSelectedIndex];
@@ -743,27 +702,15 @@ export function AgentSelector({
         }
       }
     } else if (activeTab === "pinned" && (input === "p" || input === "P")) {
-      if (showingPinnedFallback) {
-        const selected = pinnedFallbackPageAgents[pinnedSelectedIndex];
-        if (selected) {
-          if (selected.isLocal) {
-            settingsManager.pinLocal(selected.agent.id);
-          } else {
-            settingsManager.pinGlobal(selected.agent.id);
-          }
-          loadPinnedAgents();
+      // Unpin from current scope (pinned tab only)
+      const selected = pinnedPageAgents[pinnedSelectedIndex];
+      if (selected) {
+        if (selected.isLocal) {
+          settingsManager.unpinLocal(selected.agentId);
+        } else {
+          settingsManager.unpinGlobal(selected.agentId);
         }
-      } else {
-        // Unpin from current scope (pinned tab only)
-        const selected = pinnedPageAgents[pinnedSelectedIndex];
-        if (selected) {
-          if (selected.isLocal) {
-            settingsManager.unpinLocal(selected.agentId);
-          } else {
-            settingsManager.unpinGlobal(selected.agentId);
-          }
-          loadPinnedAgents();
-        }
+        loadPinnedAgents();
       }
     } else if (input === "D") {
       // Delete agent - open confirmation
@@ -973,7 +920,6 @@ export function AgentSelector({
         activeTab !== "new" &&
         !currentLoading &&
         ((activeTab === "pinned" && validPinnedAgents.length > 0) ||
-          (activeTab === "pinned" && showingPinnedFallback) ||
           (activeTab === "local" && localAgents.length > 0) ||
           (activeTab === "constellation" &&
             !constellationError &&
@@ -986,9 +932,7 @@ export function AgentSelector({
                   : activeTab === "local"
                     ? `Page ${localPage + 1}/${localTotalPages || 1}`
                     : `Page ${constellationPage + 1}${constellationHasMore ? "+" : `/${constellationTotalPages || 1}`}${constellationLoadingMore ? " (loading...)" : ""}`;
-              const pinnedHint = showingPinnedFallback
-                ? " · Shift+P pin"
-                : " · Shift+P unpin";
+              const pinnedHint = " · Shift+P unpin";
               const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? pinnedHint : ""} · Esc cancel`;
 
               return (
@@ -1020,18 +964,7 @@ export function AgentSelector({
           }
         />
         <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
-        {activeTab === "pinned" && showingPinnedFallback && <Box height={2} />}
-        {activeTab === "pinned" && showingPinnedFallback && (
-          <Text dimColor>
-            {" "}
-            No pinned agents yet, showing recent agents instead.
-          </Text>
-        )}
-        {activeTab === "pinned" && showingPinnedFallback ? (
-          <Box height={1} />
-        ) : (
-          <Box height={2} />
-        )}
+        <Box height={2} />
       </Box>
 
       {/* Search input - list tabs only */}
@@ -1071,9 +1004,7 @@ export function AgentSelector({
 
       {/* Empty state */}
       {!currentLoading &&
-        ((activeTab === "pinned" &&
-          validPinnedAgents.length === 0 &&
-          !showingPinnedFallback) ||
+        ((activeTab === "pinned" && validPinnedAgents.length === 0) ||
           (activeTab === "local" && localAgents.length === 0) ||
           (activeTab === "constellation" &&
             !constellationError &&
@@ -1086,19 +1017,8 @@ export function AgentSelector({
         )}
 
       {/* Pinned tab content */}
-      {activeTab === "pinned" && !pinnedLoading && showingPinnedFallback && (
-        <Box flexDirection="column">
-          {pinnedFallbackPageAgents.map((data, index) =>
-            renderAgentItem(data.agent, index, index === pinnedSelectedIndex, {
-              backend: data.isLocal ? "local" : "constellation",
-            }),
-          )}
-        </Box>
-      )}
-
       {activeTab === "pinned" &&
         !pinnedLoading &&
-        !showingPinnedFallback &&
         validPinnedAgents.length > 0 && (
           <Box flexDirection="column">
             {pinnedPageAgents.map((data, index) =>
