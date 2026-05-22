@@ -36,15 +36,17 @@ const REQUESTING: PhaseVisual = {
 
 const THINKING: PhaseVisual = {
   tickMs: 200,
-  direction: "rtl",
+  direction: "ltr",
   // Shared base across all phases so phase entry doesn't cause a color jump.
   // The thinking-specific "breath" comes from the two-sided overlay below,
-  // which oscillates symmetrically toward a lighter and deeper anchor.
+  // which oscillates symmetrically toward a near-white anchor on one lobe and
+  // a deep-saturated-purple anchor on the other. Anchors intentionally far
+  // from the base to give the row a visible "deep contemplation" sway.
   baseColor: colors.status.processing,
   shimmerColor: colors.status.processingShimmer,
   overlay: "two-sided",
-  lighterColor: colors.status.processingShimmer,
-  deeperColor: "#5252D9",
+  lighterColor: "#F0F0FF",
+  deeperColor: "#2828A0",
 };
 
 const TOOL_USE: PhaseVisual = {
@@ -154,10 +156,10 @@ export function effectiveBaseColor(visual: PhaseVisual, t: number): string {
   if (visual.overlay === "two-sided") {
     const f = Math.sin((t * Math.PI) / 1500);
     if (f >= 0 && visual.lighterColor) {
-      return blendHex(visual.baseColor, visual.lighterColor, f * 0.6);
+      return blendHex(visual.baseColor, visual.lighterColor, f * 0.85);
     }
     if (f < 0 && visual.deeperColor) {
-      return blendHex(visual.baseColor, visual.deeperColor, -f * 0.6);
+      return blendHex(visual.baseColor, visual.deeperColor, -f * 0.85);
     }
     return visual.baseColor;
   }
