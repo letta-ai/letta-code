@@ -40,7 +40,7 @@ const LOCAL_MODEL_HANDLE_PREFIXES = [
   "llama-cpp/",
 ];
 
-function isLocalModelHandle(modelHandle: string): boolean {
+export function isLocalModelHandle(modelHandle: string): boolean {
   return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
     modelHandle.startsWith(prefix),
   );
