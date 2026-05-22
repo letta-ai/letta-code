@@ -150,7 +150,7 @@ jobs:
         if: steps.detect.outputs.should_publish == 'true'
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: ./letta.js --prompt "ping" --tools "" --permission-mode plan
+        run: ./letta.js --prompt "ping" --tools "" --permission-mode standard
 
       - name: Create release tag on merged main commit
         if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.tag_exists != 'true'

@@ -194,6 +194,15 @@ export const BYOK_PROVIDERS = [
 export type ByokProviderId = (typeof BYOK_PROVIDERS)[number]["id"];
 export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 
+export function defaultProviderApiKey(
+  provider: ByokProvider,
+): string | undefined {
+  if ("requiresApiKey" in provider && provider.requiresApiKey === false) {
+    return "defaultApiKey" in provider ? provider.defaultApiKey : "not-needed";
+  }
+  return undefined;
+}
+
 export function isLocalProviderStoreEnabled(): boolean {
   return getBackend().capabilities.localModelCatalog;
 }

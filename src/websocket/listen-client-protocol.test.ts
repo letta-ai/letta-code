@@ -7,7 +7,10 @@ import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  type EnsureLocalMemfsCheckoutOptions,
+  getMemoryFilesystemRoot,
+} from "@/agent/memory-filesystem";
 import { buildConversationMessagesCreateRequestBody } from "@/agent/message";
 import { models } from "@/agent/model";
 import {
@@ -57,7 +60,6 @@ import {
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
 } from "@/websocket/listener/recoverable-notices";
-import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 
 class MockSocket {
   readyState: number;
@@ -1493,14 +1495,16 @@ describe("listen-client memory command handling", () => {
   test("bootstraps only the local memfs checkout when memfs is already enabled", async () => {
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
     const socket = new MockSocket(WebSocket.OPEN);
-    const ensureLocalMemfsCheckoutMock = mock(async () => {
-      await mkdir(join(tempRoot, ".git"), { recursive: true });
-      await mkdir(join(tempRoot, "system"), { recursive: true });
-      await writeFile(
-        join(tempRoot, "system", "persona.md"),
-        "---\ndescription: Persona\n---\nHello from memory\n",
-      );
-    });
+    const ensureLocalMemfsCheckoutMock = mock(
+      async (_agentId: string, _options?: EnsureLocalMemfsCheckoutOptions) => {
+        await mkdir(join(tempRoot, ".git"), { recursive: true });
+        await mkdir(join(tempRoot, "system"), { recursive: true });
+        await writeFile(
+          join(tempRoot, "system", "persona.md"),
+          "---\ndescription: Persona\n---\nHello from memory\n",
+        );
+      },
+    );
 
     try {
       await __listenClientTestUtils.handleListMemoryCommand(
@@ -1519,6 +1523,10 @@ describe("listen-client memory command handling", () => {
       );
 
       expect(ensureLocalMemfsCheckoutMock).toHaveBeenCalledTimes(1);
+      expect(ensureLocalMemfsCheckoutMock.mock.calls[0]).toEqual([
+        "agent-1",
+        { pullOnExistingRepo: true },
+      ]);
       const messages = socket.sentPayloads.map((payload) =>
         JSON.parse(payload as string),
       );
@@ -1541,6 +1549,112 @@ describe("listen-client memory command handling", () => {
         }),
       ]);
       expect(messages[0].entries[0]?.content).toContain("Hello from memory");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pulls an existing local memfs checkout before scanning", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const isMemfsEnabledOnServerMock = mock(async () => true);
+    const ensureLocalMemfsCheckoutMock = mock(
+      async (_agentId: string, _options?: EnsureLocalMemfsCheckoutOptions) => {
+        await mkdir(join(tempRoot, "system"), { recursive: true });
+        await writeFile(
+          join(tempRoot, "system", "human.md"),
+          "---\ndescription: Human\n---\nPulled from remote\n",
+        );
+      },
+    );
+
+    try {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-pull-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: isMemfsEnabledOnServerMock,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      expect(isMemfsEnabledOnServerMock).not.toHaveBeenCalled();
+      expect(ensureLocalMemfsCheckoutMock).toHaveBeenCalledTimes(1);
+      expect(ensureLocalMemfsCheckoutMock.mock.calls[0]).toEqual([
+        "agent-1",
+        { pullOnExistingRepo: true },
+      ]);
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-pull-1",
+        success: true,
+        done: true,
+        total: 1,
+        memfs_enabled: true,
+        memfs_initialized: true,
+      });
+      expect(messages[0].entries).toEqual([
+        expect.objectContaining({
+          relative_path: "system/human.md",
+          is_system: true,
+          description: "Human",
+          references: [],
+        }),
+      ]);
+      expect(messages[0].entries[0]?.content).toContain("Pulled from remote");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("returns a failure response when syncing an existing checkout fails", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const ensureLocalMemfsCheckoutMock = mock(async () => {
+      throw new Error("Pull failed: auth rejected");
+    });
+
+    try {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-pull-failed-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => true,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      expect(ensureLocalMemfsCheckoutMock).toHaveBeenCalledTimes(1);
+      const message = JSON.parse(socket.sentPayloads[0] as string);
+      expect(message).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-pull-failed-1",
+        success: false,
+        done: true,
+        total: 0,
+        entries: [],
+        error: "Pull failed: auth rejected",
+      });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -2554,8 +2668,6 @@ describe("listen-client permission mode scope keys", () => {
       "agent:__unknown__::conversation:default",
       {
         mode: "acceptEdits",
-        planFilePath: null,
-        modeBeforePlan: null,
       },
     );
 
@@ -2604,8 +2716,6 @@ describe("listen-client permission mode scope keys", () => {
       listener.permissionModeByConversation.get("conversation:conv-slack-1"),
     ).toEqual({
       mode: "unrestricted",
-      planFilePath: null,
-      modeBeforePlan: null,
     });
   });
 
@@ -2636,8 +2746,6 @@ describe("listen-client permission mode scope keys", () => {
       listener.permissionModeByConversation.get("conversation:conv-discord-1"),
     ).toEqual({
       mode: "acceptEdits",
-      planFilePath: null,
-      modeBeforePlan: null,
     });
   });
 });
@@ -2984,38 +3092,9 @@ describe("listen-client v2 status builders", () => {
     const loopStatus = __listenClientTestUtils.buildLoopStatus(runtime);
     expect(loopStatus.status).toBe("WAITING_ON_INPUT");
     expect(loopStatus.active_run_ids).toEqual([]);
-    expect(loopStatus.plan_file_path).toBeNull();
     // queue is now separate from loopStatus — verify via buildQueueSnapshot
     const queueSnapshot = __listenClientTestUtils.buildQueueSnapshot(runtime);
     expect(queueSnapshot).toEqual([]);
-  });
-
-  test("buildLoopStatus includes plan file path for scoped plan mode", () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
-      "agent-1",
-      "default",
-    );
-    listener.permissionModeByConversation.set(
-      "agent:agent-1::conversation:default",
-      {
-        mode: "plan",
-        planFilePath: "/tmp/listener-plan.md",
-        modeBeforePlan: "standard",
-      },
-    );
-
-    expect(
-      __listenClientTestUtils.buildLoopStatus(listener, {
-        agent_id: "agent-1",
-        conversation_id: "default",
-      }),
-    ).toEqual({
-      status: "WAITING_ON_INPUT",
-      active_run_ids: [],
-      plan_file_path: "/tmp/listener-plan.md",
-    });
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
@@ -3539,7 +3618,6 @@ describe("listen-client v2 status builders", () => {
     expect(outbound[1].loop_status).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
-      plan_file_path: null,
     });
   });
 
@@ -3679,7 +3757,6 @@ describe("listen-client v2 status builders", () => {
     ).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
-      plan_file_path: null,
     });
   });
 
@@ -4146,143 +4223,6 @@ describe("listen-client capability-gated approval flow", () => {
     expect("error" in response).toBe(true);
     if ("error" in response) {
       expect(response.error).toBe("Internal server error");
-    }
-  });
-
-  test("mode changes reject plan mode when plan mode is disabled", async () => {
-    const originalHome = process.env.HOME;
-    const testHomeDir = await mkdtemp(
-      join(os.tmpdir(), "letta-plan-disabled-"),
-    );
-    await settingsManager.reset();
-    process.env.HOME = testHomeDir;
-    resetRemoteSettingsCache();
-    await settingsManager.initialize();
-
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    listener.socket = socket as unknown as WebSocket;
-
-    const scope = {
-      agent_id: "agent-1",
-      conversation_id: "default",
-    } as const;
-
-    listener.permissionModeByConversation.set(
-      "agent:agent-1::conversation:default",
-      {
-        mode: "standard",
-        planFilePath: null,
-        modeBeforePlan: null,
-      },
-    );
-
-    try {
-      __listenClientTestUtils.handleModeChange(
-        { mode: "plan" },
-        socket as unknown as WebSocket,
-        listener,
-        scope,
-      );
-
-      const outbound = socket.sentPayloads.map((payload) =>
-        JSON.parse(payload as string),
-      );
-      const deviceStatus = outbound.findLast(
-        (payload) => payload.type === "update_device_status",
-      )?.device_status;
-      const loopStatus = outbound.findLast(
-        (payload) => payload.type === "update_loop_status",
-      )?.loop_status;
-      const notice = outbound.findLast(
-        (payload) =>
-          payload.type === "stream_delta" &&
-          payload.delta?.message_type === "loop_error",
-      );
-
-      expect(deviceStatus?.current_permission_mode).toBe("standard");
-      expect(deviceStatus?.plan_mode_enabled).toBe(false);
-      expect(loopStatus?.plan_file_path).toBeNull();
-      expect(notice?.delta?.message).toContain(
-        "Plan mode is disabled in user settings.",
-      );
-    } finally {
-      await settingsManager.reset();
-      await rm(testHomeDir, { recursive: true, force: true });
-      process.env.HOME = originalHome;
-      resetRemoteSettingsCache();
-    }
-  });
-
-  test("mode changes emit fresh loop status plan_file_path on enter exit and re-enter", async () => {
-    const originalHome = process.env.HOME;
-    const testHomeDir = await mkdtemp(join(os.tmpdir(), "letta-plan-ws-"));
-    await settingsManager.reset();
-    process.env.HOME = testHomeDir;
-    resetRemoteSettingsCache();
-    await settingsManager.initialize();
-    settingsManager.setPlanModeEnabled(true);
-
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    listener.socket = socket as unknown as WebSocket;
-
-    const scope = {
-      agent_id: "agent-1",
-      conversation_id: "default",
-    } as const;
-
-    try {
-      __listenClientTestUtils.handleModeChange(
-        { mode: "plan" },
-        socket as unknown as WebSocket,
-        listener,
-        scope,
-      );
-
-      const firstPlanPath = (socket.sentPayloads
-        .map((payload) => JSON.parse(payload as string))
-        .findLast((payload) => payload.type === "update_loop_status")
-        ?.loop_status?.plan_file_path ?? null) as string | null;
-
-      expect(firstPlanPath).toBeTruthy();
-
-      __listenClientTestUtils.handleModeChange(
-        { mode: "unrestricted" },
-        socket as unknown as WebSocket,
-        listener,
-        scope,
-      );
-
-      const afterExitLoopStatus = socket.sentPayloads
-        .map((payload) => JSON.parse(payload as string))
-        .findLast(
-          (payload) =>
-            payload.type === "update_loop_status" &&
-            payload.loop_status?.status === "WAITING_ON_INPUT",
-        );
-
-      expect(afterExitLoopStatus?.loop_status?.plan_file_path).toBeNull();
-
-      __listenClientTestUtils.handleModeChange(
-        { mode: "plan" },
-        socket as unknown as WebSocket,
-        listener,
-        scope,
-      );
-
-      const secondPlanPath = (socket.sentPayloads
-        .map((payload) => JSON.parse(payload as string))
-        .findLast((payload) => payload.type === "update_loop_status")
-        ?.loop_status?.plan_file_path ?? null) as string | null;
-
-      expect(secondPlanPath).toBeTruthy();
-      expect(secondPlanPath).not.toBe(firstPlanPath);
-    } finally {
-      await settingsManager.reset();
-      await rm(testHomeDir, { recursive: true, force: true });
-      process.env.HOME = originalHome;
-      resetRemoteSettingsCache();
     }
   });
 

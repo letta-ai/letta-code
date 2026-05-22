@@ -118,6 +118,26 @@ describe("formatErrorDetails", () => {
     expect(message).not.toContain("Selected hosted model");
   });
 
+  test("prefers backend reason_text for credit exhaustion", () => {
+    const error = new APIError(
+      402,
+      {
+        error: "Rate limited",
+        reasons: ["not-enough-credits"],
+        reason_text:
+          "This request is estimated to cost 10,000 credits, but only 7 credits are currently available. Please add more credits or use a lower-cost model.",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toBe(
+      "This request is estimated to cost 10,000 credits, but only 7 credits are currently available. Please add more credits or use a lower-cost model.",
+    );
+  });
+
   test("formats OpenAI incomplete chunked streaming errors", () => {
     setErrorContext({ modelEndpointType: "chatgpt_oauth" });
     const errorObject = {
@@ -167,6 +187,26 @@ describe("formatErrorDetails", () => {
     const message = formatErrorDetails(error);
     expect(message).toBe(
       "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+    );
+  });
+
+  test("handles nested reason_text for credit exhaustion", () => {
+    const error = new APIError(
+      402,
+      {
+        error: {
+          reasons: ["not-enough-credits"],
+          reason_text:
+            "This request is too expensive for the credits currently available. Please add more credits or use a lower-cost model.",
+        },
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+    expect(message).toBe(
+      "This request is too expensive for the credits currently available. Please add more credits or use a lower-cost model.",
     );
   });
 
@@ -302,6 +342,27 @@ describe("formatErrorDetails", () => {
     expect(message).toContain("Upgrade your plan for more quota");
     expect(message).toContain("purchase credits");
     expect(message).not.toContain("Add your own API keys");
+  });
+
+  test("prefers backend reason_text over generic hosted quota guidance", () => {
+    setErrorContext({ billingTier: "team_pro", modelLabel: "letta/auto" });
+
+    const error = new APIError(
+      402,
+      {
+        reasons: ["basic-usage-exceeded", "not-enough-credits"],
+        reason_text:
+          "You've used all of your Basic tier model inferences for this 4-hour window (100 per 4-hour window). Quota resets in 2h. This request is estimated to cost 5,000 credits, but only 20 credits are currently available. Please add more credits or use a lower-cost model.",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toContain("Quota resets in 2h");
+    expect(message).toContain("estimated to cost 5,000 credits");
+    expect(message).not.toContain("Upgrade your plan for more quota");
   });
 
   test("keeps generic credit guidance for non-Letta models", () => {

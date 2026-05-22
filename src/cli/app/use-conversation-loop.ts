@@ -88,13 +88,13 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { alwaysRequiresUserInput } from "@/cli/helpers/tool-name-mapping.js";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { goalLoopMode } from "@/goal-loop-mode";
 import { runStopHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
-import { ralphMode } from "@/ralph/mode";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
@@ -113,13 +113,13 @@ import {
   TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
+import { buildGoalPrompt } from "./goal-loop";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import {
   getErrorHintForStopReason,
   getPreferredAgentModelHandle,
 } from "./model-config";
 import { sendDesktopNotification } from "./notifications";
-import { buildLoopPrompt } from "./ralph";
 import { isRetriableError } from "./retry";
 import { stripSystemReminders } from "./system-reminders";
 import type {
@@ -206,7 +206,7 @@ type ConversationLoopContext = {
   setTrajectoryElapsedBaseMs: Dispatch<SetStateAction<number>>;
   setTrajectoryTokenBase: Dispatch<SetStateAction<number>>;
   setUiPermissionMode: (mode: PermissionMode) => void;
-  setUiRalphActive: Dispatch<SetStateAction<boolean>>;
+  setUiGoalLoopActive: Dispatch<SetStateAction<boolean>>;
   shouldAutoGenerateConversationTitleRef: MutableRefObject<boolean>;
   syncTrajectoryElapsedBase: () => void;
   syncTrajectoryTokenBase: () => void;
@@ -297,7 +297,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -330,7 +330,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       // auto-approvals (YOLO / unrestricted) don't regress after a retry.
       const pinnedPermissionMode = uiPermissionModeRef.current;
       const restorePinnedPermissionMode = () => {
-        if (pinnedPermissionMode === "plan") return;
         if (permissionMode.getMode() !== pinnedPermissionMode) {
           permissionMode.setMode(pinnedPermissionMode);
         }
@@ -378,13 +377,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           refreshDerived();
         }
       }
-      // Helper function for Ralph Wiggum mode continuation
-      // Defined here to have access to buffersRef, processConversation via closure
-      const handleRalphContinuation = () => {
-        const ralphState = ralphMode.getState();
+      // Helper for goal loop continuation. Defined here to access buffersRef
+      // and processConversation via closure.
+      const handleGoalContinuation = () => {
+        const goalState = goalLoopMode.getState();
 
-        // Extract LAST assistant message from buffers to check for promise
-        // (We only want to check the most recent response, not the entire transcript)
+        // Extract LAST assistant message from buffers to check for a legacy
+        // <goal_status>complete</goal_status> completion marker.
         const lines = toLines(buffersRef.current);
         const assistantLines = lines.filter(
           (l): l is Line & { kind: "assistant" } => l.kind === "assistant",
@@ -394,40 +393,35 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             ? (assistantLines[assistantLines.length - 1]?.text ?? "")
             : "";
 
-        // Check for completion promise
-        const goalCompletedByTool =
-          ralphState.mode === "goal" &&
-          settingsManager.getConversationGoal(conversationIdRef.current)
-            ?.status === "complete";
+        const goalStatusAfterTool = settingsManager.getConversationGoal(
+          conversationIdRef.current,
+        )?.status;
+        const goalStoppedByTool =
+          goalStatusAfterTool === "complete" ||
+          goalStatusAfterTool === "blocked";
         if (
-          goalCompletedByTool ||
-          ralphMode.checkForCompletion(lastAssistantText)
+          goalStoppedByTool ||
+          goalLoopMode.checkForGoalComplete(lastAssistantText)
         ) {
-          // Promise matched - exit ralph mode
-          const wasYolo = ralphState.isYolo;
-          const wasGoal = ralphState.mode === "goal";
-          ralphMode.deactivate();
-          setUiRalphActive(false);
-          if (wasGoal) {
-            settingsManager.updateConversationGoalStatus(
-              conversationIdRef.current,
-              "complete",
-            );
-          }
-          if (wasYolo) {
-            permissionMode.setMode("standard");
-            setUiPermissionMode("standard");
-          }
+          const finalGoalStatus =
+            goalStatusAfterTool === "blocked" ? "blocked" : "complete";
+          goalLoopMode.deactivate();
+          setUiGoalLoopActive(false);
+          settingsManager.updateConversationGoalStatus(
+            conversationIdRef.current,
+            finalGoalStatus,
+          );
+          permissionMode.setMode("standard");
+          setUiPermissionMode("standard");
 
-          // Add completion status to transcript
           const statusId = uid("status");
           buffersRef.current.byId.set(statusId, {
             kind: "status",
             id: statusId,
             lines: [
-              wasGoal
-                ? `✅ Goal complete after ${ralphState.currentIteration} iteration(s)`
-                : `✅ Ralph loop complete: promise detected after ${ralphState.currentIteration} iteration(s)`,
+              finalGoalStatus === "blocked"
+                ? `⚠️ Goal blocked after ${goalState.currentIteration} iteration(s)`
+                : `✅ Goal complete after ${goalState.currentIteration} iteration(s)`,
             ],
           });
           buffersRef.current.order.push(statusId);
@@ -435,57 +429,24 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
-        // Check iteration limit
-        if (!ralphMode.shouldContinue()) {
-          // Max iterations reached - exit ralph mode
-          const wasYolo = ralphState.isYolo;
-          const wasGoal = ralphState.mode === "goal";
-          ralphMode.deactivate();
-          setUiRalphActive(false);
-          if (wasGoal) {
-            settingsManager.updateConversationGoalStatus(
-              conversationIdRef.current,
-              "paused",
-            );
-          }
-          if (wasYolo) {
-            permissionMode.setMode("standard");
-            setUiPermissionMode("standard");
-          }
-
-          // Add status to transcript
-          const statusId = uid("status");
-          buffersRef.current.byId.set(statusId, {
-            kind: "status",
-            id: statusId,
-            lines: [
-              wasGoal
-                ? `🛑 Goal paused: Max iterations (${ralphState.maxIterations}) reached`
-                : `🛑 Ralph loop: Max iterations (${ralphState.maxIterations}) reached`,
-            ],
-          });
-          buffersRef.current.order.push(statusId);
-          refreshDerived();
+        if (!goalLoopMode.shouldContinue()) {
           return;
         }
 
-        // Continue loop - increment iteration and re-send prompt
-        ralphMode.incrementIteration();
-        const newState = ralphMode.getState();
-        const systemMsg = buildLoopPrompt(newState, conversationIdRef.current);
+        goalLoopMode.incrementIteration();
+        const nextGoalState = goalLoopMode.getState();
+        const systemMsg = buildGoalPrompt(
+          nextGoalState,
+          conversationIdRef.current,
+        );
 
-        // Re-inject original prompt with ralph reminder prepended
-        // Use setTimeout to avoid blocking the current render cycle
         setTimeout(() => {
           processConversation(
             [
               {
                 type: "message",
                 role: "user",
-                content:
-                  newState.mode === "goal"
-                    ? [{ type: "text", text: systemMsg }]
-                    : `${systemMsg}\n\n${newState.originalPrompt}`,
+                content: [{ type: "text", text: systemMsg }],
                 otid: randomUUID(),
               },
             ],
@@ -1291,7 +1252,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             0,
             buffersRef.current.tokenCount - runTokenStart,
           );
-          if (ralphMode.getState().mode === "goal") {
+          if (goalLoopMode.getState().isActive) {
             const updatedGoal = settingsManager.accountConversationGoalUsage(
               conversationIdRef.current,
               tokenDelta,
@@ -1306,13 +1267,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   conversationIdRef.current,
                   "budget_limited",
                 );
-              const wasYolo = ralphMode.getState().isYolo;
-              ralphMode.deactivate();
-              setUiRalphActive(false);
-              if (wasYolo) {
-                permissionMode.setMode("standard");
-                setUiPermissionMode("standard");
-              }
+              goalLoopMode.deactivate();
+              setUiGoalLoopActive(false);
+              permissionMode.setMode("standard");
+              setUiPermissionMode("standard");
               if (budgetLimitedGoal) {
                 const systemMsg = buildGoalBudgetLimitPrompt(budgetLimitedGoal);
                 setTimeout(() => {
@@ -1596,11 +1554,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               queueSnapshotRef.current = [];
             }
 
-            // === RALPH WIGGUM CONTINUATION CHECK ===
-            // Check if ralph mode is active and should auto-continue
-            // This happens at the very end, right before we'd release input
-            if (ralphMode.getState().isActive) {
-              handleRalphContinuation();
+            // Continue active goals at the very end, right before releasing input.
+            if (goalLoopMode.getState().isActive) {
+              handleGoalContinuation();
               return;
             }
 
@@ -1637,23 +1593,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 appendError(INTERRUPT_MESSAGE, true);
               }
 
-              // In ralph mode, ESC interrupts but does NOT exit ralph
-              // User can type additional instructions, which will get ralph prefix prepended
-              // (Similar to how plan mode works)
-              if (ralphMode.getState().isActive) {
-                if (ralphMode.getState().mode === "goal") {
-                  settingsManager.updateConversationGoalStatus(
-                    conversationIdRef.current,
-                    "paused",
-                  );
-                }
-                // Add status to transcript showing ralph is paused
+              // ESC interrupts an active goal loop but keeps it resumable.
+              if (goalLoopMode.getState().isActive) {
+                settingsManager.updateConversationGoalStatus(
+                  conversationIdRef.current,
+                  "paused",
+                );
                 const statusId = uid("status");
                 buffersRef.current.byId.set(statusId, {
                   kind: "status",
                   id: statusId,
                   lines: [
-                    `⏸️ Ralph loop paused - type to continue or shift+tab to exit`,
+                    `⏸️ Goal loop paused - type to continue or Shift+Tab to exit`,
                   ],
                 });
                 buffersRef.current.order.push(statusId);

@@ -17,7 +17,10 @@ import type { StopReasonType } from "@/types/protocol_v2";
 
 const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
-const CONVERSATION_BUSY_DETAIL_FRAGMENT = "is currently being processed";
+const CONVERSATION_BUSY_DETAIL_FRAGMENTS = [
+  "is currently being processed",
+  "busy with another active run",
+];
 const CONVERSATION_BUSY_RUN_ID_PATTERN = /\brun_id=([A-Za-z0-9_-]+)/i;
 const EMPTY_RESPONSE_DETAIL_FRAGMENT = "empty content in";
 const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
@@ -135,7 +138,10 @@ export function isApprovalPendingError(detail: unknown): boolean {
 /** Conversation is busy (another request is being processed). */
 export function isConversationBusyError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
-  return detail.toLowerCase().includes(CONVERSATION_BUSY_DETAIL_FRAGMENT);
+  const normalized = detail.toLowerCase();
+  return CONVERSATION_BUSY_DETAIL_FRAGMENTS.some((fragment) =>
+    normalized.includes(fragment),
+  );
 }
 
 /** Extract the server-reported blocking run id from a conversation-busy error. */
@@ -390,6 +396,7 @@ export function getPreStreamErrorAction(
 export function extractConflictDetail(error: unknown): string {
   if (error && typeof error === "object" && "error" in error) {
     const errObj = (error as Record<string, unknown>).error;
+    if (typeof errObj === "string") return errObj;
     if (errObj && typeof errObj === "object") {
       const outer = errObj as Record<string, unknown>;
       // Nested: e.error.error.detail → e.error.error.message
@@ -398,6 +405,8 @@ export function extractConflictDetail(error: unknown): string {
         if (typeof nested.detail === "string") return nested.detail;
         if (typeof nested.message === "string") return nested.message;
       }
+      // String body: e.error.error (e.g. { error: "Conversation is busy..." })
+      if (typeof outer.error === "string") return outer.error;
       // Direct: e.error.detail → e.error.message
       if (typeof outer.detail === "string") return outer.detail;
       if (typeof outer.message === "string") return outer.message;

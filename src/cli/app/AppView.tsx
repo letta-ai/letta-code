@@ -19,8 +19,8 @@ import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
 import { BtwPane, type BtwState } from "@/cli/components/BtwPane";
 import { CommandMessage } from "@/cli/components/CommandMessage";
 import { CompactionSelector } from "@/cli/components/CompactionSelector";
+import { ConstellationLoginOverlay } from "@/cli/components/ConstellationLoginOverlay";
 import { ConversationSelector } from "@/cli/components/ConversationSelector";
-// EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
 import { EventMessage } from "@/cli/components/EventMessage";
 import { ExperimentSelector } from "@/cli/components/ExperimentSelector";
@@ -43,8 +43,6 @@ import { ProviderSelector } from "@/cli/components/ProviderSelector";
 import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
 import { SkillsDialog } from "@/cli/components/SkillsDialog";
 import { SleeptimeSelector } from "@/cli/components/SleeptimeSelector";
-// InlinePlanApproval kept for easy rollback if needed
-// import { InlinePlanApproval } from "../components/InlinePlanApproval";
 import { StatusMessage } from "@/cli/components/StatusMessage";
 import { SubagentGroupDisplay } from "@/cli/components/SubagentGroupDisplay";
 import { SubagentManager } from "@/cli/components/SubagentManager";
@@ -80,13 +78,11 @@ import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import type { PermissionMode } from "@/permissions/mode";
-import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
-import { _readPlanFile } from "./plan-file";
 import { StaticTranscript } from "./StaticTranscript";
 import type {
   ActiveOverlay,
@@ -105,12 +101,6 @@ type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
   options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
-};
-
-type PendingRalphConfig = {
-  completionPromise: string | null | undefined;
-  maxIterations: number;
-  isYolo: boolean;
 };
 
 type QueuedApprovalDecision = {
@@ -192,8 +182,6 @@ type AppViewProps = {
   ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
   handleDenyCurrent: (reason: string) => Promise<void>;
-  handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
-  handleEnterPlanModeReject: () => Promise<void>;
   handleQueueEdit: () => string;
   handleExit: () => Promise<void>;
   handleExperimentsConfirm: (
@@ -212,11 +200,9 @@ type AppViewProps = {
     personalityId: PersonalityId,
     commandId?: string | null,
   ) => Promise<void>;
-  handlePlanApprove: (acceptEdits?: boolean) => Promise<void>;
-  handlePlanKeepPlanning: (reason: string) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
-  handleRalphExit: () => void;
+  handleGoalLoopExit: () => void;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -236,7 +222,6 @@ type AppViewProps = {
   inputVisible: boolean;
   interruptRequested: boolean;
   isAgentBusy: () => boolean;
-  lastPlanFilePathRef: RefObject<string | null>;
   liveItems: Line[];
   liveTrajectoryElapsedBaseMs: number;
   loadingState: AppLoadingState;
@@ -250,7 +235,6 @@ type AppViewProps = {
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
   pendingIds: Set<string>;
-  pendingRalphConfig: PendingRalphConfig | null;
   pinDialogLocal: boolean;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
   profileConfirmPending: {
@@ -306,8 +290,10 @@ type AppViewProps = {
   stubDescriptions: Map<string, string>;
   thinkingMessage: string;
   trajectoryTokenDisplay: number;
+  usedContextTokens: number;
+  contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
-  uiRalphActive: boolean;
+  uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
 };
 
@@ -364,8 +350,6 @@ export function AppView(props: AppViewProps) {
     handleCreateNewAgent,
     handleCycleReasoningEffort,
     handleDenyCurrent,
-    handleEnterPlanModeApprove,
-    handleEnterPlanModeReject,
     handleQueueEdit,
     handleExit,
     handleExperimentsConfirm,
@@ -375,11 +359,9 @@ export function AppView(props: AppViewProps) {
     handlePasteError,
     handlePermissionModeChange,
     handlePersonalitySelect,
-    handlePlanApprove,
-    handlePlanKeepPlanning,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
-    handleRalphExit,
+    handleGoalLoopExit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -390,7 +372,6 @@ export function AppView(props: AppViewProps) {
     inputVisible,
     interruptRequested,
     isAgentBusy,
-    lastPlanFilePathRef,
     liveItems,
     liveTrajectoryElapsedBaseMs,
     loadingState,
@@ -402,7 +383,6 @@ export function AppView(props: AppViewProps) {
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingIds,
-    pendingRalphConfig,
     pinDialogLocal,
     precomputedDiffsRef,
     profileConfirmPending,
@@ -444,8 +424,10 @@ export function AppView(props: AppViewProps) {
     stubDescriptions,
     thinkingMessage,
     trajectoryTokenDisplay,
+    usedContextTokens,
+    contextWindowSize,
     uiPermissionMode,
-    uiRalphActive,
+    uiGoalLoopActive,
     updateAgentName,
   } = props;
 
@@ -458,7 +440,6 @@ export function AppView(props: AppViewProps) {
         statusLinePrompt={statusLine.prompt}
         showCompactionsEnabled={showCompactionsEnabled}
         precomputedDiffs={precomputedDiffsRef.current}
-        lastPlanFilePath={lastPlanFilePathRef.current}
         hiddenToolCallId={expandedToolCallId ?? undefined}
         lastShellToolCallId={lastShellToolCallId ?? undefined}
       />
@@ -527,11 +508,7 @@ export function AppView(props: AppViewProps) {
                             onApproveAlways={handleApproveAlways}
                             onDeny={handleDenyCurrent}
                             onCancel={handleCancelApprovals}
-                            onPlanApprove={handlePlanApprove}
-                            onPlanKeepPlanning={handlePlanKeepPlanning}
                             onQuestionSubmit={handleQuestionSubmit}
-                            onEnterPlanModeApprove={handleEnterPlanModeApprove}
-                            onEnterPlanModeReject={handleEnterPlanModeReject}
                             precomputedDiff={
                               ln.toolCallId
                                 ? precomputedDiffsRef.current.get(ln.toolCallId)
@@ -552,19 +529,6 @@ export function AppView(props: AppViewProps) {
                                   "project")
                             }
                             showPreview={showApprovalPreview}
-                            planContent={
-                              currentApproval.toolName === "ExitPlanMode"
-                                ? _readPlanFile(lastPlanFilePathRef.current)
-                                : undefined
-                            }
-                            planFilePath={
-                              currentApproval.toolName === "ExitPlanMode"
-                                ? (permissionMode.getPlanFilePath() ??
-                                  lastPlanFilePathRef.current ??
-                                  undefined)
-                                : undefined
-                            }
-                            agentName={agentName ?? undefined}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} prompt={statusLine.prompt} />
@@ -601,7 +565,6 @@ export function AppView(props: AppViewProps) {
                           <ToolCallMessage
                             line={ln}
                             precomputedDiffs={precomputedDiffsRef.current}
-                            lastPlanFilePath={lastPlanFilePathRef.current}
                             isStreaming={streaming}
                             expandedToolCallId={expandedToolCallId}
                             lastShellToolCallId={lastShellToolCallId}
@@ -632,11 +595,7 @@ export function AppView(props: AppViewProps) {
                     onApproveAlways={handleApproveAlways}
                     onDeny={handleDenyCurrent}
                     onCancel={handleCancelApprovals}
-                    onPlanApprove={handlePlanApprove}
-                    onPlanKeepPlanning={handlePlanKeepPlanning}
                     onQuestionSubmit={handleQuestionSubmit}
-                    onEnterPlanModeApprove={handleEnterPlanModeApprove}
-                    onEnterPlanModeReject={handleEnterPlanModeReject}
                     allDiffs={precomputedDiffsRef.current}
                     isFocused={true}
                     approveAlwaysText={
@@ -651,19 +610,6 @@ export function AppView(props: AppViewProps) {
                         : (currentApprovalContext?.defaultScope ?? "project")
                     }
                     showPreview={showApprovalPreview}
-                    planContent={
-                      currentApproval.toolName === "ExitPlanMode"
-                        ? _readPlanFile(lastPlanFilePathRef.current)
-                        : undefined
-                    }
-                    planFilePath={
-                      currentApproval.toolName === "ExitPlanMode"
-                        ? (permissionMode.getPlanFilePath() ??
-                          lastPlanFilePathRef.current ??
-                          undefined)
-                        : undefined
-                    }
-                    agentName={agentName ?? undefined}
                   />
                 </Box>
               )}
@@ -701,6 +647,8 @@ export function AppView(props: AppViewProps) {
                 visible={inputVisible}
                 streaming={streaming}
                 tokenCount={trajectoryTokenDisplay}
+                usedContextTokens={usedContextTokens}
+                contextWindowSize={contextWindowSize}
                 elapsedBaseMs={liveTrajectoryElapsedBaseMs}
                 thinkingMessage={thinkingMessage}
                 includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
@@ -738,10 +686,8 @@ export function AppView(props: AppViewProps) {
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
                 inputDisabled={btwState.status === "complete"}
-                ralphActive={uiRalphActive}
-                ralphPending={pendingRalphConfig !== null}
-                ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
-                onRalphExit={handleRalphExit}
+                goalLoopActive={uiGoalLoopActive}
+                onGoalLoopExit={handleGoalLoopExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
@@ -997,6 +943,37 @@ export function AppView(props: AppViewProps) {
                   void handleCreateNewAgent(name, {
                     commandId: overlayCommand?.id,
                   });
+                }}
+              />
+            )}
+
+            {activeOverlay === "login" && (
+              <ConstellationLoginOverlay
+                onComplete={() => {
+                  const overlayCommand = completeOverlay("login");
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/login",
+                      "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                    );
+                  cmd.finish(
+                    "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                    true,
+                  );
+                }}
+                onAlreadyLoggedIn={() => {
+                  const overlayCommand = completeOverlay("login");
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/login",
+                      "Already signed in to Constellation. Run /logout to sign out.",
+                    );
+                  cmd.finish(
+                    "Already signed in to Constellation. Run /logout to sign out.",
+                    true,
+                  );
                 }}
               />
             )}
@@ -1579,10 +1556,8 @@ export function AppView(props: AppViewProps) {
             )}
 
             {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
-            {/* ExitPlanMode approval is handled by InlinePlanApproval component */}
 
             {/* AskUserQuestion now rendered inline via InlineQuestionApproval */}
-            {/* EnterPlanMode now rendered inline in liveItems above */}
             {/* ApprovalDialog removed - all approvals now render inline via InlineGenericApproval fallback */}
           </>
         )}

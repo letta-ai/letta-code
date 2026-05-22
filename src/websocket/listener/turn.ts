@@ -50,7 +50,6 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
-import { getPlanModeReminder } from "@/reminders/plan-mode-reminder";
 import { syncReminderStateFromContextTracker } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
@@ -379,8 +378,6 @@ export async function handleIncomingMessage(
   );
 
   // Get the canonical mutable permission mode state ref for this turn.
-  // Websocket mode changes and tool implementations (EnterPlanMode/ExitPlanMode)
-  // all mutate this same object in place.
   const turnPermissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime.listener,
     normalizedAgentId,
@@ -562,7 +559,6 @@ export async function handleIncomingMessage(
                   cachedAgent,
                 })
               : undefined,
-            resolvePlanModeReminder: getPlanModeReminder,
             workingDirectory: turnWorkingDirectory,
           }),
         );

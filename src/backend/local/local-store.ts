@@ -24,6 +24,7 @@ import type {
   ConversationUpdateBody,
 } from "@/backend/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { isRecord } from "@/utils/type-guards";
 import type { LocalCompactionStats } from "./compaction";
 import {
   emptyLocalUsage,
@@ -343,10 +344,6 @@ function normalizeContent(content: unknown): unknown {
     return textContent(content);
   }
   return content;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function localImageContentFromLegacyImage(

@@ -2,6 +2,7 @@
 // Copied from old letta-code repo to preserve exact formatting behavior
 
 import { relative } from "node:path";
+import { isRecord } from "@/utils/type-guards";
 import {
   type ShellSemanticDisplay,
   summarizeShellDisplay,
@@ -18,10 +19,6 @@ import {
   isShellTool,
   isTodoTool,
 } from "./tool-name-mapping.js";
-
-// Small helpers
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null;
 
 function formatItemCount(count: number): string {
   return `${String(count)} item${count === 1 ? "" : "s"}`;

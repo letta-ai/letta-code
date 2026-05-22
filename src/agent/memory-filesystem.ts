@@ -175,14 +175,21 @@ export async function isMemfsEnabledOnServer(
   return enabled;
 }
 
+export interface EnsureLocalMemfsCheckoutOptions {
+  pullOnExistingRepo?: boolean;
+}
+
 /**
  * Ensures the local memfs checkout exists for an already-enabled agent.
  *
  * Unlike applyMemfsFlags(), this helper does not update prompts, tags, tools,
- * or other agent configuration. It only materializes the local git checkout
- * when the repo is missing.
+ * or other agent configuration. It materializes the local git checkout when
+ * missing and can optionally pull an existing remote-backed repo before use.
  */
-export async function ensureLocalMemfsCheckout(agentId: string): Promise<void> {
+export async function ensureLocalMemfsCheckout(
+  agentId: string,
+  options: EnsureLocalMemfsCheckoutOptions = {},
+): Promise<void> {
   if (isLocalBackendEnvEnabled()) {
     const { initializeLocalMemoryRepo } = await import("@/agent/memory-git");
     await initializeLocalMemoryRepo({
@@ -193,8 +200,13 @@ export async function ensureLocalMemfsCheckout(agentId: string): Promise<void> {
     return;
   }
 
-  const { isGitRepo, cloneMemoryRepo } = await import("@/agent/memory-git");
+  const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
+    "@/agent/memory-git"
+  );
   if (isGitRepo(agentId)) {
+    if (options.pullOnExistingRepo) {
+      await pullMemory(agentId, { throwOnFailure: true });
+    }
     return;
   }
   await cloneMemoryRepo(agentId);

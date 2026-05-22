@@ -53,7 +53,6 @@ function makeCtx(overrides: Partial<SharedReminderContext> = {}) {
     systemInfoReminderEnabled: true,
     reflectionSettings: { trigger: "off", stepCount: 25 },
     skillSources: [],
-    resolvePlanModeReminder: () => "",
     workingDirectory: "/tmp",
     ...overrides,
   } as SharedReminderContext;

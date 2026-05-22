@@ -109,6 +109,7 @@ import {
   updateTask,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
+import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
@@ -118,7 +119,6 @@ import {
   QueueRuntime,
   type TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
-import { ralphMode } from "@/ralph/mode";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -150,7 +150,6 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
-import { generatePlanFilePath } from "@/utils/plan-name";
 import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
 import { recordTuiPerf } from "@/utils/tui-perf";
 import { getVersion } from "@/version";
@@ -339,38 +338,15 @@ export function App({
     null,
   );
 
-  // Store the last plan file path for post-approval rendering
-  // (needed because plan mode is exited before rendering the result)
-  const lastPlanFilePathRef = useRef<string | null>(null);
-  const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {
-    if (planFilePath) {
-      lastPlanFilePathRef.current = planFilePath;
+  const setUiPermissionMode = useCallback((mode: PermissionMode) => {
+    uiPermissionModeRef.current = mode;
+    _setUiPermissionMode(mode);
+
+    // Keep the permissionMode singleton in sync *immediately*.
+    if (permissionMode.getMode() !== mode) {
+      permissionMode.setMode(mode);
     }
   }, []);
-
-  const setUiPermissionMode = useCallback(
-    (mode: PermissionMode) => {
-      uiPermissionModeRef.current = mode;
-      _setUiPermissionMode(mode);
-
-      // Keep the permissionMode singleton in sync *immediately*.
-      //
-      // We also have a useEffect sync (below) as a safety net, but relying on it
-      // introduces a render/effect window where the UI can show YOLO while the
-      // singleton still reports an older mode. That window is enough to break
-      // plan-mode restoration (plan remembers the singleton's mode-at-entry).
-      if (permissionMode.getMode() !== mode) {
-        // If entering plan mode via UI state, ensure a plan file path is set.
-        if (mode === "plan" && !permissionMode.getPlanFilePath()) {
-          const planPath = generatePlanFilePath();
-          permissionMode.setPlanFilePath(planPath);
-          cacheLastPlanFilePath(planPath);
-        }
-        permissionMode.setMode(mode);
-      }
-    },
-    [cacheLastPlanFilePath],
-  );
 
   const statusLineTriggerVersionRef = useRef(0);
   const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
@@ -428,8 +404,6 @@ export function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
-  const lastAutoApprovedEnterPlanToolCallIdRef = useRef<string | null>(null);
-  const lastAutoHandledExitPlanToolCallIdRef = useRef<string | null>(null);
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [queuedApprovalResults, setQueuedApprovalResults] = useState<
     ApprovalResult[] | null
@@ -509,16 +483,9 @@ export function App({
     [],
   );
 
-  // Ralph Wiggum mode: config waiting for next message to capture as prompt
-  const [pendingRalphConfig, setPendingRalphConfig] = useState<{
-    completionPromise: string | null | undefined;
-    maxIterations: number;
-    isYolo: boolean;
-  } | null>(null);
-
-  // Track ralph mode for UI updates (singleton state doesn't trigger re-renders)
-  const [uiRalphActive, setUiRalphActive] = useState(
-    ralphMode.getState().isActive,
+  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
+  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
+    goalLoopMode.getState().isActive,
   );
 
   // Derive current approval from pending approvals and results
@@ -874,6 +841,11 @@ export function App({
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
+
+  // Live total context tokens (history + system + output). Mirrors
+  // `contextTrackerRef.current.lastContextTokens` into reactive state so
+  // UI can react during streaming — the ref itself doesn't trigger renders.
+  const [usedContextTokens, setUsedContextTokens] = useState(0);
 
   // Trajectory token/time bases (accumulated across runs)
   const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
@@ -2256,7 +2228,6 @@ export function App({
 
   const currentApprovalShouldCommitPreview = useMemo(() => {
     if (!currentApproval) return false;
-    if (currentApproval.toolName === "ExitPlanMode") return false;
     return shouldEagerCommitApprovalPreview(currentApproval);
   }, [currentApproval, shouldEagerCommitApprovalPreview]);
 
@@ -2264,6 +2235,7 @@ export function App({
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
     setTokenCount(b.tokenCount);
+    setUsedContextTokens(contextTrackerRef.current.lastContextTokens);
     const newLines = toLines(b);
     setLines(newLines);
     commitEligibleLines(b);
@@ -2497,52 +2469,9 @@ export function App({
     }
   }, [refreshDerived]);
 
-  // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
-  // This keeps the dynamic area small (just approval options) to avoid flicker
-  useEffect(() => {
-    if (!currentApproval) return;
-    if (currentApproval.toolName !== "ExitPlanMode") return;
-
-    const toolCallId = currentApproval.toolCallId;
-    if (!toolCallId) return;
-
-    // Already committed preview for this approval?
-    if (eagerCommittedPreviewsRef.current.has(toolCallId)) return;
-
-    const planFilePath = permissionMode.getPlanFilePath();
-    if (!planFilePath) return;
-
-    try {
-      const { readFileSync, existsSync } = require("node:fs");
-      if (!existsSync(planFilePath)) return;
-
-      const planContent = readFileSync(planFilePath, "utf-8");
-
-      // Commit preview to static area
-      const previewItem: StaticItem = {
-        kind: "approval_preview",
-        id: `approval-preview-${toolCallId}`,
-        toolCallId,
-        toolName: currentApproval.toolName,
-        toolArgs: currentApproval.toolArgs || "{}",
-        planContent,
-        planFilePath,
-      };
-
-      setStaticItems((prev) => [...prev, previewItem]);
-      eagerCommittedPreviewsRef.current.add(toolCallId);
-
-      // Also capture plan file path for post-approval rendering
-      lastPlanFilePathRef.current = planFilePath;
-    } catch {
-      // Failed to read plan, don't commit preview
-    }
-  }, [currentApproval]);
-
   // Eager commit for large approval previews (bash/file edits) to avoid flicker
   useEffect(() => {
     if (!currentApproval) return;
-    if (currentApproval.toolName === "ExitPlanMode") return;
 
     const toolCallId = currentApproval.toolCallId;
     if (!toolCallId) return;
@@ -3355,7 +3284,7 @@ export function App({
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -3378,11 +3307,7 @@ export function App({
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handlePlanApprove,
-    handlePlanKeepPlanning,
     handleQuestionSubmit,
-    handleEnterPlanModeApprove,
-    handleEnterPlanModeReject,
   } = useApprovalFlow({
     abortControllerRef,
     agentId,
@@ -3394,7 +3319,6 @@ export function App({
     autoDeniedApprovals,
     autoHandledResults,
     buffersRef,
-    cacheLastPlanFilePath,
     clearApprovalToolContext,
     closeTrajectorySegment,
     commandRunner,
@@ -3407,9 +3331,6 @@ export function App({
     executingToolCallIdsRef,
     interruptQueuedRef,
     isExecutingTool,
-    lastAutoApprovedEnterPlanToolCallIdRef,
-    lastAutoHandledExitPlanToolCallIdRef,
-    lastPlanFilePathRef,
     loadingState,
     openTrajectorySegment,
     pendingApprovals,
@@ -3704,7 +3625,6 @@ export function App({
     appendTaskNotificationEvents,
     bashCommandCacheRef,
     buffersRef,
-    cacheLastPlanFilePath,
     checkPendingApprovalsForSlashCommand,
     chromeColumns,
     commandRunner,
@@ -3743,7 +3663,6 @@ export function App({
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
-    pendingRalphConfig,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,
@@ -3779,7 +3698,6 @@ export function App({
     setLlmConfig,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPendingRalphConfig,
     setPinDialogLocal,
     setProfileConfirmPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
@@ -3791,7 +3709,7 @@ export function App({
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
     streaming,
@@ -4118,25 +4036,19 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Handle ralph mode exit from Input component (shift+tab)
-  const handleRalphExit = useCallback(() => {
-    const ralph = ralphMode.getState();
-    if (ralph.isActive) {
-      const wasYolo = ralph.isYolo;
-      const wasGoal = ralph.mode === "goal";
-      ralphMode.deactivate();
-      setUiRalphActive(false);
-      if (wasGoal) {
-        settingsManager.updateConversationGoalStatus(
-          conversationIdRef.current,
-          "paused",
-        );
-      }
-      if (wasYolo) {
-        permissionMode.setMode("standard");
-        setUiPermissionMode("standard");
-      }
+  // Handle goal loop exit from Input component (Shift+Tab).
+  const handleGoalLoopExit = useCallback(() => {
+    if (!goalLoopMode.getState().isActive) {
+      return;
     }
+    goalLoopMode.deactivate();
+    setUiGoalLoopActive(false);
+    settingsManager.updateConversationGoalStatus(
+      conversationIdRef.current,
+      "paused",
+    );
+    permissionMode.setMode("standard");
+    setUiPermissionMode("standard");
   }, [setUiPermissionMode]);
 
   // Toggle expand/collapse for a specific tool call ID
@@ -4176,24 +4088,11 @@ export function App({
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
-      if (mode === "plan" && !settingsManager.isPlanModeEnabled()) {
-        permissionMode.setMode("unrestricted");
-        setUiPermissionMode("unrestricted");
-        triggerStatusLineRefresh();
-        return;
-      }
-
-      // When entering plan mode via tab cycling, generate and set the plan file path
-      if (mode === "plan") {
-        const planPath = generatePlanFilePath();
-        permissionMode.setPlanFilePath(planPath);
-        cacheLastPlanFilePath(planPath);
-      }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
       triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
+    [triggerStatusLineRefresh, setUiPermissionMode],
   );
 
   const { flushPendingReasoningEffort, handleCycleReasoningEffort } =
@@ -4522,8 +4421,6 @@ export function App({
       handleCreateNewAgent={handleCreateNewAgent}
       handleCycleReasoningEffort={handleCycleReasoningEffort}
       handleDenyCurrent={handleDenyCurrent}
-      handleEnterPlanModeApprove={handleEnterPlanModeApprove}
-      handleEnterPlanModeReject={handleEnterPlanModeReject}
       handleQueueEdit={handleQueueEdit}
       handleExit={handleExit}
       handleExperimentsConfirm={handleExperimentsConfirm}
@@ -4533,11 +4430,9 @@ export function App({
       handlePasteError={handlePasteError}
       handlePermissionModeChange={handlePermissionModeChange}
       handlePersonalitySelect={handlePersonalitySelect}
-      handlePlanApprove={handlePlanApprove}
-      handlePlanKeepPlanning={handlePlanKeepPlanning}
       handleProfileEscapeCancel={handleProfileEscapeCancel}
       handleQuestionSubmit={handleQuestionSubmit}
-      handleRalphExit={handleRalphExit}
+      handleGoalLoopExit={handleGoalLoopExit}
       handleSleeptimeModeSelect={handleSleeptimeModeSelect}
       handleSystemPromptSelect={handleSystemPromptSelect}
       handleToolsetSelect={handleToolsetSelect}
@@ -4548,7 +4443,6 @@ export function App({
       inputVisible={inputVisible}
       interruptRequested={interruptRequested}
       isAgentBusy={isAgentBusy}
-      lastPlanFilePathRef={lastPlanFilePathRef}
       liveItems={liveItems}
       liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
       loadingState={loadingState}
@@ -4562,7 +4456,6 @@ export function App({
       pendingApprovals={pendingApprovals}
       pendingConversationSwitchRef={pendingConversationSwitchRef}
       pendingIds={pendingIds}
-      pendingRalphConfig={pendingRalphConfig}
       pinDialogLocal={pinDialogLocal}
       precomputedDiffsRef={precomputedDiffsRef}
       profileConfirmPending={profileConfirmPending}
@@ -4604,8 +4497,10 @@ export function App({
       stubDescriptions={stubDescriptions}
       thinkingMessage={thinkingMessage}
       trajectoryTokenDisplay={trajectoryTokenDisplay}
+      usedContextTokens={usedContextTokens}
+      contextWindowSize={effectiveContextWindowSize}
       uiPermissionMode={uiPermissionMode}
-      uiRalphActive={uiRalphActive}
+      uiGoalLoopActive={uiGoalLoopActive}
       updateAgentName={updateAgentName}
     />
   );

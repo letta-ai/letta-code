@@ -93,6 +93,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
   runSessionStartHooks,
@@ -101,9 +102,10 @@ import {
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
-import { DEFAULT_COMPLETION_PROMISE, ralphMode } from "@/ralph/mode";
-import { buildSharedReminderParts } from "@/reminders/engine";
-import { getPlanModeReminder } from "@/reminders/plan-mode-reminder";
+import {
+  buildSharedReminderParts,
+  prependReminderPartsToContent,
+} from "@/reminders/engine";
 import {
   type SharedReminderState,
   syncReminderStateFromContextTracker,
@@ -113,20 +115,14 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import type { ToolsetName } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { generatePlanFilePath } from "@/utils/plan-name";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
 import { isInteractiveCommand, isNonStateCommand } from "./command-routing";
 import { AUTO_REFLECTION_DESCRIPTION } from "./constants";
 import { buildTextParts } from "./content-parts";
+import { buildGoalPrompt } from "./goal-loop";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
-import {
-  buildGoalPrompt,
-  buildLoopFirstTurnPrompt,
-  buildLoopPrompt,
-  parseRalphArgs,
-} from "./ralph";
 import { hasActiveReflectionSubagent } from "./reflection";
 import { saveLastSessionBeforeExit } from "./session";
 import { handleConnectionCommand } from "./submit-connection-commands";
@@ -149,12 +145,6 @@ type PendingGitReminder = {
   dirty: boolean;
   aheadOfRemote: boolean;
   summary: string;
-};
-
-type PendingRalphConfig = {
-  completionPromise: string | null | undefined;
-  maxIterations: number;
-  isYolo: boolean;
 };
 
 type ProfileConfirmPending = {
@@ -180,7 +170,6 @@ type SubmitHandlerContext = {
   appendTaskNotificationEvents: (summaries: string[]) => boolean;
   bashCommandCacheRef: MutableRefObject<BashCommandCacheEntry[]>;
   buffersRef: MutableRefObject<Buffers>;
-  cacheLastPlanFilePath: (planFilePath: string | null) => void;
   checkPendingApprovalsForSlashCommand: () => Promise<
     { blocked: true } | { blocked: false }
   >;
@@ -232,7 +221,6 @@ type SubmitHandlerContext = {
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: MutableRefObject<ConversationSwitchContext | null>;
   pendingGitReminderRef: MutableRefObject<PendingGitReminder | null>;
-  pendingRalphConfig: PendingRalphConfig | null;
   processConversation: ProcessConversation;
   processConversationWithQueuedApprovals: ProcessConversation;
   profileConfirmPending: ProfileConfirmPending | null;
@@ -279,7 +267,6 @@ type SubmitHandlerContext = {
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
-  setPendingRalphConfig: Dispatch<SetStateAction<PendingRalphConfig | null>>;
   setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
@@ -293,7 +280,7 @@ type SubmitHandlerContext = {
   setTokenStreamingEnabled: Dispatch<SetStateAction<boolean>>;
   setTrajectoryTokenBase: Dispatch<SetStateAction<number>>;
   setUiPermissionMode: (mode: PermissionMode) => void;
-  setUiRalphActive: Dispatch<SetStateAction<boolean>>;
+  setUiGoalLoopActive: Dispatch<SetStateAction<boolean>>;
   sharedReminderStateRef: MutableRefObject<SharedReminderState>;
   shouldAutoGenerateConversationTitleRef: MutableRefObject<boolean>;
 
@@ -333,7 +320,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     appendTaskNotificationEvents,
     bashCommandCacheRef,
     buffersRef,
-    cacheLastPlanFilePath,
     checkPendingApprovalsForSlashCommand,
     chromeColumns,
     commandRunner,
@@ -372,7 +358,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
-    pendingRalphConfig,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,
@@ -406,7 +391,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setLlmConfig,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPendingRalphConfig,
     setPinDialogLocal,
     setProfileConfirmPending,
     setReasoningTabCycleEnabled,
@@ -418,7 +402,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
 
@@ -608,45 +592,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
       // Note: userCancelledRef.current was already reset above before the queue check
       // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
-
-      // Handle pending Ralph config - activate ralph mode but let message flow through normal path
-      // This ensures session context and other reminders are included
-      // Track if we just activated so we can use first turn reminder vs continuation
-      let justActivatedRalph = false;
-      if (pendingRalphConfig && !msg.startsWith("/")) {
-        const { completionPromise, maxIterations, isYolo } = pendingRalphConfig;
-        ralphMode.activate(msg, completionPromise, maxIterations, isYolo);
-        setUiRalphActive(true);
-        setPendingRalphConfig(null);
-        justActivatedRalph = true;
-        if (isYolo) {
-          permissionMode.setMode("unrestricted");
-          setUiPermissionMode("unrestricted");
-        }
-
-        const ralphState = ralphMode.getState();
-
-        // Add status to transcript
-        const statusId = uid("status");
-        const promiseDisplay = ralphState.completionPromise
-          ? `"${ralphState.completionPromise.slice(0, 50)}${ralphState.completionPromise.length > 50 ? "..." : ""}"`
-          : "(none)";
-        buffersRef.current.byId.set(statusId, {
-          kind: "status",
-          id: statusId,
-          lines: [
-            `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode started (iter 1/${maxIterations || "∞"})`,
-            `Promise: ${promiseDisplay}`,
-          ],
-        });
-        buffersRef.current.order.push(statusId);
-        refreshDerived();
-
-        // Don't return - let message flow through normal path which will:
-        // 1. Add session context reminder (if first message)
-        // 2. Add ralph mode reminder (since ralph is now active)
-        // 3. Add other reminders (skill unload, memory, etc.)
-      }
 
       let aliasedMsg = msg;
       if (msg === "exit" || msg === "quit") {
@@ -1079,6 +1024,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        // Special handling for /login command - sign in to Letta Constellation
+        if (trimmed === "/login") {
+          openOverlay("login", "/login", "Opening login...", "Login dismissed");
+          return { submitted: true };
+        }
+
         // Special handling for /logout command - clear credentials and exit
         if (trimmed === "/logout") {
           const cmd = commandRunner.start(msg.trim(), "Logging out...");
@@ -1149,68 +1100,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             cmd.fail(`Failed: ${errorOutput}`);
           } finally {
             setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /ralph and /yolo-ralph commands - Ralph Wiggum mode
-        if (trimmed.startsWith("/yolo-ralph") || trimmed.startsWith("/ralph")) {
-          const isYolo = trimmed.startsWith("/yolo-ralph");
-          const { prompt, completionPromise, maxIterations } =
-            parseRalphArgs(trimmed);
-
-          const cmd = commandRunner.start(trimmed, "Activating ralph mode...");
-
-          if (prompt) {
-            // Inline prompt - activate immediately and send
-            ralphMode.activate(
-              prompt,
-              completionPromise,
-              maxIterations,
-              isYolo,
-            );
-            setUiRalphActive(true);
-            if (isYolo) {
-              permissionMode.setMode("unrestricted");
-              setUiPermissionMode("unrestricted");
-            }
-
-            const ralphState = ralphMode.getState();
-            const promiseDisplay = ralphState.completionPromise
-              ? `"${ralphState.completionPromise.slice(0, 50)}${ralphState.completionPromise.length > 50 ? "..." : ""}"`
-              : "(none)";
-
-            cmd.finish(
-              `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode activated (iter 1/${maxIterations || "∞"})\nPromise: ${promiseDisplay}`,
-              true,
-            );
-
-            // Send the prompt with ralph reminder prepended
-            const systemMsg = buildLoopFirstTurnPrompt(
-              ralphState,
-              conversationIdRef.current,
-            );
-            processConversationWithQueuedApprovals([
-              {
-                type: "message",
-                role: "user",
-                content: buildTextParts(systemMsg, prompt),
-                otid: randomUUID(),
-              },
-            ]);
-          } else {
-            // No inline prompt - wait for next message
-            setPendingRalphConfig({ completionPromise, maxIterations, isYolo });
-
-            const defaultPromisePreview = DEFAULT_COMPLETION_PROMISE.slice(
-              0,
-              40,
-            );
-
-            cmd.finish(
-              `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode ready (waiting for task)\nMax iterations: ${maxIterations || "unlimited"}\nPromise: ${completionPromise === null ? "(none)" : (completionPromise ?? `"${defaultPromisePreview}..." (default)`)}\n\nType your task to begin the loop.`,
-              true,
-            );
           }
           return { submitted: true };
         }
@@ -1637,9 +1526,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               currentConversationId,
               false,
             );
-            if (ralphMode.getState().mode === "goal") {
-              ralphMode.deactivate();
-              setUiRalphActive(false);
+            if (goalLoopMode.getState().isActive) {
+              goalLoopMode.deactivate();
+              setUiGoalLoopActive(false);
               permissionMode.setMode("standard");
               setUiPermissionMode("standard");
             }
@@ -1671,9 +1560,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
             if (lowerGoalArg === "pause" || lowerGoalArg === "complete") {
-              if (ralphMode.getState().mode === "goal") {
-                ralphMode.deactivate();
-                setUiRalphActive(false);
+              if (goalLoopMode.getState().isActive) {
+                goalLoopMode.deactivate();
+                setUiGoalLoopActive(false);
                 permissionMode.setMode("standard");
                 setUiPermissionMode("standard");
               }
@@ -1682,11 +1571,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 currentConversationId,
                 true,
               );
-              ralphMode.activateGoal(goal.objective, 0, true);
-              setUiRalphActive(true);
+              goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
+              setUiGoalLoopActive(true);
               permissionMode.setMode("unrestricted");
               setUiPermissionMode("unrestricted");
-              const goalState = ralphMode.getState();
+              const goalState = goalLoopMode.getState();
               const systemMsg = buildGoalPrompt(
                 goalState,
                 currentConversationId,
@@ -1739,13 +1628,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             parsedGoal.tokenBudget,
             true,
           );
-          ralphMode.activateGoal(
+          goalLoopMode.activateGoal(
             parsedGoal.objective,
-            0,
-            true,
             parsedGoal.tokenBudget,
           );
-          setUiRalphActive(true);
+          setUiGoalLoopActive(true);
           permissionMode.setMode("unrestricted");
           setUiPermissionMode("unrestricted");
           const replaced = previousGoal ? " replaced" : " active";
@@ -1753,7 +1640,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`,
             true,
           );
-          const goalState = ralphMode.getState();
+          const goalState = goalLoopMode.getState();
           const systemMsg = buildGoalPrompt(goalState, currentConversationId);
           processConversationWithQueuedApprovals([
             {
@@ -2757,84 +2644,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /plan command - enter plan mode
-        if (trimmed === "/plan") {
-          const cmd = commandRunner.start("/plan", "Entering plan mode...");
-          if (!settingsManager.isPlanModeEnabled()) {
-            cmd.finish("Plan mode is disabled in user settings.", false);
-            return { submitted: true };
-          }
-
-          // Generate plan file path and enter plan mode
-          const planPath = generatePlanFilePath();
-          permissionMode.setPlanFilePath(planPath);
-          cacheLastPlanFilePath(planPath);
-          permissionMode.setMode("plan");
-          setUiPermissionMode("plan");
-
-          cmd.finish(`Plan mode enabled. Plan file: ${planPath}`, true);
-
-          return { submitted: true };
-        }
-
-        if (trimmed === "/plan-mode" || trimmed.startsWith("/plan-mode ")) {
-          const cmd = commandRunner.start(
-            "/plan-mode",
-            "Updating plan mode setting...",
-          );
-          const arg = trimmed.split(/\s+/)[1]?.toLowerCase();
-          const enabled = (() => {
-            if (arg === "on" || arg === "true" || arg === "enable") {
-              return true;
-            }
-            if (arg === "off" || arg === "false" || arg === "disable") {
-              return false;
-            }
-            return null;
-          })();
-
-          if (enabled === null) {
-            cmd.fail("Usage: /plan-mode on|off");
-            return { submitted: true };
-          }
-
-          try {
-            settingsManager.setPlanModeEnabled(enabled);
-            await settingsManager.flush();
-
-            if (!enabled && permissionMode.getMode() === "plan") {
-              permissionMode.setMode("unrestricted");
-              setUiPermissionMode("unrestricted");
-            }
-
-            const { forceToolsetSwitch, switchToolsetForModel } = await import(
-              "@/tools/toolset"
-            );
-            if (currentToolset) {
-              await forceToolsetSwitch(currentToolset, agentId);
-            } else {
-              await switchToolsetForModel(
-                currentModelHandle ??
-                  currentModelId ??
-                  "anthropic/claude-sonnet-4",
-                agentId,
-              );
-            }
-
-            cmd.finish(
-              enabled
-                ? "Plan mode enabled. /plan and plan-mode tools are now available."
-                : "Plan mode disabled. /plan is disabled and plan-mode tools are hidden.",
-              true,
-            );
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed to update plan mode setting: ${errorDetails}`);
-          }
-
-          return { submitted: true };
-        }
-
         // Special handling for /init command
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
@@ -3201,19 +3010,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       openTrajectorySegment();
       refreshDerived();
 
-      // Prepend ralph mode reminder if in ralph mode
-      let ralphModeReminder = "";
-      if (ralphMode.getState().isActive) {
-        if (justActivatedRalph) {
-          // First turn - use full first turn reminder, don't increment (already at 1)
-          const ralphState = ralphMode.getState();
-          ralphModeReminder = `${buildLoopFirstTurnPrompt(ralphState, conversationIdRef.current)}\n\n`;
-        } else {
-          // Continuation after ESC - increment iteration and use shorter reminder
-          ralphMode.incrementIteration();
-          const ralphState = ralphMode.getState();
-          ralphModeReminder = `${buildLoopPrompt(ralphState, conversationIdRef.current)}\n\n`;
-        }
+      // If a goal loop is active and the user sends an interstitial message,
+      // keep the loop context attached to the turn.
+      let goalLoopReminder = "";
+      if (goalLoopMode.getState().isActive) {
+        goalLoopMode.incrementIteration();
+        const goalState = goalLoopMode.getState();
+        goalLoopReminder = `${buildGoalPrompt(goalState, conversationIdRef.current)}
+
+`;
       }
 
       // Inject SessionStart hook feedback (stdout on exit 2) into first message only
@@ -3418,7 +3223,6 @@ ${SYSTEM_REMINDER_CLOSE}
         systemInfoReminderEnabled,
         reflectionSettings,
         skillSources: getSkillSources(),
-        resolvePlanModeReminder: getPlanModeReminder,
         maybeLaunchReflectionSubagent,
       });
       for (const part of sharedReminderParts) {
@@ -3441,7 +3245,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
       pushReminder(sessionStartHookFeedback);
       pushReminder(conversationSwitchAlert);
-      pushReminder(ralphModeReminder);
+      pushReminder(goalLoopReminder);
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryGitReminder);
@@ -3451,10 +3255,10 @@ ${SYSTEM_REMINDER_CLOSE}
       if (currentGoal) {
         pushReminder(buildGoalReminder(currentGoal));
       }
-      const messageContent =
-        reminderParts.length > 0
-          ? [...reminderParts, ...contentParts]
-          : contentParts;
+      const messageContent = prependReminderPartsToContent(
+        contentParts as MessageCreate["content"],
+        reminderParts,
+      );
 
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
@@ -3566,7 +3370,6 @@ ${SYSTEM_REMINDER_CLOSE}
       isAgentBusy,
       setStreaming,
       setCommandRunning,
-      pendingRalphConfig,
       openTrajectorySegment,
       resetTrajectoryBases,
       systemInfoReminderEnabled,

@@ -25,6 +25,8 @@ export function goalStatusLabel(status: ConversationGoal["status"]): string {
       return "paused";
     case "complete":
       return "complete";
+    case "blocked":
+      return "blocked";
     case "budget_limited":
       return "budget limited";
   }
@@ -108,6 +110,8 @@ export function formatGoalStatusIndicator(goal: ConversationGoal): string {
         : `Pursuing goal (${formatGoalElapsedSeconds(elapsedSeconds)})`;
     case "paused":
       return "Goal paused (/goal resume)";
+    case "blocked":
+      return "Goal blocked (/goal resume)";
     case "budget_limited":
       return tokenUsage
         ? `Goal unmet (${tokenUsage} tokens)`
@@ -126,7 +130,7 @@ The user has set a goal for this conversation.
 Goal status: ${goalStatusLabel(goal.status)}
 Goal objective: ${goal.objective}
 
-Keep this goal in mind when choosing next steps. If the goal is paused, do not proactively continue it unless the user resumes it or asks you to proceed. If the goal is complete, treat it as completed context rather than an active directive.
+Keep this goal in mind when choosing next steps. If the goal is paused or blocked, do not proactively continue it unless the user resumes it or asks you to proceed. If the goal is complete, treat it as completed context rather than an active directive.
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
@@ -174,10 +178,11 @@ Before deciding that the goal is achieved, perform a completion audit against th
 - Do not accept proxy signals as completion by themselves. Passing tests, a complete manifest, a successful verifier, or substantial implementation effort are useful evidence only if they cover every requirement in the objective.
 - Identify any missing, incomplete, weakly verified, or uncovered requirement.
 - Treat uncertainty as not achieved; do more verification or continue the work.
+- If the same blocking condition has recurred for at least three consecutive goal turns and you are at an impasse, call update_goal with status "blocked" instead of continuing indefinitely. Summarize the blocker and what user input or external change would unblock progress.
 
-Do not rely on intent, partial progress, elapsed effort, memory of earlier work, or a plausible final answer as proof of completion. Only mark the goal achieved when the audit shows that the objective has actually been achieved and no required work remains. If any requirement is missing, incomplete, or unverified, keep working instead of marking the goal complete. If the objective is achieved, call update_goal with status "complete" so usage accounting is preserved. Report the final elapsed time, and if the achieved goal has a token budget, report the final consumed token budget to the user after update_goal succeeds.
+Do not rely on intent, partial progress, elapsed effort, memory of earlier work, or a plausible final answer as proof of completion. Only mark the goal achieved when the audit shows that the objective has actually been achieved and no required work remains. If any requirement is missing, incomplete, or unverified, keep working instead of marking the goal complete unless you meet the repeated-blocker rule above. If the objective is achieved, call update_goal with status "complete" so usage accounting is preserved. Report the final elapsed time, and if the achieved goal has a token budget, report the final consumed token budget to the user after update_goal succeeds.
 
-Do not call update_goal unless the goal is complete. Do not mark a goal complete merely because the budget is nearly exhausted or because you are stopping work.`;
+Do not call update_goal unless the goal is complete or blocked under the repeated-blocker rule. Do not mark a goal complete merely because the budget is nearly exhausted or because you are stopping work.`;
 }
 
 export function buildGoalBudgetLimitPrompt(goal: ConversationGoal): string {
