@@ -966,6 +966,15 @@ export function AppView(props: AppViewProps) {
                     backendMode,
                   });
                 }}
+                onLogin={() => {
+                  completeOverlay("resume");
+                  openOverlay(
+                    "login",
+                    "/login",
+                    "Opening login...",
+                    "Login dismissed",
+                  );
+                }}
                 onCancel={closeOverlay}
                 onCreateNewAgent={(name: string, backendMode) => {
                   const overlayCommand = completeOverlay("resume");
