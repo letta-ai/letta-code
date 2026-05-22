@@ -17,6 +17,10 @@ import {
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import {
+  DEFAULT_STATUSLINE_RENDERER_ID,
+  getBuiltinStatuslineRenderer,
+} from "@/cli/display/statusline/registry";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
@@ -24,7 +28,6 @@ import {
   type ExecutionPhase,
   getPhaseVisual,
 } from "@/cli/helpers/phase-visuals";
-import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
@@ -68,19 +71,6 @@ function truncateEnd(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   if (maxChars <= 3) return value.slice(0, maxChars);
   return `${value.slice(0, maxChars - 3)}...`;
-}
-
-function getReasoningEffortTag(
-  effort: ModelReasoningEffort | null | undefined,
-): string | null {
-  if (effort === "none") return null;
-  if (effort === "xhigh") return "xhigh";
-  if (effort === "max") return "max";
-  if (effort === "minimal") return "minimal";
-  if (effort === "low") return "low";
-  if (effort === "medium") return "medium";
-  if (effort === "high") return "high";
-  return null;
 }
 
 /**
@@ -634,6 +624,7 @@ function StatuslineTransientHintView({
 }
 
 function DefaultOrExtensionStatusline({
+  defaultLeftStatusline,
   statusLineActive,
   statusLineText,
   isBashMode,
@@ -642,6 +633,7 @@ function DefaultOrExtensionStatusline({
   modeGlyph,
   showExitHint,
 }: {
+  defaultLeftStatusline: ReactNode;
   statusLineActive: boolean;
   statusLineText?: string;
   isBashMode: boolean;
@@ -680,7 +672,7 @@ function DefaultOrExtensionStatusline({
     );
   }
 
-  return <Text dimColor>Press / for commands</Text>;
+  return defaultLeftStatusline;
 }
 
 /**
@@ -697,6 +689,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   showExitHint,
   agentName,
   currentModel,
+  currentModelProvider,
   currentReasoningEffort,
   isOpenAICodexProvider,
   isByokProvider,
@@ -718,6 +711,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   showExitHint: boolean;
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
+  currentModelProvider?: string | null;
   currentReasoningEffort?: ModelReasoningEffort | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
@@ -736,12 +730,33 @@ const StatuslineSlot = memo(function StatuslineSlot({
     ctrlCPressed,
     escapePressed,
   });
+  const statuslineRenderer = getBuiltinStatuslineRenderer(
+    DEFAULT_STATUSLINE_RENDERER_ID,
+  );
+  const renderedStatusline = statuslineRenderer.render({
+    agentName,
+    currentModel,
+    currentModelProvider,
+    currentReasoningEffort,
+    goalStatusText: null,
+    hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+    isByokProvider,
+    isLocalBackend,
+    isOpenAICodexProvider,
+    rightColumnWidth,
+  });
+  const defaultLeftStatusline = renderedStatusline?.left ?? (
+    <Text dimColor>Press / for commands</Text>
+  );
+  const rightLabel = renderedStatusline?.right ?? <Text> </Text>;
+
   const leftContent = preemption ? (
     <StatuslinePreemptionView preemption={preemption} />
   ) : transientHint ? (
     <StatuslineTransientHintView hint={transientHint} />
   ) : (
     <DefaultOrExtensionStatusline
+      defaultLeftStatusline={defaultLeftStatusline}
       statusLineActive={statusLineActive}
       statusLineText={statusLineText}
       isBashMode={isBashMode}
@@ -751,64 +766,6 @@ const StatuslineSlot = memo(function StatuslineSlot({
       showExitHint={showExitHint}
     />
   );
-
-  const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
-  const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
-  const reasoningTag = shouldHideReasoningForModelDisplay(currentModel)
-    ? null
-    : getReasoningEffortTag(currentReasoningEffort);
-  const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
-  const tempOverrideExtraChars = hasTemporaryModelOverride ? 2 : 0; // " ▲"
-
-  const baseReservedChars =
-    displayAgentName.length + byokExtraChars + tempOverrideExtraChars + 4;
-  const modelWithReasoning =
-    (currentModel ?? "unknown") + (reasoningTag ? ` (${reasoningTag})` : "");
-
-  const maxModelChars = Math.max(8, rightColumnWidth - baseReservedChars);
-  const displayModel = truncateEnd(modelWithReasoning, maxModelChars);
-  const rightTextLength =
-    displayAgentName.length +
-    displayModel.length +
-    byokExtraChars +
-    tempOverrideExtraChars +
-    3;
-  const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
-
-  // Agent label without leading spaces (used for the default right-side label)
-  const rightLabelCore = useMemo(() => {
-    const parts: string[] = [];
-    parts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
-    parts.push(chalk.dim(" ["));
-    parts.push(chalk.dim(displayModel));
-    if (isByokProvider) {
-      parts.push(chalk.dim(" "));
-      parts.push(
-        isOpenAICodexProvider ? chalk.hex("#74AA9C")("▲") : chalk.yellow("▲"),
-      );
-    }
-    if (hasTemporaryModelOverride) {
-      parts.push(chalk.dim(" "));
-      parts.push(chalk.yellow("▲"));
-    }
-    parts.push(chalk.dim("]"));
-    if (isLocalBackend) {
-      parts.push(chalk.dim(" · "));
-      parts.push(chalk.hex(colors.status.success)("local"));
-    }
-    return parts.join("");
-  }, [
-    displayAgentName,
-    displayModel,
-    isByokProvider,
-    isOpenAICodexProvider,
-    isLocalBackend,
-    hasTemporaryModelOverride,
-  ]);
-
-  const rightLabel = useMemo(() => {
-    return " ".repeat(rightPrefixSpaces) + rightLabelCore;
-  }, [rightPrefixSpaces, rightLabelCore]);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -2236,6 +2193,7 @@ export function Input({
                 agentId={agentId}
                 agentName={agentName}
                 currentModel={currentModel}
+                currentModelProvider={currentModelProvider}
                 currentReasoningEffort={currentReasoningEffort}
                 serverUrl={serverUrl}
                 workingDirectory={process.cwd()}
