@@ -36,7 +36,7 @@ import {
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
-import { getBackend } from "@/backend";
+import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
 import {
@@ -766,6 +766,7 @@ export function App({
   }, [agentState?.name, conversationSummary, projectDirectory]);
 
   const currentModelProvider = llmConfig?.provider_name ?? null;
+  const isLocalBackend = isLocalBackendEnabled();
   const currentReasoningEffort: ModelReasoningEffort | null =
     currentModelLabel?.startsWith("letta/auto")
       ? null
@@ -4396,6 +4397,7 @@ export function App({
       currentModelHandle={currentModelHandle}
       currentModelId={currentModelId}
       currentModelProvider={currentModelProvider}
+      isLocalBackend={isLocalBackend}
       currentPersonalityId={currentPersonalityId}
       currentReasoningEffort={currentReasoningEffort}
       currentSystemPromptId={currentSystemPromptId}

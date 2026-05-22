@@ -443,6 +443,7 @@ const InputFooter = memo(function InputFooter({
   currentReasoningEffort,
   isOpenAICodexProvider,
   isByokProvider,
+  isLocalBackend = false,
   hasTemporaryModelOverride,
   hideFooter,
   rightColumnWidth,
@@ -466,6 +467,7 @@ const InputFooter = memo(function InputFooter({
   currentReasoningEffort?: ModelReasoningEffort | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
+  isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   hideFooter: boolean;
   rightColumnWidth: number;
@@ -584,12 +586,17 @@ const InputFooter = memo(function InputFooter({
       parts.push(chalk.yellow("▲"));
     }
     parts.push(chalk.dim("]"));
+    if (isLocalBackend) {
+      parts.push(chalk.dim(" · "));
+      parts.push(chalk.hex(colors.status.success)("local"));
+    }
     return parts.join("");
   }, [
     displayAgentName,
     displayModel,
     isByokProvider,
     isOpenAICodexProvider,
+    isLocalBackend,
     hasTemporaryModelOverride,
   ]);
 
@@ -1019,6 +1026,7 @@ export function Input({
   agentName,
   currentModel,
   currentModelProvider,
+  isLocalBackend = false,
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
   messageQueue,
@@ -1067,6 +1075,7 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
+  isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   messageQueue?: QueuedMessage[];
@@ -1942,6 +1951,7 @@ export function Input({
                   currentModelProvider?.startsWith("lc-") ||
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
+                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
@@ -2009,6 +2019,7 @@ export function Input({
     suppressDividers,
     queueMode,
     deferModeSupported,
+    isLocalBackend,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
