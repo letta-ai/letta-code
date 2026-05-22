@@ -299,9 +299,7 @@ function ProfileSelectionUI({
 
   const hasLocalDir = settingsManager.hasLocalLettaDir();
   const contextMessage = externalFreshRepoMode
-    ? options.length > 0
-      ? "0 pinned agents available."
-      : "0 pinned agents available."
+    ? `${options.length} pinned agent${options.length !== 1 ? "s" : ""} available.`
     : hasLocalDir
       ? "Existing `.letta` folder detected."
       : `${options.length} agent profile${options.length !== 1 ? "s" : ""} detected.`;
