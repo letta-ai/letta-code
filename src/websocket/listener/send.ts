@@ -53,10 +53,11 @@ import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime } from "./types";
 
-const ACTIVE_BLOCKING_RUN_STATUSES = new Set(["created", "running", "pending"]);
-const DEFAULT_BUSY_RUN_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+const ACTIVE_BLOCKING_RUN_STATUSES = new Set(["created", "running"]);
+const BUSY_RUN_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 const BUSY_RUN_POLL_INTERVAL_MS = 5000;
 
+type MessageStreamResult = Awaited<ReturnType<typeof sendMessageStream>>;
 type BlockingRunWaitResult = "settled" | "timed_out" | "unavailable";
 
 export function isApprovalOnlyInput(
@@ -88,14 +89,6 @@ function isBackendNotFoundError(err: unknown): boolean {
 
 function isBlockingRunActive(status: unknown): boolean {
   return typeof status === "string" && ACTIVE_BLOCKING_RUN_STATUSES.has(status);
-}
-
-function getBusyRunWaitTimeoutMs(): number {
-  const configured = Number(process.env.LETTA_BUSY_RUN_WAIT_TIMEOUT_MS);
-  if (Number.isFinite(configured) && configured >= 0) {
-    return configured;
-  }
-  return DEFAULT_BUSY_RUN_WAIT_TIMEOUT_MS;
 }
 
 async function sleepWithAbort(
@@ -139,7 +132,7 @@ async function waitForBlockingRunToSettle(
   runId: string,
   abortSignal?: AbortSignal,
 ): Promise<BlockingRunWaitResult> {
-  const timeoutMs = getBusyRunWaitTimeoutMs();
+  const timeoutMs = BUSY_RUN_WAIT_TIMEOUT_MS;
   const startedAt = Date.now();
 
   while (true) {
@@ -192,11 +185,85 @@ async function maybeWaitForBlockingRun(params: {
 
   if (waitResult === "timed_out") {
     throw new Error(
-      `Conversation is still busy because run ${runId} remained active after ${getBusyRunWaitTimeoutMs()}ms`,
+      `Conversation is still busy because run ${runId} remained active after ${BUSY_RUN_WAIT_TIMEOUT_MS}ms`,
     );
   }
 
   return "fall_back";
+}
+
+function getConversationBusyRetryNotice(
+  blockingRunId: string | null,
+  retryDelayMs: number,
+): { message: string; delayMs: number } {
+  if (!blockingRunId) {
+    return {
+      message: "Conversation is busy, waiting and retrying…",
+      delayMs: retryDelayMs,
+    };
+  }
+
+  return {
+    message: `Conversation is busy; waiting for run ${blockingRunId} to finish…`,
+    delayMs: BUSY_RUN_POLL_INTERVAL_MS,
+  };
+}
+
+async function tryResumeBusyConversationStream(params: {
+  conversationId: string;
+  messages: Parameters<typeof sendMessageStream>[1];
+  runtime: ConversationRuntime;
+  abortSignal?: AbortSignal;
+  debugMessage: string;
+}): Promise<MessageStreamResult | null> {
+  const { conversationId, messages, runtime, abortSignal, debugMessage } =
+    params;
+
+  try {
+    const backend = getBackend();
+    const messageOtid = messages
+      .map((item) => (item as Record<string, unknown>).otid)
+      .find((value): value is string => typeof value === "string");
+    const resumeAbortRelay = createStreamAbortRelay(abortSignal);
+
+    if (abortSignal?.aborted) {
+      throw new Error("Cancelled by user");
+    }
+
+    try {
+      const resumeStream = await backend.streamConversationMessages(
+        conversationId,
+        {
+          agent_id:
+            conversationId === "default"
+              ? (runtime.agentId ?? undefined)
+              : undefined,
+          otid: messageOtid ?? undefined,
+          starting_after: 0,
+          batch_size: 1000,
+        } as unknown as ConversationMessageStreamBody,
+        resumeAbortRelay ? { signal: resumeAbortRelay.signal } : undefined,
+      );
+      resumeAbortRelay?.attach(resumeStream as object);
+      return resumeStream;
+    } catch (resumeError) {
+      resumeAbortRelay?.cleanup();
+      throw resumeError;
+    }
+  } catch (resumeError) {
+    if (abortSignal?.aborted) {
+      throw new Error("Cancelled by user");
+    }
+    if (process.env.DEBUG) {
+      console.warn(
+        debugMessage,
+        resumeError instanceof Error
+          ? resumeError.message
+          : String(resumeError),
+      );
+    }
+    return null;
+  }
 }
 
 /**
@@ -521,51 +588,16 @@ export async function sendMessageStreamWithRetry(
           agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
-        try {
-          const backend = getBackend();
-          const messageOtid = messages
-            .map((item) => (item as Record<string, unknown>).otid)
-            .find((value): value is string => typeof value === "string");
-          const resumeAbortRelay = createStreamAbortRelay(abortSignal);
-
-          if (abortSignal?.aborted) {
-            throw new Error("Cancelled by user");
-          }
-
-          try {
-            const resumeStream = await backend.streamConversationMessages(
-              conversationId,
-              {
-                agent_id:
-                  conversationId === "default"
-                    ? (runtime.agentId ?? undefined)
-                    : undefined,
-                otid: messageOtid ?? undefined,
-                starting_after: 0,
-                batch_size: 1000,
-              } as unknown as ConversationMessageStreamBody,
-              resumeAbortRelay
-                ? { signal: resumeAbortRelay.signal }
-                : undefined,
-            );
-            resumeAbortRelay?.attach(resumeStream as object);
-            return resumeStream;
-          } catch (resumeError) {
-            resumeAbortRelay?.cleanup();
-            throw resumeError;
-          }
-        } catch (resumeError) {
-          if (abortSignal?.aborted) {
-            throw new Error("Cancelled by user");
-          }
-          if (process.env.DEBUG) {
-            console.warn(
-              "[Listen] Pre-stream resume failed, falling back to wait/retry:",
-              resumeError instanceof Error
-                ? resumeError.message
-                : String(resumeError),
-            );
-          }
+        const resumeStream = await tryResumeBusyConversationStream({
+          conversationId,
+          messages,
+          runtime,
+          abortSignal,
+          debugMessage:
+            "[Listen] Pre-stream resume failed, falling back to wait/retry:",
+        });
+        if (resumeStream) {
+          return resumeStream;
         }
 
         const retryBudgetAvailable = action === "retry_conversation_busy";
@@ -577,13 +609,17 @@ export async function sendMessageStreamWithRetry(
           category: "conversation_busy",
           attempt,
         });
+        const retryNotice = getConversationBusyRetryNotice(
+          blockingRunId,
+          delayMs,
+        );
 
         emitRetryDelta(socket, runtime, {
-          message: "Conversation is busy, waiting and retrying…",
+          message: retryNotice.message,
           reason: "error",
           attempt,
           maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
-          delayMs,
+          delayMs: retryNotice.delayMs,
           agentId: runtime.agentId ?? undefined,
           conversationId,
         });
@@ -791,64 +827,33 @@ export async function sendApprovalContinuationWithRetry(
           conversation_id: conversationId,
         });
 
-        try {
-          const backend = getBackend();
-          const messageOtid = messages
-            .map((item) => (item as Record<string, unknown>).otid)
-            .find((value): value is string => typeof value === "string");
-          const resumeAbortRelay = createStreamAbortRelay(abortSignal);
-
-          if (abortSignal?.aborted) {
-            throw new Error("Cancelled by user");
-          }
-
-          try {
-            const resumeStream = await backend.streamConversationMessages(
-              conversationId,
-              {
-                agent_id:
-                  conversationId === "default"
-                    ? (runtime.agentId ?? undefined)
-                    : undefined,
-                otid: messageOtid ?? undefined,
-                starting_after: 0,
-                batch_size: 1000,
-              } as unknown as ConversationMessageStreamBody,
-              resumeAbortRelay
-                ? { signal: resumeAbortRelay.signal }
-                : undefined,
-            );
-            resumeAbortRelay?.attach(resumeStream as object);
-            return resumeStream;
-          } catch (resumeError) {
-            resumeAbortRelay?.cleanup();
-            throw resumeError;
-          }
-        } catch (resumeError) {
-          if (abortSignal?.aborted) {
-            throw new Error("Cancelled by user");
-          }
-          if (process.env.DEBUG) {
-            console.warn(
-              "[Listen] Approval continuation pre-stream resume failed, falling back to wait/retry:",
-              resumeError instanceof Error
-                ? resumeError.message
-                : String(resumeError),
-            );
-          }
+        const resumeStream = await tryResumeBusyConversationStream({
+          conversationId,
+          messages,
+          runtime,
+          abortSignal,
+          debugMessage:
+            "[Listen] Approval continuation pre-stream resume failed, falling back to wait/retry:",
+        });
+        if (resumeStream) {
+          return resumeStream;
         }
 
         const retryDelayMs = getRetryDelayMs({
           category: "conversation_busy",
           attempt,
         });
+        const retryNotice = getConversationBusyRetryNotice(
+          blockingRunId,
+          retryDelayMs,
+        );
 
         emitRetryDelta(socket, runtime, {
-          message: "Conversation is busy, waiting and retrying…",
+          message: retryNotice.message,
           reason: "error",
           attempt,
           maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
-          delayMs: retryDelayMs,
+          delayMs: retryNotice.delayMs,
           agentId: runtime.agentId ?? undefined,
           conversationId,
         });
