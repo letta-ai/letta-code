@@ -41,6 +41,31 @@ export function usesBackendModelCatalog(
   return Boolean(isSelfHosted || localModelCatalog);
 }
 
+export function getEmptyStateActionDescriptors(
+  showLoginAction: boolean,
+): Array<{
+  id: "connect" | "login";
+  label: string;
+  description: string;
+}> {
+  return [
+    {
+      id: "connect",
+      label: "/connect",
+      description: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
+    },
+    ...(showLoginAction
+      ? [
+          {
+            id: "login" as const,
+            label: "/login",
+            description: "Sign in to Letta Constellation",
+          },
+        ]
+      : []),
+  ];
+}
+
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
 // For Letta-hosted, keep ordering consistent across billing tiers.
@@ -104,6 +129,8 @@ interface ModelSelectorProps {
   /** The current model's handle (e.g., "anthropic/claude-sonnet-4.6") for accurate current model highlighting */
   currentModelHandle?: string | null;
   onSelect: (modelId: string) => void;
+  onOpenConnect?: () => void;
+  onOpenLogin?: () => void;
   onCancel: () => void;
   /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
   filterProvider?: string;
@@ -121,6 +148,8 @@ export function ModelSelector({
   currentModelId,
   currentModelHandle,
   onSelect,
+  onOpenConnect,
+  onOpenLogin,
   onCancel,
   filterProvider,
   forceRefresh: forceRefreshOnMount,
@@ -160,6 +189,7 @@ export function ModelSelector({
   const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showLoginAction, setShowLoginAction] = useState(false);
   const [byokProviderAliases, setByokProviderAliases] = useState<
     Record<string, string>
   >(() => buildByokProviderAliases([]));
@@ -171,6 +201,29 @@ export function ModelSelector({
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (isSelfHosted) {
+      setShowLoginAction(false);
+      return;
+    }
+
+    let cancelled = false;
+    void settingsManager
+      .getSettingsWithSecureTokens()
+      .then((settings) => {
+        if (cancelled) return;
+        setShowLoginAction(!settings.refreshToken);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setShowLoginAction(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSelfHosted]);
 
   // Fetch available models from the API (with caching + inflight dedupe)
   const loadModels = useRef(async (forceRefresh = false) => {
@@ -562,6 +615,14 @@ export function ModelSelector({
   // All categories empty → show null state under a single "All" tab
   const allEmpty =
     !isLoading && nonEmptyCategories.length === 0 && !searchQuery;
+  const emptyStateActions = useMemo(
+    () =>
+      getEmptyStateActionDescriptors(showLoginAction).map((action) => ({
+        ...action,
+        onSelect: action.id === "connect" ? onOpenConnect : onOpenLogin,
+      })),
+    [onOpenConnect, onOpenLogin, showLoginAction],
+  );
 
   // When all categories are empty, collapse to a single "All" tab
   const displayCategories = useMemo(
@@ -636,10 +697,13 @@ export function ModelSelector({
 
   // Clamp selectedIndex when list changes
   useEffect(() => {
-    if (selectedIndex >= currentList.length && currentList.length > 0) {
-      setSelectedIndex(currentList.length - 1);
+    const selectableCount = allEmpty
+      ? emptyStateActions.length
+      : currentList.length;
+    if (selectedIndex >= selectableCount && selectableCount > 0) {
+      setSelectedIndex(selectableCount - 1);
     }
-  }, [selectedIndex, currentList.length]);
+  }, [selectedIndex, currentList.length, allEmpty, emptyStateActions.length]);
 
   useInput(
     (input, key) => {
@@ -695,6 +759,23 @@ export function ModelSelector({
           setSelectedIndex(0);
         }
         return;
+      }
+
+      if (allEmpty) {
+        if (key.upArrow) {
+          setSelectedIndex((prev) => Math.max(0, prev - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setSelectedIndex((prev) =>
+            Math.min(emptyStateActions.length - 1, prev + 1),
+          );
+          return;
+        }
+        if (key.return) {
+          emptyStateActions[selectedIndex]?.onSelect?.();
+          return;
+        }
       }
 
       // Capture text input for search (allow typing even with 0 results)
@@ -820,10 +901,28 @@ export function ModelSelector({
           <Box flexDirection="column" paddingLeft={1} marginTop={1}>
             <Text dimColor>No models available.</Text>
             <Text dimColor>
-              {backendModelCatalog
-                ? "Use /connect to add an API key, or set one in your environment and restart `letta`."
-                : "Use /login to connect to Letta Cloud, or /connect to add an API key."}
+              Set an LLM API key in your env and restart `letta` or use the
+              following options:
             </Text>
+            <Box height={1} />
+            {emptyStateActions.map((action, index) => {
+              const isSelected = index === selectedIndex;
+              return (
+                <Box key={action.id} flexDirection="column" marginBottom={1}>
+                  <Text
+                    color={
+                      isSelected ? colors.selector.itemHighlighted : undefined
+                    }
+                  >
+                    {isSelected ? "> " : "  "}
+                    {action.label}
+                  </Text>
+                  <Box paddingLeft={2}>
+                    <Text dimColor>{action.description}</Text>
+                  </Box>
+                </Box>
+              );
+            })}
           </Box>
         </Box>
       )}
