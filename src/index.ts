@@ -525,10 +525,8 @@ async function resolveConversationAcrossBackends(
 ) {
   for (const backendMode of backendLookupOrder) {
     try {
-      const conversation =
-        await getBackendForMode(backendMode).retrieveConversation(
-          conversationId,
-        );
+      const backend = getBackendForMode(backendMode);
+      const conversation = await backend.retrieveConversation(conversationId);
       return { conversation, backendMode };
     } catch {
       // Conversation does not exist or this backend is unavailable; try fallback.
