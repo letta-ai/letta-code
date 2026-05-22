@@ -891,7 +891,7 @@ const StreamingStatus = memo(function StreamingStatus({
   const networkArrow = useMemo(() => {
     if (!networkPhase) return "";
     if (networkPhase === "upload") return "↑";
-    if (networkPhase === "download") return "↑"; // Use ↑ for both to avoid distracting flip (change to ↓ to restore)
+    if (networkPhase === "download") return "↓";
     return "↑\u0338";
   }, [networkPhase]);
   const showErrorArrow = networkArrow === "↑\u0338";
