@@ -31,6 +31,7 @@ import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import { getMemoryFilesystemRoot } from "./agent/memory-filesystem";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelInfo,
@@ -48,6 +49,7 @@ import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import { getSubagents } from "./agent/subagent-state";
 import {
   type ConversationCreateBody,
   type ConversationMessageStreamBody,
@@ -80,6 +82,15 @@ import {
   type ReflectionSettings,
   type ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
+import { handleMemorySubagentCompletion } from "./cli/helpers/memory-subagent-completion";
+import { isReflectionSubagentActive } from "./cli/helpers/reflection-gate";
+import {
+  appendTranscriptDeltaJsonl,
+  buildAutoReflectionPayload,
+  buildParentMemorySnapshot,
+  buildReflectionSubagentPrompt,
+  finalizeAutoReflectionPayload,
+} from "./cli/helpers/reflection-transcript";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -182,6 +193,7 @@ const PROVIDER_FALLBACK_MAP: Record<string, string> = {
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
+const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
 function trackHeadlessBoundaryError(
   errorType: string,
@@ -2923,6 +2935,8 @@ async function runBidirectionalMode(
   const backend = getBackend();
   const telemetryModelId = agent.llm_config?.model ?? "unknown";
   const readline = await import("node:readline");
+  const systemPromptRecompileByConversation = new Map<string, Promise<void>>();
+  const queuedSystemPromptRecompileByConversation = new Set<string>();
   const exitBidirectional = async (
     code: number,
     exitReason: string,
@@ -2959,6 +2973,120 @@ async function runBidirectionalMode(
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const maybeLaunchReflectionSubagent = async (
+    triggerSource: Exclude<ReflectionTrigger, "off">,
+  ): Promise<boolean> => {
+    if (!settingsManager.isMemfsEnabled(agent.id)) {
+      return false;
+    }
+
+    if (isReflectionSubagentActive(getSubagents(), agent.id, conversationId)) {
+      debugLog(
+        "memory",
+        `Skipping auto reflection launch (${triggerSource}) because one is already active`,
+      );
+      return false;
+    }
+
+    try {
+      let systemPrompt: string | undefined = agent.system ?? undefined;
+      if (!systemPrompt) {
+        try {
+          const freshAgent = await backend.retrieveAgent(agent.id);
+          systemPrompt = freshAgent.system ?? undefined;
+        } catch {
+          debugLog(
+            "memory",
+            "Failed to fetch agent system prompt for reflection payload",
+          );
+        }
+      }
+
+      const autoPayload = await buildAutoReflectionPayload(
+        agent.id,
+        conversationId,
+        systemPrompt,
+      );
+      if (!autoPayload) {
+        debugLog(
+          "memory",
+          `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
+        );
+        return false;
+      }
+
+      const memoryDir = getMemoryFilesystemRoot(agent.id);
+      const parentMemory = await buildParentMemorySnapshot(memoryDir);
+      const reflectionPrompt = buildReflectionSubagentPrompt({
+        memoryDir,
+        parentMemory,
+      });
+
+      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
+        await import("@/tools/impl/task");
+      const { subagentId } = spawnBackgroundSubagentTask({
+        subagentType: "reflection",
+        prompt: reflectionPrompt,
+        description: AUTO_REFLECTION_DESCRIPTION,
+        silentCompletion: true,
+        transcriptPath: autoPayload.payloadPath,
+        parentScope: { agentId: agent.id, conversationId },
+        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
+          telemetry.trackReflectionEnd(triggerSource, success, {
+            subagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            error,
+          });
+          await finalizeAutoReflectionPayload(
+            agent.id,
+            conversationId,
+            autoPayload.payloadPath,
+            autoPayload.endSnapshotLine,
+            success,
+          );
+          await handleMemorySubagentCompletion(
+            {
+              agentId: agent.id,
+              conversationId,
+              subagentType: "reflection",
+              success,
+              error,
+            },
+            {
+              recompileByConversation: systemPromptRecompileByConversation,
+              recompileQueuedByConversation:
+                queuedSystemPromptRecompileByConversation,
+              logRecompileFailure: (message) => debugWarn("memory", message),
+            },
+          );
+        },
+      });
+      const reflectionAgentId = await waitForBackgroundSubagentAgentId(
+        subagentId,
+        1000,
+      );
+      telemetry.trackReflectionStart(triggerSource, {
+        subagentId: reflectionAgentId ?? undefined,
+        conversationId,
+        startMessageId: autoPayload.startMessageId,
+        endMessageId: autoPayload.endMessageId,
+      });
+
+      debugLog(
+        "memory",
+        `Auto-launched reflection subagent (${triggerSource})`,
+      );
+      return true;
+    } catch (error) {
+      debugWarn(
+        "memory",
+        `Failed to auto-launch reflection subagent (${triggerSource}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+  };
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
@@ -3758,6 +3886,19 @@ async function runBidirectionalMode(
       try {
         const buffers = createBuffers(agent.id);
         const startTime = performance.now();
+        const userOtid = randomUUID();
+        const userTranscriptText = extractTelemetryInputText(userContent);
+        if (userTranscriptText.length > 0) {
+          const userLineId = `user-${userOtid}`;
+          buffers.byId.set(userLineId, {
+            kind: "user",
+            id: userLineId,
+            text: userTranscriptText,
+            otid: userOtid,
+          });
+          buffers.userLineIdByOtid.set(userOtid, userLineId);
+          buffers.order.push(userLineId);
+        }
         let numTurns = 0;
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
         let sawStreamError = false; // Track if we emitted an error during streaming
@@ -3783,6 +3924,7 @@ async function runBidirectionalMode(
           workingDirectory: getCurrentWorkingDirectory(),
           reflectionSettings,
           skillSources,
+          maybeLaunchReflectionSubagent,
         });
         const enrichedContent = prependReminderPartsToContent(
           userContent,
@@ -3791,7 +3933,7 @@ async function runBidirectionalMode(
 
         // Initial input is the user message
         let currentInput: MessageCreate[] = [
-          { role: "user", content: enrichedContent },
+          { role: "user", content: enrichedContent, otid: userOtid },
         ];
 
         // Approval handling loop - continue until end_turn or error
@@ -4182,6 +4324,21 @@ async function runBidirectionalMode(
           : isError
             ? "error"
             : "success";
+
+        if (subtype === "success" && lastStopReason === "end_turn") {
+          try {
+            await appendTranscriptDeltaJsonl(agent.id, conversationId, lines);
+          } catch (transcriptError) {
+            debugWarn(
+              "memory",
+              `Failed to append transcript delta: ${
+                transcriptError instanceof Error
+                  ? transcriptError.message
+                  : String(transcriptError)
+              }`,
+            );
+          }
+        }
 
         const resultMsg: ResultMessage = {
           type: "result",
