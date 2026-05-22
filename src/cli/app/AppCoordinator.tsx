@@ -72,6 +72,7 @@ import {
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
+import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -803,10 +804,16 @@ export function App({
     : agentState?.model_settings;
   const derivedReasoningEffort: ModelReasoningEffort | null =
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
+  const startupModelDisplayOverride = getStartupModelDisplayOverride({
+    isLocalBackend: isLocalBackendEnabled(),
+    startupHasAvailableLocalModels,
+    agentProvenance,
+  });
 
   // Use tier-aware resolution so the display matches the agent's reasoning effort
   // (e.g. "GPT-5.3-Codex" not just "GPT-5" for the first match).
   const currentModelDisplay = useMemo(() => {
+    if (startupModelDisplayOverride) return startupModelDisplayOverride;
     if (!currentModelLabel) return null;
     const info = getModelInfoForLlmConfig(currentModelLabel, {
       reasoning_effort: derivedReasoningEffort ?? null,
@@ -823,7 +830,12 @@ export function App({
       currentModelLabel.split("/").pop() ??
       null
     );
-  }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
+  }, [
+    currentModelLabel,
+    derivedReasoningEffort,
+    llmConfig,
+    startupModelDisplayOverride,
+  ]);
 
   // Set terminal title from window title config
   useEffect(() => {
@@ -2592,6 +2604,7 @@ export function App({
               continueSession,
               agentState,
               agentProvenance,
+              startupHasAvailableLocalModels,
               terminalWidth: columns,
             },
           },
@@ -4318,6 +4331,7 @@ export function App({
             continueSession,
             agentState,
             agentProvenance,
+            startupHasAvailableLocalModels,
             terminalWidth: columns,
           },
         },

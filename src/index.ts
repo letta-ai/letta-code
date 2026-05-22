@@ -1539,6 +1539,17 @@ async function main(): Promise<void> {
           setStartupHasAvailableLocalModels(true);
         }
 
+        if (startupBackendMode === "local") {
+          try {
+            const models = await backend.listModels();
+            setStartupHasAvailableLocalModels(models.length > 0);
+          } catch {
+            setStartupHasAvailableLocalModels(false);
+          }
+        } else {
+          setStartupHasAvailableLocalModels(true);
+        }
+
         // Track whether we need model picker (for skipping ensureDefaultAgents)
         let needsModelPicker = false;
 
