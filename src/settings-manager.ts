@@ -73,7 +73,7 @@ export interface AgentSettings {
 
 export interface ConversationGoal {
   objective: string;
-  status: "active" | "paused" | "complete" | "budget_limited";
+  status: "active" | "paused" | "complete" | "blocked" | "budget_limited";
   createdAt: string;
   updatedAt: string;
   activeStartedAt?: string | null;

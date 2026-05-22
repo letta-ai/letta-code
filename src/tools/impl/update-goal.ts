@@ -5,9 +5,9 @@ import { settingsManager } from "@/settings-manager";
 export async function update_goal(
   args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  if (args.status !== "complete") {
+  if (args.status !== "complete" && args.status !== "blocked") {
     throw new Error(
-      'update_goal can only mark the existing goal complete; use status "complete".',
+      'update_goal can only mark the existing goal complete or blocked; use status "complete" or "blocked".',
     );
   }
   const conversationId = getConversationId();
@@ -17,7 +17,7 @@ export async function update_goal(
   const workingDirectory = getCurrentWorkingDirectory();
   const goal = settingsManager.updateConversationGoalStatus(
     conversationId,
-    "complete",
+    args.status,
     workingDirectory,
   );
   if (!goal) {
@@ -29,8 +29,9 @@ export async function update_goal(
       goal.tokenBudget != null
         ? Math.max(0, goal.tokenBudget - goal.tokensUsed)
         : null,
-    completion_budget_report: goal.tokenBudget
-      ? `Goal achieved. Report final budget usage to the user: tokens used: ${goal.tokensUsed} of ${goal.tokenBudget}; time used: ${goal.activeTimeSeconds} seconds.`
-      : null,
+    completion_budget_report:
+      args.status === "complete" && goal.tokenBudget
+        ? `Goal achieved. Report final budget usage to the user: tokens used: ${goal.tokensUsed} of ${goal.tokenBudget}; time used: ${goal.activeTimeSeconds} seconds.`
+        : null,
   };
 }

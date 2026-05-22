@@ -393,18 +393,23 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             ? (assistantLines[assistantLines.length - 1]?.text ?? "")
             : "";
 
-        const goalCompletedByTool =
-          settingsManager.getConversationGoal(conversationIdRef.current)
-            ?.status === "complete";
+        const goalStatusAfterTool = settingsManager.getConversationGoal(
+          conversationIdRef.current,
+        )?.status;
+        const goalStoppedByTool =
+          goalStatusAfterTool === "complete" ||
+          goalStatusAfterTool === "blocked";
         if (
-          goalCompletedByTool ||
+          goalStoppedByTool ||
           goalLoopMode.checkForGoalComplete(lastAssistantText)
         ) {
+          const finalGoalStatus =
+            goalStatusAfterTool === "blocked" ? "blocked" : "complete";
           goalLoopMode.deactivate();
           setUiGoalLoopActive(false);
           settingsManager.updateConversationGoalStatus(
             conversationIdRef.current,
-            "complete",
+            finalGoalStatus,
           );
           permissionMode.setMode("standard");
           setUiPermissionMode("standard");
@@ -414,7 +419,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             kind: "status",
             id: statusId,
             lines: [
-              `✅ Goal complete after ${goalState.currentIteration} iteration(s)`,
+              finalGoalStatus === "blocked"
+                ? `⚠️ Goal blocked after ${goalState.currentIteration} iteration(s)`
+                : `✅ Goal complete after ${goalState.currentIteration} iteration(s)`,
             ],
           });
           buffersRef.current.order.push(statusId);
