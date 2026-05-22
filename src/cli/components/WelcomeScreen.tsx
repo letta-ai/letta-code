@@ -73,7 +73,7 @@ export function WelcomeScreen({
   loadingState,
   continueSession,
   agentState,
-  agentProvenance,
+  agentProvenance: _agentProvenance,
   startupHasAvailableLocalModels = true,
 }: {
   loadingState: LoadingState;
@@ -99,7 +99,6 @@ export function WelcomeScreen({
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
     startupHasAvailableLocalModels,
-    agentProvenance,
   });
   const model =
     startupModelDisplayOverride ??

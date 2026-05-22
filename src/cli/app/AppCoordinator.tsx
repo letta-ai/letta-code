@@ -815,7 +815,6 @@ export function App({
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
     startupHasAvailableLocalModels,
-    agentProvenance,
   });
 
   // Use tier-aware resolution so the display matches the agent's reasoning effort
