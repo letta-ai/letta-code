@@ -919,13 +919,27 @@ export function AgentSelector({
       footer={
         activeTab !== "new" &&
         !currentLoading &&
-        ((activeTab === "pinned" && validPinnedAgents.length > 0) ||
+        (activeTab === "pinned" ||
           (activeTab === "local" && localAgents.length > 0) ||
           (activeTab === "constellation" &&
             !constellationError &&
             constellationAgents.length > 0))
           ? (() => {
               const footerWidth = Math.max(0, terminalWidth - 2);
+              if (activeTab === "pinned" && validPinnedAgents.length === 0) {
+                return (
+                  <Box flexDirection="row">
+                    <Box width={2} flexShrink={0} />
+                    <Box flexGrow={1} width={footerWidth}>
+                      <MarkdownDisplay
+                        text="Tab switch · Esc cancel"
+                        dimColor
+                      />
+                    </Box>
+                  </Box>
+                );
+              }
+
               const pageText =
                 activeTab === "pinned"
                   ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
@@ -1010,7 +1024,10 @@ export function AgentSelector({
             !constellationError &&
             hasCloudAuth &&
             constellationAgents.length === 0)) && (
-          <Box flexDirection="column">
+          <Box
+            flexDirection="column"
+            paddingLeft={activeTab === "pinned" ? 2 : 0}
+          >
             <Text dimColor>{TAB_EMPTY_STATES[activeTab]}</Text>
             <Text dimColor>Press ESC to cancel</Text>
           </Box>
