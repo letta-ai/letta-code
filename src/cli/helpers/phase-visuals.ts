@@ -58,10 +58,9 @@ const TOOL_USE: PhaseVisual = {
 };
 
 const RESPONDING: PhaseVisual = {
-  // Halfway between requesting (50ms) and thinking/toolUse (200ms) — the
-  // model is producing tokens, the row should feel responsive rather than
-  // contemplative.
-  tickMs: 125,
+  // Between requesting (50ms) and thinking/toolUse (200ms) — the model is
+  // producing tokens, the row should feel responsive rather than contemplative.
+  tickMs: 100,
   direction: "rtl",
   baseColor: colors.status.processing,
   shimmerColor: colors.status.processingShimmer,
