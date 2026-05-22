@@ -7,12 +7,12 @@ import {
   getSubagentToolCount,
   registerSubagent,
   updateSubagent,
-} from "@/agent/subagentState";
+} from "@/agent/subagent-state";
 import type { Line } from "@/cli/helpers/accumulator";
 import {
   collectFinishedTaskToolCalls,
   createSubagentGroupItem,
-} from "@/cli/helpers/subagentAggregation";
+} from "@/cli/helpers/subagent-aggregation";
 
 describe("subagent tool count stability", () => {
   beforeEach(() => {

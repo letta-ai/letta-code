@@ -7,7 +7,7 @@ import {
   extractImagePlaceholderIds,
   extractTextPlaceholderIds,
   resolvePlaceholders,
-} from "@/cli/helpers/pasteRegistry";
+} from "@/cli/helpers/paste-registry";
 
 test("allocatePaste creates a placeholder", () => {
   const id = allocatePaste("Hello World");

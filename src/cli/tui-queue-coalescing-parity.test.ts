@@ -11,9 +11,9 @@ import { describe, expect, test } from "bun:test";
 import {
   buildContentFromQueueBatch,
   buildQueuedContentParts,
-} from "@/cli/helpers/queuedMessageParts";
-import { QueueRuntime } from "@/queue/queueRuntime";
-import type { QueuedMessage } from "@/utils/messageQueueBridge";
+} from "@/cli/helpers/queued-message-parts";
+import { QueueRuntime } from "@/queue/queue-runtime";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -182,7 +182,7 @@ describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () =>
 describe("toQueuedMsg", () => {
   // Imported lazily here to keep test readable
   test("user message with string content round-trips to QueuedMessage", async () => {
-    const { toQueuedMsg } = await import("@/cli/helpers/queuedMessageParts");
+    const { toQueuedMsg } = await import("@/cli/helpers/queued-message-parts");
     const item = {
       id: "item-1",
       kind: "message" as const,
@@ -198,7 +198,7 @@ describe("toQueuedMsg", () => {
   });
 
   test("task_notification round-trips to QueuedMessage", async () => {
-    const { toQueuedMsg } = await import("@/cli/helpers/queuedMessageParts");
+    const { toQueuedMsg } = await import("@/cli/helpers/queued-message-parts");
     const item = {
       id: "item-2",
       kind: "task_notification" as const,
@@ -213,7 +213,7 @@ describe("toQueuedMsg", () => {
   });
 
   test("user message with content parts extracts text parts", async () => {
-    const { toQueuedMsg } = await import("@/cli/helpers/queuedMessageParts");
+    const { toQueuedMsg } = await import("@/cli/helpers/queued-message-parts");
     const item = {
       id: "item-3",
       kind: "message" as const,

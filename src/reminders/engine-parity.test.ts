@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { SkillSource } from "@/agent/skills";
-import type { ReflectionSettings } from "@/cli/helpers/memoryReminder";
+import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
 import {
   SHARED_REMINDER_CATALOG,
   SHARED_REMINDER_IDS,
@@ -49,7 +49,6 @@ describe("shared reminder parity", () => {
       systemInfoReminderEnabled: true,
       reflectionSettings,
       skillSources: [] as SkillSource[],
-      resolvePlanModeReminder: () => "plan",
     };
 
     const interactive = await buildSharedReminderParts({
@@ -108,7 +107,6 @@ describe("shared reminder parity", () => {
       systemInfoReminderEnabled: true,
       reflectionSettings,
       skillSources: [] as SkillSource[],
-      resolvePlanModeReminder: () => "plan",
       mode: "subagent",
       state: createSharedReminderState(),
     });

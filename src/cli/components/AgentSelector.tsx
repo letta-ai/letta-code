@@ -1,23 +1,26 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getModelDisplayName } from "@/agent/model";
-import { type Backend, getBackend } from "@/backend";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { getBackendForMode } from "@/backend/backend";
+import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
+import { OverlayShell } from "./OverlayShell";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { validateAgentName } from "./PinDialog";
+import { TabBar } from "./TabBar";
 import { Text } from "./Text";
 
-// Horizontal line character (matches approval dialogs)
-const SOLID_LINE = "─";
+/** Backend mode to switch to when selecting an agent */
+export type AgentBackendMode = "local" | "api";
 
 interface AgentSelectorProps {
   currentAgentId: string;
-  onSelect: (agentId: string) => void;
+  onSelect: (agentId: string, backendMode: AgentBackendMode) => void;
   onCancel: () => void;
   /** Called when user creates a new agent (from New tab or N shortcut) */
   onCreateNewAgent?: (name: string) => void;
@@ -25,11 +28,16 @@ interface AgentSelectorProps {
   command?: string;
 }
 
-type TabId = "pinned" | "letta-code" | "all" | "new";
+type TabId = "pinned" | "local" | "constellation" | "new";
 
 type ViewState =
   | { type: "list" }
-  | { type: "deleteConfirm"; agent: AgentState; agentId: string };
+  | {
+      type: "deleteConfirm";
+      agent: AgentState;
+      agentId: string;
+      isLocal: boolean;
+    };
 
 interface PinnedAgentData {
   agentId: string;
@@ -38,29 +46,39 @@ interface PinnedAgentData {
   isLocal: boolean;
 }
 
-const TABS: { id: TabId; label: string }[] = [
+const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "pinned", label: "Pinned" },
-  { id: "letta-code", label: "Letta Code" },
-  { id: "all", label: "All" },
+  { id: "constellation", label: "Constellation" },
+  { id: "local", label: "Local" },
   { id: "new", label: "New" },
 ];
 
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
   pinned: "Save agents for easy access by pinning them with /pin",
-  "letta-code": "Displaying agents created inside of Letta Code",
-  all: "Displaying all available agents",
+  local: "Local agents from this device",
+  constellation: "Hosted agents from Letta Constellation",
   new: "Create a brand new agent",
 };
 
 const TAB_EMPTY_STATES: Record<TabId, string> = {
   pinned: "No pinned agents, use /pin to save",
-  "letta-code": "No agents with tag 'origin:letta-code'",
-  all: "No agents found",
+  local: "No local agents found",
+  constellation: "No agents found",
   new: "",
 };
 
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
+
+/**
+ * Check if the user has cloud credentials (API key or refresh token).
+ * Used to determine whether the Constellation tab can fetch agents.
+ */
+async function hasCloudCredentials(): Promise<boolean> {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  return Boolean(apiKey || settings.refreshToken);
+}
 
 /**
  * Format a relative time string from a date
@@ -127,15 +145,31 @@ export function AgentSelector({
   command = "/agents",
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
-  const backendRef = useRef<Backend | null>(null);
-  const selectorBackend = useCallback(() => {
-    const backend = backendRef.current ?? getBackend();
-    backendRef.current = backend;
-    return backend;
-  }, []);
 
   // Tab state
+  // Eagerly check for local agents (synchronous disk read) to determine tab visibility
+  const [hasLocalAgents, setHasLocalAgents] = useState(() => {
+    try {
+      return listLocalAgentsFromDisk().length > 0;
+    } catch {
+      return false;
+    }
+  });
+
+  // Compute visible tabs — Local tab only shown when there are local agents
+  const visibleTabs = useMemo(
+    () => ALL_TABS.filter((t) => t.id !== "local" || hasLocalAgents),
+    [hasLocalAgents],
+  );
+
   const [activeTab, setActiveTab] = useState<TabId>("pinned");
+
+  // If active tab is no longer visible (e.g. local tab hidden after deleting all local agents), fall back
+  useEffect(() => {
+    if (activeTab === "local" && !hasLocalAgents) {
+      setActiveTab("constellation");
+    }
+  }, [activeTab, hasLocalAgents]);
 
   // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
@@ -143,29 +177,33 @@ export function AgentSelector({
   const [pinnedSelectedIndex, setPinnedSelectedIndex] = useState(0);
   const [pinnedPage, setPinnedPage] = useState(0);
 
-  // Letta Code tab state (cached separately)
-  const [lettaCodeAgents, setLettaCodeAgents] = useState<AgentState[]>([]);
-  const [lettaCodeCursor, setLettaCodeCursor] = useState<string | null>(null);
-  const [lettaCodeLoading, setLettaCodeLoading] = useState(false);
-  const [lettaCodeLoadingMore, setLettaCodeLoadingMore] = useState(false);
-  const [lettaCodeHasMore, setLettaCodeHasMore] = useState(true);
-  const [lettaCodeSelectedIndex, setLettaCodeSelectedIndex] = useState(0);
-  const [lettaCodePage, setLettaCodePage] = useState(0);
-  const [lettaCodeError, setLettaCodeError] = useState<string | null>(null);
-  const [lettaCodeLoaded, setLettaCodeLoaded] = useState(false);
-  const [lettaCodeQuery, setLettaCodeQuery] = useState<string>(""); // Query used to load current data
+  // Local tab state (reads from disk, no API calls)
+  const [localAgents, setLocalAgents] = useState<AgentState[]>([]);
+  const [localLoading, setLocalLoading] = useState(false);
+  const [localSelectedIndex, setLocalSelectedIndex] = useState(0);
+  const [localPage, setLocalPage] = useState(0);
+  const [localLoaded, setLocalLoaded] = useState(false);
 
-  // All tab state (cached separately)
-  const [allAgents, setAllAgents] = useState<AgentState[]>([]);
-  const [allCursor, setAllCursor] = useState<string | null>(null);
-  const [allLoading, setAllLoading] = useState(false);
-  const [allLoadingMore, setAllLoadingMore] = useState(false);
-  const [allHasMore, setAllHasMore] = useState(true);
-  const [allSelectedIndex, setAllSelectedIndex] = useState(0);
-  const [allPage, setAllPage] = useState(0);
-  const [allError, setAllError] = useState<string | null>(null);
-  const [allLoaded, setAllLoaded] = useState(false);
-  const [allQuery, setAllQuery] = useState<string>(""); // Query used to load current data
+  // Constellation tab state (fetches from API)
+  const [constellationAgents, setConstellationAgents] = useState<AgentState[]>(
+    [],
+  );
+  const [constellationCursor, setConstellationCursor] = useState<string | null>(
+    null,
+  );
+  const [constellationLoading, setConstellationLoading] = useState(false);
+  const [constellationLoadingMore, setConstellationLoadingMore] =
+    useState(false);
+  const [constellationHasMore, setConstellationHasMore] = useState(true);
+  const [constellationSelectedIndex, setConstellationSelectedIndex] =
+    useState(0);
+  const [constellationPage, setConstellationPage] = useState(0);
+  const [constellationError, setConstellationError] = useState<string | null>(
+    null,
+  );
+  const [constellationLoaded, setConstellationLoaded] = useState(false);
+  const [constellationQuery, setConstellationQuery] = useState<string>("");
+  const [hasCloudAuth, setHasCloudAuth] = useState<boolean | null>(null);
 
   // Search state (shared across list tabs)
   const [searchInput, setSearchInput] = useState("");
@@ -192,12 +230,14 @@ export function AgentSelector({
         return;
       }
 
-      const backend = selectorBackend();
-
       const pinnedData = await Promise.all(
         mergedPinned.map(async ({ agentId, isLocal }) => {
           try {
-            const agent = await backend.retrieveAgent(agentId, {
+            // Use the correct backend for this agent's mode
+            const agentBackend = isLocal
+              ? getBackendForMode("local")
+              : getBackendForMode("api");
+            const agent = await agentBackend.retrieveAgent(agentId, {
               include: ["agent.blocks"],
             });
             return { agentId, agent, error: null, isLocal };
@@ -213,20 +253,34 @@ export function AgentSelector({
     } finally {
       setPinnedLoading(false);
     }
-  }, [selectorBackend]);
+  }, []);
 
-  // Fetch agents for list tabs (Letta Code / All)
-  const fetchListAgents = useCallback(
-    async (
-      filterLettaCode: boolean,
-      afterCursor?: string | null,
-      query?: string,
-    ) => {
-      const backend = selectorBackend();
+  // Load local agents from disk
+  const loadLocalAgents = useCallback(() => {
+    setLocalLoading(true);
+    try {
+      const agents = listLocalAgentsFromDisk();
+      setLocalAgents(agents);
+      setHasLocalAgents(agents.length > 0);
+      setLocalPage(0);
+      setLocalSelectedIndex(0);
+      setLocalLoaded(true);
+    } catch {
+      setLocalAgents([]);
+      setHasLocalAgents(false);
+    } finally {
+      setLocalLoading(false);
+    }
+  }, []);
 
-      const agentList = await backend.listAgents({
+  // Fetch Constellation agents from cloud API directly (not via getBackend, which may be local)
+  const fetchConstellationAgents = useCallback(
+    async (afterCursor?: string | null, query?: string) => {
+      const { getClient } = await import("@/backend/api/client");
+      const client = await getClient();
+
+      const agentList = await client.agents.list({
         limit: FETCH_PAGE_SIZE,
-        ...(filterLettaCode && { tags: ["origin:letta-code"] }),
         include: ["agent.blocks"],
         order: "desc",
         order_by: "last_run_completion",
@@ -241,54 +295,67 @@ export function AgentSelector({
 
       return { agents: agentList.items, nextCursor: cursor };
     },
-    [selectorBackend],
+    [],
   );
 
-  // Load Letta Code agents
-  const loadLettaCodeAgents = useCallback(
+  // Load Constellation agents
+  const loadConstellationAgents = useCallback(
     async (query?: string) => {
-      setLettaCodeLoading(true);
-      setLettaCodeError(null);
+      setConstellationLoading(true);
+      setConstellationError(null);
       try {
-        const result = await fetchListAgents(true, null, query);
-        setLettaCodeAgents(result.agents);
-        setLettaCodeCursor(result.nextCursor);
-        setLettaCodeHasMore(result.nextCursor !== null);
-        setLettaCodePage(0);
-        setLettaCodeSelectedIndex(0);
-        setLettaCodeLoaded(true);
-        setLettaCodeQuery(query || ""); // Track query used for this load
+        const result = await fetchConstellationAgents(null, query);
+        setConstellationAgents(result.agents);
+        setConstellationCursor(result.nextCursor);
+        setConstellationHasMore(result.nextCursor !== null);
+        setConstellationPage(0);
+        setConstellationSelectedIndex(0);
+        setConstellationLoaded(true);
+        setConstellationQuery(query || "");
       } catch (err) {
-        setLettaCodeError(err instanceof Error ? err.message : String(err));
+        setConstellationError(err instanceof Error ? err.message : String(err));
       } finally {
-        setLettaCodeLoading(false);
+        setConstellationLoading(false);
       }
     },
-    [fetchListAgents],
+    [fetchConstellationAgents],
   );
 
-  // Load All agents
-  const loadAllAgents = useCallback(
-    async (query?: string) => {
-      setAllLoading(true);
-      setAllError(null);
-      try {
-        const result = await fetchListAgents(false, null, query);
-        setAllAgents(result.agents);
-        setAllCursor(result.nextCursor);
-        setAllHasMore(result.nextCursor !== null);
-        setAllPage(0);
-        setAllSelectedIndex(0);
-        setAllLoaded(true);
-        setAllQuery(query || ""); // Track query used for this load
-      } catch (err) {
-        setAllError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setAllLoading(false);
-      }
-    },
-    [fetchListAgents],
-  );
+  // Fetch more Constellation agents (pagination)
+  const fetchMoreConstellationAgents = useCallback(async () => {
+    if (
+      constellationLoadingMore ||
+      !constellationHasMore ||
+      !constellationCursor
+    )
+      return;
+
+    setConstellationLoadingMore(true);
+    try {
+      const result = await fetchConstellationAgents(
+        constellationCursor,
+        activeQuery || undefined,
+      );
+      setConstellationAgents((prev) => [...prev, ...result.agents]);
+      setConstellationCursor(result.nextCursor);
+      setConstellationHasMore(result.nextCursor !== null);
+    } catch {
+      // Silently fail on pagination errors
+    } finally {
+      setConstellationLoadingMore(false);
+    }
+  }, [
+    constellationLoadingMore,
+    constellationHasMore,
+    constellationCursor,
+    fetchConstellationAgents,
+    activeQuery,
+  ]);
+
+  // Check cloud auth on mount
+  useEffect(() => {
+    hasCloudCredentials().then(setHasCloudAuth);
+  }, []);
 
   // Load pinned agents on mount
   useEffect(() => {
@@ -297,84 +364,33 @@ export function AgentSelector({
 
   // Load tab data when switching tabs (only if not already loaded)
   useEffect(() => {
-    if (activeTab === "letta-code" && !lettaCodeLoaded && !lettaCodeLoading) {
-      loadLettaCodeAgents();
-    } else if (activeTab === "all" && !allLoaded && !allLoading) {
-      loadAllAgents();
+    if (activeTab === "local" && !localLoaded && !localLoading) {
+      loadLocalAgents();
+    } else if (
+      activeTab === "constellation" &&
+      !constellationLoaded &&
+      !constellationLoading &&
+      hasCloudAuth
+    ) {
+      loadConstellationAgents();
     }
   }, [
     activeTab,
-    lettaCodeLoaded,
-    lettaCodeLoading,
-    loadLettaCodeAgents,
-    allLoaded,
-    allLoading,
-    loadAllAgents,
+    localLoaded,
+    localLoading,
+    loadLocalAgents,
+    constellationLoaded,
+    constellationLoading,
+    loadConstellationAgents,
+    hasCloudAuth,
   ]);
 
   // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
-    if (activeTab === "letta-code" && activeQuery !== lettaCodeQuery) {
-      loadLettaCodeAgents(activeQuery || undefined);
-    } else if (activeTab === "all" && activeQuery !== allQuery) {
-      loadAllAgents(activeQuery || undefined);
+    if (activeTab === "constellation" && activeQuery !== constellationQuery) {
+      loadConstellationAgents(activeQuery || undefined);
     }
-  }, [
-    activeQuery,
-    activeTab,
-    lettaCodeQuery,
-    allQuery,
-    loadLettaCodeAgents,
-    loadAllAgents,
-  ]);
-
-  // Fetch more Letta Code agents
-  const fetchMoreLettaCodeAgents = useCallback(async () => {
-    if (lettaCodeLoadingMore || !lettaCodeHasMore || !lettaCodeCursor) return;
-
-    setLettaCodeLoadingMore(true);
-    try {
-      const result = await fetchListAgents(
-        true,
-        lettaCodeCursor,
-        activeQuery || undefined,
-      );
-      setLettaCodeAgents((prev) => [...prev, ...result.agents]);
-      setLettaCodeCursor(result.nextCursor);
-      setLettaCodeHasMore(result.nextCursor !== null);
-    } catch {
-      // Silently fail on pagination errors
-    } finally {
-      setLettaCodeLoadingMore(false);
-    }
-  }, [
-    lettaCodeLoadingMore,
-    lettaCodeHasMore,
-    lettaCodeCursor,
-    fetchListAgents,
-    activeQuery,
-  ]);
-
-  // Fetch more All agents
-  const fetchMoreAllAgents = useCallback(async () => {
-    if (allLoadingMore || !allHasMore || !allCursor) return;
-
-    setAllLoadingMore(true);
-    try {
-      const result = await fetchListAgents(
-        false,
-        allCursor,
-        activeQuery || undefined,
-      );
-      setAllAgents((prev) => [...prev, ...result.agents]);
-      setAllCursor(result.nextCursor);
-      setAllHasMore(result.nextCursor !== null);
-    } catch {
-      // Silently fail on pagination errors
-    } finally {
-      setAllLoadingMore(false);
-    }
-  }, [allLoadingMore, allHasMore, allCursor, fetchListAgents, activeQuery]);
+  }, [activeQuery, activeTab, constellationQuery, loadConstellationAgents]);
 
   // Pagination calculations - Pinned (filter out 404 agents)
   const validPinnedAgents = pinnedAgents.filter((p) => p.agent !== null);
@@ -387,52 +403,58 @@ export function AgentSelector({
     pinnedStartIndex + DISPLAY_PAGE_SIZE,
   );
 
-  // Pagination calculations - Letta Code
-  const lettaCodeTotalPages = Math.ceil(
-    lettaCodeAgents.length / DISPLAY_PAGE_SIZE,
+  // Pagination calculations - Local (current agent pinned to top)
+  const sortedLocalAgents = useMemo(
+    () =>
+      localAgents.toSorted((a, b) => {
+        if (a.id === currentAgentId) return -1;
+        if (b.id === currentAgentId) return 1;
+        return 0;
+      }),
+    [localAgents, currentAgentId],
   );
-  const lettaCodeStartIndex = lettaCodePage * DISPLAY_PAGE_SIZE;
-  const lettaCodePageAgents = lettaCodeAgents.slice(
-    lettaCodeStartIndex,
-    lettaCodeStartIndex + DISPLAY_PAGE_SIZE,
+  const localTotalPages = Math.ceil(
+    sortedLocalAgents.length / DISPLAY_PAGE_SIZE,
   );
-  const lettaCodeCanGoNext =
-    lettaCodePage < lettaCodeTotalPages - 1 || lettaCodeHasMore;
+  const localStartIndex = localPage * DISPLAY_PAGE_SIZE;
+  const localPageAgents = sortedLocalAgents.slice(
+    localStartIndex,
+    localStartIndex + DISPLAY_PAGE_SIZE,
+  );
 
-  // Pagination calculations - All
-  const allTotalPages = Math.ceil(allAgents.length / DISPLAY_PAGE_SIZE);
-  const allStartIndex = allPage * DISPLAY_PAGE_SIZE;
-  const allPageAgents = allAgents.slice(
-    allStartIndex,
-    allStartIndex + DISPLAY_PAGE_SIZE,
+  // Pagination calculations - Constellation
+  const constellationTotalPages = Math.ceil(
+    constellationAgents.length / DISPLAY_PAGE_SIZE,
   );
-  const allCanGoNext = allPage < allTotalPages - 1 || allHasMore;
+  const constellationStartIndex = constellationPage * DISPLAY_PAGE_SIZE;
+  const constellationPageAgents = constellationAgents.slice(
+    constellationStartIndex,
+    constellationStartIndex + DISPLAY_PAGE_SIZE,
+  );
+  const constellationCanGoNext =
+    constellationPage < constellationTotalPages - 1 || constellationHasMore;
 
   // Current tab's state (computed)
   const currentLoading =
     activeTab === "pinned"
       ? pinnedLoading
-      : activeTab === "letta-code"
-        ? lettaCodeLoading
-        : allLoading;
+      : activeTab === "local"
+        ? localLoading
+        : constellationLoading;
   const currentError =
-    activeTab === "letta-code"
-      ? lettaCodeError
-      : activeTab === "all"
-        ? allError
-        : null;
+    activeTab === "constellation" ? constellationError : null;
   const currentAgents =
     activeTab === "pinned"
       ? pinnedPageAgents.map((p) => p.agent).filter(Boolean)
-      : activeTab === "letta-code"
-        ? lettaCodePageAgents
-        : allPageAgents;
+      : activeTab === "local"
+        ? localPageAgents
+        : constellationPageAgents;
   const setCurrentSelectedIndex =
     activeTab === "pinned"
       ? setPinnedSelectedIndex
-      : activeTab === "letta-code"
-        ? setLettaCodeSelectedIndex
-        : setAllSelectedIndex;
+      : activeTab === "local"
+        ? setLocalSelectedIndex
+        : setConstellationSelectedIndex;
 
   // Submit search
   const submitSearch = useCallback(() => {
@@ -452,14 +474,17 @@ export function AgentSelector({
   // Handle agent deletion
   const handleDeleteAgent = useCallback(async () => {
     if (viewState.type !== "deleteConfirm") return;
-    const { agent, agentId } = viewState;
+    const { agent, agentId, isLocal } = viewState;
     const expectedName = agent.name || agentId.slice(0, 12);
 
     if (deleteConfirmInput !== expectedName) return;
 
     setDeleteLoading(true);
     try {
-      const backend = selectorBackend();
+      // Use the correct backend for this agent's mode
+      const backend = isLocal
+        ? getBackendForMode("local")
+        : getBackendForMode("api");
       await backend.deleteAgent(agentId);
 
       // Reset state and refresh tabs
@@ -467,14 +492,14 @@ export function AgentSelector({
       setDeleteConfirmInput("");
       // Reload pinned and invalidate cached tabs
       loadPinnedAgents();
-      setLettaCodeLoaded(false);
-      setAllLoaded(false);
+      setLocalLoaded(false);
+      setConstellationLoaded(false);
     } catch {
       // Stay on confirmation screen on error
     } finally {
       setDeleteLoading(false);
     }
-  }, [viewState, deleteConfirmInput, loadPinnedAgents, selectorBackend]);
+  }, [viewState, deleteConfirmInput, loadPinnedAgents]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -509,9 +534,9 @@ export function AgentSelector({
 
     // Tab key cycles through tabs
     if (key.tab) {
-      const currentIndex = TABS.findIndex((t) => t.id === activeTab);
-      const nextIndex = (currentIndex + 1) % TABS.length;
-      setActiveTab(TABS[nextIndex]?.id ?? "pinned");
+      const currentIndex = visibleTabs.findIndex((t) => t.id === activeTab);
+      const nextIndex = (currentIndex + 1) % visibleTabs.length;
+      setActiveTab(visibleTabs[nextIndex]?.id ?? "pinned");
       return;
     }
 
@@ -555,17 +580,18 @@ export function AgentSelector({
       if (activeTab === "pinned") {
         const selected = pinnedPageAgents[pinnedSelectedIndex];
         if (selected?.agent) {
-          onSelect(selected.agentId);
+          const mode: AgentBackendMode = selected.isLocal ? "local" : "api";
+          onSelect(selected.agentId, mode);
         }
-      } else if (activeTab === "letta-code") {
-        const selected = lettaCodePageAgents[lettaCodeSelectedIndex];
+      } else if (activeTab === "local") {
+        const selected = localPageAgents[localSelectedIndex];
         if (selected?.id) {
-          onSelect(selected.id);
+          onSelect(selected.id, "local");
         }
-      } else {
-        const selected = allPageAgents[allSelectedIndex];
+      } else if (activeTab === "constellation") {
+        const selected = constellationPageAgents[constellationSelectedIndex];
         if (selected?.id) {
-          onSelect(selected.id);
+          onSelect(selected.id, "api");
         }
       }
     } else if (key.escape) {
@@ -586,15 +612,15 @@ export function AgentSelector({
           setPinnedPage((prev) => prev - 1);
           setPinnedSelectedIndex(0);
         }
-      } else if (activeTab === "letta-code") {
-        if (lettaCodePage > 0) {
-          setLettaCodePage((prev) => prev - 1);
-          setLettaCodeSelectedIndex(0);
+      } else if (activeTab === "local") {
+        if (localPage > 0) {
+          setLocalPage((prev) => prev - 1);
+          setLocalSelectedIndex(0);
         }
       } else {
-        if (allPage > 0) {
-          setAllPage((prev) => prev - 1);
-          setAllSelectedIndex(0);
+        if (constellationPage > 0) {
+          setConstellationPage((prev) => prev - 1);
+          setConstellationSelectedIndex(0);
         }
       }
     } else if (key.rightArrow) {
@@ -604,29 +630,25 @@ export function AgentSelector({
           setPinnedPage((prev) => prev + 1);
           setPinnedSelectedIndex(0);
         }
-      } else if (activeTab === "letta-code" && lettaCodeCanGoNext) {
-        const nextPageIndex = lettaCodePage + 1;
+      } else if (activeTab === "local") {
+        if (localPage < localTotalPages - 1) {
+          setLocalPage((prev) => prev + 1);
+          setLocalSelectedIndex(0);
+        }
+      } else if (activeTab === "constellation" && constellationCanGoNext) {
+        const nextPageIndex = constellationPage + 1;
         const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
 
-        if (nextStartIndex >= lettaCodeAgents.length && lettaCodeHasMore) {
-          fetchMoreLettaCodeAgents();
+        if (
+          nextStartIndex >= constellationAgents.length &&
+          constellationHasMore
+        ) {
+          fetchMoreConstellationAgents();
         }
 
-        if (nextStartIndex < lettaCodeAgents.length) {
-          setLettaCodePage(nextPageIndex);
-          setLettaCodeSelectedIndex(0);
-        }
-      } else if (activeTab === "all" && allCanGoNext) {
-        const nextPageIndex = allPage + 1;
-        const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
-
-        if (nextStartIndex >= allAgents.length && allHasMore) {
-          fetchMoreAllAgents();
-        }
-
-        if (nextStartIndex < allAgents.length) {
-          setAllPage(nextPageIndex);
-          setAllSelectedIndex(0);
+        if (nextStartIndex < constellationAgents.length) {
+          setConstellationPage(nextPageIndex);
+          setConstellationSelectedIndex(0);
         }
       }
     } else if (activeTab === "pinned" && (input === "p" || input === "P")) {
@@ -644,19 +666,24 @@ export function AgentSelector({
       // Delete agent - open confirmation
       let selectedAgent: AgentState | null = null;
       let selectedAgentId: string | null = null;
+      let selectedIsLocal = false;
 
       if (activeTab === "pinned") {
         const selected = pinnedPageAgents[pinnedSelectedIndex];
         if (selected?.agent) {
           selectedAgent = selected.agent;
           selectedAgentId = selected.agentId;
+          selectedIsLocal = selected.isLocal;
         }
-      } else if (activeTab === "letta-code") {
-        selectedAgent = lettaCodePageAgents[lettaCodeSelectedIndex] ?? null;
+      } else if (activeTab === "local") {
+        selectedAgent = localPageAgents[localSelectedIndex] ?? null;
         selectedAgentId = selectedAgent?.id ?? null;
+        selectedIsLocal = true;
       } else {
-        selectedAgent = allPageAgents[allSelectedIndex] ?? null;
+        selectedAgent =
+          constellationPageAgents[constellationSelectedIndex] ?? null;
         selectedAgentId = selectedAgent?.id ?? null;
+        selectedIsLocal = false;
       }
 
       if (selectedAgent && selectedAgentId) {
@@ -664,6 +691,7 @@ export function AgentSelector({
           type: "deleteConfirm",
           agent: selectedAgent,
           agentId: selectedAgentId,
+          isLocal: selectedIsLocal,
         });
         setDeleteConfirmInput("");
       }
@@ -676,34 +704,12 @@ export function AgentSelector({
     }
   });
 
-  // Render tab bar
-  const renderTabBar = () => (
-    <Box flexDirection="row" gap={2}>
-      {TABS.map((tab) => {
-        const isActive = tab.id === activeTab;
-        // Always use same width (with padding) to prevent jitter when switching tabs
-        return (
-          <Text
-            key={tab.id}
-            backgroundColor={
-              isActive ? colors.selector.itemHighlighted : undefined
-            }
-            color={isActive ? "white" : undefined}
-            bold={isActive}
-          >
-            {` ${tab.label} `}
-          </Text>
-        );
-      })}
-    </Box>
-  );
-
   // Render agent item (shared between tabs)
   const renderAgentItem = (
     agent: AgentState,
     _index: number,
     isSelected: boolean,
-    extra?: { isLocal?: boolean },
+    extra?: { isLocal?: boolean; backend?: "local" | "constellation" },
   ) => {
     const isCurrent = agent.id === currentAgentId;
     const relativeTime = formatRelativeTime(agent.last_run_completion);
@@ -714,6 +720,10 @@ export function AgentSelector({
     const fixedChars = 2 + 3 + (isCurrent ? 10 : 0);
     const availableForId = Math.max(15, terminalWidth - nameLen - fixedChars);
     const displayId = truncateAgentId(agent.id, availableForId);
+
+    const backendLabel = extra?.backend
+      ? `${extra.backend === "local" ? "Local" : "Constellation"} · `
+      : "";
 
     return (
       <Box key={agent.id} flexDirection="column" marginBottom={1}>
@@ -734,7 +744,7 @@ export function AgentSelector({
             {" · "}
             {extra?.isLocal !== undefined
               ? `${extra.isLocal ? "project" : "global"} · `
-              : ""}
+              : backendLabel}
             {displayId}
           </Text>
           {isCurrent && (
@@ -795,6 +805,16 @@ export function AgentSelector({
     );
   };
 
+  // Render Constellation upsell (shown when not logged in)
+  const renderConstellationUpsell = () => (
+    <Box flexDirection="column" paddingLeft={2}>
+      <Text dimColor>
+        Connect to Letta Constellation to see hosted agents here.
+      </Text>
+      <Text dimColor>Run /login to sign in.</Text>
+    </Box>
+  );
+
   // Render delete confirmation view
   const renderDeleteConfirm = () => {
     if (viewState.type !== "deleteConfirm") return null;
@@ -833,41 +853,66 @@ export function AgentSelector({
     );
   };
 
-  // Calculate horizontal line width
-  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
-
   // If in delete confirmation view, render that instead of the list
   if (viewState.type === "deleteConfirm") {
     return (
-      <Box flexDirection="column">
-        {/* Command header */}
-        <Text dimColor>{`> ${command}`}</Text>
-        <Text dimColor>{solidLine}</Text>
-
-        <Box height={1} />
-
+      <OverlayShell command={command} title="Delete agent">
         {renderDeleteConfirm()}
-      </Box>
+      </OverlayShell>
     );
   }
 
   return (
-    <Box flexDirection="column">
-      {/* Command header */}
-      <Text dimColor>{`> ${command}`}</Text>
-      <Text dimColor>{solidLine}</Text>
+    <OverlayShell
+      command={command}
+      title="Swap to a different agent"
+      footer={
+        activeTab !== "new" &&
+        !currentLoading &&
+        ((activeTab === "pinned" && validPinnedAgents.length > 0) ||
+          (activeTab === "local" && localAgents.length > 0) ||
+          (activeTab === "constellation" &&
+            !constellationError &&
+            constellationAgents.length > 0))
+          ? (() => {
+              const footerWidth = Math.max(0, terminalWidth - 2);
+              const pageText =
+                activeTab === "pinned"
+                  ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
+                  : activeTab === "local"
+                    ? `Page ${localPage + 1}/${localTotalPages || 1}`
+                    : `Page ${constellationPage + 1}${constellationHasMore ? "+" : `/${constellationTotalPages || 1}`}${constellationLoadingMore ? " (loading...)" : ""}`;
+              const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""} · Esc cancel`;
 
-      <Box height={1} />
-
-      {/* Header */}
-      <Box flexDirection="column" gap={1} marginBottom={1}>
-        <Text bold color={colors.selector.title}>
-          Swap to a different agent
-        </Text>
-        <Box flexDirection="column" paddingLeft={1}>
-          {renderTabBar()}
-          <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
-        </Box>
+              return (
+                <Box flexDirection="column">
+                  <Box flexDirection="row">
+                    <Box width={2} flexShrink={0} />
+                    <Box flexGrow={1} width={footerWidth}>
+                      <MarkdownDisplay text={pageText} dimColor />
+                    </Box>
+                  </Box>
+                  <Box flexDirection="row">
+                    <Box width={2} flexShrink={0} />
+                    <Box flexGrow={1} width={footerWidth}>
+                      <MarkdownDisplay text={hintsText} dimColor />
+                    </Box>
+                  </Box>
+                </Box>
+              );
+            })()
+          : undefined
+      }
+    >
+      <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
+        <TabBar
+          tabs={visibleTabs.map((t) => t.id)}
+          activeTab={activeTab}
+          getLabel={(tabId) =>
+            visibleTabs.find((t) => t.id === tabId)?.label ?? tabId
+          }
+        />
+        <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
       </Box>
 
       {/* Search input - list tabs only */}
@@ -899,13 +944,20 @@ export function AgentSelector({
         </Box>
       )}
 
+      {/* Constellation upsell when not logged in */}
+      {activeTab === "constellation" &&
+        !currentLoading &&
+        hasCloudAuth === false &&
+        renderConstellationUpsell()}
+
       {/* Empty state */}
       {!currentLoading &&
         ((activeTab === "pinned" && validPinnedAgents.length === 0) ||
-          (activeTab === "letta-code" &&
-            !lettaCodeError &&
-            lettaCodeAgents.length === 0) ||
-          (activeTab === "all" && !allError && allAgents.length === 0)) && (
+          (activeTab === "local" && localAgents.length === 0) ||
+          (activeTab === "constellation" &&
+            !constellationError &&
+            hasCloudAuth &&
+            constellationAgents.length === 0)) && (
           <Box flexDirection="column">
             <Text dimColor>{TAB_EMPTY_STATES[activeTab]}</Text>
             <Text dimColor>Press ESC to cancel</Text>
@@ -923,26 +975,32 @@ export function AgentSelector({
           </Box>
         )}
 
-      {/* Letta Code tab content */}
-      {activeTab === "letta-code" &&
-        !lettaCodeLoading &&
-        !lettaCodeError &&
-        lettaCodeAgents.length > 0 && (
-          <Box flexDirection="column">
-            {lettaCodePageAgents.map((agent, index) =>
-              renderAgentItem(agent, index, index === lettaCodeSelectedIndex),
-            )}
-          </Box>
-        )}
+      {/* Local tab content */}
+      {activeTab === "local" && !localLoading && localAgents.length > 0 && (
+        <Box flexDirection="column">
+          {localPageAgents.map((agent, index) =>
+            renderAgentItem(agent, index, index === localSelectedIndex, {
+              backend: "local",
+            }),
+          )}
+        </Box>
+      )}
 
-      {/* All tab content */}
-      {activeTab === "all" &&
-        !allLoading &&
-        !allError &&
-        allAgents.length > 0 && (
+      {/* Constellation tab content */}
+      {activeTab === "constellation" &&
+        !constellationLoading &&
+        !constellationError &&
+        constellationAgents.length > 0 && (
           <Box flexDirection="column">
-            {allPageAgents.map((agent, index) =>
-              renderAgentItem(agent, index, index === allSelectedIndex),
+            {constellationPageAgents.map((agent, index) =>
+              renderAgentItem(
+                agent,
+                index,
+                index === constellationSelectedIndex,
+                {
+                  backend: "constellation",
+                },
+              ),
             )}
           </Box>
         )}
@@ -998,42 +1056,6 @@ export function AgentSelector({
           </Box>
         </Box>
       )}
-
-      {/* Footer */}
-      {activeTab !== "new" &&
-        !currentLoading &&
-        ((activeTab === "pinned" && validPinnedAgents.length > 0) ||
-          (activeTab === "letta-code" &&
-            !lettaCodeError &&
-            lettaCodeAgents.length > 0) ||
-          (activeTab === "all" && !allError && allAgents.length > 0)) &&
-        (() => {
-          const footerWidth = Math.max(0, terminalWidth - 2);
-          const pageText =
-            activeTab === "pinned"
-              ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
-              : activeTab === "letta-code"
-                ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
-                : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
-          const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""} · Esc cancel`;
-
-          return (
-            <Box flexDirection="column">
-              <Box flexDirection="row">
-                <Box width={2} flexShrink={0} />
-                <Box flexGrow={1} width={footerWidth}>
-                  <MarkdownDisplay text={pageText} dimColor />
-                </Box>
-              </Box>
-              <Box flexDirection="row">
-                <Box width={2} flexShrink={0} />
-                <Box flexGrow={1} width={footerWidth}>
-                  <MarkdownDisplay text={hintsText} dimColor />
-                </Box>
-              </Box>
-            </Box>
-          );
-        })()}
-    </Box>
+    </OverlayShell>
   );
 }

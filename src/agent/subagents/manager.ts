@@ -16,7 +16,7 @@ import {
   addToolCall,
   emitStreamEvent,
   updateSubagent,
-} from "@/agent/subagentState.js";
+} from "@/agent/subagent-state.js";
 import {
   type BackendMode,
   getBackend,
@@ -24,17 +24,14 @@ import {
 } from "@/backend";
 import { getBillingTier } from "@/backend/api/metadata";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
-import { buildAgentReference } from "@/cli/helpers/appUrls";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
   INTERRUPTED_BY_USER,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
-import { cliPermissions } from "@/permissions/cliPermissionsInstance";
-import {
-  parseScopeList,
-  resolveAllowedMemoryRoots,
-} from "@/permissions/memoryScope";
+import { cliPermissions } from "@/permissions/cli-permissions-instance";
+import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -42,7 +39,7 @@ import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
-} from "@/tools/impl/shellEnv";
+} from "@/tools/impl/shell-env";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
@@ -50,7 +47,7 @@ import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
-} from "./contextBudget";
+} from "./context-budget";
 
 // ============================================================================
 // Constants
@@ -628,9 +625,8 @@ export interface ComposeSubagentChildEnvOptions {
   backendMode?: BackendMode;
   /** Local backend flatfile root to forward when backendMode="local". */
   localBackendStorageDir?: string | null;
-  /** Parent agent ID. When present, authorizes the subagent to touch the
-   * parent's memory via the cross-agent guard and sets LETTA_PARENT_AGENT_ID
-   * so prompts / scripts that reference it resolve correctly. */
+  /** Parent agent ID. When present, sets LETTA_PARENT_AGENT_ID so prompts,
+   * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
   /** The subagent config's declared permissionMode ("memory" triggers
    * memory-dir override; other modes leave the parent's MEMORY_DIR alone). */
@@ -653,15 +649,11 @@ export interface ComposeSubagentChildEnvOptions {
 /**
  * Compose the env a subagent child process should be spawned with.
  *
- * Authorization (LETTA_MEMORY_SCOPE) and filesystem pointer (MEMORY_DIR) are
- * intentionally decoupled:
+ * The parent identity marker and filesystem pointer are intentionally
+ * decoupled:
  *
- *   - LETTA_MEMORY_SCOPE inherits any scope the parent process already had
- *     (env LETTA_MEMORY_SCOPE plus CLI --memory-scope) and also includes the
- *     immediate parent agent ID when one is known. Subagents should never
- *     lose explicit cross-agent access that the parent process already had.
- *     This applies to general-purpose/recall etc. — not just
- *     memory-writing subagents.
+ *   - LETTA_PARENT_AGENT_ID identifies the immediate parent. Subagents never
+ *     inherit a broad cross-agent memory-guard opt-out from the parent.
  *
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
  *     declares permissionMode=memory. Those subagents operate on the parent's
@@ -702,25 +694,6 @@ export function composeSubagentChildEnv(
     }
   } else if (backendMode === "api") {
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "0";
-  }
-
-  const nextScope = new Set<string>([
-    ...parseScopeList(parentProcessEnv.LETTA_MEMORY_SCOPE),
-    ...cliPermissions.getMemoryScope(),
-  ]);
-  if (parentAgentId) {
-    nextScope.add(parentAgentId);
-  }
-
-  // Authorize the subagent to access both the parent's memory and any
-  // explicitly granted cross-agent scope the parent process already had.
-  // Independent of permissionMode — Read from those memories is legitimate
-  // for any subagent type, and the cross-agent guard would otherwise deny it
-  // as a foreign-agent access.
-  if (nextScope.size > 0) {
-    childEnv.LETTA_MEMORY_SCOPE = [...nextScope].join(",");
-  } else {
-    delete childEnv.LETTA_MEMORY_SCOPE;
   }
 
   // Only memory-mode subagents get MEMORY_DIR pointed at the parent. Other

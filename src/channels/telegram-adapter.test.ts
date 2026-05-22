@@ -601,6 +601,44 @@ test("telegram adapter replies with lifecycle errors", async () => {
   );
 });
 
+test("telegram adapter hides raw generic lifecycle errors", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "error",
+    error: "Unexpected stop reason: error",
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    "Turn failed:\nSomething went wrong while processing that message. Please try again.",
+    { reply_parameters: { message_id: 77 } },
+  );
+});
+
 test("telegram adapter does not send lifecycle replies for completed turns", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,

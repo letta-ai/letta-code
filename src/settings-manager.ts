@@ -12,7 +12,7 @@ import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { getRuntimeContext } from "./runtime-context";
-import { trackBoundaryError } from "./telemetry/errorReporting";
+import { trackBoundaryError } from "./telemetry/error-reporting";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
@@ -90,8 +90,8 @@ export interface Settings {
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
-  planModeEnabled: boolean; // Enables plan-mode tools and /plan command when true
   includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
+  preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
   recentModels: string[]; // Recently used model IDs (most recent first, max 5)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
@@ -176,7 +176,6 @@ const DEFAULT_SETTINGS: Settings = {
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
   autoSwapOnQuotaLimit: true,
-  planModeEnabled: false,
   includeWorktreeTool: true,
   recentModels: [],
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
@@ -576,14 +575,6 @@ class SettingsManager {
    */
   getSetting<K extends keyof Settings>(key: K): Settings[K] {
     return this.getSettings()[key];
-  }
-
-  isPlanModeEnabled(): boolean {
-    return this.getSettings().planModeEnabled === true;
-  }
-
-  setPlanModeEnabled(enabled: boolean): void {
-    this.updateSettings({ planModeEnabled: enabled });
   }
 
   shouldIncludeWorktreeTool(): boolean {

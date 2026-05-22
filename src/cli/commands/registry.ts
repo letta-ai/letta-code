@@ -140,6 +140,15 @@ export const commands: Record<string, Command> = {
       return "Opening compaction settings...";
     },
   },
+  "/context-limit": {
+    desc: "Set or reset the max context window",
+    args: "[tokens] [--override]",
+    order: 15.7,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Setting max context window...";
+    },
+  },
   "/memfs": {
     desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
     args: "[enable|disable|sync|reset]",
@@ -166,15 +175,6 @@ export const commands: Record<string, Command> = {
       return "Opening provider connection...";
     },
   },
-  // "/remote": {
-  //   desc: "Connect to Letta Cloud (device connect mode)",
-  //   args: "[--env-name <name>]",
-  //   order: 17.5,
-  //   handler: () => {
-  //     // Handled specially in App.tsx
-  //     return "Starting listener...";
-  //   },
-  // },
   "/clear": {
     desc: "Clear in-context messages",
     order: 18,
@@ -465,7 +465,7 @@ export const commands: Record<string, Command> = {
         getKeybindingsPath,
         installKeybinding,
         removeKeybinding,
-      } = await import("@/cli/utils/terminalKeybindingInstaller");
+      } = await import("@/cli/utils/terminal-keybinding-installer");
       const { updateSettings } = await import("@/settings");
 
       const isRevert = args.includes("--revert") || args.includes("--remove");
@@ -519,23 +519,6 @@ export const commands: Record<string, Command> = {
   },
 
   // === Session management (order 40-49) ===
-  "/plan": {
-    desc: "Enter plan mode",
-    order: 40,
-    noArgs: true,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Entering plan mode...";
-    },
-  },
-  "/plan-mode": {
-    desc: "Enable or disable plan mode (/plan-mode on|off)",
-    order: 40.5,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Updating plan mode setting...";
-    },
-  },
   "/disconnect": {
     desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
     order: 41,
@@ -562,6 +545,15 @@ export const commands: Record<string, Command> = {
       return "Exiting...";
     },
   },
+  "/login": {
+    desc: "Sign in to Letta Constellation",
+    order: 43,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in use-submit-handler.ts
+      return "Signing in...";
+    },
+  },
   "/logout": {
     desc: "Clear saved credentials and exit",
     order: 44,
@@ -569,24 +561,6 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access settings manager
       return "Clearing credentials...";
-    },
-  },
-
-  // === Ralph Wiggum mode (order 45-46) ===
-  "/ralph": {
-    desc: 'Start Ralph Wiggum loop (/ralph [prompt] [--completion-promise "X"] [--max-iterations N])',
-    order: 45,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Activating ralph mode...";
-    },
-  },
-  "/yolo-ralph": {
-    desc: "Start Ralph loop with bypass permissions (yolo + ralph)",
-    order: 46,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Activating yolo-ralph mode...";
     },
   },
 
@@ -609,7 +583,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/set-max-context": {
-    desc: "Set or reset the max context window",
+    desc: "Alias for /context-limit",
     args: "[tokens] [--override]",
     hidden: true,
     handler: () => {

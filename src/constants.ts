@@ -23,6 +23,13 @@ export const DEFAULT_AGENT_NAME = "Letta Code";
 export const INTERRUPTED_BY_USER = "Interrupted by user";
 
 /**
+ * Synthetic tool result injected when a turn ended without completing all tool calls
+ * (e.g. process crash or unhandled stream error). Settled automatically at the start
+ * of the next turn so the conversation history stays valid for the provider.
+ */
+export const TURN_DID_NOT_COMPLETE = "Turn did not complete";
+
+/**
  * XML tag used to wrap system reminder content injected into messages
  */
 export const SYSTEM_REMINDER_TAG = "system-reminder";

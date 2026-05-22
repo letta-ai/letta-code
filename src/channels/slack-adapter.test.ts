@@ -37,6 +37,19 @@ type SlackEventHandler = (args: {
   };
 }) => Promise<void>;
 
+type SlackCommandHandler = (args: {
+  command: {
+    command?: string;
+    text?: string;
+    user_id?: string;
+    user_name?: string;
+    channel_id?: string;
+    channel_name?: string;
+    trigger_id?: string;
+  };
+  ack: () => Promise<void>;
+}) => Promise<void>;
+
 class FakeSlackApp {
   static instances: FakeSlackApp[] = [];
 
@@ -82,6 +95,7 @@ class FakeSlackApp {
 
   messageHandler: SlackMessageHandler | null = null;
   eventHandlers = new Map<string, SlackEventHandler>();
+  commandHandlers = new Map<string, SlackCommandHandler>();
   errorHandler: ((error: Error) => Promise<void>) | null = null;
   readonly init = mock(async () => {});
   readonly start = mock(async () => {});
@@ -97,6 +111,10 @@ class FakeSlackApp {
 
   event(name: string, handler: SlackEventHandler): void {
     this.eventHandlers.set(name, handler);
+  }
+
+  command(name: string, handler: SlackCommandHandler): void {
+    this.commandHandlers.set(name, handler);
   }
 
   error(handler: (error: Error) => Promise<void>): void {
@@ -272,6 +290,59 @@ test("slack adapter start does not re-run bolt init", async () => {
   expect(app).toBeDefined();
   expect(app?.init).not.toHaveBeenCalled();
   expect(app?.start).toHaveBeenCalledTimes(1);
+});
+
+test("slack adapter forwards native /cancel command as channel slash input", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const messages: unknown[] = [];
+  adapter.onMessage = async (message) => {
+    messages.push(message);
+  };
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.commandHandlers.get("/cancel");
+  if (!handler) {
+    throw new Error("Expected /cancel command handler");
+  }
+
+  const ack = mock(async () => {});
+  await handler({
+    command: {
+      command: "/cancel",
+      text: "",
+      user_id: "U123",
+      user_name: "Alice",
+      channel_id: "C123",
+      channel_name: "eng",
+      trigger_id: "trigger-1",
+    },
+    ack,
+  });
+
+  expect(ack).toHaveBeenCalledTimes(1);
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    senderId: "U123",
+    senderName: "Alice",
+    chatLabel: "eng",
+    text: "/cancel",
+    messageId: "trigger-1",
+    threadId: null,
+    chatType: "channel",
+  });
 });
 
 test("resolveSlackAccountDisplayName prefers the Slack bot profile display name", async () => {
@@ -1230,6 +1301,47 @@ test("slack adapter dedupes lifecycle error posts by reply destination", async (
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
     text: "Turn failed:\n```\nDebounced batch failure\n```",
+    thread_ts: "1712790000.000050",
+  });
+});
+
+test("slack adapter hides raw generic lifecycle errors", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-raw-error",
+    outcome: "error",
+    error: "Unexpected stop reason: error",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000501",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```",
     thread_ts: "1712790000.000050",
   });
 });

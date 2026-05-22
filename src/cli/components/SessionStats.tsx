@@ -1,5 +1,5 @@
 import type { SessionStatsSnapshot } from "@/agent/stats";
-import { buildAppUrl } from "@/cli/helpers/appUrls";
+import { buildAppUrl } from "@/cli/helpers/app-urls";
 import { formatCompact } from "@/cli/helpers/format";
 
 export function formatDuration(ms: number): string {

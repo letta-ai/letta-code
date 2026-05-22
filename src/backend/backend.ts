@@ -4,7 +4,7 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
-import { LocalBackend } from "./local/LocalBackend";
+import { LocalBackend } from "./local/local-backend";
 import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
   LOCAL_BACKEND_EXPERIMENTAL_ENV,
@@ -474,6 +474,14 @@ export function getBackend(): Backend {
   return backend;
 }
 
+/**
+ * Get a backend instance for a specific mode without switching the global backend.
+ * Useful for cross-backend operations like retrieving pinned agents from the other backend.
+ */
+export function getBackendForMode(mode: BackendMode): Backend {
+  return createBackendForMode(mode);
+}
+
 export function configureBackendMode(mode: BackendMode): void {
   configuredBackendMode = mode;
   process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = mode === "local" ? "1" : "0";
@@ -490,11 +498,11 @@ function devBackendStoreOptions() {
 
 async function createPiDevBackend(): Promise<Backend> {
   const { FakeHeadlessBackend } = await import(
-    "@/backend/dev/FakeHeadlessBackend"
+    "@/backend/dev/fake-headless-backend"
   );
-  const { PiStreamAdapter } = await import("@/backend/dev/PiStreamAdapter");
+  const { PiStreamAdapter } = await import("@/backend/dev/pi-stream-adapter");
   const { ProviderTurnExecutor } = await import(
-    "@/backend/dev/ProviderTurnExecutor"
+    "@/backend/dev/provider-turn-executor"
   );
   return new FakeHeadlessBackend(
     "agent-fake-headless",
@@ -507,7 +515,7 @@ export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
       const { FakeHeadlessBackend } = await import(
-        "@/backend/dev/FakeHeadlessBackend"
+        "@/backend/dev/fake-headless-backend"
       );
       backend = new FakeHeadlessBackend(
         undefined,
@@ -518,10 +526,10 @@ export async function configureDevBackend(name: string): Promise<void> {
     }
     case "fake-headless-tool-call": {
       const { FakeHeadlessBackend } = await import(
-        "@/backend/dev/FakeHeadlessBackend"
+        "@/backend/dev/fake-headless-backend"
       );
       const { DeterministicToolCallExecutor } = await import(
-        "@/backend/dev/HeadlessTurnExecutor"
+        "@/backend/dev/headless-turn-executor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
@@ -532,10 +540,10 @@ export async function configureDevBackend(name: string): Promise<void> {
     }
     case "fake-headless-provider": {
       const { FakeHeadlessBackend } = await import(
-        "@/backend/dev/FakeHeadlessBackend"
+        "@/backend/dev/fake-headless-backend"
       );
       const { ProviderTurnExecutor } = await import(
-        "@/backend/dev/ProviderTurnExecutor"
+        "@/backend/dev/provider-turn-executor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",

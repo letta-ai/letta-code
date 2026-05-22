@@ -8,7 +8,7 @@ import {
   parseContextWindowValue,
   parseSetMaxContextArgs,
   resolveModelJsonContextWindow,
-} from "@/agent/maxContext";
+} from "@/agent/max-context";
 import {
   __testSetBackend,
   type AgentCreateBody,
@@ -35,6 +35,9 @@ describe("max context command helpers", () => {
     });
     expect(() => parseSetMaxContextArgs("10000 --force")).toThrow(
       "Unknown option: --force",
+    );
+    expect(() => parseSetMaxContextArgs("10000 20000")).toThrow(
+      "Usage: /context-limit [tokens] [--override]",
     );
   });
 

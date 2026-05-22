@@ -18,8 +18,8 @@ import { promisify } from "node:util";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
-} from "@/integration-tests/processDiagnostics";
-import { createIsolatedCliTestEnv } from "./testProcessEnv";
+} from "@/integration-tests/process-diagnostics";
+import { createIsolatedCliTestEnv } from "./test-process-env";
 
 const execFile = promisify(execFileCb);
 
@@ -187,11 +187,24 @@ async function runCLI(args: Args): Promise<RunResult> {
     args.model,
   );
 
+  // Cap each attempt at 6 minutes. The scenario should complete in ~2-3 min
+  // under normal conditions. Without a timeout, a WS proxy timeout mid-turn
+  // (observed at ~14 min in CI) can block a single attempt for 30+ minutes,
+  // consuming all retries with no useful signal. Killing early lets the outer
+  // retry loop start fresh with a clean agent context.
+  const RUN_TIMEOUT_MS = 6 * 60 * 1000;
+
   return new Promise((resolve, reject) => {
     const proc = spawn("bun", cliArgs, { env });
 
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGTERM");
+    }, RUN_TIMEOUT_MS);
 
     proc.stdout.on("data", (data) => {
       stdout += data.toString();
@@ -202,9 +215,11 @@ async function runCLI(args: Args): Promise<RunResult> {
     });
 
     proc.on("close", (code) => {
-      if (code !== 0) {
+      clearTimeout(timeoutHandle);
+      const effectiveCode = timedOut ? 124 : (code ?? 1);
+      if (effectiveCode !== 0) {
         console.error(
-          `CLI failed (${args.backend} / ${args.model} / ${args.output}).\n${formatCapturedOutput(
+          `CLI ${timedOut ? `timed out after ${RUN_TIMEOUT_MS / 1000}s` : `failed`} (${args.backend} / ${args.model} / ${args.output}).\n${formatCapturedOutput(
             {
               stdout,
               stderr,
@@ -212,7 +227,7 @@ async function runCLI(args: Args): Promise<RunResult> {
           )}`,
         );
       }
-      resolve({ stdout, stderr, code: code ?? 1, localStorageDir });
+      resolve({ stdout, stderr, code: effectiveCode, localStorageDir });
     });
 
     proc.on("error", reject);

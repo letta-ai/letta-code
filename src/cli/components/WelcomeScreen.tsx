@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { AgentProvenance } from "@/agent/create";
 import { getModelDisplayName } from "@/agent/model";
 import { isLocalBackendEnabled } from "@/backend";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version";
 import { AnimatedLogo } from "./AnimatedLogo";

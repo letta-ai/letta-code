@@ -5,8 +5,8 @@ import { extractConflictDetail } from "@/agent/turn-recovery-policy";
 import {
   checkCloudflareEdgeError,
   formatErrorDetails,
-} from "@/cli/helpers/errorFormatter";
-import type { ErrorInfo } from "@/cli/helpers/streamProcessor";
+} from "@/cli/helpers/error-formatter";
+import type { ErrorInfo } from "@/cli/helpers/stream-processor";
 import type { StatusMessage, StopReasonType } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
 import {

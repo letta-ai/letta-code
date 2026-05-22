@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   extractErrorDetail,
   formatDiscordDeliveryError,
-} from "@/channels/discord/errorReply";
+} from "@/channels/discord/error-reply";
 
 describe("extractErrorDetail", () => {
   test("prefers nested Letta SDK error.error.detail", () => {

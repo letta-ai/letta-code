@@ -84,7 +84,7 @@ mock.module("../backend/api/client", () => ({
   getServerUrl: () => "http://localhost:8283",
 }));
 
-const { memory } = await import("@/tools/impl/Memory");
+const { memory } = await import("@/tools/impl/memory");
 
 function runScopedMemory(args: Parameters<typeof memory>[0]) {
   return runWithRuntimeContext({ agentId: TEST_AGENT_ID }, () => memory(args));

@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -11,12 +10,12 @@ import {
 } from "@/agent/approval-execution";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
-import { computeDiffPreviews } from "@/helpers/diffPreview";
-import { formatPermissionDenial } from "@/permissions/formatDenial";
+import { computeDiffPreviews } from "@/helpers/diff-preview";
+import { formatPermissionDenial } from "@/permissions/format-denial";
 import {
   getInteractiveApprovalKind,
   isInteractiveApprovalTool,
-} from "@/tools/interactivePolicy";
+} from "@/tools/interactive-policy";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
@@ -48,7 +47,7 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
-import type { ProviderFallbackState } from "./providerFallback";
+import type { ProviderFallbackState } from "./provider-fallback";
 import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { debugLogApprovalResumeState } from "./recovery";
@@ -121,30 +120,6 @@ export function resolveChannelApprovalSource(
   }
 
   return [...sourcesByScope.values()].at(-1) ?? null;
-}
-
-async function maybeReadPlanPreview(
-  toolName: string,
-  turnPermissionModeState: import("@/tools/manager").PermissionModeState,
-): Promise<{ planFilePath?: string; planContent?: string }> {
-  if (toolName !== "ExitPlanMode" || !turnPermissionModeState.planFilePath) {
-    return {};
-  }
-
-  try {
-    const planContent = await readFile(
-      turnPermissionModeState.planFilePath,
-      "utf8",
-    );
-    return {
-      planFilePath: turnPermissionModeState.planFilePath,
-      planContent,
-    };
-  } catch {
-    return {
-      planFilePath: turnPermissionModeState.planFilePath,
-    };
-  }
 }
 
 export async function handleApprovalStop(params: {
@@ -345,10 +320,6 @@ export async function handleApprovalStop(params: {
           source: channelSource,
           toolName: ac.approval.toolName,
           input: ac.parsedArgs,
-          ...(await maybeReadPlanPreview(
-            ac.approval.toolName,
-            turnPermissionModeState,
-          )),
         });
       }
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   isRetryableLocalProviderError,
   normalizeLocalProviderError,
-} from "@/backend/dev/LocalProviderErrors";
+} from "@/backend/dev/local-provider-errors";
 
 describe("LocalProviderErrors", () => {
   test("classifies Codex Responses server_error events as retryable LLM errors", () => {

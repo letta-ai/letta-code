@@ -4,8 +4,9 @@ import type SlackApp from "@slack/bolt";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
-} from "@/channels/inboundDebounce";
+} from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -22,7 +23,7 @@ import {
   resolveSlackThreadStarter,
 } from "./media";
 import { loadSlackBoltModule } from "./runtime";
-import { createSlackWebApiClient } from "./webApiClient";
+import { createSlackWebApiClient } from "./web-api-client";
 
 type SlackAppConstructor = typeof import("@slack/bolt").App;
 type SlackBoltModule = typeof import("@slack/bolt") & {
@@ -76,6 +77,16 @@ type SlackReactionEvent = {
   item_user?: string;
   reaction?: string;
   event_ts?: string;
+};
+
+type SlackCommandPayload = {
+  command?: string;
+  text?: string;
+  user_id?: string;
+  user_name?: string;
+  channel_id?: string;
+  channel_name?: string;
+  trigger_id?: string;
 };
 
 type Constructor = abstract new (...args: never[]) => unknown;
@@ -710,7 +721,7 @@ export function createSlackAdapter(
   }
 
   function formatSlackLifecycleErrorMessage(errorText: string): string {
-    const normalized = errorText.trim();
+    const normalized = normalizeChannelLifecycleErrorMessage(errorText);
     const truncated =
       normalized.length > SLACK_LIFECYCLE_ERROR_TEXT_MAX
         ? `${normalized.slice(0, SLACK_LIFECYCLE_ERROR_TEXT_MAX - 1).trimEnd()}…`
@@ -1111,6 +1122,51 @@ export function createSlackAdapter(
         });
       } catch (error) {
         console.error("[Slack] Error handling channel mention:", error);
+      }
+    });
+
+    instance.command("/cancel", async ({ command, ack }) => {
+      await ack();
+
+      if (!adapter.onMessage) {
+        return;
+      }
+
+      const payload = command as SlackCommandPayload;
+      if (
+        !isNonEmptyString(payload.channel_id) ||
+        !isNonEmptyString(payload.user_id)
+      ) {
+        return;
+      }
+
+      const commandText = isNonEmptyString(payload.text)
+        ? `/cancel ${payload.text.trim()}`
+        : "/cancel";
+
+      const inbound: InboundChannelMessage = {
+        channel: "slack",
+        accountId: config.accountId,
+        chatId: payload.channel_id,
+        senderId: payload.user_id,
+        senderName: firstNonEmptyString(payload.user_name, payload.user_id),
+        chatLabel: firstNonEmptyString(
+          payload.channel_name,
+          payload.channel_id,
+        ),
+        text: commandText,
+        timestamp: Date.now(),
+        messageId: firstNonEmptyString(payload.trigger_id, payload.command),
+        threadId: null,
+        chatType: resolveSlackChatType(payload.channel_id),
+        isMention: false,
+        raw: command,
+      };
+
+      try {
+        await adapter.onMessage(inbound);
+      } catch (error) {
+        console.error("[Slack] Error handling /cancel command:", error);
       }
     });
 

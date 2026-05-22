@@ -13,17 +13,17 @@ import type {
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
-import type { HeadlessTurnExecutor } from "@/backend/dev/HeadlessTurnExecutor";
-import type { PiStreamFunction } from "@/backend/dev/PiStreamAdapter";
+import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
+import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
-import { LocalBackend } from "@/backend/local/LocalBackend";
-import { emptyLocalUsage } from "@/backend/local/LocalMessage";
-import { listLocalModels } from "@/backend/local/LocalModelConfig";
+import { LocalBackend } from "@/backend/local/local-backend";
+import { emptyLocalUsage } from "@/backend/local/local-message";
+import { listLocalModels } from "@/backend/local/local-model-config";
 import {
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
-} from "@/backend/local/LocalStore";
-import { migrateLocalBackendTranscripts } from "@/backend/local/transcriptMigration";
+} from "@/backend/local/local-store";
+import { migrateLocalBackendTranscripts } from "@/backend/local/transcript-migration";
 
 async function firstConversationDir(storageDir: string): Promise<string> {
   const entries = await readdir(join(storageDir, "conversations"));

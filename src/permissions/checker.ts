@@ -1,13 +1,13 @@
 // src/permissions/checker.ts
 // Main permission checking logic
 
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { runPermissionRequestHooks } from "@/hooks";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
-import { cliPermissions } from "./cliPermissionsInstance";
-import { evaluateCrossAgentGuard, extractFilePath } from "./crossAgentGuard";
+import { cliPermissions } from "./cli-permissions-instance";
+import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
 import {
   type MatcherOptions,
   matchesBashPattern,
@@ -15,7 +15,7 @@ import {
   matchesToolPattern,
 } from "./matcher";
 import { permissionMode } from "./mode";
-import { isMemoryDirCommand, isReadOnlyShellCommand } from "./readOnlyShell";
+import { isMemoryDirCommand, isReadOnlyShellCommand } from "./read-only-shell";
 import { sessionPermissions } from "./session";
 import type {
   PermissionCheckResult,
@@ -116,8 +116,9 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  *
  * Decision logic:
  * 0. Cross-agent guard (unbypassable) → DENY any tool call targeting
- *    another agent's memory dir unless that agent is in allowed_agents
- *    (self ∪ LETTA_MEMORY_SCOPE ∪ --memory-scope)
+ *    another agent's memory dir unless it targets the current agent, targets
+ *    an explicit parent agent for a subagent process, or the parent process
+ *    passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
  * 3. Check permission mode (--permission-mode flag) → ALLOW or DENY
@@ -335,33 +336,14 @@ function checkPermissionForEngine(
   // Use the scoped permission mode state when available (listener/remote mode),
   // otherwise fall back to the global singleton (local/CLI mode).
   const effectiveMode = modeState?.mode ?? permissionMode.getMode();
-  const effectivePlanFilePath =
-    modeState?.planFilePath ?? permissionMode.getPlanFilePath();
   const modeOverride = permissionMode.checkModeOverride(
     toolName,
     toolArgs,
     workingDirectory,
     effectiveMode,
-    effectivePlanFilePath,
   );
   if (modeOverride) {
-    let reason = modeOverride.reason ?? `Permission mode: ${effectiveMode}`;
-    if (
-      effectiveMode === "plan" &&
-      modeOverride.decision === "deny" &&
-      !modeOverride.reason
-    ) {
-      const applyPatchRelativePath = effectivePlanFilePath
-        ? relative(workingDirectory, effectivePlanFilePath).replace(/\\/g, "/")
-        : null;
-      reason =
-        `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
-        `Write your plan to: ${effectivePlanFilePath || "(error: plan file path not configured)"}. ` +
-        (applyPatchRelativePath
-          ? `If using apply_patch, use this exact relative path in patch headers: ${applyPatchRelativePath}. `
-          : "") +
-        `Use ExitPlanMode when your plan is ready for user approval.`;
-    }
+    const reason = modeOverride.reason ?? `Permission mode: ${effectiveMode}`;
     traceEvent(trace, "mode-override", reason);
     return {
       result: {
@@ -718,7 +700,7 @@ function matchesPattern(
 
 /**
  * Subagent types that are safe to auto-approve by default.
- * Some are read-only explorers; others are memory-scoped writers whose
+ * Some are read-only explorers; others are memory-rooted writers whose
  * mutations are constrained by dedicated permission-mode enforcement.
  */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([

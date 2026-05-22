@@ -1,14 +1,14 @@
 import { Box } from "ink";
 import { memo } from "react";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   SYSTEM_ALERT_CLOSE,
   SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
-import { extractTaskNotificationsForDisplay } from "@/utils/taskNotifications";
+import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

@@ -7,12 +7,13 @@ import {
   type Model,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { isContextWindowOverflowError } from "@/backend/dev/contextWindowOverflow";
+import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
-} from "@/backend/dev/PiModelFactory";
-import type { LocalMessage } from "./LocalMessage";
+} from "@/backend/dev/pi-model-factory";
+import { isRecord } from "@/utils/type-guards";
+import type { LocalMessage } from "./local-message";
 import type { LocalAgentRecord } from "./local-types";
 
 const ALL_WORD_LIMIT = 500;
@@ -127,10 +128,6 @@ export interface LocalSlidingWindowCompactionPlan {
 export interface LocalAllCompactionPlan {
   messagesToSummarize: LocalMessage[];
   messagesToKeep: LocalMessage[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringifyUnknown(value: unknown): string {

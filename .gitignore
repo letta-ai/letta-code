@@ -157,3 +157,7 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 __pycache__/
+
+# Nix build outputs
+result
+result-*

@@ -119,6 +119,20 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values.backend).toBe("local");
   });
 
+  test("recognizes disable-memory-guard as a boolean flag", () => {
+    const parsed = parseCliArgs(
+      preprocessCliArgs([
+        "node",
+        "script",
+        "--disable-memory-guard",
+        "-p",
+        "hi",
+      ]),
+      true,
+    );
+    expect(parsed.values["disable-memory-guard"]).toBe(true);
+  });
+
   test("validates backend mode values", () => {
     expect(parseBackendModeFlag(undefined)).toBeUndefined();
     expect(parseBackendModeFlag("api")).toBe("api");

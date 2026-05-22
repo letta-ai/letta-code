@@ -10,7 +10,7 @@
 
 import { Box, type Key, useInput } from "ink";
 import { memo, useCallback, useEffect, useState } from "react";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

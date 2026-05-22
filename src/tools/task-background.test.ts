@@ -9,8 +9,8 @@ import {
   createBackgroundOutputFile,
   getNextTaskId,
 } from "@/tools/impl/process_manager";
-import { task_output } from "@/tools/impl/TaskOutput";
-import { task_stop } from "@/tools/impl/TaskStop";
+import { task_output } from "@/tools/impl/task-output";
+import { task_stop } from "@/tools/impl/task-stop";
 
 /**
  * Tests for Task background execution infrastructure.

@@ -16,7 +16,7 @@ import {
   __testOverrideLoadPendingControlRequestStore,
   __testOverrideSavePendingControlRequestStore,
   clearPendingControlRequestStore,
-} from "@/channels/pendingControlRequests";
+} from "@/channels/pending-control-requests";
 import {
   buildSlackConversationSummary,
   ChannelRegistry,
@@ -216,6 +216,500 @@ describe("ChannelRegistry", () => {
     expect(replies[0]?.text).toContain(
       "Telegram received /compact now, but that slash command is not supported in channels yet.",
     );
+  });
+
+  test("/status replies with route status instead of being delivered to the agent", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        enabled: true,
+        token: "test-token",
+        dmPolicy: "open",
+        allowedUsers: [],
+        binding: { agentId: null, conversationId: null },
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-status",
+      conversationId: "conv-status",
+      enabled: true,
+      createdAt: "2026-05-15T00:00:00.000Z",
+    });
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/status",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "77",
+    });
+    expect(replies[0]?.text).toContain("Telegram status");
+    expect(replies[0]?.text).toContain(
+      "Route: Connected to a Letta agent conversation.",
+    );
+    expect(replies[0]?.text).toContain("Agent: agent-status.");
+    expect(replies[0]?.text).toContain("Conversation: conv-status.");
+  });
+
+  test("/pause and /resume update the current route without agent delivery", async () => {
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-18T00:00:00.000Z",
+      updatedAt: "2026-05-18T00:00:00.000Z",
+    });
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/pause",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies.at(-1)).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "77",
+    });
+    expect(replies.at(-1)?.text).toContain("paused agent routing");
+    expect(getRoute("telegram", "123", "acct-telegram")).toBeNull();
+
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/resume",
+      timestamp: Date.now(),
+      messageId: "78",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies.at(-1)).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "78",
+    });
+    expect(replies.at(-1)?.text).toContain("resumed agent routing");
+    expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
+      "conv-1",
+    );
+  });
+
+  test("/cancel invokes the channel cancel handler for the routed chat", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    const cancellations: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setCancelHandler(async (params) => {
+      cancellations.push(params);
+      return true;
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/cancel",
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(cancellations).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "Slack cancelled the in-progress agent turn for this chat.",
+        replyToMessageId: "1712800000.000200",
+      },
+    ]);
+  });
+
+  test("/cancel reports when the routed chat has no active turn", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    registry.setMessageHandler(() => {});
+    registry.setCancelHandler(async () => false);
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "/cancel",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(replies[0]?.text).toBe(
+      "Telegram received /cancel, but there is no in-progress agent turn to cancel for this chat.",
+    );
+  });
+
+  test("/cancel can target the sole Slack thread route when native commands omit thread metadata", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const cancellations: unknown[] = [];
+    const registry = new ChannelRegistry();
+    registry.setMessageHandler(() => {});
+    registry.setCancelHandler(async (params) => {
+      cancellations.push(params);
+      return true;
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/cancel",
+      timestamp: Date.now(),
+      messageId: "trigger-1",
+      threadId: null,
+      chatType: "channel",
+    });
+
+    expect(cancellations).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies[0]?.text).toBe(
+      "Slack cancelled the in-progress agent turn for this chat.",
+    );
+  });
+
+  test("/chat replies with the web chat link for the routed conversation", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "/chat",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies[0]?.text).toContain(
+      "https://app.letta.com/chat/agent-1?conversation=conv-1",
+    );
+    expect(replies[0]?.text).toContain("Conversation: conv-1.");
+  });
+
+  test("/reflection invokes the channel reflection handler for the routed conversation", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const reflections: unknown[] = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReflectionHandler(async (params) => {
+      reflections.push(params);
+      return { handled: true, text: "Started a reflection pass." };
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/reflection",
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(reflections).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies[0]?.text).toBe("Started a reflection pass.");
   });
 });
 
@@ -544,6 +1038,118 @@ describe("pending channel control requests", () => {
     });
   });
 
+  test("/cancel bypasses pending channel control prompts", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler(() => {});
+
+    const approvalResponses: unknown[] = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+    const cancellations: unknown[] = [];
+    registry.setCancelHandler(async (params) => {
+      cancellations.push(params);
+      return true;
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    await registry.registerPendingControlRequest(
+      createPendingControlRequestEvent(),
+    );
+
+    await adapter.onMessage?.(createInboundMessage("/cancel"));
+
+    expect(approvalResponses).toHaveLength(0);
+    expect(cancellations).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "Slack cancelled the in-progress agent turn for this chat.",
+        replyToMessageId: "1712800000.000200",
+      },
+    ]);
+  });
+
+  test("/reflection bypasses pending channel control prompts", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler(() => {});
+
+    const approvalResponses: unknown[] = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+    const reflections: unknown[] = [];
+    registry.setReflectionHandler(async (params) => {
+      reflections.push(params);
+      return { handled: true, text: "Started a reflection pass." };
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    await registry.registerPendingControlRequest(
+      createPendingControlRequestEvent(),
+    );
+
+    await adapter.onMessage?.(createInboundMessage("/reflection"));
+
+    expect(approvalResponses).toHaveLength(0);
+    expect(reflections).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "Started a reflection pass.",
+        replyToMessageId: "1712800000.000200",
+      },
+    ]);
+  });
+
   test("freeform multi-question channel replies approve instead of reprompting", async () => {
     const replies: Array<{
       chatId: string;
@@ -681,128 +1287,5 @@ describe("pending channel control requests", () => {
     registry.clearPendingControlRequest("req-ask-1");
 
     expect(saveSnapshots.at(-1)).toEqual({ requests: [] });
-  });
-
-  test("a newer pending request on the same channel scope replaces the older one", async () => {
-    const replies: Array<{
-      chatId: string;
-      text: string;
-      replyToMessageId?: string;
-    }> = [];
-    const registry = new ChannelRegistry();
-    const adapter = createAdapter(replies);
-    registry.registerAdapter(adapter);
-
-    const requestIds: string[] = [];
-    registry.setApprovalResponseHandler(async ({ response }) => {
-      const requestId =
-        typeof response === "object" &&
-        response &&
-        "request_id" in response &&
-        typeof response.request_id === "string"
-          ? response.request_id
-          : null;
-      if (requestId) {
-        requestIds.push(requestId);
-      }
-      return true;
-    });
-
-    const sharedSource = {
-      channel: "slack" as const,
-      accountId: "acct-slack",
-      chatId: "C123",
-      chatType: "channel" as const,
-      messageId: "1712800000.000100",
-      threadId: "1712790000.000050",
-      agentId: "agent-1",
-      conversationId: "conv-1",
-    };
-
-    await registry.registerPendingControlRequest({
-      requestId: "req-old",
-      kind: "enter_plan_mode",
-      source: sharedSource,
-      toolName: "EnterPlanMode",
-      input: {},
-    });
-
-    await registry.registerPendingControlRequest({
-      requestId: "req-new",
-      kind: "exit_plan_mode",
-      source: sharedSource,
-      toolName: "ExitPlanMode",
-      input: {},
-    });
-
-    await adapter.onMessage?.(createInboundMessage("approve"));
-
-    expect(replies).toHaveLength(0);
-    expect(requestIds).toEqual(["req-new"]);
-  });
-
-  test("control prompt delivery failures do not block pending approval replies", async () => {
-    const replies: Array<{
-      chatId: string;
-      text: string;
-      replyToMessageId?: string;
-    }> = [];
-    const registry = new ChannelRegistry();
-    const adapter: ChannelAdapter = {
-      ...createAdapter(replies),
-      handleControlRequestEvent: async () => {
-        throw new Error("slack write failed");
-      },
-    };
-    registry.registerAdapter(adapter);
-
-    const approvalResponses: Array<{
-      runtime: { agent_id?: string | null; conversation_id?: string | null };
-      response: unknown;
-    }> = [];
-    registry.setApprovalResponseHandler(async (params) => {
-      approvalResponses.push(params);
-      return true;
-    });
-
-    const originalConsoleError = console.error;
-    console.error = () => {};
-    try {
-      await registry.registerPendingControlRequest({
-        requestId: "req-best-effort",
-        kind: "enter_plan_mode",
-        source: {
-          channel: "slack",
-          accountId: "acct-slack",
-          chatId: "C123",
-          chatType: "channel",
-          messageId: "1712800000.000100",
-          threadId: "1712790000.000050",
-          agentId: "agent-1",
-          conversationId: "conv-1",
-        },
-        toolName: "EnterPlanMode",
-        input: {},
-      });
-    } finally {
-      console.error = originalConsoleError;
-    }
-
-    await adapter.onMessage?.(createInboundMessage("approve"));
-
-    expect(replies).toHaveLength(0);
-    expect(approvalResponses).toHaveLength(1);
-    expect(approvalResponses[0]).toEqual({
-      runtime: {
-        agent_id: "agent-1",
-        conversation_id: "conv-1",
-      },
-      response: {
-        request_id: "req-best-effort",
-        decision: {
-          behavior: "allow",
-        },
-      },
-    });
   });
 });

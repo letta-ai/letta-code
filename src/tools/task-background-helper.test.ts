@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import type { SubagentState } from "@/agent/subagentState";
+import type { SubagentState } from "@/agent/subagent-state";
 import {
   clearAllSubagents,
   registerSubagent,
   updateSubagent,
-} from "@/agent/subagentState";
+} from "@/agent/subagent-state";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
@@ -15,7 +15,7 @@ import {
   spawnBackgroundSubagentTask,
   waitForBackgroundSubagentAgentId,
   waitForBackgroundSubagentLink,
-} from "@/tools/impl/Task";
+} from "@/tools/impl/task";
 
 describe("spawnBackgroundSubagentTask", () => {
   let subagentCounter = 0;

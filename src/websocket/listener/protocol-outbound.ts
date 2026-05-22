@@ -3,14 +3,14 @@ import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { getMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
-import { getSubagents } from "@/agent/subagentState";
-import { getGitContext } from "@/cli/helpers/gitContext";
-import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
-import { getSystemPromptDoctorState } from "@/cli/helpers/systemPromptWarning";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getSubagents } from "@/agent/subagent-state";
+import { getGitContext } from "@/cli/helpers/git-context";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
-import type { DequeuedBatch } from "@/queue/queueRuntime";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
 import {
   backgroundProcesses,
@@ -39,7 +39,7 @@ import { isDebugEnabled } from "@/utils/debug";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
-import { getConversationPermissionModeState } from "./permissionMode";
+import { getConversationPermissionModeState } from "./permission-mode";
 import {
   getConversationRuntime,
   getPendingControlRequests,
@@ -61,14 +61,6 @@ import type {
 } from "./types";
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
-
-function isPlanModeEnabled(): boolean {
-  try {
-    return settingsManager.isPlanModeEnabled();
-  } catch {
-    return false;
-  }
-}
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
@@ -387,7 +379,6 @@ export function buildDeviceStatus(
       is_online: false,
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
-      plan_mode_enabled: isPlanModeEnabled(),
       current_working_directory: fallbackCwd,
       git_context: getCachedDeviceGitContext(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
@@ -454,7 +445,6 @@ export function buildDeviceStatus(
     is_online: transport ? isListenerTransportOpen(transport) : false,
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
-    plan_mode_enabled: isPlanModeEnabled(),
     current_working_directory: resolvedCwd,
     git_context: getCachedDeviceGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
@@ -497,17 +487,11 @@ export function buildLoopStatus(
     return {
       status: "WAITING_ON_INPUT",
       active_run_ids: [],
-      plan_file_path: null,
     };
   }
   const scope = getScopeForRuntime(runtime, params);
   const scopedAgentId = resolveScopedAgentId(listener, scope);
   const scopedConversationId = resolveScopedConversationId(listener, scope);
-  const conversationPermissionModeState = getConversationPermissionModeState(
-    listener,
-    scopedAgentId,
-    scopedConversationId,
-  );
   const conversationRuntime = getConversationRuntime(
     listener,
     scopedAgentId,
@@ -534,10 +518,6 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
-    plan_file_path:
-      conversationPermissionModeState.mode === "plan"
-        ? conversationPermissionModeState.planFilePath
-        : null,
   };
 }
 

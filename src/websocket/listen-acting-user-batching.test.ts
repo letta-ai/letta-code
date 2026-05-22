@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { QueueItem } from "@/queue/queueRuntime";
+import type { QueueItem } from "@/queue/queue-runtime";
 import { pickBatchActingUserId } from "@/websocket/listener/queue";
 
 function makeItem(overrides: Partial<QueueItem> = {}): QueueItem {
