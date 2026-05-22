@@ -61,6 +61,10 @@ for (const f of files) {
   console.error(`    ↳ rename to: ${basename(f).replace(stem, kebab)}\n`);
 }
 
-console.error(`Found ${files.length} violation${files.length === 1 ? "" : "s"}.`);
-console.error(".tsx files are exempt (PascalCase is correct for React components).\n");
+console.error(
+  `Found ${files.length} violation${files.length === 1 ? "" : "s"}.`,
+);
+console.error(
+  ".tsx files are exempt (PascalCase is correct for React components).\n",
+);
 process.exit(1);

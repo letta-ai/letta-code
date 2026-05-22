@@ -1447,7 +1447,5 @@ export function handleChannelRegistryEvent(
     event.conversationId,
   );
   permissionModeState.mode = event.defaultPermissionMode;
-  permissionModeState.planFilePath = null;
-  permissionModeState.modeBeforePlan = null;
   persistPermissionModeMapForRuntime(runtime);
 }

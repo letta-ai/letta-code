@@ -12,7 +12,7 @@
  *   - `Record<channelId, mode>`: per-channel mode map
  */
 
-import type { DiscordChannelMode } from "../types";
+import type { DiscordChannelMode } from "@/channels/types";
 
 /** Resolved channel ID for gating purposes (thread → parent fallback). */
 function resolveGateChannelId(

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConversationMessageCreateBody } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
 
 async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
@@ -32,6 +33,12 @@ describe("dev backend smoke", () => {
 
   test("local deterministic backend exposes local model catalog and streams", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-smoke-pi-"));
+    await createOrUpdateLocalProvider({
+      providerType: "openai",
+      providerName: "lc-openai",
+      apiKey: "dummy",
+      storageDir,
+    });
     const backend = new LocalBackend({
       storageDir,
       executionMode: "deterministic",

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-import { isPathWithinRoots, normalizeScopedPath } from "./memory-scope";
+import { isPathWithinRoots, normalizeMemoryPath } from "./memory-paths";
 import {
   extractDashCArgument,
   isShellExecutor,
@@ -1330,7 +1330,7 @@ function normalizeSeparators(p: string): string {
 }
 
 function expandPath(p: string): string {
-  return normalizeScopedPath(p);
+  return normalizeMemoryPath(p);
 }
 
 type ScopedShellOptions = {
@@ -1395,11 +1395,11 @@ function normalizeScopePath(
     expandedPath.startsWith("/") ||
     /^[a-zA-Z]:[\\/]/.test(expandedPath)
   ) {
-    return normalizeScopedPath(expandedPath);
+    return normalizeMemoryPath(expandedPath);
   }
 
   if (cwd) {
-    return normalizeScopedPath(resolve(cwd, expandedPath));
+    return normalizeMemoryPath(resolve(cwd, expandedPath));
   }
 
   return null;
@@ -1450,7 +1450,7 @@ function applyScopedAssignments(
       expandedValue.startsWith("/") ||
       /^[a-zA-Z]:[\\/]/.test(expandedValue)
     ) {
-      shellVars[assignment.name] = normalizeScopedPath(expandedValue);
+      shellVars[assignment.name] = normalizeMemoryPath(expandedValue);
     } else {
       shellVars[assignment.name] = expandedValue;
     }

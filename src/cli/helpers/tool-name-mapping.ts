@@ -24,8 +24,6 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "glob" || rawName === "Glob") return "Glob";
   if (rawName === "ls") return "LS";
   if (rawName === "todo_write" || rawName === "TodoWrite") return "TODO";
-  if (rawName === "EnterPlanMode" || rawName === "ExitPlanMode")
-    return "Planning";
   if (rawName === "AskUserQuestion") return "Question";
 
   // Codex toolset (snake_case)
@@ -112,14 +110,12 @@ export function isPlanTool(rawName: string, displayName?: string): boolean {
 
 /**
  * Checks if a tool requires a specialized UI dialog instead of standard approval
- * Note: ExitPlanMode, file edit/write/patch tools, and shell tools now render inline
- * (not overlay), but still need this flag to bypass the standard ApprovalDialog rendering
+ * File edit/write/patch tools and shell tools render inline (not overlay), but
+ * still need this flag to bypass the standard ApprovalDialog rendering.
  */
 export function isFancyUITool(name: string): boolean {
   return (
     name === "AskUserQuestion" ||
-    name === "EnterPlanMode" ||
-    name === "ExitPlanMode" ||
     // File edit/write/patch tools now render inline
     isFileEditTool(name) ||
     isFileWriteTool(name) ||
@@ -133,8 +129,6 @@ export function isFancyUITool(name: string): boolean {
  * Checks if a tool always requires user interaction, even in unrestricted mode.
  * These are tools that fundamentally need user input to proceed:
  * - AskUserQuestion: needs user to answer questions
- * - EnterPlanMode: needs user to approve entering plan mode
- * - ExitPlanMode: needs user to approve the plan
  *
  * Other tools (bash, file edits) should respect unrestricted mode and auto-approve.
  */

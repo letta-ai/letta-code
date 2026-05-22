@@ -146,17 +146,3 @@ export function appendTaskNotificationEventsToBuffer(
   flush?.();
   return true;
 }
-
-/**
- * Format multiple notifications as XML string.
- * @deprecated Use formatTaskNotification and queue individually
- */
-export function formatTaskNotifications(
-  notifications: TaskNotification[],
-): string {
-  if (notifications.length === 0) {
-    return "";
-  }
-
-  return notifications.map(formatTaskNotification).join("\n\n");
-}

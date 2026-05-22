@@ -1,3 +1,4 @@
+import { isRecord } from "@/utils/type-guards";
 import type {
   ChannelConfigBooleanField,
   ChannelConfigField,
@@ -22,10 +23,6 @@ const FIELD_TYPES: ReadonlySet<ChannelConfigField["type"]> = new Set([
   "string-array",
   "key-value-map",
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;

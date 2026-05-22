@@ -322,22 +322,22 @@ describe("git auth hardening", () => {
     expect(args.join("\n")).toContain("http.extraHeader=Authorization: Basic");
   });
 
-  test("does NOT add Pierre routing header when LETTA_MEMFS_BACKEND is unset", () => {
+  test("does NOT add hosted routing header when LETTA_MEMFS_BACKEND is unset", () => {
     const args = buildGitAuthArgs("token-123", { PATH: "/usr/bin" });
     expect(args.join("\n")).not.toContain("x-letta-memfs-backend");
   });
 
-  test("adds Pierre routing header when LETTA_MEMFS_BACKEND=pierre", () => {
+  test("adds hosted routing header when LETTA_MEMFS_BACKEND=hosted", () => {
     const args = buildGitAuthArgs("token-123", {
-      LETTA_MEMFS_BACKEND: "pierre",
+      LETTA_MEMFS_BACKEND: "hosted",
     });
     expect(args.join("\n")).toContain(
-      "http.extraHeader=x-letta-memfs-backend: pierre",
+      "http.extraHeader=x-letta-memfs-backend: hosted",
     );
   });
 
-  test("does NOT add Pierre routing header for other LETTA_MEMFS_BACKEND values", () => {
-    for (const value of ["memfs-py", "dual", "PIERRE", ""]) {
+  test("does NOT add hosted routing header for other LETTA_MEMFS_BACKEND values", () => {
+    for (const value of ["memfs-py", "dual", "HOSTED", ""]) {
       const args = buildGitAuthArgs("token-123", {
         LETTA_MEMFS_BACKEND: value,
       });

@@ -36,4 +36,33 @@ describe("headless shared reminder content helpers", () => {
     expect(result[1]).toEqual(multimodal[0]);
     expect(result[2]).toEqual(multimodal[1]);
   });
+
+  test("uses only reminder parts when user content is nullish", () => {
+    const reminder = { type: "text" as const, text: "<skills>demo</skills>" };
+
+    expect(
+      prependReminderPartsToContent(
+        null as unknown as MessageCreate["content"],
+        [reminder],
+      ),
+    ).toEqual([reminder]);
+    expect(
+      prependReminderPartsToContent(
+        undefined as unknown as MessageCreate["content"],
+        [reminder],
+      ),
+    ).toEqual([reminder]);
+  });
+
+  test("stringifies unexpected user content when prepending reminders", () => {
+    const result = prependReminderPartsToContent(
+      { ref: "abc" } as unknown as MessageCreate["content"],
+      [{ type: "text", text: "<skills>demo</skills>" }],
+    );
+
+    expect(result).toEqual([
+      { type: "text", text: "<skills>demo</skills>" },
+      { type: "text", text: '{"ref":"abc"}' },
+    ]);
+  });
 });

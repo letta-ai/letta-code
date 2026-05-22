@@ -202,19 +202,6 @@ describe("Settings Manager - Global Settings", () => {
     expect(tokenStreaming).toBe(true);
   });
 
-  test("Plan mode defaults off and can be toggled", () => {
-    expect(settingsManager.getSetting("planModeEnabled")).toBe(false);
-    expect(settingsManager.isPlanModeEnabled()).toBe(false);
-
-    settingsManager.setPlanModeEnabled(true);
-    expect(settingsManager.getSetting("planModeEnabled")).toBe(true);
-    expect(settingsManager.isPlanModeEnabled()).toBe(true);
-
-    settingsManager.setPlanModeEnabled(false);
-    expect(settingsManager.getSetting("planModeEnabled")).toBe(false);
-    expect(settingsManager.isPlanModeEnabled()).toBe(false);
-  });
-
   test("Worktree tool defaults on and can be toggled", () => {
     expect(settingsManager.getSetting("includeWorktreeTool")).toBe(true);
     expect(settingsManager.shouldIncludeWorktreeTool()).toBe(true);

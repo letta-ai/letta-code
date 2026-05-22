@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { commands } from "@/cli/commands/registry";
+import { truncateText } from "@/cli/helpers/truncate-text";
 import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { settingsManager } from "@/settings-manager";
@@ -9,13 +10,6 @@ import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
 const VISIBLE_COMMANDS = 7; // Number of commands visible at once
 const CMD_COL_WIDTH = 14;
-
-function truncateText(text: string, maxWidth: number): string {
-  if (maxWidth <= 0) return "";
-  if (text.length <= maxWidth) return text;
-  if (maxWidth <= 3) return text.slice(0, maxWidth);
-  return `${text.slice(0, maxWidth - 3)}...`;
-}
 
 // Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)

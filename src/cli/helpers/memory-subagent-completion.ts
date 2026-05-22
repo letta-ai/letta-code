@@ -1,4 +1,5 @@
 import { recompileAgentSystemPrompt } from "@/agent/modify";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
@@ -81,10 +82,11 @@ export async function handleMemorySubagentCompletion(
   }
 
   if (!success) {
-    const normalizedError = error || "Unknown error";
     if (subagentType === "reflection") {
-      return `Tried to reflect, but got lost in the palace: ${normalizedError}`;
+      const detail = isDebugEnabled() ? `: ${error || "Unknown error"}` : "";
+      return `Tried to reflect, but got lost in the palace${detail}`;
     }
+    const normalizedError = error || "Unknown error";
     return `Memory initialization failed: ${normalizedError}`;
   }
 

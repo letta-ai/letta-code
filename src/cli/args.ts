@@ -148,16 +148,15 @@ export const CLI_FLAG_CATALOG = {
   allowedTools: { parser: { type: "string" }, mode: "both" },
   disallowedTools: { parser: { type: "string" }, mode: "both" },
   "permission-mode": { parser: { type: "string" }, mode: "both" },
-  "memory-scope": {
-    parser: { type: "string" },
+  "disable-memory-guard": {
+    parser: { type: "boolean" },
     mode: "both",
     help: {
-      argLabel: "<ids>",
       description:
-        "Comma-separated agent IDs this session may access in addition to self.",
+        "Disable the cross-agent memory guard for this parent agent process.",
       continuationLines: [
-        "Example: --memory-scope agent-abc,agent-def",
-        "Required to read or write another agent's memory directory.",
+        "Allows intentional access to other agents' memory directories.",
+        "Ignored by subagents; their memory guard remains enabled.",
       ],
     },
   },

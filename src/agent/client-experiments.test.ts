@@ -10,6 +10,7 @@ const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalApiKey = process.env.LETTA_API_KEY;
 const originalNodeFlag = process.env.LETTA_NODE;
+const originalMemfsBackend = process.env.LETTA_MEMFS_BACKEND;
 
 let testHomeDir = "";
 
@@ -20,6 +21,7 @@ beforeEach(async () => {
   process.env.USERPROFILE = testHomeDir;
   process.env.LETTA_API_KEY = "test-api-key";
   delete process.env.LETTA_NODE;
+  delete process.env.LETTA_MEMFS_BACKEND;
   await settingsManager.initialize();
 });
 
@@ -48,6 +50,12 @@ afterEach(async () => {
   } else {
     process.env.LETTA_NODE = originalNodeFlag;
   }
+
+  if (originalMemfsBackend === undefined) {
+    delete process.env.LETTA_MEMFS_BACKEND;
+  } else {
+    process.env.LETTA_MEMFS_BACKEND = originalMemfsBackend;
+  }
 });
 
 describe("getClient experiment headers", () => {
@@ -66,5 +74,11 @@ describe("getClient experiment headers", () => {
 
   test("omits the node header when the experiment is default-off", async () => {
     expect(getClientDefaultHeaders()["x-letta-node"]).toBeUndefined();
+  });
+
+  test("sends hosted backend header when requested", async () => {
+    process.env.LETTA_MEMFS_BACKEND = "hosted";
+
+    expect(getClientDefaultHeaders()["x-letta-memfs-backend"]).toBe("hosted");
   });
 });

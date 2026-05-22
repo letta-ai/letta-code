@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { isRecord } from "@/utils/type-guards";
 import { emptyLocalUsage, type LocalMessage } from "./local-message";
 import {
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
@@ -29,10 +30,6 @@ export interface LocalTranscriptMigrationResult {
     reason: string;
   }>;
   dryRun: boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readJsonl(path: string): unknown[] {

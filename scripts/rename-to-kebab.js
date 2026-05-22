@@ -22,10 +22,7 @@ function* walkTs(dir) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       yield* walkTs(full);
-    } else if (
-      entry.endsWith(".ts") &&
-      !entry.endsWith(".d.ts")
-    ) {
+    } else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {
       yield full;
     }
   }
@@ -59,6 +56,4 @@ for (const { from, to } of renames) {
 }
 
 console.log(`\nDone. ${renames.length} files renamed.`);
-console.log(
-  "\nNext: run the import update script to fix all references.",
-);
+console.log("\nNext: run the import update script to fix all references.");

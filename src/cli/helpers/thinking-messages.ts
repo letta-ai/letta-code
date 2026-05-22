@@ -122,18 +122,6 @@ export function getRandomPastTenseVerb(): string {
   return PAST_TENSE_VERBS[verb] ?? "completed";
 }
 
-// Get a random thinking message (full string with agent name)
-export function getRandomThinkingMessage(agentName?: string | null): string {
-  const verb = getRandomVerb();
-
-  if (agentName) {
-    return `${agentName} is ${verb}`;
-  }
-
-  // Fallback to capitalized verb if no agent name
-  return verb.charAt(0).toUpperCase() + verb.slice(1);
-}
-
 export function getRandomThinkingTip(options?: {
   includeSystemPromptUpgradeTip?: boolean;
 }): string {
