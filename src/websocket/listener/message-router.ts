@@ -540,8 +540,8 @@ export function createListenerMessageHandler(
             cwd_map: Object.fromEntries(runtime.workingDirectoryByConversation),
             boot_working_directory: runtime.bootWorkingDirectory,
           },
-          "retrieve_cwd_map_response_failed",
           "retrieve_cwd_map_response",
+          "retrieve_cwd_map",
         );
         return;
       }
