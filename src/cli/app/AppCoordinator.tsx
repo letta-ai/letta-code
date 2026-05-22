@@ -100,6 +100,7 @@ import {
   useTerminalWidth,
 } from "@/cli/hooks/use-terminal-width";
 import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
+import { DEFAULT_AGENT_NAME } from "@/constants";
 import {
   getTask,
   handleMissedOneShot,
@@ -199,6 +200,58 @@ import { useInterruptHandler } from "./use-interrupt-handler";
 import { useQueuedApprovalSubmit } from "./use-queued-approval-submit";
 import { useReasoningCycle } from "./use-reasoning-cycle";
 import { useSubmitHandler } from "./use-submit-handler";
+
+function buildStartupCommandHints(options: {
+  isResumingConversation: boolean;
+  isPinned: boolean;
+  isLocalBackend: boolean;
+  agentName: string | null | undefined;
+}): string[] {
+  const { isResumingConversation, isPinned, isLocalBackend, agentName } =
+    options;
+  const isDefaultNamedAgent =
+    !agentName ||
+    agentName === DEFAULT_AGENT_NAME ||
+    agentName === "Unnamed Agent";
+
+  if (isResumingConversation) {
+    return [
+      "→ **/agents**    list all agents",
+      "→ **/resume**    browse all conversations",
+      "→ **/new**       start a new conversation",
+      "→ **/init**      initialize your agent's memory",
+      "→ **/remember**  teach your agent",
+    ];
+  }
+
+  if (isLocalBackend && !isPinned && isDefaultNamedAgent) {
+    return [
+      "→ **/model**     switch models",
+      "→ **/connect**   configure your llm api keys",
+      "→ **/rename**    name your agent",
+      "→ **/init**      initialize your agent's memory",
+      "→ **/login**     sign in to Constellation",
+    ];
+  }
+
+  if (isPinned) {
+    return [
+      "→ **/agents**    list all agents",
+      "→ **/resume**    resume a previous conversation",
+      "→ **/memory**    view your agent's memory",
+      "→ **/init**      initialize your agent's memory",
+      "→ **/remember**  teach your agent",
+    ];
+  }
+
+  return [
+    "→ **/agents**    list all agents",
+    "→ **/resume**    resume a previous conversation",
+    "→ **/pin**       save + name your agent",
+    "→ **/init**      initialize your agent's memory",
+    "→ **/remember**  teach your agent",
+  ];
+}
 
 export function App({
   agentId: initialAgentId,
@@ -2553,33 +2606,12 @@ export function App({
         ? `Resuming conversation with **${agentName}**`
         : `Starting new conversation with **${agentName}**`;
 
-      // Command hints - vary based on agent state:
-      // - Resuming: show /new (they may want a fresh conversation)
-      // - New session + unpinned: show /pin (they should save their agent)
-      // - New session + pinned: show /memory (they're already saved)
-      const commandHints = isResumingConversation
-        ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    browse all conversations",
-            "→ **/new**       start a new conversation",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
-        : isPinned
-          ? [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/memory**    view your agent's memory",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ]
-          : [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/pin**       save + name your agent",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ];
+      const commandHints = buildStartupCommandHints({
+        isResumingConversation,
+        isPinned,
+        isLocalBackend: isLocalBackendEnabled(),
+        agentName,
+      });
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -4285,22 +4317,12 @@ export function App({
           ? `Starting new conversation with **${agentName}**`
           : "Creating a new agent";
 
-      // Command hints - for pinned agents show /memory, for unpinned show /pin
-      const commandHints = isPinned
-        ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/memory**    view your agent's memory",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
-        : [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/pin**       save + name your agent",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ];
+      const commandHints = buildStartupCommandHints({
+        isResumingConversation: resumedExistingConversation,
+        isPinned,
+        isLocalBackend: isLocalBackendEnabled(),
+        agentName,
+      });
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
