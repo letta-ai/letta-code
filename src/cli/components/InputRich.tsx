@@ -31,6 +31,7 @@ import {
   type ExecutionPhase,
   getPhaseVisual,
 } from "@/cli/helpers/phase-visuals";
+import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
@@ -59,6 +60,14 @@ import { Text } from "./Text";
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
 const FOOTER_WIDTH_STREAMING_DELTA = 2;
+const EMPTY_COMPOSER_PROMPT_ROTATION_MS = 6000;
+const EMPTY_COMPOSER_PROMPT_HINTS = [
+  'Try "help me understand this codebase"',
+  'Try "help me organize my desktop"',
+  'Try "debug this error"',
+  'Try "explain what this function does"',
+  'Try "review this pull request"',
+];
 
 function truncateEnd(value: string, maxChars: number): string {
   if (maxChars <= 0) return "";
@@ -534,7 +543,9 @@ const InputFooter = memo(function InputFooter({
 
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
-  const reasoningTag = getReasoningEffortTag(currentReasoningEffort);
+  const reasoningTag = shouldHideReasoningForModelDisplay(currentModel)
+    ? null
+    : getReasoningEffortTag(currentReasoningEffort);
   const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
   const tempOverrideExtraChars = hasTemporaryModelOverride ? 2 : 0; // " ▲"
 
@@ -1053,6 +1064,7 @@ export function Input({
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
+  showInspirationalPromptHints = false,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -1103,6 +1115,7 @@ export function Input({
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
+  showInspirationalPromptHints?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -1113,6 +1126,8 @@ export function Input({
   const [currentMode, setCurrentMode] = useState<PermissionMode>(
     externalMode || permissionMode.getMode(),
   );
+  const [emptyPromptHintIndex, setEmptyPromptHintIndex] = useState(0);
+  const [emptyPromptHintReady, setEmptyPromptHintReady] = useState(false);
   const [isAutocompleteActive, setIsAutocompleteActive] = useState(false);
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
@@ -1252,6 +1267,47 @@ export function Input({
       onRestoredInputConsumed?.();
     }
   }, [restoredInput, value, onRestoredInputConsumed]);
+
+  useEffect(() => {
+    if (!showInspirationalPromptHints || value !== "") {
+      setEmptyPromptHintIndex(0);
+      setEmptyPromptHintReady(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setEmptyPromptHintReady(true);
+    }, EMPTY_COMPOSER_PROMPT_ROTATION_MS);
+
+    return () => clearTimeout(timer);
+  }, [showInspirationalPromptHints, value]);
+
+  useEffect(() => {
+    if (
+      !showInspirationalPromptHints ||
+      value !== "" ||
+      !emptyPromptHintReady
+    ) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setEmptyPromptHintIndex(
+        (prev) => (prev + 1) % EMPTY_COMPOSER_PROMPT_HINTS.length,
+      );
+    }, EMPTY_COMPOSER_PROMPT_ROTATION_MS);
+
+    return () => clearInterval(timer);
+  }, [showInspirationalPromptHints, value, emptyPromptHintReady]);
+
+  const inspirationalPlaceholder = showInspirationalPromptHints
+    ? (EMPTY_COMPOSER_PROMPT_HINTS[emptyPromptHintIndex] ?? undefined)
+    : undefined;
+  const showInspirationalPlaceholder =
+    showInspirationalPromptHints &&
+    emptyPromptHintReady &&
+    value === "" &&
+    !!inspirationalPlaceholder;
 
   const handleBangAtEmpty = useCallback(() => {
     if (isBashMode) return false;
@@ -1896,6 +1952,11 @@ export function Input({
                   value={value}
                   onChange={setValue}
                   onSubmit={handleSubmit}
+                  placeholder={
+                    showInspirationalPlaceholder
+                      ? inspirationalPlaceholder
+                      : undefined
+                  }
                   cursorPosition={cursorPos}
                   onCursorMove={setCurrentCursorPosition}
                   focus={interactionEnabled && !onEscapeCancel}
@@ -1988,6 +2049,7 @@ export function Input({
     contentWidth,
     value,
     handleSubmit,
+    showInspirationalPlaceholder,
     cursorPos,
     onEscapeCancel,
     handleBangAtEmpty,
@@ -2027,6 +2089,7 @@ export function Input({
     queueMode,
     deferModeSupported,
     isLocalBackend,
+    inspirationalPlaceholder,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state

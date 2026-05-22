@@ -92,7 +92,13 @@ The flake exposes:
 - `homeManagerModules.default` and the compatibility alias `homeModules.default`
 - `nixosModules.default`
 
-The package builds the Letta Code CLI from this repository with the checked-in `package-lock.json`, wraps the resulting `letta` binary with common runtime tools, and leaves agent configuration and credentials in the normal Letta Code locations.
+The package builds the Letta Code CLI from this repository with Bun. Dependency resolution is driven by the checked-in `bun.lock`; the generated `bun.nix` file lets the flake prefetch those Bun dependencies reproducibly for offline Nix builds. The resulting `letta` binary is wrapped with common runtime tools, and agent configuration and credentials stay in the normal Letta Code locations.
+
+When `bun.lock` changes, regenerate the Nix dependency expression before opening the PR:
+
+```bash
+bunx bun2nix -o bun.nix
+```
 
 ## Follow-up packaging work
 

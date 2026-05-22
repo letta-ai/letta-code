@@ -335,6 +335,18 @@ export interface DeviceStatus {
   pending_control_requests: PendingControlRequest[];
   experiments: ExperimentSnapshot[];
   memory_directory: string | null;
+  /**
+   * Persisted CWD overrides keyed by listener scope key.
+   *
+   * Key format:
+   * - `conversation:<conversation_id>` for conversation-scoped overrides
+   * - `agent:<agent_id>::conversation:default` for an agent's default conversation scope
+   *
+   * Example: `conversation:conv_123` or `agent:agent_123::conversation:default`
+   */
+  cwd_map?: Record<string, string>;
+  /** Listener boot CWD used when a conversation has no matching formatted key in `cwd_map`. */
+  boot_working_directory?: string | null;
   should_doctor?: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
   /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
@@ -1062,6 +1074,23 @@ export interface CreateAgentCommand {
   pin_global?: boolean;
 }
 
+export interface GetCwdMapCommand {
+  type: "get_cwd_map";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+export interface GetCwdMapResponseMessage {
+  type: "get_cwd_map_response";
+  request_id: string;
+  success: boolean;
+  /** Persisted per-conversation CWD overrides, keyed by listener scope key. */
+  cwd_map: Record<string, string>;
+  /** Listener boot CWD used when a conversation has no entry in cwd_map. */
+  boot_working_directory: string | null;
+  error?: string;
+}
+
 export interface GetReflectionSettingsCommand {
   type: "get_reflection_settings";
   /** Echoed back in the response for request correlation. */
@@ -1755,6 +1784,7 @@ export type WsProtocolCommand =
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
+  | GetCwdMapCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | GetExperimentsCommand
@@ -1822,6 +1852,7 @@ export type WsProtocolMessage =
   | ChannelPairingsUpdatedMessage
   | ChannelRoutesUpdatedMessage
   | ChannelTargetsUpdatedMessage
+  | GetCwdMapResponseMessage
   | SecretListResponse
   | SecretApplyResponse
   | RemoveQueueItemResponse;
