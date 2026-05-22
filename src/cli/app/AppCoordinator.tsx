@@ -322,6 +322,13 @@ export function App({
     prefetchAvailableModelHandles();
   }, []);
 
+  const [hasAvailableLocalModels, setHasAvailableLocalModels] = useState(
+    startupHasAvailableLocalModels,
+  );
+  const markLocalModelsAvailable = useCallback(() => {
+    setHasAvailableLocalModels(true);
+  }, []);
+
   // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
@@ -831,7 +838,7 @@ export function App({
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
-    startupHasAvailableLocalModels,
+    startupHasAvailableLocalModels: hasAvailableLocalModels,
   });
 
   // Use tier-aware resolution so the display matches the agent's reasoning effort
@@ -3787,6 +3794,7 @@ export function App({
     setHasConversationModelOverride,
     setLines,
     setLlmConfig,
+    markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
@@ -3958,6 +3966,7 @@ export function App({
     setConversationOverrideModelSettings,
     setCurrentModelHandle,
     setCurrentModelId,
+    setHasAvailableLocalModels,
     setCurrentPersonalityId,
     setCurrentSystemPromptId,
     setCurrentToolset,
@@ -4540,6 +4549,7 @@ export function App({
       liveItems={liveItems}
       liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
       loadingState={loadingState}
+      markLocalModelsAvailable={markLocalModelsAvailable}
       maybeCarryOverActiveConversationModel={
         maybeCarryOverActiveConversationModel
       }

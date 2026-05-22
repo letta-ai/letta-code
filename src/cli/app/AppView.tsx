@@ -230,6 +230,7 @@ type AppViewProps = {
   liveItems: Line[];
   liveTrajectoryElapsedBaseMs: number;
   loadingState: AppLoadingState;
+  markLocalModelsAvailable: () => void;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
@@ -382,6 +383,7 @@ export function AppView(props: AppViewProps) {
     liveItems,
     liveTrajectoryElapsedBaseMs,
     loadingState,
+    markLocalModelsAvailable,
     maybeCarryOverActiveConversationModel,
     modelReasoningPrompt,
     modelSelectorOptions,
@@ -893,6 +895,7 @@ export function AppView(props: AppViewProps) {
                         refreshDerived,
                         setCommandRunning,
                         onCodexConnected: () => {
+                          markLocalModelsAvailable();
                           setModelSelectorOptions({
                             filterProvider: "chatgpt-plus-pro",
                             forceRefresh: true,

@@ -265,6 +265,7 @@ type SubmitHandlerContext = {
   setHasConversationModelOverride: (value: boolean) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
+  markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
   setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
@@ -389,6 +390,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setHasConversationModelOverride,
     setLines,
     setLlmConfig,
+    markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
@@ -920,6 +922,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             refreshDerived,
             openOverlay,
             setCommandRunning,
+            markLocalModelsAvailable,
             setModelSelectorOptions,
           },
         );
