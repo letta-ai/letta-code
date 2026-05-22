@@ -1069,14 +1069,14 @@ export interface CreateAgentCommand {
   pin_global?: boolean;
 }
 
-export interface RetrieveCwdMapCommand {
-  type: "retrieve_cwd_map";
+export interface GetCwdMapCommand {
+  type: "get_cwd_map";
   /** Echoed back in the response for request correlation. */
   request_id: string;
 }
 
-export interface RetrieveCwdMapResponseMessage {
-  type: "retrieve_cwd_map_response";
+export interface GetCwdMapResponseMessage {
+  type: "get_cwd_map_response";
   request_id: string;
   success: boolean;
   /** Persisted per-conversation CWD overrides, keyed by listener scope key. */
