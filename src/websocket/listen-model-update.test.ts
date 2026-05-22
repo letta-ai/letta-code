@@ -19,6 +19,13 @@ function readModelToolsetCommandSource(): string {
   return readFileSync(commandPath, "utf-8");
 }
 
+function readListenerLifecycleSource(): string {
+  const lifecyclePath = fileURLToPath(
+    new URL("./listener/lifecycle.ts", import.meta.url),
+  );
+  return readFileSync(lifecyclePath, "utf-8");
+}
+
 describe("listen-client model update status message", () => {
   test("emits only model name when toolset did not change", () => {
     const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
@@ -198,6 +205,21 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(source).toContain("updateConversationLLMConfig(");
     expect(source).toContain("preserveContextWindow: false");
     expect(source).toContain('appliedTo = "conversation"');
+  });
+});
+
+describe("listen-client channel model command wiring", () => {
+  test("wireChannelIngress routes channel /model through the model update helpers", () => {
+    const source = readListenerLifecycleSource();
+
+    expect(source).toContain("registry.setModelHandler");
+    expect(source).toContain("buildListModelsResponse(");
+    expect(source).toContain("resolveModelForUpdate({");
+    expect(source).toContain("applyModelUpdateForRuntime({");
+    expect(source).toContain("settingsManager.getRecentModels()");
+    expect(source).toContain(
+      "settingsManager.addRecentModel(resolvedModel.handle)",
+    );
   });
 });
 

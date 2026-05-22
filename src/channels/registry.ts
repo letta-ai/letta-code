@@ -27,6 +27,7 @@ import {
   buildChannelCancelUnavailableMessage,
   buildChannelChatLinkMessage,
   buildChannelChatUnavailableMessage,
+  buildChannelModelUnavailableMessage,
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
   buildChannelReflectionUnavailableMessage,
@@ -281,6 +282,18 @@ export type ChannelReflectionHandler = (params: {
   text?: string;
 }>;
 
+export type ChannelModelHandler = (params: {
+  channelId: string;
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+  modelIdentifier?: string;
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+}>;
+
 type PendingChannelControlRequest = {
   event: ChannelControlRequestEvent;
   deliveredThisProcess: boolean;
@@ -322,6 +335,7 @@ export class ChannelRegistry {
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
   private cancelHandler: ChannelCancelHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
+  private modelHandler: ChannelModelHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
@@ -460,6 +474,10 @@ export class ChannelRegistry {
 
   setReflectionHandler(handler: ChannelReflectionHandler | null): void {
     this.reflectionHandler = handler;
+  }
+
+  setModelHandler(handler: ChannelModelHandler | null): void {
+    this.modelHandler = handler;
   }
 
   setEventHandler(
@@ -754,6 +772,7 @@ export class ChannelRegistry {
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
     this.reflectionHandler = null;
+    this.modelHandler = null;
   }
 
   /**
@@ -772,6 +791,7 @@ export class ChannelRegistry {
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
     this.reflectionHandler = null;
+    this.modelHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
     instance = null;
@@ -1002,6 +1022,35 @@ export class ChannelRegistry {
     });
   }
 
+  private async handleModelSlashCommand(
+    command: { args: string },
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (!this.modelHandler) {
+      return {
+        handled: true,
+        text: buildChannelModelUnavailableMessage(msg.channel),
+      };
+    }
+
+    return this.modelHandler({
+      channelId: msg.channel,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+      modelIdentifier: command.args || undefined,
+    });
+  }
+
   private getCancelRoute(msg: InboundChannelMessage): ChannelRoute | null {
     let route = this.getRoute(
       msg.channel,
@@ -1082,6 +1131,8 @@ export class ChannelRegistry {
             this.handleCancelSlashCommand(commandMsg),
           chat: async (_command, commandMsg) =>
             this.handleChatSlashCommand(commandMsg),
+          model: async (command, commandMsg) =>
+            this.handleModelSlashCommand(command, commandMsg),
           pause: async () => this.handlePauseResumeSlashCommand("pause", msg),
           reflection: async (_command, commandMsg) =>
             this.handleReflectionSlashCommand(commandMsg),
