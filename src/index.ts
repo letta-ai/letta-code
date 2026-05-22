@@ -861,7 +861,7 @@ async function main(): Promise<void> {
     : null;
   if (personalityInput && !personality) {
     console.error(
-      `Error: Unknown personality "${personalityInput}". Valid: letta-code, linus, kawaii, claude, codex`,
+      `Error: Unknown personality "${personalityInput}". Valid: letta-code, tutorial, blank, linus, kawaii, claude, codex`,
     );
     process.exit(1);
   }
