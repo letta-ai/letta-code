@@ -31,8 +31,10 @@ import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
 import {
   type Backend,
+  type BackendMode,
   configureBackendMode,
   getBackend,
+  getBackendForMode,
   isExperimentalLocalBackendEnabled,
 } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
@@ -58,7 +60,10 @@ import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
-import { inferBackendModeFromAgentId } from "./cli/startup-backend-mode";
+import {
+  getStartupBackendLookupOrder,
+  inferBackendModeFromAgentId,
+} from "./cli/startup-backend-mode";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
@@ -361,80 +366,174 @@ function getModelForToolLoading(
   return specifiedModel;
 }
 
+function getCurrentBackendMode(): BackendMode {
+  return isExperimentalLocalBackendEnabled() ? "local" : "api";
+}
+
+function getPinnedAgentIdsForBackendMode(backendMode: BackendMode): string[] {
+  const previousBackendMode = getCurrentBackendMode();
+  configureBackendMode(backendMode);
+  try {
+    return settingsManager
+      .getMergedPinnedAgents()
+      .map((entry) => entry.agentId)
+      .filter((id) => isAgentIdCompatibleWithBackend(id, backendMode));
+  } finally {
+    configureBackendMode(previousBackendMode);
+  }
+}
+
+async function findLocalAgentsByName(name: string): Promise<AgentState[]> {
+  const backend = getBackendForMode("local");
+  const normalizedName = name.toLowerCase();
+  try {
+    const page = await backend.listAgents({
+      query_text: name,
+      limit: 100,
+    } as never);
+    return paginatedItems<AgentState>(page).filter(
+      (agent) => agent.name?.toLowerCase() === normalizedName,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function getStartupTargetLookupOrderForCredentials({
+  baseURL,
+  explicitBackendMode,
+  lookupOrder,
+  apiKey,
+  hasRefreshToken,
+}: {
+  baseURL: string;
+  explicitBackendMode?: BackendMode;
+  lookupOrder: BackendMode[];
+  apiKey?: string;
+  hasRefreshToken: boolean;
+}): BackendMode[] {
+  if (explicitBackendMode) return lookupOrder;
+  if (baseURL !== LETTA_CLOUD_API_URL || apiKey || hasRefreshToken) {
+    return lookupOrder;
+  }
+  return lookupOrder.filter((mode) => mode !== "api");
+}
+
 /**
  * Resolve an agent ID by name from pinned agents.
  * Case-insensitive exact match. If multiple matches, picks the most recently used.
  */
 async function resolveAgentByName(
   name: string,
-): Promise<{ id: string; name: string; agent: AgentState } | null> {
-  const backend = getBackend();
-
-  // Get all pinned agents (local first, then global, deduplicated)
-  const localPinned = settingsManager.getLocalPinnedAgents();
-  const globalPinned = settingsManager.getGlobalPinnedAgents();
-  const allPinned = [...new Set([...localPinned, ...globalPinned])];
-
-  if (allPinned.length === 0) {
-    return null;
-  }
-
-  // Fetch names for all pinned agents and find matches
-  const matches: { id: string; name: string; agent: AgentState }[] = [];
+  backendLookupOrder: BackendMode[],
+): Promise<{
+  id: string;
+  name: string;
+  agent: AgentState;
+  backendMode: BackendMode;
+} | null> {
   const normalizedSearchName = name.toLowerCase();
 
-  await Promise.all(
-    allPinned.map(async (id) => {
-      try {
-        const agent = await backend.retrieveAgent(id);
-        if (agent.name?.toLowerCase() === normalizedSearchName) {
-          matches.push({ id, name: agent.name, agent });
+  for (const backendMode of backendLookupOrder) {
+    const backend = getBackendForMode(backendMode);
+    const pinnedAgents = getPinnedAgentIdsForBackendMode(backendMode);
+
+    const matches: Array<{
+      id: string;
+      name: string;
+      agent: AgentState;
+      backendMode: BackendMode;
+    }> = [];
+
+    if (pinnedAgents.length > 0) {
+      await Promise.all(
+        pinnedAgents.map(async (id) => {
+          try {
+            const agent = await backend.retrieveAgent(id);
+            if (agent.name?.toLowerCase() === normalizedSearchName) {
+              matches.push({ id, name: agent.name, agent, backendMode });
+            }
+          } catch {
+            // Agent not found or error, skip
+          }
+        }),
+      );
+    }
+
+    if (backendMode === "local") {
+      const seen = new Set(matches.map((match) => match.id));
+      for (const agent of await findLocalAgentsByName(name)) {
+        if (!seen.has(agent.id)) {
+          matches.push({
+            id: agent.id,
+            name: agent.name ?? agent.id,
+            agent,
+            backendMode,
+          });
+          seen.add(agent.id);
         }
-      } catch {
-        // Agent not found or error, skip
       }
-    }),
-  );
+    }
 
-  if (matches.length === 0) return null;
-  if (matches.length === 1) return matches[0] ?? null;
+    if (matches.length === 0) continue;
+    if (matches.length === 1) return matches[0] ?? null;
 
-  // Multiple matches - pick most recently used
-  // Check local LRU first
-  const localSettings = settingsManager.getLocalProjectSettings();
-  const localMatch = matches.find((m) => m.id === localSettings.lastAgent);
-  if (localMatch) return localMatch;
+    // Multiple matches within this backend - pick most recently used.
+    const localSettings = settingsManager.getLocalProjectSettings();
+    const localMatch = matches.find((m) => m.id === localSettings.lastAgent);
+    if (localMatch) return localMatch;
 
-  // Then global LRU
-  const settings = settingsManager.getSettings();
-  const globalMatch = matches.find((m) => m.id === settings.lastAgent);
-  if (globalMatch) return globalMatch;
+    const settings = settingsManager.getSettings();
+    const globalMatch = matches.find((m) => m.id === settings.lastAgent);
+    if (globalMatch) return globalMatch;
 
-  // Fallback to first match (preserves local pinned order)
-  return matches[0] ?? null;
+    // Fallback to first match (preserves pinned order for this backend).
+    return matches[0] ?? null;
+  }
+
+  return null;
 }
 
 /**
  * Get all pinned agent names for error messages
  */
-async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
-  const backend = getBackend();
-  const localPinned = settingsManager.getLocalPinnedAgents();
-  const globalPinned = settingsManager.getGlobalPinnedAgents();
-  const allPinned = [...new Set([...localPinned, ...globalPinned])];
-
+async function getPinnedAgentNames(
+  backendLookupOrder: BackendMode[],
+): Promise<{ id: string; name: string }[]> {
   const agents: { id: string; name: string }[] = [];
-  await Promise.all(
-    allPinned.map(async (id) => {
-      try {
-        const agent = await backend.retrieveAgent(id);
-        agents.push({ id, name: agent.name || "(unnamed)" });
-      } catch {
-        // Agent not found, skip
-      }
-    }),
-  );
+  for (const backendMode of backendLookupOrder) {
+    const backend = getBackendForMode(backendMode);
+    const pinnedAgents = getPinnedAgentIdsForBackendMode(backendMode);
+
+    await Promise.all(
+      pinnedAgents.map(async (id) => {
+        try {
+          const agent = await backend.retrieveAgent(id);
+          agents.push({ id, name: agent.name || "(unnamed)" });
+        } catch {
+          // Agent not found, skip
+        }
+      }),
+    );
+  }
   return agents;
+}
+
+async function resolveConversationAcrossBackends(
+  conversationId: string,
+  backendLookupOrder: BackendMode[],
+) {
+  for (const backendMode of backendLookupOrder) {
+    try {
+      const backend = getBackendForMode(backendMode);
+      const conversation = await backend.retrieveConversation(conversationId);
+      return { conversation, backendMode };
+    } catch {
+      // Conversation does not exist or this backend is unavailable; try fallback.
+    }
+  }
+
+  return null;
 }
 
 type LocalStartupFallbackSession = {
@@ -800,6 +899,17 @@ async function main(): Promise<void> {
     settingsManager.updateSettings({ preferredBackendMode: "local" });
     await settingsManager.flush();
   }
+
+  const startupTargetLookupOrder = getStartupTargetLookupOrderForCredentials({
+    baseURL,
+    explicitBackendMode,
+    lookupOrder: getStartupBackendLookupOrder(
+      isExperimentalLocalBackendEnabled() ? "local" : "api",
+      explicitBackendMode,
+    ),
+    apiKey,
+    hasRefreshToken: Boolean(settings.refreshToken),
+  });
 
   const startupBackend = getBackend();
   const localNoMemfsRequested = Boolean(
@@ -1205,13 +1315,16 @@ async function main(): Promise<void> {
     // Load local settings for LRU priority
     await settingsManager.loadLocalProjectSettings();
 
-    const resolved = await resolveAgentByName(specifiedAgentName);
+    const resolved = await resolveAgentByName(
+      specifiedAgentName,
+      startupTargetLookupOrder,
+    );
     if (!resolved) {
       console.error(
         `Error: No pinned agent found with name "${specifiedAgentName}"`,
       );
       console.error("");
-      const pinnedAgents = await getPinnedAgentNames();
+      const pinnedAgents = await getPinnedAgentNames(startupTargetLookupOrder);
       if (pinnedAgents.length > 0) {
         console.error("Available pinned agents:");
         for (const agent of pinnedAgents) {
@@ -1224,6 +1337,7 @@ async function main(): Promise<void> {
       }
       process.exit(1);
     }
+    configureBackendMode(resolved.backendMode);
     specifiedAgentId = resolved.id;
     nameResolvedAgent = resolved.agent;
   }
@@ -1601,29 +1715,24 @@ async function main(): Promise<void> {
             return;
           }
 
-          // For explicit conversations, derive agent from conversation
-          try {
-            debugLog(
-              "conversations",
-              `retrieve(${specifiedConversationId}) [TUI conv→agent lookup]`,
-            );
-            const conversation = await backend.retrieveConversation(
-              specifiedConversationId,
-            );
-            // Use the agent that owns this conversation
-            setSelectedGlobalAgentId(conversation.agent_id);
-            setSelectedConversationId(specifiedConversationId);
-            setLoadingState("assembling");
-            return;
-          } catch (error) {
-            if (isBackendNotFoundError(error)) {
-              console.error(
-                `Conversation ${specifiedConversationId} not found`,
-              );
-              process.exit(1);
-            }
-            throw error;
+          debugLog(
+            "conversations",
+            `retrieve(${specifiedConversationId}) [TUI conv→agent lookup]`,
+          );
+          const resolved = await resolveConversationAcrossBackends(
+            specifiedConversationId,
+            startupTargetLookupOrder,
+          );
+          if (!resolved) {
+            console.error(`Conversation ${specifiedConversationId} not found`);
+            process.exit(1);
           }
+          configureBackendMode(resolved.backendMode);
+          // Use the agent that owns this conversation
+          setSelectedGlobalAgentId(resolved.conversation.agent_id);
+          setSelectedConversationId(specifiedConversationId);
+          setLoadingState("assembling");
+          return;
         }
 
         // =====================================================================
