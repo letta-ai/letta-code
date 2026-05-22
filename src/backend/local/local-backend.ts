@@ -25,7 +25,11 @@ import {
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
 import type { ProviderTurnInput } from "@/backend/dev/provider-turn-executor";
-import { ProviderTurnExecutor } from "@/backend/dev/provider-turn-executor";
+import {
+  contextTokensFromUsage,
+  estimateProviderContextTokens,
+  ProviderTurnExecutor,
+} from "@/backend/dev/provider-turn-executor";
 import { isRecord } from "@/utils/type-guards";
 import {
   estimateLocalMessageTokens,
@@ -188,11 +192,6 @@ function localCompactionSettingsForStorage(
   if (!hasLocalSetting) return undefined;
 
   return { ...settings };
-}
-
-function contextTokensFromUsage(usage: Usage): number | undefined {
-  if (typeof usage.totalTokens === "number") return usage.totalTokens;
-  return (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0);
 }
 
 function createLocalExecutor(
@@ -478,7 +477,8 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const contextTokens = contextTokensFromUsage(usage);
+    const contextTokens =
+      contextTokensFromUsage(usage) ?? estimateProviderContextTokens(input);
     const contextWindow = this.effectiveContextWindow(
       input.conversationId,
       input.agentId,
