@@ -998,6 +998,7 @@ export function AppView(props: AppViewProps) {
                     true,
                   );
                 }}
+                onCancel={closeOverlay}
               />
             )}
 
