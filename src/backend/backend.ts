@@ -474,6 +474,14 @@ export function getBackend(): Backend {
   return backend;
 }
 
+/**
+ * Get a backend instance for a specific mode without switching the global backend.
+ * Useful for cross-backend operations like retrieving pinned agents from the other backend.
+ */
+export function getBackendForMode(mode: BackendMode): Backend {
+  return createBackendForMode(mode);
+}
+
 export function configureBackendMode(mode: BackendMode): void {
   configuredBackendMode = mode;
   process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = mode === "local" ? "1" : "0";

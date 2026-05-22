@@ -1,8 +1,8 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getModelDisplayName } from "@/agent/model";
-import { type Backend, getBackend } from "@/backend";
+import { getBackendForMode } from "@/backend/backend";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { DEFAULT_AGENT_NAME } from "@/constants";
@@ -32,7 +32,12 @@ type TabId = "pinned" | "local" | "constellation" | "new";
 
 type ViewState =
   | { type: "list" }
-  | { type: "deleteConfirm"; agent: AgentState; agentId: string };
+  | {
+      type: "deleteConfirm";
+      agent: AgentState;
+      agentId: string;
+      isLocal: boolean;
+    };
 
 interface PinnedAgentData {
   agentId: string;
@@ -140,12 +145,6 @@ export function AgentSelector({
   command = "/agents",
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
-  const backendRef = useRef<Backend | null>(null);
-  const selectorBackend = useCallback(() => {
-    const backend = backendRef.current ?? getBackend();
-    backendRef.current = backend;
-    return backend;
-  }, []);
 
   // Tab state
   // Eagerly check for local agents (synchronous disk read) to determine tab visibility
@@ -231,12 +230,14 @@ export function AgentSelector({
         return;
       }
 
-      const backend = selectorBackend();
-
       const pinnedData = await Promise.all(
         mergedPinned.map(async ({ agentId, isLocal }) => {
           try {
-            const agent = await backend.retrieveAgent(agentId, {
+            // Use the correct backend for this agent's mode
+            const agentBackend = isLocal
+              ? getBackendForMode("local")
+              : getBackendForMode("api");
+            const agent = await agentBackend.retrieveAgent(agentId, {
               include: ["agent.blocks"],
             });
             return { agentId, agent, error: null, isLocal };
@@ -252,7 +253,7 @@ export function AgentSelector({
     } finally {
       setPinnedLoading(false);
     }
-  }, [selectorBackend]);
+  }, []);
 
   // Load local agents from disk
   const loadLocalAgents = useCallback(() => {
@@ -473,14 +474,17 @@ export function AgentSelector({
   // Handle agent deletion
   const handleDeleteAgent = useCallback(async () => {
     if (viewState.type !== "deleteConfirm") return;
-    const { agent, agentId } = viewState;
+    const { agent, agentId, isLocal } = viewState;
     const expectedName = agent.name || agentId.slice(0, 12);
 
     if (deleteConfirmInput !== expectedName) return;
 
     setDeleteLoading(true);
     try {
-      const backend = selectorBackend();
+      // Use the correct backend for this agent's mode
+      const backend = isLocal
+        ? getBackendForMode("local")
+        : getBackendForMode("api");
       await backend.deleteAgent(agentId);
 
       // Reset state and refresh tabs
@@ -495,7 +499,7 @@ export function AgentSelector({
     } finally {
       setDeleteLoading(false);
     }
-  }, [viewState, deleteConfirmInput, loadPinnedAgents, selectorBackend]);
+  }, [viewState, deleteConfirmInput, loadPinnedAgents]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -662,20 +666,24 @@ export function AgentSelector({
       // Delete agent - open confirmation
       let selectedAgent: AgentState | null = null;
       let selectedAgentId: string | null = null;
+      let selectedIsLocal = false;
 
       if (activeTab === "pinned") {
         const selected = pinnedPageAgents[pinnedSelectedIndex];
         if (selected?.agent) {
           selectedAgent = selected.agent;
           selectedAgentId = selected.agentId;
+          selectedIsLocal = selected.isLocal;
         }
       } else if (activeTab === "local") {
         selectedAgent = localPageAgents[localSelectedIndex] ?? null;
         selectedAgentId = selectedAgent?.id ?? null;
+        selectedIsLocal = true;
       } else {
         selectedAgent =
           constellationPageAgents[constellationSelectedIndex] ?? null;
         selectedAgentId = selectedAgent?.id ?? null;
+        selectedIsLocal = false;
       }
 
       if (selectedAgent && selectedAgentId) {
@@ -683,6 +691,7 @@ export function AgentSelector({
           type: "deleteConfirm",
           agent: selectedAgent,
           agentId: selectedAgentId,
+          isLocal: selectedIsLocal,
         });
         setDeleteConfirmInput("");
       }
