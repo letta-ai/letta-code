@@ -1749,8 +1749,13 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
  * Pull latest changes from the server.
  * Called on startup to ensure local state is current.
  */
+export interface PullMemoryOptions {
+  throwOnFailure?: boolean;
+}
+
 export async function pullMemory(
   agentId: string,
+  options: PullMemoryOptions = {},
 ): Promise<{ updated: boolean; summary: string }> {
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
@@ -1824,10 +1829,14 @@ export async function pullMemory(
 
       const msg =
         rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
+      const failureSummary = `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`;
       debugWarn("memfs-git", `Pull failed: ${msg}`);
+      if (options.throwOnFailure) {
+        throw new Error(failureSummary);
+      }
       return {
         updated: false,
-        summary: `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`,
+        summary: failureSummary,
       };
     }
   }

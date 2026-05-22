@@ -109,6 +109,7 @@ import {
   updateTask,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
+import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
@@ -118,7 +119,6 @@ import {
   QueueRuntime,
   type TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
-import { ralphMode } from "@/ralph/mode";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -483,16 +483,9 @@ export function App({
     [],
   );
 
-  // Ralph Wiggum mode: config waiting for next message to capture as prompt
-  const [pendingRalphConfig, setPendingRalphConfig] = useState<{
-    completionPromise: string | null | undefined;
-    maxIterations: number;
-    isYolo: boolean;
-  } | null>(null);
-
-  // Track ralph mode for UI updates (singleton state doesn't trigger re-renders)
-  const [uiRalphActive, setUiRalphActive] = useState(
-    ralphMode.getState().isActive,
+  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
+  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
+    goalLoopMode.getState().isActive,
   );
 
   // Derive current approval from pending approvals and results
@@ -848,6 +841,11 @@ export function App({
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
+
+  // Live total context tokens (history + system + output). Mirrors
+  // `contextTrackerRef.current.lastContextTokens` into reactive state so
+  // UI can react during streaming — the ref itself doesn't trigger renders.
+  const [usedContextTokens, setUsedContextTokens] = useState(0);
 
   // Trajectory token/time bases (accumulated across runs)
   const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
@@ -2237,6 +2235,7 @@ export function App({
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
     setTokenCount(b.tokenCount);
+    setUsedContextTokens(contextTrackerRef.current.lastContextTokens);
     const newLines = toLines(b);
     setLines(newLines);
     commitEligibleLines(b);
@@ -3285,7 +3284,7 @@ export function App({
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -3664,7 +3663,6 @@ export function App({
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
-    pendingRalphConfig,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,
@@ -3700,7 +3698,6 @@ export function App({
     setLlmConfig,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPendingRalphConfig,
     setPinDialogLocal,
     setProfileConfirmPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
@@ -3712,7 +3709,7 @@ export function App({
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
     streaming,
@@ -4039,25 +4036,19 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Handle ralph mode exit from Input component (shift+tab)
-  const handleRalphExit = useCallback(() => {
-    const ralph = ralphMode.getState();
-    if (ralph.isActive) {
-      const wasYolo = ralph.isYolo;
-      const wasGoal = ralph.mode === "goal";
-      ralphMode.deactivate();
-      setUiRalphActive(false);
-      if (wasGoal) {
-        settingsManager.updateConversationGoalStatus(
-          conversationIdRef.current,
-          "paused",
-        );
-      }
-      if (wasYolo) {
-        permissionMode.setMode("standard");
-        setUiPermissionMode("standard");
-      }
+  // Handle goal loop exit from Input component (Shift+Tab).
+  const handleGoalLoopExit = useCallback(() => {
+    if (!goalLoopMode.getState().isActive) {
+      return;
     }
+    goalLoopMode.deactivate();
+    setUiGoalLoopActive(false);
+    settingsManager.updateConversationGoalStatus(
+      conversationIdRef.current,
+      "paused",
+    );
+    permissionMode.setMode("standard");
+    setUiPermissionMode("standard");
   }, [setUiPermissionMode]);
 
   // Toggle expand/collapse for a specific tool call ID
@@ -4441,7 +4432,7 @@ export function App({
       handlePersonalitySelect={handlePersonalitySelect}
       handleProfileEscapeCancel={handleProfileEscapeCancel}
       handleQuestionSubmit={handleQuestionSubmit}
-      handleRalphExit={handleRalphExit}
+      handleGoalLoopExit={handleGoalLoopExit}
       handleSleeptimeModeSelect={handleSleeptimeModeSelect}
       handleSystemPromptSelect={handleSystemPromptSelect}
       handleToolsetSelect={handleToolsetSelect}
@@ -4465,7 +4456,6 @@ export function App({
       pendingApprovals={pendingApprovals}
       pendingConversationSwitchRef={pendingConversationSwitchRef}
       pendingIds={pendingIds}
-      pendingRalphConfig={pendingRalphConfig}
       pinDialogLocal={pinDialogLocal}
       precomputedDiffsRef={precomputedDiffsRef}
       profileConfirmPending={profileConfirmPending}
@@ -4507,8 +4497,10 @@ export function App({
       stubDescriptions={stubDescriptions}
       thinkingMessage={thinkingMessage}
       trajectoryTokenDisplay={trajectoryTokenDisplay}
+      usedContextTokens={usedContextTokens}
+      contextWindowSize={effectiveContextWindowSize}
       uiPermissionMode={uiPermissionMode}
-      uiRalphActive={uiRalphActive}
+      uiGoalLoopActive={uiGoalLoopActive}
       updateAgentName={updateAgentName}
     />
   );

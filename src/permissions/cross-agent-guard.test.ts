@@ -7,6 +7,7 @@ import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import {
   evaluateCrossAgentGuard,
   extractTargetAgentPaths,
+  isMemoryGuardDisabled,
   resolveAllowedAgents,
 } from "@/permissions/cross-agent-guard";
 import { permissionMode } from "@/permissions/mode";
@@ -36,7 +37,7 @@ const ENV_KEYS_TO_RESET = [
   "AGENT_ID",
   "LETTA_AGENT_ID",
   "LETTA_PARENT_AGENT_ID",
-  "LETTA_MEMORY_SCOPE",
+  "LETTA_CODE_AGENT_ROLE",
   "MEMORY_DIR",
   "LETTA_MEMORY_DIR",
 ] as const;
@@ -85,49 +86,37 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("resolveAllowedAgents", () => {
-  test("self-only when no scope is configured", () => {
+  test("self-only when no parent is configured", () => {
     const allowed = resolveAllowedAgents();
-    expect([...allowed.ids]).toEqual([SELF]);
-    expect(allowed.sources.self).toBe(SELF);
-    expect(allowed.sources.env).toEqual([]);
-    expect(allowed.sources.cli).toEqual([]);
+    expect([...allowed]).toEqual([SELF]);
   });
 
-  test("LETTA_MEMORY_SCOPE (comma-separated) adds to allowed set", () => {
-    process.env.LETTA_MEMORY_SCOPE = "agent-a,agent-b";
+  test("subagent parent ID adds only the parent to the allowed set", () => {
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    process.env.LETTA_PARENT_AGENT_ID = OTHER;
     const allowed = resolveAllowedAgents();
-    expect(allowed.ids).toEqual(new Set([SELF, "agent-a", "agent-b"]));
-    expect(allowed.sources.env).toEqual(["agent-a", "agent-b"]);
+    expect(allowed).toEqual(new Set([SELF, OTHER]));
   });
 
-  test("LETTA_MEMORY_SCOPE (whitespace-separated) also works", () => {
-    process.env.LETTA_MEMORY_SCOPE = "agent-a  agent-b";
+  test("parent ID is ignored outside subagent processes", () => {
+    process.env.LETTA_PARENT_AGENT_ID = OTHER;
     const allowed = resolveAllowedAgents();
-    expect(allowed.ids).toEqual(new Set([SELF, "agent-a", "agent-b"]));
-  });
-
-  test("--memory-scope CLI flag adds to allowed set", () => {
-    cliPermissions.setMemoryScope("agent-cli1,agent-cli2");
-    const allowed = resolveAllowedAgents();
-    expect(allowed.ids).toEqual(new Set([SELF, "agent-cli1", "agent-cli2"]));
-    expect(allowed.sources.cli).toEqual(["agent-cli1", "agent-cli2"]);
-  });
-
-  test("all three sources combine without duplicates", () => {
-    process.env.LETTA_MEMORY_SCOPE = "agent-a,agent-shared";
-    cliPermissions.setMemoryScope("agent-shared agent-b");
-    const allowed = resolveAllowedAgents();
-    expect(allowed.ids).toEqual(
-      new Set([SELF, "agent-a", "agent-shared", "agent-b"]),
-    );
+    expect(allowed).toEqual(new Set([SELF]));
   });
 
   test("explicit currentAgentId overrides env lookup", () => {
     process.env.AGENT_ID = "env-agent";
     const allowed = resolveAllowedAgents({ currentAgentId: "explicit-agent" });
-    expect(allowed.sources.self).toBe("explicit-agent");
-    expect(allowed.ids.has("explicit-agent")).toBe(true);
-    expect(allowed.ids.has("env-agent")).toBe(false);
+    expect(allowed.has("explicit-agent")).toBe(true);
+    expect(allowed.has("env-agent")).toBe(false);
+  });
+
+  test("memory guard disable flag is ignored for subagents", () => {
+    cliPermissions.setMemoryGuardDisabled(true);
+    expect(isMemoryGuardDisabled()).toBe(true);
+
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    expect(isMemoryGuardDisabled()).toBe(false);
   });
 });
 
@@ -322,8 +311,8 @@ describe("evaluateCrossAgentGuard", () => {
     expect(result?.reason).toMatch(/cross-agent memory guard/);
   });
 
-  test("passes through when other agent is in LETTA_MEMORY_SCOPE", () => {
-    process.env.LETTA_MEMORY_SCOPE = OTHER;
+  test("passes through when parent process disables the guard", () => {
+    cliPermissions.setMemoryGuardDisabled(true);
     const result = evaluateCrossAgentGuard(
       "Write",
       { file_path: otherMemory("system/a.md") },
@@ -332,8 +321,9 @@ describe("evaluateCrossAgentGuard", () => {
     expect(result).toBeNull();
   });
 
-  test("passes through when other agent is in --memory-scope", () => {
-    cliPermissions.setMemoryScope(OTHER);
+  test("subagent can access its explicit parent memory with guard enabled", () => {
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    process.env.LETTA_PARENT_AGENT_ID = OTHER;
     const result = evaluateCrossAgentGuard(
       "Write",
       { file_path: otherMemory("system/a.md") },
@@ -342,8 +332,10 @@ describe("evaluateCrossAgentGuard", () => {
     expect(result).toBeNull();
   });
 
-  test("partial scope: denies when any target is outside allowed set", () => {
-    process.env.LETTA_MEMORY_SCOPE = OTHER; // only OTHER is allowed
+  test("subagent with disabled guard request still denies non-parent agents", () => {
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    process.env.LETTA_PARENT_AGENT_ID = OTHER;
+    cliPermissions.setMemoryGuardDisabled(true);
     const patch = [
       "*** Begin Patch",
       `*** Add File: ${otherMemory("ok.md")}`,
@@ -409,7 +401,7 @@ describe("checkPermission integration", () => {
     expect(result.matchedRule).toBe("cross-agent guard");
   });
 
-  test("memory mode does NOT let you write another agent's memory without scope", () => {
+  test("memory mode does NOT let you write another agent's memory with guard enabled", () => {
     permissionMode.setMode("memory");
     process.env.MEMORY_DIR = selfMemory();
     const result = checkPermission(
@@ -422,9 +414,9 @@ describe("checkPermission integration", () => {
     expect(result.matchedRule).toBe("cross-agent guard");
   });
 
-  test("memory mode DOES allow writes to scoped agent's memory", () => {
+  test("memory mode allows writes to another agent's memory when guard is disabled", () => {
     permissionMode.setMode("memory");
-    process.env.LETTA_MEMORY_SCOPE = OTHER;
+    cliPermissions.setMemoryGuardDisabled(true);
     process.env.MEMORY_DIR = otherMemory();
     const result = checkPermission(
       "Write",
@@ -489,16 +481,16 @@ describe("checkPermission integration", () => {
     expect(result.matchedRule).toBe("cross-agent guard");
   });
 
-  test("CLI --memory-scope opens access in acceptEdits mode", () => {
+  test("CLI --disable-memory-guard opens access in acceptEdits mode", () => {
     permissionMode.setMode("acceptEdits");
-    cliPermissions.setMemoryScope(OTHER);
+    cliPermissions.setMemoryGuardDisabled(true);
     const result = checkPermission(
       "Write",
       { file_path: otherMemory("system/a.md") },
       permissions,
       "/tmp",
     );
-    // acceptEdits allows writes, and the guard passes since OTHER is scoped.
+    // acceptEdits allows writes, and the guard is intentionally disabled.
     expect(result.decision).toBe("allow");
   });
 });
@@ -592,9 +584,8 @@ describe("shell bypass regression tests", () => {
     expect(result).toBeNull();
   });
 
-  test("scoped access via LETTA_MEMORY_SCOPE passes through", () => {
-    process.env.LETTA_MEMORY_SCOPE =
-      "agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada";
+  test("raw-command access passes through when parent disables the guard", () => {
+    cliPermissions.setMemoryGuardDisabled(true);
     const command = `TARGET="\${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"
 cat "$TARGET/system/persona.md"`;
     const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
@@ -715,8 +706,8 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     expect(result).toBeNull();
   });
 
-  test("Grep on a foreign agent is allowed when scoped via LETTA_MEMORY_SCOPE", () => {
-    process.env.LETTA_MEMORY_SCOPE = OTHER;
+  test("Grep on a foreign agent is allowed when the guard is disabled", () => {
+    cliPermissions.setMemoryGuardDisabled(true);
     const result = evaluateCrossAgentGuard(
       "Grep",
       { pattern: "password", path: otherMemory() },

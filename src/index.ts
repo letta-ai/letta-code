@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
@@ -26,7 +27,7 @@ import {
 } from "./agent/personality";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
-import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
 import {
   type Backend,
   configureBackendMode,
@@ -67,7 +68,11 @@ import {
   permissionMode,
   VALID_PERMISSION_MODES,
 } from "./permissions/mode";
-import { settingsManager, shouldPersistSessionState } from "./settings-manager";
+import {
+  type Settings,
+  settingsManager,
+  shouldPersistSessionState,
+} from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/error-reporting";
@@ -106,6 +111,42 @@ function trackCliBoundaryError(
     error,
     context,
   });
+}
+
+async function refreshStartupOAuthToken(
+  settings: Settings,
+): Promise<string | null> {
+  if (!settings.refreshToken) {
+    return null;
+  }
+
+  try {
+    const now = Date.now();
+    const deviceId = settingsManager.getOrCreateDeviceId();
+    const deviceName = hostname();
+    const tokens = await refreshAccessToken(
+      settings.refreshToken,
+      deviceId,
+      deviceName,
+    );
+
+    settingsManager.updateSettings({
+      env: { ...settings.env, LETTA_API_KEY: tokens.access_token },
+      refreshToken: tokens.refresh_token || settings.refreshToken,
+      tokenExpiresAt: now + tokens.expires_in * 1000,
+    });
+    await settingsManager.flush();
+
+    return tokens.access_token;
+  } catch (error) {
+    trackCliBoundaryError(
+      "startup_auth_token_refresh_failed",
+      error,
+      "startup_auth_token_refresh",
+    );
+    debugWarn("auth", "Failed to refresh OAuth token during startup", error);
+    return null;
+  }
 }
 
 void ensureFileIndex();
@@ -721,7 +762,7 @@ async function main(): Promise<void> {
   });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
@@ -1067,9 +1108,32 @@ async function main(): Promise<void> {
       return main();
     }
 
+    if (
+      !process.env.LETTA_API_KEY &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      settings.refreshToken &&
+      settings.tokenExpiresAt &&
+      (!apiKey || settings.tokenExpiresAt - Date.now() < 5 * 60 * 1000)
+    ) {
+      apiKey = (await refreshStartupOAuthToken(settings)) ?? apiKey;
+    }
+
     // Validate credentials by checking health endpoint
     const { validateCredentials } = await import("@/auth/oauth");
-    const isValid = await validateCredentials(baseURL, apiKey ?? "");
+    let isValid = await validateCredentials(baseURL, apiKey ?? "");
+
+    if (
+      !isValid &&
+      !process.env.LETTA_API_KEY &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      settings.refreshToken
+    ) {
+      const refreshedApiKey = await refreshStartupOAuthToken(settings);
+      if (refreshedApiKey) {
+        apiKey = refreshedApiKey;
+        isValid = await validateCredentials(baseURL, apiKey);
+      }
+    }
     markMilestone("CREDENTIALS_VALIDATED");
 
     // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
@@ -1146,7 +1210,11 @@ async function main(): Promise<void> {
   }
 
   // Set CLI permission overrides if provided
-  if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
+  if (
+    values.allowedTools ||
+    values.disallowedTools ||
+    values["disable-memory-guard"]
+  ) {
     const { cliPermissions } = await import(
       "@/permissions/cli-permissions-instance"
     );
@@ -1156,8 +1224,8 @@ async function main(): Promise<void> {
     if (values.disallowedTools) {
       cliPermissions.setDisallowedTools(values.disallowedTools);
     }
-    if (values["memory-scope"]) {
-      cliPermissions.setMemoryScope(values["memory-scope"]);
+    if (values["disable-memory-guard"]) {
+      cliPermissions.setMemoryGuardDisabled(true);
     }
   }
 
@@ -1419,7 +1487,6 @@ async function main(): Promise<void> {
       async function checkAndStart() {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
-        const localSettings = settingsManager.getLocalProjectSettings();
         const backend = getBackend();
 
         // For self-hosted servers, pre-fetch available models
@@ -1507,7 +1574,9 @@ async function main(): Promise<void> {
           const localSession = settingsManager.getLocalLastSession(
             process.cwd(),
           );
-          const localAgentId = localSession?.agentId ?? localSettings.lastAgent;
+          const localAgentId =
+            localSession?.agentId ??
+            settingsManager.getLocalLastAgentId(process.cwd());
 
           // Try local LRU first
           if (localAgentId) {
@@ -1810,12 +1879,11 @@ async function main(): Promise<void> {
 
         // Priority 3: LRU from local settings (if not --new or user explicitly requested new from selector)
         if (!resumingAgentId && !shouldCreateNew) {
-          const localProjectSettings =
-            settingsManager.getLocalProjectSettings();
-          if (localProjectSettings?.lastAgent) {
+          const localLastAgentId = settingsManager.getLocalLastAgentId();
+          if (localLastAgentId) {
             try {
-              await backend.retrieveAgent(localProjectSettings.lastAgent);
-              resumingAgentId = localProjectSettings.lastAgent;
+              await backend.retrieveAgent(localLastAgentId);
+              resumingAgentId = localLastAgentId;
             } catch {
               // LRU agent doesn't exist (wrong org, deleted, etc.)
               // Show selector instead of silently creating a new agent

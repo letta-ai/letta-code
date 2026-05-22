@@ -533,6 +533,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         overlayCommand ?? commandRunner.start("/agents", "Switching agent...");
       cmd.update({ output: "Switching agent...", phase: "running" });
 
+      // Track previous backend mode for rollback on failure
+      const previousBackendMode = isLocalBackendEnabled() ? "local" : "api";
+      let didSwitchBackend = false;
+
       try {
         // Switch backend if the target agent belongs to a different backend
         if (opts?.backendMode) {
@@ -540,6 +544,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           const targetIsLocal = opts.backendMode === "local";
           if (currentIsLocal !== targetIsLocal) {
             configureBackendMode(opts.backendMode);
+            didSwitchBackend = true;
           }
         }
 
@@ -629,6 +634,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticItems([separator]);
         cmd.finish(successOutput, true);
       } catch (error) {
+        // Rollback backend mode if we switched before the failure
+        if (didSwitchBackend) {
+          configureBackendMode(previousBackendMode);
+        }
         const errorDetails = formatErrorDetails(error, agentId);
         cmd.fail(`Failed: ${errorDetails}`);
       } finally {

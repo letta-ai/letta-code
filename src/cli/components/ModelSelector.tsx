@@ -514,49 +514,69 @@ export function ModelSelector({
     return resolved;
   }, [availableHandles, pickPreferredStaticModel]);
 
+  // Map category -> list for O(1) lookup
+  const categoryListMap = useMemo(
+    () => ({
+      recents: recentModels,
+      supported: supportedModels,
+      byok: byokModels,
+      "byok-all": byokAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      })),
+      "server-recommended": serverRecommendedModels,
+      "server-all": serverAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      })),
+      all: allLettaModels,
+    }),
+    [
+      recentModels,
+      supportedModels,
+      byokModels,
+      byokAllModels,
+      allLettaModels,
+      serverRecommendedModels,
+      serverAllModels,
+    ],
+  );
+
+  // Filter out empty categories so the tab bar never shows tabs with 0 items
+  const nonEmptyCategories = useMemo(
+    () =>
+      modelCategories.filter((cat) => {
+        const list = categoryListMap[cat];
+        if (!list || list.length === 0) return false;
+        // Recents tab only shows when there are ≥2 available recent models
+        if (cat === "recents" && list.length < 2) return false;
+        return true;
+      }),
+    [modelCategories, categoryListMap],
+  );
+
+  // All categories empty → show null state under a single "All" tab
+  const allEmpty =
+    !isLoading && nonEmptyCategories.length === 0 && !searchQuery;
+
+  // When all categories are empty, collapse to a single "All" tab
+  const displayCategories = useMemo(
+    () =>
+      allEmpty
+        ? ([backendModelCatalog ? "server-all" : "all"] as ModelCategory[])
+        : nonEmptyCategories,
+    [allEmpty, backendModelCatalog, nonEmptyCategories],
+  );
+
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
-    if (category === "recents") {
-      return recentModels;
-    }
-    if (category === "supported") {
-      return supportedModels;
-    }
-    if (category === "byok") {
-      return byokModels;
-    }
-    if (category === "byok-all") {
-      // Convert raw handles to UiModel
-      return byokAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      }));
-    }
-    if (category === "server-recommended") {
-      return serverRecommendedModels;
-    }
-    if (category === "server-all") {
-      // Convert raw handles to UiModel
-      return serverAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      }));
-    }
-    return allLettaModels;
-  }, [
-    category,
-    recentModels,
-    supportedModels,
-    byokModels,
-    byokAllModels,
-    allLettaModels,
-    serverRecommendedModels,
-    serverAllModels,
-  ]);
+    const list = categoryListMap[category] as UiModel[] | undefined;
+    return list ?? [];
+  }, [category, categoryListMap]);
 
   // Show 1 fewer item because Search line takes space
   const visibleCount = VISIBLE_ITEMS - 1;
@@ -578,17 +598,29 @@ export function ModelSelector({
   const showScrollDown = startIndex + visibleCount < currentList.length;
   const itemsBelow = currentList.length - startIndex - visibleCount;
 
+  // Auto-switch to first non-empty category if current category becomes empty
+  useEffect(() => {
+    if (allEmpty) return;
+    if (
+      nonEmptyCategories.length > 0 &&
+      !nonEmptyCategories.includes(category)
+    ) {
+      setCategory(nonEmptyCategories[0] as ModelCategory);
+      setSelectedIndex(0);
+    }
+  }, [nonEmptyCategories, category, allEmpty]);
+
   // Reset selection when category changes
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
-      const idx = modelCategories.indexOf(current);
-      return modelCategories[
-        (idx + 1) % modelCategories.length
-      ] as ModelCategory;
+      const cats =
+        displayCategories.length > 0 ? displayCategories : modelCategories;
+      const idx = cats.indexOf(current);
+      return cats[(idx + 1) % cats.length] as ModelCategory;
     });
     setSelectedIndex(0);
     setSearchQuery("");
-  }, [modelCategories]);
+  }, [displayCategories, modelCategories]);
 
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
@@ -646,10 +678,10 @@ export function ModelSelector({
       if (key.leftArrow) {
         // Cycle backwards through categories
         setCategory((current) => {
-          const idx = modelCategories.indexOf(current);
-          return modelCategories[
-            idx === 0 ? modelCategories.length - 1 : idx - 1
-          ] as ModelCategory;
+          const cats =
+            displayCategories.length > 0 ? displayCategories : modelCategories;
+          const idx = cats.indexOf(current);
+          return cats[idx === 0 ? cats.length - 1 : idx - 1] as ModelCategory;
         });
         setSelectedIndex(0);
         setSearchQuery("");
@@ -758,10 +790,10 @@ export function ModelSelector({
         ) : undefined
       }
     >
-      {!isLoading && (
+      {!isLoading && !allEmpty && (
         <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
           <TabBar
-            tabs={modelCategories}
+            tabs={displayCategories}
             activeTab={category}
             getLabel={getCategoryLabel}
           />
@@ -774,6 +806,25 @@ export function ModelSelector({
               <Text dimColor>(type to filter)</Text>
             )}
           </Text>
+        </Box>
+      )}
+
+      {/* Null state — no models available */}
+      {!isLoading && allEmpty && (
+        <Box flexDirection="column" paddingLeft={1}>
+          <TabBar
+            tabs={displayCategories}
+            activeTab={displayCategories[0] as ModelCategory}
+            getLabel={getCategoryLabel}
+          />
+          <Box flexDirection="column" paddingLeft={1} marginTop={1}>
+            <Text dimColor>No models available.</Text>
+            <Text dimColor>
+              {backendModelCatalog
+                ? "Use /connect to add an API key, or set one in your environment and restart `letta`."
+                : "Use /login to connect to Letta Cloud, or /connect to add an API key."}
+            </Text>
+          </Box>
         </Box>
       )}
 
@@ -792,11 +843,11 @@ export function ModelSelector({
         </Box>
       )}
 
-      {!isLoading && visibleModels.length === 0 && (
+      {!isLoading && !allEmpty && visibleModels.length === 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>
-            {category === "supported"
-              ? "No supported models available."
+            {searchQuery
+              ? "No models match your search."
               : "No additional models available."}
           </Text>
         </Box>

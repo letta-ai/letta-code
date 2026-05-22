@@ -1,4 +1,5 @@
 import { open, readFile, stat, unlink } from "node:fs/promises";
+import { sleep } from "@/utils/sleep";
 
 export type FileLockOptions = {
   /** A lock file older than this is treated as abandoned and reaped. */
@@ -139,8 +140,4 @@ async function tryReapStaleLock(
     // Another reaper got there first.
   }
   return true;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

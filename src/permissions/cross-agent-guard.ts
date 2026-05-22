@@ -1,72 +1,74 @@
 // src/permissions/crossAgentGuard.ts
 // Cross-agent guard: hard-denies any tool call whose target resolves under
-// another agent's memory directory unless the caller has explicitly opted in.
+// another agent's memory directory unless the parent CLI process explicitly
+// disabled the guard.
 //
 // The guard runs BEFORE any other permission logic (mode overrides, CLI
-// allow/deny rules, settings rules). Its deny is unbypassable — no mode,
-// no rule, no flag can override it.
+// allow/deny rules, settings rules). Its deny is unbypassable by modes and
+// permission rules.
 //
-// Sources for the allowed-agents set (additive, deduped):
-//   - self:  current AGENT_ID
-//   - env:   LETTA_MEMORY_SCOPE (comma- or whitespace-separated agent IDs)
-//   - cli:   --memory-scope flag (via cliPermissions.getMemoryScope())
+// Guarded access is limited to:
+//   - self:   current AGENT_ID
+//   - parent: explicit LETTA_PARENT_AGENT_ID for subagent processes
+//
+// --disable-memory-guard is parent-process only. Subagents always evaluate the
+// guard and cannot use the flag to open broad cross-agent memory access.
 
 import { homedir } from "node:os";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import {
   deriveAgentId,
-  normalizeScopedPath,
-  parseScopeList,
-  resolveScopedTargetPath,
-} from "./memory-scope";
+  normalizeMemoryPath,
+  resolveMemoryTargetPath,
+} from "./memory-paths";
 import { splitShellSegments, tokenizeShellWords } from "./shell-analysis";
 
 // --------------------------------------------------------------------------
 // Allowed agents
 // --------------------------------------------------------------------------
 
-export interface AllowedAgentsOptions {
+export interface CrossAgentGuardOptions {
   env?: NodeJS.ProcessEnv;
   currentAgentId?: string | null;
-  cliMemoryScope?: string[];
+  disableMemoryGuard?: boolean;
 }
 
-export interface ResolvedAllowedAgents {
-  ids: Set<string>;
-  sources: {
-    self: string | null;
-    env: string[];
-    cli: string[];
-  };
+function isSubagentProcess(env: NodeJS.ProcessEnv): boolean {
+  return env.LETTA_CODE_AGENT_ROLE === "subagent";
+}
+
+function deriveParentAgentId(env: NodeJS.ProcessEnv): string | null {
+  if (!isSubagentProcess(env)) return null;
+  const parent = env.LETTA_PARENT_AGENT_ID?.trim();
+  return parent || null;
+}
+
+export function isMemoryGuardDisabled(
+  options: CrossAgentGuardOptions = {},
+): boolean {
+  const env = options.env ?? process.env;
+  if (isSubagentProcess(env)) return false;
+  return options.disableMemoryGuard ?? cliPermissions.isMemoryGuardDisabled();
 }
 
 /**
- * Resolve the set of agent IDs the current process is allowed to operate
- * against. Additive union of three sources.
+ * Resolve the set of agent IDs a guarded process is allowed to operate
+ * against without disabling the guard.
  */
 export function resolveAllowedAgents(
-  options: AllowedAgentsOptions = {},
-): ResolvedAllowedAgents {
+  options: CrossAgentGuardOptions = {},
+): Set<string> {
   const env = options.env ?? process.env;
 
   const self = deriveAgentId(env, options.currentAgentId);
-  const envScope = parseScopeList(env.LETTA_MEMORY_SCOPE);
-  const cliScope = options.cliMemoryScope ?? cliPermissions.getMemoryScope();
+  const parent = deriveParentAgentId(env);
 
   const ids = new Set<string>();
   if (self) ids.add(self);
-  for (const id of envScope) ids.add(id);
-  for (const id of cliScope) ids.add(id);
+  if (parent) ids.add(parent);
 
-  return {
-    ids,
-    sources: {
-      self,
-      env: envScope,
-      cli: [...cliScope],
-    },
-  };
+  return ids;
 }
 
 // --------------------------------------------------------------------------
@@ -353,7 +355,7 @@ function scanToken(
   for (const value of candidates) {
     const expanded = expandShellToken(value, env, homeDir);
     if (expanded === null) continue;
-    const normalized = normalizeScopedPath(expanded);
+    const normalized = normalizeMemoryPath(expanded);
     const classification = classifyAgentsTreePath(normalized, homeDir);
     if (classification.kind === "agent") {
       out.set(value, classification.id);
@@ -494,7 +496,7 @@ export function extractTargetAgentPaths(
 
   const addFromPath = (rawPath: string | null | undefined) => {
     if (!rawPath || typeof rawPath !== "string") return;
-    const resolvedPath = resolveScopedTargetPath(rawPath, workingDirectory);
+    const resolvedPath = resolveMemoryTargetPath(rawPath, workingDirectory);
     if (!resolvedPath) return;
     const classification = classifyAgentsTreePath(resolvedPath, homeDir);
     switch (classification.kind) {
@@ -582,18 +584,16 @@ export interface CrossAgentGuardResult {
   offendingAgentIds: string[];
 }
 
-function buildReason(
-  offending: string[],
-  allowed: ResolvedAllowedAgents,
-): string {
+function buildReason(offending: string[], allowed: Set<string>): string {
   const offendingDesc = offending.join(", ");
-  const allowedList = [...allowed.ids];
+  const allowedList = [...allowed];
   const allowedDesc =
     allowedList.length > 0 ? allowedList.join(", ") : "(none)";
   return (
     `Permission denied by cross-agent memory guard (${offendingDesc}). ` +
     `Allowed: ${allowedDesc}. ` +
-    `Set LETTA_MEMORY_SCOPE or pass --memory-scope to opt in.`
+    `Pass --disable-memory-guard from the parent agent process to opt in; ` +
+    `subagents cannot disable this guard.`
   );
 }
 
@@ -612,10 +612,14 @@ export function evaluateCrossAgentGuard(
   toolName: string,
   toolArgs: ToolArgs,
   workingDirectory: string,
-  options: AllowedAgentsOptions = {},
+  options: CrossAgentGuardOptions = {},
 ): CrossAgentGuardResult | null {
   const env = options.env ?? process.env;
   const homeDir = env.HOME ?? homedir();
+
+  if (isMemoryGuardDisabled(options)) {
+    return null;
+  }
 
   const targets = extractTargetAgentPaths(
     toolName,
@@ -629,7 +633,7 @@ export function evaluateCrossAgentGuard(
   const offending = new Set<string>();
 
   for (const id of targets.agentIds) {
-    if (!allowed.ids.has(id)) {
+    if (!allowed.has(id)) {
       offending.add(id);
     }
   }
@@ -641,7 +645,7 @@ export function evaluateCrossAgentGuard(
     if (command) {
       const unresolved = scanRawCommandForUnresolvedAgentRefs(
         command,
-        allowed.ids,
+        allowed,
         env,
         homeDir,
       );

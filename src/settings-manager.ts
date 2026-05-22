@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
+  LOCAL_BACKEND_DIR_ENV,
 } from "./backend/local/paths";
 import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
@@ -218,6 +219,14 @@ function normalizeBaseUrl(baseUrl: string): string {
 
 function getLocalBackendSettingsKey(): string {
   return `local:${resolve(getLocalBackendStorageDir())}`;
+}
+
+function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
+  return (
+    isLocalBackendEnvEnabled() &&
+    typeof process.env[LOCAL_BACKEND_DIR_ENV] === "string" &&
+    process.env[LOCAL_BACKEND_DIR_ENV].length > 0
+  );
 }
 
 /**
@@ -1125,6 +1134,10 @@ class SettingsManager {
       return settings.sessionsByServer[serverKey];
     }
 
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
+    }
+
     // Fall back to legacy lastSession for migration
     if (settings.lastSession) {
       return settings.lastSession;
@@ -1145,6 +1158,10 @@ class SettingsManager {
     // Try server-indexed lookup first
     if (settings.sessionsByServer?.[serverKey]) {
       return settings.sessionsByServer[serverKey].agentId;
+    }
+
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
     }
 
     // Fall back to legacy for migration
@@ -1193,6 +1210,10 @@ class SettingsManager {
       return localSettings.sessionsByServer[serverKey];
     }
 
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
+    }
+
     // Fall back to legacy lastSession for migration
     if (localSettings.lastSession) {
       return localSettings.lastSession;
@@ -1214,6 +1235,10 @@ class SettingsManager {
     // Try server-indexed lookup first
     if (localSettings.sessionsByServer?.[serverKey]) {
       return localSettings.sessionsByServer[serverKey].agentId;
+    }
+
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
     }
 
     // Fall back to legacy for migration

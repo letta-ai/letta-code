@@ -38,12 +38,12 @@ describe("formatPermissionDenial", () => {
     const result = formatPermissionDenial({
       reason:
         "Permission denied by cross-agent memory guard: targeted agent-abc123. " +
-        "Set LETTA_MEMORY_SCOPE or pass --memory-scope to authorize.",
+        "Pass --disable-memory-guard from the parent agent process to opt in.",
       matchedRule: "cross-agent guard",
     });
     expect(result).toBe(
       "Permission denied by cross-agent memory guard: targeted agent-abc123. " +
-        "Set LETTA_MEMORY_SCOPE or pass --memory-scope to authorize.",
+        "Pass --disable-memory-guard from the parent agent process to opt in.",
     );
   });
 

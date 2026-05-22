@@ -38,6 +38,7 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
 import { refreshFileIndex } from "@/utils/file-index";
+import { isRecord } from "@/utils/type-guards";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
@@ -1544,10 +1545,6 @@ export function clipToolReturn(
  * @param result - The raw result from a tool execution
  * @returns A flattened string representation of the result
  */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")

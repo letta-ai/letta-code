@@ -260,7 +260,15 @@ export async function listLocalModels(
     });
   };
 
-  if (!isDiscoverableLocalProvider(configured.provider)) {
+  // Only add the configured model if its provider is actually reachable
+  // (has keys/env configured). Otherwise we'd show models the user can't use.
+  const configuredProviderIsConfigured = listConfiguredPiProviders(
+    providerNames,
+  ).includes(configured.provider);
+  if (
+    !isDiscoverableLocalProvider(configured.provider) &&
+    configuredProviderIsConfigured
+  ) {
     addModel(configured.provider, configured.model);
   }
   const discoveryOptions: Required<ListLocalModelsOptions> = {
