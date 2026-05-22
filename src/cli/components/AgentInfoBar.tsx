@@ -4,6 +4,7 @@ import { memo, useMemo } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
 import { buildAppUrl, buildChatUrl } from "@/cli/helpers/app-urls";
+import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
 import { truncateText } from "@/cli/helpers/truncate-text";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { DEFAULT_AGENT_NAME } from "@/constants";
@@ -61,7 +62,9 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       ? buildChatUrl(agentId, { conversationId })
       : "";
   const showBottomBar = agentId && agentId !== "loading";
-  const reasoningLabel = formatReasoningLabel(currentReasoningEffort);
+  const reasoningLabel = shouldHideReasoningForModelDisplay(currentModel)
+    ? null
+    : formatReasoningLabel(currentReasoningEffort);
   const modelLine = currentModel
     ? `${currentModel}${reasoningLabel ? ` (${reasoningLabel})` : ""}`
     : null;
