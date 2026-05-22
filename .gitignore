@@ -11,6 +11,7 @@
 .idea
 node_modules
 bun.lockb
+package-lock.json
 bin/
 letta.js
 letta.js.map
