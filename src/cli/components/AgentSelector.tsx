@@ -27,7 +27,7 @@ interface AgentSelectorProps {
   onSelect: (agentId: string, backendMode: AgentBackendMode) => void;
   onCancel: () => void;
   /** Called when user creates a new agent (from New tab or N shortcut) */
-  onCreateNewAgent?: (name: string) => void;
+  onCreateNewAgent?: (name: string, backendMode: AgentBackendMode) => void;
   /** The command that triggered this selector (e.g., "/agents" or "/resume") */
   command?: string;
 }
@@ -78,6 +78,7 @@ const TAB_EMPTY_STATES: Record<TabId, string> = {
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
 const PINNED_FALLBACK_DISPLAY_SIZE = 3;
+const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
 
 /**
  * Check if the user has cloud credentials (API key or refresh token).
@@ -86,8 +87,14 @@ const PINNED_FALLBACK_DISPLAY_SIZE = 3;
 function hasCloudCredentials(): boolean {
   const apiKey = process.env.LETTA_API_KEY;
   if (apiKey) return true;
+  const settings = settingsManager.getSettings();
   const cached = settingsManager.getCachedSecureTokens();
-  return Boolean(cached.apiKey || cached.refreshToken);
+  return Boolean(
+    cached.apiKey ||
+      cached.refreshToken ||
+      settings.refreshToken ||
+      settings.env?.LETTA_API_KEY,
+  );
 }
 
 /**
@@ -230,6 +237,8 @@ export function AgentSelector({
   // New agent tab state
   const [newAgentNameInput, setNewAgentNameInput] = useState("");
   const [newAgentNameError, setNewAgentNameError] = useState("");
+  const [newAgentBackendMode, setNewAgentBackendMode] =
+    useState<AgentBackendMode>(NEW_AGENT_DEFAULT_BACKEND);
 
   // Load pinned agents
   const loadPinnedAgents = useCallback(async () => {
@@ -428,6 +437,12 @@ export function AgentSelector({
     hasCloudAuth,
   ]);
 
+  useEffect(() => {
+    if (activeTab === "new") {
+      setNewAgentBackendMode(NEW_AGENT_DEFAULT_BACKEND);
+    }
+  }, [activeTab]);
+
   // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
     if (
@@ -608,6 +623,11 @@ export function AgentSelector({
     // New tab has its own input handling via PasteAwareTextInput.
     // Only handle Escape here.
     if (activeTab === "new") {
+      if (hasCloudAuth && key.ctrl && input.toLowerCase() === "b") {
+        setNewAgentBackendMode((prev) => (prev === "api" ? "local" : "api"));
+        return;
+      }
+
       if (key.escape) {
         if (newAgentNameInput) {
           setNewAgentNameInput("");
@@ -1143,7 +1163,10 @@ export function AgentSelector({
                 onSubmit={(text) => {
                   const trimmed = text.trim();
                   if (!trimmed) {
-                    onCreateNewAgent?.(DEFAULT_AGENT_NAME);
+                    onCreateNewAgent?.(
+                      DEFAULT_AGENT_NAME,
+                      hasCloudAuth ? newAgentBackendMode : "local",
+                    );
                     return;
                   }
                   const validationError = validateAgentName(trimmed);
@@ -1151,12 +1174,43 @@ export function AgentSelector({
                     setNewAgentNameError(validationError);
                     return;
                   }
-                  onCreateNewAgent?.(trimmed);
+                  onCreateNewAgent?.(
+                    trimmed,
+                    hasCloudAuth ? newAgentBackendMode : "local",
+                  );
                 }}
                 placeholder={DEFAULT_AGENT_NAME}
               />
             </Box>
           </Box>
+          {hasCloudAuth && (
+            <Box paddingLeft={2} marginTop={1}>
+              <Text>Backend: </Text>
+              <Text
+                bold={newAgentBackendMode === "api"}
+                color={
+                  newAgentBackendMode === "api"
+                    ? colors.selector.itemHighlighted
+                    : undefined
+                }
+                dimColor={newAgentBackendMode !== "api"}
+              >
+                Constellation
+              </Text>
+              <Text dimColor> · </Text>
+              <Text
+                bold={newAgentBackendMode === "local"}
+                color={
+                  newAgentBackendMode === "local"
+                    ? colors.selector.itemHighlighted
+                    : undefined
+                }
+                dimColor={newAgentBackendMode !== "local"}
+              >
+                Local
+              </Text>
+            </Box>
+          )}
           {newAgentNameError && (
             <Box paddingLeft={2} marginTop={1}>
               <Text color="red">{newAgentNameError}</Text>
@@ -1164,7 +1218,11 @@ export function AgentSelector({
           )}
           <Box height={1} />
           <Box paddingLeft={2}>
-            <Text dimColor>Enter create · Esc cancel</Text>
+            <Text dimColor>
+              {hasCloudAuth
+                ? `Enter create · Ctrl+B switch to ${newAgentBackendMode === "api" ? "Local" : "Constellation"} · Esc cancel`
+                : "Enter create · Esc cancel"}
+            </Text>
           </Box>
         </Box>
       )}

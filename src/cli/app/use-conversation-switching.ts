@@ -670,7 +670,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
   // Handle creating a new agent and switching to it
   // biome-ignore lint/correctness/useExhaustiveDependencies: switch refs are stable objects; .current is read dynamically during agent creation.
   const handleCreateNewAgent = useCallback(
-    async (name: string, opts?: { commandId?: string }) => {
+    async (
+      name: string,
+      opts?: { commandId?: string; backendMode?: "local" | "api" },
+    ) => {
       // Close dialog immediately
       setActiveOverlay(null);
 
@@ -682,7 +685,15 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         : commandRunner.start("/new", `Creating agent "${name}"...`);
       cmd.update({ output: `Creating agent "${name}"...`, phase: "running" });
 
+      const previousBackendMode = isLocalBackendEnabled() ? "local" : "api";
+      let didSwitchBackend = false;
+
       try {
+        if (opts?.backendMode && opts.backendMode !== previousBackendMode) {
+          configureBackendMode(opts.backendMode);
+          didSwitchBackend = true;
+        }
+
         // Pre-determine memfs mode so the agent is created with the correct prompt.
         const { isLettaCloud, enableMemfsIfCloud } = await import(
           "@/agent/memory-filesystem"
@@ -690,7 +701,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         const backend = getBackend();
         const willAutoEnableMemfs = await isLettaCloud();
 
-        let effectiveModel = currentModelId || currentModelHandle || undefined;
+        let effectiveModel = didSwitchBackend
+          ? undefined
+          : currentModelId || currentModelHandle || undefined;
         const isSelfHosted = !getServerUrl().includes("api.letta.com");
         if (isSelfHosted) {
           try {
@@ -795,6 +808,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticItems([separator]);
         cmd.finish(successOutput, true);
       } catch (error) {
+        if (didSwitchBackend) {
+          configureBackendMode(previousBackendMode);
+        }
         const errorDetails = formatErrorDetails(error, agentId);
         cmd.fail(`Failed to create agent: ${errorDetails}`);
       } finally {
