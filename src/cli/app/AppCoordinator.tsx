@@ -279,6 +279,23 @@ function buildStartupCommandHints(options: {
   return dedupedHints;
 }
 
+function hasConversationContent(lines: Line[]): boolean {
+  return lines.some((line) => {
+    switch (line.kind) {
+      case "user":
+      case "assistant":
+      case "reasoning":
+      case "tool_call":
+      case "error":
+      case "command":
+      case "bash_command":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
 export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
@@ -4426,6 +4443,13 @@ export function App({
   const inputVisible = !showExitStats;
   const inputEnabled =
     !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+  const showInspirationalPromptHints =
+    loadingState === "ready" &&
+    !hasConversationContent(lines) &&
+    !streaming &&
+    queueDisplay.length === 0 &&
+    pendingApprovals.length === 0 &&
+    !anySelectorOpen;
   const currentApprovalPreviewCommitted = currentApproval?.toolCallId
     ? eagerCommittedPreviewsRef.current.has(currentApproval.toolCallId)
     : false;
@@ -4479,6 +4503,7 @@ export function App({
       emittedIdsRef={emittedIdsRef}
       feedbackPrefill={feedbackPrefill}
       footerUpdateText={footerUpdateText}
+      showInspirationalPromptHints={showInspirationalPromptHints}
       handleAgentSelect={handleAgentSelect}
       handleApproveAlways={handleApproveAlways}
       handleApproveCurrent={handleApproveCurrent}
