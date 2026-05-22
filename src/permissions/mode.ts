@@ -6,8 +6,8 @@ import { classifyMemoryBashDenial } from "./memory-denial-reason";
 import {
   isPathWithinRoots,
   resolveAllowedMemoryRoots,
-  resolveScopedTargetPath,
-} from "./memory-scope";
+  resolveMemoryTargetPath,
+} from "./memory-paths";
 import {
   isReadOnlyShellCommand,
   isScopedMemoryShellCommand,
@@ -73,7 +73,7 @@ function everyResolvedTargetIsWithinRoots(
   return (
     candidatePaths.length > 0 &&
     candidatePaths.every((path) => {
-      const resolvedPath = resolveScopedTargetPath(path, workingDirectory);
+      const resolvedPath = resolveMemoryTargetPath(path, workingDirectory);
       return resolvedPath ? isPathWithinRoots(resolvedPath, roots) : false;
     })
   );
@@ -91,9 +91,8 @@ function buildWriteOutsideRootsReason(
 ): string {
   if (allowedRoots.length === 0) {
     return (
-      "Memory mode requires $MEMORY_DIR (or LETTA_MEMORY_SCOPE / " +
-      "--memory-scope) to be set so write targets can be resolved against " +
-      "an allowed memory root."
+      "Memory mode requires $MEMORY_DIR to be set so write targets can be " +
+      "resolved against an allowed memory root."
     );
   }
   const rootsList = allowedRoots.join(", ");
@@ -272,9 +271,8 @@ class PermissionModeManager {
           return {
             decision: "deny",
             reason:
-              "Memory mode requires $MEMORY_DIR (or LETTA_MEMORY_SCOPE / " +
-              "--memory-scope) to be set so the apply-patch target can be " +
-              "resolved.",
+              "Memory mode requires $MEMORY_DIR to be set so the " +
+              "apply-patch target can be resolved.",
           };
         }
 

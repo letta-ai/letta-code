@@ -116,8 +116,9 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  *
  * Decision logic:
  * 0. Cross-agent guard (unbypassable) → DENY any tool call targeting
- *    another agent's memory dir unless that agent is in allowed_agents
- *    (self ∪ LETTA_MEMORY_SCOPE ∪ --memory-scope)
+ *    another agent's memory dir unless it targets the current agent, targets
+ *    an explicit parent agent for a subagent process, or the parent process
+ *    passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
  * 3. Check permission mode (--permission-mode flag) → ALLOW or DENY
@@ -699,7 +700,7 @@ function matchesPattern(
 
 /**
  * Subagent types that are safe to auto-approve by default.
- * Some are read-only explorers; others are memory-scoped writers whose
+ * Some are read-only explorers; others are memory-rooted writers whose
  * mutations are constrained by dedicated permission-mode enforcement.
  */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([

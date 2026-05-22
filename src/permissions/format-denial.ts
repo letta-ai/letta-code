@@ -31,7 +31,7 @@ const GENERIC_MATCHED_RULE_REASONS = new Set([
  *      to `matchedRule` when present so the user sees the actual rule text.
  *   3. `permission.reason` — the detailed explanation set by the permission
  *      check (e.g. "Permission denied by cross-agent memory guard: ...
- *      Set LETTA_MEMORY_SCOPE or pass --memory-scope to authorize").
+ *      Pass --disable-memory-guard from the parent agent process to opt in").
  *      If it already starts with "Permission denied", keep it verbatim;
  *      otherwise prefix it once with `"Permission denied: "`.
  *   4. `permission.matchedRule` — the short rule label
