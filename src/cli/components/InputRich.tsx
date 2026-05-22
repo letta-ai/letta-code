@@ -29,10 +29,11 @@ import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
 import {
   type ExecutionPhase,
-  effectiveBaseColor,
   getPhaseVisual,
 } from "@/cli/helpers/phase-visuals";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
+import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
+import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
@@ -808,108 +809,22 @@ const StreamingStatus = memo(function StreamingStatus({
     prevStreamingRef.current = streaming;
   }, [streaming]);
 
-  const [shimmerOffset, setShimmerOffset] = useState(-3);
-  const [shimmerBaseColor, setShimmerBaseColor] = useState<string>(
-    phaseVisual.baseColor,
-  );
-  // Float position carried across phase transitions so a direction or speed
-  // change continues from wherever the bright cell currently is, instead of
-  // snapping to the off-screen edge of the new direction.
-  const positionRef = useRef<number>(-3);
-  const lastFrameRef = useRef<number>(0);
-  // Wall-clock time at which the current phase became active. Used for
-  // phase-local time when computing the overlay color so each phase entry
-  // starts at the curve's calm anchor, not mid-breath.
-  const phaseStartedAtRef = useRef<number>(0);
-  // Smoothed token-count display. The raw `tokenCount` prop jumps in
-  // chunk-sized steps which reads as twitchy; we catch up to it with a
-  // piecewise-linear rule on a 50ms tick so the number ticks up like a
-  // human-readable progress bar regardless of bursty chunk arrival.
-  const targetTokenBytesRef = useRef(tokenCount);
-  targetTokenBytesRef.current = tokenCount;
-  const displayedTokenBytesRef = useRef(tokenCount);
-  const [displayedTokenBytes, setDisplayedTokenBytes] = useState(tokenCount);
+  // Include agent name length (+1 for space) and trailing ellipsis in cycle
+  const agentPrefixLength = agentName ? agentName.length + 1 : 0;
+  const shimmerTextLength = agentPrefixLength + thinkingMessage.length + 1;
+  const isLive = streaming && visible && animate;
+
+  const { offset: shimmerOffset, baseColor: shimmerBaseColor } =
+    useShimmerAnimation({
+      active: isLive,
+      textLength: shimmerTextLength,
+      phaseVisual,
+    });
+  const displayedTokenBytes = useTokenSmoothing(tokenCount, isLive);
+
   const [elapsedMs, setElapsedMs] = useState(0);
   const [tipMessage, setTipMessage] = useState("");
   const streamStartRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!streaming || !visible || !animate) return;
-
-    lastFrameRef.current = performance.now();
-    phaseStartedAtRef.current = performance.now();
-
-    const tick = () => {
-      const now = performance.now();
-      const dt = now - lastFrameRef.current;
-      lastFrameRef.current = now;
-
-      // Include agent name length (+1 for space) and trailing ellipsis in cycle
-      const prefixLen = agentName ? agentName.length + 1 : 0;
-      const len = prefixLen + thinkingMessage.length + 1;
-      const minPos = -10;
-      const maxPos = len + 10;
-      const cycleLen = maxPos - minPos;
-
-      const dir = phaseVisual.direction === "ltr" ? 1 : -1;
-      let pos = positionRef.current + (dt * dir) / phaseVisual.tickMs;
-      while (pos > maxPos) pos -= cycleLen;
-      while (pos < minPos) pos += cycleLen;
-      positionRef.current = pos;
-
-      setShimmerOffset(Math.floor(pos));
-      setShimmerBaseColor(
-        effectiveBaseColor(phaseVisual, now - phaseStartedAtRef.current),
-      );
-    };
-
-    tick();
-    const id = setInterval(tick, phaseVisual.tickMs);
-    return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible, agentName, animate, phaseVisual]);
-
-  useEffect(() => {
-    if (!animate) {
-      setShimmerOffset(-3);
-      setShimmerBaseColor(phaseVisual.baseColor);
-      positionRef.current = -3;
-    }
-  }, [animate, phaseVisual]);
-
-  // Token-counter smoothing. Mirrors Claude Code v2.1.x: 50ms tick, forward-
-  // only, piecewise step (+3 when close, 15% of gap when mid, capped at +50
-  // when far). Snaps to target when not streaming so the post-stream final
-  // value is exact.
-  useEffect(() => {
-    if (!streaming || !visible || !animate) {
-      displayedTokenBytesRef.current = targetTokenBytesRef.current;
-      setDisplayedTokenBytes(targetTokenBytesRef.current);
-      return;
-    }
-    const id = setInterval(() => {
-      const target = targetTokenBytesRef.current;
-      const cur = displayedTokenBytesRef.current;
-      const delta = target - cur;
-      if (delta <= 0) {
-        // Snap on decrease (defensive — e.g. if a future code path resets
-        // tokenCount mid-stream the display follows immediately rather than
-        // staying stuck at the higher value).
-        if (cur !== target) {
-          displayedTokenBytesRef.current = target;
-          setDisplayedTokenBytes(target);
-        }
-        return;
-      }
-      let step: number;
-      if (delta < 70) step = 3;
-      else if (delta < 200) step = Math.max(8, Math.ceil(delta * 0.15));
-      else step = 50;
-      const next = Math.min(cur + step, target);
-      displayedTokenBytesRef.current = next;
-      setDisplayedTokenBytes(next);
-    }, 50);
-    return () => clearInterval(id);
-  }, [streaming, visible, animate]);
 
   // Elapsed time tracking: pause updates during resize, but do not reset.
   useEffect(() => {

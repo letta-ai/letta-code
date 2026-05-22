@@ -157,7 +157,6 @@ const _colors = {
     interrupt: brandColors.statusError,
     processing: brandColors.primaryAccent, // base text color
     processingShimmer: brandColors.primaryAccentLight, // shimmer highlight
-    warning: brandColors.statusWarning, // thinking-phase tint
   },
 
   // Tool calls
