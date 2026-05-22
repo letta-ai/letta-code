@@ -691,7 +691,7 @@ export function formatErrorDetails(
   options: FormatErrorDetailsOptions = {},
 ): string {
   let runId: string | undefined;
-  const surface = options.surface ?? "plain";
+  const surface = options.surface ?? "terminal";
 
   // Check for OpenAI encrypted content org mismatch before anything else
   const encryptedContentMsg = checkEncryptedContentError(e);

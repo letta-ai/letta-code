@@ -512,7 +512,7 @@ describe("formatErrorDetails", () => {
     expect(message).not.toContain("\x1b");
   });
 
-  test("uses plain agent references by default for non-terminal displays", () => {
+  test("keeps OSC8 links by default for terminal displays", () => {
     const error = new APIError(
       500,
       {
@@ -524,6 +524,26 @@ describe("formatErrorDetails", () => {
     );
 
     const message = formatErrorDetails(error, "agent-1", "conv-1");
+
+    expect(message).toContain(
+      "\x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
+    );
+  });
+
+  test("uses plain agent references when explicitly requested", () => {
+    const error = new APIError(
+      500,
+      {
+        detail: "Internal failure",
+        run_id: "run-123",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error, "agent-1", "conv-1", {
+      surface: "plain",
+    });
 
     expect(message).toContain("View agent: agent-1 (run: run-123)");
     expect(message).not.toContain("app.letta.com");
