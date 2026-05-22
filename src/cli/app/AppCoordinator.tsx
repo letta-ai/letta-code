@@ -218,6 +218,30 @@ function buildStartupCommandHints(options: {
     hasAvailableLocalModels,
   } = options;
 
+  const baseHints = isResumingConversation
+    ? [
+        "→ **/agents**    list all agents",
+        "→ **/resume**    browse all conversations",
+        "→ **/new**       start a new conversation",
+        "→ **/init**      initialize your agent's memory",
+        "→ **/remember**  teach your agent",
+      ]
+    : isPinned
+      ? [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/memory**    view your agent's memory",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ]
+      : [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/pin**       save + name your agent",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ];
+
   const onboardingHints: string[] = [];
 
   if (isLocalBackend && !hasAvailableLocalModels) {
@@ -238,37 +262,21 @@ function buildStartupCommandHints(options: {
     onboardingHints.push("→ **/login**     sign in to Constellation");
   }
 
-  if (onboardingHints.length > 0) {
-    return onboardingHints.slice(0, 5);
+  const dedupedHints: string[] = [];
+  const seenHints = new Set<string>();
+
+  for (const hint of [...onboardingHints, ...baseHints]) {
+    if (seenHints.has(hint)) {
+      continue;
+    }
+    seenHints.add(hint);
+    dedupedHints.push(hint);
+    if (dedupedHints.length === 5) {
+      break;
+    }
   }
 
-  if (isResumingConversation) {
-    return [
-      "→ **/agents**    list all agents",
-      "→ **/resume**    browse all conversations",
-      "→ **/new**       start a new conversation",
-      "→ **/init**      initialize your agent's memory",
-      "→ **/remember**  teach your agent",
-    ];
-  }
-
-  if (isPinned) {
-    return [
-      "→ **/agents**    list all agents",
-      "→ **/resume**    resume a previous conversation",
-      "→ **/memory**    view your agent's memory",
-      "→ **/init**      initialize your agent's memory",
-      "→ **/remember**  teach your agent",
-    ];
-  }
-
-  return [
-    "→ **/agents**    list all agents",
-    "→ **/resume**    resume a previous conversation",
-    "→ **/pin**       save + name your agent",
-    "→ **/init**      initialize your agent's memory",
-    "→ **/remember**  teach your agent",
-  ];
+  return dedupedHints;
 }
 
 export function App({
@@ -4349,7 +4357,7 @@ export function App({
       // Build status message based on session type
       const agentName = agentState?.name || "Unnamed Agent";
       const headerMessage = resumedExistingConversation
-        ? `Resuming (empty) conversation with **${agentName}**`
+        ? `Resuming new conversation with **${agentName}**`
         : continueSession
           ? `Starting new conversation with **${agentName}**`
           : "Creating a new agent";
