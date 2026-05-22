@@ -337,9 +337,17 @@ export interface DeviceStatus {
   pending_control_requests: PendingControlRequest[];
   experiments: ExperimentSnapshot[];
   memory_directory: string | null;
-  /** Persisted per-conversation CWD overrides, keyed by listener scope key. */
+  /**
+   * Persisted CWD overrides keyed by listener scope key.
+   *
+   * Key format:
+   * - `conversation:<conversation_id>` for conversation-scoped overrides
+   * - `agent:<agent_id>::conversation:default` for an agent's default conversation scope
+   *
+   * Example: `conversation:conv_123` or `agent:agent_123::conversation:default`
+   */
   cwd_map?: Record<string, string>;
-  /** Listener boot CWD used when a conversation has no entry in cwd_map. */
+  /** Listener boot CWD used when a conversation has no matching formatted key in `cwd_map`. */
   boot_working_directory?: string | null;
   should_doctor?: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
