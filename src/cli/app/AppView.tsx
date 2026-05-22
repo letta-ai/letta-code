@@ -153,6 +153,7 @@ type AppViewProps = {
 
   feedbackPrefill: string;
   footerUpdateText: string | null;
+  showInspirationalPromptHints: boolean;
   handleAgentSelect: (
     targetAgentId: string,
     opts?: {
@@ -344,6 +345,7 @@ export function AppView(props: AppViewProps) {
     handleCtrlD,
     feedbackPrefill,
     footerUpdateText,
+    showInspirationalPromptHints,
     handleAgentSelect,
     handleApproveAlways,
     handleApproveCurrent,
@@ -705,6 +707,7 @@ export function AppView(props: AppViewProps) {
                 statusLineRight={statusLine.rightText || undefined}
                 statusLinePrompt={statusLine.prompt}
                 footerNotification={footerUpdateText}
+                showInspirationalPromptHints={showInspirationalPromptHints}
               />
             </Box>
 
