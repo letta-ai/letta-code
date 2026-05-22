@@ -1029,7 +1029,9 @@ export function AgentSelector({
             paddingLeft={activeTab === "pinned" ? 2 : 0}
           >
             <Text dimColor>{TAB_EMPTY_STATES[activeTab]}</Text>
-            <Text dimColor>Press ESC to cancel</Text>
+            {activeTab !== "pinned" && (
+              <Text dimColor>Press ESC to cancel</Text>
+            )}
           </Box>
         )}
 
