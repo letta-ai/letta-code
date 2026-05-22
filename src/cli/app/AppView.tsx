@@ -137,6 +137,7 @@ type AppViewProps = {
   currentModelHandle: string | null;
   currentModelId: string | null;
   currentModelProvider: string | null;
+  isLocalBackend: boolean;
   currentPersonalityId: PersonalityId | null;
   currentReasoningEffort: ModelReasoningEffort | null;
   currentSystemPromptId: string | null;
@@ -325,6 +326,7 @@ export function AppView(props: AppViewProps) {
     currentModelHandle,
     currentModelId,
     currentModelProvider,
+    isLocalBackend,
     currentPersonalityId,
     currentReasoningEffort,
     currentSystemPromptId,
@@ -678,6 +680,7 @@ export function AppView(props: AppViewProps) {
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
+                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 messageQueue={queueDisplay}
