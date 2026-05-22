@@ -1,7 +1,9 @@
+import { isLocalAgentId as isLocalAgentIdShared } from "@/agent/agent-id";
+
 const APP_BASE = "https://app.letta.com";
 
 export function isLocalAgentId(agentId: string): boolean {
-  return agentId.startsWith("agent-local-");
+  return isLocalAgentIdShared(agentId);
 }
 
 /**
