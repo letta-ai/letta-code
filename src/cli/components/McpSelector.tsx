@@ -14,6 +14,7 @@ import { Text } from "./Text";
 
 // Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";
+export const MCP_SERVERS_LIST_TIMEOUT_MS = 15_000;
 
 interface McpSelectorProps {
   agentId: string;
@@ -25,6 +26,25 @@ type McpServer = StreamableHTTPMcpServer | SseMcpServer | StdioMcpServer;
 
 const DISPLAY_PAGE_SIZE = 5;
 const TOOLS_DISPLAY_PAGE_SIZE = 8;
+
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 /**
  * Get a display string for the MCP server type
@@ -94,7 +114,11 @@ export const McpSelector = memo(function McpSelector({
     setError(null);
     try {
       const client = await getClient();
-      const serverList = await client.mcpServers.list();
+      const serverList = await withTimeout(
+        client.mcpServers.list(),
+        MCP_SERVERS_LIST_TIMEOUT_MS,
+        "Timed out loading MCP servers. The API endpoint may be slow or unavailable; press R to retry.",
+      );
       setServers(serverList);
     } catch (err) {
       setError(
