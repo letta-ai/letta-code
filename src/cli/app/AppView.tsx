@@ -179,7 +179,10 @@ type AppViewProps = {
   ) => Promise<void>;
   handleCreateNewAgent: (
     name: string,
-    opts?: { commandId?: string },
+    opts?: {
+      commandId?: string;
+      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+    },
   ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
   handleDenyCurrent: (reason: string) => Promise<void>;
@@ -961,10 +964,11 @@ export function AppView(props: AppViewProps) {
                   });
                 }}
                 onCancel={closeOverlay}
-                onCreateNewAgent={(name: string) => {
+                onCreateNewAgent={(name: string, backendMode) => {
                   const overlayCommand = completeOverlay("resume");
                   void handleCreateNewAgent(name, {
                     commandId: overlayCommand?.id,
+                    backendMode,
                   });
                 }}
               />
