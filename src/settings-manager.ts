@@ -1384,6 +1384,52 @@ class SettingsManager {
   }
 
   /**
+   * Get the last session for the currently configured local backend storage dir,
+   * regardless of the active runtime backend mode.
+   *
+   * This is useful when switching from cloud -> local (e.g. /logout), where we
+   * need to resume the user's last local session even though the current server
+   * key still points at the cloud backend.
+   */
+  getLastLocalBackendSession(
+    workingDirectory: string = process.cwd(),
+  ): SessionRef | null {
+    const localServerKey = getLocalBackendSettingsKey();
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const localProjectSession =
+      localSettings.sessionsByServer?.[localServerKey];
+    if (localProjectSession) {
+      if (
+        isSessionCompatibleWithServerKey(localProjectSession, localServerKey)
+      ) {
+        return localProjectSession;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible explicit local backend session for server %s: %s",
+        localServerKey,
+        localProjectSession.agentId,
+      );
+    }
+
+    const globalSettings = this.getSettings();
+    const globalSession = globalSettings.sessionsByServer?.[localServerKey];
+    if (globalSession) {
+      if (isSessionCompatibleWithServerKey(globalSession, localServerKey)) {
+        return globalSession;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible explicit global local-backend session for server %s: %s",
+        localServerKey,
+        globalSession.agentId,
+      );
+    }
+
+    return null;
+  }
+
+  /**
    * Get the effective last session (local overrides global).
    * Returns null if no session is available anywhere.
    */
@@ -2280,10 +2326,6 @@ class SettingsManager {
         this.markDirty("refreshToken", "tokenExpiresAt", "deviceId", "env");
         await this.persistSettings();
       }
-
-      console.log(
-        "Successfully logged out and cleared all authentication data",
-      );
     } catch (error) {
       trackBoundaryError({
         errorType: "settings_logout_failed",

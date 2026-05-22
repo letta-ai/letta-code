@@ -1030,8 +1030,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /logout command - clear credentials and exit
+        // Special handling for /logout command
         if (trimmed === "/logout") {
+          if (isAgentBusy()) {
+            const cmd = commandRunner.start(
+              "/logout",
+              "Cannot log out while the agent is running.",
+            );
+            cmd.fail("Wait for the current turn to finish and try again.");
+            return { submitted: true };
+          }
+
           const cmd = commandRunner.start(msg.trim(), "Logging out...");
 
           setCommandRunning(true);
@@ -1040,6 +1049,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const { settingsManager } = await import("@/settings-manager");
             const currentSettings =
               await settingsManager.getSettingsWithSecureTokens();
+            const hasEnvApiKey = Boolean(process.env.LETTA_API_KEY);
+            const hasStoredCloudAuth = Boolean(
+              currentSettings.refreshToken ||
+                currentSettings.env?.LETTA_API_KEY,
+            );
+
+            if (!hasEnvApiKey && !hasStoredCloudAuth) {
+              cmd.finish(
+                "Already logged out. Run /login to sign into Constellation.",
+                true,
+              );
+              return { submitted: true };
+            }
+
+            const currentAgentId = agentIdRef.current;
+            const currentConversationId =
+              conversationIdRef.current ?? "default";
+            const currentAgentIsLocal = isLocalAgentId(currentAgentId);
 
             // Revoke refresh token on server if we have one
             if (currentSettings.refreshToken) {
@@ -1050,12 +1077,23 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Clear all credentials including secrets
             await settingsManager.logout();
 
-            cmd.finish(
-              buildLogoutSuccessMessage(Boolean(process.env.LETTA_API_KEY)),
-              true,
-            );
+            // Logged out while already using a local agent → stay in place.
+            if (currentAgentIsLocal) {
+              const localAgentLabel = agentName ?? currentAgentId;
+              const baseMessage = `Logged out successfully. You're still using your local agent ${localAgentLabel}.`;
+              cmd.finish(
+                hasEnvApiKey
+                  ? `${baseMessage}\n\n${buildLogoutSuccessMessage(true)}`
+                  : baseMessage,
+                true,
+              );
+              refreshDerived();
+              return { submitted: true };
+            }
 
-            saveLastSessionBeforeExit(conversationIdRef.current);
+            cmd.finish(buildLogoutSuccessMessage(hasEnvApiKey), true);
+
+            saveLastSessionBeforeExit(currentConversationId);
 
             // Track session end explicitly (before exit) with stats
             const stats = sessionStatsRef.current.getSnapshot();
@@ -1086,7 +1124,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Flush telemetry before exit
             await telemetry.flush();
 
-            // Exit after a brief delay to show the message
+            // No valid local session to return to after logging out of cloud.
+            // Exit after a brief delay to show the message.
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
             let errorOutput = formatErrorDetails(error, agentId);
