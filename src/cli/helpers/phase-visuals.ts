@@ -33,7 +33,9 @@ const REQUESTING: PhaseVisual = {
 const THINKING: PhaseVisual = {
   tickMs: 200,
   direction: "rtl",
-  baseColor: colors.status.processing,
+  // Deeper purple than the default processing accent so the cool end of the
+  // warning-blend breathe lands on a richer color, not a washed-out lavender.
+  baseColor: "#5252D9",
   shimmerColor: colors.status.processingShimmer,
   overlay: "warning-blend",
 };
