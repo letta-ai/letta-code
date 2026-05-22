@@ -2610,7 +2610,6 @@ export function App({
             snapshot: {
               continueSession,
               agentState,
-              agentProvenance,
               startupHasAvailableLocalModels,
               terminalWidth: columns,
             },
@@ -2689,7 +2688,6 @@ export function App({
     continueSession,
     columns,
     agentState,
-    agentProvenance,
     resumedExistingConversation,
     releaseNotes,
     startupHasCloudCredentials,
@@ -4337,7 +4335,6 @@ export function App({
           snapshot: {
             continueSession,
             agentState,
-            agentProvenance,
             startupHasAvailableLocalModels,
             terminalWidth: columns,
           },
