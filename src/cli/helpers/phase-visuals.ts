@@ -7,7 +7,7 @@ export type ExecutionPhase =
   | "responding"
   | null;
 
-export type PhaseOverlay = "sin-pulse" | "warning-blend" | null;
+export type PhaseOverlay = "sin-pulse" | "two-sided" | null;
 
 export type PhaseVisual = {
   /** Sweep tick in ms. Smaller = faster bright cell. */
@@ -20,6 +20,10 @@ export type PhaseVisual = {
   shimmerColor: string;
   /** Optional whole-word color modulation layered under the sweep. */
   overlay: PhaseOverlay;
+  /** `two-sided` overlay: color reached on the upper lobe of the sin curve. */
+  lighterColor?: string;
+  /** `two-sided` overlay: color reached on the lower lobe of the sin curve. */
+  deeperColor?: string;
 };
 
 const REQUESTING: PhaseVisual = {
@@ -33,11 +37,14 @@ const REQUESTING: PhaseVisual = {
 const THINKING: PhaseVisual = {
   tickMs: 200,
   direction: "rtl",
-  // Deeper purple than the default processing accent so the cool end of the
-  // warning-blend breathe lands on a richer color, not a washed-out lavender.
-  baseColor: "#5252D9",
+  // Shared base across all phases so phase entry doesn't cause a color jump.
+  // The thinking-specific "breath" comes from the two-sided overlay below,
+  // which oscillates symmetrically toward a lighter and deeper anchor.
+  baseColor: colors.status.processing,
   shimmerColor: colors.status.processingShimmer,
-  overlay: "warning-blend",
+  overlay: "two-sided",
+  lighterColor: colors.status.processingShimmer,
+  deeperColor: "#5252D9",
 };
 
 const TOOL_USE: PhaseVisual = {
@@ -123,28 +130,33 @@ export function blendHex(a: string, b: string, t: number): string {
 }
 
 /**
- * Compute the effective base color for a phase at time `t` (ms). The sweep's
- * bright cell is layered on top of whatever this returns.
+ * Compute the effective base color for a phase at phase-local time `t` (ms).
+ * Caller is responsible for passing time measured from phase-entry, not from
+ * a global clock — that way the curve always begins at its anchor when the
+ * phase becomes active, instead of landing mid-cycle.
  *
- *  - `sin-pulse`: blends baseColor → shimmerColor on a 2s sin curve, mirroring
- *    the tool-use "breathing" in Claude Code v2.1.x.
- *  - `warning-blend`: blends baseColor → warningColor on a slower 3s sin curve
- *    that stays within a warm band (25%–55% mix), giving the thinking row a
- *    visible warm breathing distinct from the cooler tool-use pulse.
+ *  - `sin-pulse`: blends baseColor → shimmerColor on a 2s cos curve. Anchored
+ *    at baseColor (calm) and breathes lighter.
+ *  - `two-sided`: 3s sin curve. Positive lobe blends baseColor → lighterColor,
+ *    negative lobe blends baseColor → deeperColor. Crosses through unblended
+ *    baseColor twice per period — so phase entry and every half-period look
+ *    identical to neighboring phases' resting color (no jump).
  */
-export function effectiveBaseColor(
-  visual: PhaseVisual,
-  warningColor: string,
-  t: number,
-): string {
+export function effectiveBaseColor(visual: PhaseVisual, t: number): string {
   if (!visual.overlay) return visual.baseColor;
   if (visual.overlay === "sin-pulse") {
-    const f = (Math.sin((t * Math.PI) / 1000) + 1) / 2;
+    const f = (1 - Math.cos((t * Math.PI) / 1000)) / 2;
     return blendHex(visual.baseColor, visual.shimmerColor, f * 0.55);
   }
-  if (visual.overlay === "warning-blend") {
-    const f = (Math.sin((t * Math.PI) / 1500) + 1) / 2;
-    return blendHex(visual.baseColor, warningColor, 0.25 + f * 0.3);
+  if (visual.overlay === "two-sided") {
+    const f = Math.sin((t * Math.PI) / 1500);
+    if (f >= 0 && visual.lighterColor) {
+      return blendHex(visual.baseColor, visual.lighterColor, f * 0.6);
+    }
+    if (f < 0 && visual.deeperColor) {
+      return blendHex(visual.baseColor, visual.deeperColor, -f * 0.6);
+    }
+    return visual.baseColor;
   }
   return visual.baseColor;
 }
