@@ -29,6 +29,7 @@ import {
   refreshInputOtidsForNewRequest,
   shouldAttemptApprovalRecovery,
 } from "@/agent/approval-recovery";
+import { getAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getStreamToolContextId, sendMessageStream } from "@/agent/message";
 import { getModelInfo, getModelInfoForLlmConfig } from "@/agent/model";
@@ -63,6 +64,10 @@ import {
 } from "@/cli/helpers/error-formatter";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import { buildGoalBudgetLimitPrompt } from "@/cli/helpers/goal-command";
+import {
+  buildLocalNoModelResponse,
+  splitSyntheticAssistantResponse,
+} from "@/cli/helpers/local-no-model-response";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
@@ -132,6 +137,10 @@ import type {
 } from "./types";
 
 type NetworkPhase = "error" | "upload" | "download" | null;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 type ConversationLoopContext = {
   abortControllerRef: MutableRefObject<AbortController | null>;
@@ -313,6 +322,100 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     userCancelledRef,
     waitingForQueueCancelRef,
   } = ctx;
+
+  const maybeStreamSyntheticNoModelResponse = useCallback(
+    async (
+      currentInput: Array<MessageCreate | ApprovalCreate>,
+      allowReentry: boolean,
+      hasApprovalInput: boolean,
+    ): Promise<boolean> => {
+      const backend = getBackend();
+      if (
+        !backend.capabilities.localModelCatalog ||
+        allowReentry ||
+        hasApprovalInput
+      ) {
+        return false;
+      }
+
+      const hasUserMessage = currentInput.some(
+        (item) => item.type === "message" && item.role === "user",
+      );
+      if (!hasUserMessage) {
+        return false;
+      }
+
+      const availableModels = await getAvailableModelHandles({
+        forceRefresh: true,
+      });
+      if (availableModels.handles.size > 0) {
+        return false;
+      }
+
+      const currentSettings =
+        await settingsManager.getSettingsWithSecureTokens();
+      const hasCloudAuth = Boolean(
+        process.env.LETTA_API_KEY ||
+          currentSettings.refreshToken ||
+          currentSettings.env?.LETTA_API_KEY,
+      );
+
+      setThinkingMessage(getRandomThinkingVerb());
+      await sleep(250);
+
+      const lineId = uid("assistant");
+      buffersRef.current.byId.set(lineId, {
+        kind: "assistant",
+        id: lineId,
+        text: "",
+        phase: "streaming",
+      });
+      buffersRef.current.order.push(lineId);
+      refreshDerived();
+
+      const chunks = splitSyntheticAssistantResponse(
+        buildLocalNoModelResponse(hasCloudAuth),
+      );
+      for (const chunk of chunks) {
+        if (abortControllerRef.current?.signal.aborted) {
+          break;
+        }
+
+        const currentLine = buffersRef.current.byId.get(lineId);
+        if (!currentLine || currentLine.kind !== "assistant") {
+          break;
+        }
+
+        buffersRef.current.byId.set(lineId, {
+          ...currentLine,
+          text: currentLine.text + chunk,
+        });
+        buffersRef.current.tokenCount += Buffer.byteLength(chunk, "utf8");
+        refreshDerived();
+        await sleep(chunk === "\n" ? 70 : 120);
+      }
+
+      const finalLine = buffersRef.current.byId.get(lineId);
+      if (finalLine && finalLine.kind === "assistant") {
+        buffersRef.current.byId.set(lineId, {
+          ...finalLine,
+          phase: "finished",
+        });
+      }
+      setNetworkPhase(null);
+      setStreaming(false);
+      refreshDerived();
+      return true;
+    },
+    [
+      abortControllerRef,
+      buffersRef,
+      refreshDerived,
+      setNetworkPhase,
+      setStreaming,
+      setThinkingMessage,
+    ],
+  );
 
   // Core streaming function - iterative loop that processes conversation turns
   // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — this callback has ~16 omitted deps (refs, stable functions, etc.). Refs are safe (read .current dynamically), but the blanket ignore also hides any genuinely missing reactive deps. If stale-closure bugs appear in processConversation, audit the dep array here first.
@@ -524,6 +627,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         openTrajectorySegment();
         setNetworkPhase("upload");
         abortControllerRef.current = new AbortController();
+
+        if (
+          await maybeStreamSyntheticNoModelResponse(
+            currentInput,
+            allowReentry,
+            hasApprovalInput,
+          )
+        ) {
+          return;
+        }
 
         // Recover interrupted message only after explicit user interrupt:
         // if cache contains ONLY user messages, prepend them.
@@ -2789,6 +2902,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       resetTrajectoryBases,
       setUiPermissionMode,
       prepareScopedToolExecutionContext,
+      maybeStreamSyntheticNoModelResponse,
     ],
   );
 
