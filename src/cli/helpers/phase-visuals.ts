@@ -126,9 +126,9 @@ export function blendHex(a: string, b: string, t: number): string {
  *
  *  - `sin-pulse`: blends baseColor → shimmerColor on a 2s sin curve, mirroring
  *    the tool-use "breathing" in Claude Code v2.1.x.
- *  - `warning-blend`: drifts baseColor toward statusWarning at a steady level.
- *    (No smoothed intensity signal yet — we use a fixed amount so the tint is
- *    visible whenever the phase is active.)
+ *  - `warning-blend`: blends baseColor → warningColor on a slower 3s sin curve
+ *    that stays within a warm band (25%–55% mix), giving the thinking row a
+ *    visible warm breathing distinct from the cooler tool-use pulse.
  */
 export function effectiveBaseColor(
   visual: PhaseVisual,
@@ -141,7 +141,8 @@ export function effectiveBaseColor(
     return blendHex(visual.baseColor, visual.shimmerColor, f * 0.55);
   }
   if (visual.overlay === "warning-blend") {
-    return blendHex(visual.baseColor, warningColor, 0.45);
+    const f = (Math.sin((t * Math.PI) / 1500) + 1) / 2;
+    return blendHex(visual.baseColor, warningColor, 0.25 + f * 0.3);
   }
   return visual.baseColor;
 }
