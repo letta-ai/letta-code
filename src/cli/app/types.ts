@@ -200,6 +200,7 @@ export type StaticItem =
         continueSession: boolean;
         agentState?: AgentState | null;
         agentProvenance?: AgentProvenance | null;
+        startupHasAvailableLocalModels?: boolean;
         terminalWidth: number;
       };
     }

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { AgentProvenance } from "@/agent/create";
 import { getModelDisplayName } from "@/agent/model";
 import { isLocalBackendEnabled } from "@/backend";
+import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version";
@@ -72,12 +73,14 @@ export function WelcomeScreen({
   loadingState,
   continueSession,
   agentState,
-  agentProvenance: _agentProvenance,
+  agentProvenance,
+  startupHasAvailableLocalModels = true,
 }: {
   loadingState: LoadingState;
   continueSession?: boolean;
   agentState?: Letta.AgentState | null;
   agentProvenance?: AgentProvenance | null;
+  startupHasAvailableLocalModels?: boolean;
 }) {
   // Keep hook call for potential future responsive behavior
   useTerminalWidth();
@@ -93,9 +96,16 @@ export function WelcomeScreen({
     llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
-  const model = fullModel
-    ? (getModelDisplayName(fullModel) ?? fullModel.split("/").pop())
-    : undefined;
+  const startupModelDisplayOverride = getStartupModelDisplayOverride({
+    isLocalBackend: isLocalBackendEnabled(),
+    startupHasAvailableLocalModels,
+    agentProvenance,
+  });
+  const model =
+    startupModelDisplayOverride ??
+    (fullModel
+      ? (getModelDisplayName(fullModel) ?? fullModel.split("/").pop())
+      : undefined);
 
   // Get auth method - use sync check for env vars, async only for keychain
   const initialAuth = getInitialAuthMethod();
