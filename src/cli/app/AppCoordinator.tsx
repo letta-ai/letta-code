@@ -4447,11 +4447,13 @@ export function App({
   const inputVisible = !showExitStats;
   const inputEnabled =
     !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
-  const onEscapeCommandCancel = isActiveConnectOperationCancellable()
-    ? () => {
-        cancelActiveConnectOperation();
-      }
-    : undefined;
+  const onEscapeCommandCancel = useCallback(() => {
+    if (isActiveConnectOperationCancellable()) {
+      cancelActiveConnectOperation();
+      return true;
+    }
+    return false;
+  }, []);
   const showInspirationalPromptHints =
     loadingState === "ready" &&
     !hasConversationContent(lines) &&

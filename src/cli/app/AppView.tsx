@@ -154,7 +154,7 @@ type AppViewProps = {
   feedbackPrefill: string;
   footerUpdateText: string | null;
   showInspirationalPromptHints: boolean;
-  onEscapeCommandCancel?: () => void;
+  onEscapeCommandCancel?: () => boolean;
   handleAgentSelect: (
     targetAgentId: string,
     opts?: {
