@@ -488,6 +488,68 @@ describe("formatErrorDetails", () => {
     expect(message).not.toContain("OpenAI");
   });
 
+  test("formats conversation-busy conflicts with user-facing copy", () => {
+    const error = new APIError(
+      409,
+      {
+        detail:
+          "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.",
+        run_id: "run-123",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error, "agent-1", "conv-1");
+
+    expect(message).toBe(
+      "Turn still running\n" +
+        "Another request is already processing for this conversation. Please wait for it to finish, then try again.\n\n" +
+        "Run ID: run-123",
+    );
+    expect(message).not.toContain("CONFLICT");
+    expect(message).not.toContain("app.letta.com");
+    expect(message).not.toContain("\x1b");
+  });
+
+  test("uses plain agent references by default for non-terminal displays", () => {
+    const error = new APIError(
+      500,
+      {
+        detail: "Internal failure",
+        run_id: "run-123",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error, "agent-1", "conv-1");
+
+    expect(message).toContain("View agent: agent-1 (run: run-123)");
+    expect(message).not.toContain("app.letta.com");
+    expect(message).not.toContain("\x1b");
+  });
+
+  test("keeps OSC8 links when terminal output explicitly asks for them", () => {
+    const error = new APIError(
+      500,
+      {
+        detail: "Internal failure",
+        run_id: "run-123",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error, "agent-1", "conv-1", {
+      surface: "terminal",
+    });
+
+    expect(message).toContain(
+      "\x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
+    );
+  });
+
   describe("Cloudflare HTML 52x errors", () => {
     const cloudflare521Html = `521 <!DOCTYPE html>
 <html lang="en-US">

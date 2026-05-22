@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -288,14 +288,10 @@ export function buildDiscordReplyOptions(
 }
 
 function formatDiscordLifecycleErrorMessage(errorText: string): string {
-  const normalized = normalizeChannelLifecycleErrorMessage(errorText);
-  const truncated =
-    normalized.length > DISCORD_LIFECYCLE_ERROR_TEXT_MAX
-      ? `${normalized
-          .slice(0, DISCORD_LIFECYCLE_ERROR_TEXT_MAX - 1)
-          .trimEnd()}…`
-      : normalized;
-  return `Turn failed:\n\`\`\`\n${truncated.replace(/```/g, "``\u200b`")}\n\`\`\``;
+  return formatChannelLifecycleErrorMessage(errorText, {
+    codeBlock: true,
+    maxLength: DISCORD_LIFECYCLE_ERROR_TEXT_MAX,
+  });
 }
 
 /**

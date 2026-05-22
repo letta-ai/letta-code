@@ -6,7 +6,7 @@ import {
   type InboundDebouncer,
 } from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -721,13 +721,10 @@ export function createSlackAdapter(
   }
 
   function formatSlackLifecycleErrorMessage(errorText: string): string {
-    const normalized = normalizeChannelLifecycleErrorMessage(errorText);
-    const truncated =
-      normalized.length > SLACK_LIFECYCLE_ERROR_TEXT_MAX
-        ? `${normalized.slice(0, SLACK_LIFECYCLE_ERROR_TEXT_MAX - 1).trimEnd()}…`
-        : normalized;
-    const escaped = truncated.replace(/```/g, "``\u200b`");
-    return `Turn failed:\n\`\`\`\n${escaped}\n\`\`\``;
+    return formatChannelLifecycleErrorMessage(errorText, {
+      codeBlock: true,
+      maxLength: SLACK_LIFECYCLE_ERROR_TEXT_MAX,
+    });
   }
 
   function pruneLifecycleState(now: number = Date.now()): void {

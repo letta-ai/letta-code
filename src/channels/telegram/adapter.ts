@@ -4,10 +4,16 @@
  * Uses long-polling (no webhook setup needed).
  */
 
+import { randomUUID } from "node:crypto";
 import type { ReactionType, ReactionTypeEmoji } from "@grammyjs/types";
 import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import {
+  buildChannelLifecycleErrorReport,
+  type ChannelLifecycleErrorReport,
+  submitChannelLifecycleErrorReport,
+} from "@/channels/lifecycle-error-report";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -73,9 +79,31 @@ type TelegramReactionUpdate = {
   new_reaction: TelegramReactionType[];
 };
 
+type TelegramCallbackQuery = {
+  id?: string;
+  data?: string;
+};
+
+type TelegramCallbackContext = GrammYContext & {
+  callbackQuery?: TelegramCallbackQuery;
+  answerCallbackQuery?: (options?: {
+    text?: string;
+    show_alert?: boolean;
+  }) => Promise<unknown>;
+};
+
+type TelegramLifecycleErrorReportEntry = {
+  expiresAt: number;
+  report: ChannelLifecycleErrorReport;
+  submitted: boolean;
+};
+
 const TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX = 3500;
 const TELEGRAM_LIFECYCLE_ERROR_DEDUPE_TTL_MS = 6 * 60 * 60 * 1000;
 const TELEGRAM_LIFECYCLE_ERROR_DEDUPE_MAX = 1000;
+const TELEGRAM_LIFECYCLE_ERROR_REPORT_TTL_MS = 6 * 60 * 60 * 1000;
+const TELEGRAM_LIFECYCLE_ERROR_REPORT_MAX = 1000;
+const TELEGRAM_REPORT_CALLBACK_PREFIX = "lc_report:";
 
 function resolveTelegramBotConstructor(
   mod: GrammYModule,
@@ -212,14 +240,9 @@ function getTelegramLifecycleErrorReplyKey(
 }
 
 function formatTelegramLifecycleErrorMessage(errorText: string): string {
-  const normalized = normalizeChannelLifecycleErrorMessage(errorText);
-  const truncated =
-    normalized.length > TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX
-      ? `${normalized
-          .slice(0, TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX - 1)
-          .trimEnd()}…`
-      : normalized;
-  return `Turn failed:\n${truncated}`;
+  return formatChannelLifecycleErrorMessage(errorText, {
+    maxLength: TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX,
+  });
 }
 
 const TELEGRAM_TYPING_REFRESH_MS = 4_000;
@@ -239,6 +262,10 @@ export function createTelegramAdapter(
   let running = false;
   const bufferedMediaGroups = new Map<string, BufferedMediaGroup>();
   const lifecycleErrorReplies = new Map<string, number>();
+  const lifecycleErrorReports = new Map<
+    string,
+    TelegramLifecycleErrorReportEntry
+  >();
   const typingByChatId = new Map<string, TelegramTypingEntry>();
 
   async function sendTypingAction(chatId: string): Promise<void> {
@@ -427,6 +454,10 @@ export function createTelegramAdapter(
       console.error(prefix, error.error);
     });
 
+    instance.on("callback_query", async (ctx) => {
+      await handleLifecycleErrorReportCallback(ctx);
+    });
+
     instance.on("message", async (ctx) => {
       const msg = ctx.message as TelegramLikeMessage | undefined;
       if (!msg?.from) {
@@ -561,6 +592,105 @@ export function createTelegramAdapter(
     return true;
   }
 
+  function pruneLifecycleErrorReports(now: number = Date.now()): void {
+    for (const [token, entry] of lifecycleErrorReports) {
+      if (entry.expiresAt <= now) {
+        lifecycleErrorReports.delete(token);
+      }
+    }
+
+    if (lifecycleErrorReports.size <= TELEGRAM_LIFECYCLE_ERROR_REPORT_MAX) {
+      return;
+    }
+
+    const overflowCount =
+      lifecycleErrorReports.size - TELEGRAM_LIFECYCLE_ERROR_REPORT_MAX;
+    const oldestEntries = Array.from(lifecycleErrorReports.entries()).sort(
+      (a, b) => a[1].expiresAt - b[1].expiresAt,
+    );
+    for (let index = 0; index < overflowCount; index += 1) {
+      const entry = oldestEntries[index];
+      if (entry) {
+        lifecycleErrorReports.delete(entry[0]);
+      }
+    }
+  }
+
+  function rememberLifecycleErrorReport(
+    source: ChannelTurnSource,
+    errorText: string,
+  ): string {
+    pruneLifecycleErrorReports();
+    const token = randomUUID();
+    lifecycleErrorReports.set(token, {
+      expiresAt: Date.now() + TELEGRAM_LIFECYCLE_ERROR_REPORT_TTL_MS,
+      report: buildChannelLifecycleErrorReport(source, errorText),
+      submitted: false,
+    });
+    return `${TELEGRAM_REPORT_CALLBACK_PREFIX}${token}`;
+  }
+
+  async function answerLifecycleErrorReportCallback(
+    ctx: TelegramCallbackContext,
+    text: string,
+    showAlert = false,
+  ): Promise<void> {
+    if (typeof ctx.answerCallbackQuery !== "function") {
+      return;
+    }
+    await ctx.answerCallbackQuery({ text, show_alert: showAlert });
+  }
+
+  async function handleLifecycleErrorReportCallback(
+    ctx: GrammYContext,
+  ): Promise<void> {
+    const callbackCtx = ctx as TelegramCallbackContext;
+    const data = callbackCtx.callbackQuery?.data?.trim();
+    if (!data?.startsWith(TELEGRAM_REPORT_CALLBACK_PREFIX)) {
+      return;
+    }
+
+    const token = data.slice(TELEGRAM_REPORT_CALLBACK_PREFIX.length);
+    const entry = lifecycleErrorReports.get(token);
+    if (!entry || entry.expiresAt <= Date.now()) {
+      lifecycleErrorReports.delete(token);
+      await answerLifecycleErrorReportCallback(
+        callbackCtx,
+        "This error report button expired.",
+        true,
+      );
+      return;
+    }
+
+    if (entry.submitted) {
+      await answerLifecycleErrorReportCallback(
+        callbackCtx,
+        "Error report already sent.",
+      );
+      return;
+    }
+
+    entry.submitted = true;
+    try {
+      await submitChannelLifecycleErrorReport(entry.report);
+      await answerLifecycleErrorReportCallback(
+        callbackCtx,
+        "Error report sent. Thanks.",
+      );
+    } catch (error) {
+      entry.submitted = false;
+      console.warn(
+        "[Telegram] Failed to submit lifecycle error report:",
+        error instanceof Error ? error.message : error,
+      );
+      await answerLifecycleErrorReportCallback(
+        callbackCtx,
+        "Could not send the error report. Please try again later.",
+        true,
+      );
+    }
+  }
+
   async function sendLifecycleErrorReply(
     source: ChannelTurnSource,
     errorText: string,
@@ -580,10 +710,24 @@ export function createTelegramAdapter(
       }
     }
 
+    const options: Record<string, unknown> = reply_parameters
+      ? { reply_parameters }
+      : {};
+    options.reply_markup = {
+      inline_keyboard: [
+        [
+          {
+            text: "Report error",
+            callback_data: rememberLifecycleErrorReport(source, errorText),
+          },
+        ],
+      ],
+    };
+
     await telegramBot.api.sendMessage(
       source.chatId,
       formatTelegramLifecycleErrorMessage(errorText),
-      reply_parameters ? { reply_parameters } : {},
+      options,
     );
   }
 
@@ -608,7 +752,7 @@ export function createTelegramAdapter(
 
         void telegramBot
           .start({
-            allowed_updates: ["message", "message_reaction"],
+            allowed_updates: ["message", "message_reaction", "callback_query"],
             onStart: () => {
               running = true;
               started = true;
@@ -637,6 +781,7 @@ export function createTelegramAdapter(
       }
       bufferedMediaGroups.clear();
       lifecycleErrorReplies.clear();
+      lifecycleErrorReports.clear();
       clearAllTyping();
 
       if (!running || !bot) return;
