@@ -74,10 +74,11 @@ const FETCH_PAGE_SIZE = 20;
  * Check if the user has cloud credentials (API key or refresh token).
  * Used to determine whether the Constellation tab can fetch agents.
  */
-async function hasCloudCredentials(): Promise<boolean> {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-  return Boolean(apiKey || settings.refreshToken);
+function hasCloudCredentials(): boolean {
+  const apiKey = process.env.LETTA_API_KEY;
+  if (apiKey) return true;
+  const cached = settingsManager.getCachedSecureTokens();
+  return Boolean(cached.apiKey || cached.refreshToken);
 }
 
 /**
@@ -234,6 +235,9 @@ export function AgentSelector({
         mergedPinned.map(async ({ agentId, isLocal }) => {
           try {
             // Use the correct backend for this agent's mode
+            if (!isLocal && !hasCloudCredentials()) {
+              return { agentId, agent: null, error: "Not signed in", isLocal };
+            }
             const agentBackend = isLocal
               ? getBackendForMode("local")
               : getBackendForMode("api");
@@ -352,9 +356,9 @@ export function AgentSelector({
     activeQuery,
   ]);
 
-  // Check cloud auth on mount
+  // Check cloud credentials on mount (sync — reads from the in-memory keychain cache)
   useEffect(() => {
-    hasCloudCredentials().then(setHasCloudAuth);
+    setHasCloudAuth(hasCloudCredentials());
   }, []);
 
   // Load pinned agents on mount
@@ -387,10 +391,20 @@ export function AgentSelector({
 
   // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
-    if (activeTab === "constellation" && activeQuery !== constellationQuery) {
+    if (
+      activeTab === "constellation" &&
+      hasCloudAuth &&
+      activeQuery !== constellationQuery
+    ) {
       loadConstellationAgents(activeQuery || undefined);
     }
-  }, [activeQuery, activeTab, constellationQuery, loadConstellationAgents]);
+  }, [
+    activeQuery,
+    activeTab,
+    constellationQuery,
+    loadConstellationAgents,
+    hasCloudAuth,
+  ]);
 
   // Pagination calculations - Pinned (filter out 404 agents)
   const validPinnedAgents = pinnedAgents.filter((p) => p.agent !== null);
