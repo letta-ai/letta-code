@@ -31,12 +31,15 @@ describe("Skill tool memory filesystem lookup", () => {
   let tempRoot: string;
   const originalMemoryDir = process.env.MEMORY_DIR;
   const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
+  const originalLocalBackendExperimental =
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
   const originalHome = process.env.HOME;
   const originalUserCwd = process.env.USER_CWD;
 
   beforeEach(() => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-skill-tool-"));
     currentSkillsDirectory = join(tempRoot, ".skills");
+    delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
     consumeQueuedSkillContent();
   });
 
@@ -55,6 +58,13 @@ describe("Skill tool memory filesystem lookup", () => {
       delete process.env.LETTA_MEMORY_DIR;
     } else {
       process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+    }
+
+    if (originalLocalBackendExperimental === undefined) {
+      delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    } else {
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL =
+        originalLocalBackendExperimental;
     }
 
     if (originalHome === undefined) {
@@ -210,7 +220,7 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued[0]?.content).toContain("Loaded from agent memory fallback.");
   });
 
-  test("loads legacy ~/.letta/agents/<id>/skills entries listed by discovery", async () => {
+  test("does not load legacy ~/.letta/agents/<id>/skills entries", async () => {
     const skillName = "legacy-agent-skill";
     const skillDir = join(
       tempRoot,
@@ -232,15 +242,14 @@ describe("Skill tool memory filesystem lookup", () => {
     delete process.env.LETTA_MEMORY_DIR;
     process.env.HOME = tempRoot;
 
-    const result = await runScopedSkill({
-      skill: skillName,
-      toolCallId: "tc-legacy-agent-skill",
-    });
-    expect(result.message).toBe(`Launching skill: ${skillName}`);
+    await expect(
+      runScopedSkill({
+        skill: skillName,
+        toolCallId: "tc-legacy-agent-skill",
+      }),
+    ).rejects.toThrow(skillName);
 
-    const queued = consumeQueuedSkillContent();
-    expect(queued).toHaveLength(1);
-    expect(queued[0]?.content).toContain("Loaded from legacy agent skills.");
+    expect(consumeQueuedSkillContent()).toHaveLength(0);
   });
 
   test("prefers injected parentScope.agentId over global agent context for memfs fallback", async () => {
