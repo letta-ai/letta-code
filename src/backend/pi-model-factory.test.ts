@@ -154,6 +154,16 @@ describe("pi model factory", () => {
     }
   });
 
+  test("resolves server LM Studio provider type to local runtime provider", async () => {
+    const resolved = await resolvePiModelForAgent(undefined, {
+      provider_type: "lmstudio_openai",
+    });
+
+    expect(resolved.provider).toBe("lmstudio");
+    expect(resolved.model.provider).toBe("lmstudio");
+    expect(resolved.model.baseUrl).toBe("http://127.0.0.1:1234/v1");
+  });
+
   test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-llama-cpp-base-url-"));
     try {

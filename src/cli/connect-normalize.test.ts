@@ -66,6 +66,7 @@ describe("connect provider normalization", () => {
 
     expect(defaultConnectApiKey(ollama)).toBe("not-needed");
     expect(defaultConnectApiKey(lmstudio)).toBe("not-needed");
+    expect(lmstudio.byokProvider.providerType).toBe("lmstudio_openai");
     expect(defaultConnectApiKey(llamaCpp)).toBe("not-needed");
     expect(llamaCpp.canonical).toBe("llama-cpp");
   });

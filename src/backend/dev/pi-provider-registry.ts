@@ -8,6 +8,8 @@ export const LOCAL_OPENROUTER_PROVIDER_NAME = "lc-openrouter";
 export const LOCAL_OLLAMA_PROVIDER_NAME = "lc-ollama";
 export const LOCAL_OLLAMA_CLOUD_PROVIDER_NAME = "lc-ollama-cloud";
 export const LOCAL_LMSTUDIO_PROVIDER_NAME = "lc-lmstudio";
+export const LMSTUDIO_OPENAI_PROVIDER_TYPE = "lmstudio_openai";
+export const LEGACY_LMSTUDIO_PROVIDER_TYPE = "lmstudio";
 export const LOCAL_LLAMA_CPP_PROVIDER_NAME = "lc-llama-cpp";
 export const LOCAL_ZAI_PROVIDER_NAME = "lc-zai";
 export const LOCAL_ZAI_CODING_PROVIDER_NAME = "lc-zai-coding";
@@ -216,7 +218,10 @@ export const PI_PROVIDER_SPECS = [
   },
   {
     id: "lmstudio",
-    providerTypes: ["lmstudio"],
+    providerTypes: [
+      LMSTUDIO_OPENAI_PROVIDER_TYPE,
+      LEGACY_LMSTUDIO_PROVIDER_TYPE,
+    ],
     handlePrefixes: ["lmstudio/"],
     localProviderNames: [LOCAL_LMSTUDIO_PROVIDER_NAME],
     defaultModel: "lmstudio/google/gemma-3n-e4b",

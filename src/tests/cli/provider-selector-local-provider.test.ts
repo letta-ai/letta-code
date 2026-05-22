@@ -15,6 +15,13 @@ function providerById(id: string): ByokProvider {
 }
 
 describe("ProviderSelector local provider API keys", () => {
+  test("keeps LM Studio UI identity while using server provider type", () => {
+    const lmstudio = providerById("lmstudio");
+
+    expect(lmstudio.providerName).toBe("lc-lmstudio");
+    expect(lmstudio.providerType).toBe("lmstudio_openai");
+  });
+
   test("uses default key placeholders for API-key optional local providers", () => {
     expect(defaultProviderApiKey(providerById("ollama"))).toBe("not-needed");
     expect(defaultProviderApiKey(providerById("lmstudio"))).toBe("not-needed");

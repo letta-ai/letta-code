@@ -24,6 +24,7 @@ describe("buildByokProviderAliases", () => {
     expect(aliases["lc-gemini"]).toBe("google_ai");
     expect(aliases["lc-minimax"]).toBe("minimax");
     expect(aliases["lc-openrouter"]).toBe("openrouter");
+    expect(aliases["lc-lmstudio"]).toBe("lmstudio");
     expect(aliases["lc-llama-cpp"]).toBe("llama.cpp");
     expect(aliases["lc-bedrock"]).toBe("bedrock");
     expect(aliases["chatgpt-plus-pro"]).toBe("chatgpt-plus-pro");
@@ -39,6 +40,16 @@ describe("buildByokProviderAliases", () => {
     // Built-ins still present
     expect(aliases["lc-openai"]).toBe("openai");
     expect(aliases["lc-anthropic"]).toBe("anthropic");
+  });
+
+  test("maps connected LM Studio provider types to the LM Studio handle", () => {
+    const aliases = buildByokProviderAliases([
+      { name: "lmstudio-server", provider_type: "lmstudio_openai" },
+      { name: "lmstudio-legacy", provider_type: "lmstudio" },
+    ]);
+
+    expect(aliases["lmstudio-server"]).toBe("lmstudio");
+    expect(aliases["lmstudio-legacy"]).toBe("lmstudio");
   });
 
   test("handles unknown provider types gracefully", () => {
