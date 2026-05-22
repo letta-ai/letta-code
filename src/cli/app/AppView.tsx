@@ -52,6 +52,7 @@ import { ToolsetSelector } from "@/cli/components/ToolsetSelector";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
+import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
 import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -273,6 +274,14 @@ type AppViewProps = {
   resumeKey: number;
   searchQuery: string;
   sessionStatsRef: RefObject<SessionStats>;
+  worktreeDiffSelectorPending: {
+    worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+  } | null;
+  setWorktreeDiffSelectorPending: Dispatch<
+    SetStateAction<{
+      worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+    } | null>
+  >;
   setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
   setBtwState: Dispatch<SetStateAction<BtwState>>;
   setCommandRunning: (value: boolean) => void;
@@ -421,6 +430,8 @@ export function AppView(props: AppViewProps) {
     resumeKey,
     searchQuery,
     sessionStatsRef,
+    worktreeDiffSelectorPending,
+    setWorktreeDiffSelectorPending,
     setActiveOverlay,
     setBtwState,
     setCommandRunning,
@@ -949,6 +960,51 @@ export function AppView(props: AppViewProps) {
                 onCancel={closeOverlay}
               />
             )}
+
+            {activeOverlay === "worktree-diff" &&
+              worktreeDiffSelectorPending && (
+                <WorktreeDiffSelector
+                  worktrees={worktreeDiffSelectorPending.worktrees}
+                  onSelect={(path) => {
+                    setWorktreeDiffSelectorPending(null);
+                    const overlayCommand = completeOverlay("worktree-diff");
+                    const cmd =
+                      overlayCommand ??
+                      commandRunner.start(
+                        "/experiments",
+                        "Opening worktree diff...",
+                      );
+                    void import("@/web/generate-diff-viewer")
+                      .then(({ generateAndOpenDiffViewer }) =>
+                        generateAndOpenDiffViewer(path),
+                      )
+                      .then((result) => {
+                        const fileSummary = `${result.fileCount} file${result.fileCount === 1 ? "" : "s"}`;
+                        if (result.opened) {
+                          cmd.finish(
+                            `Opened worktree diff (${fileSummary})`,
+                            true,
+                          );
+                        } else {
+                          cmd.finish(
+                            `Open manually: ${result.filePath} (${fileSummary})`,
+                            true,
+                          );
+                        }
+                      })
+                      .catch((err: unknown) => {
+                        cmd.finish(
+                          `Failed to open diff: ${err instanceof Error ? err.message : String(err)}`,
+                          false,
+                        );
+                      });
+                  }}
+                  onCancel={() => {
+                    setWorktreeDiffSelectorPending(null);
+                    closeOverlay();
+                  }}
+                />
+              )}
 
             {/* Toolset Selector - conditionally mounted as overlay */}
             {activeOverlay === "toolset" && (

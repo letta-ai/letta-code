@@ -492,6 +492,10 @@ export function App({
     agentId: string;
     cmdId: string;
   } | null>(null);
+  const [worktreeDiffSelectorPending, setWorktreeDiffSelectorPending] =
+    useState<{
+      worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+    } | null>(null);
 
   // If we have approval requests, we should show the approval dialog instead of the input area
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
@@ -3827,6 +3831,7 @@ export function App({
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
     setProfileConfirmPending,
+    setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
     setSearchQuery,
     setStaticItems,
@@ -4611,6 +4616,8 @@ export function App({
       resumeKey={resumeKey}
       searchQuery={searchQuery}
       sessionStatsRef={sessionStatsRef}
+      worktreeDiffSelectorPending={worktreeDiffSelectorPending}
+      setWorktreeDiffSelectorPending={setWorktreeDiffSelectorPending}
       setActiveOverlay={setActiveOverlay}
       setBtwState={setBtwState}
       setCommandRunning={setCommandRunning}
