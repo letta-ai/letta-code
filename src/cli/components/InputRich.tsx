@@ -1043,6 +1043,7 @@ export function Input({
   messageQueue,
   onQueueEdit,
   onEscapeCancel,
+  onEscapeCommandCancel,
   inputDisabled = false,
   goalLoopActive = false,
   onGoalLoopExit,
@@ -1093,6 +1094,7 @@ export function Input({
   messageQueue?: QueuedMessage[];
   onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
+  onEscapeCommandCancel?: () => void;
   inputDisabled?: boolean;
   goalLoopActive?: boolean;
   onGoalLoopExit?: () => void;
@@ -1417,6 +1419,11 @@ export function Input({
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
         // in App.tsx process them automatically after the interrupt completes.
+        return;
+      }
+
+      if (onEscapeCommandCancel) {
+        onEscapeCommandCancel();
         return;
       }
 

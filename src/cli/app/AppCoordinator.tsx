@@ -40,6 +40,10 @@ import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
 import {
+  cancelActiveConnectOperation,
+  isActiveConnectOperationCancellable,
+} from "@/cli/commands/connect-command-state";
+import {
   type CommandFinishedEvent,
   type CommandHandle,
   createCommandRunner,
@@ -4443,6 +4447,11 @@ export function App({
   const inputVisible = !showExitStats;
   const inputEnabled =
     !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+  const onEscapeCommandCancel = isActiveConnectOperationCancellable()
+    ? () => {
+        cancelActiveConnectOperation();
+      }
+    : undefined;
   const showInspirationalPromptHints =
     loadingState === "ready" &&
     !hasConversationContent(lines) &&
@@ -4504,6 +4513,7 @@ export function App({
       feedbackPrefill={feedbackPrefill}
       footerUpdateText={footerUpdateText}
       showInspirationalPromptHints={showInspirationalPromptHints}
+      onEscapeCommandCancel={onEscapeCommandCancel}
       handleAgentSelect={handleAgentSelect}
       handleApproveAlways={handleApproveAlways}
       handleApproveCurrent={handleApproveCurrent}
