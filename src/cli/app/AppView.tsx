@@ -154,6 +154,7 @@ type AppViewProps = {
   feedbackPrefill: string;
   footerUpdateText: string | null;
   showInspirationalPromptHints: boolean;
+  onEscapeCommandCancel?: () => boolean;
   handleAgentSelect: (
     targetAgentId: string,
     opts?: {
@@ -347,6 +348,7 @@ export function AppView(props: AppViewProps) {
     feedbackPrefill,
     footerUpdateText,
     showInspirationalPromptHints,
+    onEscapeCommandCancel,
     handleAgentSelect,
     handleApproveAlways,
     handleApproveCurrent,
@@ -695,6 +697,7 @@ export function AppView(props: AppViewProps) {
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
+                onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
                 goalLoopActive={uiGoalLoopActive}
                 onGoalLoopExit={handleGoalLoopExit}

@@ -1043,6 +1043,7 @@ export function Input({
   messageQueue,
   onQueueEdit,
   onEscapeCancel,
+  onEscapeCommandCancel,
   inputDisabled = false,
   goalLoopActive = false,
   onGoalLoopExit,
@@ -1093,6 +1094,7 @@ export function Input({
   messageQueue?: QueuedMessage[];
   onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
+  onEscapeCommandCancel?: () => boolean;
   inputDisabled?: boolean;
   goalLoopActive?: boolean;
   onGoalLoopExit?: () => void;
@@ -1369,6 +1371,29 @@ export function Input({
     }
   }, [interactionEnabled]);
 
+  const interactionEnabledRef = useRef(interactionEnabled);
+  useEffect(() => {
+    interactionEnabledRef.current = interactionEnabled;
+  }, [interactionEnabled]);
+
+  const onEscapeCommandCancelRef = useRef(onEscapeCommandCancel);
+  useEffect(() => {
+    onEscapeCommandCancelRef.current = onEscapeCommandCancel;
+  }, [onEscapeCommandCancel]);
+
+  useEffect(() => {
+    const handleRawInput = (data: Buffer | string) => {
+      if (!interactionEnabledRef.current) return;
+      if (data.toString("utf8") !== "\u001b") return;
+      onEscapeCommandCancelRef.current?.();
+    };
+
+    stdin.on("data", handleRawInput);
+    return () => {
+      stdin.off("data", handleRawInput);
+    };
+  }, []);
+
   // Get server URL (same logic as client.ts)
   const settings = settingsManager.getSettings();
   const serverUrl =
@@ -1417,6 +1442,10 @@ export function Input({
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
         // in App.tsx process them automatically after the interrupt completes.
+        return;
+      }
+
+      if (onEscapeCommandCancel?.()) {
         return;
       }
 
