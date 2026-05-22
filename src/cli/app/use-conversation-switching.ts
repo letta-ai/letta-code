@@ -25,7 +25,11 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { createAgent } from "@/agent/create";
 import { selectDefaultAgentModel } from "@/agent/defaults";
 import { sendMessageStream } from "@/agent/message";
-import { getBackend } from "@/backend";
+import {
+  configureBackendMode,
+  getBackend,
+  isLocalBackendEnabled,
+} from "@/backend";
 import { getServerUrl } from "@/backend/api/client";
 import type { BtwState } from "@/cli/components/BtwPane";
 import {
@@ -89,7 +93,7 @@ type ConversationSwitchingContext = {
     approvals: ApprovalRequest[],
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
-  resetBootstrapReminderState: () => void;
+  resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
@@ -476,6 +480,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         profileName?: string;
         conversationId?: string;
         commandId?: string;
+        backendMode?: "local" | "api";
       },
     ) => {
       const overlayCommand = opts?.commandId
@@ -515,6 +520,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           type: "switch_agent",
           agentId: targetAgentId,
           commandId: cmd.id,
+          backendMode: opts?.backendMode,
         });
         return;
       }
@@ -527,7 +533,21 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         overlayCommand ?? commandRunner.start("/agents", "Switching agent...");
       cmd.update({ output: "Switching agent...", phase: "running" });
 
+      // Track previous backend mode for rollback on failure
+      const previousBackendMode = isLocalBackendEnabled() ? "local" : "api";
+      let didSwitchBackend = false;
+
       try {
+        // Switch backend if the target agent belongs to a different backend
+        if (opts?.backendMode) {
+          const currentIsLocal = isLocalBackendEnabled();
+          const targetIsLocal = opts.backendMode === "local";
+          if (currentIsLocal !== targetIsLocal) {
+            configureBackendMode(opts.backendMode);
+            didSwitchBackend = true;
+          }
+        }
+
         // Fetch new agent
         const agent = await getBackend().retrieveAgent(targetAgentId);
 
@@ -614,6 +634,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticItems([separator]);
         cmd.finish(successOutput, true);
       } catch (error) {
+        // Rollback backend mode if we switched before the failure
+        if (didSwitchBackend) {
+          configureBackendMode(previousBackendMode);
+        }
         const errorDetails = formatErrorDetails(error, agentId);
         cmd.fail(`Failed: ${errorDetails}`);
       } finally {
@@ -765,7 +789,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         resetContextHistory(contextTrackerRef.current);
 
         // Ensure bootstrap reminders are re-injected after creating a new agent.
-        resetBootstrapReminderState();
+        resetBootstrapReminderState(true);
 
         const separator = {
           kind: "separator" as const,

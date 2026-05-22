@@ -21,11 +21,10 @@ type ConnectionCommandContext = {
   commandRunner: AppCommandRunner;
   conversationIdRef: MutableRefObject<string>;
   refreshDerived: () => void;
-  setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
   setCommandRunning: (value: boolean) => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
-  startOverlayCommand: (
-    overlay: ActiveOverlay,
+  openOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
     input: string,
     openingOutput: string,
     dismissOutput: string,
@@ -43,10 +42,9 @@ export async function handleConnectionCommand(
     commandRunner,
     conversationIdRef,
     refreshDerived,
-    setActiveOverlay,
     setCommandRunning,
     setModelSelectorOptions,
-    startOverlayCommand,
+    openOverlay,
   } = ctx;
 
   if (trimmed.startsWith("/mcp")) {
@@ -71,13 +69,12 @@ export async function handleConnectionCommand(
     }
 
     if (!firstWord) {
-      startOverlayCommand(
+      openOverlay(
         "mcp",
         "/mcp",
         "Opening MCP server manager...",
         "MCP dialog dismissed",
       );
-      setActiveOverlay("mcp");
       return { submitted: true };
     }
 
@@ -94,13 +91,12 @@ export async function handleConnectionCommand(
     }
 
     if (firstWord === "connect") {
-      startOverlayCommand(
+      openOverlay(
         "mcp-connect",
         "/mcp connect",
         "Opening MCP connect flow...",
         "MCP connect dismissed",
       );
-      setActiveOverlay("mcp-connect");
       return { submitted: true };
     }
 
@@ -130,13 +126,12 @@ export async function handleConnectionCommand(
   }
 
   if (trimmed === "/connect") {
-    startOverlayCommand(
+    openOverlay(
       "connect",
       "/connect",
       "Opening provider selector...",
       "Connect dialog dismissed",
     );
-    setActiveOverlay("connect");
     return { submitted: true };
   }
 
@@ -156,13 +151,12 @@ export async function handleConnectionCommand(
               filterProvider: "chatgpt-plus-pro",
               forceRefresh: true,
             });
-            startOverlayCommand(
+            openOverlay(
               "model",
               "/model",
               "Opening model selector...",
               "Models dialog dismissed",
             );
-            setActiveOverlay("model");
           },
         },
         msg,

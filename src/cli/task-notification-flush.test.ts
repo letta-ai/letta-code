@@ -1,5 +1,4 @@
 import { describe, expect, mock, test } from "bun:test";
-import { readInteractiveAppSource } from "@/test-utils/read-interactive-app-source";
 import type { NotificationBuffer } from "@/utils/task-notifications";
 import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
 
@@ -84,60 +83,5 @@ describe("appendTaskNotificationEventsToBuffer", () => {
 
     expect(result).toBe(true);
     expect(buffer.order).toHaveLength(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Integration wiring: onComplete callbacks → appendTaskNotificationEvents
-//
-// These verify that the actual background subagent completion sites in App.tsx
-// route through the flush-equipped appendTaskNotificationEvents, and that the
-// ref indirection connecting it to refreshDerived is wired correctly.
-// ---------------------------------------------------------------------------
-
-describe("background onComplete → flush wiring in App.tsx", () => {
-  const readSource = readInteractiveAppSource;
-
-  test("appendTaskNotificationEvents delegates to appendTaskNotificationEventsToBuffer with a flush arg", () => {
-    const source = readSource();
-
-    // The useCallback must call the extracted helper
-    expect(source).toContain("appendTaskNotificationEventsToBuffer(");
-
-    // It must pass refreshDerivedRef as the flush callback (4th arg).
-    // Match the delegation pattern: the flush lambda references refreshDerivedRef.
-    expect(source).toContain("refreshDerivedRef.current?.");
-  });
-
-  test("refreshDerivedRef is assigned after refreshDerived is defined", () => {
-    const source = readSource();
-
-    const refDecl = source.indexOf("const refreshDerivedRef = useRef");
-    const derivedDecl = source.indexOf("const refreshDerived = useCallback");
-    const refAssign = source.indexOf(
-      "refreshDerivedRef.current = refreshDerived",
-    );
-
-    expect(refDecl).toBeGreaterThan(-1);
-    expect(derivedDecl).toBeGreaterThan(-1);
-    expect(refAssign).toBeGreaterThan(-1);
-
-    // Declaration order: ref declared before refreshDerived, assignment after
-    expect(refDecl).toBeLessThan(derivedDecl);
-    expect(refAssign).toBeGreaterThan(derivedDecl);
-  });
-
-  test("reflection onComplete calls appendTaskNotificationEvents", () => {
-    const source = readSource();
-
-    const reflectionBlock = source.indexOf('subagentType: "reflection"');
-    expect(reflectionBlock).toBeGreaterThan(-1);
-
-    const onCompleteIdx = source.indexOf("onComplete:", reflectionBlock);
-    expect(onCompleteIdx).toBeGreaterThan(-1);
-
-    const onCompleteWindow = source.slice(onCompleteIdx, onCompleteIdx + 1400);
-    expect(onCompleteWindow).toContain("await handleMemorySubagentCompletion(");
-    expect(onCompleteWindow).toContain("appendTaskNotificationEvents(");
   });
 });

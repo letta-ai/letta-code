@@ -12,6 +12,7 @@ import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
+import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
 import type { LocalAgentRecord } from "./local-types";
 
@@ -127,10 +128,6 @@ export interface LocalSlidingWindowCompactionPlan {
 export interface LocalAllCompactionPlan {
   messagesToSummarize: LocalMessage[];
   messagesToKeep: LocalMessage[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringifyUnknown(value: unknown): string {

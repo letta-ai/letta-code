@@ -24,6 +24,7 @@ import type {
   ConversationUpdateBody,
 } from "@/backend/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { isRecord } from "@/utils/type-guards";
 import type { LocalCompactionStats } from "./compaction";
 import {
   emptyLocalUsage,
@@ -275,7 +276,7 @@ function normalizeAgentRecord(
   };
 }
 
-function projectAgentState(
+export function projectLocalAgentState(
   record: LocalAgentRecord,
   messageIds: string[] = [],
   inContextMessageIds: string[] = messageIds,
@@ -343,10 +344,6 @@ function normalizeContent(content: unknown): unknown {
     return textContent(content);
   }
   return content;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function localImageContentFromLegacyImage(
@@ -2057,7 +2054,7 @@ export class LocalStore {
     const inContextMessageIds =
       this.conversations.get(key)?.in_context_message_ids ?? messageIds;
     const lastRunCompletion = defaultMessages.at(-1)?.date ?? null;
-    return projectAgentState(
+    return projectLocalAgentState(
       record,
       messageIds,
       inContextMessageIds,

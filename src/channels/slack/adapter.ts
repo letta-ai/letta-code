@@ -79,6 +79,16 @@ type SlackReactionEvent = {
   event_ts?: string;
 };
 
+type SlackCommandPayload = {
+  command?: string;
+  text?: string;
+  user_id?: string;
+  user_name?: string;
+  channel_id?: string;
+  channel_name?: string;
+  trigger_id?: string;
+};
+
 type Constructor = abstract new (...args: never[]) => unknown;
 
 function isConstructorFunction<T extends Constructor>(
@@ -1112,6 +1122,51 @@ export function createSlackAdapter(
         });
       } catch (error) {
         console.error("[Slack] Error handling channel mention:", error);
+      }
+    });
+
+    instance.command("/cancel", async ({ command, ack }) => {
+      await ack();
+
+      if (!adapter.onMessage) {
+        return;
+      }
+
+      const payload = command as SlackCommandPayload;
+      if (
+        !isNonEmptyString(payload.channel_id) ||
+        !isNonEmptyString(payload.user_id)
+      ) {
+        return;
+      }
+
+      const commandText = isNonEmptyString(payload.text)
+        ? `/cancel ${payload.text.trim()}`
+        : "/cancel";
+
+      const inbound: InboundChannelMessage = {
+        channel: "slack",
+        accountId: config.accountId,
+        chatId: payload.channel_id,
+        senderId: payload.user_id,
+        senderName: firstNonEmptyString(payload.user_name, payload.user_id),
+        chatLabel: firstNonEmptyString(
+          payload.channel_name,
+          payload.channel_id,
+        ),
+        text: commandText,
+        timestamp: Date.now(),
+        messageId: firstNonEmptyString(payload.trigger_id, payload.command),
+        threadId: null,
+        chatType: resolveSlackChatType(payload.channel_id),
+        isMention: false,
+        raw: command,
+      };
+
+      try {
+        await adapter.onMessage(inbound);
+      } catch (error) {
+        console.error("[Slack] Error handling /cancel command:", error);
       }
     });
 

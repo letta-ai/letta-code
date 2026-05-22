@@ -13,19 +13,6 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("systemInfoReminderEnabled,");
   });
 
-  test("bidirectional mode builds shared reminders with plan-mode resolver", () => {
-    const headlessPath = fileURLToPath(
-      new URL("./headless.ts", import.meta.url),
-    );
-    const source = readFileSync(headlessPath, "utf-8");
-
-    expect(source).toContain(
-      'isSubagent ? "subagent" : "headless-bidirectional"',
-    );
-    expect(source).toContain("resolvePlanModeReminder: async () => {");
-    expect(source).toContain("const { PLAN_MODE_REMINDER } = await import");
-  });
-
   test("all headless drains pass context tracker for compaction-driven reminder state", () => {
     const headlessPath = fileURLToPath(
       new URL("./headless.ts", import.meta.url),

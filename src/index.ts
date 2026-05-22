@@ -135,6 +135,8 @@ USAGE
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta connect ...     Connect providers from terminal
+  letta backend ...     Show or set the default backend
+  letta setup           Re-run first-run setup
 
 OPTIONS
 ${renderCliOptionsHelp()}
@@ -154,6 +156,7 @@ SUBCOMMANDS
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
   letta connect <provider> [options]
+  letta backend [api|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
@@ -509,10 +512,12 @@ async function main(): Promise<void> {
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
+  let explicitBackendMode: "api" | "local" | undefined;
   try {
     const backendSelection = extractBackendFlag(rawCliArgs);
     subcommandArgs = normalizeUpdateCommandAliases(backendSelection.args);
     if (backendSelection.backend) {
+      explicitBackendMode = backendSelection.backend;
       configureBackendMode(backendSelection.backend);
     }
   } catch (error) {
@@ -692,21 +697,6 @@ async function main(): Promise<void> {
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
   const noMemfsFlag = values["no-memfs"];
-  const startupBackend = getBackend();
-  const localNoMemfsRequested = Boolean(
-    startupBackend.capabilities.localMemfs &&
-      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
-  );
-  if (localNoMemfsRequested) {
-    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
-  }
-  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
-    ? "memfs"
-    : noMemfsFlag || localNoMemfsRequested
-      ? "standard"
-      : undefined;
-  const shouldAutoEnableMemfsForNewAgent =
-    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
   const noSkillsFlag = values["no-skills"];
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
@@ -730,6 +720,36 @@ async function main(): Promise<void> {
     fromAfFlagValue: values["from-af"],
   });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const baseURL =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    LETTA_CLOUD_API_URL;
+
+  if (
+    !explicitBackendMode &&
+    settings.preferredBackendMode === "local" &&
+    baseURL === LETTA_CLOUD_API_URL
+  ) {
+    configureBackendMode("local");
+  }
+
+  const startupBackend = getBackend();
+  const localNoMemfsRequested = Boolean(
+    startupBackend.capabilities.localMemfs &&
+      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
+  );
+  if (localNoMemfsRequested) {
+    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
+  }
+  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+    ? "memfs"
+    : noMemfsFlag || localNoMemfsRequested
+      ? "standard"
+      : undefined;
+  const shouldAutoEnableMemfsForNewAgent =
+    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
 
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   // Surface is set here so session_start captures the correct mode.
@@ -990,13 +1010,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Check if API key is configured
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
-
   const isUsingDevBackend =
     isHeadless &&
     typeof values["dev-backend"] === "string" &&
@@ -1133,7 +1146,11 @@ async function main(): Promise<void> {
   }
 
   // Set CLI permission overrides if provided
-  if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
+  if (
+    values.allowedTools ||
+    values.disallowedTools ||
+    values["disable-memory-guard"]
+  ) {
     const { cliPermissions } = await import(
       "@/permissions/cli-permissions-instance"
     );
@@ -1143,8 +1160,8 @@ async function main(): Promise<void> {
     if (values.disallowedTools) {
       cliPermissions.setDisallowedTools(values.disallowedTools);
     }
-    if (values["memory-scope"]) {
-      cliPermissions.setMemoryScope(values["memory-scope"]);
+    if (values["disable-memory-guard"]) {
+      cliPermissions.setMemoryGuardDisabled(true);
     }
   }
 

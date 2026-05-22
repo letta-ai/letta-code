@@ -80,8 +80,6 @@ export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
 
 export type ChannelControlRequestKind =
   | "ask_user_question"
-  | "enter_plan_mode"
-  | "exit_plan_mode"
   | "generic_tool_approval";
 
 export interface ChannelControlRequestEvent {
@@ -90,8 +88,6 @@ export interface ChannelControlRequestEvent {
   source: ChannelTurnSource;
   toolName: string;
   input: Record<string, unknown>;
-  planFilePath?: string;
-  planContent?: string;
 }
 
 export type ChannelTurnLifecycleEvent =

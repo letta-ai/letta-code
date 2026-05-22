@@ -23,6 +23,7 @@ import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
+import { sleep } from "@/utils/sleep";
 import { formatTaskNotification } from "@/utils/task-notifications.js";
 import {
   appendToOutputFile,
@@ -209,10 +210,6 @@ function writeTaskTranscriptResult(
     outputFile,
     `${header ? `${header}\n\n` : ""}[error] ${result.error || "Subagent execution failed"}\n\n[Task failed]\n`,
   );
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function resolveParentScope(parentScope?: {

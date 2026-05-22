@@ -1,17 +1,20 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { SkillSource } from "@/agent/skills";
 import { buildAgentInfo } from "@/cli/helpers/agent-info";
+import { buildConversationBootstrapReminder } from "@/cli/helpers/conversation-bootstrap";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
   type ReflectionSettings,
   shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
+import { getReflectionTranscriptState } from "@/cli/helpers/reflection-transcript";
 import {
   buildSessionContext,
   type SessionContextSource,
 } from "@/cli/helpers/session-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
@@ -39,10 +42,10 @@ export interface SharedReminderContext {
   systemInfoReminderEnabled: boolean;
   reflectionSettings: ReflectionSettings;
   skillSources: SkillSource[];
-  resolvePlanModeReminder: () => string | Promise<string>;
   maybeLaunchReflectionSubagent?: (
     triggerSource: ReflectionTriggerSource,
   ) => Promise<boolean>;
+  conversationBootstrapContent?: MessageCreate["content"];
   /** Explicit working directory (overrides process.cwd() in session context). */
   workingDirectory?: string;
   /** Source of the session context (varies intro text). */
@@ -140,21 +143,36 @@ async function buildSessionContextReminder(
   return reminder || null;
 }
 
-async function buildPlanModeReminder(
+async function buildConversationBootstrapReminderPart(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  if (permissionMode.getMode() !== "plan") {
+  if (
+    !context.state.pendingConversationBootstrap ||
+    context.state.hasSentConversationBootstrap ||
+    !experimentManager.isEnabled("desktop_conversation_bootstrap") ||
+    !context.conversationBootstrapContent
+  ) {
     return null;
   }
 
-  const reminder = await context.resolvePlanModeReminder();
-  return reminder || null;
+  context.state.hasSentConversationBootstrap = true;
+  context.state.pendingConversationBootstrap = false;
+
+  const conversationId = context.agent.conversationId;
+  if (!conversationId) {
+    return null;
+  }
+
+  return buildConversationBootstrapReminder({
+    agentId: context.agent.id,
+    content: context.conversationBootstrapContent,
+    excludeConversationId: conversationId,
+  });
 }
 
 const PERMISSION_MODE_DESCRIPTIONS = {
   standard: "Normal approval flow.",
   acceptEdits: "File edits auto-approved.",
-  plan: "Read-only mode. Focus on exploration and planning.",
   memory:
     "Memory-scoped mode. Reads are broad; mutations are limited to allowed memory roots.",
   unrestricted: "All tools auto-approved. Bias toward action.",
@@ -197,23 +215,28 @@ async function buildPermissionModeReminder(
 async function buildReflectionStepReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  const shouldFireStepTrigger = shouldFireStepCountTrigger(
-    context.state.turnCount,
-    context.reflectionSettings,
-  );
-
   const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
   let reminder: string | null = null;
 
-  if (shouldFireStepTrigger) {
+  if (context.reflectionSettings.trigger === "step-count") {
     if (memfsEnabled) {
-      if (context.maybeLaunchReflectionSubagent) {
-        await context.maybeLaunchReflectionSubagent("step-count");
-      } else {
-        debugLog(
-          "memory",
-          `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-        );
+      const transcriptState = await getReflectionTranscriptState(
+        context.agent.id,
+        context.agent.conversationId ?? "default",
+      );
+      const shouldFireStepTrigger = shouldFireStepCountTrigger(
+        transcriptState.turns_since_last_successful_reflection,
+        context.reflectionSettings,
+      );
+      if (shouldFireStepTrigger) {
+        if (context.maybeLaunchReflectionSubagent) {
+          await context.maybeLaunchReflectionSubagent("step-count");
+        } else {
+          debugLog(
+            "memory",
+            `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
+          );
+        }
       }
     } else {
       reminder = await buildMemoryReminder(
@@ -365,10 +388,10 @@ export const sharedReminderProviders: Record<
   SharedReminderProvider
 > = {
   "agent-info": buildAgentInfoReminder,
+  "conversation-bootstrap": buildConversationBootstrapReminderPart,
   "secrets-info": buildSecretsInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
-  "plan-mode": buildPlanModeReminder,
   "reflection-step-count": buildReflectionStepReminder,
   "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,

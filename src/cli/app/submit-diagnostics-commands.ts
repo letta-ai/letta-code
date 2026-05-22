@@ -361,11 +361,21 @@ export async function handleDiagnosticsCommand(
     return { submitted: true };
   }
 
-  if (
-    trimmed === "/set-max-context" ||
-    trimmed.startsWith("/set-max-context ")
-  ) {
-    const args = trimmed.slice("/set-max-context".length).trim();
+  const contextLimitCommand = (() => {
+    if (trimmed === "/context-limit" || trimmed.startsWith("/context-limit ")) {
+      return "/context-limit";
+    }
+    if (
+      trimmed === "/set-max-context" ||
+      trimmed.startsWith("/set-max-context ")
+    ) {
+      return "/set-max-context";
+    }
+    return null;
+  })();
+
+  if (contextLimitCommand) {
+    const args = trimmed.slice(contextLimitCommand.length).trim();
     const cmd = commandRunner.start(trimmed, "Setting max context window...");
     setCommandRunning(true);
 

@@ -64,6 +64,7 @@ export {
   LocalBackendNotFoundError,
   LocalStore,
   type LocalStoreOptions,
+  projectLocalAgentState,
   type StoredMessage,
   type StoredTurnInput,
 } from "./local-store";

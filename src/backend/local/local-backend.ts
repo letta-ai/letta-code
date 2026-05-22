@@ -30,6 +30,7 @@ import {
   estimateProviderContextTokens,
   ProviderTurnExecutor,
 } from "@/backend/dev/provider-turn-executor";
+import { isRecord } from "@/utils/type-guards";
 import {
   estimateLocalMessageTokens,
   isLocalSlidingWindowCompactionPlanningError,
@@ -147,10 +148,6 @@ interface ResolvedLocalCompactionSettings {
   prompt?: string | null;
   clipChars?: number | null;
   slidingWindowPercentage: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function compactionSettingsRecord(
