@@ -57,7 +57,12 @@ export function useShimmerAnimation({
         ((((raw - minPos) % cycleLen) + cycleLen) % cycleLen) + minPos;
       positionRef.current = wrapped;
 
-      setOffset(Math.floor(wrapped));
+      // For sweepless phases, hide the bright cell off-screen — the breathe
+      // overlay alone carries the row's animation. Position still ticks so a
+      // later phase that does sweep picks up smoothly from a fresh state.
+      const renderedOffset =
+        phaseVisual.hasSweep === false ? OFFSCREEN : Math.floor(wrapped);
+      setOffset(renderedOffset);
       setBaseColor(
         effectiveBaseColor(phaseVisual, now - phaseStartedAtRef.current),
       );

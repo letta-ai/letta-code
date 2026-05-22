@@ -20,6 +20,12 @@ export type PhaseVisual = {
   shimmerColor: string;
   /** Optional whole-word color modulation layered under the sweep. */
   overlay: PhaseOverlay;
+  /**
+   * Whether the bright-cell sweep is rendered. Defaults to true. Set false
+   * for phases where the row should breathe color without any horizontal
+   * traversal — useful when the breathe alone communicates activity.
+   */
+  hasSweep?: boolean;
   /** `two-sided` overlay: color reached on the upper lobe of the sin curve. */
   lighterColor?: string;
   /** `two-sided` overlay: color reached on the lower lobe of the sin curve. */
@@ -45,6 +51,7 @@ const THINKING: PhaseVisual = {
   baseColor: colors.status.processing,
   shimmerColor: colors.status.processingShimmer,
   overlay: "two-sided",
+  hasSweep: false,
   lighterColor: "#F0F0FF",
   deeperColor: "#2828A0",
 };
