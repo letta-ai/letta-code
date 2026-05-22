@@ -890,7 +890,16 @@ const StreamingStatus = memo(function StreamingStatus({
       const target = targetTokenBytesRef.current;
       const cur = displayedTokenBytesRef.current;
       const delta = target - cur;
-      if (delta <= 0) return;
+      if (delta <= 0) {
+        // Snap on decrease (defensive — e.g. if a future code path resets
+        // tokenCount mid-stream the display follows immediately rather than
+        // staying stuck at the higher value).
+        if (cur !== target) {
+          displayedTokenBytesRef.current = target;
+          setDisplayedTokenBytes(target);
+        }
+        return;
+      }
       let step: number;
       if (delta < 70) step = 3;
       else if (delta < 200) step = Math.max(8, Math.ceil(delta * 0.15));
@@ -935,10 +944,14 @@ const StreamingStatus = memo(function StreamingStatus({
     }
   }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
+  // Gate visibility on the actual count so the counter appears the instant
+  // the real total crosses the threshold; render the smoothed value so it
+  // animates up rather than popping in mid-number.
+  const actualEstimatedTokens = bytesToTokens(tokenCount);
   const estimatedTokens = bytesToTokens(displayedTokenBytes);
   const totalElapsedMs = elapsedBaseMs + elapsedMs;
   const shouldShowTokenCount =
-    streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
+    streaming && actualEstimatedTokens > TOKEN_DISPLAY_THRESHOLD;
   const shouldShowElapsed =
     streaming && totalElapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
   const elapsedLabel = formatElapsedLabel(totalElapsedMs);
