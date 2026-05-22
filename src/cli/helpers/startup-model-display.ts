@@ -1,20 +1,12 @@
-import type { AgentProvenance } from "@/agent/create";
-
 const STARTUP_NO_MODEL_LABEL = "No model selected";
 
 export function getStartupModelDisplayOverride(options: {
   isLocalBackend: boolean;
   startupHasAvailableLocalModels: boolean;
-  agentProvenance: AgentProvenance | null | undefined;
 }): string | null {
-  const { isLocalBackend, startupHasAvailableLocalModels, agentProvenance } =
-    options;
+  const { isLocalBackend, startupHasAvailableLocalModels } = options;
 
-  if (
-    isLocalBackend &&
-    !startupHasAvailableLocalModels &&
-    agentProvenance?.isNew
-  ) {
+  if (isLocalBackend && !startupHasAvailableLocalModels) {
     return STARTUP_NO_MODEL_LABEL;
   }
 

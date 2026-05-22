@@ -2,7 +2,6 @@ import { homedir } from "node:os";
 import type { Letta } from "@letta-ai/letta-client";
 import { Box } from "ink";
 import { useEffect, useState } from "react";
-import type { AgentProvenance } from "@/agent/create";
 import { getModelDisplayName } from "@/agent/model";
 import { isLocalBackendEnabled } from "@/backend";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
@@ -73,13 +72,11 @@ export function WelcomeScreen({
   loadingState,
   continueSession,
   agentState,
-  agentProvenance,
   startupHasAvailableLocalModels = true,
 }: {
   loadingState: LoadingState;
   continueSession?: boolean;
   agentState?: Letta.AgentState | null;
-  agentProvenance?: AgentProvenance | null;
   startupHasAvailableLocalModels?: boolean;
 }) {
   // Keep hook call for potential future responsive behavior
@@ -99,7 +96,6 @@ export function WelcomeScreen({
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
     startupHasAvailableLocalModels,
-    agentProvenance,
   });
   const model =
     startupModelDisplayOverride ??

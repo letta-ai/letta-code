@@ -815,7 +815,6 @@ export function App({
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
     startupHasAvailableLocalModels,
-    agentProvenance,
   });
 
   // Use tier-aware resolution so the display matches the agent's reasoning effort
@@ -2611,7 +2610,6 @@ export function App({
             snapshot: {
               continueSession,
               agentState,
-              agentProvenance,
               startupHasAvailableLocalModels,
               terminalWidth: columns,
             },
@@ -2690,7 +2688,6 @@ export function App({
     continueSession,
     columns,
     agentState,
-    agentProvenance,
     resumedExistingConversation,
     releaseNotes,
     startupHasCloudCredentials,
@@ -4338,7 +4335,6 @@ export function App({
           snapshot: {
             continueSession,
             agentState,
-            agentProvenance,
             startupHasAvailableLocalModels,
             terminalWidth: columns,
           },
