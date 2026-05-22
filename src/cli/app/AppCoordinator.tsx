@@ -842,6 +842,11 @@ export function App({
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
 
+  // Live total context tokens (history + system + output). Mirrors
+  // `contextTrackerRef.current.lastContextTokens` into reactive state so
+  // UI can react during streaming — the ref itself doesn't trigger renders.
+  const [usedContextTokens, setUsedContextTokens] = useState(0);
+
   // Trajectory token/time bases (accumulated across runs)
   const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
   const [trajectoryElapsedBaseMs, setTrajectoryElapsedBaseMs] = useState(0);
@@ -2230,6 +2235,7 @@ export function App({
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
     setTokenCount(b.tokenCount);
+    setUsedContextTokens(contextTrackerRef.current.lastContextTokens);
     const newLines = toLines(b);
     setLines(newLines);
     commitEligibleLines(b);
@@ -4491,6 +4497,8 @@ export function App({
       stubDescriptions={stubDescriptions}
       thinkingMessage={thinkingMessage}
       trajectoryTokenDisplay={trajectoryTokenDisplay}
+      usedContextTokens={usedContextTokens}
+      contextWindowSize={effectiveContextWindowSize}
       uiPermissionMode={uiPermissionMode}
       uiGoalLoopActive={uiGoalLoopActive}
       updateAgentName={updateAgentName}
