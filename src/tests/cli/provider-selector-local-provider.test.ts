@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { providerApiKeyFromInput } from "../../cli/components/ProviderSelector";
+import { providerApiKeyFromInput } from "@/cli/components/ProviderSelector";
 import {
   BYOK_PROVIDERS,
   type ByokProvider,
   defaultProviderApiKey,
-} from "../../providers/byok-providers";
+} from "@/providers/byok-providers";
 
 function providerById(id: string): ByokProvider {
   const provider = BYOK_PROVIDERS.find((candidate) => candidate.id === id);

@@ -1,6 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import {
-  getMemoryHeadRevision,
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
@@ -604,9 +603,15 @@ export class LocalBackend extends HeadlessBackend {
   }> {
     const agent = this.store.retrieveAgentRecord(agentId);
     const settings = this.resolveCompactionSettings(agent, body);
+    let result: {
+      numMessagesBefore: number;
+      numMessagesAfter: number;
+      summary: string;
+      stats: LocalCompactionStats;
+    };
     if (settings.mode === "sliding_window") {
       try {
-        const result = await this.compactLocalConversationSlidingWindow(
+        result = await this.compactLocalConversationSlidingWindow(
           conversationId,
           agentId,
           agent,
@@ -618,13 +623,20 @@ export class LocalBackend extends HeadlessBackend {
           result.stats.context_tokens_after === undefined ||
           result.stats.context_tokens_after < result.stats.context_window
         ) {
+          await this.compileAndMaybePersistSystemPrompt(
+            conversationId,
+            agentId,
+            {
+              dryRun: false,
+            },
+          );
           return result;
         }
       } catch (error) {
         if (!isLocalSlidingWindowCompactionPlanningError(error)) throw error;
       }
     }
-    return this.compactLocalConversationAll(
+    result = await this.compactLocalConversationAll(
       conversationId,
       agentId,
       agent,
@@ -635,6 +647,10 @@ export class LocalBackend extends HeadlessBackend {
         prompt: settings.mode === "all" ? settings.prompt : undefined,
       },
     );
+    await this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
+      dryRun: false,
+    });
+    return result;
   }
 
   private async compactLocalConversationAll(
@@ -749,16 +765,7 @@ export class LocalBackend extends HeadlessBackend {
       conversationId,
       agentId,
     );
-    const memfsEnabled = this.isLocalMemfsEnabled();
-    const memfsRevision = memfsEnabled
-      ? await getMemoryHeadRevision(this.memoryDirForAgent(agentId))
-      : undefined;
-    if (
-      existing?.rawSystemHash === hashRawSystemPrompt(agent.system) &&
-      (memfsEnabled
-        ? memfsRevision !== null && existing.memfsRevision === memfsRevision
-        : existing.memfsRevision === undefined)
-    ) {
+    if (existing?.rawSystemHash === hashRawSystemPrompt(agent.system)) {
       return existing;
     }
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
