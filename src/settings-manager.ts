@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { isCloudAgentId, isLocalAgentId } from "./agent/agent-id";
 import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
@@ -219,6 +220,26 @@ function normalizeBaseUrl(baseUrl: string): string {
 
 function getLocalBackendSettingsKey(): string {
   return `local:${resolve(getLocalBackendStorageDir())}`;
+}
+
+function isLocalServerKey(serverKey: string): boolean {
+  return serverKey.startsWith("local:");
+}
+
+function isAgentIdCompatibleWithServerKey(
+  agentId: string,
+  serverKey: string,
+): boolean {
+  return isLocalServerKey(serverKey)
+    ? isLocalAgentId(agentId)
+    : isCloudAgentId(agentId);
+}
+
+function isSessionCompatibleWithServerKey(
+  session: SessionRef,
+  serverKey: string,
+): boolean {
+  return isAgentIdCompatibleWithServerKey(session.agentId, serverKey);
 }
 
 function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
@@ -1130,8 +1151,17 @@ class SettingsManager {
     const serverKey = getCurrentServerKey(settings);
 
     // Try server-indexed lookup first
-    if (settings.sessionsByServer?.[serverKey]) {
-      return settings.sessionsByServer[serverKey];
+    const serverSession = settings.sessionsByServer?.[serverKey];
+    if (serverSession) {
+      if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
+        return serverSession;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible global session for server %s: %s",
+        serverKey,
+        serverSession.agentId,
+      );
     }
 
     if (shouldSkipLegacyLocalBackendSessionFallback()) {
@@ -1139,7 +1169,10 @@ class SettingsManager {
     }
 
     // Fall back to legacy lastSession for migration
-    if (settings.lastSession) {
+    if (
+      settings.lastSession &&
+      isSessionCompatibleWithServerKey(settings.lastSession, serverKey)
+    ) {
       return settings.lastSession;
     }
 
@@ -1156,8 +1189,17 @@ class SettingsManager {
     const serverKey = getCurrentServerKey(settings);
 
     // Try server-indexed lookup first
-    if (settings.sessionsByServer?.[serverKey]) {
-      return settings.sessionsByServer[serverKey].agentId;
+    const serverSession = settings.sessionsByServer?.[serverKey];
+    if (serverSession) {
+      if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
+        return serverSession.agentId;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible global agent for server %s: %s",
+        serverKey,
+        serverSession.agentId,
+      );
     }
 
     if (shouldSkipLegacyLocalBackendSessionFallback()) {
@@ -1165,10 +1207,19 @@ class SettingsManager {
     }
 
     // Fall back to legacy for migration
-    if (settings.lastSession) {
+    if (
+      settings.lastSession &&
+      isSessionCompatibleWithServerKey(settings.lastSession, serverKey)
+    ) {
       return settings.lastSession.agentId;
     }
-    return settings.lastAgent;
+    if (
+      settings.lastAgent &&
+      isAgentIdCompatibleWithServerKey(settings.lastAgent, serverKey)
+    ) {
+      return settings.lastAgent;
+    }
+    return null;
   }
 
   /**
@@ -1179,18 +1230,33 @@ class SettingsManager {
     const settings = this.getSettings();
     const serverKey = getCurrentServerKey(settings);
 
+    if (!isSessionCompatibleWithServerKey(session, serverKey)) {
+      debugWarn(
+        "settings",
+        "Skipping incompatible global session write for server %s: %s",
+        serverKey,
+        session.agentId,
+      );
+      return;
+    }
+
     // Update server-indexed storage
     const sessionsByServer = {
       ...settings.sessionsByServer,
       [serverKey]: session,
     };
 
-    // Also update legacy fields for backwards compat with older CLI versions
-    this.updateSettings({
-      sessionsByServer,
-      lastSession: session,
-      lastAgent: session.agentId,
-    });
+    // Keep legacy global fields for cloud/self-hosted agents only.
+    if (isCloudAgentId(session.agentId)) {
+      this.updateSettings({
+        sessionsByServer,
+        lastSession: session,
+        lastAgent: session.agentId,
+      });
+      return;
+    }
+
+    this.updateSettings({ sessionsByServer });
   }
 
   /**
@@ -1206,8 +1272,17 @@ class SettingsManager {
     const localSettings = this.getLocalProjectSettings(workingDirectory);
 
     // Try server-indexed lookup first
-    if (localSettings.sessionsByServer?.[serverKey]) {
-      return localSettings.sessionsByServer[serverKey];
+    const serverSession = localSettings.sessionsByServer?.[serverKey];
+    if (serverSession) {
+      if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
+        return serverSession;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible local session for server %s: %s",
+        serverKey,
+        serverSession.agentId,
+      );
     }
 
     if (shouldSkipLegacyLocalBackendSessionFallback()) {
@@ -1215,7 +1290,10 @@ class SettingsManager {
     }
 
     // Fall back to legacy lastSession for migration
-    if (localSettings.lastSession) {
+    if (
+      localSettings.lastSession &&
+      isSessionCompatibleWithServerKey(localSettings.lastSession, serverKey)
+    ) {
       return localSettings.lastSession;
     }
 
@@ -1233,8 +1311,17 @@ class SettingsManager {
     const localSettings = this.getLocalProjectSettings(workingDirectory);
 
     // Try server-indexed lookup first
-    if (localSettings.sessionsByServer?.[serverKey]) {
-      return localSettings.sessionsByServer[serverKey].agentId;
+    const serverSession = localSettings.sessionsByServer?.[serverKey];
+    if (serverSession) {
+      if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
+        return serverSession.agentId;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible local agent for server %s: %s",
+        serverKey,
+        serverSession.agentId,
+      );
     }
 
     if (shouldSkipLegacyLocalBackendSessionFallback()) {
@@ -1242,10 +1329,19 @@ class SettingsManager {
     }
 
     // Fall back to legacy for migration
-    if (localSettings.lastSession) {
+    if (
+      localSettings.lastSession &&
+      isSessionCompatibleWithServerKey(localSettings.lastSession, serverKey)
+    ) {
       return localSettings.lastSession.agentId;
     }
-    return localSettings.lastAgent;
+    if (
+      localSettings.lastAgent &&
+      isAgentIdCompatibleWithServerKey(localSettings.lastAgent, serverKey)
+    ) {
+      return localSettings.lastAgent;
+    }
+    return null;
   }
 
   /**
@@ -1259,6 +1355,16 @@ class SettingsManager {
     const globalSettings = this.getSettings();
     const serverKey = getCurrentServerKey(globalSettings);
     const localSettings = this.getLocalProjectSettings(workingDirectory);
+
+    if (!isSessionCompatibleWithServerKey(session, serverKey)) {
+      debugWarn(
+        "settings",
+        "Skipping incompatible local session write for server %s: %s",
+        serverKey,
+        session.agentId,
+      );
+      return;
+    }
 
     // Update server-indexed storage
     const sessionsByServer = {

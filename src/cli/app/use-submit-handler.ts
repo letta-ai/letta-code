@@ -1335,14 +1335,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               isDefault: false,
             };
 
-            settingsManager.setLocalLastSession(
-              { agentId, conversationId: forked.id },
-              process.cwd(),
-            );
-            settingsManager.setGlobalLastSession({
-              agentId,
-              conversationId: forked.id,
-            });
+            settingsManager.persistSession(agentId, forked.id, process.cwd());
 
             resetContextHistory(contextTrackerRef.current);
             resetBootstrapReminderState();

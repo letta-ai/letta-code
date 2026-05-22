@@ -4,6 +4,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { ensureFileIndex } from "@/utils/file-index";
+import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import {
   getResumeDataFromBackend,
   type ResumeData,
@@ -1488,6 +1489,9 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const backend = getBackend();
+        const startupBackendMode = isExperimentalLocalBackendEnabled()
+          ? "local"
+          : "api";
 
         // For self-hosted servers, pre-fetch available models
         // This is needed so ProfileSelectionInline can show model picker
@@ -1577,41 +1581,36 @@ async function main(): Promise<void> {
           const localAgentId =
             localSession?.agentId ??
             settingsManager.getLocalLastAgentId(process.cwd());
-
-          // Try local LRU first
-          if (localAgentId) {
-            try {
-              const agent = await backend.retrieveAgent(localAgentId, {
-                include: ["agent.tags"],
-              });
-              setResumeAgentId(localAgentId);
-              setResumeAgentName(agent.name ?? null);
-              setLoadingState("selecting_conversation");
-              return;
-            } catch {
-              // Local agent doesn't exist, try global
-              setFailedAgentMessage(
-                `Unable to locate agent ${localAgentId} in .letta/, checking global (~/.letta)`,
-              );
-            }
-          } else {
-            // No recent agent locally, silently fall through to global
-          }
-
-          // Try global LRU
           const globalSession = settingsManager.getGlobalLastSession();
           const globalAgentId = globalSession?.agentId;
-          if (globalAgentId) {
+
+          const preferredResumeAgentId =
+            startupBackendMode === "local"
+              ? localAgentId &&
+                isAgentIdCompatibleWithBackend(localAgentId, "local")
+                ? localAgentId
+                : null
+              : globalAgentId &&
+                  isAgentIdCompatibleWithBackend(globalAgentId, "api")
+                ? globalAgentId
+                : null;
+
+          if (preferredResumeAgentId) {
             try {
-              const agent = await backend.retrieveAgent(globalAgentId, {
-                include: ["agent.tags"],
-              });
-              setResumeAgentId(globalAgentId);
+              const agent = await backend.retrieveAgent(
+                preferredResumeAgentId,
+                {
+                  include: ["agent.tags"],
+                },
+              );
+              setResumeAgentId(preferredResumeAgentId);
               setResumeAgentName(agent.name ?? null);
               setLoadingState("selecting_conversation");
               return;
             } catch {
-              // Global agent also doesn't exist
+              setFailedAgentMessage(
+                `Unable to locate agent ${preferredResumeAgentId}`,
+              );
             }
           }
 
@@ -1648,10 +1647,24 @@ async function main(): Promise<void> {
           return;
         }
 
-        // Step 1: Check local project LRU (session helpers centralize legacy fallback)
-        // Cache the retrieved agent to avoid redundant re-fetch in init()
-        const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
-        const globalAgentId = settingsManager.getGlobalLastAgentId();
+        // Step 1: Check recent session state for the active backend only.
+        // Cache the retrieved agent to avoid redundant re-fetch in init().
+        const rawLocalAgentId = settingsManager.getLocalLastAgentId(
+          process.cwd(),
+        );
+        const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
+        const localAgentId =
+          startupBackendMode === "local" &&
+          rawLocalAgentId &&
+          isAgentIdCompatibleWithBackend(rawLocalAgentId, "local")
+            ? rawLocalAgentId
+            : null;
+        const globalAgentId =
+          startupBackendMode === "api" &&
+          rawGlobalAgentId &&
+          isAgentIdCompatibleWithBackend(rawGlobalAgentId, "api")
+            ? rawGlobalAgentId
+            : null;
 
         // Fetch local + global LRU agents in parallel
         let localAgentExists = false;
@@ -1706,7 +1719,8 @@ async function main(): Promise<void> {
           process.cwd(),
         );
         const shouldRepairMissingLocalBackendLru = Boolean(
-          (localAgentId || globalAgentId) &&
+          startupBackendMode === "local" &&
+            (localAgentId || globalAgentId) &&
             !localAgentExists &&
             !globalAgentExists,
         );
@@ -1823,6 +1837,9 @@ async function main(): Promise<void> {
 
       async function init() {
         const backend = getBackend();
+        const startupBackendMode = backend.capabilities.localModelCatalog
+          ? "local"
+          : "api";
 
         // Determine which agent we'll be using (before loading tools)
         let resumingAgentId: string | null = null;
@@ -1877,13 +1894,19 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 3: LRU from local settings (if not --new or user explicitly requested new from selector)
+        // Priority 3: LRU from the active backend (if not --new or user explicitly requested new from selector)
         if (!resumingAgentId && !shouldCreateNew) {
-          const localLastAgentId = settingsManager.getLocalLastAgentId();
-          if (localLastAgentId) {
+          const recentAgentId =
+            startupBackendMode === "local"
+              ? settingsManager.getLocalLastAgentId()
+              : settingsManager.getGlobalLastAgentId();
+          if (
+            recentAgentId &&
+            isAgentIdCompatibleWithBackend(recentAgentId, startupBackendMode)
+          ) {
             try {
-              await backend.retrieveAgent(localLastAgentId);
-              resumingAgentId = localLastAgentId;
+              await backend.retrieveAgent(recentAgentId);
+              resumingAgentId = recentAgentId;
             } catch {
               // LRU agent doesn't exist (wrong org, deleted, etc.)
               // Show selector instead of silently creating a new agent
@@ -2076,9 +2099,12 @@ async function main(): Promise<void> {
           await settingsManager.loadLocalProjectSettings();
         }
 
-        // Save agent ID to both project and global settings
+        // Save agent ID to project settings.
+        // Only mirror into global legacy lastAgent for cloud/self-hosted agents.
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
-        settingsManager.updateSettings({ lastAgent: agent.id });
+        if (isAgentIdCompatibleWithBackend(agent.id, "api")) {
+          settingsManager.updateSettings({ lastAgent: agent.id });
+        }
 
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);

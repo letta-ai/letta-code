@@ -10,6 +10,7 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
+import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -610,6 +611,9 @@ export async function handleHeadlessCommand(
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   let autoEnableMemfsForFreshAgent = false;
+  const startupBackendMode = backend.capabilities.localModelCatalog
+    ? "local"
+    : "api";
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
@@ -1136,12 +1140,15 @@ export async function handleHeadlessCommand(
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
-  if (!agent) {
+  if (!agent && startupBackendMode === "local") {
     await settingsManager.loadLocalProjectSettings();
     const localAgentId = settingsManager.getLocalLastAgentId(
       getCurrentWorkingDirectory(),
     );
-    if (localAgentId) {
+    if (
+      localAgentId &&
+      isAgentIdCompatibleWithBackend(localAgentId, startupBackendMode)
+    ) {
       try {
         agent = await backend.retrieveAgent(localAgentId, {
           include: ["agent.tags"],
@@ -1155,9 +1162,12 @@ export async function handleHeadlessCommand(
 
   // Priority 5: Try to reuse global LRU (covers directory-switching case)
   // Do NOT restore global conversation — use default (project-scoped conversations)
-  if (!agent) {
+  if (!agent && startupBackendMode === "api") {
     const globalAgentId = settingsManager.getGlobalLastAgentId();
-    if (globalAgentId) {
+    if (
+      globalAgentId &&
+      isAgentIdCompatibleWithBackend(globalAgentId, startupBackendMode)
+    ) {
       try {
         agent = await backend.retrieveAgent(globalAgentId, {
           include: ["agent.tags"],

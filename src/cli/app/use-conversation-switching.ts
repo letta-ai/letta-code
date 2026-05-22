@@ -370,11 +370,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           messageHistory: resumeData.messageHistory,
         };
 
-        settingsManager.setLocalLastSession(
-          { agentId, conversationId },
-          process.cwd(),
-        );
-        settingsManager.setGlobalLastSession({ agentId, conversationId });
+        settingsManager.persistSession(agentId, conversationId, process.cwd());
 
         // Clear current transcript and static items (same pattern as /search)
         buffersRef.current.byId.clear();
