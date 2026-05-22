@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { migratePermissionMode } from "../permissions/mode";
+import { migratePermissionMode } from "@/permissions/mode";
+import { isRecord } from "@/utils/type-guards";
 import {
   getChannelAccountsPath,
   getChannelDir,
@@ -15,11 +16,30 @@ import type {
   TelegramChannelAccount,
 } from "./types";
 import {
+  isCustomChannelAccount,
   isDiscordChannelAccount,
   isFirstPartyChannelId,
   isSlackChannelAccount,
   isTelegramChannelAccount,
 } from "./types";
+
+/**
+ * Known snake_case → camelCase key mappings for migration.
+ * When both forms exist on a loaded account, snake_case wins and a
+ * warning is logged. Only the camelCase form is kept in the runtime
+ * account object; the canonicalized snake_case form is emitted on save.
+ */
+const SNAKE_TO_CAMEL: Record<string, string> = {
+  allowed_channels: "allowedChannels",
+  auto_thread_on_mention: "autoThreadOnMention",
+  acknowledge_message_reaction: "acknowledgeMessageReaction",
+  inbound_debounce_ms: "inboundDebounceMs",
+  remove_stale_routes: "removeStaleRoutes",
+  thread_policy_by_channel: "threadPolicyByChannel",
+  transcribe_voice: "transcribeVoice",
+};
+
+let warnedAboutDualKeys = false;
 
 interface ChannelAccountStore {
   accounts: ChannelAccount[];
@@ -47,9 +67,11 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
   }
 
   if (isDiscordChannelAccount(account) && account.allowedChannels) {
-    (cloned as DiscordChannelAccount).allowedChannels = [
-      ...account.allowedChannels,
-    ];
+    (cloned as DiscordChannelAccount).allowedChannels = Array.isArray(
+      account.allowedChannels,
+    )
+      ? [...account.allowedChannels]
+      : { ...account.allowedChannels };
   }
 
   if ("config" in account) {
@@ -59,13 +81,38 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
   return cloned;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
 function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   const next = cloneAccount(account);
-  if (!isFirstPartyChannelId(next.channel)) {
+
+  // ── Key migration: accept snake_case keys from accounts.json ──
+  // Runtime code uses camelCase throughout. On read, accept both forms;
+  // if both exist, snake_case wins (log warning once).
+  const raw = account as unknown as Record<string, unknown>;
+  for (const [snakeKey, camelKey] of Object.entries(SNAKE_TO_CAMEL)) {
+    const hasSnake = snakeKey in raw;
+    const hasCamel = camelKey in raw;
+    if (hasSnake && hasCamel) {
+      if (!warnedAboutDualKeys) {
+        warnedAboutDualKeys = true;
+        console.warn(
+          `[accounts] Both "${snakeKey}" and "${camelKey}" found in loaded account. "${snakeKey}" takes precedence. Remove "${camelKey}" to silence this warning.`,
+        );
+      }
+      (next as unknown as Record<string, unknown>)[camelKey] = (
+        next as unknown as Record<string, unknown>
+      )[snakeKey];
+      continue;
+    }
+    if (hasSnake && !hasCamel) {
+      (next as unknown as Record<string, unknown>)[camelKey] = raw[snakeKey];
+    }
+    // hasCamel && !hasSnake → already on the object, nothing to do
+  }
+
+  // Both the "custom" first-party channel and all user-installed channels use
+  // the generic `config: Record<string, unknown>` shape, so make sure that
+  // field is present and well-formed before downstream code reads it.
+  if (isCustomChannelAccount(next) || !isFirstPartyChannelId(next.channel)) {
     (next as CustomChannelAccount).config = isRecord(
       (next as Partial<CustomChannelAccount>).config,
     )
@@ -98,6 +145,13 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     );
     (next as DiscordChannelAccount).defaultPermissionMode =
       (migrated as ChannelDefaultPermissionMode | null) ?? "standard";
+
+    // Compatibility migration: existing accounts created before this field was
+    // persisted auto-threaded on mentions by default. Keep that behavior for
+    // accounts that lack an explicit setting, while new accounts write false.
+    if (!("auto_thread_on_mention" in raw) && !("autoThreadOnMention" in raw)) {
+      (next as DiscordChannelAccount).autoThreadOnMention = true;
+    }
   }
   return next;
 }
@@ -139,8 +193,12 @@ function makeDefaultLegacyAccount(
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
       allowedChannels: config.allowedChannels
-        ? [...config.allowedChannels]
+        ? Array.isArray(config.allowedChannels)
+          ? [...config.allowedChannels]
+          : { ...config.allowedChannels }
         : undefined,
+      autoThreadOnMention: config.autoThreadOnMention ?? true,
+      threadPolicyByChannel: config.threadPolicyByChannel,
       agentId: null,
       defaultPermissionMode: config.defaultPermissionMode ?? "standard",
       createdAt: now,
@@ -223,10 +281,25 @@ export function loadChannelAccounts(channelId: string): void {
 
 function saveChannelAccounts(channelId: string): void {
   const store = getStore(channelId);
+  const writeAccounts = store.accounts.map((account) => {
+    const cloned = cloneAccount(account);
+    // Canonicalize: convert camelCase keys to snake_case for storage
+    for (const [snakeKey, camelKey] of Object.entries(SNAKE_TO_CAMEL)) {
+      const value = (cloned as unknown as Record<string, unknown>)[camelKey];
+      // Remove camelCase key
+      delete (cloned as unknown as Record<string, unknown>)[camelKey];
+      // Set snake_case key (only if value is not undefined — omit absent fields)
+      if (value !== undefined) {
+        (cloned as unknown as Record<string, unknown>)[snakeKey] = value;
+      }
+    }
+    return cloned;
+  });
+
   if (saveAccountsOverride) {
     saveAccountsOverride(
       channelId,
-      store.accounts.map((account) => cloneAccount(account)),
+      writeAccounts.map((account) => cloneAccount(account)),
     );
     return;
   }
@@ -235,7 +308,7 @@ function saveChannelAccounts(channelId: string): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     getChannelAccountsPath(channelId),
-    `${JSON.stringify({ accounts: store.accounts }, null, 2)}\n`,
+    `${JSON.stringify({ accounts: writeAccounts }, null, 2)}\n`,
     "utf-8",
   );
 }
@@ -290,6 +363,7 @@ export function removeChannelAccount(
 
 export function clearChannelAccountStores(): void {
   stores.clear();
+  warnedAboutDualKeys = false;
 }
 
 export function __testOverrideLoadChannelAccounts(

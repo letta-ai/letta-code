@@ -148,7 +148,7 @@ async function fetchGitHubDirs(path: string): Promise<Set<string>> {
 
   try {
     const { fetchGitHubContents, parseDirNames } = await import(
-      "./github-utils"
+      "@/agent/github-utils"
     );
     const entries = await fetchGitHubContents(
       owner,

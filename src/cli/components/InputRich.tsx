@@ -5,9 +5,7 @@ import { stdin } from "node:process";
 import chalk from "chalk";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
-import SpinnerLib from "ink-spinner";
 import {
-  type ComponentType,
   memo,
   type ReactNode,
   useCallback,
@@ -18,38 +16,39 @@ import {
   useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
-import type { ModelReasoningEffort } from "../../agent/model";
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
-import {
-  ELAPSED_DISPLAY_THRESHOLD_MS,
-  TOKEN_DISPLAY_THRESHOLD,
-} from "../../constants";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { buildChatUrl } from "../helpers/appUrls.js";
-import { bytesToTokens, formatCompact } from "../helpers/format";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { formatGoalStatusIndicator } from "../helpers/goalCommand";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
+import type { ModelReasoningEffort } from "@/agent/model";
 import {
   getActiveBackgroundAgents,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
-} from "../helpers/subagentState.js";
-import { getRandomThinkingTip } from "../helpers/thinkingMessages";
+} from "@/agent/subagent-state.js";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { buildChatUrl } from "@/cli/helpers/app-urls.js";
+import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
+import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
+import {
+  ELAPSED_DISPLAY_THRESHOLD_MS,
+  TOKEN_DISPLAY_THRESHOLD,
+} from "@/constants";
+import type { PermissionMode } from "@/permissions/mode";
+import { permissionMode } from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { settingsManager } from "@/settings-manager";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
+import {
+  contextTierFromRatio,
+  spinnerWidthForTier,
+} from "./spinners/animations.js";
+import { StreamingStatusSpinner } from "./spinners/StreamingStatusSpinner.js";
 import { Text } from "./Text";
-
-// Type assertion for ink-spinner compatibility
-const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
@@ -391,14 +390,12 @@ function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
 
 function StatusLineContent({
   text,
-  _padding,
   modeName,
   modeColor,
   modeGlyph,
   showExitHint,
 }: {
   text: string;
-  _padding: number;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
@@ -451,10 +448,11 @@ const InputFooter = memo(function InputFooter({
   rightColumnWidth,
   statusLineText,
   statusLineRight,
-  statusLinePadding,
   footerNotification,
   goalStatusText,
   hasQueuedMessages = false,
+  queueMode = "immediate",
+  deferModeSupported = false,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -473,10 +471,11 @@ const InputFooter = memo(function InputFooter({
   rightColumnWidth: number;
   statusLineText?: string;
   statusLineRight?: string;
-  statusLinePadding?: number;
   footerNotification?: string | null;
   goalStatusText?: string | null;
   hasQueuedMessages?: boolean;
+  queueMode?: "immediate" | "defer";
+  deferModeSupported?: boolean;
 }) {
   const hideFooterContent = hideFooter;
 
@@ -621,7 +620,6 @@ const InputFooter = memo(function InputFooter({
         ) : statusLineText ? (
           <StatusLineContent
             text={statusLineText}
-            _padding={statusLinePadding ?? 0}
             modeName={modeName}
             modeColor={modeColor}
             modeGlyph={modeGlyph}
@@ -642,7 +640,13 @@ const InputFooter = memo(function InputFooter({
             {footerNotification}
           </Text>
         ) : hasQueuedMessages ? (
-          <Text dimColor>press ↑ to edit queued message</Text>
+          <Text dimColor>
+            {deferModeSupported
+              ? queueMode === "defer"
+                ? "press ↑ to edit queued message · ctrl+d to release queue"
+                : "press ↑ to edit queued message · ctrl+d to hold queue until done"
+              : "press ↑ to edit queued message"}
+          </Text>
         ) : (
           <Text dimColor>Press / for commands</Text>
         )}
@@ -710,6 +714,8 @@ const StreamingStatus = memo(function StreamingStatus({
   streaming,
   visible,
   tokenCount,
+  usedContextTokens,
+  contextWindowSize,
   elapsedBaseMs,
   thinkingMessage,
   includeSystemPromptUpgradeTip,
@@ -722,6 +728,8 @@ const StreamingStatus = memo(function StreamingStatus({
   streaming: boolean;
   visible: boolean;
   tokenCount: number;
+  usedContextTokens: number;
+  contextWindowSize: number | null | undefined;
   elapsedBaseMs: number;
   thinkingMessage: string;
   includeSystemPromptUpgradeTip: boolean;
@@ -762,6 +770,28 @@ const StreamingStatus = memo(function StreamingStatus({
   }, []);
 
   const animate = shouldAnimate && !isResizing;
+
+  // Context-usage tier drives both the spinner animation and its column
+  // width — wider as the conversation fills up.
+  const contextRatio =
+    contextWindowSize && contextWindowSize > 0
+      ? usedContextTokens / contextWindowSize
+      : 0;
+  const contextTier = contextTierFromRatio(contextRatio);
+  const spinnerColumnWidth = spinnerWidthForTier(contextTier) + 1;
+
+  // Bump a counter on each false→true streaming edge so the spinner
+  // remounts (via key={}) and re-picks from its tier pool. Without this
+  // the useState initializer can persist a pick across messages when
+  // the JSX shape and tier value are unchanged between streams.
+  const [streamSeed, setStreamSeed] = useState(0);
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    if (streaming && !prevStreamingRef.current) {
+      setStreamSeed((s) => s + 1);
+    }
+    prevStreamingRef.current = streaming;
+  }, [streaming]);
 
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -841,7 +871,10 @@ const StreamingStatus = memo(function StreamingStatus({
   // Avoid painting into the terminal's last column; some terminals will soft-wrap
   // padded Ink rows at the edge which breaks Ink's line-clearing accounting and
   // leaves duplicate status rows behind during streaming/resizes.
-  const statusContentWidth = Math.max(0, terminalWidth - 3);
+  const statusContentWidth = Math.max(
+    0,
+    terminalWidth - 1 - spinnerColumnWidth,
+  );
   const minMessageWidth = 12;
   const statusHintParts = useMemo(() => {
     const parts: string[] = [];
@@ -909,9 +942,16 @@ const StreamingStatus = memo(function StreamingStatus({
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box flexDirection="row">
-        <Box width={2} flexShrink={0}>
+        <Box width={spinnerColumnWidth} flexShrink={0}>
           <Text color={colors.status.processing}>
-            {animate ? <Spinner type="layer" /> : CLI_GLYPHS.bullet}
+            {animate ? (
+              <StreamingStatusSpinner
+                tier={contextTier}
+                streamSeed={streamSeed}
+              />
+            ) : (
+              CLI_GLYPHS.bullet
+            )}
           </Text>
         </Box>
         <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
@@ -932,7 +972,7 @@ const StreamingStatus = memo(function StreamingStatus({
         </Box>
       </Box>
       <Box flexDirection="row">
-        <Box width={2} flexShrink={0} />
+        <Box width={spinnerColumnWidth} flexShrink={0} />
         <Box width={statusContentWidth} flexShrink={0}>
           <Text color={colors.subagent.hint} wrap="truncate-end">
             {tipLineText}
@@ -955,6 +995,8 @@ export function Input({
   visible = true,
   streaming,
   tokenCount,
+  usedContextTokens = 0,
+  contextWindowSize,
   elapsedBaseMs = 0,
   thinkingMessage,
   includeSystemPromptUpgradeTip = true,
@@ -968,6 +1010,10 @@ export function Input({
   onPermissionModeChange,
   onExit,
   onInterrupt,
+  onCtrlO,
+  onCtrlD,
+  queueMode = "immediate",
+  deferModeSupported = false,
   interruptRequested = false,
   agentId,
   agentName,
@@ -979,10 +1025,8 @@ export function Input({
   onQueueEdit,
   onEscapeCancel,
   inputDisabled = false,
-  ralphActive = false,
-  ralphPending = false,
-  ralphPendingYolo = false,
-  onRalphExit,
+  goalLoopActive = false,
+  onGoalLoopExit,
   conversationId,
   onPasteError,
   restoredInput,
@@ -992,7 +1036,6 @@ export function Input({
   shouldAnimate = true,
   statusLineText,
   statusLineRight,
-  statusLinePadding = 0,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
@@ -1000,6 +1043,8 @@ export function Input({
   visible?: boolean;
   streaming: boolean;
   tokenCount: number;
+  usedContextTokens?: number;
+  contextWindowSize?: number | null;
   elapsedBaseMs?: number;
   thinkingMessage: string;
   includeSystemPromptUpgradeTip?: boolean;
@@ -1013,6 +1058,10 @@ export function Input({
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
   onInterrupt?: () => void;
+  onCtrlO?: () => void;
+  onCtrlD?: () => void;
+  queueMode?: "immediate" | "defer";
+  deferModeSupported?: boolean;
   interruptRequested?: boolean;
   agentId?: string;
   agentName?: string | null;
@@ -1024,10 +1073,8 @@ export function Input({
   onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
   inputDisabled?: boolean;
-  ralphActive?: boolean;
-  ralphPending?: boolean;
-  ralphPendingYolo?: boolean;
-  onRalphExit?: () => void;
+  goalLoopActive?: boolean;
+  onGoalLoopExit?: () => void;
   conversationId?: string;
   onPasteError?: (message: string) => void;
   restoredInput?: string | null;
@@ -1037,7 +1084,6 @@ export function Input({
   shouldAnimate?: boolean;
   statusLineText?: string;
   statusLineRight?: string;
-  statusLinePadding?: number;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -1216,6 +1262,7 @@ export function Input({
       const timer = setTimeout(() => setCursorPos(undefined), 0);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [cursorPos]);
 
   // Reset bash exit arming when leaving bash mode
@@ -1244,7 +1291,7 @@ export function Input({
     setPreferredColumn(null);
   }, [currentCursorPosition, value.length]);
 
-  // Sync with external mode changes (from plan approval dialog)
+  // Sync with external mode changes.
   useEffect(() => {
     if (externalMode !== undefined) {
       setCurrentMode(externalMode);
@@ -1328,7 +1375,24 @@ export function Input({
   });
 
   useInput((input, key) => {
+    // Handle CTRL-D to toggle queue defer mode — works even while agent is running
+    // since that's exactly when messages are queued and the toggle is useful.
+    if (
+      input === "d" &&
+      key.ctrl &&
+      (messageQueue?.filter((m) => m.kind === "user").length ?? 0) > 0
+    ) {
+      if (onCtrlD) onCtrlD();
+      return;
+    }
+
     if (!interactionEnabled) return;
+
+    // Handle CTRL-O to expand/collapse the last tool call output
+    if (input === "o" && key.ctrl) {
+      if (onCtrlO) onCtrlO();
+      return;
+    }
 
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
@@ -1359,7 +1423,7 @@ export function Input({
   // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
   // consume the keystroke before it renders (no flicker).
 
-  // Handle Shift+Tab for permission mode cycling (or ralph mode exit)
+  // Handle Shift+Tab for permission mode cycling (or goal loop exit)
   useInput((_input, key) => {
     if (!interactionEnabled) return;
 
@@ -1385,16 +1449,18 @@ export function Input({
     }
 
     if (key.shift && key.tab) {
-      // If ralph mode is active, exit it first (goes to default mode)
-      if (ralphActive && onRalphExit) {
-        onRalphExit();
+      // If a goal loop is active, pause it before cycling permission mode.
+      if (goalLoopActive && onGoalLoopExit) {
+        onGoalLoopExit();
         return;
       }
 
       // Cycle through permission modes
-      const modes: PermissionMode[] = settingsManager.isPlanModeEnabled()
-        ? ["unrestricted", "acceptEdits", "standard", "plan"]
-        : ["unrestricted", "acceptEdits", "standard"];
+      const modes: PermissionMode[] = [
+        "unrestricted",
+        "acceptEdits",
+        "standard",
+      ];
       const currentIndex = modes.indexOf(currentMode);
       const nextIndex = (currentIndex + 1) % modes.length;
       const nextMode = modes[nextIndex] ?? "unrestricted";
@@ -1705,7 +1771,7 @@ export function Input({
     setCursorPos(selectedCommand.length);
   }, []);
 
-  // Get display name and color for permission mode (ralph modes take precedence)
+  // Get display name and color for permission mode
   // Memoized to prevent unnecessary footer re-renders
   const modeInfo = useMemo<{
     name: string;
@@ -1713,44 +1779,6 @@ export function Input({
     glyph?: string;
     showExitHint?: boolean;
   } | null>(() => {
-    // Check ralph pending first (waiting for task input)
-    if (ralphPending) {
-      if (ralphPendingYolo) {
-        return {
-          name: "yolo-ralph (waiting)",
-          color: "#FF8C00", // dark orange
-        };
-      }
-      return {
-        name: "ralph (waiting)",
-        color: "#FEE19C", // yellow (brandColors.statusWarning)
-      };
-    }
-
-    // Check ralph mode active (using prop for reactivity)
-    if (ralphActive) {
-      const ralph = ralphMode.getState();
-      const iterDisplay =
-        ralph.maxIterations > 0
-          ? `${ralph.currentIteration}/${ralph.maxIterations}`
-          : `${ralph.currentIteration}`;
-
-      if (ralph.mode === "goal") {
-        return null;
-      }
-
-      if (ralph.isYolo) {
-        return {
-          name: `yolo-ralph (iter ${iterDisplay})`,
-          color: "#FF8C00", // dark orange
-        };
-      }
-      return {
-        name: `ralph (iter ${iterDisplay})`,
-        color: "#FEE19C", // yellow (brandColors.statusWarning)
-      };
-    }
-
     // Fall through to permission modes
     switch (currentMode) {
       case "acceptEdits":
@@ -1761,19 +1789,13 @@ export function Input({
           color: colors.status.processingShimmer,
           glyph: "▶",
         };
-      case "plan":
-        return {
-          name: "plan (read-only) mode",
-          color: colors.status.success,
-          glyph: "⏸",
-        };
       case "unrestricted":
         // Default mode — show nothing so "Press / for commands" renders instead
         return null;
       default:
         return null;
     }
-  }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
+  }, [currentMode]);
 
   // Goal status footer text. Stored in state (rather than recomputed every
   // render) so we only trigger a re-render when the displayed string actually
@@ -1828,7 +1850,7 @@ export function Input({
       <>
         {/* Queue display - show whenever there are queued messages */}
         {messageQueue && messageQueue.length > 0 && (
-          <QueuedMessages messages={messageQueue} />
+          <QueuedMessages messages={messageQueue} queueMode={queueMode} />
         )}
 
         {interactionEnabled ? (
@@ -1909,9 +1931,7 @@ export function Input({
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
-                showExitHint={
-                  modeInfo?.showExitHint ?? (ralphActive || ralphPending)
-                }
+                showExitHint={modeInfo?.showExitHint ?? goalLoopActive}
                 agentName={agentName}
                 currentModel={currentModel}
                 currentReasoningEffort={currentReasoningEffort}
@@ -1927,13 +1947,14 @@ export function Input({
                 rightColumnWidth={footerRightColumnWidth}
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
-                statusLinePadding={statusLinePadding}
                 footerNotification={footerNotification}
                 goalStatusText={goalStatusText}
                 hasQueuedMessages={
                   (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
                   0
                 }
+                queueMode={queueMode}
+                deferModeSupported={deferModeSupported}
               />
             )}
           </Box>
@@ -1969,8 +1990,7 @@ export function Input({
     modeInfo?.color,
     modeInfo?.glyph,
     modeInfo?.showExitHint,
-    ralphActive,
-    ralphPending,
+    goalLoopActive,
     currentModel,
     currentReasoningEffort,
     currentModelProvider,
@@ -1981,12 +2001,14 @@ export function Input({
     inputChromeHeight,
     statusLineText,
     statusLineRight,
-    statusLinePadding,
+
     footerNotification,
     goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,
+    queueMode,
+    deferModeSupported,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
@@ -2000,6 +2022,8 @@ export function Input({
         streaming={streaming}
         visible={visible}
         tokenCount={tokenCount}
+        usedContextTokens={usedContextTokens}
+        contextWindowSize={contextWindowSize}
         elapsedBaseMs={elapsedBaseMs}
         thinkingMessage={thinkingMessage}
         includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}

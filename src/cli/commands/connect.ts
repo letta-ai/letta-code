@@ -5,23 +5,23 @@ import {
   formatLocalProviderTimeout,
   type LocalProviderTimeout,
   parseLocalProviderTimeout,
-} from "../../backend/local/LocalProviderTimeout";
+} from "@/backend/local/local-provider-timeout";
+import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import {
   checkProviderApiKey,
   createOrUpdateProvider,
   getProviderByName,
   providerStorageTargetLabel,
   removeProviderByName,
-} from "../../providers/byok-providers";
+} from "@/providers/byok-providers";
 import {
   deleteOpenAICodexProvider,
   getOpenAICodexProvider,
   listProviders,
   OPENAI_CODEX_PROVIDER_NAME,
   removeOpenAICodexProvider,
-} from "../../providers/openai-codex-provider";
-import { getErrorMessage } from "../../utils/error";
-import type { Buffers, Line } from "../helpers/accumulator";
+} from "@/providers/openai-codex-provider";
+import { getErrorMessage } from "@/utils/error";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,

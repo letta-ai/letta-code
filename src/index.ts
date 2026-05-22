@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
+import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { ensureFileIndex } from "@/utils/file-index";
 import {
   getResumeDataFromBackend,
   type ResumeData,
@@ -23,9 +25,9 @@ import {
   buildCreateAgentOptionsForPersonality,
   resolvePersonalityId,
 } from "./agent/personality";
-import type { MemoryPromptMode } from "./agent/promptAssets";
-import { resolveSkillSourcesSelection } from "./agent/skillSources";
-import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import type { MemoryPromptMode } from "./agent/prompt-assets";
+import { resolveSkillSourcesSelection } from "./agent/skill-sources";
+import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
 import {
   type Backend,
   configureBackendMode,
@@ -50,27 +52,30 @@ import {
   parseCsvListFlag,
   parseJsonArrayFlag,
   resolveImportFlagAlias,
-} from "./cli/flagUtils";
-import { formatErrorDetails } from "./cli/helpers/errorFormatter";
-import { ensureFileIndex } from "./cli/helpers/fileIndex";
+} from "./cli/flag-utils";
+import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import type { ApprovalRequest } from "./cli/helpers/stream";
-import { initTerminalTheme } from "./cli/helpers/terminalTheme";
+import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
   validateRegistryHandleOrThrow,
-} from "./cli/startupFlagValidation";
+} from "./cli/startup-flag-validation";
 import { runSubcommand } from "./cli/subcommands/router";
 import {
   migratePermissionMode,
   permissionMode,
   VALID_PERMISSION_MODES,
 } from "./permissions/mode";
-import { settingsManager, shouldPersistSessionState } from "./settings-manager";
+import {
+  type Settings,
+  settingsManager,
+  shouldPersistSessionState,
+} from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
-import { trackBoundaryError } from "./telemetry/errorReporting";
+import { trackBoundaryError } from "./telemetry/error-reporting";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
@@ -108,6 +113,42 @@ function trackCliBoundaryError(
   });
 }
 
+async function refreshStartupOAuthToken(
+  settings: Settings,
+): Promise<string | null> {
+  if (!settings.refreshToken) {
+    return null;
+  }
+
+  try {
+    const now = Date.now();
+    const deviceId = settingsManager.getOrCreateDeviceId();
+    const deviceName = hostname();
+    const tokens = await refreshAccessToken(
+      settings.refreshToken,
+      deviceId,
+      deviceName,
+    );
+
+    settingsManager.updateSettings({
+      env: { ...settings.env, LETTA_API_KEY: tokens.access_token },
+      refreshToken: tokens.refresh_token || settings.refreshToken,
+      tokenExpiresAt: now + tokens.expires_in * 1000,
+    });
+    await settingsManager.flush();
+
+    return tokens.access_token;
+  } catch (error) {
+    trackCliBoundaryError(
+      "startup_auth_token_refresh_failed",
+      error,
+      "startup_auth_token_refresh",
+    );
+    debugWarn("auth", "Failed to refresh OAuth token during startup", error);
+    return null;
+  }
+}
+
 void ensureFileIndex();
 
 function printHelp() {
@@ -135,6 +176,8 @@ USAGE
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta connect ...     Connect providers from terminal
+  letta backend ...     Show or set the default backend
+  letta setup           Re-run first-run setup
 
 OPTIONS
 ${renderCliOptionsHelp()}
@@ -154,6 +197,7 @@ SUBCOMMANDS
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
   letta connect <provider> [options]
+  letta backend [api|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
@@ -195,9 +239,9 @@ EXAMPLES
  */
 async function printInfo() {
   const { join } = await import("node:path");
-  const { getVersion } = await import("./version");
-  const { SKILLS_DIR } = await import("./agent/skills");
-  const { exists } = await import("./utils/fs");
+  const { getVersion } = await import("@/version");
+  const { SKILLS_DIR } = await import("@/agent/skills");
+  const { exists } = await import("@/utils/fs");
 
   const cwd = process.cwd();
   const skillsDir = join(cwd, SKILLS_DIR);
@@ -509,10 +553,12 @@ async function main(): Promise<void> {
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
+  let explicitBackendMode: "api" | "local" | undefined;
   try {
     const backendSelection = extractBackendFlag(rawCliArgs);
     subcommandArgs = normalizeUpdateCommandAliases(backendSelection.args);
     if (backendSelection.backend) {
+      explicitBackendMode = backendSelection.backend;
       configureBackendMode(backendSelection.backend);
     }
   } catch (error) {
@@ -545,7 +591,7 @@ async function main(): Promise<void> {
   // Bootstrap base tools for subcommands that have LETTA_API_KEY set (e.g., remote via code-desktop)
   if (process.env.LETTA_API_KEY) {
     const { bootstrapBaseToolsIfNeeded } = await import(
-      "./agent/bootstrap-tools"
+      "@/agent/bootstrap-tools"
     );
     await bootstrapBaseToolsIfNeeded();
   }
@@ -553,7 +599,7 @@ async function main(): Promise<void> {
   // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {
     try {
-      const { lspManager } = await import("./lsp/manager.js");
+      const { lspManager } = await import("@/lsp/manager.js");
       await lspManager.initialize(process.cwd());
     } catch (error) {
       trackCliBoundaryError("lsp_init_failed", error, "tui_startup_lsp_init");
@@ -562,7 +608,7 @@ async function main(): Promise<void> {
   }
 
   // Check for updates on startup (non-blocking)
-  const { checkAndAutoUpdate } = await import("./updater/auto-update");
+  const { checkAndAutoUpdate } = await import("@/updater/auto-update");
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
@@ -620,7 +666,7 @@ async function main(): Promise<void> {
 
   // Handle version flag
   if (values.version) {
-    const { getVersion } = await import("./version");
+    const { getVersion } = await import("@/version");
     console.log(`${getVersion()} (Letta Code)`);
     process.exit(0);
   }
@@ -692,21 +738,6 @@ async function main(): Promise<void> {
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
   const noMemfsFlag = values["no-memfs"];
-  const startupBackend = getBackend();
-  const localNoMemfsRequested = Boolean(
-    startupBackend.capabilities.localMemfs &&
-      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
-  );
-  if (localNoMemfsRequested) {
-    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
-  }
-  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
-    ? "memfs"
-    : noMemfsFlag || localNoMemfsRequested
-      ? "standard"
-      : undefined;
-  const shouldAutoEnableMemfsForNewAgent =
-    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
   const noSkillsFlag = values["no-skills"];
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
@@ -731,6 +762,36 @@ async function main(): Promise<void> {
   });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
+  let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const baseURL =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    LETTA_CLOUD_API_URL;
+
+  if (
+    !explicitBackendMode &&
+    settings.preferredBackendMode === "local" &&
+    baseURL === LETTA_CLOUD_API_URL
+  ) {
+    configureBackendMode("local");
+  }
+
+  const startupBackend = getBackend();
+  const localNoMemfsRequested = Boolean(
+    startupBackend.capabilities.localMemfs &&
+      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
+  );
+  if (localNoMemfsRequested) {
+    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
+  }
+  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+    ? "memfs"
+    : noMemfsFlag || localNoMemfsRequested
+      ? "standard"
+      : undefined;
+  const shouldAutoEnableMemfsForNewAgent =
+    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
+
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   // Surface is set here so session_start captures the correct mode.
   telemetry.setSurface(isHeadless ? "headless" : "tui");
@@ -738,10 +799,10 @@ async function main(): Promise<void> {
 
   if (!isHeadless) {
     // TUI-only startup tasks: keep headless runs free of extra background work.
-    const { startDockerVersionCheck } = await import("./startup-docker-check");
+    const { startDockerVersionCheck } = await import("@/startup-docker-check");
     startDockerVersionCheck().catch(() => {});
 
-    const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
+    const { cleanupOldOverflowFiles } = await import("@/tools/impl/overflow");
     Promise.resolve().then(() => {
       try {
         cleanupOldOverflowFiles(process.cwd());
@@ -824,7 +885,9 @@ async function main(): Promise<void> {
   // Known preset IDs are always accepted. Subagent names are only accepted
   // for internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent).
   if (systemPromptPreset) {
-    const { validateSystemPromptPreset } = await import("./agent/promptAssets");
+    const { validateSystemPromptPreset } = await import(
+      "@/agent/prompt-assets"
+    );
     const allowSubagentNames = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
     try {
       await validateSystemPromptPreset(systemPromptPreset, {
@@ -988,13 +1051,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Check if API key is configured
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
-
   const isUsingDevBackend =
     isHeadless &&
     typeof values["dev-backend"] === "string" &&
@@ -1027,7 +1083,7 @@ async function main(): Promise<void> {
       !apiKey
     ) {
       // For interactive mode, show setup flow
-      const { runSetup } = await import("./auth/setup");
+      const { runSetup } = await import("@/auth/setup");
       await runSetup();
       // After setup, restart main flow
       return main().catch((err: unknown) => {
@@ -1046,22 +1102,45 @@ async function main(): Promise<void> {
     if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
       // For interactive mode, show setup flow
       console.log("No credentials found. Let's get you set up!\n");
-      const { runSetup } = await import("./auth/setup");
+      const { runSetup } = await import("@/auth/setup");
       await runSetup();
       // After setup, restart main flow
       return main();
     }
 
+    if (
+      !process.env.LETTA_API_KEY &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      settings.refreshToken &&
+      settings.tokenExpiresAt &&
+      (!apiKey || settings.tokenExpiresAt - Date.now() < 5 * 60 * 1000)
+    ) {
+      apiKey = (await refreshStartupOAuthToken(settings)) ?? apiKey;
+    }
+
     // Validate credentials by checking health endpoint
-    const { validateCredentials } = await import("./auth/oauth");
-    const isValid = await validateCredentials(baseURL, apiKey ?? "");
+    const { validateCredentials } = await import("@/auth/oauth");
+    let isValid = await validateCredentials(baseURL, apiKey ?? "");
+
+    if (
+      !isValid &&
+      !process.env.LETTA_API_KEY &&
+      baseURL === LETTA_CLOUD_API_URL &&
+      settings.refreshToken
+    ) {
+      const refreshedApiKey = await refreshStartupOAuthToken(settings);
+      if (refreshedApiKey) {
+        apiKey = refreshedApiKey;
+        isValid = await validateCredentials(baseURL, apiKey);
+      }
+    }
     markMilestone("CREDENTIALS_VALIDATED");
 
     // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
     // Must run after credentials are validated so OAuth tokens are available.
     if (isValid) {
       const { bootstrapBaseToolsIfNeeded } = await import(
-        "./agent/bootstrap-tools"
+        "@/agent/bootstrap-tools"
       );
       await bootstrapBaseToolsIfNeeded();
     }
@@ -1087,7 +1166,7 @@ async function main(): Promise<void> {
         "Your credentials may be invalid or the server may be unreachable.",
       );
       console.log("Let's reconfigure your setup.\n");
-      const { runSetup } = await import("./auth/setup");
+      const { runSetup } = await import("@/auth/setup");
       await runSetup();
       // After setup, restart main flow
       return main();
@@ -1126,21 +1205,27 @@ async function main(): Promise<void> {
 
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
-    const { toolFilter } = await import("./tools/filter");
+    const { toolFilter } = await import("@/tools/filter");
     toolFilter.setEnabledTools(values.tools);
   }
 
   // Set CLI permission overrides if provided
-  if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
-    const { cliPermissions } = await import("./permissions/cli");
+  if (
+    values.allowedTools ||
+    values.disallowedTools ||
+    values["disable-memory-guard"]
+  ) {
+    const { cliPermissions } = await import(
+      "@/permissions/cli-permissions-instance"
+    );
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
     }
     if (values.disallowedTools) {
       cliPermissions.setDisallowedTools(values.disallowedTools);
     }
-    if (values["memory-scope"]) {
-      cliPermissions.setMemoryScope(values["memory-scope"]);
+    if (values["disable-memory-guard"]) {
+      cliPermissions.setMemoryGuardDisabled(true);
     }
   }
 
@@ -1183,7 +1268,7 @@ async function main(): Promise<void> {
         ? { ...values, agent: specifiedAgentId }
         : values;
 
-    const { handleHeadlessCommand } = await import("./headless");
+    const { handleHeadlessCommand } = await import("@/headless");
     await handleHeadlessCommand(
       { values: headlessValues, positionals },
       specifiedModel,
@@ -1200,7 +1285,7 @@ async function main(): Promise<void> {
   // In VS Code/xterm.js this typically requires a short handshake (query + enable).
   try {
     const { detectAndEnableKittyProtocol } = await import(
-      "./cli/utils/kittyProtocolDetector"
+      "@/cli/utils/kitty-protocol-detector"
     );
     await detectAndEnableKittyProtocol();
   } catch {
@@ -1212,8 +1297,8 @@ async function main(): Promise<void> {
   const React = await import("react");
   const { render } = await import("ink");
   const { useState, useEffect, useCallback } = React;
-  const AppModule = await import("./cli/App");
-  const App = AppModule.default;
+  const AppModule = await import("@/cli/App");
+  const App = AppModule.App;
 
   function LoadingApp({
     forceNew,
@@ -1322,8 +1407,8 @@ async function main(): Promise<void> {
           getKeybindingsPath,
           keybindingExists,
           installKeybinding,
-        } = await import("./cli/utils/terminalKeybindingInstaller");
-        const { loadSettings, updateSettings } = await import("./settings");
+        } = await import("@/cli/utils/terminal-keybinding-installer");
+        const { loadSettings, updateSettings } = await import("@/settings");
 
         const terminal = detectTerminalType();
         if (!terminal) {
@@ -1362,8 +1447,8 @@ async function main(): Promise<void> {
           wezTermDeleteFixExists,
           getWezTermConfigPath,
           installWezTermDeleteFix,
-        } = await import("./cli/utils/terminalKeybindingInstaller");
-        const { loadSettings, updateSettings } = await import("./settings");
+        } = await import("@/cli/utils/terminal-keybinding-installer");
+        const { loadSettings, updateSettings } = await import("@/settings");
 
         if (!isWezTerm()) return;
 
@@ -1390,7 +1475,7 @@ async function main(): Promise<void> {
     // Check for release notes to display (runs once on mount)
     useEffect(() => {
       async function checkNotes() {
-        const { checkReleaseNotes } = await import("./release-notes");
+        const { checkReleaseNotes } = await import("@/release-notes");
         const notes = await checkReleaseNotes();
         setReleaseNotes(notes);
       }
@@ -1402,7 +1487,6 @@ async function main(): Promise<void> {
       async function checkAndStart() {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
-        const localSettings = settingsManager.getLocalProjectSettings();
         const backend = getBackend();
 
         // For self-hosted servers, pre-fetch available models
@@ -1420,7 +1504,7 @@ async function main(): Promise<void> {
         if (isSelfHosted) {
           setSelfHostedBaseUrl(baseURL);
           try {
-            const { getDefaultModel } = await import("./agent/model");
+            const { getDefaultModel } = await import("@/agent/model");
             const defaultModel = getDefaultModel();
             setSelfHostedDefaultModel(defaultModel);
             const modelsList = await backend.listModels();
@@ -1490,7 +1574,9 @@ async function main(): Promise<void> {
           const localSession = settingsManager.getLocalLastSession(
             process.cwd(),
           );
-          const localAgentId = localSession?.agentId ?? localSettings.lastAgent;
+          const localAgentId =
+            localSession?.agentId ??
+            settingsManager.getLocalLastAgentId(process.cwd());
 
           // Try local LRU first
           if (localAgentId) {
@@ -1628,7 +1714,7 @@ async function main(): Promise<void> {
           ? await getLocalBackendStartupFallbackSession(backend)
           : null;
         const { resolveStartupTarget } = await import(
-          "./agent/resolve-startup-agent"
+          "@/agent/resolve-startup-agent"
         );
         const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
@@ -1659,7 +1745,7 @@ async function main(): Promise<void> {
             setLoadingState("selecting_global");
             return;
           case "create": {
-            const { ensureDefaultAgents } = await import("./agent/defaults");
+            const { ensureDefaultAgents } = await import("@/agent/defaults");
             try {
               const defaultAgent = await ensureDefaultAgents(getBackend(), {
                 preferredModel: model,
@@ -1793,12 +1879,11 @@ async function main(): Promise<void> {
 
         // Priority 3: LRU from local settings (if not --new or user explicitly requested new from selector)
         if (!resumingAgentId && !shouldCreateNew) {
-          const localProjectSettings =
-            settingsManager.getLocalProjectSettings();
-          if (localProjectSettings?.lastAgent) {
+          const localLastAgentId = settingsManager.getLocalLastAgentId();
+          if (localLastAgentId) {
             try {
-              await backend.retrieveAgent(localProjectSettings.lastAgent);
-              resumingAgentId = localProjectSettings.lastAgent;
+              await backend.retrieveAgent(localLastAgentId);
+              resumingAgentId = localLastAgentId;
             } catch {
               // LRU agent doesn't exist (wrong org, deleted, etc.)
               // Show selector instead of silently creating a new agent
@@ -1820,7 +1905,7 @@ async function main(): Promise<void> {
         await loadTools(modelForTools);
 
         setLoadingState("initializing");
-        const { createAgent } = await import("./agent/create");
+        const { createAgent } = await import("@/agent/create");
 
         let agent: AgentState | null = null;
         let autoEnableMemfsForFreshAgent = false;
@@ -1832,7 +1917,7 @@ async function main(): Promise<void> {
 
           if (isRegistryImport) {
             // Import from letta-ai/agent-file registry
-            const { importAgentFromRegistry } = await import("./agent/import");
+            const { importAgentFromRegistry } = await import("@/agent/import");
             result = await importAgentFromRegistry({
               handle: fromAfFile,
               modelOverride: model,
@@ -1841,7 +1926,7 @@ async function main(): Promise<void> {
             });
           } else {
             // Import from local file
-            const { importAgentFromFile } = await import("./agent/import");
+            const { importAgentFromFile } = await import("@/agent/import");
             result = await importAgentFromFile({
               filePath: fromAfFile,
               modelOverride: model,
@@ -1864,7 +1949,7 @@ async function main(): Promise<void> {
 
           // Display extracted skills summary
           if (result.skills && result.skills.length > 0) {
-            const { getAgentSkillsDir } = await import("./agent/skills");
+            const { getAgentSkillsDir } = await import("@/agent/skills");
             const skillsDir = getAgentSkillsDir(agent.id);
             console.log(
               `\n📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}\n`,
@@ -1909,13 +1994,13 @@ async function main(): Promise<void> {
             !backend.capabilities.localModelCatalog
           ) {
             // On Letta API without explicit model - check billing tier for appropriate default
-            const { getDefaultModelForTier } = await import("./agent/model");
+            const { getDefaultModelForTier } = await import("@/agent/model");
             const billingTier = await getBillingTier();
             effectiveModel = getDefaultModelForTier(billingTier);
           }
 
           // Pre-determine memfs mode so the agent is created with the correct prompt.
-          const { isLettaCloud } = await import("./agent/memoryFilesystem");
+          const { isLettaCloud } = await import("@/agent/memory-filesystem");
           const willAutoEnableMemfs =
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
           const effectiveMemoryMode: MemoryPromptMode | undefined = backend
@@ -2000,7 +2085,7 @@ async function main(): Promise<void> {
 
         if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
           const { hydrateMemfsSettingFromAgent } = await import(
-            "./agent/memoryFilesystem"
+            "@/agent/memory-filesystem"
           );
           const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
           if (!memfsEnabled) {
@@ -2020,7 +2105,7 @@ async function main(): Promise<void> {
           : memfsFlag;
         const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
         const memfsSyncPromise = backend.capabilities.remoteMemfs
-          ? import("./agent/memoryFilesystem").then(({ applyMemfsFlags }) =>
+          ? import("@/agent/memory-filesystem").then(({ applyMemfsFlags }) =>
               applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
                 pullOnExistingRepo: true,
                 agentTags,
@@ -2062,7 +2147,7 @@ async function main(): Promise<void> {
         }
 
         // Init secrets cache — runs in parallel with memfs sync below.
-        const secretsInitPromise = import("./utils/secretsStore").then(
+        const secretsInitPromise = import("@/utils/secrets-store").then(
           ({ initSecretsFromServer }) =>
             initSecretsFromServer(agentId, agent ?? undefined),
         );
@@ -2263,7 +2348,7 @@ async function main(): Promise<void> {
         try {
           await secretsInitPromise;
         } catch (error) {
-          import("./utils/debug").then(({ debugLog }) =>
+          import("@/utils/debug").then(({ debugLog }) =>
             debugLog(
               "secrets",
               `Failed to init secrets: ${error instanceof Error ? error.message : String(error)}`,
@@ -2290,7 +2375,7 @@ async function main(): Promise<void> {
 
           if (storedPreset && storedPreset !== "custom") {
             const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
-              await import("./agent/promptAssets");
+              await import("@/agent/prompt-assets");
             if (isKnown(storedPreset)) {
               const memoryMode = settingsManager.isMemfsEnabled(agent.id)
                 ? "memfs"

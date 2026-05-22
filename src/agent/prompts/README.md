@@ -30,13 +30,14 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 - **Version:** Extracted from `codex-rs/models-manager/models.json` @ openai/codex `main` (May 2026)
 - **Reference:** https://github.com/openai/codex
 - **Notes:** gpt-5.5 uses `model_messages.instructions_template` with a `{{ personality }}` placeholder; this snapshot renders the template substituted with `personality_pragmatic` (the default). Major drift from the prior gpt-5.3-codex snapshot: new senior-engineer framing, expanded engineering judgment guidance, substantially expanded frontend guidance, softer dirty-worktree handling, updated autonomy/compaction instructions, revised formatting/file-link rules, and new anti-creature-language guidance.
+- **Automation:** `.github/workflows/codex-release-watch.yml` polls stable `openai/codex` releases and files a `codex-watch` issue when upstream tool/schema fields or tool implementation paths change.
 
 #### source_gemini.md
 
 - **Source:** Gemini CLI (Google)
 - **Version:** snippets.ts (Feb 2026, copyright 2026 Google LLC)
 - **Reference:** https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/prompts/snippets.ts
-- **Notes:** Rendered for interactive mode, git repo present, outside sandbox, standard tools, no sub-agents, no skills, no YOLO mode, no approved plan. Tool name variables resolved. Conditional sections (YOLO mode, Plan mode, sandbox, GEMINI.md) noted but not inlined.
+- **Notes:** Rendered for interactive mode, git repo present, outside sandbox, standard tools, no sub-agents, no skills, and no YOLO mode. Tool name variables resolved. Conditional sections (YOLO mode, sandbox, GEMINI.md) noted but not inlined.
 
 ## Memory blocks (`.mdx`)
 
@@ -69,7 +70,6 @@ Short XML-wrapped messages injected into the conversation as system events.
 
 | File | Used | Description |
 |------|------|-------------|
-| `plan_mode_reminder.txt` | Plan mode active | Prevents the agent from making changes until plan is confirmed |
 | `memory_check_reminder.txt` | Periodic during conversation | Prompts the agent to review and update memory blocks |
 | `approval_recovery_alert.txt` | Keep-alive ping | Automated message to resume after approval timeout |
 | `interrupt_recovery_alert.txt` | User interrupts stream | Notifies the agent the stream was interrupted |

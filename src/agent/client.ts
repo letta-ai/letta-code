@@ -1,1 +1,1 @@
-export * from "../backend/api/client";
+export * from "@/backend/api/client";

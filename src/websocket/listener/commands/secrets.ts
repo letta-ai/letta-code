@@ -1,7 +1,10 @@
 import type WebSocket from "ws";
-import { isSecretApplyCommand, isSecretListCommand } from "../protocol-inbound";
-import { invalidateSecretsCacheForAgent } from "../secrets-sync";
-import type { ListenerRuntime } from "../types";
+import {
+  isSecretApplyCommand,
+  isSecretListCommand,
+} from "@/websocket/listener/protocol-inbound";
+import { invalidateSecretsCacheForAgent } from "@/websocket/listener/secrets-sync";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 type SecretsCommandContext = {
@@ -20,9 +23,7 @@ export function handleSecretsCommand(
   if (isSecretListCommand(parsed)) {
     runDetachedListenerTask("secret_list", async () => {
       try {
-        const { refreshAndListSecrets } = await import(
-          "../../../utils/secretsStore"
-        );
+        const { refreshAndListSecrets } = await import("@/utils/secrets-store");
         const secrets = await refreshAndListSecrets(parsed.agent_id);
         safeSocketSend(
           socket,
@@ -75,9 +76,7 @@ export function handleSecretsCommand(
       }
 
       try {
-        const { applySecretBatch } = await import(
-          "../../../utils/secretsStore"
-        );
+        const { applySecretBatch } = await import("@/utils/secrets-store");
         const names = await applySecretBatch(
           { set: parsed.set, unset: parsed.unset },
           parsed.agent_id,

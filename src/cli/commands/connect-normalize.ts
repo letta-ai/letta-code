@@ -1,8 +1,9 @@
 import {
   type ByokProvider,
   type ByokProviderId,
+  defaultProviderApiKey,
   getProviderConfig,
-} from "../../providers/byok-providers";
+} from "@/providers/byok-providers";
 
 export type ConnectProviderCanonical =
   | "chatgpt"
@@ -141,15 +142,7 @@ export function isConnectApiKeyProvider(
 export function defaultConnectApiKey(
   provider: ResolvedConnectProvider,
 ): string | undefined {
-  if (
-    "requiresApiKey" in provider.byokProvider &&
-    provider.byokProvider.requiresApiKey === false
-  ) {
-    return "defaultApiKey" in provider.byokProvider
-      ? provider.byokProvider.defaultApiKey
-      : "not-needed";
-  }
-  return undefined;
+  return defaultProviderApiKey(provider.byokProvider);
 }
 
 export function isConnectZaiBaseProvider(

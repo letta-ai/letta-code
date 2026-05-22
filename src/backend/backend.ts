@@ -4,7 +4,7 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
-import { LocalBackend } from "./local/LocalBackend";
+import { LocalBackend } from "./local/local-backend";
 import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
   LOCAL_BACKEND_EXPERIMENTAL_ENV,
@@ -270,7 +270,7 @@ export class APIBackend implements Backend {
     if (this.getApiClientOverride) {
       return this.getApiClientOverride();
     }
-    const { getClient: resolveClient } = await import("./api/client");
+    const { getClient: resolveClient } = await import("@/backend/api/client");
     return resolveClient();
   }
 
@@ -423,7 +423,7 @@ export class APIBackend implements Backend {
     if (this.forkConversationOverride) {
       return this.forkConversationOverride(conversationId, options);
     }
-    const { forkConversation } = await import("./api/conversations");
+    const { forkConversation } = await import("@/backend/api/conversations");
     return forkConversation(conversationId, options);
   }
 }
@@ -474,6 +474,14 @@ export function getBackend(): Backend {
   return backend;
 }
 
+/**
+ * Get a backend instance for a specific mode without switching the global backend.
+ * Useful for cross-backend operations like retrieving pinned agents from the other backend.
+ */
+export function getBackendForMode(mode: BackendMode): Backend {
+  return createBackendForMode(mode);
+}
+
 export function configureBackendMode(mode: BackendMode): void {
   configuredBackendMode = mode;
   process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = mode === "local" ? "1" : "0";
@@ -489,9 +497,13 @@ function devBackendStoreOptions() {
 }
 
 async function createPiDevBackend(): Promise<Backend> {
-  const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
-  const { PiStreamAdapter } = await import("./dev/PiStreamAdapter");
-  const { ProviderTurnExecutor } = await import("./dev/ProviderTurnExecutor");
+  const { FakeHeadlessBackend } = await import(
+    "@/backend/dev/fake-headless-backend"
+  );
+  const { PiStreamAdapter } = await import("@/backend/dev/pi-stream-adapter");
+  const { ProviderTurnExecutor } = await import(
+    "@/backend/dev/provider-turn-executor"
+  );
   return new FakeHeadlessBackend(
     "agent-fake-headless",
     new ProviderTurnExecutor(new PiStreamAdapter({})),
@@ -502,7 +514,9 @@ async function createPiDevBackend(): Promise<Backend> {
 export async function configureDevBackend(name: string): Promise<void> {
   switch (name) {
     case "fake-headless": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/fake-headless-backend"
+      );
       backend = new FakeHeadlessBackend(
         undefined,
         undefined,
@@ -511,9 +525,11 @@ export async function configureDevBackend(name: string): Promise<void> {
       return;
     }
     case "fake-headless-tool-call": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/fake-headless-backend"
+      );
       const { DeterministicToolCallExecutor } = await import(
-        "./dev/HeadlessTurnExecutor"
+        "@/backend/dev/headless-turn-executor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",
@@ -523,9 +539,11 @@ export async function configureDevBackend(name: string): Promise<void> {
       return;
     }
     case "fake-headless-provider": {
-      const { FakeHeadlessBackend } = await import("./dev/FakeHeadlessBackend");
+      const { FakeHeadlessBackend } = await import(
+        "@/backend/dev/fake-headless-backend"
+      );
       const { ProviderTurnExecutor } = await import(
-        "./dev/ProviderTurnExecutor"
+        "@/backend/dev/provider-turn-executor"
       );
       backend = new FakeHeadlessBackend(
         "agent-fake-headless",

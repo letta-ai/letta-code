@@ -7,12 +7,13 @@ import { join, resolve } from "node:path";
 import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
+  LOCAL_BACKEND_DIR_ENV,
 } from "./backend/local/paths";
 import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { getRuntimeContext } from "./runtime-context";
-import { trackBoundaryError } from "./telemetry/errorReporting";
+import { trackBoundaryError } from "./telemetry/error-reporting";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
@@ -46,6 +47,10 @@ export interface StatusLineConfig {
   prompt?: string; // Custom input prompt character (default "›")
 }
 
+export interface WindowTitleConfig {
+  items: string[]; // Ordered list of enabled field keys (e.g. ["agent-name", "model-name"])
+}
+
 /**
  * Per-agent settings stored in a flat array.
  * baseUrl is omitted/undefined for Letta API (api.letta.com).
@@ -68,7 +73,7 @@ export interface AgentSettings {
 
 export interface ConversationGoal {
   objective: string;
-  status: "active" | "paused" | "complete" | "budget_limited";
+  status: "active" | "paused" | "complete" | "blocked" | "budget_limited";
   createdAt: string;
   updatedAt: string;
   activeStartedAt?: string | null;
@@ -86,7 +91,9 @@ export interface Settings {
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
-  planModeEnabled: boolean; // Enables plan-mode tools and /plan command when true
+  includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
+  preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
+  recentModels: string[]; // Recently used model IDs (most recent first, max 5)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionStepCount: number;
@@ -104,6 +111,7 @@ export interface Settings {
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
   statusLine?: StatusLineConfig; // Configurable status line command
+  windowTitle?: WindowTitleConfig; // Configurable terminal window title
   env?: Record<string, string>;
   experiments?: Partial<Record<ExperimentId, boolean>>;
   // Server-indexed settings (agent IDs are server-specific)
@@ -130,6 +138,7 @@ export interface Settings {
 export interface ProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   statusLine?: StatusLineConfig; // Project-specific status line command
+  windowTitle?: WindowTitleConfig; // Project-specific terminal window title
 }
 
 export interface LocalProjectSettings {
@@ -138,6 +147,7 @@ export interface LocalProjectSettings {
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Project-specific hook commands
   statusLine?: StatusLineConfig; // Local project-specific status line command
+  windowTitle?: WindowTitleConfig; // Local project-specific terminal window title
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
@@ -167,7 +177,8 @@ const DEFAULT_SETTINGS: Settings = {
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
   autoSwapOnQuotaLimit: true,
-  planModeEnabled: false,
+  includeWorktreeTool: true,
+  recentModels: [],
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
@@ -208,6 +219,14 @@ function normalizeBaseUrl(baseUrl: string): string {
 
 function getLocalBackendSettingsKey(): string {
   return `local:${resolve(getLocalBackendStorageDir())}`;
+}
+
+function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
+  return (
+    isLocalBackendEnvEnabled() &&
+    typeof process.env[LOCAL_BACKEND_DIR_ENV] === "string" &&
+    process.env[LOCAL_BACKEND_DIR_ENV].length > 0
+  );
 }
 
 /**
@@ -567,12 +586,22 @@ class SettingsManager {
     return this.getSettings()[key];
   }
 
-  isPlanModeEnabled(): boolean {
-    return this.getSettings().planModeEnabled === true;
+  shouldIncludeWorktreeTool(): boolean {
+    return this.getSettings().includeWorktreeTool !== false;
   }
 
-  setPlanModeEnabled(enabled: boolean): void {
-    this.updateSettings({ planModeEnabled: enabled });
+  setIncludeWorktreeTool(enabled: boolean): void {
+    this.updateSettings({ includeWorktreeTool: enabled });
+  }
+
+  getRecentModels(): string[] {
+    return this.getSettings().recentModels ?? [];
+  }
+
+  addRecentModel(modelId: string): void {
+    const current = this.getRecentModels().filter((id) => id !== modelId);
+    const updated = [modelId, ...current].slice(0, 5);
+    this.updateSettings({ recentModels: updated });
   }
 
   getCachedSecureTokens(): SecureTokens {
@@ -745,6 +774,7 @@ class SettingsManager {
       const projectSettings: ProjectSettings = {
         hooks: rawSettings.hooks as HooksConfig | undefined,
         statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
+        windowTitle: rawSettings.windowTitle as WindowTitleConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);
@@ -788,6 +818,9 @@ class SettingsManager {
       }
       if ("statusLine" in updates) {
         globalUpdates.statusLine = updates.statusLine;
+      }
+      if ("windowTitle" in updates) {
+        globalUpdates.windowTitle = updates.windowTitle;
       }
       if (Object.keys(globalUpdates).length > 0) {
         this.updateSettings(globalUpdates);
@@ -1101,6 +1134,10 @@ class SettingsManager {
       return settings.sessionsByServer[serverKey];
     }
 
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
+    }
+
     // Fall back to legacy lastSession for migration
     if (settings.lastSession) {
       return settings.lastSession;
@@ -1121,6 +1158,10 @@ class SettingsManager {
     // Try server-indexed lookup first
     if (settings.sessionsByServer?.[serverKey]) {
       return settings.sessionsByServer[serverKey].agentId;
+    }
+
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
     }
 
     // Fall back to legacy for migration
@@ -1169,6 +1210,10 @@ class SettingsManager {
       return localSettings.sessionsByServer[serverKey];
     }
 
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
+    }
+
     // Fall back to legacy lastSession for migration
     if (localSettings.lastSession) {
       return localSettings.lastSession;
@@ -1190,6 +1235,10 @@ class SettingsManager {
     // Try server-indexed lookup first
     if (localSettings.sessionsByServer?.[serverKey]) {
       return localSettings.sessionsByServer[serverKey].agentId;
+    }
+
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
     }
 
     // Fall back to legacy for migration

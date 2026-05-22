@@ -1,8 +1,10 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getVersion } from "../../version";
-import { commands } from "../commands/registry";
+import { commands } from "@/cli/commands/registry";
+import { getVersion } from "@/version";
 import { colors } from "./colors";
+import { OverlayShell } from "./OverlayShell";
+import { TabBar } from "./TabBar";
 import { Text } from "./Text";
 
 const PAGE_SIZE = 10;
@@ -33,7 +35,7 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
 
   // Load custom commands once on mount
   useEffect(() => {
-    import("../commands/custom.js").then(({ getCustomCommands }) => {
+    import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         setCustomCommands(
           customs.map((cmd) => ({
@@ -150,31 +152,15 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   };
 
   return (
-    <Box flexDirection="column" gap={1}>
-      <Box flexDirection="column">
-        <Text bold color={colors.selector.title}>
-          Letta Code v{version} (↑↓ navigate, ←→/jk page, ESC close)
-        </Text>
-        <Box>
-          <Text dimColor>Tab: </Text>
-          {HELP_TABS.map((tab, i) => (
-            <Text key={tab}>
-              {i > 0 && <Text dimColor> · </Text>}
-              <Text
-                bold={tab === activeTab}
-                color={
-                  tab === activeTab
-                    ? colors.selector.itemHighlighted
-                    : undefined
-                }
-              >
-                {getTabLabel(tab)}
-              </Text>
-            </Text>
-          ))}
-          <Text dimColor> (Tab to switch)</Text>
-        </Box>
+    <OverlayShell
+      command="/help"
+      title={`Letta Code v${version}`}
+      footer={`Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel`}
+    >
+      <Box flexDirection="column" paddingLeft={1}>
+        <TabBar tabs={HELP_TABS} activeTab={activeTab} getLabel={getTabLabel} />
         <Text dimColor>
+          {" "}
           Page {currentPage + 1}/{totalPages}
         </Text>
       </Box>
@@ -240,21 +226,6 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
             );
           })}
       </Box>
-
-      <Box flexDirection="column" marginTop={1}>
-        <Text dimColor>Getting started:</Text>
-        <Text dimColor>
-          • Run <Text bold>/init</Text> to initialize agent memory for this
-          project
-        </Text>
-        <Text dimColor>
-          • Press <Text bold>/</Text> at any time to see command autocomplete
-        </Text>
-        <Text dimColor>
-          • Visit <Text bold>https://docs.letta.com/letta-code</Text> for more
-          help
-        </Text>
-      </Box>
-    </Box>
+    </OverlayShell>
   );
 }

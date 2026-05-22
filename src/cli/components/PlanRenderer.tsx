@@ -1,7 +1,7 @@
 import { Box } from "ink";
 import type React from "react";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
 

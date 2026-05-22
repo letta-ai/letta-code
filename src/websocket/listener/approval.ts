@@ -1,8 +1,5 @@
-import type { ApprovalResult } from "../../agent/approval-execution";
-import type {
-  ApprovalResponseBody,
-  ControlRequest,
-} from "../../types/protocol_v2";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   emitDeviceStatusIfOpen,
   emitLoopStatusIfOpen,

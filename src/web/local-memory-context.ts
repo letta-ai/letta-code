@@ -1,5 +1,5 @@
-import { getBackend } from "../backend";
-import { estimateSystemTokens } from "../utils/systemPromptSize";
+import { getBackend } from "@/backend";
+import { estimateSystemTokens } from "@/utils/system-prompt-size";
 import type { ContextData, ConversationInfo, MessageInfo } from "./types";
 
 type PaginatedItems<T> = T[] | { getPaginatedItems?: () => T[] };

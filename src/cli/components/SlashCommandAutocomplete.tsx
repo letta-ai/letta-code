@@ -1,21 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { settingsManager } from "../../settings-manager";
-import { commands } from "../commands/registry";
-import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { commands } from "@/cli/commands/registry";
+import { truncateText } from "@/cli/helpers/truncate-text";
+import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { settingsManager } from "@/settings-manager";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
 const VISIBLE_COMMANDS = 7; // Number of commands visible at once
 const CMD_COL_WIDTH = 14;
-
-function truncateText(text: string, maxWidth: number): string {
-  if (maxWidth <= 0) return "";
-  if (text.length <= maxWidth) return text;
-  if (maxWidth <= 3) return text.slice(0, maxWidth);
-  return `${text.slice(0, maxWidth - 3)}...`;
-}
 
 // Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)
@@ -65,7 +59,7 @@ export function SlashCommandAutocomplete({
 
   // Load custom commands once on mount
   useEffect(() => {
-    import("../commands/custom.js").then(({ getCustomCommands }) => {
+    import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         const matches: CommandMatch[] = customs.map((cmd) => ({
           cmd: `/${cmd.id}`,
@@ -84,10 +78,10 @@ export function SlashCommandAutocomplete({
     (async () => {
       try {
         const { discoverClientSideSkills } = await import(
-          "../../agent/clientSkills"
+          "@/agent/client-skills"
         );
-        const { getSkillSources } = await import("../../agent/context");
-        const { isUserInvocableSkill } = await import("../../agent/skills");
+        const { getSkillSources } = await import("@/agent/context");
+        const { isUserInvocableSkill } = await import("@/agent/skills");
         const discovery = await discoverClientSideSkills({
           agentId,
           skillSources: getSkillSources(),
@@ -212,18 +206,13 @@ export function SlashCommandAutocomplete({
     manageActiveState: false,
   });
 
-  // Manually manage active state to include the "no matches" case
+  // Manually manage active state - only active when there are matches to select
+  // When there are no matches, we don't block submit so the user can still
+  // run commands that aren't in the autocomplete registry (e.g., /help, /reflection)
   useLayoutEffect(() => {
-    const queryLength = queryInfo?.query.length ?? 0;
-    const isActive =
-      !hideAutocomplete && (matches.length > 0 || queryLength > 0);
+    const isActive = !hideAutocomplete && matches.length > 0;
     onActiveChange?.(isActive);
-  }, [
-    hideAutocomplete,
-    matches.length,
-    onActiveChange,
-    queryInfo?.query.length,
-  ]);
+  }, [hideAutocomplete, matches.length, onActiveChange]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {

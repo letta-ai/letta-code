@@ -1,8 +1,8 @@
 import { Box } from "ink";
 import { memo, useEffect, useState } from "react";
-import type { StreamingState } from "../helpers/accumulator";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { StreamingState } from "@/cli/helpers/accumulator";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { Text } from "./Text";
 
 interface StreamingOutputDisplayProps {

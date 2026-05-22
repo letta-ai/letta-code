@@ -11,8 +11,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   translatePasteForImages,
   tryImportClipboardImageMac,
-} from "../helpers/clipboard";
-import { allocatePaste, resolvePlaceholders } from "../helpers/pasteRegistry";
+} from "@/cli/helpers/clipboard";
+import {
+  allocatePaste,
+  resolvePlaceholders,
+} from "@/cli/helpers/paste-registry";
 
 // Global timestamp for forward delete coordination
 // Use globalThis to ensure singleton across bundle
@@ -711,6 +714,7 @@ export function PasteAwareTextInput({
       const t = setTimeout(() => setNudgeCursorOffset(undefined), 0);
       return () => clearTimeout(t);
     }
+    return undefined;
   }, [nudgeCursorOffset]);
 
   return (

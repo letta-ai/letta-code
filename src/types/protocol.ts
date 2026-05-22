@@ -365,7 +365,7 @@ export type QueueItemSource =
  * - message: User or system text to send to the agent
  * - task_notification: Background task completed notification
  * - approval_result: Tool approval/denial result
- * - overlay_action: Plan mode, AskUserQuestion, etc.
+ * - overlay_action: AskUserQuestion or other overlay action
  */
 export type QueueItemKind =
   | "message"
@@ -441,7 +441,7 @@ export interface QueueBatchDequeuedEvent extends MessageEnvelope {
  * Why the queue cannot dequeue right now.
  * - streaming: Agent turn is actively running/streaming (request, response, or local tool execution)
  * - pending_approvals: Waiting for HITL approval decisions
- * - overlay_open: Plan mode, AskUserQuestion, or other overlay is active
+ * - overlay_open: AskUserQuestion or other overlay is active
  * - command_running: Slash command is executing
  * - interrupt_in_progress: User interrupt (Esc) is being processed
  * - runtime_busy: Generic busy state (e.g., listen-client turn in flight)
