@@ -21,6 +21,7 @@ import {
   type LocalMessage,
 } from "@/backend/local/local-message";
 import type { ClientTool } from "@/tools/manager";
+import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
   isRetryableLocalProviderError,
@@ -91,10 +92,6 @@ class PiProviderError extends Error {
       .find((value): value is number => typeof value === "number");
     this.statusCode = status;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function sleepWithAbort(

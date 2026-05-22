@@ -4,6 +4,7 @@ import {
   parseRetryAfterHeaderMs,
   shouldRetryPreStreamTransientError,
 } from "@/agent/turn-recovery-policy";
+import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 
 export interface LocalProviderErrorInfo {
@@ -41,10 +42,6 @@ const RETRYABLE_LOCAL_PROVIDER_DETAIL_PATTERNS = [
   "terminated",
   "retry delay",
 ];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
