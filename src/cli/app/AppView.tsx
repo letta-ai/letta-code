@@ -1440,6 +1440,18 @@ export function AppView(props: AppViewProps) {
                   agentName={agentState?.name}
                   onClose={closeOverlay}
                   conversationId={conversationId}
+                  contextUsage={
+                    usedContextTokens > 0
+                      ? {
+                          usedTokens: usedContextTokens,
+                          contextWindow: contextWindowSize ?? 0,
+                          model:
+                            currentModelHandle ??
+                            currentModelDisplay ??
+                            "unknown",
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <MemoryTabViewer

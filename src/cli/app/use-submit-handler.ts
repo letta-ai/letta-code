@@ -877,10 +877,20 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           const { generateAndOpenMemoryViewer } = await import(
             "@/web/generate-memory-viewer"
           );
+          const latestContextTokens =
+            contextTrackerRef.current.lastContextTokens;
           generateAndOpenMemoryViewer(agentId, {
             agentName: agentName ?? undefined,
             conversationId:
               conversationId !== "default" ? conversationId : undefined,
+            contextUsage:
+              latestContextTokens > 0
+                ? {
+                    usedTokens: latestContextTokens,
+                    contextWindow: effectiveContextWindowSize ?? 0,
+                    model: llmConfigRef.current?.model ?? "unknown",
+                  }
+                : undefined,
           })
             .then((result) => {
               if (result.opened) {
