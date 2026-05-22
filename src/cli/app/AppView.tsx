@@ -100,6 +100,7 @@ type ModelSelectorOptions = {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
+  initialEffort?: ModelReasoningEffort;
   options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
 };
 
@@ -719,6 +720,7 @@ export function AppView(props: AppViewProps) {
                   modelLabel={modelReasoningPrompt.modelLabel}
                   options={modelReasoningPrompt.options}
                   initialModelId={modelReasoningPrompt.initialModelId}
+                  initialEffort={modelReasoningPrompt.initialEffort}
                   onSelect={(selectedOption) => {
                     setModelReasoningPrompt(null);
                     void handleModelSelect(selectedOption.modelId, null, {

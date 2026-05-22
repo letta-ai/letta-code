@@ -49,6 +49,7 @@ import type {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
+  initialEffort?: ModelReasoningEffort;
   options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
 };
 
@@ -287,6 +288,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             setModelReasoningPrompt({
               modelLabel: model.label,
               initialModelId: preferredOption.modelId,
+              initialEffort: preferredOption.effort,
               options: reasoningTierOptions,
             });
             return;

@@ -17,6 +17,7 @@ interface ModelReasoningSelectorProps {
   modelLabel: string;
   options: ReasoningOption[];
   initialModelId: string;
+  initialEffort?: ModelReasoningEffort;
   onSelect: (option: ReasoningOption) => void;
   onCancel: () => void;
 }
@@ -36,6 +37,7 @@ export function ModelReasoningSelector({
   modelLabel,
   options,
   initialModelId,
+  initialEffort,
   onSelect,
   onCancel,
 }: ModelReasoningSelectorProps) {
@@ -43,19 +45,23 @@ export function ModelReasoningSelector({
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const [selectedIndex, setSelectedIndex] = useState(() => {
     const idx = options.findIndex(
-      (option) => option.modelId === initialModelId,
+      (option) =>
+        option.modelId === initialModelId &&
+        (initialEffort === undefined || option.effort === initialEffort),
     );
     return idx >= 0 ? idx : 0;
   });
 
   useEffect(() => {
     const idx = options.findIndex(
-      (option) => option.modelId === initialModelId,
+      (option) =>
+        option.modelId === initialModelId &&
+        (initialEffort === undefined || option.effort === initialEffort),
     );
     if (idx >= 0) {
       setSelectedIndex(idx);
     }
-  }, [options, initialModelId]);
+  }, [options, initialModelId, initialEffort]);
 
   const selectedOption = options[selectedIndex] ?? options[0];
   const effortOptions = useMemo(
