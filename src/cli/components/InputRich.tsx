@@ -27,6 +27,7 @@ import { buildChatUrl } from "@/cli/helpers/app-urls.js";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
+import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -536,7 +537,9 @@ const InputFooter = memo(function InputFooter({
 
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
-  const reasoningTag = getReasoningEffortTag(currentReasoningEffort);
+  const reasoningTag = shouldHideReasoningForModelDisplay(currentModel)
+    ? null
+    : getReasoningEffortTag(currentReasoningEffort);
   const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
   const tempOverrideExtraChars = hasTemporaryModelOverride ? 2 : 0; // " ▲"
 
