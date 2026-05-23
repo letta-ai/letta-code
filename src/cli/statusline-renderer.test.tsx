@@ -5,7 +5,6 @@ import {
   getBuiltinStatuslineRenderer,
   getBuiltinStatuslineRenderers,
 } from "@/cli/display/statusline/registry";
-import { renderCustomStatusline } from "@/cli/display/statusline/renderers/Custom";
 import { buildLegacyStatuslineParts } from "@/cli/display/statusline/renderers/Legacy";
 
 describe("statusline renderers", () => {
@@ -15,14 +14,10 @@ describe("statusline renderers", () => {
     expect(getBuiltinStatuslineRenderer("missing").id).toBe("legacy");
   });
 
-  test("registry exposes legacy and custom renderers", () => {
+  test("registry exposes the legacy renderer", () => {
     expect(
       getBuiltinStatuslineRenderers().map((renderer) => renderer.id),
-    ).toEqual(["legacy", "custom"]);
-  });
-
-  test("custom renderer is an empty placeholder", () => {
-    expect(renderCustomStatusline()).toBeNull();
+    ).toEqual(["legacy"]);
   });
 
   test("legacy renderer preserves the detailed model label", () => {

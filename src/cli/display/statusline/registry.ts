@@ -1,4 +1,3 @@
-import { customStatuslineRenderer } from "@/cli/display/statusline/renderers/Custom";
 import { legacyStatuslineRenderer } from "@/cli/display/statusline/renderers/Legacy";
 import type { StatuslineRenderer } from "@/cli/display/statusline/types";
 
@@ -6,7 +5,6 @@ export const DEFAULT_STATUSLINE_RENDERER_ID = "legacy";
 
 const BUILTIN_STATUSLINE_RENDERERS = [
   legacyStatuslineRenderer,
-  customStatuslineRenderer,
 ] as const satisfies readonly StatuslineRenderer[];
 
 export function getBuiltinStatuslineRenderers(): readonly StatuslineRenderer[] {
