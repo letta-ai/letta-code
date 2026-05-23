@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import { getChannelDir } from "../config";
-import { transcribeAudioFile } from "../transcription";
+import { getChannelDir } from "@/channels/config";
+import { transcribeAudioFile } from "@/channels/transcription";
 import type {
   ChannelMessageAttachment,
   OutboundChannelMessage,
-} from "../types";
+} from "@/channels/types";
 import { sanitizePathSegment } from "./jid";
 
 export const DEFAULT_WHATSAPP_MEDIA_MAX_BYTES = 50 * 1024 * 1024;

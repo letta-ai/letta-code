@@ -3,12 +3,12 @@ import type {
   ChannelConfigSchema,
   ChannelConfigSelectField,
   ChannelConfigTextField,
-} from "@/channels/pluginTypes";
+} from "@/channels/plugin-types";
 import {
   parseChannelConfigSchema,
   redactConfigForSnapshot,
   validateConfigAgainstSchema,
-} from "@/channels/schemaConfig";
+} from "@/channels/schema-config";
 
 const SIMPLE_SCHEMA: ChannelConfigSchema = {
   version: 1,

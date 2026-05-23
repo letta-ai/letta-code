@@ -3,7 +3,7 @@ import { telemetry } from "@/telemetry";
 import {
   formatTelemetryErrorMessage,
   trackBoundaryError,
-} from "@/telemetry/errorReporting";
+} from "@/telemetry/error-reporting";
 
 describe("telemetry error reporting helper", () => {
   test("formats error values safely", () => {

@@ -26,7 +26,7 @@ describe("/reload command", () => {
 
   test("useSubmitHandler handles /reload command", () => {
     const submitHandlerPath = fileURLToPath(
-      new URL("../cli/app/useSubmitHandler.ts", import.meta.url),
+      new URL("../cli/app/use-submit-handler.ts", import.meta.url),
     );
     const source = readFileSync(submitHandlerPath, "utf-8");
 
@@ -36,7 +36,7 @@ describe("/reload command", () => {
 
   test("/reload has a busy guard", () => {
     const submitHandlerPath = fileURLToPath(
-      new URL("../cli/app/useSubmitHandler.ts", import.meta.url),
+      new URL("../cli/app/use-submit-handler.ts", import.meta.url),
     );
     const source = readFileSync(submitHandlerPath, "utf-8");
 
@@ -45,7 +45,7 @@ describe("/reload command", () => {
 
   test("/reload is in NON_STATE_COMMANDS for bypass routing", () => {
     const commandRoutingPath = fileURLToPath(
-      new URL("../cli/app/commandRouting.ts", import.meta.url),
+      new URL("../cli/app/command-routing.ts", import.meta.url),
     );
     const source = readFileSync(commandRoutingPath, "utf-8");
 

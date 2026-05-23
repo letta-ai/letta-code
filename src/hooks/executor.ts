@@ -3,7 +3,7 @@
 // Cross-platform: uses platform-appropriate shell (PowerShell on Windows, sh/bash/zsh on Unix)
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { buildShellLaunchers } from "@/tools/impl/shellLaunchers";
+import { buildShellLaunchers } from "@/tools/impl/shell-launchers";
 import { executePromptHook } from "./prompt-executor";
 import {
   type CommandHookConfig,

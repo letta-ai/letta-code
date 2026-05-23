@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelMessageActionContext } from "@/channels/pluginTypes";
+import type { ChannelMessageActionContext } from "@/channels/plugin-types";
 import type { ChannelAdapter, OutboundChannelMessage } from "@/channels/types";
-import { whatsappMessageActions } from "@/channels/whatsapp/messageActions";
+import { whatsappMessageActions } from "@/channels/whatsapp/message-actions";
 
 function makeContext(action: string, overrides: Record<string, unknown> = {}) {
   const sent: OutboundChannelMessage[] = [];

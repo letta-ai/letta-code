@@ -5,7 +5,7 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   getPermissionModeScopeKey,
   pruneConversationPermissionModeStateIfDefault,
-} from "@/websocket/listener/permissionMode";
+} from "@/websocket/listener/permission-mode";
 
 describe("listener permission mode helpers", () => {
   test("getOrCreate ref preserves identity across legacy default-key migration", () => {
@@ -14,8 +14,6 @@ describe("listener permission mode helpers", () => {
 
     const legacyState = {
       mode: "acceptEdits" as const,
-      planFilePath: null,
-      modeBeforePlan: null,
     };
     listener.permissionModeByConversation.set(legacyKey, legacyState);
 

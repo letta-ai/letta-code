@@ -25,7 +25,7 @@ import {
   type MemoryPromptMode,
   resolveAndBuildSystemPrompt,
   SLEEPTIME_MEMORY_PERSONA,
-} from "./promptAssets";
+} from "./prompt-assets";
 
 /**
  * Describes where a memory block came from

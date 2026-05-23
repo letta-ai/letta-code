@@ -3,7 +3,7 @@ import Letta from "@letta-ai/letta-client";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "@/auth/oauth";
 import { experimentManager } from "@/experiments/manager";
 import { type Settings, settingsManager } from "@/settings-manager";
-import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
 import { createTimingFetch, isTimingsEnabled } from "@/utils/timing";
 import packageJson from "../../../package.json";
@@ -141,6 +141,9 @@ export function getClientDefaultHeaders(): Record<string, string> {
       : nodeExperiment.enabled
         ? { "x-letta-node": "1" }
         : {}),
+    ...(process.env.LETTA_MEMFS_BACKEND === "hosted"
+      ? { "x-letta-memfs-backend": "hosted" }
+      : {}),
   };
 }
 

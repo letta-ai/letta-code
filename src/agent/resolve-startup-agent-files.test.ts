@@ -9,6 +9,8 @@ const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
 const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+const originalBaseUrl = process.env.LETTA_BASE_URL;
+const originalMemfsBaseUrl = process.env.LETTA_MEMFS_BASE_URL;
 
 let testHomeDir: string;
 let testProjectDir: string;
@@ -70,6 +72,8 @@ beforeEach(async () => {
   process.env.HOME = testHomeDir;
   delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
   delete process.env.LETTA_LOCAL_BACKEND_DIR;
+  delete process.env.LETTA_BASE_URL;
+  delete process.env.LETTA_MEMFS_BASE_URL;
   process.chdir(testProjectDir);
 });
 
@@ -86,6 +90,16 @@ afterEach(async () => {
     delete process.env.LETTA_LOCAL_BACKEND_DIR;
   } else {
     process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
+  }
+  if (originalBaseUrl === undefined) {
+    delete process.env.LETTA_BASE_URL;
+  } else {
+    process.env.LETTA_BASE_URL = originalBaseUrl;
+  }
+  if (originalMemfsBaseUrl === undefined) {
+    delete process.env.LETTA_MEMFS_BASE_URL;
+  } else {
+    process.env.LETTA_MEMFS_BASE_URL = originalMemfsBaseUrl;
   }
   await rm(testHomeDir, { recursive: true, force: true });
   await rm(testProjectDir, { recursive: true, force: true });
@@ -115,6 +129,25 @@ describe("startup resolution from settings files", () => {
       action: "resume",
       agentId: "agent-global",
     });
+  });
+
+  test("api startup ignores incompatible local agent stored under api.letta.com", async () => {
+    await writeGlobalSettings({
+      sessionsByServer: {
+        "api.letta.com": {
+          agentId: "agent-local-poisoned",
+          conversationId: "local-conv-poisoned",
+        },
+      },
+      lastAgent: "agent-local-poisoned",
+      lastSession: {
+        agentId: "agent-local-poisoned",
+        conversationId: "local-conv-poisoned",
+      },
+    });
+
+    const target = await resolveFromSettings();
+    expect(target).toEqual({ action: "create" });
   });
 
   test("local session + valid local agent => resume local agent", async () => {
@@ -329,6 +362,8 @@ describe("startup resolution from settings files", () => {
     });
     expect(globalSettings.sessionsByServer?.["api.letta.com"]).toBeUndefined();
     expect(localSettings.sessionsByServer?.["api.letta.com"]).toBeUndefined();
+    expect(globalSettings.lastAgent).toBeNull();
+    expect(globalSettings.lastSession).toBeUndefined();
   });
 
   test("local backend reads the session for the active storage directory", async () => {

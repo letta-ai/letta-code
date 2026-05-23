@@ -23,7 +23,6 @@ export function StaticTranscript({
   statusLinePrompt,
   showCompactionsEnabled,
   precomputedDiffs,
-  lastPlanFilePath,
   hiddenToolCallId,
   lastShellToolCallId,
 }: {
@@ -33,7 +32,6 @@ export function StaticTranscript({
   statusLinePrompt: string;
   showCompactionsEnabled: boolean;
   precomputedDiffs: Map<string, AdvancedDiffSuccess>;
-  lastPlanFilePath: string | null;
   hiddenToolCallId?: string;
   /** Used to show ctrl+o hint on the last committed tool call.
    *  Intentionally NOT included in the Static key — passing it here without
@@ -64,7 +62,6 @@ export function StaticTranscript({
                 <ToolCallMessage
                   line={item}
                   precomputedDiffs={precomputedDiffs}
-                  lastPlanFilePath={lastPlanFilePath}
                   expandedToolCallId={hiddenToolCallId}
                   lastShellToolCallId={lastShellToolCallId}
                 />
@@ -95,8 +92,6 @@ export function StaticTranscript({
                   toolArgs={item.toolArgs}
                   precomputedDiff={item.precomputedDiff}
                   allDiffs={precomputedDiffs}
-                  planContent={item.planContent}
-                  planFilePath={item.planFilePath}
                   toolCallId={item.toolCallId}
                 />
               ) : null}

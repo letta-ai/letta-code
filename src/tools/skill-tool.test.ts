@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { consumeQueuedSkillContent } from "@/tools/impl/skillContentRegistry";
+import { consumeQueuedSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;
 
 const { renderSkillContent, skill, wrapSkillContent } = await import(
-  "@/tools/impl/Skill"
+  "@/tools/impl/skill"
 );
 
 function withSkillContext<T>(fn: () => Promise<T>) {
@@ -31,12 +31,15 @@ describe("Skill tool memory filesystem lookup", () => {
   let tempRoot: string;
   const originalMemoryDir = process.env.MEMORY_DIR;
   const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
+  const originalLocalBackendExperimental =
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
   const originalHome = process.env.HOME;
   const originalUserCwd = process.env.USER_CWD;
 
   beforeEach(() => {
     tempRoot = mkdtempSync(join(tmpdir(), "letta-skill-tool-"));
     currentSkillsDirectory = join(tempRoot, ".skills");
+    delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
     consumeQueuedSkillContent();
   });
 
@@ -55,6 +58,13 @@ describe("Skill tool memory filesystem lookup", () => {
       delete process.env.LETTA_MEMORY_DIR;
     } else {
       process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+    }
+
+    if (originalLocalBackendExperimental === undefined) {
+      delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    } else {
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL =
+        originalLocalBackendExperimental;
     }
 
     if (originalHome === undefined) {
@@ -208,6 +218,38 @@ describe("Skill tool memory filesystem lookup", () => {
     const queued = consumeQueuedSkillContent();
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toContain("Loaded from agent memory fallback.");
+  });
+
+  test("does not load legacy ~/.letta/agents/<id>/skills entries", async () => {
+    const skillName = "legacy-agent-skill";
+    const skillDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "skills",
+      skillName,
+    );
+
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: legacy-agent-skill\ndescription: test\n---\n\nLoaded from legacy agent skills.",
+      "utf8",
+    );
+
+    delete process.env.MEMORY_DIR;
+    delete process.env.LETTA_MEMORY_DIR;
+    process.env.HOME = tempRoot;
+
+    await expect(
+      runScopedSkill({
+        skill: skillName,
+        toolCallId: "tc-legacy-agent-skill",
+      }),
+    ).rejects.toThrow(skillName);
+
+    expect(consumeQueuedSkillContent()).toHaveLength(0);
   });
 
   test("prefers injected parentScope.agentId over global agent context for memfs fallback", async () => {

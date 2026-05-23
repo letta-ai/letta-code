@@ -11,6 +11,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { getBackend } from "@/backend";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
+import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
 
 type ModelSettings =
@@ -21,10 +22,6 @@ type ModelSettings =
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return modelHandle.includes("claude-opus-4-7");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -416,7 +413,7 @@ export async function updateAgentSystemPrompt(
 ): Promise<UpdateSystemPromptResult> {
   try {
     const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "@/agent/promptAssets"
+      "@/agent/prompt-assets"
     );
     const { settingsManager } = await import("@/settings-manager");
 
@@ -491,7 +488,7 @@ export async function updateAgentSystemPromptMemfs(
   try {
     const { settingsManager } = await import("@/settings-manager");
     const { isKnownPreset, buildSystemPrompt } = await import(
-      "@/agent/promptAssets"
+      "@/agent/prompt-assets"
     );
 
     const newMode = enableMemfs

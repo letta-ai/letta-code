@@ -7,7 +7,8 @@ import type { Tool } from "@letta-ai/letta-client/resources/tools";
 import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useState } from "react";
 import { getClient } from "@/backend/api/client";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { truncateText } from "@/cli/helpers/truncate-text";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -57,11 +58,6 @@ function getServerTarget(server: McpServer): string {
 /**
  * Truncate text with ellipsis if it exceeds width
  */
-function truncateText(text: string, maxWidth: number): string {
-  if (text.length <= maxWidth) return text;
-  if (maxWidth < 10) return text.slice(0, maxWidth);
-  return `${text.slice(0, maxWidth - 3)}...`;
-}
 
 type Mode = "browsing" | "confirming-delete" | "viewing-tools";
 

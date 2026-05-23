@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { checkPermission } from "@/permissions/checker";
-import { cliPermissions } from "@/permissions/cliPermissionsInstance";
+import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { permissionMode } from "@/permissions/mode";
 import type { PermissionRules } from "@/permissions/types";
 
@@ -59,6 +59,18 @@ test("Handle whitespace in tool list", () => {
   const tools = cliPermissions.getAllowedTools();
 
   expect(tools).toEqual(["Bash(:*)", "Read(**)", "Write(**)"]);
+});
+
+test("tracks disable-memory-guard CLI override", () => {
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
+  cliPermissions.setMemoryGuardDisabled(true);
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
+});
+
+test("clear resets disable-memory-guard CLI override", () => {
+  cliPermissions.setMemoryGuardDisabled(true);
+  cliPermissions.clear();
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
 });
 
 // ============================================================================

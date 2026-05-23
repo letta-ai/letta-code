@@ -3,7 +3,7 @@ import {
   clearSecretsCache,
   initSecretsFromServer,
   loadSecrets,
-} from "@/utils/secretsStore";
+} from "@/utils/secrets-store";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import {
   __testOverrideRefreshSecretsForAgent,

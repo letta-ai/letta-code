@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { searchFiles } from "@/cli/helpers/fileSearch";
-import { useAutocompleteNavigation } from "@/cli/hooks/useAutocompleteNavigation";
-import { addEntriesToCache } from "@/utils/fileIndex";
+import { searchFiles } from "@/cli/helpers/file-search";
+import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
+import { addEntriesToCache } from "@/utils/file-index";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { colors } from "./colors";
 import { Text } from "./Text";

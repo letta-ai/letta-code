@@ -6,13 +6,10 @@
 import { hostname } from "node:os";
 import { getServerUrl } from "@/backend/api/client";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
-import { buildAgentReference } from "@/cli/helpers/appUrls";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
-import {
-  registerWithCloud,
-  registerWithCloudRetry,
-} from "@/websocket/listen-register";
+import { registerWithCloudRetry } from "@/websocket/listen-register";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -226,14 +223,30 @@ export async function handleListen(
       throw new Error("Missing LETTA_API_KEY");
     }
 
-    // Register with cloud
+    // Register with cloud, retrying transient failures with a bounded backoff.
     const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloud({
-        serverUrl,
-        apiKey,
-        deviceId,
-        connectionName,
-      });
+      await registerWithCloudRetry(
+        {
+          serverUrl,
+          apiKey,
+          deviceId,
+          connectionName,
+        },
+        {
+          onRetry: (attempt, delayMs, error) => {
+            updateCommandResult(
+              ctx.buffersRef,
+              ctx.refreshDerived,
+              cmdId,
+              msg,
+              `Registering listener "${connectionName}"...\n` +
+                `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+              true,
+              "running",
+            );
+          },
+        },
+      );
 
     updateCommandResult(
       ctx.buffersRef,
@@ -331,6 +344,7 @@ export async function handleListen(
             const reregisterResult = await registerWithCloudRetry(
               { serverUrl, apiKey, deviceId, connectionName },
               {
+                maxDurationMs: Infinity,
                 onRetry: (attempt, delayMs, error) => {
                   updateCommandResult(
                     ctx.buffersRef,

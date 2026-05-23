@@ -87,4 +87,28 @@ describe("OAuth network errors", () => {
       pollForToken("device-code", 0, 60, "device-id"),
     ).rejects.toThrow("User denied authorization");
   });
+
+  test("pollForToken supports cancellation via AbortSignal", async () => {
+    const controller = new AbortController();
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "authorization_pending" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    const promise = pollForToken(
+      "device-code",
+      1,
+      60,
+      "device-id",
+      undefined,
+      controller.signal,
+    );
+    controller.abort();
+
+    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+  });
 });

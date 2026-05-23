@@ -1,12 +1,11 @@
 import { Box } from "ink";
 import { memo } from "react";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
-import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { parsePatchOperations } from "@/cli/helpers/format-args-display";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
 import { BashPreview } from "./previews/BashPreview";
-import { PlanPreview } from "./previews/PlanPreview";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
@@ -17,8 +16,6 @@ type Props = {
   toolArgs: string;
   precomputedDiff?: AdvancedDiffSuccess;
   allDiffs?: Map<string, AdvancedDiffSuccess>;
-  planContent?: string;
-  planFilePath?: string;
   toolCallId?: string;
 };
 
@@ -105,26 +102,10 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
  * what the inline approval components show.
  */
 export const ApprovalPreview = memo(
-  ({
-    toolName,
-    toolArgs,
-    precomputedDiff,
-    allDiffs,
-    planContent,
-    toolCallId,
-  }: Props) => {
+  ({ toolName, toolArgs, precomputedDiff, allDiffs, toolCallId }: Props) => {
     const columns = useTerminalWidth();
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
-
-    // ExitPlanMode: Use PlanPreview component
-    if (toolName === "ExitPlanMode" && planContent) {
-      return (
-        <Box flexDirection="column">
-          <PlanPreview plan={planContent} />
-        </Box>
-      );
-    }
 
     // Bash/Shell: Use BashPreview component
     if (

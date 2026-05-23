@@ -1,7 +1,7 @@
-import type { ChannelPlugin } from "../pluginTypes";
-import type { ChannelAccount, WhatsAppChannelAccount } from "../types";
+import type { ChannelPlugin } from "@/channels/plugin-types";
+import type { ChannelAccount, WhatsAppChannelAccount } from "@/channels/types";
 import { createWhatsAppAdapter } from "./adapter";
-import { whatsappMessageActions } from "./messageActions";
+import { whatsappMessageActions } from "./message-actions";
 import { runWhatsAppSetup } from "./setup";
 
 export const whatsappChannelPlugin: ChannelPlugin = {

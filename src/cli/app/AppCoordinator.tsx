@@ -18,16 +18,16 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { prefetchAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memoryFilesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
 } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
-import { shouldRecommendDefaultPrompt } from "@/agent/promptAssets";
-import { reconcileExistingAgentState } from "@/agent/reconcileExistingAgentState";
-import { recordSessionEnd } from "@/agent/sessionHistory";
+import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
+import { reconcileExistingAgentState } from "@/agent/reconcile-existing-agent-state";
+import { recordSessionEnd } from "@/agent/session-history";
 import { SessionStats } from "@/agent/stats";
 import {
   clearSubagentsByIds,
@@ -35,10 +35,14 @@ import {
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
-} from "@/agent/subagentState";
-import { getBackend } from "@/backend";
+} from "@/agent/subagent-state";
+import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
+import {
+  cancelActiveConnectOperation,
+  isActiveConnectOperationCancellable,
+} from "@/cli/commands/connect-command-state";
 import {
   type CommandFinishedEvent,
   type CommandHandle,
@@ -52,54 +56,55 @@ import {
   type Line,
   toLines,
 } from "@/cli/helpers/accumulator";
-import { isLocalAgentId } from "@/cli/helpers/appUrls";
+import { isLocalAgentId } from "@/cli/helpers/app-urls";
 import { backfillBuffers } from "@/cli/helpers/backfill";
-import { chunkLog } from "@/cli/helpers/chunkLog";
+import { chunkLog } from "@/cli/helpers/chunk-log";
 import {
   createContextTracker,
   resetContextHistory,
-} from "@/cli/helpers/contextTracker";
+} from "@/cli/helpers/context-tracker";
 import {
   generateConversationTitleFromFork,
   normalizeConversationTitle,
-} from "@/cli/helpers/conversationTitle";
+} from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
-import { setErrorContext } from "@/cli/helpers/errorContext";
-import { parsePatchOperations } from "@/cli/helpers/formatArgsDisplay";
-import { getReflectionSettings } from "@/cli/helpers/memoryReminder";
+import { setErrorContext } from "@/cli/helpers/error-context";
+import { parsePatchOperations } from "@/cli/helpers/format-args-display";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import {
   buildContentFromQueueBatch,
   toQueuedMsg,
-} from "@/cli/helpers/queuedMessageParts";
-import { safeJsonParseOr } from "@/cli/helpers/safeJsonParse";
+} from "@/cli/helpers/queued-message-parts";
+import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
+import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   collectFinishedTaskToolCalls,
   createSubagentGroupItem,
   hasInProgressTaskToolCalls,
-} from "@/cli/helpers/subagentAggregation";
-import { buildStartupSystemPromptWarning } from "@/cli/helpers/systemPromptWarning.ts";
-import { getRandomThinkingVerb } from "@/cli/helpers/thinkingMessages";
+} from "@/cli/helpers/subagent-aggregation";
+import { buildStartupSystemPromptWarning } from "@/cli/helpers/system-prompt-warning.ts";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
   isShellOutputTool,
   isShellTool,
-} from "@/cli/helpers/toolNameMapping";
-import { isTaskTool } from "@/cli/helpers/toolNameMapping.js";
-import { getTuiBlockedReason } from "@/cli/helpers/tuiQueueAdapter";
+} from "@/cli/helpers/tool-name-mapping";
+import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
 import {
   renderWindowTitle,
   resolveWindowTitleConfig,
-} from "@/cli/helpers/windowTitleConfig";
-import { useConfigurableStatusLine } from "@/cli/hooks/useConfigurableStatusLine";
-import { useSuspend } from "@/cli/hooks/useSuspend/useSuspend.ts";
-import { useSyncedState } from "@/cli/hooks/useSyncedState";
+} from "@/cli/helpers/window-title-config";
+import { useConfigurableStatusLine } from "@/cli/hooks/use-configurable-status-line";
+import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
   useTerminalRows,
   useTerminalWidth,
-} from "@/cli/hooks/useTerminalWidth";
+} from "@/cli/hooks/use-terminal-width";
+import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
 import {
   getTask,
   handleMissedOneShot,
@@ -109,6 +114,7 @@ import {
   updateTask,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
+import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
@@ -117,13 +123,13 @@ import {
   type MessageQueueItem,
   QueueRuntime,
   type TaskNotificationQueueItem,
-} from "@/queue/queueRuntime";
-import { ralphMode } from "@/ralph/mode";
+} from "@/queue/queue-runtime";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
   enqueueToolsetChangeReminder,
   resetSharedReminderState,
+  type SharedReminderState,
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -148,10 +154,9 @@ import {
   addToMessageQueue,
   type QueuedMessage,
   setMessageQueueAdder,
-} from "@/utils/messageQueueBridge";
-import { generatePlanFilePath } from "@/utils/planName";
-import { appendTaskNotificationEventsToBuffer } from "@/utils/taskNotifications";
-import { recordTuiPerf } from "@/utils/tuiPerf";
+} from "@/utils/message-queue-bridge";
+import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
+import { recordTuiPerf } from "@/utils/tui-perf";
 import { getVersion } from "@/version";
 import { AppView } from "./AppView";
 import {
@@ -181,7 +186,7 @@ import {
   getPreferredAgentModelHandle,
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
-} from "./modelConfig";
+} from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
   ActiveOverlay,
@@ -189,16 +194,111 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
-import { useApprovalFlow } from "./useApprovalFlow";
-import { useBashHandlers } from "./useBashHandlers";
-import { useConfigurationHandlers } from "./useConfigurationHandlers";
-import { useConversationLoop } from "./useConversationLoop";
-import { useConversationSwitching } from "./useConversationSwitching";
-import { useFeedbackHandler } from "./useFeedbackHandler";
-import { useInterruptHandler } from "./useInterruptHandler";
-import { useQueuedApprovalSubmit } from "./useQueuedApprovalSubmit";
-import { useReasoningCycle } from "./useReasoningCycle";
-import { useSubmitHandler } from "./useSubmitHandler";
+import { useApprovalFlow } from "./use-approval-flow";
+import { useBashHandlers } from "./use-bash-handlers";
+import { useConfigurationHandlers } from "./use-configuration-handlers";
+import { useConversationLoop } from "./use-conversation-loop";
+import { useConversationSwitching } from "./use-conversation-switching";
+import { useFeedbackHandler } from "./use-feedback-handler";
+import { useInterruptHandler } from "./use-interrupt-handler";
+import { useQueuedApprovalSubmit } from "./use-queued-approval-submit";
+import { useReasoningCycle } from "./use-reasoning-cycle";
+import { useSubmitHandler } from "./use-submit-handler";
+
+function buildStartupCommandHints(options: {
+  isResumingConversation: boolean;
+  isPinned: boolean;
+  isLocalBackend: boolean;
+  hasMessages: boolean;
+  hasCloudCredentials: boolean;
+  hasAvailableLocalModels: boolean;
+}): string[] {
+  const {
+    isResumingConversation,
+    isPinned,
+    isLocalBackend,
+    hasMessages,
+    hasCloudCredentials,
+    hasAvailableLocalModels,
+  } = options;
+
+  const baseHints = isResumingConversation
+    ? [
+        "→ **/agents**    list all agents",
+        "→ **/resume**    browse all conversations",
+        "→ **/new**       start a new conversation",
+        "→ **/init**      initialize your agent's memory",
+        "→ **/remember**  teach your agent",
+      ]
+    : isPinned
+      ? [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/memory**    view your agent's memory",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ]
+      : [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/pin**       save + name your agent",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ];
+
+  const onboardingHints: string[] = [];
+
+  if (isLocalBackend && !hasAvailableLocalModels) {
+    onboardingHints.push(
+      "→ **/model**     switch models",
+      "→ **/connect**   configure your llm api keys",
+    );
+  }
+
+  if (!hasMessages) {
+    onboardingHints.push(
+      "→ **/rename**    name your agent",
+      "→ **/init**      initialize your agent's memory",
+    );
+  }
+
+  if (!hasCloudCredentials) {
+    onboardingHints.push("→ **/login**     sign in to Constellation");
+  }
+
+  const dedupedHints: string[] = [];
+  const seenHints = new Set<string>();
+
+  for (const hint of [...onboardingHints, ...baseHints]) {
+    if (seenHints.has(hint)) {
+      continue;
+    }
+    seenHints.add(hint);
+    dedupedHints.push(hint);
+    if (dedupedHints.length === 5) {
+      break;
+    }
+  }
+
+  return dedupedHints;
+}
+
+function hasConversationContent(lines: Line[]): boolean {
+  return lines.some((line) => {
+    switch (line.kind) {
+      case "user":
+      case "assistant":
+      case "reasoning":
+      case "tool_call":
+      case "error":
+      case "command":
+      case "bash_command":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
 
 export function App({
   agentId: initialAgentId,
@@ -214,6 +314,8 @@ export function App({
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
   agentProvenance = null,
+  startupHasCloudCredentials = false,
+  startupHasAvailableLocalModels = true,
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
@@ -222,6 +324,13 @@ export function App({
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
     prefetchAvailableModelHandles();
+  }, []);
+
+  const [hasAvailableLocalModels, setHasAvailableLocalModels] = useState(
+    startupHasAvailableLocalModels,
+  );
+  const markLocalModelsAvailable = useCallback(() => {
+    setHasAvailableLocalModels(true);
   }, []);
 
   // Track current agent (can change when swapping)
@@ -279,7 +388,7 @@ export function App({
 
   // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
-    | import("@/cli/helpers/conversationSwitchAlert").ConversationSwitchContext
+    | import("@/cli/helpers/conversation-switch-alert").ConversationSwitchContext
     | null
   >(null);
 
@@ -338,38 +447,15 @@ export function App({
     null,
   );
 
-  // Store the last plan file path for post-approval rendering
-  // (needed because plan mode is exited before rendering the result)
-  const lastPlanFilePathRef = useRef<string | null>(null);
-  const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {
-    if (planFilePath) {
-      lastPlanFilePathRef.current = planFilePath;
+  const setUiPermissionMode = useCallback((mode: PermissionMode) => {
+    uiPermissionModeRef.current = mode;
+    _setUiPermissionMode(mode);
+
+    // Keep the permissionMode singleton in sync *immediately*.
+    if (permissionMode.getMode() !== mode) {
+      permissionMode.setMode(mode);
     }
   }, []);
-
-  const setUiPermissionMode = useCallback(
-    (mode: PermissionMode) => {
-      uiPermissionModeRef.current = mode;
-      _setUiPermissionMode(mode);
-
-      // Keep the permissionMode singleton in sync *immediately*.
-      //
-      // We also have a useEffect sync (below) as a safety net, but relying on it
-      // introduces a render/effect window where the UI can show YOLO while the
-      // singleton still reports an older mode. That window is enough to break
-      // plan-mode restoration (plan remembers the singleton's mode-at-entry).
-      if (permissionMode.getMode() !== mode) {
-        // If entering plan mode via UI state, ensure a plan file path is set.
-        if (mode === "plan" && !permissionMode.getPlanFilePath()) {
-          const planPath = generatePlanFilePath();
-          permissionMode.setPlanFilePath(planPath);
-          cacheLastPlanFilePath(planPath);
-        }
-        permissionMode.setMode(mode);
-      }
-    },
-    [cacheLastPlanFilePath],
-  );
 
   const statusLineTriggerVersionRef = useRef(0);
   const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
@@ -427,8 +513,6 @@ export function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
-  const lastAutoApprovedEnterPlanToolCallIdRef = useRef<string | null>(null);
-  const lastAutoHandledExitPlanToolCallIdRef = useRef<string | null>(null);
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [queuedApprovalResults, setQueuedApprovalResults] = useState<
     ApprovalResult[] | null
@@ -508,16 +592,9 @@ export function App({
     [],
   );
 
-  // Ralph Wiggum mode: config waiting for next message to capture as prompt
-  const [pendingRalphConfig, setPendingRalphConfig] = useState<{
-    completionPromise: string | null | undefined;
-    maxIterations: number;
-    isYolo: boolean;
-  } | null>(null);
-
-  // Track ralph mode for UI updates (singleton state doesn't trigger re-renders)
-  const [uiRalphActive, setUiRalphActive] = useState(
-    ralphMode.getState().isActive,
+  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
+  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
+    goalLoopMode.getState().isActive,
   );
 
   // Derive current approval from pending approvals and results
@@ -763,10 +840,15 @@ export function App({
     : agentState?.model_settings;
   const derivedReasoningEffort: ModelReasoningEffort | null =
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
+  const startupModelDisplayOverride = getStartupModelDisplayOverride({
+    isLocalBackend: isLocalBackendEnabled(),
+    startupHasAvailableLocalModels: hasAvailableLocalModels,
+  });
 
   // Use tier-aware resolution so the display matches the agent's reasoning effort
   // (e.g. "GPT-5.3-Codex" not just "GPT-5" for the first match).
   const currentModelDisplay = useMemo(() => {
+    if (startupModelDisplayOverride) return startupModelDisplayOverride;
     if (!currentModelLabel) return null;
     const info = getModelInfoForLlmConfig(currentModelLabel, {
       reasoning_effort: derivedReasoningEffort ?? null,
@@ -783,7 +865,12 @@ export function App({
       currentModelLabel.split("/").pop() ??
       null
     );
-  }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
+  }, [
+    currentModelLabel,
+    derivedReasoningEffort,
+    llmConfig,
+    startupModelDisplayOverride,
+  ]);
 
   // Set terminal title from window title config
   useEffect(() => {
@@ -798,6 +885,7 @@ export function App({
   }, [agentState?.name, conversationSummary, projectDirectory]);
 
   const currentModelProvider = llmConfig?.provider_name ?? null;
+  const isLocalBackend = isLocalBackendEnabled();
   const currentReasoningEffort: ModelReasoningEffort | null =
     currentModelLabel?.startsWith("letta/auto")
       ? null
@@ -873,6 +961,11 @@ export function App({
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
+
+  // Live total context tokens (history + system + output). Mirrors
+  // `contextTrackerRef.current.lastContextTokens` into reactive state so
+  // UI can react during streaming — the ref itself doesn't trigger renders.
+  const [usedContextTokens, setUsedContextTokens] = useState(0);
 
   // Trajectory token/time bases (accumulated across runs)
   const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
@@ -1008,7 +1101,13 @@ export function App({
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
-  const sharedReminderStateRef = useRef(createSharedReminderState());
+  const sharedReminderStateRef = useRef<SharedReminderState>(
+    (() => {
+      const state = createSharedReminderState();
+      state.pendingConversationBootstrap = !resumedExistingConversation;
+      return state;
+    })(),
+  );
   const _systemPromptRecompileByConversationRef = useRef(
     new Map<string, Promise<void>>(),
   );
@@ -1079,9 +1178,14 @@ export function App({
       return fallback;
     }
   }, [deriveAutoConversationTitle]);
-  const resetBootstrapReminderState = useCallback(() => {
-    resetSharedReminderState(sharedReminderStateRef.current);
-  }, []);
+  const resetBootstrapReminderState = useCallback(
+    (pendingConversationBootstrap = false) => {
+      resetSharedReminderState(sharedReminderStateRef.current);
+      sharedReminderStateRef.current.pendingConversationBootstrap =
+        pendingConversationBootstrap;
+    },
+    [],
+  );
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
 
@@ -2244,7 +2348,6 @@ export function App({
 
   const currentApprovalShouldCommitPreview = useMemo(() => {
     if (!currentApproval) return false;
-    if (currentApproval.toolName === "ExitPlanMode") return false;
     return shouldEagerCommitApprovalPreview(currentApproval);
   }, [currentApproval, shouldEagerCommitApprovalPreview]);
 
@@ -2252,6 +2355,7 @@ export function App({
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
     setTokenCount(b.tokenCount);
+    setUsedContextTokens(contextTrackerRef.current.lastContextTokens);
     const newLines = toLines(b);
     setLines(newLines);
     commitEligibleLines(b);
@@ -2342,6 +2446,43 @@ export function App({
     pendingOverlayCommandRef.current = null;
     return pending.command;
   }, []);
+
+  // Combines startOverlayCommand + setActiveOverlay — these are always called together.
+  const openOverlay = useCallback(
+    (
+      overlay: NonNullable<ActiveOverlay>,
+      input: string,
+      openingOutput: string,
+      dismissOutput: string,
+    ) => {
+      const cmd = startOverlayCommand(
+        overlay,
+        input,
+        openingOutput,
+        dismissOutput,
+      );
+      setActiveOverlay(overlay);
+      return cmd;
+    },
+    [startOverlayCommand],
+  );
+
+  // Combines consumeOverlayCommand + the UI-reset side of closeOverlay, but WITHOUT
+  // calling cmd.finish(dismissOutput). Use this when the overlay completed successfully
+  // and the caller will finish the command with a real result. Contrast with
+  // closeOverlay() (cancel path) which does finish with the dismiss message.
+  const completeOverlay = useCallback(
+    (overlay: NonNullable<ActiveOverlay>) => {
+      const cmd = consumeOverlayCommand(overlay);
+      setActiveOverlay(null);
+      setFeedbackPrefill("");
+      setSearchQuery("");
+      setModelSelectorOptions({});
+      setModelReasoningPrompt(null);
+      return cmd;
+    },
+    [consumeOverlayCommand],
+  );
 
   useEffect(() => {
     const pending = pendingOverlayCommandRef.current;
@@ -2448,52 +2589,9 @@ export function App({
     }
   }, [refreshDerived]);
 
-  // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
-  // This keeps the dynamic area small (just approval options) to avoid flicker
-  useEffect(() => {
-    if (!currentApproval) return;
-    if (currentApproval.toolName !== "ExitPlanMode") return;
-
-    const toolCallId = currentApproval.toolCallId;
-    if (!toolCallId) return;
-
-    // Already committed preview for this approval?
-    if (eagerCommittedPreviewsRef.current.has(toolCallId)) return;
-
-    const planFilePath = permissionMode.getPlanFilePath();
-    if (!planFilePath) return;
-
-    try {
-      const { readFileSync, existsSync } = require("node:fs");
-      if (!existsSync(planFilePath)) return;
-
-      const planContent = readFileSync(planFilePath, "utf-8");
-
-      // Commit preview to static area
-      const previewItem: StaticItem = {
-        kind: "approval_preview",
-        id: `approval-preview-${toolCallId}`,
-        toolCallId,
-        toolName: currentApproval.toolName,
-        toolArgs: currentApproval.toolArgs || "{}",
-        planContent,
-        planFilePath,
-      };
-
-      setStaticItems((prev) => [...prev, previewItem]);
-      eagerCommittedPreviewsRef.current.add(toolCallId);
-
-      // Also capture plan file path for post-approval rendering
-      lastPlanFilePathRef.current = planFilePath;
-    } catch {
-      // Failed to read plan, don't commit preview
-    }
-  }, [currentApproval]);
-
   // Eager commit for large approval previews (bash/file edits) to avoid flicker
   useEffect(() => {
     if (!currentApproval) return;
-    if (currentApproval.toolName === "ExitPlanMode") return;
 
     const toolCallId = currentApproval.toolCallId;
     if (!toolCallId) return;
@@ -2540,7 +2638,7 @@ export function App({
             snapshot: {
               continueSession,
               agentState,
-              agentProvenance,
+              startupHasAvailableLocalModels,
               terminalWidth: columns,
             },
           },
@@ -2574,33 +2672,14 @@ export function App({
         ? `Resuming conversation with **${agentName}**`
         : `Starting new conversation with **${agentName}**`;
 
-      // Command hints - vary based on agent state:
-      // - Resuming: show /new (they may want a fresh conversation)
-      // - New session + unpinned: show /pin (they should save their agent)
-      // - New session + pinned: show /memory (they're already saved)
-      const commandHints = isResumingConversation
-        ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    browse all conversations",
-            "→ **/new**       start a new conversation",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
-        : isPinned
-          ? [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/memory**    view your agent's memory",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ]
-          : [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/pin**       save + name your agent",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ];
+      const commandHints = buildStartupCommandHints({
+        isResumingConversation,
+        isPinned,
+        isLocalBackend: isLocalBackendEnabled(),
+        hasMessages: messageHistory.length > 0,
+        hasCloudCredentials: startupHasCloudCredentials,
+        hasAvailableLocalModels: startupHasAvailableLocalModels,
+      });
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -2637,9 +2716,10 @@ export function App({
     continueSession,
     columns,
     agentState,
-    agentProvenance,
     resumedExistingConversation,
     releaseNotes,
+    startupHasCloudCredentials,
+    startupHasAvailableLocalModels,
     messageHistory,
   ]);
 
@@ -2675,7 +2755,7 @@ export function App({
               };
               const sysNorm = normalize(agentSystem);
               const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "@/agent/promptAssets"
+                "@/agent/prompt-assets"
               );
 
               // Best-effort preset detection.
@@ -3151,7 +3231,7 @@ export function App({
       try {
         if (getBackend().capabilities.localMemfs) {
           const { initializeLocalMemoryRepo } = await import(
-            "@/agent/memoryGit"
+            "@/agent/memory-git"
           );
           await initializeLocalMemoryRepo({
             memoryDir: getScopedMemoryFilesystemRoot(agentId),
@@ -3163,7 +3243,7 @@ export function App({
         }
 
         const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-          "@/agent/memoryGit"
+          "@/agent/memory-git"
         );
         if (!isGitRepo(agentId)) {
           await cloneMemoryRepo(agentId);
@@ -3306,7 +3386,7 @@ export function App({
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -3329,11 +3409,7 @@ export function App({
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handlePlanApprove,
-    handlePlanKeepPlanning,
     handleQuestionSubmit,
-    handleEnterPlanModeApprove,
-    handleEnterPlanModeReject,
   } = useApprovalFlow({
     abortControllerRef,
     agentId,
@@ -3345,7 +3421,6 @@ export function App({
     autoDeniedApprovals,
     autoHandledResults,
     buffersRef,
-    cacheLastPlanFilePath,
     clearApprovalToolContext,
     closeTrajectorySegment,
     commandRunner,
@@ -3358,9 +3433,6 @@ export function App({
     executingToolCallIdsRef,
     interruptQueuedRef,
     isExecutingTool,
-    lastAutoApprovedEnterPlanToolCallIdRef,
-    lastAutoHandledExitPlanToolCallIdRef,
-    lastPlanFilePathRef,
     loadingState,
     openTrajectorySegment,
     pendingApprovals,
@@ -3655,7 +3727,6 @@ export function App({
     appendTaskNotificationEvents,
     bashCommandCacheRef,
     buffersRef,
-    cacheLastPlanFilePath,
     checkPendingApprovalsForSlashCommand,
     chromeColumns,
     commandRunner,
@@ -3694,7 +3765,6 @@ export function App({
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
-    pendingRalphConfig,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,
@@ -3713,7 +3783,7 @@ export function App({
     sessionHooksRanRef,
     sessionStartFeedbackRef,
     sessionStatsRef,
-    setActiveOverlay,
+    openOverlay,
     setAgentDescription,
     setAgentState,
     setCommandRunning,
@@ -3728,9 +3798,9 @@ export function App({
     setHasConversationModelOverride,
     setLines,
     setLlmConfig,
+    markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPendingRalphConfig,
     setPinDialogLocal,
     setProfileConfirmPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
@@ -3742,10 +3812,9 @@ export function App({
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
-    startOverlayCommand,
     streaming,
     systemInfoReminderEnabled,
     systemPromptRecompileByConversationRef:
@@ -3901,6 +3970,7 @@ export function App({
     setConversationOverrideModelSettings,
     setCurrentModelHandle,
     setCurrentModelId,
+    setHasAvailableLocalModels,
     setCurrentPersonalityId,
     setCurrentSystemPromptId,
     setCurrentToolset,
@@ -3930,7 +4000,10 @@ export function App({
       // Process the queued action
       if (action.type === "switch_agent") {
         // Call handleAgentSelect - it will see isAgentBusy() as false now
-        handleAgentSelect(action.agentId, { commandId: action.commandId });
+        handleAgentSelect(action.agentId, {
+          commandId: action.commandId,
+          backendMode: action.backendMode,
+        });
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(action.modelId, action.commandId);
@@ -4050,10 +4123,10 @@ export function App({
     agentId,
     agentName,
     billingTier,
-    closeOverlay,
+    completeOverlay,
     commandRunner,
-    consumeOverlayCommand,
     currentModelId,
+    lastRunIdRef,
     sessionStatsRef,
     withCommandLock,
   });
@@ -4067,25 +4140,19 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Handle ralph mode exit from Input component (shift+tab)
-  const handleRalphExit = useCallback(() => {
-    const ralph = ralphMode.getState();
-    if (ralph.isActive) {
-      const wasYolo = ralph.isYolo;
-      const wasGoal = ralph.mode === "goal";
-      ralphMode.deactivate();
-      setUiRalphActive(false);
-      if (wasGoal) {
-        settingsManager.updateConversationGoalStatus(
-          conversationIdRef.current,
-          "paused",
-        );
-      }
-      if (wasYolo) {
-        permissionMode.setMode("standard");
-        setUiPermissionMode("standard");
-      }
+  // Handle goal loop exit from Input component (Shift+Tab).
+  const handleGoalLoopExit = useCallback(() => {
+    if (!goalLoopMode.getState().isActive) {
+      return;
     }
+    goalLoopMode.deactivate();
+    setUiGoalLoopActive(false);
+    settingsManager.updateConversationGoalStatus(
+      conversationIdRef.current,
+      "paused",
+    );
+    permissionMode.setMode("standard");
+    setUiPermissionMode("standard");
   }, [setUiPermissionMode]);
 
   // Toggle expand/collapse for a specific tool call ID
@@ -4125,24 +4192,11 @@ export function App({
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
-      if (mode === "plan" && !settingsManager.isPlanModeEnabled()) {
-        permissionMode.setMode("unrestricted");
-        setUiPermissionMode("unrestricted");
-        triggerStatusLineRefresh();
-        return;
-      }
-
-      // When entering plan mode via tab cycling, generate and set the plan file path
-      if (mode === "plan") {
-        const planPath = generatePlanFilePath();
-        permissionMode.setPlanFilePath(planPath);
-        cacheLastPlanFilePath(planPath);
-      }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
       triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
+    [triggerStatusLineRefresh, setUiPermissionMode],
   );
 
   const { flushPendingReasoningEffort, handleCycleReasoningEffort } =
@@ -4311,7 +4365,7 @@ export function App({
           snapshot: {
             continueSession,
             agentState,
-            agentProvenance,
+            startupHasAvailableLocalModels,
             terminalWidth: columns,
           },
         },
@@ -4329,27 +4383,19 @@ export function App({
       // Build status message based on session type
       const agentName = agentState?.name || "Unnamed Agent";
       const headerMessage = resumedExistingConversation
-        ? `Resuming (empty) conversation with **${agentName}**`
+        ? `Resuming new conversation with **${agentName}**`
         : continueSession
           ? `Starting new conversation with **${agentName}**`
           : "Creating a new agent";
 
-      // Command hints - for pinned agents show /memory, for unpinned show /pin
-      const commandHints = isPinned
-        ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/memory**    view your agent's memory",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
-        : [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/pin**       save + name your agent",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ];
+      const commandHints = buildStartupCommandHints({
+        isResumingConversation: resumedExistingConversation,
+        isPinned,
+        isLocalBackend: isLocalBackendEnabled(),
+        hasMessages: messageHistory.length > 0,
+        hasCloudCredentials: startupHasCloudCredentials,
+        hasAvailableLocalModels: startupHasAvailableLocalModels,
+      });
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -4389,6 +4435,8 @@ export function App({
     agentState,
     refreshDerived,
     releaseNotes,
+    startupHasCloudCredentials,
+    startupHasAvailableLocalModels,
   ]);
 
   const liveTrajectorySnapshot =
@@ -4408,6 +4456,20 @@ export function App({
   const inputVisible = !showExitStats;
   const inputEnabled =
     !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+  const onEscapeCommandCancel = useCallback(() => {
+    if (isActiveConnectOperationCancellable()) {
+      cancelActiveConnectOperation();
+      return true;
+    }
+    return false;
+  }, []);
+  const showInspirationalPromptHints =
+    loadingState === "ready" &&
+    !hasConversationContent(lines) &&
+    !streaming &&
+    queueDisplay.length === 0 &&
+    pendingApprovals.length === 0 &&
+    !anySelectorOpen;
   const currentApprovalPreviewCommitted = currentApproval?.toolCallId
     ? eagerCommittedPreviewsRef.current.has(currentApproval.toolCallId)
     : false;
@@ -4434,7 +4496,7 @@ export function App({
       closeOverlay={closeOverlay}
       columns={columns}
       commandRunner={commandRunner}
-      consumeOverlayCommand={consumeOverlayCommand}
+      completeOverlay={completeOverlay}
       contextTrackerRef={contextTrackerRef}
       continueSession={continueSession}
       conversationId={conversationId}
@@ -4446,6 +4508,7 @@ export function App({
       currentModelHandle={currentModelHandle}
       currentModelId={currentModelId}
       currentModelProvider={currentModelProvider}
+      isLocalBackend={isLocalBackend}
       currentPersonalityId={currentPersonalityId}
       currentReasoningEffort={currentReasoningEffort}
       currentSystemPromptId={currentSystemPromptId}
@@ -4460,6 +4523,8 @@ export function App({
       emittedIdsRef={emittedIdsRef}
       feedbackPrefill={feedbackPrefill}
       footerUpdateText={footerUpdateText}
+      showInspirationalPromptHints={showInspirationalPromptHints}
+      onEscapeCommandCancel={onEscapeCommandCancel}
       handleAgentSelect={handleAgentSelect}
       handleApproveAlways={handleApproveAlways}
       handleApproveCurrent={handleApproveCurrent}
@@ -4471,8 +4536,6 @@ export function App({
       handleCreateNewAgent={handleCreateNewAgent}
       handleCycleReasoningEffort={handleCycleReasoningEffort}
       handleDenyCurrent={handleDenyCurrent}
-      handleEnterPlanModeApprove={handleEnterPlanModeApprove}
-      handleEnterPlanModeReject={handleEnterPlanModeReject}
       handleQueueEdit={handleQueueEdit}
       handleExit={handleExit}
       handleExperimentsConfirm={handleExperimentsConfirm}
@@ -4482,11 +4545,9 @@ export function App({
       handlePasteError={handlePasteError}
       handlePermissionModeChange={handlePermissionModeChange}
       handlePersonalitySelect={handlePersonalitySelect}
-      handlePlanApprove={handlePlanApprove}
-      handlePlanKeepPlanning={handlePlanKeepPlanning}
       handleProfileEscapeCancel={handleProfileEscapeCancel}
       handleQuestionSubmit={handleQuestionSubmit}
-      handleRalphExit={handleRalphExit}
+      handleGoalLoopExit={handleGoalLoopExit}
       handleSleeptimeModeSelect={handleSleeptimeModeSelect}
       handleSystemPromptSelect={handleSystemPromptSelect}
       handleToolsetSelect={handleToolsetSelect}
@@ -4497,10 +4558,10 @@ export function App({
       inputVisible={inputVisible}
       interruptRequested={interruptRequested}
       isAgentBusy={isAgentBusy}
-      lastPlanFilePathRef={lastPlanFilePathRef}
       liveItems={liveItems}
       liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
       loadingState={loadingState}
+      markLocalModelsAvailable={markLocalModelsAvailable}
       maybeCarryOverActiveConversationModel={
         maybeCarryOverActiveConversationModel
       }
@@ -4511,7 +4572,6 @@ export function App({
       pendingApprovals={pendingApprovals}
       pendingConversationSwitchRef={pendingConversationSwitchRef}
       pendingIds={pendingIds}
-      pendingRalphConfig={pendingRalphConfig}
       pinDialogLocal={pinDialogLocal}
       precomputedDiffsRef={precomputedDiffsRef}
       profileConfirmPending={profileConfirmPending}
@@ -4545,7 +4605,7 @@ export function App({
       showApprovalPreview={showApprovalPreview}
       showCompactionsEnabled={showCompactionsEnabled}
       showExitStats={showExitStats}
-      startOverlayCommand={startOverlayCommand}
+      openOverlay={openOverlay}
       staticItems={staticItems}
       staticRenderEpoch={staticRenderEpoch}
       statusLine={statusLine}
@@ -4553,8 +4613,10 @@ export function App({
       stubDescriptions={stubDescriptions}
       thinkingMessage={thinkingMessage}
       trajectoryTokenDisplay={trajectoryTokenDisplay}
+      usedContextTokens={usedContextTokens}
+      contextWindowSize={effectiveContextWindowSize}
       uiPermissionMode={uiPermissionMode}
-      uiRalphActive={uiRalphActive}
+      uiGoalLoopActive={uiGoalLoopActive}
       updateAgentName={updateAgentName}
     />
   );

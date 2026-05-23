@@ -4,16 +4,18 @@ import type WebSocket from "ws";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { migratePermissionMode } from "@/permissions/mode";
-import { settingsManager } from "@/settings-manager";
-import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
-import { ensureFileIndex, getIndexRoot, setIndexRoot } from "@/utils/fileIndex";
-import { generatePlanFilePath } from "@/utils/planName";
+import {
+  ensureFileIndex,
+  getIndexRoot,
+  setIndexRoot,
+} from "@/utils/file-index";
 import {
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
@@ -28,7 +30,7 @@ import { stashRecoveredApprovalInterrupts } from "./interrupts";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "./permissionMode";
+} from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
   emitInterruptedStatusDelta,
@@ -70,14 +72,6 @@ function trackListenerError(
   });
 }
 
-function isPlanModeEnabled(): boolean {
-  try {
-    return settingsManager.isPlanModeEnabled();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Handle mode change request from cloud.
  * Stores the new mode in ListenerRuntime.permissionModeByConversation so
@@ -103,19 +97,10 @@ export function handleModeChange(
     );
 
     // Migrate legacy mode values from older clients
-    const incomingMode = migratePermissionMode(msg.mode) ?? msg.mode;
-
-    // Reject plan mode if it's disabled in settings
-    if (incomingMode === "plan" && !isPlanModeEnabled()) {
-      if (current.mode === "plan") {
-        current.mode = "unrestricted";
-        current.planFilePath = null;
-        current.modeBeforePlan = null;
-        persistPermissionModeMapForRuntime(runtime);
-      }
-      emitRuntimeStateUpdates(runtime, scope);
+    const incomingMode = migratePermissionMode(msg.mode);
+    if (!incomingMode) {
       emitLoopErrorNotice(socket, runtime, {
-        message: "Plan mode is disabled in user settings.",
+        message: `Unsupported permission mode: ${msg.mode}`,
         stopReason: "error",
         isTerminal: false,
         agentId: scope?.agent_id,
@@ -124,22 +109,7 @@ export function handleModeChange(
       return;
     }
 
-    // Track previous mode so ExitPlanMode can restore it
-    if (incomingMode === "plan" && current.mode !== "plan") {
-      current.modeBeforePlan = current.mode;
-    }
     current.mode = incomingMode;
-
-    // Generate plan file path when entering plan mode
-    if (incomingMode === "plan" && !current.planFilePath) {
-      current.planFilePath = generatePlanFilePath();
-    }
-
-    // Clear plan-related state when leaving plan mode
-    if (incomingMode !== "plan") {
-      current.planFilePath = null;
-      current.modeBeforePlan = null;
-    }
 
     persistPermissionModeMapForRuntime(runtime);
 
@@ -400,7 +370,7 @@ export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
-    socket: WebSocket;
+    socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
       connectionId?: string;

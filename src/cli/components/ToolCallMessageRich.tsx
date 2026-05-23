@@ -1,14 +1,12 @@
-// existsSync, readFileSync removed - no longer needed since plan content
-// is shown via StaticPlanApproval during approval, not in tool result
 import { Box } from "ink";
 import { Fragment, memo, type ReactNode } from "react";
-import { getSubagentByToolCallId } from "@/agent/subagentState.js";
+import { getSubagentByToolCallId } from "@/agent/subagent-state.js";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
   formatArgsDisplay,
   parsePatchInput,
   parsePatchOperations,
-} from "@/cli/helpers/formatArgsDisplay.js";
+} from "@/cli/helpers/format-args-display.js";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getDisplayToolName,
@@ -24,9 +22,10 @@ import {
   isShellTool,
   isTaskTool,
   isTodoTool,
-} from "@/cli/helpers/toolNameMapping.js";
+} from "@/cli/helpers/tool-name-mapping.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { clipToolReturn } from "@/tools/manager.js";
+import { isRecord } from "@/utils/type-guards";
 import { Text } from "./Text";
 
 /**
@@ -86,7 +85,7 @@ function colorizeArgs(argsStr: string): ReactNode {
 }
 
 import type { StreamingState } from "@/cli/helpers/accumulator";
-import { useTerminalWidth } from "@/cli/hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
@@ -148,14 +147,12 @@ export const ToolCallMessage = memo(
   ({
     line,
     precomputedDiffs,
-    lastPlanFilePath,
     isStreaming,
     expandedToolCallId,
     lastShellToolCallId,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
-    lastPlanFilePath?: string | null;
     isStreaming?: boolean;
     expandedToolCallId?: string | null;
     lastShellToolCallId?: string | null;
@@ -404,10 +401,6 @@ export const ToolCallMessage = memo(
           "",
         );
 
-        // Helper to check if a value is a record
-        const isRecord = (v: unknown): v is Record<string, unknown> =>
-          typeof v === "object" && v !== null;
-
         // Check if this is a todo_write tool with successful result
         if (
           isTodoTool(rawName, displayName) &&
@@ -547,27 +540,6 @@ export const ToolCallMessage = memo(
           if (parseCreateWorktreeResult(extractedText)) {
             return <CreateWorktreeResultRenderer resultText={extractedText} />;
           }
-        }
-
-        // Check if this is ExitPlanMode - just show path, not plan content
-        // The plan content was already shown during approval via StaticPlanApproval
-        // (rendered via Ink's <Static> and is visible in terminal scrollback)
-        if (rawName === "ExitPlanMode" && line.resultOk !== false) {
-          const planFilePath = lastPlanFilePath;
-
-          if (planFilePath) {
-            return (
-              <Box flexDirection="row">
-                <Box width={prefixWidth} flexShrink={0}>
-                  <Text>{prefix}</Text>
-                </Box>
-                <Box flexGrow={1} width={contentWidth}>
-                  <Text dimColor>Plan saved to: {planFilePath}</Text>
-                </Box>
-              </Box>
-            );
-          }
-          // Fall through to default if no plan path
         }
 
         // Check if this is a file edit tool - show diff instead of success message

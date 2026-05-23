@@ -15,9 +15,14 @@ import {
   clearChannelAccountStores,
   upsertChannelAccount,
 } from "@/channels/accounts";
-import { clearDynamicMessageChannelToolCache } from "@/channels/messageTool";
+import { clearDynamicMessageChannelToolCache } from "@/channels/message-tool";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
-import { setRouteInMemory } from "@/channels/routing";
+import {
+  __testOverrideLoadRoutes,
+  __testOverrideSaveRoutes,
+  clearAllRoutes,
+  setRouteInMemory,
+} from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
@@ -77,6 +82,9 @@ describe("tool execution context snapshot", () => {
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
     clearExternalTools();
+    clearAllRoutes();
+    __testOverrideLoadRoutes(null);
+    __testOverrideSaveRoutes(null);
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
@@ -411,6 +419,8 @@ describe("tool execution context snapshot", () => {
 
   test("does not leak MessageChannel into conversations that only share an agent-level Slack account", async () => {
     installChannelAccountTestOverrides();
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
     await loadSpecificTools(["Read"]);
 
     const registry = new ChannelRegistry();
@@ -447,6 +457,8 @@ describe("tool execution context snapshot", () => {
 
   test("includes MessageChannel in scoped snapshots when the conversation has a Slack route", async () => {
     installChannelAccountTestOverrides();
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
     await loadSpecificTools(["Read"]);
 
     const registry = new ChannelRegistry();

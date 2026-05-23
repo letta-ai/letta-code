@@ -3,7 +3,7 @@ import {
   installChannelRuntime,
   isChannelRuntimeInstalled,
   loadChannelRuntimeModule,
-} from "../runtimeDeps";
+} from "@/channels/runtime-deps";
 
 export type WhatsAppRuntimeModule = Record<string, unknown> & {
   default?: unknown;

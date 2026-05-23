@@ -8,15 +8,15 @@ import {
   isReadOnlyShellCommand,
   SAFE_GH_COMMANDS,
   SAFE_GIT_SUBCOMMAND_LIST,
-} from "./readOnlyShell";
+} from "./read-only-shell";
+import {
+  splitShellSegmentsAllowCommandSubstitution,
+  tokenizeShellWords,
+} from "./shell-analysis";
 import {
   extractPrimaryShellCommand,
   unwrapShellLauncherCommand,
 } from "./shell-command-normalization";
-import {
-  splitShellSegmentsAllowCommandSubstitution,
-  tokenizeShellWords,
-} from "./shellAnalysis";
 
 const SAFE_GIT_COMMANDS: readonly string[] = SAFE_GIT_SUBCOMMAND_LIST;
 

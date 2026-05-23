@@ -528,44 +528,6 @@ describe("channel interactive prompts", () => {
     });
   });
 
-  test("truncates long ExitPlanMode plan previews for channel delivery", () => {
-    const prompt = formatChannelControlRequestPrompt(
-      createEvent({
-        kind: "exit_plan_mode",
-        toolName: "ExitPlanMode",
-        input: {},
-        planFilePath: "/tmp/plan.md",
-        planContent: `${"Plan line\n".repeat(300)}Conclusion`,
-      }),
-    );
-
-    expect(prompt).toContain("Proposed plan:");
-    expect(prompt).toContain("[Plan preview truncated for channel delivery.]");
-    expect(prompt).toContain("Plan file: /tmp/plan.md");
-  });
-
-  test("turns ExitPlanMode feedback into a deny response", () => {
-    const parsed = parseChannelControlRequestResponse(
-      createEvent({
-        kind: "exit_plan_mode",
-        toolName: "ExitPlanMode",
-        input: {},
-      }),
-      "keep planning: please tighten the rollback story",
-    );
-
-    expect(parsed).toEqual({
-      type: "response",
-      response: {
-        request_id: "req-1",
-        decision: {
-          behavior: "deny",
-          message: "keep planning: please tighten the rollback story",
-        },
-      },
-    });
-  });
-
   test("treats generic tool approval feedback as a denial message", () => {
     const parsed = parseChannelControlRequestResponse(
       createEvent({

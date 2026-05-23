@@ -3,7 +3,7 @@ import {
   buildSharedReminderParts,
   sharedReminderProviders,
 } from "@/reminders/engine";
-import { buildListenReminderContext } from "@/reminders/listenContext";
+import { buildListenReminderContext } from "@/reminders/listen-context";
 import {
   createSharedReminderState,
   resetSharedReminderState,
@@ -68,7 +68,6 @@ function listenContext(
     agentId: "agent-test",
     state,
     reflectionSettings: { trigger: "off", stepCount: 25 },
-    resolvePlanModeReminder: () => "",
     ...overrides,
   });
 }
@@ -241,7 +240,7 @@ describe("listen-mode reflection", () => {
       // that tracks whether the launcher callback is invoked.
       sharedReminderProviders["reflection-step-count"] = async (ctx) => {
         const { shouldFireStepCountTrigger } = await import(
-          "@/cli/helpers/memoryReminder"
+          "@/cli/helpers/memory-reminder"
         );
         if (
           shouldFireStepCountTrigger(
@@ -266,7 +265,6 @@ describe("listen-mode reflection", () => {
           launchSource = source;
           return true;
         },
-        resolvePlanModeReminder: () => "",
       });
 
       // Turns 0, 1, 2 — should not fire (turnCount 0 is skipped, 1 and 2 are not multiples of 3)
@@ -290,7 +288,7 @@ describe("listen-mode reflection", () => {
 
       sharedReminderProviders["reflection-step-count"] = async (ctx) => {
         const { shouldFireStepCountTrigger } = await import(
-          "@/cli/helpers/memoryReminder"
+          "@/cli/helpers/memory-reminder"
         );
         if (
           shouldFireStepCountTrigger(
@@ -314,7 +312,6 @@ describe("listen-mode reflection", () => {
           launchCalled = true;
           return true;
         },
-        resolvePlanModeReminder: () => "",
       });
 
       // Even with stepCount=1, trigger is off — should never fire

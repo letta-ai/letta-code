@@ -182,9 +182,6 @@ async function buildAndPackVersion(
   const packageJsonPath = join(workspaceDir, "package.json");
   setVersionInPackageJson(packageJsonPath, version);
 
-  const packageLockPath = join(workspaceDir, "package-lock.json");
-  setVersionInPackageJson(packageLockPath, version);
-
   await runCommand("bun", ["run", "build"], {
     cwd: workspaceDir,
     env,

@@ -1,26 +1,36 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
-} from "@/agent/subagentState";
+} from "@/agent/subagent-state";
+import { getBackend } from "@/backend";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
+import { isReflectionSubagentActive } from "@/cli/helpers/reflection-gate";
+import {
+  buildAutoReflectionPayload,
+  buildParentMemorySnapshot,
+  buildReflectionSubagentPrompt,
+  finalizeAutoReflectionPayload,
+} from "@/cli/helpers/reflection-transcript";
 import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "@/cron/scheduler";
-import type { DequeuedBatch } from "@/queue/queueRuntime";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import { trackBoundaryError } from "@/telemetry/errorReporting";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
-import { setMessageQueueAdder } from "@/utils/messageQueueBridge";
-import { killAllTerminals } from "@/websocket/terminalHandler";
+import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
@@ -41,7 +51,7 @@ import {
 import { loadPersistedCwdMap } from "./cwd";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
-import { loadPersistedPermissionModeMap } from "./permissionMode";
+import { loadPersistedPermissionModeMap } from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
   emitLoopStatusUpdate,
@@ -80,6 +90,13 @@ import {
   scheduleListenerWarmupsAfterSync,
 } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
+
+function escapeTaskNotificationSummary(summary: string): string {
+  return summary
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
 function trackListenerError(
   errorType: string,
@@ -439,6 +456,157 @@ export async function wireChannelIngress(
     }),
   );
 
+  registry.setCancelHandler(async ({ runtime }) =>
+    handleAbortMessageInput(listener, {
+      command: {
+        type: "abort_message",
+        runtime,
+        request_id: `channel-cancel-${crypto.randomUUID()}`,
+        run_id: null,
+      },
+      socket,
+      opts,
+      processQueuedTurn,
+    }),
+  );
+
+  registry.setReflectionHandler(async ({ runtime }) => {
+    const agentId = runtime.agent_id;
+    const conversationId = runtime.conversation_id;
+
+    if (!settingsManager.isMemfsEnabled(agentId)) {
+      return {
+        handled: true,
+        text: "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.",
+      };
+    }
+
+    if (isReflectionSubagentActive(getSubagents(), agentId, conversationId)) {
+      return {
+        handled: true,
+        text: "A reflection agent is already running for this conversation.",
+      };
+    }
+
+    try {
+      let systemPrompt: string | undefined;
+      try {
+        const agent = await getBackend().retrieveAgent(agentId);
+        systemPrompt = agent.system ?? undefined;
+      } catch {
+        // Non-fatal — the reflection payload can omit the system prompt.
+      }
+
+      const autoPayload = await buildAutoReflectionPayload(
+        agentId,
+        conversationId,
+        systemPrompt,
+      );
+      if (!autoPayload) {
+        return {
+          handled: true,
+          text: "No new transcript content to reflect on for this conversation.",
+        };
+      }
+
+      const memoryDir = getMemoryFilesystemRoot(agentId);
+      const parentMemory = await buildParentMemorySnapshot(memoryDir);
+      const reflectionPrompt = buildReflectionSubagentPrompt({
+        memoryDir,
+        parentMemory,
+      });
+
+      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
+        await import("@/tools/impl/task");
+      const { subagentId } = spawnBackgroundSubagentTask({
+        subagentType: "reflection",
+        prompt: reflectionPrompt,
+        description: "Reflecting on channel conversation",
+        silentCompletion: true,
+        transcriptPath: autoPayload.payloadPath,
+        parentScope: { agentId, conversationId },
+        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
+          telemetry.trackReflectionEnd("manual", success, {
+            subagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            error,
+          });
+          await finalizeAutoReflectionPayload(
+            agentId,
+            conversationId,
+            autoPayload.payloadPath,
+            autoPayload.endSnapshotLine,
+            success,
+          );
+
+          const completionMessage = await handleMemorySubagentCompletion(
+            {
+              agentId,
+              conversationId,
+              subagentType: "reflection",
+              success,
+              error,
+            },
+            {
+              recompileByConversation:
+                listener.systemPromptRecompileByConversation,
+              recompileQueuedByConversation:
+                listener.queuedSystemPromptRecompileByConversation,
+              logRecompileFailure: (message) =>
+                isDebugEnabled() && console.warn(message),
+            },
+          );
+
+          const conversationRuntime = getOrCreateConversationRuntime(
+            listener,
+            agentId,
+            conversationId,
+          );
+          const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+            completionMessage,
+          )}</summary></task-notification>`;
+          emitStreamDelta(
+            socket,
+            conversationRuntime,
+            {
+              type: "message",
+              id: `user-msg-${crypto.randomUUID()}`,
+              date: new Date().toISOString(),
+              message_type: "user_message",
+              content: [{ type: "text", text: notificationXml }],
+            } as import("@/types/protocol_v2").StreamDelta,
+            {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            },
+          );
+        },
+      });
+
+      const reflectionAgentId = await waitForBackgroundSubagentAgentId(
+        subagentId,
+        1000,
+      );
+      telemetry.trackReflectionStart("manual", {
+        subagentId: reflectionAgentId ?? undefined,
+        conversationId,
+        startMessageId: autoPayload.startMessageId,
+        endMessageId: autoPayload.endMessageId,
+      });
+
+      return {
+        handled: true,
+        text: "Started a reflection pass for this conversation.",
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        handled: true,
+        text: `Failed to start reflection: ${message}`,
+      };
+    }
+  });
+
   registry.setReady();
 }
 
@@ -490,7 +658,7 @@ export function enqueueChannelTurn(
     agentId: route.agentId,
     conversationId: route.conversationId,
   } as Omit<
-    import("@/queue/queueRuntime").MessageQueueItem,
+    import("@/queue/queue-runtime").MessageQueueItem,
     "id" | "enqueuedAt"
   >);
 
@@ -759,7 +927,7 @@ export async function startConnectedListenerRuntime(
       conversationId:
         queuedMessage.conversationId ?? targetRuntime.conversationId,
     } as Omit<
-      import("@/queue/queueRuntime").TaskNotificationQueueItem,
+      import("@/queue/queue-runtime").TaskNotificationQueueItem,
       "id" | "enqueuedAt"
     >);
 

@@ -7,16 +7,6 @@ import {
   isFileToolName,
   isShellToolName,
 } from "./canonical";
-// parseScopeList is defined here (not in memoryScope.ts) to avoid a circular
-// dependency: cli.ts → memoryScope.ts → cliPermissionsInstance.ts → cli.ts.
-// memoryScope.ts re-exports it from here.
-export function parseScopeList(value: string | undefined | null): string[] {
-  if (!value) return [];
-  return value
-    .split(/[\s,]+/)
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
-}
 
 import { normalizePermissionRule } from "./rule-normalization";
 
@@ -27,7 +17,7 @@ import { normalizePermissionRule } from "./rule-normalization";
 export class CliPermissions {
   private allowedTools: string[] = [];
   private disallowedTools: string[] = [];
-  private memoryScope: string[] = [];
+  private memoryGuardDisabled = false;
 
   /**
    * Parse and set allowed tools from CLI flag
@@ -46,14 +36,11 @@ export class CliPermissions {
   }
 
   /**
-   * Parse and set the memory-scope flag — a list of agent IDs whose memory
-   * this session is allowed to access (in addition to the current agent).
-   * Format: comma- or whitespace-separated agent IDs, e.g.
-   *   --memory-scope "agent-abc, agent-def"
-   *   --memory-scope "agent-abc agent-def"
+   * Disable the cross-agent memory guard for this parent CLI process.
+   * Subagent processes ignore this setting when evaluating the guard.
    */
-  setMemoryScope(scopeString: string): void {
-    this.memoryScope = parseScopeList(scopeString);
+  setMemoryGuardDisabled(disabled: boolean): void {
+    this.memoryGuardDisabled = disabled;
   }
 
   /**
@@ -145,28 +132,10 @@ export class CliPermissions {
   }
 
   /**
-   * Get the CLI-supplied memory-scope list (agent IDs).
+   * Whether --disable-memory-guard was set on the CLI.
    */
-  getMemoryScope(): string[] {
-    return [...this.memoryScope];
-  }
-
-  /**
-   * Whether --memory-scope was set on the CLI.
-   */
-  hasMemoryScope(): boolean {
-    return this.memoryScope.length > 0;
-  }
-
-  /**
-   * Check if any CLI overrides are set
-   */
-  hasOverrides(): boolean {
-    return (
-      this.allowedTools.length > 0 ||
-      this.disallowedTools.length > 0 ||
-      this.memoryScope.length > 0
-    );
+  isMemoryGuardDisabled(): boolean {
+    return this.memoryGuardDisabled;
   }
 
   /**
@@ -175,6 +144,6 @@ export class CliPermissions {
   clear(): void {
     this.allowedTools = [];
     this.disallowedTools = [];
-    this.memoryScope = [];
+    this.memoryGuardDisabled = false;
   }
 }

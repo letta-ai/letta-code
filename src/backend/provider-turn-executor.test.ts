@@ -1,21 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import type { HeadlessTurnExecutorInput } from "@/backend/dev/HeadlessTurnExecutor";
+import type { HeadlessTurnExecutorInput } from "@/backend/dev/headless-turn-executor";
 import {
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
   providerLocalMessage,
   providerStreamPart,
-} from "@/backend/dev/ProviderTurnExecutor";
+} from "@/backend/dev/provider-turn-executor";
 import {
   emptyLocalUsage,
   type LocalMessage,
-} from "@/backend/local/LocalMessage";
+} from "@/backend/local/local-message";
 import {
   getAttachedLocalMessage,
   isLocalStateChunkOnly,
   type ProviderStreamPart,
-} from "@/backend/local/LocalStreamChunks";
+} from "@/backend/local/local-stream-chunks";
 
 function part(value: Record<string, unknown>): ProviderStreamPart {
   return value as unknown as ProviderStreamPart;
@@ -48,7 +48,7 @@ async function collect(
   return chunks;
 }
 
-function assistantMessage(): LocalMessage {
+function assistantMessage(usage = emptyLocalUsage()): LocalMessage {
   return {
     id: "local-assistant-final",
     role: "assistant",
@@ -56,7 +56,7 @@ function assistantMessage(): LocalMessage {
     api: "openai-responses",
     provider: "openai",
     model: "gpt-5.5",
-    usage: emptyLocalUsage(),
+    usage,
     stopReason: "stop",
     timestamp: Date.now(),
   };
@@ -204,6 +204,76 @@ describe("ProviderTurnExecutor", () => {
     expect(
       (chunks.at(-1) as { stop_reason?: string } | undefined)?.stop_reason,
     ).toBe("end_turn");
+  });
+
+  test("emits estimated context_tokens when provider usage is empty", async () => {
+    const finalMessage = assistantMessage();
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message: finalMessage }),
+        );
+      },
+    };
+
+    const turnInput = input();
+    turnInput.systemPrompt = "You are a local coding agent.";
+    turnInput.uiMessages = [
+      {
+        id: "local-user-1",
+        role: "user",
+        content: "Please inspect the repository and summarize the build.",
+        timestamp: Date.now(),
+      },
+    ];
+    turnInput.body = {
+      messages: [{ role: "user", content: "Please inspect the repository." }],
+      client_tools: [
+        {
+          name: "Read",
+          description: "Read a file",
+          parameters: { type: "object" },
+        },
+      ],
+    } as never;
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(turnInput),
+    );
+    const usage = chunks.find(
+      (chunk) => chunk.message_type === "usage_statistics",
+    ) as { context_tokens?: number; total_tokens?: number } | undefined;
+
+    expect(usage?.total_tokens).toBe(0);
+    expect(usage?.context_tokens).toBeGreaterThan(0);
+  });
+
+  test("uses latest total_tokens for context_tokens when provider reports usage", async () => {
+    const finalMessage = assistantMessage({
+      input: 100,
+      output: 900,
+      cacheRead: 20,
+      cacheWrite: 5,
+      totalTokens: 1025,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message: finalMessage }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    const usage = chunks.find(
+      (chunk) => chunk.message_type === "usage_statistics",
+    ) as { context_tokens?: number; total_tokens?: number } | undefined;
+
+    expect(usage?.total_tokens).toBe(1025);
+    expect(usage?.context_tokens).toBe(1025);
   });
 
   test("normalizes provider errors into local error chunks", async () => {

@@ -25,9 +25,9 @@ import { debugLog, debugWarn } from "@/utils/debug";
 import {
   cleanupStreamAbortRelay,
   createStreamAbortRelay,
-} from "@/utils/streamAbortRelay";
+} from "@/utils/stream-abort-relay";
 import { formatDuration, logTiming } from "@/utils/timing";
-import { recordTuiJsonPayload, recordTuiPerf } from "@/utils/tuiPerf";
+import { recordTuiJsonPayload, recordTuiPerf } from "@/utils/tui-perf";
 
 import {
   type createBuffers,
@@ -35,10 +35,10 @@ import {
   markIncompleteToolsAsCancelled,
   onChunk,
 } from "./accumulator";
-import { chunkLog } from "./chunkLog";
-import type { ContextTracker } from "./contextTracker";
-import type { ErrorInfo } from "./streamProcessor";
-import { StreamProcessor } from "./streamProcessor";
+import { chunkLog } from "./chunk-log";
+import type { ContextTracker } from "./context-tracker";
+import type { ErrorInfo } from "./stream-processor";
+import { StreamProcessor } from "./stream-processor";
 
 export type ApprovalRequest = {
   toolCallId: string;

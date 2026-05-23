@@ -5,7 +5,7 @@ import {
   __testOverrideSecretsBackend,
   clearSecretsCache,
   loadSecrets,
-} from "@/utils/secretsStore";
+} from "@/utils/secrets-store";
 
 const AGENT_ID = "agent-secret-command";
 

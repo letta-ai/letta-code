@@ -6,7 +6,7 @@ import { __testOverrideChannelsRoot } from "@/channels/config";
 import {
   buildDynamicMessageChannelSchema,
   clearDynamicMessageChannelToolCache,
-} from "@/channels/messageTool";
+} from "@/channels/message-tool";
 import {
   __testClearUserChannelPluginCache,
   getChannelDisplayName,
@@ -14,7 +14,7 @@ import {
   getSupportedChannelIds,
   isSupportedChannelId,
   loadChannelPlugin,
-} from "@/channels/pluginRegistry";
+} from "@/channels/plugin-registry";
 
 let channelsRoot: string;
 

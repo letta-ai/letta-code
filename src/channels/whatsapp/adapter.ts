@@ -1,11 +1,11 @@
-import { formatChannelControlRequestPrompt } from "../interactive";
+import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   InboundChannelMessage,
   OutboundChannelMessage,
   WhatsAppChannelAccount,
-} from "../types";
+} from "@/channels/types";
 import {
   isGroupJid,
   isLidJid,

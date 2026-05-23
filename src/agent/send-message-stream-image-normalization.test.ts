@@ -8,11 +8,11 @@ import { translatePasteForImages } from "@/cli/helpers/clipboard";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
-} from "@/cli/helpers/pasteRegistry";
+} from "@/cli/helpers/paste-registry";
 import {
   assertSupportedBase64ImageMediaTypes,
   normalizeMessageImageParts,
-} from "@/utils/messageImageNormalization";
+} from "@/utils/message-image-normalization";
 
 const TEST_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";

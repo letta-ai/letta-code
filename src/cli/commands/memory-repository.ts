@@ -21,7 +21,7 @@ import {
   readMemoryRepositoryPushLog,
   setMemoryRepositoryUrl,
   unsetMemoryRepositoryUrl,
-} from "@/agent/memoryGit";
+} from "@/agent/memory-git";
 
 export interface MemoryRepositoryCommandResult {
   output: string;

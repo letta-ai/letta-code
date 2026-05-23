@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_STATUS_LINE_DEBOUNCE_MS,
   normalizeStatusLineConfig,
-} from "@/cli/helpers/statusLineConfig";
-import { buildRefreshIntervalPlan } from "@/cli/hooks/useConfigurableStatusLine";
+} from "@/cli/helpers/status-line-config";
+import { buildRefreshIntervalPlan } from "@/cli/hooks/use-configurable-status-line";
 
 describe("statusline controller-related config", () => {
   test("normalizes debounce and refresh interval defaults", () => {

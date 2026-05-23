@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { bash } from "@/tools/impl/Bash";
+import { bash } from "@/tools/impl/bash";
 
 async function runBashInTemp(command: string) {
   const dir = await mkdtemp(path.join(tmpdir(), "letta-bash-worktree-test-"));
