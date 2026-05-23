@@ -72,6 +72,7 @@ import {
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { setErrorContext } from "@/cli/helpers/error-context";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import {
@@ -80,6 +81,7 @@ import {
 } from "@/cli/helpers/queued-message-parts";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
+import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -101,7 +103,6 @@ import {
   renderWindowTitle,
   resolveWindowTitleConfig,
 } from "@/cli/helpers/window-title-config";
-import { useConfigurableStatusLine } from "@/cli/hooks/use-configurable-status-line";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
   useTerminalRows,
@@ -461,20 +462,12 @@ export function App({
     }
   }, []);
 
-  const statusLineTriggerVersionRef = useRef(0);
-  const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
-
   useEffect(() => {
     if (!streaming) {
       setNetworkPhase(null);
       setExecutionPhase(null);
     }
   }, [streaming]);
-
-  const triggerStatusLineRefresh = useCallback(() => {
-    statusLineTriggerVersionRef.current += 1;
-    setStatusLineTriggerVersion(statusLineTriggerVersionRef.current);
-  }, []);
 
   // Guard ref for preventing concurrent processConversation calls
   // Separate from streaming state which may be set early for UI responsiveness
@@ -2129,10 +2122,9 @@ export function App({
     buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
   }, [tokenStreamingEnabled]);
 
-  // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const statusLine = useConfigurableStatusLine({
+  const statusLinePayload = buildStatusLinePayload({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
     reasoningEffort: currentReasoningEffort,
@@ -2168,12 +2160,11 @@ export function App({
       status: a.status,
       duration_ms: Date.now() - a.startTime,
     })),
-    triggerVersion: statusLineTriggerVersion,
   });
   const extensionContext = useMemo(
     () =>
       buildStatuslineRenderContext({
-        payload: statusLine.payload,
+        payload: statusLinePayload,
         ui: {
           currentModelProvider: currentModelProvider ?? null,
           goalStatusText: null,
@@ -2196,27 +2187,10 @@ export function App({
       currentModelProvider,
       hasTemporaryModelOverride,
       isLocalBackend,
-      statusLine.payload,
+      statusLinePayload,
     ],
   );
   const extensionRuntime = useLocalExtensionRuntime(extensionContext);
-
-  const previousStreamingForStatusLineRef = useRef(streaming);
-  useEffect(() => {
-    // Trigger status line when an assistant stream completes.
-    if (previousStreamingForStatusLineRef.current && !streaming) {
-      triggerStatusLineRefresh();
-    }
-    previousStreamingForStatusLineRef.current = streaming;
-  }, [streaming, triggerStatusLineRefresh]);
-
-  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${effectiveContextWindowSize ?? ""}|${currentReasoningEffort ?? ""}|${currentSystemPromptId ?? ""}|${currentToolset ?? ""}`;
-
-  // Trigger status line when key session identity/display state changes.
-  useEffect(() => {
-    void statusLineRefreshIdentity;
-    triggerStatusLineRefresh();
-  }, [statusLineRefreshIdentity, triggerStatusLineRefresh]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -3770,7 +3744,6 @@ export function App({
     bashCommandCacheRef,
     buffersRef,
     checkPendingApprovalsForSlashCommand,
-    chromeColumns,
     commandRunner,
     commandRunning,
     consumeQueuedApprovalInputForCurrentConversation,
@@ -3778,14 +3751,10 @@ export function App({
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
-    currentModelDisplay,
     currentModelHandle,
     currentModelId,
     currentModelLabel,
     currentModelProvider,
-    currentReasoningEffort,
-    currentSystemPromptId,
-    currentToolset,
     effectiveContextWindowSize,
     emittedIdsRef,
     firstUserQueryRef,
@@ -3797,11 +3766,9 @@ export function App({
     hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
-    lastRunIdRef,
     llmConfigRef,
     maybeCarryOverActiveConversationModel,
     needsEagerApprovalCheck,
-    networkPhase,
     openTrajectorySegment,
     overrideContentPartsRef,
     pendingApprovals,
@@ -3864,9 +3831,7 @@ export function App({
     tokenStreamingEnabled,
     trajectoryRunTokenStartRef,
     trajectoryTokenDisplayRef,
-    triggerStatusLineRefresh,
     tuiQueueRef,
-    uiPermissionMode,
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
@@ -4236,9 +4201,8 @@ export function App({
     (mode: PermissionMode) => {
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
-      triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode],
+    [setUiPermissionMode],
   );
 
   const { flushPendingReasoningEffort, handleCycleReasoningEffort } =
@@ -4651,7 +4615,8 @@ export function App({
       openOverlay={openOverlay}
       staticItems={staticItems}
       staticRenderEpoch={staticRenderEpoch}
-      statusLine={statusLine}
+      statusLinePayload={statusLinePayload}
+      statusLinePrompt={CLI_GLYPHS.prompt}
       extensionRuntime={extensionRuntime}
       streaming={streaming}
       stubDescriptions={stubDescriptions}

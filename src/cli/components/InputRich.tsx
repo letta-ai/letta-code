@@ -4,7 +4,6 @@ import { EventEmitter } from "node:events";
 import { stdin } from "node:process";
 import chalk from "chalk";
 import { Box, useInput } from "ink";
-import Link from "ink-link";
 import {
   memo,
   type ReactNode,
@@ -141,249 +140,6 @@ function findCursorLine(
   };
 }
 
-// Combined regex for ANSI colors (256-color and 24-bit) and OSC 8 hyperlinks
-// Captures: p1[;p2[;p3[;p4[;p5]]]]m
-// 256-color fg: 38;5;N     → p1=38, p2=5,  p3=N
-// 256-color bg: 48;5;N     → p1=48, p2=5,  p3=N
-// 24-bit fg:    38;2;R;G;B → p1=38, p2=2,  p3=R, p4=G, p5=B
-// 24-bit bg:    48;2;R;G;B → p1=48, p2=2,  p3=R, p4=G, p5=B
-// Reset:        0m         → p1=0
-// OSC 8: \x1b]8;;URL\x1b\DISPLAY\x1b]8;;\x1b\
-const COMBINED_STYLE_REGEX =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI/OSC escape sequences require control characters
-  /\x1b\[(\d+)(?:;(\d+)(?:;(\d+)(?:;(\d+)(?:;(\d+))?)?)?)?m|\x1b\]8;;([^\x1b]*)\x1b\\([^\x1b]*)\x1b\]8;;\x1b\\/g;
-
-// 256-color palette lookup (simplified - standard xterm colors 0-255)
-// Returns hex color for palette index
-function get256Color(index: number): string | undefined {
-  if (index < 0 || index > 255) return undefined;
-
-  // Standard 16 colors (0-15)
-  const standardColors = [
-    "#000000",
-    "#800000",
-    "#008000",
-    "#808000",
-    "#000080",
-    "#800080",
-    "#008080",
-    "#c0c0c0",
-    "#808080",
-    "#ff0000",
-    "#00ff00",
-    "#ffff00",
-    "#0000ff",
-    "#ff00ff",
-    "#00ffff",
-    "#ffffff",
-  ];
-  if (index < 16) return standardColors[index];
-
-  // 216 color cube (16-231): 6x6x6 cube
-  if (index < 232) {
-    const cubeIndex = index - 16;
-    const r = Math.floor(cubeIndex / 36) % 6;
-    const g = Math.floor(cubeIndex / 6) % 6;
-    const b = cubeIndex % 6;
-    // Convert 0-5 to 0-255 range (0, 95, 135, 175, 215, 255)
-    const values = [0, 95, 135, 175, 215, 255];
-    const toHex = (v: number) => v.toString(16).padStart(2, "0");
-    return `#${toHex(values[r] ?? 0)}${toHex(values[g] ?? 0)}${toHex(values[b] ?? 0)}`;
-  }
-
-  // Grayscale (232-255): 24 shades from black to white
-  const grayValue = 8 + (index - 232) * 10;
-  const hex = grayValue.toString(16).padStart(2, "0");
-  return `#${hex}${hex}${hex}`;
-}
-
-function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
-  const parts: ReactNode[] = [];
-  let lastIndex = 0;
-  let currentColor: string | undefined;
-  let currentBgColor: string | undefined;
-
-  const regex = new RegExp(COMBINED_STYLE_REGEX.source, "g");
-
-  for (let match = regex.exec(line); match !== null; match = regex.exec(line)) {
-    const fullMatch = match[0];
-
-    // Handle OSC 8 hyperlink: groups 6=URL, 7=display text
-    const osc8Url = match[6];
-    const osc8Display = match[7];
-    if (osc8Url !== undefined && osc8Display !== undefined) {
-      // Flush any pending text with current color before the link
-      if (match.index > lastIndex) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-      }
-      // Create link with display text (ANSI colors inside link text not supported for now)
-      parts.push(
-        <Link key={`${keyPrefix}-${match.index}`} url={osc8Url}>
-          <Text color={currentColor} backgroundColor={currentBgColor}>
-            {osc8Display}
-          </Text>
-        </Link>,
-      );
-      lastIndex = match.index + fullMatch.length;
-      continue;
-    }
-
-    const code = parseInt(match[1] ?? "0", 10);
-
-    // Handle reset
-    if (code === 0) {
-      if (lastIndex > 0 || currentColor || currentBgColor) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-      }
-      lastIndex = match.index + fullMatch.length;
-      currentColor = undefined;
-      currentBgColor = undefined;
-      continue;
-    }
-
-    // Handle 24-bit foreground color: 38;2;R;G;B → p1=38,p2=2,p3=R,p4=G,p5=B
-    if (code === 38 && match[2] === "2") {
-      const r = match[3];
-      const g = match[4];
-      const b = match[5];
-      if (r && g && b) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        currentColor = `#${parseInt(r, 10).toString(16).padStart(2, "0")}${parseInt(g, 10).toString(16).padStart(2, "0")}${parseInt(b, 10).toString(16).padStart(2, "0")}`;
-        continue;
-      }
-    }
-
-    // Handle 256-color foreground: 38;5;N
-    if (code === 38 && match[2] === "5") {
-      const n = match[3];
-      if (n) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        const color256 = get256Color(parseInt(n, 10));
-        if (color256) currentColor = color256;
-        continue;
-      }
-    }
-
-    // Handle 24-bit background color: 48;2;R;G;B → p1=48,p2=2,p3=R,p4=G,p5=B
-    if (code === 48 && match[2] === "2") {
-      const r = match[3];
-      const g = match[4];
-      const b = match[5];
-      if (r && g && b) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        currentBgColor = `#${parseInt(r, 10).toString(16).padStart(2, "0")}${parseInt(g, 10).toString(16).padStart(2, "0")}${parseInt(b, 10).toString(16).padStart(2, "0")}`;
-        continue;
-      }
-    }
-
-    // Handle 256-color background: 48;5;N
-    if (code === 48 && match[2] === "5") {
-      const n = match[3];
-      if (n) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        const color256 = get256Color(parseInt(n, 10));
-        if (color256) currentBgColor = color256;
-      }
-    }
-
-    // Fallback: unrecognized SGR code (bold, underline, standard 16-color, etc.)
-    // Advance lastIndex past the matched sequence so raw escape bytes don't leak into rendered text
-    lastIndex = match.index + fullMatch.length;
-  }
-
-  // Add remaining text with current color
-  if (lastIndex < line.length) {
-    const text = line.slice(lastIndex);
-    if (text || currentColor || currentBgColor) {
-      parts.push(
-        <Text
-          key={`${keyPrefix}-${lastIndex}`}
-          color={currentColor}
-          backgroundColor={currentBgColor}
-        >
-          {text}
-        </Text>,
-      );
-    }
-  }
-
-  if (parts.length === 0) {
-    parts.push(<Text key={keyPrefix}>{line}</Text>);
-  }
-
-  return parts;
-}
-
 function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
   if (modeGlyph === "") {
     return modeName;
@@ -417,44 +173,6 @@ function getPermissionModeTransientHintInfo(mode: PermissionMode): {
     case "memory":
       return { name: "memory mode", color: colors.status.processing };
   }
-}
-
-function StatusLineContent({
-  text,
-  modeName,
-  modeColor,
-  modeGlyph,
-  showExitHint,
-}: {
-  text: string;
-  modeName: string | null;
-  modeColor: string | null;
-  modeGlyph?: string | null;
-  showExitHint: boolean;
-}) {
-  const lines = text.split("\n");
-  const parts: ReactNode[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (i > 0) {
-      parts.push("\n");
-    }
-    parts.push(...parseStyledLine(lines[i] ?? "", `l${i}`));
-  }
-  return (
-    <Text wrap="wrap">
-      <Text>{parts}</Text>
-      {modeName && modeColor && (
-        <>
-          {"\n"}
-          <Text color={modeColor}>{formatModeLabel(modeName, modeGlyph)}</Text>
-          <Text color={modeColor} dimColor>
-            {" "}
-            (shift+tab to {showExitHint ? "exit" : "cycle"})
-          </Text>
-        </>
-      )}
-    </Text>
-  );
 }
 
 type StatuslinePreemption =
@@ -723,9 +441,6 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hasTemporaryModelOverride,
   hideFooter,
   rightColumnWidth,
-  statusLineActive,
-  statusLineText,
-  statusLineRight,
   statusLinePayload,
   extensionRuntime,
   transientHint,
@@ -744,9 +459,6 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hasTemporaryModelOverride?: boolean;
   hideFooter: boolean;
   rightColumnWidth: number;
-  statusLineActive: boolean;
-  statusLineText?: string;
-  statusLineRight?: string;
   statusLinePayload: StatusLinePayload;
   extensionRuntime: LocalExtensionRuntime;
   transientHint?: StatuslineTransientHint | null;
@@ -784,8 +496,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   );
   const localStatuslineRenderer =
     extensionRuntime.registry?.ui.statuslineRenderer ?? null;
-  const idleSlotAvailable =
-    !hideFooterContent && !preemption && !transientHint && !statusLineActive;
+  const idleSlotAvailable = !hideFooterContent && !preemption && !transientHint;
 
   if (idleSlotAvailable && localStatuslineRenderer) {
     try {
@@ -817,17 +528,6 @@ const StatuslineSlot = memo(function StatuslineSlot({
     <StatuslinePreemptionView preemption={preemption} />
   ) : transientHint ? (
     <StatuslineTransientHintView hint={transientHint} />
-  ) : statusLineActive ? (
-    statusLineText ? (
-      <StatusLineContent
-        text={statusLineText}
-        modeName={null}
-        modeColor={null}
-        showExitHint={false}
-      />
-    ) : (
-      <Text> </Text>
-    )
   ) : (
     <DefaultStatuslineLeftContent
       defaultLeftStatusline={defaultLeftStatusline}
@@ -845,8 +545,6 @@ const StatuslineSlot = memo(function StatuslineSlot({
     isBashMode,
     modeActive: Boolean(modeName && modeColor),
     preemptionActive: Boolean(preemption),
-    statusLineActive,
-    statusLineRight,
     transientHintActive: Boolean(transientHint),
   });
 
@@ -862,21 +560,13 @@ const StatuslineSlot = memo(function StatuslineSlot({
       <Box
         flexDirection="column"
         alignItems="flex-end"
-        width={
-          statusLineRight && !hideFooterContent ? undefined : rightColumnWidth
-        }
+        width={rightColumnWidth}
         flexShrink={0}
       >
         {hideFooterContent ? (
           <Text>{" ".repeat(rightColumnWidth)}</Text>
         ) : shouldBlankRightColumn ? (
           <Text>{" ".repeat(rightColumnWidth)}</Text>
-        ) : statusLineRight ? (
-          statusLineRight.split("\n").map((line, i) => (
-            <Text key={`${i}-${line}`} wrap="truncate-end">
-              {parseStyledLine(line, `r${i}`)}
-            </Text>
-          ))
         ) : (
           <Text>{rightLabel}</Text>
         )}
@@ -1211,9 +901,6 @@ export function Input({
   executionPhase = null,
   terminalWidth,
   shouldAnimate = true,
-  statusLineActive = false,
-  statusLineText,
-  statusLineRight,
   statusLinePayload,
   extensionRuntime,
   statusLinePrompt,
@@ -1266,9 +953,6 @@ export function Input({
   executionPhase?: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate?: boolean;
-  statusLineActive?: boolean;
-  statusLineText?: string;
-  statusLineRight?: string;
   statusLinePayload: StatusLinePayload;
   extensionRuntime: LocalExtensionRuntime;
   statusLinePrompt?: string;
@@ -2340,9 +2024,6 @@ export function Input({
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
-                statusLineActive={statusLineActive}
-                statusLineText={statusLineText}
-                statusLineRight={statusLineRight}
                 statusLinePayload={statusLinePayload}
                 extensionRuntime={extensionRuntime}
                 transientHint={statuslineTransientHint}
@@ -2391,9 +2072,6 @@ export function Input({
     footerRightColumnWidth,
     reserveInputSpace,
     inputChromeHeight,
-    statusLineActive,
-    statusLineText,
-    statusLineRight,
     statusLinePayload,
     extensionRuntime,
 

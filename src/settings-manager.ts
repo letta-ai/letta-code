@@ -34,20 +34,6 @@ export interface SessionRef {
   conversationId: string;
 }
 
-/**
- * Configuration for a user-defined status line command.
- */
-export interface StatusLineConfig {
-  type?: "command";
-  command: string; // Shell command (receives JSON stdin, outputs text)
-  padding?: number; // Left padding for status line output
-  timeout?: number; // Execution timeout ms (default 5000, max 30000)
-  debounceMs?: number; // Debounce for event-driven refreshes (default 300)
-  refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
-  disabled?: boolean; // Disable at this level
-  prompt?: string; // Custom input prompt character (default "›")
-}
-
 export interface WindowTitleConfig {
   items: string[]; // Ordered list of enabled field keys (e.g. ["agent-name", "model-name"])
 }
@@ -111,7 +97,6 @@ export interface Settings {
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
-  statusLine?: StatusLineConfig; // Configurable status line command
   windowTitle?: WindowTitleConfig; // Configurable terminal window title
   env?: Record<string, string>;
   experiments?: Partial<Record<ExperimentId, boolean>>;
@@ -138,7 +123,6 @@ export interface Settings {
 
 export interface ProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
-  statusLine?: StatusLineConfig; // Project-specific status line command
   windowTitle?: WindowTitleConfig; // Project-specific terminal window title
 }
 
@@ -147,7 +131,6 @@ export interface LocalProjectSettings {
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Project-specific hook commands
-  statusLine?: StatusLineConfig; // Local project-specific status line command
   windowTitle?: WindowTitleConfig; // Local project-specific terminal window title
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
@@ -794,7 +777,6 @@ class SettingsManager {
 
       const projectSettings: ProjectSettings = {
         hooks: rawSettings.hooks as HooksConfig | undefined,
-        statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
         windowTitle: rawSettings.windowTitle as WindowTitleConfig | undefined,
       };
 
@@ -836,9 +818,6 @@ class SettingsManager {
       const globalUpdates: Partial<Settings> = {};
       if ("hooks" in updates) {
         globalUpdates.hooks = updates.hooks;
-      }
-      if ("statusLine" in updates) {
-        globalUpdates.statusLine = updates.statusLine;
       }
       if ("windowTitle" in updates) {
         globalUpdates.windowTitle = updates.windowTitle;
