@@ -1137,12 +1137,13 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     async (
       changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
     ) => {
+      const overlayCommand = consumeOverlayCommand("experiment");
+
       if (changes.length === 0) {
+        overlayCommand?.finish("Experiments dialog dismissed", true);
         setActiveOverlay(null);
         return;
       }
-
-      const overlayCommand = consumeOverlayCommand("experiment");
 
       if (isAgentBusy()) {
         setActiveOverlay(null);
