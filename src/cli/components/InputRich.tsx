@@ -452,7 +452,6 @@ const InputFooter = memo(function InputFooter({
   statusLineText,
   statusLineRight,
   footerNotification,
-  goalStatusText,
   hasQueuedMessages = false,
   queueMode = "immediate",
   deferModeSupported = false,
@@ -476,7 +475,6 @@ const InputFooter = memo(function InputFooter({
   statusLineText?: string;
   statusLineRight?: string;
   footerNotification?: string | null;
-  goalStatusText?: string | null;
   hasQueuedMessages?: boolean;
   queueMode?: "immediate" | "defer";
   deferModeSupported?: boolean;
@@ -538,11 +536,8 @@ const InputFooter = memo(function InputFooter({
   ]);
 
   const rightLabel = useMemo(() => {
-    if (goalStatusText) {
-      return chalk.magenta(goalStatusText);
-    }
     return " ".repeat(rightPrefixSpaces) + rightLabelCore;
-  }, [goalStatusText, rightPrefixSpaces, rightLabelCore]);
+  }, [rightPrefixSpaces, rightLabelCore]);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -1782,7 +1777,7 @@ export function Input({
     }
   }, [currentMode]);
 
-  // Goal status footer text. Stored in state (rather than recomputed every
+  // Goal product status text. Stored in state (rather than recomputed every
   // render) so we only trigger a re-render when the displayed string actually
   // changes. The previous implementation used setGoalFooterTick + setInterval
   // which forced a full Input re-render every second while a goal was active,
@@ -1813,7 +1808,7 @@ export function Input({
   // While the goal is active, re-check the formatted string each second but
   // only re-render when it actually changes. Combined with the fixed-width
   // format from formatGoalElapsedSeconds, the string changes at most once per
-  // second and the change is always same-width, so no footer flicker.
+  // second and the change is always same-width, so no product row flicker.
   useEffect(() => {
     if (!goalIsActive || !conversationId) return;
     const timer = setInterval(() => {
@@ -1841,7 +1836,10 @@ export function Input({
         {interactionEnabled ? (
           <Box flexDirection="column">
             {!suppressDividers && (
-              <ProductStatusRow terminalWidth={terminalWidth} />
+              <ProductStatusRow
+                goalStatusText={goalStatusText}
+                terminalWidth={terminalWidth}
+              />
             )}
 
             {/* Top horizontal divider */}
@@ -1943,7 +1941,6 @@ export function Input({
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
                 footerNotification={footerNotification}
-                goalStatusText={goalStatusText}
                 hasQueuedMessages={
                   (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
                   0
