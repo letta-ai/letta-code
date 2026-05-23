@@ -715,6 +715,7 @@ export function AppView(props: AppViewProps) {
                 statusLineActive={statusLine.active}
                 statusLineText={statusLine.text || undefined}
                 statusLineRight={statusLine.rightText || undefined}
+                statusLinePayload={statusLine.payload}
                 statusLinePrompt={statusLine.prompt}
                 footerNotification={footerUpdateText}
                 showInspirationalPromptHints={showInspirationalPromptHints}
