@@ -15,8 +15,16 @@ interface DefaultStatuslineParts {
   rightWidth: number;
 }
 
+export function getDefaultStatuslineRightColumnWidth(
+  context: StatuslineRenderContext,
+): number {
+  const terminalWidth = context.terminalWidth ?? context.ui.rightColumnWidth;
+  return Math.max(context.ui.rightColumnWidth, terminalWidth - 4);
+}
+
 export function buildDefaultStatuslineParts(
   context: StatuslineRenderContext,
+  rightColumnWidth = getDefaultStatuslineRightColumnWidth(context),
 ): DefaultStatuslineParts {
   const indicatorWidth =
     (context.ui.isByokProvider ? 2 : 0) +
@@ -24,7 +32,7 @@ export function buildDefaultStatuslineParts(
   const separatorWidth = 3;
   const availableTextWidth = Math.max(
     12,
-    context.ui.rightColumnWidth - separatorWidth - indicatorWidth,
+    rightColumnWidth - separatorWidth - indicatorWidth,
   );
   const maxAgentChars = Math.max(8, Math.floor(availableTextWidth * 0.4));
   const displayAgentName = truncateStatuslineText(
@@ -45,10 +53,7 @@ export function buildDefaultStatuslineParts(
     separatorWidth +
     displayModel.length +
     indicatorWidth;
-  const rightPrefixSpaces = Math.max(
-    0,
-    context.ui.rightColumnWidth - rightWidth,
-  );
+  const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightWidth);
 
   const rightCoreParts: string[] = [];
   rightCoreParts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
@@ -81,7 +86,8 @@ export function buildDefaultStatuslineParts(
 }
 
 export function renderDefaultStatusline(context: StatuslineRenderContext) {
-  const parts = buildDefaultStatuslineParts(context);
+  const rightColumnWidth = getDefaultStatuslineRightColumnWidth(context);
+  const parts = buildDefaultStatuslineParts(context, rightColumnWidth);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -91,7 +97,7 @@ export function renderDefaultStatusline(context: StatuslineRenderContext) {
       <Box
         flexDirection="column"
         alignItems="flex-end"
-        width={context.ui.rightColumnWidth}
+        width={rightColumnWidth}
         flexShrink={0}
       >
         <Text>{parts.right}</Text>

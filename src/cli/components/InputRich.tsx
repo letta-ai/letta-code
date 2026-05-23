@@ -537,7 +537,10 @@ const StatuslineSlot = memo(function StatuslineSlot({
     return <BlankStatuslineRow rightColumnWidth={rightColumnWidth} />;
   }
 
-  const defaultStatuslineParts = buildDefaultStatuslineParts(statuslineContext);
+  const defaultStatuslineParts = buildDefaultStatuslineParts(
+    statuslineContext,
+    rightColumnWidth,
+  );
   const rightLabel = defaultStatuslineParts.right;
   const defaultLeftStatusline = defaultStatuslineParts.left;
 
