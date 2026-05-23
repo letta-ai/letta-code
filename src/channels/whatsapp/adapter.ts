@@ -2,6 +2,8 @@ import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelTurnLifecycleEvent,
+  ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
   WhatsAppChannelAccount,
@@ -178,6 +180,11 @@ function buildQuotedOptions(
       message: { conversation: "" },
     },
   };
+}
+
+function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
+  if (!source.chatId) return null;
+  return `${source.chatId}:${source.messageId ?? ""}`;
 }
 
 export function createWhatsAppAdapter(
@@ -594,6 +601,37 @@ export function createWhatsAppAdapter(
         event.source.chatId,
         formatChannelControlRequestPrompt(event),
         { replyToMessageId: event.source.messageId },
+      );
+    },
+
+    async handleTurnLifecycleEvent(
+      event: ChannelTurnLifecycleEvent,
+    ): Promise<void> {
+      if (!running || event.type !== "finished") return;
+
+      const errorText = event.outcome === "error" ? event.error?.trim() : null;
+      if (!errorText) return;
+
+      const uniqueSources = new Map<string, ChannelTurnSource>();
+      for (const source of event.sources) {
+        const key = getLifecycleErrorReplyKey(source);
+        if (!key || uniqueSources.has(key)) continue;
+        uniqueSources.set(key, source);
+      }
+
+      await Promise.all(
+        Array.from(uniqueSources.values()).map(async (source) => {
+          try {
+            await adapter.sendDirectReply(source.chatId, errorText, {
+              replyToMessageId: source.messageId,
+            });
+          } catch (error) {
+            console.warn(
+              `[WhatsApp:${account.accountId}] Failed to send lifecycle error reply for ${source.chatId}:`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }),
       );
     },
   };
