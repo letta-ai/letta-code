@@ -22,7 +22,7 @@ import {
   DEFAULT_STATUSLINE_RENDERER_ID,
   getBuiltinStatuslineRenderer,
 } from "@/cli/display/statusline/registry";
-import { buildLegacyStatuslineParts } from "@/cli/display/statusline/renderers/Legacy";
+import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
 import { evaluateLocalExtensionStatuses } from "@/cli/extensions/local-extension-loader";
 import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
@@ -537,9 +537,9 @@ const StatuslineSlot = memo(function StatuslineSlot({
     return <BlankStatuslineRow rightColumnWidth={rightColumnWidth} />;
   }
 
-  const legacyStatuslineParts = buildLegacyStatuslineParts(statuslineContext);
-  const rightLabel = legacyStatuslineParts.right;
-  const defaultLeftStatusline = legacyStatuslineParts.left;
+  const defaultStatuslineParts = buildDefaultStatuslineParts(statuslineContext);
+  const rightLabel = defaultStatuslineParts.right;
+  const defaultLeftStatusline = defaultStatuslineParts.left;
 
   const leftContent = preemption ? (
     <StatuslinePreemptionView preemption={preemption} />
@@ -1786,7 +1786,7 @@ export function Input({
           glyph: "▶",
         };
       case "unrestricted":
-        // Default mode — show nothing so "Press / for commands" renders instead
+        // Default mode — show nothing so the built-in idle row owns the space.
         return null;
       default:
         return null;

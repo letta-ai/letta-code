@@ -1,10 +1,10 @@
-import { legacyStatuslineRenderer } from "@/cli/display/statusline/renderers/Legacy";
+import { defaultStatuslineRenderer } from "@/cli/display/statusline/renderers/Default";
 import type { StatuslineRenderer } from "@/cli/display/statusline/types";
 
-export const DEFAULT_STATUSLINE_RENDERER_ID = "legacy";
+export const DEFAULT_STATUSLINE_RENDERER_ID = "default";
 
 const BUILTIN_STATUSLINE_RENDERERS = [
-  legacyStatuslineRenderer,
+  defaultStatuslineRenderer,
 ] as const satisfies readonly StatuslineRenderer[];
 
 export function getBuiltinStatuslineRenderers(): readonly StatuslineRenderer[] {
@@ -16,6 +16,6 @@ export function getBuiltinStatuslineRenderer(
 ): StatuslineRenderer {
   return (
     BUILTIN_STATUSLINE_RENDERERS.find((renderer) => renderer.id === id) ??
-    legacyStatuslineRenderer
+    defaultStatuslineRenderer
   );
 }
