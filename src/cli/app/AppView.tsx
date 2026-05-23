@@ -708,6 +708,7 @@ export function AppView(props: AppViewProps) {
                 networkPhase={networkPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
+                statusLineActive={statusLine.active}
                 statusLineText={statusLine.text || undefined}
                 statusLineRight={statusLine.rightText || undefined}
                 statusLinePrompt={statusLine.prompt}

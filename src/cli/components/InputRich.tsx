@@ -48,6 +48,7 @@ import { Text } from "./Text";
 const ESC_CLEAR_WINDOW_MS = 2500;
 const FOOTER_WIDTH_STREAMING_DELTA = 2;
 const EMPTY_COMPOSER_PROMPT_ROTATION_MS = 6000;
+const STATUSLINE_TRANSIENT_HINT_MS = 4000;
 const EMPTY_COMPOSER_PROMPT_HINTS = [
   'Try "help me understand this codebase"',
   'Try "help me organize my desktop"',
@@ -390,6 +391,31 @@ function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
   return `${modeGlyph ?? "⏵⏵"} ${modeName}`;
 }
 
+function getPermissionModeTransientHintInfo(mode: PermissionMode): {
+  name: string;
+  color: string;
+  glyph?: string;
+} {
+  switch (mode) {
+    case "acceptEdits":
+      return { name: "accept edits", color: colors.status.processing };
+    case "standard":
+      return {
+        name: "standard (request approval) mode",
+        color: colors.status.processingShimmer,
+        glyph: "▶",
+      };
+    case "unrestricted":
+      return {
+        name: "unrestricted mode",
+        color: colors.status.success,
+        glyph: "⚡︎",
+      };
+    case "memory":
+      return { name: "memory mode", color: colors.status.processing };
+  }
+}
+
 function StatusLineContent({
   text,
   modeName,
@@ -430,18 +456,30 @@ function StatusLineContent({
 
 type StatuslinePreemption =
   | { type: "confirm-exit" }
-  | { type: "confirm-clear" }
+  | { type: "confirm-clear" };
+
+type StatuslineTransientHint =
+  | {
+      type: "message";
+      message: string;
+      color?: string;
+      dimColor?: boolean;
+    }
   | { type: "bash-mode" }
   | {
-      type: "mode-hint";
+      type: "permission-mode";
       modeName: string;
       modeColor: string;
       modeGlyph?: string | null;
       showExitHint: boolean;
     }
-  | { type: "footer-notification"; message: string }
   | {
       type: "queued-message-hint";
+      queueMode: "immediate" | "defer";
+      deferModeSupported: boolean;
+    }
+  | {
+      type: "queue-mode-changed";
       queueMode: "immediate" | "defer";
       deferModeSupported: boolean;
     };
@@ -449,29 +487,9 @@ type StatuslinePreemption =
 function getStatuslinePreemption({
   ctrlCPressed,
   escapePressed,
-  isBashMode,
-  statusLineText,
-  modeName,
-  modeColor,
-  modeGlyph,
-  showExitHint,
-  footerNotification,
-  hasQueuedMessages,
-  queueMode,
-  deferModeSupported,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
-  isBashMode: boolean;
-  statusLineText?: string;
-  modeName: string | null;
-  modeColor: string | null;
-  modeGlyph?: string | null;
-  showExitHint: boolean;
-  footerNotification?: string | null;
-  hasQueuedMessages: boolean;
-  queueMode: "immediate" | "defer";
-  deferModeSupported: boolean;
 }): StatuslinePreemption | null {
   if (ctrlCPressed) {
     return { type: "confirm-exit" };
@@ -479,38 +497,6 @@ function getStatuslinePreemption({
 
   if (escapePressed) {
     return { type: "confirm-clear" };
-  }
-
-  if (isBashMode) {
-    return { type: "bash-mode" };
-  }
-
-  // Preserve current behavior: a configured statusline owns the slot over
-  // non-armed host interaction hints.
-  if (statusLineText) {
-    return null;
-  }
-
-  if (modeName && modeColor) {
-    return {
-      type: "mode-hint",
-      modeName,
-      modeColor,
-      modeGlyph,
-      showExitHint,
-    };
-  }
-
-  if (footerNotification) {
-    return { type: "footer-notification", message: footerNotification };
-  }
-
-  if (hasQueuedMessages) {
-    return {
-      type: "queued-message-hint",
-      queueMode,
-      deferModeSupported,
-    };
   }
 
   return null;
@@ -526,64 +512,160 @@ function StatuslinePreemptionView({
       return <Text dimColor>Press CTRL-C again to exit</Text>;
     case "confirm-clear":
       return <Text dimColor>Press Esc again to clear</Text>;
-    case "bash-mode":
-      return (
-        <Text>
-          <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
-          <Text color={colors.bash.prompt} dimColor>
-            {" "}
-            (backspace to exit)
-          </Text>
-        </Text>
-      );
-    case "mode-hint":
-      return (
-        <Text>
-          <Text color={preemption.modeColor}>
-            {formatModeLabel(preemption.modeName, preemption.modeGlyph)}
-          </Text>
-          <Text color={preemption.modeColor} dimColor>
-            {" "}
-            (shift+tab to {preemption.showExitHint ? "exit" : "cycle"})
-          </Text>
-        </Text>
-      );
-    case "footer-notification":
-      return (
-        <Text color={colors.status.processingShimmer}>
-          {preemption.message}
-        </Text>
-      );
-    case "queued-message-hint":
-      return (
-        <Text dimColor>
-          {preemption.deferModeSupported
-            ? preemption.queueMode === "defer"
-              ? "press ↑ to edit queued message · ctrl+d to release queue"
-              : "press ↑ to edit queued message · ctrl+d to hold queue until done"
-            : "press ↑ to edit queued message"}
-        </Text>
-      );
   }
 }
 
-function DefaultOrExtensionStatusline({
-  statusLineText,
+function StatuslineBashModeHint() {
+  return (
+    <Text>
+      <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
+      <Text color={colors.bash.prompt} dimColor>
+        {" "}
+        (backspace to exit)
+      </Text>
+    </Text>
+  );
+}
+
+function StatuslineModeHint({
   modeName,
   modeColor,
   modeGlyph,
   showExitHint,
 }: {
+  modeName: string;
+  modeColor: string;
+  modeGlyph?: string | null;
+  showExitHint: boolean;
+}) {
+  return (
+    <Text>
+      <Text color={modeColor}>{formatModeLabel(modeName, modeGlyph)}</Text>
+      <Text color={modeColor} dimColor>
+        {" "}
+        (shift+tab to {showExitHint ? "exit" : "cycle"})
+      </Text>
+    </Text>
+  );
+}
+
+function StatuslineQueuedMessageHint({
+  queueMode,
+  deferModeSupported,
+}: {
+  queueMode: "immediate" | "defer";
+  deferModeSupported: boolean;
+}) {
+  return (
+    <Text dimColor>
+      {deferModeSupported
+        ? queueMode === "defer"
+          ? "press ↑ to edit queued message · ctrl+d to release queue"
+          : "press ↑ to edit queued message · ctrl+d to hold queue until done"
+        : "press ↑ to edit queued message"}
+    </Text>
+  );
+}
+
+function StatuslineQueueModeChangedHint({
+  queueMode,
+  deferModeSupported,
+}: {
+  queueMode: "immediate" | "defer";
+  deferModeSupported: boolean;
+}) {
+  if (!deferModeSupported) {
+    return null;
+  }
+
+  return (
+    <Text dimColor>
+      {queueMode === "defer"
+        ? "queue held until done · ctrl+d to release"
+        : "queue sends as soon as possible · ctrl+d to hold"}
+    </Text>
+  );
+}
+
+function StatuslineTransientHintView({
+  hint,
+}: {
+  hint: StatuslineTransientHint;
+}) {
+  switch (hint.type) {
+    case "message":
+      return (
+        <Text color={hint.color} dimColor={hint.dimColor}>
+          {hint.message}
+        </Text>
+      );
+    case "bash-mode":
+      return <StatuslineBashModeHint />;
+    case "permission-mode":
+      return (
+        <StatuslineModeHint
+          modeName={hint.modeName}
+          modeColor={hint.modeColor}
+          modeGlyph={hint.modeGlyph}
+          showExitHint={hint.showExitHint}
+        />
+      );
+    case "queued-message-hint":
+      return (
+        <StatuslineQueuedMessageHint
+          queueMode={hint.queueMode}
+          deferModeSupported={hint.deferModeSupported}
+        />
+      );
+    case "queue-mode-changed":
+      return (
+        <StatuslineQueueModeChangedHint
+          queueMode={hint.queueMode}
+          deferModeSupported={hint.deferModeSupported}
+        />
+      );
+  }
+}
+
+function DefaultOrExtensionStatusline({
+  statusLineActive,
+  statusLineText,
+  isBashMode,
+  modeName,
+  modeColor,
+  modeGlyph,
+  showExitHint,
+}: {
+  statusLineActive: boolean;
   statusLineText?: string;
+  isBashMode: boolean;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
   showExitHint: boolean;
 }) {
-  if (statusLineText) {
+  if (statusLineActive) {
+    if (!statusLineText) {
+      return <Text> </Text>;
+    }
+
     return (
       <StatusLineContent
         text={statusLineText}
+        modeName={null}
+        modeColor={null}
+        showExitHint={false}
+      />
+    );
+  }
+
+  if (isBashMode) {
+    return <StatuslineBashModeHint />;
+  }
+
+  if (modeName && modeColor) {
+    return (
+      <StatuslineModeHint
         modeName={modeName}
         modeColor={modeColor}
         modeGlyph={modeGlyph}
@@ -616,12 +698,10 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hasTemporaryModelOverride,
   hideFooter,
   rightColumnWidth,
+  statusLineActive,
   statusLineText,
   statusLineRight,
-  footerNotification,
-  hasQueuedMessages = false,
-  queueMode = "immediate",
-  deferModeSupported = false,
+  transientHint,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -639,34 +719,26 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hasTemporaryModelOverride?: boolean;
   hideFooter: boolean;
   rightColumnWidth: number;
+  statusLineActive: boolean;
   statusLineText?: string;
   statusLineRight?: string;
-  footerNotification?: string | null;
-  hasQueuedMessages?: boolean;
-  queueMode?: "immediate" | "defer";
-  deferModeSupported?: boolean;
+  transientHint?: StatuslineTransientHint | null;
 }) {
   const hideFooterContent = hideFooter;
 
   const preemption = getStatuslinePreemption({
     ctrlCPressed,
     escapePressed,
-    isBashMode,
-    statusLineText,
-    modeName,
-    modeColor,
-    modeGlyph,
-    showExitHint,
-    footerNotification,
-    hasQueuedMessages,
-    queueMode,
-    deferModeSupported,
   });
   const leftContent = preemption ? (
     <StatuslinePreemptionView preemption={preemption} />
+  ) : transientHint ? (
+    <StatuslineTransientHintView hint={transientHint} />
   ) : (
     <DefaultOrExtensionStatusline
+      statusLineActive={statusLineActive}
       statusLineText={statusLineText}
+      isBashMode={isBashMode}
       modeName={modeName}
       modeColor={modeColor}
       modeGlyph={modeGlyph}
@@ -1087,6 +1159,7 @@ export function Input({
   networkPhase = null,
   terminalWidth,
   shouldAnimate = true,
+  statusLineActive = false,
   statusLineText,
   statusLineRight,
   statusLinePrompt,
@@ -1138,6 +1211,7 @@ export function Input({
   networkPhase?: "upload" | "download" | "error" | null;
   terminalWidth: number;
   shouldAnimate?: boolean;
+  statusLineActive?: boolean;
   statusLineText?: string;
   statusLineRight?: string;
   statusLinePrompt?: string;
@@ -1150,6 +1224,11 @@ export function Input({
   const escapeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [ctrlCPressed, setCtrlCPressed] = useState(false);
   const ctrlCTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [statuslineTransientHint, setStatuslineTransientHint] =
+    useState<StatuslineTransientHint | null>(null);
+  const statuslineTransientHintTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const previousValueRef = useRef(value);
   const [currentMode, setCurrentMode] = useState<PermissionMode>(
     externalMode || permissionMode.getMode(),
@@ -1213,6 +1292,20 @@ export function Input({
 
   const interactionEnabled = visible && inputEnabled && !inputDisabled;
   const reserveInputSpace = !collapseInputWhenDisabled;
+
+  const showStatuslineTransientHint = useCallback(
+    (hint: StatuslineTransientHint) => {
+      if (statuslineTransientHintTimerRef.current) {
+        clearTimeout(statuslineTransientHintTimerRef.current);
+      }
+      setStatuslineTransientHint(hint);
+      statuslineTransientHintTimerRef.current = setTimeout(() => {
+        statuslineTransientHintTimerRef.current = null;
+        setStatuslineTransientHint(null);
+      }, STATUSLINE_TRANSIENT_HINT_MS);
+    },
+    [],
+  );
   const hideFooter = !interactionEnabled || value.startsWith("/");
   const inputRowLines = useMemo(() => {
     return Math.max(1, getVisualLines(value, contentWidth).length);
@@ -1340,10 +1433,11 @@ export function Input({
   const handleBangAtEmpty = useCallback(() => {
     if (isBashMode) return false;
     setIsBashMode(true);
+    showStatuslineTransientHint({ type: "bash-mode" });
     // Arm immediately so initial empty backspace exits in one press.
     setBashExitArmed(true);
     return true;
-  }, [isBashMode]);
+  }, [isBashMode, showStatuslineTransientHint]);
 
   const handleBackspaceAtEmpty = useCallback(() => {
     if (!isBashMode) return false;
@@ -1770,6 +1864,9 @@ export function Input({
     return () => {
       if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
       if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
+      if (statuslineTransientHintTimerRef.current) {
+        clearTimeout(statuslineTransientHintTimerRef.current);
+      }
     };
   }, []);
 
@@ -1924,6 +2021,23 @@ export function Input({
     }
   }, [currentMode]);
 
+  const previousModeRef = useRef(currentMode);
+  useEffect(() => {
+    if (previousModeRef.current === currentMode) {
+      return;
+    }
+    previousModeRef.current = currentMode;
+
+    const hintInfo = getPermissionModeTransientHintInfo(currentMode);
+    showStatuslineTransientHint({
+      type: "permission-mode",
+      modeName: hintInfo.name,
+      modeColor: hintInfo.color,
+      modeGlyph: hintInfo.glyph,
+      showExitHint: goalLoopActive,
+    });
+  }, [currentMode, goalLoopActive, showStatuslineTransientHint]);
+
   // Goal product status text. Stored in state (rather than recomputed every
   // render) so we only trigger a re-render when the displayed string actually
   // changes. The previous implementation used setGoalFooterTick + setInterval
@@ -1971,6 +2085,66 @@ export function Input({
     () => "─".repeat(Math.max(0, columns)),
     [columns],
   );
+
+  const queuedUserMessageCount =
+    messageQueue?.filter((message) => message.kind === "user").length ?? 0;
+
+  const previousQueuedUserMessageCountRef = useRef(queuedUserMessageCount);
+  useEffect(() => {
+    const previousCount = previousQueuedUserMessageCountRef.current;
+    previousQueuedUserMessageCountRef.current = queuedUserMessageCount;
+
+    if (previousCount === 0 && queuedUserMessageCount > 0) {
+      showStatuslineTransientHint({
+        type: "queued-message-hint",
+        queueMode,
+        deferModeSupported,
+      });
+    }
+  }, [
+    queuedUserMessageCount,
+    queueMode,
+    deferModeSupported,
+    showStatuslineTransientHint,
+  ]);
+
+  const previousQueueModeRef = useRef(queueMode);
+  useEffect(() => {
+    const previousMode = previousQueueModeRef.current;
+    previousQueueModeRef.current = queueMode;
+
+    if (
+      previousMode !== queueMode &&
+      queuedUserMessageCount > 0 &&
+      deferModeSupported
+    ) {
+      showStatuslineTransientHint({
+        type: "queue-mode-changed",
+        queueMode,
+        deferModeSupported,
+      });
+    }
+  }, [
+    queueMode,
+    queuedUserMessageCount,
+    deferModeSupported,
+    showStatuslineTransientHint,
+  ]);
+
+  const previousFooterNotificationRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      footerNotification &&
+      footerNotification !== previousFooterNotificationRef.current
+    ) {
+      showStatuslineTransientHint({
+        type: "message",
+        message: footerNotification,
+        color: colors.status.processingShimmer,
+      });
+    }
+    previousFooterNotificationRef.current = footerNotification ?? null;
+  }, [footerNotification, showStatuslineTransientHint]);
 
   const lowerPane = useMemo(() => {
     return (
@@ -2085,15 +2259,10 @@ export function Input({
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
+                statusLineActive={statusLineActive}
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
-                footerNotification={footerNotification}
-                hasQueuedMessages={
-                  (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
-                  0
-                }
-                queueMode={queueMode}
-                deferModeSupported={deferModeSupported}
+                transientHint={statuslineTransientHint}
               />
             )}
           </Box>
@@ -2139,19 +2308,19 @@ export function Input({
     footerRightColumnWidth,
     reserveInputSpace,
     inputChromeHeight,
+    statusLineActive,
     statusLineText,
     statusLineRight,
 
-    footerNotification,
     goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,
     queueMode,
-    deferModeSupported,
     isLocalBackend,
     inspirationalPlaceholder,
     terminalWidth,
+    statuslineTransientHint,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
