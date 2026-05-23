@@ -73,6 +73,9 @@ describe("statusline renderers", () => {
     expect(context.toolset).toBe("computer");
     expect(context.workspace.currentDir).toBe("/tmp/project");
     expect(context.workspace.projectDir).toBe("/tmp/project");
+    expect(context.components.Box).toBeDefined();
+    expect(context.components.Text).toBeDefined();
+    expect(context.components.Spacer).toBeDefined();
     expect(context.agent.name).toBe("Letta Code");
     expect(context.model.displayName).toBe("GPT-5.5 (ChatGPT)");
     expect(context.model.provider).toBe("chatgpt-plus-pro");

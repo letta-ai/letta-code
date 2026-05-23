@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type * as DisplayComponents from "@/cli/display/DisplayComponents";
 import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 
 export interface StatuslineUiContext {
@@ -43,6 +44,7 @@ export interface StatuslineCostContext {
 
 export interface StatuslineRenderContext {
   rawPayload: StatusLinePayload;
+  components: typeof DisplayComponents;
   app: {
     version: string;
   };

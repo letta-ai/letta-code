@@ -1,3 +1,4 @@
+import * as DisplayComponents from "@/cli/display/DisplayComponents";
 import type {
   StatuslineRenderContext,
   StatuslineUiContext,
@@ -15,6 +16,7 @@ export function buildStatuslineRenderContext({
 }: BuildStatuslineRenderContextInput): StatuslineRenderContext {
   return {
     rawPayload: payload,
+    components: DisplayComponents,
     app: {
       version: payload.version,
     },
