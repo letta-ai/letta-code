@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
@@ -142,6 +148,39 @@ describe("local extension loader", () => {
           ),
         }),
       ).toBe("second:slow");
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("transpiles TypeScript and TSX extensions to importable mjs cache files", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      const extensionPath = path.join(extensionDir, "statusline.tsx");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta: any) {
+          const Label = letta.getContext().components.Text;
+          letta.ui.setStatuslineRenderer((ctx: any) => <Label>{ctx.agent.name}</Label>);
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(registry.loadedPaths).toEqual([extensionPath]);
+      const cacheFiles = readdirSync(options.cacheDirectory).filter((entry) =>
+        entry.startsWith(".letta-extension-statusline-"),
+      );
+      expect(cacheFiles).toHaveLength(1);
+      expect(cacheFiles[0]?.endsWith(".mjs")).toBe(true);
+      const output = registry.ui.statuslineRenderer?.render(
+        createStatuslineContext(),
+      );
+      expect(output).toMatchObject({ props: { children: "Letta Code" } });
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

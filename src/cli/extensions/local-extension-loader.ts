@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import * as ts from "typescript";
 import type {
   StatuslineRenderContext,
   StatuslineRenderer,
@@ -31,6 +32,7 @@ export const EXTENSION_CACHE_DIRECTORY = path.join(
 );
 
 const EXTENSION_FILE_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".tsx"]);
+const TYPESCRIPT_EXTENSION_FILE_EXTENSIONS = new Set([".ts", ".tsx"]);
 const requireFromRuntime = createRequire(import.meta.url);
 
 export type StatuslineRenderFunction = (
@@ -170,6 +172,54 @@ function ensureExtensionCache(cacheDirectory: string): void {
   ensureRuntimeDependencySymlink(cacheDirectory, "react");
 }
 
+function formatTranspileDiagnostic(diagnostic: ts.Diagnostic): string {
+  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+  if (!diagnostic.file || diagnostic.start == null) {
+    return message;
+  }
+
+  const position = diagnostic.file.getLineAndCharacterOfPosition(
+    diagnostic.start,
+  );
+  return `${diagnostic.file.fileName}:${position.line + 1}:${position.character + 1} ${message}`;
+}
+
+function transpileTypeScriptExtension(
+  extensionPath: string,
+  source: string,
+): string {
+  const result = ts.transpileModule(source, {
+    compilerOptions: {
+      jsx: ts.JsxEmit.ReactJSX,
+      module: ts.ModuleKind.ES2022,
+      target: ts.ScriptTarget.ES2022,
+    },
+    fileName: extensionPath,
+    reportDiagnostics: true,
+  });
+
+  const errors = result.diagnostics?.filter(
+    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+  );
+  if (errors?.length) {
+    throw new Error(errors.map(formatTranspileDiagnostic).join("\n"));
+  }
+
+  return result.outputText;
+}
+
+function prepareExtensionForImport(
+  extensionPath: string,
+  source: string,
+): string {
+  const extension = path.extname(extensionPath);
+  if (TYPESCRIPT_EXTENSION_FILE_EXTENSIONS.has(extension)) {
+    return transpileTypeScriptExtension(extensionPath, source);
+  }
+
+  return source;
+}
+
 function createImportableExtensionPath(
   extensionPath: string,
   cacheDirectory: string,
@@ -179,23 +229,23 @@ function createImportableExtensionPath(
   const source = readFileSync(extensionPath, "utf8");
   const hash = createHash("sha256").update(source).digest("hex").slice(0, 16);
   const extension = path.extname(extensionPath);
+  const importableSource = prepareExtensionForImport(extensionPath, source);
   const baseName = path
     .basename(extensionPath, extension)
     .replace(/[^a-zA-Z0-9_-]/g, "-");
   const importPath = path.join(
     cacheDirectory,
-    `.letta-extension-${baseName}-${hash}${extension}`,
+    `.letta-extension-${baseName}-${hash}.mjs`,
   );
 
   if (!existsSync(importPath)) {
-    writeFileSync(importPath, source, "utf8");
+    writeFileSync(importPath, importableSource, "utf8");
   }
 
   try {
     for (const entry of readdirSync(cacheDirectory)) {
       if (
         entry.startsWith(`.letta-extension-${baseName}-`) &&
-        entry.endsWith(extension) &&
         entry !== path.basename(importPath)
       ) {
         unlinkSync(path.join(cacheDirectory, entry));
