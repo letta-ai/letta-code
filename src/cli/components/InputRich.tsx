@@ -367,6 +367,21 @@ function StatuslineTransientHintView({
   }
 }
 
+function shouldTransientHintBlankRightColumn({
+  customStatuslineActive,
+  hint,
+}: {
+  customStatuslineActive: boolean;
+  hint: StatuslineTransientHint | null | undefined;
+}): boolean {
+  if (!hint) return false;
+  if (customStatuslineActive) return true;
+
+  // With the built-in default, bash and permission modes render on the left
+  // while the default renderer owns the right label, so they can coexist.
+  return hint.type !== "bash-mode" && hint.type !== "permission-mode";
+}
+
 function DefaultStatuslineLeftContent({
   defaultLeftStatusline,
   isBashMode,
@@ -496,6 +511,13 @@ const StatuslineSlot = memo(function StatuslineSlot({
   );
   const localStatuslineRenderer =
     extensionRuntime.registry?.ui.statuslineRenderer ?? null;
+  const extensionStatuslineLoading =
+    extensionRuntime.isLoading &&
+    (extensionRuntime.hasExtensionSources ||
+      extensionRuntime.hadStatuslineRenderer);
+  const customStatuslineActive = Boolean(
+    localStatuslineRenderer || extensionStatuslineLoading,
+  );
   const idleSlotAvailable = !hideFooterContent && !preemption && !transientHint;
 
   if (idleSlotAvailable && localStatuslineRenderer) {
@@ -511,12 +533,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
     }
   }
 
-  if (
-    idleSlotAvailable &&
-    extensionRuntime.isLoading &&
-    (extensionRuntime.hasExtensionSources ||
-      extensionRuntime.hadStatuslineRenderer)
-  ) {
+  if (idleSlotAvailable && extensionStatuslineLoading) {
     return <BlankStatuslineRow rightColumnWidth={rightColumnWidth} />;
   }
 
@@ -538,7 +555,12 @@ const StatuslineSlot = memo(function StatuslineSlot({
       showExitHint={showExitHint}
     />
   );
-  const shouldBlankRightColumn = Boolean(preemption || transientHint);
+  const shouldBlankRightColumn =
+    Boolean(preemption) ||
+    shouldTransientHintBlankRightColumn({
+      customStatuslineActive,
+      hint: transientHint,
+    });
 
   const shouldRenderDefaultStatusline = shouldRenderDefaultStatuslineRenderer({
     hideFooterContent,
