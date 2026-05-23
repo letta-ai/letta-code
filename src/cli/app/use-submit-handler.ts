@@ -931,6 +931,61 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
+          const args = trimmed.slice("/statusline".length).trim();
+          const cmd = commandRunner.start(
+            msg,
+            args
+              ? `Starting statusline setup for: ${args}`
+              : "Starting statusline setup...",
+          );
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /statusline.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+          try {
+            const { loadRenderedSkillContent, wrapSkillContent } = await import(
+              "@/tools/impl/skill"
+            );
+            const skillContent = await loadRenderedSkillContent(
+              "customizing-statusline",
+              {
+                agentId,
+                args,
+                allowDisabledModelInvocation: true,
+              },
+            );
+            const request = args
+              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline extension.`
+              : "The user ran `/statusline` without arguments. Use the loaded skill's bare `/statusline` behavior.";
+
+            cmd.finish("Running statusline setup...", true);
+            await processConversationWithQueuedApprovals([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${wrapSkillContent("customizing-statusline", skillContent)}\n\n${SYSTEM_REMINDER_OPEN}\n${request}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to run statusline setup: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         const diagnosticsCommandResult = await handleDiagnosticsCommand(
           trimmed,
           {
