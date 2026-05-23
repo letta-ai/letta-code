@@ -156,7 +156,13 @@ export interface ChannelPluginAccountPatch {
   acknowledgeMessageReaction?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  selfChatMode?: boolean;
+  groupMode?: "disabled" | "mention" | "open";
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
   transcribeVoice?: boolean;
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &
