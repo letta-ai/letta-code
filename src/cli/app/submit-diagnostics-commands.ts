@@ -66,20 +66,6 @@ export async function handleDiagnosticsCommand(
     setLlmConfig,
   } = ctx;
 
-  if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
-    const cmd = commandRunner.start(trimmed, "Checking statusline setup...");
-    cmd.finish(
-      [
-        "Statusline customization now uses local extensions.",
-        "Create a global extension at ~/.letta/extensions/statusline.tsx and register a renderer with letta.ui.setStatuslineRenderer().",
-        "Legacy shell command statusline config is no longer executed.",
-      ].join("\n"),
-      true,
-      true,
-    );
-    return { submitted: true };
-  }
-
   if (trimmed === "/usage") {
     const cmd = commandRunner.start(trimmed, "Fetching usage statistics...");
 
