@@ -7,7 +7,10 @@ import {
   getBuiltinStatuslineRenderer,
   getBuiltinStatuslineRenderers,
 } from "@/cli/display/statusline/registry";
-import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
+import {
+  buildDefaultStatuslineParts,
+  getDefaultStatuslineRightColumnWidth,
+} from "@/cli/display/statusline/renderers/Default";
 import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
 import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
 
@@ -23,11 +26,15 @@ function createStatuslineContext({
   agentName = "Letta Code",
   modelDisplayName = "GPT-5.5 (ChatGPT)",
   reasoningEffort = "high",
+  rightColumnWidth = 80,
+  terminalWidth = 120,
   toolset = "letta-code",
 }: {
   agentName?: string;
   modelDisplayName?: string;
   reasoningEffort?: string;
+  rightColumnWidth?: number;
+  terminalWidth?: number;
   toolset?: string;
 } = {}): StatuslineRenderContext {
   return buildStatuslineRenderContext({
@@ -37,6 +44,7 @@ function createStatuslineContext({
       modelDisplayName,
       projectDirectory: "/tmp/project",
       reasoningEffort,
+      terminalWidth,
       toolset,
     }),
     ui: {
@@ -46,7 +54,7 @@ function createStatuslineContext({
       isByokProvider: false,
       isLocalBackend: true,
       isOpenAICodexProvider: false,
-      rightColumnWidth: 80,
+      rightColumnWidth,
     },
   });
 }
@@ -97,6 +105,20 @@ describe("statusline renderers", () => {
     expect(stripAnsi(String(output.right)).trim()).toBe(
       "Letta Code · No model selected",
     );
+  });
+
+  test("default renderer uses idle row width for long agent names", () => {
+    const context = createStatuslineContext({
+      agentName: "A Very Long Agent Name",
+      modelDisplayName: "Claude",
+      rightColumnWidth: 36,
+      terminalWidth: 80,
+    });
+
+    expect(getDefaultStatuslineRightColumnWidth(context)).toBe(76);
+    expect(
+      stripAnsi(String(buildDefaultStatuslineParts(context).right)),
+    ).toContain("A Very Long Agent Name");
   });
 
   test("default renderer does not override safety preemptions", () => {
