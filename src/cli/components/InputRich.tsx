@@ -13,17 +13,10 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
-import {
-  getActiveBackgroundAgents,
-  getSnapshot as getSubagentSnapshot,
-  subscribe as subscribeToSubagents,
-} from "@/agent/subagent-state.js";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { buildChatUrl } from "@/cli/helpers/app-urls.js";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
@@ -38,10 +31,10 @@ import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
-import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { ProductStatusRow } from "./ProductStatusRow";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 import {
@@ -490,51 +483,6 @@ const InputFooter = memo(function InputFooter({
 }) {
   const hideFooterContent = hideFooter;
 
-  // Subscribe to subagent state for background agent indicators
-  useSyncExternalStore(subscribeToSubagents, getSubagentSnapshot);
-  const backgroundAgents = [
-    ...getActiveBackgroundAgents(),
-    ...(process.env.LETTA_DEBUG_FOOTER === "1"
-      ? [
-          {
-            id: "debug-bg-agent",
-            type: "Reflection",
-            description: "Debug background agent",
-            status: "running" as const,
-            agentURL: "https://app.letta.com/chat/agent-debug-link",
-            toolCalls: [],
-            totalTokens: 0,
-            durationMs: 0,
-            startTime: Date.now() - 12_000,
-            isBackground: true,
-            silent: true,
-          },
-        ]
-      : []),
-  ];
-
-  // Tick counter for elapsed time display (only active when background agents exist)
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (backgroundAgents.length === 0) return;
-    const t = setInterval(() => setTick((v) => v + 1), 1000);
-    return () => clearInterval(t);
-  }, [backgroundAgents.length]);
-
-  // Background agent display parts for the footer indicator
-  const bgAgentParts = backgroundAgents.map((a) => {
-    const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
-    const agentId =
-      a.agentURL?.match(/\/(?:agents|chat)\/([^/?#]+)/)?.[1] ?? null;
-    const rawType = a.type.toLowerCase();
-    return {
-      id: a.id,
-      typeLabel: rawType === "reflection" ? "dreaming" : rawType,
-      chatUrl: agentId ? buildChatUrl(agentId) : null,
-      elapsed: `${elapsedS}s`,
-    };
-  });
-
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
   const reasoningTag = shouldHideReasoningForModelDisplay(currentModel)
@@ -558,29 +506,7 @@ const InputFooter = memo(function InputFooter({
     3;
   const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
 
-  // When bg agents are active, widen the right column to fit the indicator + label
-  // spinner slot (3) + parts text + " │ " (3)
-  const bgIndicatorWidth =
-    backgroundAgents.length > 0
-      ? 3 +
-        bgAgentParts.reduce(
-          (acc, p, i) =>
-            acc +
-            (i > 0 ? 3 : 0) +
-            p.typeLabel.length +
-            1 +
-            p.elapsed.length +
-            2,
-          0,
-        ) +
-        3
-      : 0;
-  const effectiveRightWidth =
-    backgroundAgents.length > 0
-      ? Math.max(rightColumnWidth, bgIndicatorWidth + rightTextLength)
-      : rightColumnWidth;
-
-  // Agent label without leading spaces (used by both default and bg-agent cases)
+  // Agent label without leading spaces (used for the default right-side label)
   const rightLabelCore = useMemo(() => {
     const parts: string[] = [];
     parts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
@@ -673,9 +599,7 @@ const InputFooter = memo(function InputFooter({
         flexDirection="column"
         alignItems="flex-end"
         width={
-          statusLineRight && !hideFooterContent
-            ? undefined
-            : effectiveRightWidth
+          statusLineRight && !hideFooterContent ? undefined : rightColumnWidth
         }
         flexShrink={0}
       >
@@ -687,39 +611,6 @@ const InputFooter = memo(function InputFooter({
               {parseStyledLine(line, `r${i}`)}
             </Text>
           ))
-        ) : backgroundAgents.length > 0 ? (
-          <Text>
-            <BlinkingSpinner
-              color={colors.bgSubagent.spinner}
-              width={2}
-              marginRight={0}
-              pulseIntervalMs={400}
-            />
-            {bgAgentParts.map((part, i) => (
-              <Text key={`bg-agent-${part.id}`}>
-                {i > 0 && (
-                  <Text
-                    key={`bg-agent-indicator-${part}`}
-                    color={colors.bgSubagent.label}
-                  >
-                    {" · "}
-                  </Text>
-                )}
-                {part.chatUrl ? (
-                  <Link url={part.chatUrl} fallback={false}>
-                    <Text color={colors.bgSubagent.label}>
-                      {part.typeLabel}
-                    </Text>
-                  </Link>
-                ) : (
-                  <Text color={colors.bgSubagent.label}>{part.typeLabel}</Text>
-                )}
-                <Text dimColor> ({part.elapsed})</Text>
-              </Text>
-            ))}
-            <Text dimColor>{" │ "}</Text>
-            {rightLabelCore}
-          </Text>
         ) : (
           <Text>{rightLabel}</Text>
         )}
@@ -1949,6 +1840,10 @@ export function Input({
 
         {interactionEnabled ? (
           <Box flexDirection="column">
+            {!suppressDividers && (
+              <ProductStatusRow terminalWidth={terminalWidth} />
+            )}
+
             {/* Top horizontal divider */}
             {!suppressDividers && (
               <Text
@@ -2112,6 +2007,7 @@ export function Input({
     deferModeSupported,
     isLocalBackend,
     inspirationalPlaceholder,
+    terminalWidth,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
