@@ -1146,21 +1146,19 @@ export function AgentSelector({
                 color={
                   newAgentBackendMode === "api"
                     ? colors.selector.itemHighlighted
-                    : undefined
+                    : colors.selector.title
                 }
-                dimColor={newAgentBackendMode !== "api"}
               >
                 Constellation
               </Text>
-              <Text dimColor> · </Text>
+              <Text color={colors.selector.title}> · </Text>
               <Text
                 bold={newAgentBackendMode === "local"}
                 color={
                   newAgentBackendMode === "local"
                     ? colors.selector.itemHighlighted
-                    : undefined
+                    : colors.selector.title
                 }
-                dimColor={newAgentBackendMode !== "local"}
               >
                 Local
               </Text>
