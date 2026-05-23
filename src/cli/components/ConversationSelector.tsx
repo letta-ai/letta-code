@@ -82,6 +82,34 @@ function formatRelativeTime(dateStr: string | null | undefined): string {
   return `${diffWeeks} week${diffWeeks === 1 ? "" : "s"} ago`;
 }
 
+export function formatConversationTimestampText(params: {
+  lastActiveAt: string | null | undefined;
+  createdAt: string | null | undefined;
+}): string {
+  const activeTime = formatRelativeTime(params.lastActiveAt);
+  const createdAt = params.createdAt;
+
+  if (!createdAt) {
+    return `Active ${activeTime}`;
+  }
+
+  const createdDate = new Date(createdAt);
+  const activeDate = params.lastActiveAt ? new Date(params.lastActiveAt) : null;
+
+  // Created-after-active is not a real timeline. This can happen for the
+  // synthetic "default" row if we invent a creation time at selector render.
+  if (
+    Number.isNaN(createdDate.getTime()) ||
+    (activeDate &&
+      !Number.isNaN(activeDate.getTime()) &&
+      createdDate.getTime() > activeDate.getTime() + 60_000)
+  ) {
+    return `Active ${activeTime}`;
+  }
+
+  return `Active ${activeTime} · Created ${formatRelativeTime(createdAt)}`;
+}
+
 /**
  * Extract preview text from a user message
  * Content can be a string or an array of content parts like [{ type: "text", text: "..." }]
@@ -212,6 +240,28 @@ function getMessageStats(messages: Message[]): {
   return { previewLines, lastActiveAt, messageCount: messages.length };
 }
 
+export function buildDefaultConversationEntry(
+  agentId: string,
+  stats: {
+    previewLines: PreviewLine[];
+    lastActiveAt: string | null;
+    messageCount: number;
+  },
+): EnrichedConversation {
+  return {
+    conversation: {
+      id: "default",
+      agent_id: agentId,
+      created_at: null,
+      updated_at: stats.lastActiveAt,
+    } as Conversation,
+    previewLines: stats.previewLines,
+    lastActiveAt: stats.lastActiveAt,
+    messageCount: stats.messageCount,
+    enriched: true,
+  };
+}
+
 export function ConversationSelector({
   agentId,
   agentName,
@@ -320,17 +370,7 @@ export function ConversationSelector({
                   const items = paginatedItems(msgs);
                   if (items.length === 0) return null;
                   const stats = getMessageStats([...items].reverse());
-                  return {
-                    conversation: {
-                      id: "default",
-                      agent_id: agentId,
-                      created_at: new Date().toISOString(),
-                    } as Conversation,
-                    previewLines: stats.previewLines,
-                    lastActiveAt: stats.lastActiveAt,
-                    messageCount: stats.messageCount,
-                    enriched: true,
-                  };
+                  return buildDefaultConversationEntry(agentId, stats);
                 })
                 .catch(() => null)
             : Promise.resolve(null);
@@ -526,9 +566,10 @@ export function ConversationSelector({
     } = enrichedConv;
     const isCurrent = conv.id === currentConversationId;
 
-    // Format timestamps
-    const activeTime = formatRelativeTime(lastActiveAt);
-    const createdTime = formatRelativeTime(conv.created_at);
+    const timestampText = formatConversationTimestampText({
+      lastActiveAt,
+      createdAt: conv.created_at,
+    });
 
     // Build preview content: (1) summary if exists, (2) preview lines, (3) message count fallback
     // Uses L-bracket indentation style for visual hierarchy
@@ -624,9 +665,7 @@ export function ConversationSelector({
         </Box>
         {renderPreview()}
         <Box flexDirection="row" marginLeft={2}>
-          <Text dimColor>
-            Active {activeTime} · Created {createdTime}
-          </Text>
+          <Text dimColor>{timestampText}</Text>
         </Box>
       </Box>
     );
