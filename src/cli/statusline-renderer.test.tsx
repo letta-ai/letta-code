@@ -1,11 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import stripAnsi from "strip-ansi";
+import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
 import {
   DEFAULT_STATUSLINE_RENDERER_ID,
   getBuiltinStatuslineRenderer,
   getBuiltinStatuslineRenderers,
 } from "@/cli/display/statusline/registry";
 import { buildLegacyStatuslineParts } from "@/cli/display/statusline/renderers/Legacy";
+
+const DEFAULT_STATUSLINE_ACTIVATION = {
+  hideFooterContent: false,
+  isBashMode: false,
+  modeActive: false,
+  preemptionActive: false,
+  statusLineActive: false,
+  statusLineRight: undefined,
+  transientHintActive: false,
+};
 
 describe("statusline renderers", () => {
   test("default renderer is legacy", () => {
@@ -56,5 +67,23 @@ describe("statusline renderers", () => {
     expect(stripAnsi(String(output.right)).trim()).toBe(
       "Letta Code [No model selected] · local",
     );
+  });
+
+  test("default renderer does not override command-provided right text", () => {
+    expect(
+      shouldRenderDefaultStatuslineRenderer({
+        ...DEFAULT_STATUSLINE_ACTIVATION,
+        statusLineRight: "right-side command output",
+      }),
+    ).toBe(false);
+  });
+
+  test("default renderer does not override an active command statusline", () => {
+    expect(
+      shouldRenderDefaultStatuslineRenderer({
+        ...DEFAULT_STATUSLINE_ACTIVATION,
+        statusLineActive: true,
+      }),
+    ).toBe(false);
   });
 });

@@ -17,6 +17,7 @@ import {
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
 import {
   DEFAULT_STATUSLINE_RENDERER_ID,
   getBuiltinStatuslineRenderer,
@@ -770,14 +771,15 @@ const StatuslineSlot = memo(function StatuslineSlot({
     />
   );
 
-  const shouldRenderDefaultStatusline =
-    !hideFooterContent &&
-    !preemption &&
-    !transientHint &&
-    !statusLineActive &&
-    !statusLineRight &&
-    !isBashMode &&
-    !(modeName && modeColor);
+  const shouldRenderDefaultStatusline = shouldRenderDefaultStatuslineRenderer({
+    hideFooterContent,
+    isBashMode,
+    modeActive: Boolean(modeName && modeColor),
+    preemptionActive: Boolean(preemption),
+    statusLineActive,
+    statusLineRight,
+    transientHintActive: Boolean(transientHint),
+  });
 
   if (shouldRenderDefaultStatusline) {
     return renderedDefaultStatusline;
