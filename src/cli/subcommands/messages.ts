@@ -1,9 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { getBackend } from "../../backend";
-import { searchMessagesForBackend } from "../../backend/messageSearch";
-import { settingsManager } from "../../settings-manager";
+import { getBackend } from "@/backend";
+import { searchMessagesForBackend } from "@/backend/message-search";
+import { settingsManager } from "@/settings-manager";
 
 type SearchMode = "vector" | "fts" | "hybrid";
 type ListOrder = "asc" | "desc";

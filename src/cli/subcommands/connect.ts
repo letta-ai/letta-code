@@ -1,15 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
-import { parseLocalProviderTimeout } from "../../backend/local/LocalProviderTimeout";
-import {
-  checkProviderApiKey,
-  createOrUpdateProvider,
-  type ProviderConnectionOptions,
-  providerStorageTargetLabel,
-} from "../../providers/byok-providers";
-import { settingsManager } from "../../settings-manager";
-import { getErrorMessage } from "../../utils/error";
+import { parseLocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
@@ -19,12 +11,20 @@ import {
   listConnectProvidersForHelp,
   listConnectProviderTokens,
   resolveConnectProvider,
-} from "../commands/connect-normalize";
+} from "@/cli/commands/connect-normalize";
 import {
   type ChatGPTOAuthFlowCallbacks,
   isChatGPTOAuthConnected,
   runChatGPTOAuthConnectFlow,
-} from "../commands/connect-oauth-core";
+} from "@/cli/commands/connect-oauth-core";
+import {
+  checkProviderApiKey,
+  createOrUpdateProvider,
+  type ProviderConnectionOptions,
+  providerStorageTargetLabel,
+} from "@/providers/byok-providers";
+import { settingsManager } from "@/settings-manager";
+import { getErrorMessage } from "@/utils/error";
 
 const CONNECT_OPTIONS = {
   help: { type: "boolean", short: "h" },

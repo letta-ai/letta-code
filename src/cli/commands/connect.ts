@@ -5,23 +5,24 @@ import {
   formatLocalProviderTimeout,
   type LocalProviderTimeout,
   parseLocalProviderTimeout,
-} from "../../backend/local/LocalProviderTimeout";
+} from "@/backend/local/local-provider-timeout";
+import { setActiveConnectAbortController } from "@/cli/commands/connect-command-state";
+import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import {
   checkProviderApiKey,
   createOrUpdateProvider,
   getProviderByName,
   providerStorageTargetLabel,
   removeProviderByName,
-} from "../../providers/byok-providers";
+} from "@/providers/byok-providers";
 import {
   deleteOpenAICodexProvider,
   getOpenAICodexProvider,
   listProviders,
   OPENAI_CODEX_PROVIDER_NAME,
   removeOpenAICodexProvider,
-} from "../../providers/openai-codex-provider";
-import { getErrorMessage } from "../../utils/error";
-import type { Buffers, Line } from "../helpers/accumulator";
+} from "@/providers/openai-codex-provider";
+import { getErrorMessage } from "@/utils/error";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
@@ -356,6 +357,8 @@ async function handleConnectChatGPT(
   }
 
   ctx.setCommandRunning(true);
+  const abortController = new AbortController();
+  setActiveConnectAbortController(abortController);
   const cmdId = addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
@@ -367,6 +370,7 @@ async function handleConnectChatGPT(
 
   try {
     await runChatGPTOAuthConnectFlow({
+      signal: abortController.signal,
       onStatus: (status) =>
         updateCommandResult(
           ctx.buffersRef,
@@ -395,16 +399,20 @@ async function handleConnectChatGPT(
       setTimeout(() => ctx.onCodexConnected?.(), 500);
     }
   } catch (error) {
+    const isCancelled = error instanceof Error && error.name === "AbortError";
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✗ Failed to connect: ${getErrorMessage(error)}`,
+      isCancelled
+        ? "Cancelled ChatGPT connection."
+        : `✗ Failed to connect: ${getErrorMessage(error)}`,
       false,
       "finished",
     );
   } finally {
+    setActiveConnectAbortController(null);
     ctx.setCommandRunning(false);
   }
 }

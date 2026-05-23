@@ -15,7 +15,7 @@
  *   in-flight request.
  */
 
-import { debugLog, debugWarn } from "../../utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 import type { ListenerRuntime } from "./types";
 
 /** Default freshness window in milliseconds. */
@@ -50,7 +50,7 @@ async function refreshSecretsForAgent(agentId: string): Promise<void> {
     return;
   }
 
-  const { initSecretsFromServer } = await import("../../utils/secretsStore");
+  const { initSecretsFromServer } = await import("@/utils/secrets-store");
   await initSecretsFromServer(agentId);
   debugLog("secrets-sync", `Refreshed secrets for agent ${agentId}`);
 }

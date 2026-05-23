@@ -7,16 +7,16 @@ import type {
   ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
-import type { ChannelTurnSource } from "../channels/types";
-import type { ApprovalRequest } from "../cli/helpers/stream";
-import { INTERRUPTED_BY_USER } from "../constants";
-import { getCurrentWorkingDirectory } from "../runtime-context";
+import type { ChannelTurnSource } from "@/channels/types";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   executeTool,
   prepareCurrentToolExecutionContext,
   type ToolExecutionResult,
   type ToolReturnContent,
-} from "../tools/manager";
+} from "@/tools/manager";
 
 /**
  * Extract displayable text from tool return content (for UI display).
@@ -82,9 +82,6 @@ const PARALLEL_SAFE_TOOLS = new Set([
   // Task spawns independent subagents
   "Task",
   "Agent",
-  // Plan mode tools (no parameters, no file operations)
-  "EnterPlanMode",
-  "ExitPlanMode",
 ]);
 
 function isParallelSafe(toolName: string): boolean {

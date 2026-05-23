@@ -1,7 +1,7 @@
 // src/hooks/index.ts
 // Main hooks module - provides high-level API for running hooks
 
-import { sessionPermissions } from "../permissions/session";
+import { sessionPermissions } from "@/permissions/session";
 import { executeHooks, executeHooksParallel } from "./executor";
 import { getHooksForEvent, hasHooksForEvent, loadHooks } from "./loader";
 import type {

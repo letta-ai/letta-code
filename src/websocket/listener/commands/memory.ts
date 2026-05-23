@@ -1,6 +1,7 @@
 import type WebSocket from "ws";
-import { trackBoundaryError } from "../../../telemetry/errorReporting";
-import type { ListMemoryCommand } from "../../../types/protocol_v2";
+import type { EnsureLocalMemfsCheckoutOptions } from "@/agent/memory-filesystem";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import type { ListMemoryCommand } from "@/types/protocol_v2";
 import {
   isDeleteMemoryFileCommand,
   isEnableMemfsCommand,
@@ -10,13 +11,16 @@ import {
   isMemoryHistoryCommand,
   isReadMemoryFileCommand,
   isWriteMemoryFileCommand,
-} from "../protocol-inbound";
+} from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
 export type ListMemoryCommandTestOverrides = {
-  ensureLocalMemfsCheckout?: (agentId: string) => Promise<void>;
+  ensureLocalMemfsCheckout?: (
+    agentId: string,
+    options?: EnsureLocalMemfsCheckoutOptions,
+  ) => Promise<void>;
   getMemoryFilesystemRoot?: (agentId: string) => string;
   isMemfsEnabledOnServer?: (agentId: string) => Promise<boolean>;
 };
@@ -48,9 +52,9 @@ export async function handleListMemoryCommand(
   try {
     const {
       ensureLocalMemfsCheckout: actualEnsureLocalMemfsCheckout,
-      getMemoryFilesystemRoot: actualGetMemoryFilesystemRoot,
+      getScopedMemoryFilesystemRoot: actualGetMemoryFilesystemRoot,
       isMemfsEnabledOnServer: actualIsMemfsEnabledOnServer,
-    } = await import("../../../agent/memoryFilesystem");
+    } = await import("@/agent/memory-filesystem");
     const ensureLocalMemfsCheckout =
       overrides.ensureLocalMemfsCheckout ?? actualEnsureLocalMemfsCheckout;
     const getMemoryFilesystemRoot =
@@ -58,8 +62,8 @@ export async function handleListMemoryCommand(
     const isMemfsEnabledOnServer =
       overrides.isMemfsEnabledOnServer ?? actualIsMemfsEnabledOnServer;
     const { scanMemoryFilesystem, getFileNodes, readFileContent } =
-      await import("../../../agent/memoryScanner");
-    const { parseFrontmatter } = await import("../../../utils/frontmatter");
+      await import("@/agent/memory-scanner");
+    const { parseFrontmatter } = await import("@/utils/frontmatter");
 
     const { existsSync } = await import("node:fs");
     const { join, posix } = await import("node:path");
@@ -89,10 +93,10 @@ export async function handleListMemoryCommand(
       return true;
     }
 
-    if (!memfsInitialized) {
-      await ensureLocalMemfsCheckout(parsed.agent_id);
-      memfsInitialized = existsSync(join(memoryRoot, ".git"));
-    }
+    await ensureLocalMemfsCheckout(parsed.agent_id, {
+      pullOnExistingRepo: true,
+    });
+    memfsInitialized = existsSync(join(memoryRoot, ".git"));
 
     if (!memfsInitialized) {
       throw new Error(
@@ -314,9 +318,7 @@ export function handleMemoryProtocolCommand(
   if (isEnableMemfsCommand(parsed)) {
     runDetachedListenerTask("enable_memfs", async () => {
       try {
-        const { applyMemfsFlags } = await import(
-          "../../../agent/memoryFilesystem"
-        );
+        const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
         const result = await applyMemfsFlags(parsed.agent_id, true, false);
         safeSocketSend(
           socket,
@@ -367,7 +369,7 @@ export function handleMemoryProtocolCommand(
   if (isMemoryHistoryCommand(parsed)) {
     runDetachedListenerTask("memory_history", async () => {
       const { getMemoryFilesystemRoot } = await import(
-        "../../../agent/memoryFilesystem"
+        "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
@@ -421,7 +423,7 @@ export function handleMemoryProtocolCommand(
   if (isMemoryFileAtRefCommand(parsed)) {
     runDetachedListenerTask("memory_file_at_ref", async () => {
       const { getMemoryFilesystemRoot } = await import(
-        "../../../agent/memoryFilesystem"
+        "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
@@ -474,7 +476,7 @@ export function handleMemoryProtocolCommand(
   if (isMemoryCommitDiffCommand(parsed)) {
     runDetachedListenerTask("memory_commit_diff", async () => {
       const { getMemoryFilesystemRoot } = await import(
-        "../../../agent/memoryFilesystem"
+        "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
@@ -548,7 +550,7 @@ export function handleMemoryProtocolCommand(
           getMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
-        } = await import("../../../agent/memoryFilesystem");
+        } = await import("@/agent/memory-filesystem");
         const { readFile } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { isAbsolute, join, normalize, relative, sep } = await import(
@@ -650,10 +652,8 @@ export function handleMemoryProtocolCommand(
           getMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
-        } = await import("../../../agent/memoryFilesystem");
-        const { commitAndSyncMemoryWrite } = await import(
-          "../../../agent/memoryGit"
-        );
+        } = await import("@/agent/memory-filesystem");
+        const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
         const { writeFile, mkdir } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { dirname, isAbsolute, join, normalize, relative, sep } =
@@ -707,7 +707,7 @@ export function handleMemoryProtocolCommand(
         await mkdir(dirname(absolutePath), { recursive: true });
         await writeFile(absolutePath, buffer);
 
-        const { getBackend } = await import("../../../backend");
+        const { getBackend } = await import("@/backend");
         const backend = getBackend();
         const memorySyncMode =
           backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs
@@ -818,10 +818,8 @@ export function handleMemoryProtocolCommand(
           getMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
-        } = await import("../../../agent/memoryFilesystem");
-        const { commitAndSyncMemoryWrite } = await import(
-          "../../../agent/memoryGit"
-        );
+        } = await import("@/agent/memory-filesystem");
+        const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
         const { unlink } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { isAbsolute, join, normalize, relative, sep } = await import(
@@ -894,7 +892,7 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
-        const { getBackend } = await import("../../../backend");
+        const { getBackend } = await import("@/backend");
         const backend = getBackend();
         const memorySyncMode =
           backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs

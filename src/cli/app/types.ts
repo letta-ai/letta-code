@@ -9,17 +9,17 @@ import type {
 import type {
   ApprovalDecision,
   ApprovalResult,
-} from "../../agent/approval-execution";
-import type { AgentProvenance } from "../../agent/create";
-import type { PersonalityId } from "../../agent/personality";
-import type { ExperimentId } from "../../experiments/types";
-import type { ToolExecutionResult } from "../../tools/manager";
-import type { ToolsetPreference } from "../../tools/toolset";
-import type { CommandHandle, createCommandRunner } from "../commands/runner";
-import type { Line } from "../helpers/accumulator";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import type { ReflectionSettings } from "../helpers/memoryReminder";
-import type { ApprovalRequest } from "../helpers/stream";
+} from "@/agent/approval-execution";
+import type { AgentProvenance } from "@/agent/create";
+import type { PersonalityId } from "@/agent/personality";
+import type { CommandHandle, createCommandRunner } from "@/cli/commands/runner";
+import type { Line } from "@/cli/helpers/accumulator";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import type { ExperimentId } from "@/experiments/types";
+import type { ToolExecutionResult } from "@/tools/manager";
+import type { ToolsetPreference } from "@/tools/toolset";
 
 export type AppLoadingState =
   | "assembling"
@@ -42,6 +42,8 @@ export type AppProps = {
   reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
+  startupHasCloudCredentials?: boolean;
+  startupHasAvailableLocalModels?: boolean;
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;
@@ -66,7 +68,6 @@ export type ActiveOverlay =
   | "memory"
   | "memfs-sync"
   | "pin"
-  | "new"
   | "mcp"
   | "mcp-connect"
   | "install-github-app"
@@ -74,10 +75,17 @@ export type ActiveOverlay =
   | "hooks"
   | "connect"
   | "skills"
+  | "window-title"
+  | "login"
   | null;
 
 export type QueuedOverlayAction =
-  | { type: "switch_agent"; agentId: string; commandId?: string }
+  | {
+      type: "switch_agent";
+      agentId: string;
+      commandId?: string;
+      backendMode?: "local" | "api";
+    }
   | { type: "switch_model"; modelId: string; commandId?: string }
   | {
       type: "set_experiment";
@@ -191,7 +199,7 @@ export type StaticItem =
       snapshot: {
         continueSession: boolean;
         agentState?: AgentState | null;
-        agentProvenance?: AgentProvenance | null;
+        startupHasAvailableLocalModels?: boolean;
         terminalWidth: number;
       };
     }
@@ -220,7 +228,5 @@ export type StaticItem =
       toolArgs: string;
       // Optional precomputed/cached data for rendering
       precomputedDiff?: AdvancedDiffSuccess;
-      planContent?: string; // For ExitPlanMode
-      planFilePath?: string; // For ExitPlanMode
     }
   | Line;

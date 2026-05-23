@@ -6,6 +6,11 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import {
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
+import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -21,11 +26,11 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
-import { handleBootstrapSessionState } from "./agent/bootstrapHandler";
-import { buildClientSkillsPayload } from "./agent/clientSkills";
+import { handleBootstrapSessionState } from "./agent/bootstrap-handler";
+import { buildClientSkillsPayload } from "./agent/client-skills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
-import { handleListMessages } from "./agent/listMessagesHandler";
+import { handleListMessages } from "./agent/list-messages-handler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
@@ -40,8 +45,8 @@ import {
   buildCreateAgentOptionsForPersonality,
   resolvePersonalityId,
 } from "./agent/personality";
-import type { MemoryPromptMode } from "./agent/promptAssets";
-import { resolveSkillSourcesSelection } from "./agent/skillSources";
+import type { MemoryPromptMode } from "./agent/prompt-assets";
+import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
@@ -60,26 +65,22 @@ import {
   parseJsonArrayFlag,
   parsePositiveIntFlag,
   resolveImportFlagAlias,
-} from "./cli/flagUtils";
+} from "./cli/flag-utils";
 import {
   createBuffers,
   type Line,
   markIncompleteToolsAsCancelled,
   toLines,
 } from "./cli/helpers/accumulator";
-import { classifyApprovals } from "./cli/helpers/approvalClassification";
-import { createContextTracker } from "./cli/helpers/contextTracker";
-import { formatErrorDetails } from "./cli/helpers/errorFormatter";
+import { classifyApprovals } from "./cli/helpers/approval-classification";
+import { createContextTracker } from "./cli/helpers/context-tracker";
+import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
   type ReflectionSettings,
   type ReflectionTrigger,
-} from "./cli/helpers/memoryReminder";
-import {
-  type QueuedMessage,
-  setMessageQueueAdder,
-} from "./cli/helpers/messageQueueBridge";
+} from "./cli/helpers/memory-reminder";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -88,15 +89,15 @@ import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
   validateRegistryHandleOrThrow,
-} from "./cli/startupFlagValidation";
+} from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
-import { computeDiffPreviews } from "./helpers/diffPreview";
-import { formatPermissionDenial } from "./permissions/formatDenial";
-import { QueueRuntime } from "./queue/queueRuntime";
+import { computeDiffPreviews } from "./helpers/diff-preview";
+import { formatPermissionDenial } from "./permissions/format-denial";
+import { QueueRuntime } from "./queue/queue-runtime";
 import {
   mergeQueuedTurnInput,
   type QueuedTurnInput,
-} from "./queue/turnQueueRuntime";
+} from "./queue/turn-queue-runtime";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -107,14 +108,11 @@ import {
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
-import { writeWireMessage, writeWireMessageAsync } from "./streamJsonWriter";
+import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { telemetry } from "./telemetry";
-import { trackBoundaryError } from "./telemetry/errorReporting";
+import { trackBoundaryError } from "./telemetry/error-reporting";
 import { extractTelemetryInputText } from "./telemetry/input";
-import {
-  isHeadlessAutoAllowTool,
-  isInteractiveApprovalTool,
-} from "./tools/interactivePolicy";
+import { isInteractiveApprovalTool } from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -208,6 +206,31 @@ function reportAndExitHeadless(
     error instanceof Error ? `Error: ${error.message}` : String(error),
   );
   process.exit(1);
+}
+
+async function reportStartupErrorAndExit(
+  errorType: string,
+  error: unknown,
+  context: string,
+  outputFormat: string,
+): Promise<never> {
+  trackHeadlessBoundaryError(errorType, error, context);
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (outputFormat === "stream-json") {
+    const errorMsg: ErrorMessage = {
+      type: "error",
+      message,
+      stop_reason: "error",
+      session_id: "startup",
+      uuid: `startup-error-${randomUUID()}`,
+    };
+    await writeWireMessageAsync(errorMsg);
+  } else {
+    console.error(`Error: ${message}`);
+  }
+
+  return await flushAndExit(1);
 }
 
 export type BidirectionalQueuedInput = QueuedTurnInput<
@@ -471,18 +494,18 @@ export async function handleHeadlessCommand(
 
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
-    const { toolFilter } = await import("./tools/filter");
+    const { toolFilter } = await import("@/tools/filter");
     toolFilter.setEnabledTools(values.tools);
   }
   // Set permission mode if provided (or via --yolo alias)
   const permissionModeValue = values["permission-mode"];
   const yoloMode = values.yolo;
   if (yoloMode || permissionModeValue) {
-    const { permissionMode } = await import("./permissions/mode");
+    const { permissionMode } = await import("@/permissions/mode");
     if (yoloMode) {
       permissionMode.setMode("unrestricted");
     } else if (permissionModeValue) {
-      const { migratePermissionMode } = await import("./permissions/mode");
+      const { migratePermissionMode } = await import("@/permissions/mode");
       const migrated = migratePermissionMode(permissionModeValue);
       if (migrated) {
         permissionMode.setMode(migrated);
@@ -490,17 +513,23 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Set CLI permission overrides if provided (inherited from parent agent)
-  if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
-    const { cliPermissions } = await import("./permissions/cli");
+  // Set CLI permission overrides if provided
+  if (
+    values.allowedTools ||
+    values.disallowedTools ||
+    values["disable-memory-guard"]
+  ) {
+    const { cliPermissions } = await import(
+      "@/permissions/cli-permissions-instance"
+    );
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
     }
     if (values.disallowedTools) {
       cliPermissions.setDisallowedTools(values.disallowedTools);
     }
-    if (values["memory-scope"]) {
-      cliPermissions.setMemoryScope(values["memory-scope"]);
+    if (values["disable-memory-guard"]) {
+      cliPermissions.setMemoryGuardDisabled(true);
     }
   }
 
@@ -554,7 +583,7 @@ export async function handleHeadlessCommand(
 
   const devBackend = values["dev-backend"];
   if (typeof devBackend === "string" && devBackend.length > 0) {
-    const { configureDevBackend } = await import("./backend");
+    const { configureDevBackend } = await import("@/backend");
     await configureDevBackend(devBackend);
   }
   const backend = getBackend();
@@ -582,6 +611,9 @@ export async function handleHeadlessCommand(
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   let autoEnableMemfsForFreshAgent = false;
+  const startupBackendMode = backend.capabilities.localModelCatalog
+    ? "local"
+    : "api";
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
@@ -1002,7 +1034,7 @@ export async function handleHeadlessCommand(
 
     if (isRegistryImport) {
       // Import from letta-ai/agent-file registry
-      const { importAgentFromRegistry } = await import("./agent/import");
+      const { importAgentFromRegistry } = await import("@/agent/import");
       result = await importAgentFromRegistry({
         handle: fromAfFile,
         modelOverride: model,
@@ -1011,7 +1043,7 @@ export async function handleHeadlessCommand(
       });
     } else {
       // Import from local file
-      const { importAgentFromFile } = await import("./agent/import");
+      const { importAgentFromFile } = await import("@/agent/import");
       result = await importAgentFromFile({
         filePath: fromAfFile,
         modelOverride: model,
@@ -1030,7 +1062,7 @@ export async function handleHeadlessCommand(
 
     // Display extracted skills summary
     if (result.skills && result.skills.length > 0) {
-      const { getAgentSkillsDir } = await import("./agent/skills");
+      const { getAgentSkillsDir } = await import("@/agent/skills");
       const skillsDir = getAgentSkillsDir(agent.id);
       console.log(
         `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}`,
@@ -1053,7 +1085,7 @@ export async function handleHeadlessCommand(
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     // Pre-determine memfs mode so the agent is created with the correct prompt.
-    const { isLettaCloud } = await import("./agent/memoryFilesystem");
+    const { isLettaCloud } = await import("@/agent/memory-filesystem");
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs &&
       shouldAutoEnableMemfsForNewAgent &&
@@ -1091,18 +1123,32 @@ export async function handleHeadlessCommand(
       blockValues,
       tags: personalityOptions?.tags ?? tags,
     };
-    const result = await createAgent(createOptions);
+    let result: Awaited<ReturnType<typeof createAgent>>;
+    try {
+      result = await createAgent(createOptions);
+    } catch (error) {
+      await reportStartupErrorAndExit(
+        "headless_agent_create_failed",
+        error,
+        "headless_startup_agent_create",
+        values["output-format"] || "text",
+      );
+      throw error;
+    }
     agent = result.agent;
     autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
-  if (!agent) {
+  if (!agent && startupBackendMode === "local") {
     await settingsManager.loadLocalProjectSettings();
     const localAgentId = settingsManager.getLocalLastAgentId(
       getCurrentWorkingDirectory(),
     );
-    if (localAgentId) {
+    if (
+      localAgentId &&
+      isAgentIdCompatibleWithBackend(localAgentId, startupBackendMode)
+    ) {
       try {
         agent = await backend.retrieveAgent(localAgentId, {
           include: ["agent.tags"],
@@ -1116,9 +1162,12 @@ export async function handleHeadlessCommand(
 
   // Priority 5: Try to reuse global LRU (covers directory-switching case)
   // Do NOT restore global conversation — use default (project-scoped conversations)
-  if (!agent) {
+  if (!agent && startupBackendMode === "api") {
     const globalAgentId = settingsManager.getGlobalLastAgentId();
-    if (globalAgentId) {
+    if (
+      globalAgentId &&
+      isAgentIdCompatibleWithBackend(globalAgentId, startupBackendMode)
+    ) {
       try {
         agent = await backend.retrieveAgent(globalAgentId, {
           include: ["agent.tags"],
@@ -1131,7 +1180,7 @@ export async function handleHeadlessCommand(
 
   // Priority 6: Fresh user with no LRU - create default agent
   if (!agent) {
-    const { ensureDefaultAgents } = await import("./agent/defaults");
+    const { ensureDefaultAgents } = await import("@/agent/defaults");
     const defaultAgent = await ensureDefaultAgents(backend, {
       preferredModel: model,
     });
@@ -1195,7 +1244,7 @@ export async function handleHeadlessCommand(
 
   if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
     const { hydrateMemfsSettingFromAgent, isLettaCloud } = await import(
-      "./agent/memoryFilesystem"
+      "@/agent/memory-filesystem"
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
     if (!memfsEnabled && !noMemfsFlag && (await isLettaCloud())) {
@@ -1211,7 +1260,7 @@ export async function handleHeadlessCommand(
   // Init secrets cache — runs in parallel with memfs sync below.
   const secretsAgentId = agent?.id;
   const secretsInitPromise = secretsAgentId
-    ? import("./utils/secretsStore").then(({ initSecretsFromServer }) =>
+    ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
         initSecretsFromServer(secretsAgentId, agent ?? undefined),
       )
     : Promise.resolve();
@@ -1230,7 +1279,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "skip") {
     // Run enable/disable logic but skip the git pull.
     try {
-      const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+      const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
       await applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
@@ -1249,7 +1298,7 @@ export async function handleHeadlessCommand(
     }
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
-    const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+    const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
     memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
@@ -1268,7 +1317,7 @@ export async function handleHeadlessCommand(
   } else {
     // "blocking" — original behaviour.
     try {
-      const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+      const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
       const memfsResult = await applyMemfsFlags(
         agent.id,
         startupMemfsFlag,
@@ -1312,7 +1361,7 @@ export async function handleHeadlessCommand(
   try {
     await secretsInitPromise;
   } catch (error) {
-    import("./utils/debug").then(({ debugLog }) =>
+    import("@/utils/debug").then(({ debugLog }) =>
       debugLog(
         "secrets",
         `Failed to init secrets: ${error instanceof Error ? error.message : String(error)}`,
@@ -1353,7 +1402,7 @@ export async function handleHeadlessCommand(
 
     if (storedPreset && storedPreset !== "custom") {
       const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
-        await import("./agent/promptAssets");
+        await import("@/agent/prompt-assets");
       if (isKnown(storedPreset)) {
         const memoryMode = settingsManager.isMemfsEnabled(agent.id)
           ? "memfs"
@@ -1591,7 +1640,7 @@ export async function handleHeadlessCommand(
   const resolveAllPendingApprovals = async (
     mode: "queue_for_next_turn" | "send_immediately" = "send_immediately",
   ) => {
-    const { getResumeDataFromBackend } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("@/agent/check-approval");
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
       const freshAgent = await backend.retrieveAgent(agent.id);
@@ -1641,7 +1690,7 @@ export async function handleHeadlessCommand(
       > = [approvalInput];
       {
         const { consumeQueuedSkillContent } = await import(
-          "./tools/impl/skillContentRegistry"
+          "@/tools/impl/skill-content-registry"
         );
         const skillContents = consumeQueuedSkillContent();
         if (skillContents.length > 0) {
@@ -1751,10 +1800,6 @@ ${SYSTEM_REMINDER_CLOSE}
     workingDirectory: getCurrentWorkingDirectory(),
     reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
-    resolvePlanModeReminder: async () => {
-      const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
-      return PLAN_MODE_REMINDER;
-    },
   });
   for (const part of sharedReminderParts) {
     pushPart(part.text);
@@ -1873,7 +1918,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Inject queued skill content as user message parts (LET-7353)
       {
         const { consumeQueuedSkillContent } = await import(
-          "./tools/impl/skillContentRegistry"
+          "@/tools/impl/skill-content-registry"
         );
         const skillContents = consumeQueuedSkillContent();
         if (skillContents.length > 0) {
@@ -2309,14 +2354,7 @@ ${SYSTEM_REMINDER_CLOSE}
           })),
           ...needsUserInput.map((ac) => {
             // One-shot headless mode has no control channel for interactive
-            // approvals. Auto-allow plan-mode entry/exit tools, while denying
-            // tools that need runtime user responses.
-            if (isHeadlessAutoAllowTool(ac.approval.toolName)) {
-              return {
-                type: "approve" as const,
-                approval: ac.approval,
-              };
-            }
+            // approvals, so deny tools that need runtime user responses.
             return {
               type: "deny" as const,
               approval: ac.approval,
@@ -2332,7 +2370,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
         // Phase 2: Execute all approved tools and format results using shared function
         const { executeApprovalBatch } = await import(
-          "./agent/approval-execution"
+          "@/agent/approval-execution"
         );
         const executedResults = await executeApprovalBatch(
           decisions,
@@ -2508,6 +2546,7 @@ ${SYSTEM_REMINDER_CLOSE}
         try {
           let errorType: string | undefined;
           let detail = detailFromRun ?? latestErrorText ?? "";
+          let explicitRetryable: boolean | undefined;
 
           if (lastRunId) {
             const run = await getBackend().retrieveRun(lastRunId);
@@ -2516,14 +2555,21 @@ ${SYSTEM_REMINDER_CLOSE}
                   error_type?: string;
                   message?: string;
                   detail?: string;
+                  retryable?: boolean;
                   // Handle nested error structure (error.error) that can occur in some edge cases
-                  error?: { error_type?: string; detail?: string };
+                  error?: {
+                    error_type?: string;
+                    detail?: string;
+                    retryable?: boolean;
+                  };
                 }
               | undefined;
 
             // Check for llm_error at top level or nested (handles error.error nesting)
             errorType = metaError?.error_type ?? metaError?.error?.error_type;
             detail = metaError?.detail ?? metaError?.error?.detail ?? detail;
+            explicitRetryable =
+              metaError?.retryable ?? metaError?.error?.retryable;
           }
 
           // Special handling for empty response errors (Opus 4.6 SADs)
@@ -2579,7 +2625,11 @@ ${SYSTEM_REMINDER_CLOSE}
             continue;
           }
 
-          if (shouldRetryRunMetadataError(errorType, detail)) {
+          if (
+            explicitRetryable === true ||
+            (explicitRetryable !== false &&
+              shouldRetryRunMetadataError(errorType, detail))
+          ) {
             const attempt = llmApiErrorRetries + 1;
             const delayMs = getRetryDelayMs({
               category: "transient_provider",
@@ -2922,7 +2972,7 @@ async function runBidirectionalMode(
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
-    const { getResumeDataFromBackend } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("@/agent/check-approval");
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
       const freshAgent = await backend.retrieveAgent(agent.id);
@@ -2965,7 +3015,7 @@ async function runBidirectionalMode(
 
       {
         const { consumeQueuedSkillContent } = await import(
-          "./tools/impl/skillContentRegistry"
+          "@/tools/impl/skill-content-registry"
         );
         const skillContents = consumeQueuedSkillContent();
         if (skillContents.length > 0) {
@@ -3301,7 +3351,7 @@ async function runBidirectionalMode(
       );
     }
 
-    const { getResumeDataFromBackend } = await import("./agent/check-approval");
+    const { getResumeDataFromBackend } = await import("@/agent/check-approval");
 
     let approvalsProcessed = 0;
     const MAX_RECOVERY_PASSES = 8;
@@ -3529,7 +3579,7 @@ async function runBidirectionalMode(
       } else if (subtype === "bootstrap_session_state") {
         const bootstrapReq = message.request as BootstrapSessionStateRequest;
         const { getResumeDataFromBackend } = await import(
-          "./agent/check-approval"
+          "@/agent/check-approval"
         );
         let hasPendingApproval = false;
 
@@ -3743,10 +3793,6 @@ async function runBidirectionalMode(
           workingDirectory: getCurrentWorkingDirectory(),
           reflectionSettings,
           skillSources,
-          resolvePlanModeReminder: async () => {
-            const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
-            return PLAN_MODE_REMINDER;
-          },
         });
         const enrichedContent = prependReminderPartsToContent(
           userContent,
@@ -3770,7 +3816,7 @@ async function runBidirectionalMode(
           // Inject queued skill content as user message parts (LET-7353)
           {
             const { consumeQueuedSkillContent } = await import(
-              "./tools/impl/skillContentRegistry"
+              "@/tools/impl/skill-content-registry"
             );
             const skillContents = consumeQueuedSkillContent();
             if (skillContents.length > 0) {
@@ -4075,7 +4121,7 @@ async function runBidirectionalMode(
 
             // Execute approved tools
             const { executeApprovalBatch } = await import(
-              "./agent/approval-execution"
+              "@/agent/approval-execution"
             );
             const executedResults = await executeApprovalBatch(
               decisions,

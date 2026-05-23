@@ -6,9 +6,9 @@ import type {
   CreateStdioMcpServer,
   CreateStreamableHTTPMcpServer,
 } from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
-import { getClient } from "../../backend/api/client";
-import type { Buffers, Line } from "../helpers/accumulator";
-import { formatErrorDetails } from "../helpers/errorFormatter";
+import { getClient } from "@/backend/api/client";
+import type { Buffers, Line } from "@/cli/helpers/accumulator";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 
 // tiny helper for unique ids
 function uid(prefix: string) {

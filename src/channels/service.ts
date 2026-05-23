@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { refreshDynamicChannelToolsInLoadedRegistry } from "../tools/manager";
+import { refreshDynamicChannelToolsInLoadedRegistry } from "@/tools/manager";
 import {
   channelPluginConfigShouldRefreshDisplayName,
   normalizeChannelAccountPatch,
   normalizeChannelConfigPatch,
   toChannelAccountProtocolConfig,
   toChannelConfigSnapshotProtocolConfig,
-} from "./accountConfig";
+} from "./account-config";
 import {
   getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,
@@ -25,12 +25,12 @@ import {
   getChannelDisplayName,
   getSupportedChannelIds,
   isSupportedChannelId,
-} from "./pluginRegistry";
+} from "./plugin-registry";
 import type {
   ChannelAccountPatch,
   ChannelConfigPatch,
   ChannelProtocolConfig,
-} from "./pluginTypes";
+} from "./plugin-types";
 import {
   completePairing,
   ensureChannelRegistry,
@@ -61,6 +61,7 @@ import type {
   ChannelDefaultPermissionMode,
   ChannelRoute,
   CustomChannelAccount,
+  DiscordChannelMode,
   DmPolicy,
   PendingPairing,
   SlackChannelMode,
@@ -99,7 +100,12 @@ export interface ChannelConfigSnapshot {
   hasAppToken?: boolean;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
-  allowedChannels?: string[];
+  allowedChannels?: string[] | Record<string, DiscordChannelMode>;
+  autoThreadOnMention?: boolean;
+  threadPolicyByChannel?: Record<string, boolean>;
+  acknowledgeMessageReaction?: boolean;
+  removeStaleRoutes?: boolean;
+  inboundDebounceMs?: number;
 }
 
 export interface PendingPairingSnapshot {
@@ -163,12 +169,17 @@ export interface ChannelAccountSnapshot {
   };
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
-  allowedChannels?: string[];
+  allowedChannels?: string[] | Record<string, DiscordChannelMode>;
+  autoThreadOnMention?: boolean;
+  threadPolicyByChannel?: Record<string, boolean>;
+  acknowledgeMessageReaction?: boolean;
+  removeStaleRoutes?: boolean;
+  inboundDebounceMs?: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export type { ChannelAccountPatch, ChannelConfigPatch } from "./pluginTypes";
+export type { ChannelAccountPatch, ChannelConfigPatch } from "./plugin-types";
 
 let resolveChannelAccountDisplayNameOverride:
   | ((
@@ -434,10 +445,19 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
       config: toChannelAccountProtocolConfig(account),
-      allowedChannels: [...(account.allowedChannels ?? [])],
+      allowedChannels: account.allowedChannels
+        ? Array.isArray(account.allowedChannels)
+          ? [...account.allowedChannels]
+          : { ...account.allowedChannels }
+        : [],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+      autoThreadOnMention: account.autoThreadOnMention ?? false,
+      threadPolicyByChannel: account.threadPolicyByChannel ?? {},
+      acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
+      removeStaleRoutes: account.removeStaleRoutes ?? false,
+      inboundDebounceMs: account.inboundDebounceMs,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -518,6 +538,11 @@ function createAccountFromPatch(
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       allowedChannels: normalizedPatch.allowedChannels ?? [],
+      autoThreadOnMention: normalizedPatch.autoThreadOnMention ?? false,
+      threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
+      acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
+      removeStaleRoutes: normalizedPatch.removeStaleRoutes,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       createdAt: now,
       updatedAt: now,
     };
@@ -595,11 +620,28 @@ function mergeAccountPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       allowedChannels:
         normalizedPatch.allowedChannels ?? existing.allowedChannels,
+      autoThreadOnMention:
+        normalizedPatch.autoThreadOnMention ?? existing.autoThreadOnMention,
+      threadPolicyByChannel:
+        normalizedPatch.threadPolicyByChannel ?? existing.threadPolicyByChannel,
+      acknowledgeMessageReaction:
+        normalizedPatch.acknowledgeMessageReaction ??
+        existing.acknowledgeMessageReaction,
+      removeStaleRoutes:
+        normalizedPatch.removeStaleRoutes ?? existing.removeStaleRoutes,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
     };
   }
 
   if (!isSlackChannelAccount(existing)) {
+    // Custom channels (and user-installed plugins) hold all plugin-specific
+    // state in the generic `config` bag. Snapshots returned to clients redact
+    // secrets (e.g. `bot_token` is replaced with `has_bot_token: boolean`), so
+    // the client cannot send the secret back on every save. Merge the patch
+    // into the existing config so omitted keys are preserved; pass `null`
+    // explicitly to clear a key.
     return {
       ...existing,
       displayName:
@@ -611,7 +653,7 @@ function mergeAccountPatch(
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       config:
         normalizedPatch.config !== undefined
-          ? { ...normalizedPatch.config }
+          ? { ...existing.config, ...normalizedPatch.config }
           : { ...existing.config },
       updatedAt: nextUpdatedAt,
     };
@@ -711,10 +753,19 @@ export function getChannelConfigSnapshot(
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
       config: toChannelConfigSnapshotProtocolConfig(account),
-      allowedChannels: [...(account.allowedChannels ?? [])],
+      allowedChannels: account.allowedChannels
+        ? Array.isArray(account.allowedChannels)
+          ? [...account.allowedChannels]
+          : { ...account.allowedChannels }
+        : [],
       hasToken: account.token.trim().length > 0,
       agentId: account.agentId,
       defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+      autoThreadOnMention: account.autoThreadOnMention ?? false,
+      threadPolicyByChannel: account.threadPolicyByChannel ?? {},
+      acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
+      removeStaleRoutes: account.removeStaleRoutes ?? false,
+      inboundDebounceMs: account.inboundDebounceMs,
     };
   }
 
@@ -767,6 +818,11 @@ export async function setChannelConfigLive(
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
+      autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+      threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
+      acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
+      removeStaleRoutes: normalizedPatch.removeStaleRoutes,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -787,6 +843,11 @@ export async function setChannelConfigLive(
         dmPolicy: normalizedPatch.dmPolicy,
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
+        autoThreadOnMention: normalizedPatch.autoThreadOnMention,
+        threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
+        acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
+        removeStaleRoutes: normalizedPatch.removeStaleRoutes,
+        inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         transcribeVoice: normalizedPatch.transcribeVoice,
         config: normalizedPatch.config,
       },
@@ -967,10 +1028,44 @@ export function updateChannelAccountLive(
     );
   }
 
-  const updated = upsertChannelAccount(
-    channelId,
-    mergeAccountPatch(existing, patch),
-  );
+  const nextAccount = mergeAccountPatch(existing, patch);
+  const shouldResetRoutes =
+    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(nextAccount) ||
+      isDiscordChannelAccount(nextAccount)) &&
+    typeof nextAccount.agentId === "string" &&
+    nextAccount.agentId !== existing.agentId;
+
+  const updated = upsertChannelAccount(channelId, nextAccount);
+
+  if (shouldResetRoutes) {
+    try {
+      loadRoutes(channelId);
+      removeRoutesForAccount(channelId, accountId);
+    } catch (error) {
+      try {
+        upsertChannelAccount(channelId, existing);
+      } catch (rollbackError) {
+        throw new Error(
+          `Failed to reset channel routes after updating account: ${getErrorMessage(
+            error,
+            "Failed to save routes",
+          )}. Failed to restore account: ${getErrorMessage(
+            rollbackError,
+            "Account rollback failed",
+          )}`,
+        );
+      }
+
+      throw new Error(
+        `Failed to reset channel routes after updating account: ${getErrorMessage(
+          error,
+          "Failed to save routes",
+        )}. Account changes were rolled back.`,
+      );
+    }
+  }
+
   return toAccountSnapshot(updated);
 }
 

@@ -3,19 +3,19 @@ import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { getGitContext } from "../../cli/helpers/gitContext";
-import { getReflectionSettings } from "../../cli/helpers/memoryReminder";
-import { getSubagents } from "../../cli/helpers/subagentState";
-import { getSystemPromptDoctorState } from "../../cli/helpers/systemPromptWarning";
-import { experimentManager } from "../../experiments/manager";
-import { permissionMode } from "../../permissions/mode";
-import type { DequeuedBatch } from "../../queue/queueRuntime";
-import { settingsManager } from "../../settings-manager";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getSubagents } from "@/agent/subagent-state";
+import { getGitContext } from "@/cli/helpers/git-context";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
+import { experimentManager } from "@/experiments/manager";
+import { permissionMode } from "@/permissions/mode";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
+import { settingsManager } from "@/settings-manager";
 import {
   backgroundProcesses,
   backgroundTasks,
-} from "../../tools/impl/process_manager";
+} from "@/tools/impl/process_manager";
 import type {
   BackgroundProcessSummary,
   DeviceStatus,
@@ -34,12 +34,12 @@ import type {
   SubagentSnapshot,
   SubagentStateUpdateMessage,
   WsProtocolMessage,
-} from "../../types/protocol_v2";
-import { isDebugEnabled } from "../../utils/debug";
-import { SUPPORTED_REMOTE_COMMANDS } from "./commands";
+} from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { getConversationPermissionModeState } from "./permissionMode";
+import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
+import { getConversationPermissionModeState } from "./permission-mode";
 import {
   getConversationRuntime,
   getPendingControlRequests,
@@ -62,16 +62,19 @@ import type {
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 
-function isPlanModeEnabled(): boolean {
-  try {
-    return settingsManager.isPlanModeEnabled();
-  } catch {
-    return false;
-  }
-}
-
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
+/**
+ * Frozen copy of the supported commands list. Avoids creating a new array on
+ * every `buildDeviceStatus()` call (every 5–30 s per connected web client).
+ * (LET-8948)
+ */
+/**
+ * Pre-computed copy of the supported commands list. Avoids creating a new
+ * array on every `buildDeviceStatus()` call (every 5–30 s per connected
+ * web client). (LET-8948)
+ */
+const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
 const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
 const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
 const PROTOCOL_PERF_ENABLED = PROTOCOL_PERF_ENV_VALUES.has(
@@ -387,7 +390,6 @@ export function buildDeviceStatus(
       is_online: false,
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
-      plan_mode_enabled: isPlanModeEnabled(),
       current_working_directory: fallbackCwd,
       git_context: getCachedDeviceGitContext(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
@@ -399,9 +401,11 @@ export function buildDeviceStatus(
       pending_control_requests: [],
       experiments: experimentManager.list(),
       memory_directory: null,
+      cwd_map: {},
+      boot_working_directory: fallbackCwd,
       should_doctor: false,
       reflection_settings: null,
-      supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
+      supported_commands: FROZEN_SUPPORTED_COMMANDS,
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -454,7 +458,6 @@ export function buildDeviceStatus(
     is_online: transport ? isListenerTransportOpen(transport) : false,
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
-    plan_mode_enabled: isPlanModeEnabled(),
     current_working_directory: resolvedCwd,
     git_context: getCachedDeviceGitContext(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
@@ -473,8 +476,14 @@ export function buildDeviceStatus(
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
+    ...(!scope
+      ? {
+          cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
+          boot_working_directory: listener.bootWorkingDirectory,
+        }
+      : {}),
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
-    supported_commands: [...SUPPORTED_REMOTE_COMMANDS],
+    supported_commands: FROZEN_SUPPORTED_COMMANDS,
     reflection_settings: scopedAgentId
       ? {
           agent_id: scopedAgentId,
@@ -497,17 +506,11 @@ export function buildLoopStatus(
     return {
       status: "WAITING_ON_INPUT",
       active_run_ids: [],
-      plan_file_path: null,
     };
   }
   const scope = getScopeForRuntime(runtime, params);
   const scopedAgentId = resolveScopedAgentId(listener, scope);
   const scopedConversationId = resolveScopedConversationId(listener, scope);
-  const conversationPermissionModeState = getConversationPermissionModeState(
-    listener,
-    scopedAgentId,
-    scopedConversationId,
-  );
   const conversationRuntime = getConversationRuntime(
     listener,
     scopedAgentId,
@@ -534,10 +537,6 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
-    plan_file_path:
-      conversationPermissionModeState.mode === "plan"
-        ? conversationPermissionModeState.planFilePath
-        : null,
   };
 }
 
@@ -852,12 +851,47 @@ export function emitQueueUpdateIfOpen(
   }
 }
 
+/**
+ * Per-transport, per-scope cache of the last emitted device-status JSON.
+ * When a periodic sync produces the exact same status as the previous one
+ * (common when idle), we skip the WS send entirely — avoiding redundant
+ * JSON serialization, WS framing, and Redis pub/sub in the cloud relay
+ * path. Keyed by transport (WeakMap) so cache is naturally cleaned up when
+ * the socket closes and gets GC'd. (LET-8948)
+ */
+const lastSyncDeviceStatusByTransport = new WeakMap<
+  ListenerTransport,
+  Map<string, string>
+>();
+
 export function emitStateSync(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope: RuntimeScope,
 ): void {
-  emitDeviceStatusUpdate(socket, runtime, scope);
+  const deviceStatus = buildDeviceStatus(runtime, scope);
+  const deviceStatusJson = JSON.stringify(deviceStatus);
+  const cacheKey = `${scope.agent_id ?? ""}:${scope.conversation_id ?? ""}`;
+
+  let scopeCache = lastSyncDeviceStatusByTransport.get(socket);
+  if (!scopeCache) {
+    scopeCache = new Map();
+    lastSyncDeviceStatusByTransport.set(socket, scopeCache);
+  }
+  const prev = scopeCache.get(cacheKey);
+
+  if (deviceStatusJson !== prev) {
+    scopeCache.set(cacheKey, deviceStatusJson);
+    const message: Omit<
+      DeviceStatusUpdateMessage,
+      "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+    > = {
+      type: "update_device_status",
+      device_status: deviceStatus,
+    };
+    emitProtocolV2Message(socket, runtime, message, scope);
+  }
+
   emitLoopStatusUpdate(socket, runtime, scope);
   emitQueueUpdate(socket, runtime, scope);
   emitSubagentStateUpdate(socket, runtime, scope);

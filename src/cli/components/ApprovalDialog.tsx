@@ -2,8 +2,11 @@
 import { Box, useInput } from "ink";
 import RawTextInput from "ink-text-input";
 import { type ComponentType, useMemo, useState } from "react";
-import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
-import type { ApprovalRequest } from "../helpers/stream";
+import {
+  type AdvancedDiffSuccess,
+  computeAdvancedDiff,
+} from "@/cli/helpers/diff";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { Text } from "./Text";
 

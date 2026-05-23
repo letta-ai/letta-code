@@ -1,22 +1,20 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
   BYOK_PROVIDERS,
   type ByokProvider,
   checkProviderApiKey,
   createOrUpdateProvider,
+  defaultProviderApiKey,
   getConnectedProviders,
   type ProviderField,
   type ProviderResponse,
   removeProviderByName,
-} from "../../providers/byok-providers";
-import {
-  type AwsProfile,
-  parseAwsCredentials,
-} from "../../utils/aws-credentials";
-import { debugLog } from "../../utils/debug";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/providers/byok-providers";
+import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
+import { debugLog } from "@/utils/debug";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -36,6 +34,13 @@ interface ProviderSelectorProps {
   onCancel: () => void;
   /** Called when ChatGPT/Codex OAuth flow should start */
   onStartOAuth?: () => void;
+}
+
+export function providerApiKeyFromInput(
+  provider: ByokProvider,
+  input: string,
+): string | undefined {
+  return input.trim() || defaultProviderApiKey(provider);
 }
 
 export function ProviderSelector({
@@ -214,9 +219,10 @@ export function ProviderSelector({
   // Handle API key validation and saving
   const handleValidateAndSave = useCallback(async () => {
     if (viewState.type !== "input") return;
-    if (!apiKeyInput.trim()) return;
 
     const { provider } = viewState;
+    const apiKey = providerApiKeyFromInput(provider, apiKeyInput);
+    if (!apiKey) return;
 
     // If already validated, save
     if (validationState === "valid") {
@@ -225,7 +231,7 @@ export function ProviderSelector({
         await createOrUpdateProvider(
           provider.providerType,
           provider.providerName,
-          apiKeyInput.trim(),
+          apiKey,
         );
         // Refresh connected providers
         const providers = await getConnectedProviders();
@@ -251,7 +257,7 @@ export function ProviderSelector({
     setValidationError(null);
 
     try {
-      await checkProviderApiKey(provider.providerType, apiKeyInput.trim());
+      await checkProviderApiKey(provider.providerType, apiKey);
       if (mountedRef.current) {
         setValidationState("valid");
       }
@@ -602,6 +608,8 @@ export function ProviderSelector({
   const renderInputView = () => {
     if (viewState.type !== "input") return null;
     const { provider } = viewState;
+    const hasDefaultApiKey = defaultProviderApiKey(provider) !== undefined;
+    const hasTypedApiKey = Boolean(apiKeyInput.trim());
 
     const statusText =
       validationState === "validating"
@@ -632,13 +640,22 @@ export function ProviderSelector({
       <>
         <Box flexDirection="column" marginBottom={1}>
           <Text>
-            {"  "}Connect your {provider.displayName} key:
+            {"  "}
+            {hasDefaultApiKey
+              ? `Connect ${provider.displayName} (API key optional):`
+              : `Connect your ${provider.displayName} key:`}
           </Text>
         </Box>
 
         <Box flexDirection="row">
           <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
-          <Text>{apiKeyInput ? maskApiKey(apiKeyInput) : "(enter key)"}</Text>
+          <Text>
+            {apiKeyInput
+              ? maskApiKey(apiKeyInput)
+              : hasDefaultApiKey
+                ? "(press Enter for no key)"
+                : "(enter key)"}
+          </Text>
           <Text
             color={statusColor}
             dimColor={
@@ -652,7 +669,9 @@ export function ProviderSelector({
         <Box marginTop={1}>
           <Text dimColor>
             {"  "}
-            {footerText}
+            {hasDefaultApiKey && !hasTypedApiKey && validationState === "idle"
+              ? "Enter to validate without a key · Esc cancel"
+              : footerText}
           </Text>
         </Box>
       </>

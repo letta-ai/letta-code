@@ -1,6 +1,6 @@
 import { Box } from "ink";
 import { useEffect } from "react";
-import type { ModelReasoningEffort } from "../../agent/model";
+import type { ModelReasoningEffort } from "@/agent/model";
 import { AgentInfoBar } from "./AgentInfoBar";
 import { FileAutocomplete } from "./FileAutocomplete";
 import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";

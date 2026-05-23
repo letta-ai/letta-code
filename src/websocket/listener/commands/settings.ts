@@ -2,8 +2,8 @@ import type WebSocket from "ws";
 import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
-} from "../../../cli/helpers/memoryReminder";
-import { experimentManager } from "../../../experiments/manager";
+} from "@/cli/helpers/memory-reminder";
+import { experimentManager } from "@/experiments/manager";
 import type {
   GetExperimentsCommand,
   GetExperimentsResponseMessage,
@@ -12,16 +12,16 @@ import type {
   SetExperimentCommand,
   SetExperimentResponseMessage,
   SetReflectionSettingsCommand,
-} from "../../../types/protocol_v2";
-import { getConversationWorkingDirectory } from "../cwd";
+} from "@/types/protocol_v2";
+import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import {
   isGetExperimentsCommand,
   isGetReflectionSettingsCommand,
   isSetExperimentCommand,
   isSetReflectionSettingsCommand,
-} from "../protocol-inbound";
-import { emitDeviceStatusUpdate } from "../protocol-outbound";
-import type { ListenerRuntime } from "../types";
+} from "@/websocket/listener/protocol-inbound";
+import { emitDeviceStatusUpdate } from "@/websocket/listener/protocol-outbound";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type ReflectionSettingsCommand =

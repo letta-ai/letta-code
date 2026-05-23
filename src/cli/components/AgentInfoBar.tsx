@@ -2,30 +2,16 @@ import { Box } from "ink";
 import Link from "ink-link";
 import { memo, useMemo } from "react";
 import stringWidth from "string-width";
-import type { ModelReasoningEffort } from "../../agent/model";
-import { DEFAULT_AGENT_NAME } from "../../constants";
-import { settingsManager } from "../../settings-manager";
-import { getVersion } from "../../version";
-import { buildAppUrl, buildChatUrl } from "../helpers/appUrls";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { ModelReasoningEffort } from "@/agent/model";
+import { buildAppUrl, buildChatUrl } from "@/cli/helpers/app-urls";
+import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
+import { truncateText } from "@/cli/helpers/truncate-text";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { DEFAULT_AGENT_NAME } from "@/constants";
+import { settingsManager } from "@/settings-manager";
+import { getVersion } from "@/version";
 import { colors } from "./colors";
 import { Text } from "./Text";
-
-function truncateText(text: string, maxWidth: number): string {
-  if (maxWidth <= 0) return "";
-  if (stringWidth(text) <= maxWidth) return text;
-  if (maxWidth <= 3) return ".".repeat(maxWidth);
-
-  const suffix = "...";
-  const budget = Math.max(0, maxWidth - stringWidth(suffix));
-  let out = "";
-  for (const ch of text) {
-    const next = out + ch;
-    if (stringWidth(next) > budget) break;
-    out = next;
-  }
-  return out + suffix;
-}
 
 interface AgentInfoBarProps {
   agentId?: string;
@@ -76,7 +62,9 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       ? buildChatUrl(agentId, { conversationId })
       : "";
   const showBottomBar = agentId && agentId !== "loading";
-  const reasoningLabel = formatReasoningLabel(currentReasoningEffort);
+  const reasoningLabel = shouldHideReasoningForModelDisplay(currentModel)
+    ? null
+    : formatReasoningLabel(currentReasoningEffort);
   const modelLine = currentModel
     ? `${currentModel}${reasoningLabel ? ` (${reasoningLabel})` : ""}`
     : null;

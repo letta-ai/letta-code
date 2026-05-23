@@ -1,23 +1,20 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getChannelRegistry } from "../../channels/registry";
-import type {
-  ChannelTurnOutcome,
-  ChannelTurnSource,
-} from "../../channels/types";
-import { resizeImageIfNeeded } from "../../cli/helpers/imageResize";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
   QueueItem,
-} from "../../queue/queueRuntime";
-import { isCoalescable } from "../../queue/queueRuntime";
-import { mergeQueuedTurnInput } from "../../queue/turnQueueRuntime";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
+} from "@/queue/queue-runtime";
+import { isCoalescable } from "@/queue/queue-runtime";
+import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { resizeImageIfNeeded } from "@/utils/image-resize";
 import {
   type ImageNormalizationFailureMode,
   normalizeMessageContentImages as normalizeSharedMessageContentImages,
-} from "../../utils/messageImageNormalization";
-import { getListenerBlockedReason } from "../helpers/listenerQueueAdapter";
+} from "@/utils/message-image-normalization";
+import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
   emitListenerStatus,
