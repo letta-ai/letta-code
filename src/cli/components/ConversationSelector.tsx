@@ -82,6 +82,15 @@ function formatRelativeTime(dateStr: string | null | undefined): string {
   return `${diffWeeks} week${diffWeeks === 1 ? "" : "s"} ago`;
 }
 
+function getMessageTimestamp(message: Message | undefined): string | null {
+  if (!message) return null;
+  return (
+    (message as Message & { date?: string; created_at?: string }).date ??
+    (message as Message & { date?: string; created_at?: string }).created_at ??
+    null
+  );
+}
+
 /**
  * Extract preview text from a user message
  * Content can be a string or an array of content parts like [{ type: "text", text: "..." }]
@@ -206,8 +215,7 @@ function getMessageStats(messages: Message[]): {
 
   // Last activity is the timestamp of the last message
   const lastMessage = messages[messages.length - 1];
-  const lastActiveAt =
-    (lastMessage as Message & { date?: string }).date ?? null;
+  const lastActiveAt = getMessageTimestamp(lastMessage);
 
   return { previewLines, lastActiveAt, messageCount: messages.length };
 }
@@ -309,22 +317,30 @@ export function ConversationSelector({
         // Fetch default conversation in parallel (not sequentially before)
         const defaultPromise: Promise<EnrichedConversation | null> =
           !afterCursor
-            ? backend
-                .listAgentMessages(agentId, {
+            ? Promise.all([
+                backend.listAgentMessages(agentId, {
                   conversation_id: "default",
                   limit: ENRICH_MESSAGE_LIMIT,
                   order: "desc",
                   include_return_message_types: RESUME_PREVIEW_MESSAGE_TYPES,
-                })
-                .then((msgs) => {
+                }),
+                backend.listAgentMessages(agentId, {
+                  conversation_id: "default",
+                  limit: 1,
+                  order: "asc",
+                }),
+              ])
+                .then(([msgs, firstMsgs]) => {
                   const items = paginatedItems(msgs);
                   if (items.length === 0) return null;
+                  const firstMessage = paginatedItems(firstMsgs)[0];
                   const stats = getMessageStats([...items].reverse());
                   return {
                     conversation: {
                       id: "default",
                       agent_id: agentId,
-                      created_at: new Date().toISOString(),
+                      created_at:
+                        getMessageTimestamp(firstMessage) ?? stats.lastActiveAt,
                     } as Conversation,
                     previewLines: stats.previewLines,
                     lastActiveAt: stats.lastActiveAt,
