@@ -76,8 +76,13 @@ import type {
   DiscordChannelAccount,
   InboundChannelMessage,
   SlackChannelAccount,
+  TelegramChannelAccount,
 } from "./types";
-import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
+import {
+  isDiscordChannelAccount,
+  isSlackChannelAccount,
+  isTelegramChannelAccount,
+} from "./types";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
@@ -195,6 +200,27 @@ function buildDiscordConversationSummary(
   }
 
   return `[Discord] Thread${channelLabel || ` ${msg.chatId}`}`;
+}
+
+function buildTelegramConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Telegram] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const preview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (preview) {
+    return `[Telegram] Topic${channelLabel}: ${preview}`;
+  }
+
+  return `[Telegram] Topic${channelLabel || ` ${msg.chatId}`}`;
 }
 
 function buildChannelTurnSource(
@@ -1114,6 +1140,35 @@ export class ChannelRegistry {
       return;
     }
 
+    // Telegram groups/supergroups can be used as public channel surfaces.
+    // DMs keep the older explicit pairing flow below; group topics route by
+    // chat_id + message_thread_id, which makes forum mode a surprisingly sane
+    // threading primitive. Telegram, accidentally doing something useful.
+    if (
+      msg.channel === "telegram" &&
+      isTelegramChannelAccount(config) &&
+      msg.chatType === "channel"
+    ) {
+      if ((config.groupMode ?? "open") === "mention-only" && !msg.isMention) {
+        return;
+      }
+      const telegramResult = await this.ensureTelegramRoute(
+        adapter,
+        msg,
+        config,
+      );
+      if (!telegramResult) {
+        return;
+      }
+
+      this.deliverOrBuffer({
+        route: telegramResult.route,
+        content: formatChannelNotification(msg),
+        turnSources: [buildChannelTurnSource(telegramResult.route, msg)],
+      });
+      return;
+    }
+
     // Discord guild messages and account-bound DMs use auto-routing (like
     // Slack). DMs configured with explicit pairing fall through to the
     // standard pairing flow below.
@@ -1386,6 +1441,98 @@ export class ChannelRegistry {
 
     return {
       route: await this.createSlackRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
+  private async createTelegramRoute(
+    config: TelegramChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.binding.agentId) {
+      throw new Error("Telegram bot is missing an agent binding.");
+    }
+
+    const conversationId = await this.createConversationForAgent(
+      config.binding.agentId,
+      buildTelegramConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: msg.threadId ?? null,
+      agentId: config.binding.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  private async ensureTelegramRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: TelegramChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.binding.agentId) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "This Telegram bot isn't connected to a Letta agent yet.\n\n" +
+          "Open Channels > Telegram in Letta Code, choose which agent this bot should represent, and try again.",
+        msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+      );
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const routeThreadId = msg.threadId ?? null;
+    let route = getRouteFromStore(
+      msg.channel,
+      msg.chatId,
+      accountId,
+      routeThreadId,
+    );
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        routeThreadId,
+      );
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    const now = new Date().toISOString();
+    loadTargetStore(msg.channel);
+    upsertChannelTarget(msg.channel, {
+      accountId,
+      targetId: msg.threadId ? `${msg.chatId}:${msg.threadId}` : msg.chatId,
+      targetType: "channel",
+      chatId: msg.chatId,
+      label: msg.chatLabel ?? `Telegram chat ${msg.chatId}`,
+      discoveredAt: now,
+      lastSeenAt: now,
+      lastMessageId: msg.messageId,
+    });
+    this.eventHandler?.({
+      type: "targets_updated",
+      channelId: msg.channel,
+    });
+
+    return {
+      route: await this.createTelegramRoute(config, msg),
       isFirstRouteTurn: true,
     };
   }

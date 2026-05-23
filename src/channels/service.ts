@@ -98,6 +98,7 @@ export interface ChannelConfigSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
+  groupMode?: "open" | "mention-only";
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
@@ -162,6 +163,7 @@ export interface ChannelAccountSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
+  groupMode?: "open" | "mention-only";
   transcribeVoice?: boolean;
   binding?: {
     agentId: string | null;
@@ -428,6 +430,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       config,
       hasToken: account.token.trim().length > 0,
       transcribeVoice: account.transcribeVoice === true,
+      groupMode: account.groupMode ?? "open",
+      inboundDebounceMs: account.inboundDebounceMs,
       binding,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -515,7 +519,9 @@ function createAccountFromPatch(
       token: normalizedPatch.token ?? "",
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
+      groupMode: normalizedPatch.groupMode ?? "open",
       transcribeVoice: normalizedPatch.transcribeVoice === true,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       binding: {
         agentId: null,
         conversationId: null,
@@ -596,8 +602,11 @@ function mergeAccountPatch(
       token: normalizedPatch.token ?? existing.token,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      groupMode: normalizedPatch.groupMode ?? existing.groupMode ?? "open",
       transcribeVoice:
         normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
     };
   }

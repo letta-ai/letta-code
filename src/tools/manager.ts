@@ -565,6 +565,8 @@ function buildExecutionRuntimeContextSnapshot(options?: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  channelTurnSources?: ChannelTurnSource[];
 }): RuntimeContextSnapshot {
   const mergedScope: RuntimeContextSnapshot = {
     ...(getRuntimeContext() ?? {}),
@@ -601,7 +603,7 @@ function buildExecutionRuntimeContextSnapshot(options?: {
   return mergedScope;
 }
 
-function getExecutionContextById(
+export function getExecutionContextById(
   contextId: string,
 ): ToolExecutionContextSnapshot | undefined {
   return getExecutionContexts().get(contextId);
@@ -931,9 +933,17 @@ function capturePreparedToolExecutionContext(
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
+    channelToolScope?: MessageChannelToolDiscoveryScope | null;
+    channelTurnSources?: ChannelTurnSource[];
   },
 ): PreparedToolExecutionContext {
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
+  if (options?.channelToolScope !== undefined) {
+    runtimeContext.channelToolScope = options.channelToolScope;
+  }
+  if (options?.channelTurnSources?.length) {
+    runtimeContext.channelTurnSources = [...options.channelTurnSources];
+  }
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
     externalTools: filterExternalToolsByClientAllowlist(
@@ -987,6 +997,8 @@ export async function prepareCurrentToolExecutionContext(options?: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  channelTurnSources?: ChannelTurnSource[];
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1011,6 +1023,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
+    channelTurnSources?: ChannelTurnSource[];
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1037,6 +1050,7 @@ export async function prepareToolExecutionContextForModel(
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
+    channelTurnSources?: ChannelTurnSource[];
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {

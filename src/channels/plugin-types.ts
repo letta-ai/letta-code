@@ -8,6 +8,7 @@ import type {
   DmPolicy,
   OutboundChannelMessage,
   SlackChannelMode,
+  TelegramGroupMode,
 } from "./types";
 
 export interface ChannelPluginMetadata {
@@ -148,6 +149,7 @@ export interface ChannelPluginAccountPatch {
   botToken?: string;
   appToken?: string;
   mode?: SlackChannelMode;
+  groupMode?: TelegramGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;

@@ -34,7 +34,7 @@ import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { getCurrentWorkingDirectory, getRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
@@ -644,6 +644,10 @@ export interface ComposeSubagentChildEnvOptions {
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
    * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
   transcriptPath?: string | null;
+  /** Optional turn-scoped tool context for forked subagents launched from
+   * channel turns. Forwarded so the child can safely rediscover only tools
+   * available in the parent turn (not a broader process-wide toolset). */
+  inheritedToolContextId?: string | null;
 }
 
 /**
@@ -676,6 +680,7 @@ export function composeSubagentChildEnv(
     inheritedApiKey,
     inheritedBaseUrl,
     transcriptPath,
+    inheritedToolContextId,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -685,6 +690,9 @@ export function composeSubagentChildEnv(
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
+    ...(inheritedToolContextId && {
+      LETTA_INHERITED_TOOL_CONTEXT_ID: inheritedToolContextId,
+    }),
   };
 
   if (backendMode === "local") {
@@ -827,6 +835,7 @@ export function buildSubagentPrompt(
 interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
+  extraTools?: string[];
 }
 
 /**
@@ -941,7 +950,10 @@ export function buildSubagentArgs(
     Array.isArray(config.allowedTools) &&
     config.allowedTools.length > 0
   ) {
-    args.push("--tools", config.allowedTools.join(","));
+    const scopedTools = Array.from(
+      new Set([...(config.allowedTools ?? []), ...(options.extraTools ?? [])]),
+    );
+    args.push("--tools", scopedTools.join(","));
   }
 
   // Add max turns limit if specified
@@ -1004,7 +1016,14 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       maxTurns,
-      { backendMode, promptTransport: "stdin" },
+      {
+        backendMode,
+        promptTransport: "stdin",
+        extraTools:
+          config.fork && process.env.LETTA_INHERITED_TOOL_CONTEXT_ID
+            ? ["MessageChannel"]
+            : undefined,
+      },
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
@@ -1061,6 +1080,7 @@ async function executeSubagent(
       inheritedApiKey,
       inheritedBaseUrl,
       transcriptPath,
+      inheritedToolContextId: getRuntimeContext()?.toolContextId ?? null,
     });
 
     const proc = spawn(launcher.command, launcher.args, {

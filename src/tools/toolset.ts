@@ -25,6 +25,7 @@ import {
   type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareToolExecutionContextForModel,
+  getExecutionContextById,
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
 import type { ToolName } from "./tool-definitions";
@@ -324,6 +325,7 @@ export async function prepareToolExecutionContextForScope(params: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   cachedAgent?: AgentState | null;
+  channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
 }): Promise<PreparedScopeToolContext> {
   const {
     agentId,
@@ -335,6 +337,7 @@ export async function prepareToolExecutionContextForScope(params: {
     workingDirectory,
     permissionModeState,
     cachedAgent,
+    channelTurnSources: explicitChannelTurnSources,
   } = params;
 
   const backend = getBackend();
@@ -373,6 +376,25 @@ export async function prepareToolExecutionContextForScope(params: {
     }
   })();
 
+  const inheritedContextId = process.env.LETTA_INHERITED_TOOL_CONTEXT_ID;
+  const inheritedContext = inheritedContextId
+    ? getExecutionContextById(inheritedContextId)
+    : undefined;
+  const inheritedChannelToolScope = inheritedContext
+    ? {
+        channels: inheritedContext.runtimeContext.channelToolScope?.channels ?? [],
+      }
+    : null;
+  const inheritedChannelTurnSources =
+    explicitChannelTurnSources ??
+    inheritedContext?.runtimeContext.channelTurnSources ??
+    [];
+  const scopedConversationId = conversationId ?? "default";
+  const channelToolScope =
+    inheritedChannelToolScope && inheritedChannelToolScope.channels.length > 0
+      ? inheritedChannelToolScope
+      : resolveConversationChannelToolScope(agentId, scopedConversationId);
+
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
     conversationId: conversationId ?? undefined,
@@ -383,13 +405,14 @@ export async function prepareToolExecutionContextForScope(params: {
     permissionModeState,
     runtimeContext: {
       agentId,
-      conversationId: conversationId ?? "default",
+      conversationId: scopedConversationId,
       workingDirectory,
+      ...(channelToolScope.channels.length > 0 ? { channelToolScope } : {}),
+      ...(inheritedChannelTurnSources.length > 0
+        ? { channelTurnSources: inheritedChannelTurnSources }
+        : {}),
     },
-    channelToolScope: resolveConversationChannelToolScope(
-      agentId,
-      conversationId ?? "default",
-    ),
+    channelToolScope,
   });
   return { ...result, agent: agent as AgentState };
 }

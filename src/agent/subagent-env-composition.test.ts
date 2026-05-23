@@ -222,6 +222,30 @@ describe("composeSubagentChildEnv", () => {
     expect(env.PATH).toBe("/usr/bin:/bin");
     expect(env.CUSTOM_VAR).toBe("preserved");
   });
+  test("inherited tool context id is forwarded when set", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { HOME: "/home/user" },
+      parentAgentId: PARENT_ID,
+      permissionMode: "standard",
+      inheritedPrimaryRoot: null,
+      inheritedToolContextId: "ctx-channel-turn",
+    });
+
+    expect(env.LETTA_INHERITED_TOOL_CONTEXT_ID).toBe("ctx-channel-turn");
+  });
+
+  test("inherited tool context id is omitted when absent", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { HOME: "/home/user" },
+      parentAgentId: PARENT_ID,
+      permissionMode: "standard",
+      inheritedPrimaryRoot: null,
+      inheritedToolContextId: null,
+    });
+
+    expect(env.LETTA_INHERITED_TOOL_CONTEXT_ID).toBeUndefined();
+  });
+
 });
 
 describe("resolveSubagentInheritedPrimaryRoot", () => {
