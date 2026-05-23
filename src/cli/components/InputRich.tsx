@@ -17,6 +17,7 @@ import {
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
 import {
   DEFAULT_STATUSLINE_RENDERER_ID,
@@ -30,6 +31,7 @@ import {
   type ExecutionPhase,
   getPhaseVisual,
 } from "@/cli/helpers/phase-visuals";
+import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
@@ -689,10 +691,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   modeColor,
   modeGlyph,
   showExitHint,
-  agentName,
-  currentModel,
   currentModelProvider,
-  currentReasoningEffort,
   isOpenAICodexProvider,
   isByokProvider,
   isLocalBackend = false,
@@ -702,6 +701,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   statusLineActive,
   statusLineText,
   statusLineRight,
+  statusLinePayload,
   transientHint,
 }: {
   ctrlCPressed: boolean;
@@ -711,10 +711,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   modeColor: string | null;
   modeGlyph?: string | null;
   showExitHint: boolean;
-  agentName: string | null | undefined;
-  currentModel: string | null | undefined;
   currentModelProvider?: string | null;
-  currentReasoningEffort?: ModelReasoningEffort | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
   isLocalBackend?: boolean;
@@ -724,6 +721,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   statusLineActive: boolean;
   statusLineText?: string;
   statusLineRight?: string;
+  statusLinePayload: StatusLinePayload;
   transientHint?: StatuslineTransientHint | null;
 }) {
   const hideFooterContent = hideFooter;
@@ -733,18 +731,18 @@ const StatuslineSlot = memo(function StatuslineSlot({
     escapePressed,
   });
 
-  const statuslineContext = {
-    agentName,
-    currentModel,
-    currentModelProvider,
-    currentReasoningEffort,
-    goalStatusText: null,
-    hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
-    isByokProvider,
-    isLocalBackend,
-    isOpenAICodexProvider,
-    rightColumnWidth,
-  };
+  const statuslineContext = buildStatuslineRenderContext({
+    payload: statusLinePayload,
+    ui: {
+      currentModelProvider: currentModelProvider ?? null,
+      goalStatusText: null,
+      hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+      isByokProvider,
+      isLocalBackend,
+      isOpenAICodexProvider,
+      rightColumnWidth,
+    },
+  });
   const statuslineRenderer = getBuiltinStatuslineRenderer(
     DEFAULT_STATUSLINE_RENDERER_ID,
   );
@@ -1143,6 +1141,7 @@ export function Input({
   statusLineActive = false,
   statusLineText,
   statusLineRight,
+  statusLinePayload,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
@@ -1196,6 +1195,7 @@ export function Input({
   statusLineActive?: boolean;
   statusLineText?: string;
   statusLineRight?: string;
+  statusLinePayload: StatusLinePayload;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -2211,7 +2211,6 @@ export function Input({
                 agentId={agentId}
                 agentName={agentName}
                 currentModel={currentModel}
-                currentModelProvider={currentModelProvider}
                 currentReasoningEffort={currentReasoningEffort}
                 serverUrl={serverUrl}
                 workingDirectory={process.cwd()}
@@ -2228,9 +2227,7 @@ export function Input({
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
                 showExitHint={modeInfo?.showExitHint ?? goalLoopActive}
-                agentName={agentName}
-                currentModel={currentModel}
-                currentReasoningEffort={currentReasoningEffort}
+                currentModelProvider={currentModelProvider}
                 isOpenAICodexProvider={
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
@@ -2245,6 +2242,7 @@ export function Input({
                 statusLineActive={statusLineActive}
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
+                statusLinePayload={statusLinePayload}
                 transientHint={statuslineTransientHint}
               />
             )}
@@ -2294,6 +2292,7 @@ export function Input({
     statusLineActive,
     statusLineText,
     statusLineRight,
+    statusLinePayload,
 
     goalStatusText,
     promptChar,

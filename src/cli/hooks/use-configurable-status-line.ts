@@ -14,6 +14,7 @@ import {
 } from "@/cli/helpers/status-line-config";
 import {
   buildStatusLinePayload,
+  type StatusLinePayload,
   type StatusLinePayloadBuildInput,
 } from "@/cli/helpers/status-line-payload";
 import { executeStatusLineCommand } from "@/cli/helpers/status-line-runtime";
@@ -89,6 +90,7 @@ export interface StatusLineState {
   executing: boolean;
   lastError: string | null;
   padding: number;
+  payload: StatusLinePayload;
   prompt: string;
 }
 
@@ -309,5 +311,14 @@ export function useConfigurableStatusLine(
     currentDirectory,
   ]);
 
-  return { text, rightText, active, executing, lastError, padding, prompt };
+  return {
+    text,
+    rightText,
+    active,
+    executing,
+    lastError,
+    padding,
+    payload: buildStatusLinePayload(toPayloadInput(inputs)),
+    prompt,
+  };
 }

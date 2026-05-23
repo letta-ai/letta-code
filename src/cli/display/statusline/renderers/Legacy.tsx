@@ -6,7 +6,6 @@ import {
   formatStatuslineReasoningEffort,
   truncateStatuslineText,
 } from "@/cli/display/statusline/formatting";
-import { CommandHintSegment } from "@/cli/display/statusline/Segments";
 import type {
   StatuslineRenderContext,
   StatuslineRenderer,
@@ -25,27 +24,29 @@ export function buildLegacyStatuslineParts(
 ): LegacyStatuslineParts {
   const maxAgentChars = Math.max(
     10,
-    Math.floor(context.rightColumnWidth * 0.45),
+    Math.floor(context.ui.rightColumnWidth * 0.45),
   );
   const displayAgentName = truncateStatuslineText(
-    context.agentName || "Unnamed",
+    context.agent.name || "Unnamed",
     maxAgentChars,
   );
-  const reasoningTag = shouldHideReasoningForModelDisplay(context.currentModel)
+  const reasoningTag = shouldHideReasoningForModelDisplay(
+    context.model.displayName,
+  )
     ? null
-    : formatStatuslineReasoningEffort(context.currentReasoningEffort);
-  const byokExtraChars = context.isByokProvider ? 2 : 0;
-  const tempOverrideExtraChars = context.hasTemporaryModelOverride ? 2 : 0;
+    : formatStatuslineReasoningEffort(context.model.reasoningEffort);
+  const byokExtraChars = context.ui.isByokProvider ? 2 : 0;
+  const tempOverrideExtraChars = context.ui.hasTemporaryModelOverride ? 2 : 0;
 
   const baseReservedChars =
     displayAgentName.length + byokExtraChars + tempOverrideExtraChars + 4;
   const modelWithReasoning =
-    (context.currentModel ?? "unknown") +
+    (context.model.displayName ?? "unknown") +
     (reasoningTag ? ` (${reasoningTag})` : "");
 
   const maxModelChars = Math.max(
     8,
-    context.rightColumnWidth - baseReservedChars,
+    context.ui.rightColumnWidth - baseReservedChars,
   );
   const displayModel = truncateStatuslineText(
     modelWithReasoning,
@@ -57,37 +58,40 @@ export function buildLegacyStatuslineParts(
     byokExtraChars +
     tempOverrideExtraChars +
     3;
-  const rightPrefixSpaces = Math.max(0, context.rightColumnWidth - rightWidth);
+  const rightPrefixSpaces = Math.max(
+    0,
+    context.ui.rightColumnWidth - rightWidth,
+  );
 
   const rightCoreParts: string[] = [];
   rightCoreParts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
   rightCoreParts.push(chalk.dim(" ["));
   rightCoreParts.push(chalk.dim(displayModel));
-  if (context.isByokProvider) {
+  if (context.ui.isByokProvider) {
     rightCoreParts.push(chalk.dim(" "));
     rightCoreParts.push(
-      context.isOpenAICodexProvider
+      context.ui.isOpenAICodexProvider
         ? chalk.hex("#74AA9C")("▲")
         : chalk.yellow("▲"),
     );
   }
-  if (context.hasTemporaryModelOverride) {
+  if (context.ui.hasTemporaryModelOverride) {
     rightCoreParts.push(chalk.dim(" "));
     rightCoreParts.push(chalk.yellow("▲"));
   }
   rightCoreParts.push(chalk.dim("]"));
-  if (context.isLocalBackend) {
+  if (context.ui.isLocalBackend) {
     rightCoreParts.push(chalk.dim(" · "));
     rightCoreParts.push(chalk.hex(colors.status.success)("local"));
   }
 
   const rightCore = rightCoreParts.join("");
-  const right = context.goalStatusText
-    ? chalk.magenta(context.goalStatusText)
+  const right = context.ui.goalStatusText
+    ? chalk.magenta(context.ui.goalStatusText)
     : " ".repeat(rightPrefixSpaces) + rightCore;
 
   return {
-    left: <CommandHintSegment />,
+    left: <Text dimColor>Press / for commands</Text>,
     right,
     rightCore,
     rightWidth,
@@ -105,7 +109,7 @@ export function renderLegacyStatusline(context: StatuslineRenderContext) {
       <Box
         flexDirection="column"
         alignItems="flex-end"
-        width={context.rightColumnWidth}
+        width={context.ui.rightColumnWidth}
         flexShrink={0}
       >
         <Text>{parts.right}</Text>

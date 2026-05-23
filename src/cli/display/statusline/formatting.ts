@@ -1,5 +1,3 @@
-import type { ModelReasoningEffort } from "@/agent/model";
-
 export function truncateStatuslineText(
   value: string,
   maxChars: number,
@@ -11,7 +9,7 @@ export function truncateStatuslineText(
 }
 
 export function formatStatuslineReasoningEffort(
-  effort: ModelReasoningEffort | null | undefined,
+  effort: string | null | undefined,
 ): string | null {
   if (effort === "none") return null;
   if (effort === "xhigh") return "xhigh";

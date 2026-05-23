@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import stripAnsi from "strip-ansi";
+import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
 import {
   DEFAULT_STATUSLINE_RENDERER_ID,
@@ -7,6 +8,8 @@ import {
   getBuiltinStatuslineRenderers,
 } from "@/cli/display/statusline/registry";
 import { buildLegacyStatuslineParts } from "@/cli/display/statusline/renderers/Legacy";
+import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
+import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
 
 const DEFAULT_STATUSLINE_ACTIVATION = {
   hideFooterContent: false,
@@ -17,6 +20,38 @@ const DEFAULT_STATUSLINE_ACTIVATION = {
   statusLineRight: undefined,
   transientHintActive: false,
 };
+
+function createStatuslineContext({
+  agentName = "Letta Code",
+  modelDisplayName = "GPT-5.5 (ChatGPT)",
+  reasoningEffort = "high",
+  toolset = "letta-code",
+}: {
+  agentName?: string;
+  modelDisplayName?: string;
+  reasoningEffort?: string;
+  toolset?: string;
+} = {}): StatuslineRenderContext {
+  return buildStatuslineRenderContext({
+    payload: buildStatusLinePayload({
+      agentName,
+      currentDirectory: "/tmp/project",
+      modelDisplayName,
+      projectDirectory: "/tmp/project",
+      reasoningEffort,
+      toolset,
+    }),
+    ui: {
+      currentModelProvider: "chatgpt-plus-pro",
+      goalStatusText: null,
+      hasTemporaryModelOverride: false,
+      isByokProvider: false,
+      isLocalBackend: true,
+      isOpenAICodexProvider: false,
+      rightColumnWidth: 80,
+    },
+  });
+}
 
 describe("statusline renderers", () => {
   test("default renderer is legacy", () => {
@@ -31,19 +66,21 @@ describe("statusline renderers", () => {
     ).toEqual(["legacy"]);
   });
 
+  test("context exposes broad app state and raw payload", () => {
+    const context = createStatuslineContext({ toolset: "computer" });
+
+    expect(context.rawPayload.toolset).toBe("computer");
+    expect(context.toolset).toBe("computer");
+    expect(context.workspace.currentDir).toBe("/tmp/project");
+    expect(context.workspace.projectDir).toBe("/tmp/project");
+    expect(context.agent.name).toBe("Letta Code");
+    expect(context.model.displayName).toBe("GPT-5.5 (ChatGPT)");
+    expect(context.model.provider).toBe("chatgpt-plus-pro");
+    expect(context.model.reasoningEffort).toBe("high");
+  });
+
   test("legacy renderer preserves the detailed model label", () => {
-    const output = buildLegacyStatuslineParts({
-      agentName: "Letta Code",
-      currentModel: "GPT-5.5 (ChatGPT)",
-      currentModelProvider: "chatgpt-plus-pro",
-      currentReasoningEffort: "high",
-      goalStatusText: null,
-      hasTemporaryModelOverride: false,
-      isByokProvider: false,
-      isLocalBackend: true,
-      isOpenAICodexProvider: false,
-      rightColumnWidth: 80,
-    });
+    const output = buildLegacyStatuslineParts(createStatuslineContext());
 
     expect(stripAnsi(String(output.right)).trim()).toBe(
       "Letta Code [GPT-5.5 (ChatGPT) (high)] · local",
@@ -51,18 +88,9 @@ describe("statusline renderers", () => {
   });
 
   test("legacy renderer suppresses reasoning for the no-model placeholder", () => {
-    const output = buildLegacyStatuslineParts({
-      agentName: "Letta Code",
-      currentModel: "No model selected",
-      currentModelProvider: "chatgpt-plus-pro",
-      currentReasoningEffort: "high",
-      goalStatusText: null,
-      hasTemporaryModelOverride: false,
-      isByokProvider: false,
-      isLocalBackend: true,
-      isOpenAICodexProvider: false,
-      rightColumnWidth: 80,
-    });
+    const output = buildLegacyStatuslineParts(
+      createStatuslineContext({ modelDisplayName: "No model selected" }),
+    );
 
     expect(stripAnsi(String(output.right)).trim()).toBe(
       "Letta Code [No model selected] · local",
