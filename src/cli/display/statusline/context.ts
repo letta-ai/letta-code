@@ -6,17 +6,22 @@ import type {
 import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 
 export interface BuildStatuslineRenderContextInput {
+  backgroundAgents?: StatusLinePayload["background_agents"];
   payload: StatusLinePayload;
+  statuses?: Record<string, string>;
   ui: StatuslineUiContext;
 }
 
 export function buildStatuslineRenderContext({
+  backgroundAgents,
   payload,
+  statuses = {},
   ui,
 }: BuildStatuslineRenderContextInput): StatuslineRenderContext {
   return {
     rawPayload: payload,
     components: DisplayComponents,
+    statuses,
     app: {
       version: payload.version,
     },
@@ -57,7 +62,7 @@ export function buildStatuslineRenderContext({
     },
     reflection: payload.reflection,
     memfs: payload.memfs,
-    backgroundAgents: payload.background_agents,
+    backgroundAgents: backgroundAgents ?? payload.background_agents,
     ui,
   };
 }

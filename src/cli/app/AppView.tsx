@@ -53,6 +53,7 @@ import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
@@ -295,6 +296,7 @@ type AppViewProps = {
   staticItems: StaticItem[];
   staticRenderEpoch: number;
   statusLine: StatusLineState;
+  extensionRuntime: LocalExtensionRuntime;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
   thinkingMessage: string;
@@ -434,6 +436,7 @@ export function AppView(props: AppViewProps) {
     staticItems,
     staticRenderEpoch,
     statusLine,
+    extensionRuntime,
     streaming,
     stubDescriptions,
     thinkingMessage,
@@ -716,6 +719,7 @@ export function AppView(props: AppViewProps) {
                 statusLineText={statusLine.text || undefined}
                 statusLineRight={statusLine.rightText || undefined}
                 statusLinePayload={statusLine.payload}
+                extensionRuntime={extensionRuntime}
                 statusLinePrompt={statusLine.prompt}
                 footerNotification={footerUpdateText}
                 showInspirationalPromptHints={showInspirationalPromptHints}
