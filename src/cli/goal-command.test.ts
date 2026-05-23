@@ -60,6 +60,7 @@ describe("goalCommand - goalStatusLabel", () => {
     expect(goalStatusLabel("active")).toBe("active");
     expect(goalStatusLabel("paused")).toBe("paused");
     expect(goalStatusLabel("complete")).toBe("complete");
+    expect(goalStatusLabel("blocked")).toBe("blocked");
     expect(goalStatusLabel("budget_limited")).toBe("budget limited");
   });
 });
@@ -201,6 +202,12 @@ describe("goalCommand - formatGoalStatusIndicator", () => {
     expect(formatGoalStatusIndicator(goal)).toContain("/goal resume");
   });
 
+  test("blocked goal shows resume hint", () => {
+    const goal = makeGoal({ status: "blocked" });
+    expect(formatGoalStatusIndicator(goal)).toContain("blocked");
+    expect(formatGoalStatusIndicator(goal)).toContain("/goal resume");
+  });
+
   test("budget_limited goal with budget shows token usage", () => {
     const goal = makeGoal({
       status: "budget_limited",
@@ -236,6 +243,12 @@ describe("goalCommand - buildGoalReminder", () => {
     const reminder = buildGoalReminder(goal);
     expect(reminder).toContain("ship the feature");
     expect(reminder).toContain("active");
+  });
+
+  test("instructs not to proactively continue blocked goals", () => {
+    const goal = makeGoal({ status: "blocked" });
+    const reminder = buildGoalReminder(goal);
+    expect(reminder).toContain("paused or blocked");
   });
 });
 
@@ -279,6 +292,18 @@ describe("goalCommand - buildGoalContinuationPrompt", () => {
     });
     expect(prompt).toContain("Token budget: none");
     expect(prompt).toContain("Tokens remaining: unbounded");
+  });
+
+  test("allows blocked status for repeated blockers", () => {
+    const prompt = buildGoalContinuationPrompt({
+      objective: "do the thing",
+      status: "active",
+      tokensUsed: 100,
+      tokenBudget: null,
+      timeUsedSeconds: 30,
+    });
+    expect(prompt).toContain('status "blocked"');
+    expect(prompt).toContain("three consecutive goal turns");
   });
 });
 

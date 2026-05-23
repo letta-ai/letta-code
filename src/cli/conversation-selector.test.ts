@@ -22,6 +22,28 @@ describe("ConversationSelector timestamps", () => {
     expect(entry.lastActiveAt).toBe(lastActiveAt);
   });
 
+  test("uses real default conversation creation time when available", () => {
+    const createdAt = new Date(
+      Date.now() - 8 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const lastActiveAt = new Date(
+      Date.now() - 2 * 60 * 60 * 1000,
+    ).toISOString();
+
+    const entry = buildDefaultConversationEntry(
+      "agent-1",
+      {
+        previewLines: [],
+        lastActiveAt,
+        messageCount: 3,
+      },
+      createdAt,
+    );
+
+    expect(entry.conversation.created_at).toBe(createdAt);
+    expect(entry.conversation.updated_at).toBe(lastActiveAt);
+  });
+
   test("suppresses impossible created-after-active timelines", () => {
     const lastActiveAt = new Date(
       Date.now() - 8 * 24 * 60 * 60 * 1000,

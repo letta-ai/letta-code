@@ -88,6 +88,7 @@ type ConfigurationHandlersContext = {
   >;
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setCurrentModelId: Dispatch<SetStateAction<string | null>>;
+  setHasAvailableLocalModels: Dispatch<SetStateAction<boolean>>;
   setCurrentPersonalityId: Dispatch<SetStateAction<PersonalityId | null>>;
   setCurrentSystemPromptId: Dispatch<SetStateAction<string | null>>;
   setCurrentToolset: Dispatch<SetStateAction<ToolsetName | null>>;
@@ -125,6 +126,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     setConversationOverrideModelSettings,
     setCurrentModelHandle,
     setCurrentModelId,
+    setHasAvailableLocalModels,
     setCurrentPersonalityId,
     setCurrentSystemPromptId,
     setCurrentToolset,
@@ -421,6 +423,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           // Reset context token tracking since different models have different tokenizers
           resetContextHistory(contextTrackerRef.current);
           setCurrentModelHandle(modelHandle);
+          setHasAvailableLocalModels(true);
 
           const persistedToolsetPreference =
             settingsManager.getToolsetPreference(agentId);
@@ -1134,12 +1137,13 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     async (
       changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
     ) => {
+      const overlayCommand = consumeOverlayCommand("experiment");
+
       if (changes.length === 0) {
+        overlayCommand?.finish("Experiments dialog dismissed", true);
         setActiveOverlay(null);
         return;
       }
-
-      const overlayCommand = consumeOverlayCommand("experiment");
 
       if (isAgentBusy()) {
         setActiveOverlay(null);

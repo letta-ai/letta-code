@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { migratePermissionMode } from "@/permissions/mode";
+import { isRecord } from "@/utils/type-guards";
 import {
   getChannelAccountsPath,
   getChannelDir,
@@ -13,6 +14,7 @@ import type {
   SlackChannelAccount,
   SupportedChannelId,
   TelegramChannelAccount,
+  WhatsAppChannelAccount,
 } from "./types";
 import {
   isCustomChannelAccount,
@@ -20,6 +22,7 @@ import {
   isFirstPartyChannelId,
   isSlackChannelAccount,
   isTelegramChannelAccount,
+  isWhatsAppChannelAccount,
 } from "./types";
 
 /**
@@ -73,15 +76,20 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
       : { ...account.allowedChannels };
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    (cloned as WhatsAppChannelAccount).allowedGroups = [
+      ...(account.allowedGroups ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).mentionPatterns = [
+      ...(account.mentionPatterns ?? []),
+    ];
+  }
+
   if ("config" in account) {
     (cloned as CustomChannelAccount).config = { ...account.config };
   }
 
   return cloned;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
@@ -131,7 +139,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
         next.displayName === "Migrated Slack app")) ||
     (isDiscordChannelAccount(next) &&
       (next.displayName === "Discord bot" ||
-        next.displayName === "Migrated Discord bot"))
+        next.displayName === "Migrated Discord bot")) ||
+    (isWhatsAppChannelAccount(next) && next.displayName === "WhatsApp")
   ) {
     next.displayName = undefined;
   }
@@ -155,6 +164,14 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     if (!("auto_thread_on_mention" in raw) && !("autoThreadOnMention" in raw)) {
       (next as DiscordChannelAccount).autoThreadOnMention = true;
     }
+  }
+  if (isWhatsAppChannelAccount(next)) {
+    next.selfChatMode = next.selfChatMode !== false;
+    next.groupMode = next.groupMode ?? "disabled";
+    next.allowedGroups = [...(next.allowedGroups ?? [])];
+    next.mentionPatterns = [...(next.mentionPatterns ?? [])];
+    next.downloadMedia = next.downloadMedia === true;
+    next.transcribeVoice = next.transcribeVoice === true;
   }
   return next;
 }
@@ -204,6 +221,28 @@ function makeDefaultLegacyAccount(
       threadPolicyByChannel: config.threadPolicyByChannel,
       agentId: null,
       defaultPermissionMode: config.defaultPermissionMode ?? "standard",
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  if (config.channel === "whatsapp") {
+    return {
+      channel: "whatsapp",
+      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
+      enabled: config.enabled,
+      dmPolicy: config.dmPolicy,
+      allowedUsers: [...config.allowedUsers],
+      agentId: config.agentId,
+      selfChatMode: config.selfChatMode !== false,
+      groupMode: config.groupMode ?? "disabled",
+      allowedGroups: config.allowedGroups ? [...config.allowedGroups] : [],
+      mentionPatterns: config.mentionPatterns
+        ? [...config.mentionPatterns]
+        : [],
+      transcribeVoice: config.transcribeVoice === true,
+      downloadMedia: config.downloadMedia === true,
+      mediaMaxBytes: config.mediaMaxBytes,
       createdAt: now,
       updatedAt: now,
     };
@@ -267,7 +306,12 @@ export function loadChannelAccounts(channelId: string): void {
     }
   }
 
-  if (channelId === "telegram" || channelId === "slack") {
+  if (
+    channelId === "telegram" ||
+    channelId === "slack" ||
+    channelId === "discord" ||
+    channelId === "whatsapp"
+  ) {
     const legacyConfig = readChannelConfig(channelId);
     if (legacyConfig) {
       const migratedAccounts = [makeDefaultLegacyAccount(channelId)];

@@ -9,16 +9,13 @@ import {
   isShellTool,
   isTaskTool,
 } from "@/cli/helpers/tool-name-mapping.js";
-import { permissionMode } from "@/permissions/mode";
 import { InlineBashApproval } from "./InlineBashApproval";
-import { InlineEnterPlanModeApproval } from "./InlineEnterPlanModeApproval";
 import { InlineFileEditApproval } from "./InlineFileEditApproval";
 import { InlineGenericApproval } from "./InlineGenericApproval";
 import type { MemoryInfo } from "./InlineMemoryApproval";
 import { InlineMemoryApproval } from "./InlineMemoryApproval";
 import { InlineQuestionApproval } from "./InlineQuestionApproval";
 import { InlineTaskApproval } from "./InlineTaskApproval";
-import { StaticPlanApproval } from "./StaticPlanApproval";
 
 // Types for parsed tool data
 type BashInfo = {
@@ -75,25 +72,12 @@ type Props = {
   showPreview?: boolean;
   defaultScope?: "project" | "session";
 
-  // Special handlers for ExitPlanMode
-  onPlanApprove?: (acceptEdits: boolean) => void;
-  onPlanKeepPlanning?: (reason: string) => void;
-
   // Special handlers for AskUserQuestion
   onQuestionSubmit?: (answers: Record<string, string>) => void;
-
-  // Special handlers for EnterPlanMode
-  onEnterPlanModeApprove?: () => void;
-  onEnterPlanModeReject?: () => void;
 
   // External data for FileEdit approvals
   precomputedDiff?: AdvancedDiffSuccess;
   allDiffs?: Map<string, AdvancedDiffSuccess>;
-
-  // Plan viewer data (for ExitPlanMode 'o' key)
-  planContent?: string;
-  planFilePath?: string;
-  agentName?: string;
 };
 
 // Parse bash info from approval args
@@ -355,42 +339,15 @@ export const ApprovalSwitch = memo(
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
-    onPlanApprove,
-    onPlanKeepPlanning,
     onQuestionSubmit,
-    onEnterPlanModeApprove,
-    onEnterPlanModeReject,
     precomputedDiff,
     allDiffs,
     showPreview = true,
     defaultScope = "project",
-    planContent,
-    planFilePath,
-    agentName,
   }: Props) => {
     const toolName = approval.toolName;
 
-    // 1. ExitPlanMode → StaticPlanApproval
-    if (toolName === "ExitPlanMode" && onPlanApprove && onPlanKeepPlanning) {
-      const showAcceptEditsOption =
-        permissionMode.getMode() === "plan" &&
-        permissionMode.getModeBeforePlan() !== "unrestricted";
-      return (
-        <StaticPlanApproval
-          onApprove={() => onPlanApprove(false)}
-          onApproveAndAcceptEdits={() => onPlanApprove(true)}
-          onKeepPlanning={onPlanKeepPlanning}
-          onCancel={onCancel ?? (() => {})}
-          showAcceptEditsOption={showAcceptEditsOption}
-          isFocused={isFocused}
-          planContent={planContent}
-          planFilePath={planFilePath}
-          agentName={agentName}
-        />
-      );
-    }
-
-    // 2. File edit/write/patch tools → InlineFileEditApproval
+    // File edit/write/patch tools → InlineFileEditApproval
     if (
       isFileEditTool(toolName) ||
       isFileWriteTool(toolName) ||
@@ -417,7 +374,7 @@ export const ApprovalSwitch = memo(
       }
     }
 
-    // 3. Shell/Bash tools → InlineBashApproval
+    // Shell/Bash tools → InlineBashApproval
     if (isShellTool(toolName)) {
       const bashInfo = getBashInfo(approval);
       if (bashInfo) {
@@ -438,22 +395,7 @@ export const ApprovalSwitch = memo(
       }
     }
 
-    // 4. EnterPlanMode → InlineEnterPlanModeApproval
-    if (
-      toolName === "EnterPlanMode" &&
-      onEnterPlanModeApprove &&
-      onEnterPlanModeReject
-    ) {
-      return (
-        <InlineEnterPlanModeApproval
-          onApprove={onEnterPlanModeApprove}
-          onReject={onEnterPlanModeReject}
-          isFocused={isFocused}
-        />
-      );
-    }
-
-    // 5. AskUserQuestion → InlineQuestionApproval
+    // AskUserQuestion → InlineQuestionApproval
     // Guard: only render specialized UI if questions are valid, otherwise fall through
     // to InlineGenericApproval (matches pattern for Bash/Task with malformed args)
     if (toolName === "AskUserQuestion" && onQuestionSubmit) {

@@ -49,7 +49,6 @@ describe("shared reminder parity", () => {
       systemInfoReminderEnabled: true,
       reflectionSettings,
       skillSources: [] as SkillSource[],
-      resolvePlanModeReminder: () => "plan",
     };
 
     const interactive = await buildSharedReminderParts({
@@ -108,7 +107,6 @@ describe("shared reminder parity", () => {
       systemInfoReminderEnabled: true,
       reflectionSettings,
       skillSources: [] as SkillSource[],
-      resolvePlanModeReminder: () => "plan",
       mode: "subagent",
       state: createSharedReminderState(),
     });

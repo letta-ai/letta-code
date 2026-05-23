@@ -1,6 +1,4 @@
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+import { isRecord } from "@/utils/type-guards";
 
 function contextOverflowHaystack(error: unknown): string {
   const pieces: string[] = [];

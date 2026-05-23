@@ -36,6 +36,7 @@ interface OAuthFlowDeps {
   startCallbackServer: (
     expectedState: string,
     port?: number,
+    signal?: AbortSignal,
   ) => Promise<OAuthCodeServerResult>;
   exchangeTokens: (
     code: string,
@@ -72,6 +73,7 @@ const DEFAULT_DEPS: OAuthFlowDeps = {
 export interface ChatGPTOAuthFlowCallbacks {
   onStatus: (message: string) => void | Promise<void>;
   openBrowser?: (authorizationUrl: string) => Promise<void>;
+  signal?: AbortSignal;
 }
 
 export async function openOAuthBrowser(
@@ -125,6 +127,7 @@ export async function runChatGPTOAuthConnectFlow(
     const serverPromise = mergedDeps.startCallbackServer(
       state,
       OPENAI_OAUTH_CONFIG.defaultPort,
+      callbacks.signal,
     );
 
     await browserOpener(authorizationUrl);
@@ -133,6 +136,7 @@ export async function runChatGPTOAuthConnectFlow(
       "Waiting for authorization...\n\n" +
         "Please complete the sign-in process in your browser.\n" +
         "The page will redirect automatically when done.\n\n" +
+        "Press Esc to cancel.\n\n" +
         `If needed, visit:\n${authorizationUrl}`,
     );
 

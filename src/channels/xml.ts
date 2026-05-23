@@ -49,7 +49,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
   const lines = [
     SYSTEM_REMINDER_OPEN,
     `This is an external ${escapedChannel} turn. Plain assistant text is not delivered to the user.`,
-    `If you should reply to the external user, your final action for this turn must be exactly one MessageChannel call with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
+    `If you should reply to the external user, use MessageChannel with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
     "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
     "Do not produce a plain text assistant response as the user-visible reply.",
     "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
@@ -80,6 +80,13 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       lines.length - 2,
       0,
       'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.',
+    );
+  }
+  if (msg.channel === "whatsapp") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Voice memo/audio uploads must be Ogg/Opus (.ogg, .oga, or .opus), not MP3/M4A/WAV. Replies are sent as the linked WhatsApp number.',
     );
   }
   if (msg.attachments?.length) {

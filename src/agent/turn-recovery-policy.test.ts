@@ -66,6 +66,14 @@ describe("isConversationBusyError", () => {
     ).toBe(true);
   });
 
+  test("detects TS core active-run busy error", () => {
+    expect(
+      isConversationBusyError(
+        "Conversation conv-123 is busy with another active run.",
+      ),
+    ).toBe(true);
+  });
+
   test("rejects approval-pending", () => {
     expect(isConversationBusyError("The agent is waiting for approval")).toBe(
       false,
@@ -99,6 +107,14 @@ describe("classifyPreStreamConflict", () => {
   test("conversation busy", () => {
     expect(
       classifyPreStreamConflict("another request is currently being processed"),
+    ).toBe("conversation_busy");
+  });
+
+  test("conversation busy from TS core", () => {
+    expect(
+      classifyPreStreamConflict(
+        "Conversation is busy with another active run.",
+      ),
     ).toBe("conversation_busy");
   });
 
@@ -478,6 +494,22 @@ describe("extractConflictDetail", () => {
     expect(extractConflictDetail(err)).toBe("fallback msg");
   });
 
+  test("nested string: e.error.error", () => {
+    const err = {
+      error: { error: "Conversation is busy with another active run." },
+    };
+    expect(extractConflictDetail(err)).toBe(
+      "Conversation is busy with another active run.",
+    );
+  });
+
+  test("string body: e.error", () => {
+    const err = { error: "Conversation is busy with another active run." };
+    expect(extractConflictDetail(err)).toBe(
+      "Conversation is busy with another active run.",
+    );
+  });
+
   test("flat: e.error.detail", () => {
     const err = {
       error: { detail: "another request is currently being processed" },
@@ -521,6 +553,19 @@ describe("extractConflictDetail", () => {
     expect(isConversationBusyError(detail)).toBe(false);
     expect(getPreStreamErrorAction(detail, 0, 3)).toBe(
       "resolve_approval_pending",
+    );
+  });
+
+  test("end-to-end: TS core busy response retries as conversation busy", () => {
+    const sdkError = {
+      error: {
+        error: "Conversation is busy with another active run.",
+      },
+    };
+    const detail = extractConflictDetail(sdkError);
+    expect(isConversationBusyError(detail)).toBe(true);
+    expect(getPreStreamErrorAction(detail, 0, 3)).toBe(
+      "retry_conversation_busy",
     );
   });
 });

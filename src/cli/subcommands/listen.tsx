@@ -21,7 +21,6 @@ import { telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
-  registerWithCloud,
   registerWithCloudRetry,
 } from "@/websocket/listen-register";
 
@@ -577,7 +576,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
 
     const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloud(registerOptions);
+      await registerWithCloudRetry(registerOptions, {
+        onRetry: (attempt, delayMs, error) => {
+          sessionLog.log(
+            `Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+          );
+          if (debugMode) {
+            console.log(
+              `[${formatTimestamp()}] Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+            );
+          }
+        },
+      });
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -607,6 +617,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connectionName,
       );
       const result = await registerWithCloudRetry(nextRegisterOptions, {
+        maxDurationMs: Infinity,
         onRetry: (attempt, delayMs, error) => {
           sessionLog.log(
             `Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,

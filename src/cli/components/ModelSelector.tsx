@@ -41,6 +41,31 @@ export function usesBackendModelCatalog(
   return Boolean(isSelfHosted || localModelCatalog);
 }
 
+export function getEmptyStateActionDescriptors(
+  showLoginAction: boolean,
+): Array<{
+  id: "connect" | "login";
+  label: string;
+  description: string;
+}> {
+  return [
+    {
+      id: "connect",
+      label: "/connect",
+      description: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
+    },
+    ...(showLoginAction
+      ? [
+          {
+            id: "login" as const,
+            label: "/login",
+            description: "Sign in to Letta Constellation",
+          },
+        ]
+      : []),
+  ];
+}
+
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
 // For Letta-hosted, keep ordering consistent across billing tiers.
@@ -104,6 +129,8 @@ interface ModelSelectorProps {
   /** The current model's handle (e.g., "anthropic/claude-sonnet-4.6") for accurate current model highlighting */
   currentModelHandle?: string | null;
   onSelect: (modelId: string) => void;
+  onOpenConnect?: () => void;
+  onOpenLogin?: () => void;
   onCancel: () => void;
   /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
   filterProvider?: string;
@@ -121,6 +148,8 @@ export function ModelSelector({
   currentModelId,
   currentModelHandle,
   onSelect,
+  onOpenConnect,
+  onOpenLogin,
   onCancel,
   filterProvider,
   forceRefresh: forceRefreshOnMount,
@@ -160,6 +189,7 @@ export function ModelSelector({
   const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showLoginAction, setShowLoginAction] = useState(false);
   const [byokProviderAliases, setByokProviderAliases] = useState<
     Record<string, string>
   >(() => buildByokProviderAliases([]));
@@ -171,6 +201,29 @@ export function ModelSelector({
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (isSelfHosted) {
+      setShowLoginAction(false);
+      return;
+    }
+
+    let cancelled = false;
+    void settingsManager
+      .getSettingsWithSecureTokens()
+      .then((settings) => {
+        if (cancelled) return;
+        setShowLoginAction(!settings.refreshToken);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setShowLoginAction(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSelfHosted]);
 
   // Fetch available models from the API (with caching + inflight dedupe)
   const loadModels = useRef(async (forceRefresh = false) => {
@@ -514,49 +567,77 @@ export function ModelSelector({
     return resolved;
   }, [availableHandles, pickPreferredStaticModel]);
 
+  // Map category -> list for O(1) lookup
+  const categoryListMap = useMemo(
+    () => ({
+      recents: recentModels,
+      supported: supportedModels,
+      byok: byokModels,
+      "byok-all": byokAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      })),
+      "server-recommended": serverRecommendedModels,
+      "server-all": serverAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      })),
+      all: allLettaModels,
+    }),
+    [
+      recentModels,
+      supportedModels,
+      byokModels,
+      byokAllModels,
+      allLettaModels,
+      serverRecommendedModels,
+      serverAllModels,
+    ],
+  );
+
+  // Filter out empty categories so the tab bar never shows tabs with 0 items
+  const nonEmptyCategories = useMemo(
+    () =>
+      modelCategories.filter((cat) => {
+        const list = categoryListMap[cat];
+        if (!list || list.length === 0) return false;
+        // Recents tab only shows when there are ≥2 available recent models
+        if (cat === "recents" && list.length < 2) return false;
+        return true;
+      }),
+    [modelCategories, categoryListMap],
+  );
+
+  // All categories empty → show null state under a single "All" tab
+  const allEmpty =
+    !isLoading && nonEmptyCategories.length === 0 && !searchQuery;
+  const emptyStateActions = useMemo(
+    () =>
+      getEmptyStateActionDescriptors(showLoginAction).map((action) => ({
+        ...action,
+        onSelect: action.id === "connect" ? onOpenConnect : onOpenLogin,
+      })),
+    [onOpenConnect, onOpenLogin, showLoginAction],
+  );
+
+  // When all categories are empty, collapse to a single "All" tab
+  const displayCategories = useMemo(
+    () =>
+      allEmpty
+        ? ([backendModelCatalog ? "server-all" : "all"] as ModelCategory[])
+        : nonEmptyCategories,
+    [allEmpty, backendModelCatalog, nonEmptyCategories],
+  );
+
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
-    if (category === "recents") {
-      return recentModels;
-    }
-    if (category === "supported") {
-      return supportedModels;
-    }
-    if (category === "byok") {
-      return byokModels;
-    }
-    if (category === "byok-all") {
-      // Convert raw handles to UiModel
-      return byokAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      }));
-    }
-    if (category === "server-recommended") {
-      return serverRecommendedModels;
-    }
-    if (category === "server-all") {
-      // Convert raw handles to UiModel
-      return serverAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      }));
-    }
-    return allLettaModels;
-  }, [
-    category,
-    recentModels,
-    supportedModels,
-    byokModels,
-    byokAllModels,
-    allLettaModels,
-    serverRecommendedModels,
-    serverAllModels,
-  ]);
+    const list = categoryListMap[category] as UiModel[] | undefined;
+    return list ?? [];
+  }, [category, categoryListMap]);
 
   // Show 1 fewer item because Search line takes space
   const visibleCount = VISIBLE_ITEMS - 1;
@@ -578,17 +659,29 @@ export function ModelSelector({
   const showScrollDown = startIndex + visibleCount < currentList.length;
   const itemsBelow = currentList.length - startIndex - visibleCount;
 
+  // Auto-switch to first non-empty category if current category becomes empty
+  useEffect(() => {
+    if (allEmpty) return;
+    if (
+      nonEmptyCategories.length > 0 &&
+      !nonEmptyCategories.includes(category)
+    ) {
+      setCategory(nonEmptyCategories[0] as ModelCategory);
+      setSelectedIndex(0);
+    }
+  }, [nonEmptyCategories, category, allEmpty]);
+
   // Reset selection when category changes
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
-      const idx = modelCategories.indexOf(current);
-      return modelCategories[
-        (idx + 1) % modelCategories.length
-      ] as ModelCategory;
+      const cats =
+        displayCategories.length > 0 ? displayCategories : modelCategories;
+      const idx = cats.indexOf(current);
+      return cats[(idx + 1) % cats.length] as ModelCategory;
     });
     setSelectedIndex(0);
     setSearchQuery("");
-  }, [modelCategories]);
+  }, [displayCategories, modelCategories]);
 
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
@@ -604,10 +697,13 @@ export function ModelSelector({
 
   // Clamp selectedIndex when list changes
   useEffect(() => {
-    if (selectedIndex >= currentList.length && currentList.length > 0) {
-      setSelectedIndex(currentList.length - 1);
+    const selectableCount = allEmpty
+      ? emptyStateActions.length
+      : currentList.length;
+    if (selectedIndex >= selectableCount && selectableCount > 0) {
+      setSelectedIndex(selectableCount - 1);
     }
-  }, [selectedIndex, currentList.length]);
+  }, [selectedIndex, currentList.length, allEmpty, emptyStateActions.length]);
 
   useInput(
     (input, key) => {
@@ -646,10 +742,10 @@ export function ModelSelector({
       if (key.leftArrow) {
         // Cycle backwards through categories
         setCategory((current) => {
-          const idx = modelCategories.indexOf(current);
-          return modelCategories[
-            idx === 0 ? modelCategories.length - 1 : idx - 1
-          ] as ModelCategory;
+          const cats =
+            displayCategories.length > 0 ? displayCategories : modelCategories;
+          const idx = cats.indexOf(current);
+          return cats[idx === 0 ? cats.length - 1 : idx - 1] as ModelCategory;
         });
         setSelectedIndex(0);
         setSearchQuery("");
@@ -663,6 +759,23 @@ export function ModelSelector({
           setSelectedIndex(0);
         }
         return;
+      }
+
+      if (allEmpty) {
+        if (key.upArrow) {
+          setSelectedIndex((prev) => Math.max(0, prev - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setSelectedIndex((prev) =>
+            Math.min(emptyStateActions.length - 1, prev + 1),
+          );
+          return;
+        }
+        if (key.return) {
+          emptyStateActions[selectedIndex]?.onSelect?.();
+          return;
+        }
       }
 
       // Capture text input for search (allow typing even with 0 results)
@@ -758,10 +871,10 @@ export function ModelSelector({
         ) : undefined
       }
     >
-      {!isLoading && (
+      {!isLoading && !allEmpty && (
         <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
           <TabBar
-            tabs={modelCategories}
+            tabs={displayCategories}
             activeTab={category}
             getLabel={getCategoryLabel}
           />
@@ -774,6 +887,43 @@ export function ModelSelector({
               <Text dimColor>(type to filter)</Text>
             )}
           </Text>
+        </Box>
+      )}
+
+      {/* Null state — no models available */}
+      {!isLoading && allEmpty && (
+        <Box flexDirection="column" paddingLeft={1}>
+          <TabBar
+            tabs={displayCategories}
+            activeTab={displayCategories[0] as ModelCategory}
+            getLabel={getCategoryLabel}
+          />
+          <Box flexDirection="column" paddingLeft={1} marginTop={1}>
+            <Text dimColor>No models available.</Text>
+            <Text dimColor>
+              Set an LLM API key in your env and restart `letta` or use the
+              following options:
+            </Text>
+            <Box height={1} />
+            {emptyStateActions.map((action, index) => {
+              const isSelected = index === selectedIndex;
+              return (
+                <Box key={action.id} flexDirection="column" marginBottom={1}>
+                  <Text
+                    color={
+                      isSelected ? colors.selector.itemHighlighted : undefined
+                    }
+                  >
+                    {isSelected ? "> " : "  "}
+                    {action.label}
+                  </Text>
+                  <Box paddingLeft={2}>
+                    <Text dimColor>{action.description}</Text>
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
         </Box>
       )}
 
@@ -792,11 +942,11 @@ export function ModelSelector({
         </Box>
       )}
 
-      {!isLoading && visibleModels.length === 0 && (
+      {!isLoading && !allEmpty && visibleModels.length === 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>
-            {category === "supported"
-              ? "No supported models available."
+            {searchQuery
+              ? "No models match your search."
               : "No additional models available."}
           </Text>
         </Box>

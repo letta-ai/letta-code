@@ -5,8 +5,6 @@ import BashOutputDescription from "./descriptions/BashOutput.md";
 import CreateGoalDescription from "./descriptions/CreateGoal.md";
 import CreateWorktreeDescription from "./descriptions/CreateWorktree.md";
 import EditDescription from "./descriptions/Edit.md";
-import EnterPlanModeDescription from "./descriptions/EnterPlanMode.md";
-import ExitPlanModeDescription from "./descriptions/ExitPlanMode.md";
 import GetGoalDescription from "./descriptions/GetGoal.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
@@ -49,8 +47,6 @@ import { bash_output } from "./impl/bash-output";
 import { create_goal } from "./impl/create-goal";
 import { create_worktree } from "./impl/create-worktree";
 import { edit } from "./impl/edit";
-import { enter_plan_mode } from "./impl/enter-plan-mode";
-import { exit_plan_mode } from "./impl/exit-plan-mode";
 import { get_goal } from "./impl/get-goal";
 import { glob } from "./impl/glob";
 // Gemini toolset
@@ -93,8 +89,6 @@ import BashOutputSchema from "./schemas/BashOutput.json";
 import CreateGoalSchema from "./schemas/CreateGoal.json";
 import CreateWorktreeSchema from "./schemas/CreateWorktree.json";
 import EditSchema from "./schemas/Edit.json";
-import EnterPlanModeSchema from "./schemas/EnterPlanMode.json";
-import ExitPlanModeSchema from "./schemas/ExitPlanMode.json";
 import GetGoalSchema from "./schemas/GetGoal.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
@@ -164,16 +158,6 @@ const toolDefinitions = {
     schema: EditSchema,
     description: EditDescription.trim(),
     impl: edit as unknown as ToolImplementation,
-  },
-  EnterPlanMode: {
-    schema: EnterPlanModeSchema,
-    description: EnterPlanModeDescription.trim(),
-    impl: enter_plan_mode as unknown as ToolImplementation,
-  },
-  ExitPlanMode: {
-    schema: ExitPlanModeSchema,
-    description: ExitPlanModeDescription.trim(),
-    impl: exit_plan_mode as unknown as ToolImplementation,
   },
   Glob: {
     schema: GlobSchema,

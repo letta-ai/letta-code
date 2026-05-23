@@ -23,7 +23,7 @@ const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
 
 export interface PersonalityOption {
-  id: "blank" | "kawaii" | "codex" | "claude" | "linus" | "memo";
+  id: "blank" | "kawaii" | "codex" | "claude" | "linus" | "memo" | "tutorial";
   label: string;
   description: string;
   /** Model ID from models.json to use when no explicit model is provided. */
@@ -35,6 +35,11 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
     id: "memo",
     label: "Letta Code",
     description: "The memory-first agent",
+  },
+  {
+    id: "tutorial",
+    label: "Tutor",
+    description: "A tutor-guide that teaches Letta through real work",
   },
   {
     id: "blank",
@@ -68,6 +73,7 @@ export type PersonalityId = PersonalityOption["id"];
 
 export const DEFAULT_CREATE_AGENT_PERSONALITIES = [
   "memo",
+  "tutorial",
   "blank",
   "linus",
   "kawaii",
@@ -103,6 +109,7 @@ export interface PersonalityBlockDefinition {
 }
 
 export const ONBOARDING_PERSONALITIES = [
+  "tutorial",
   "linus",
   "kawaii",
 ] as const satisfies readonly PersonalityId[];
@@ -286,6 +293,10 @@ export function getPersonalityContent(personalityId: PersonalityId): string {
     return getPromptBody("persona_memo.mdx");
   }
 
+  if (personalityId === "tutorial") {
+    return getPromptBody("persona_tutorial.mdx");
+  }
+
   if (personalityId === "blank") {
     return getPromptBody("persona_blank.mdx");
   }
@@ -312,7 +323,7 @@ export function getDefaultHumanContent(): string {
 export function getPersonalityHumanContent(
   personalityId: PersonalityId,
 ): string {
-  if (personalityId === "memo") {
+  if (personalityId === "memo" || personalityId === "tutorial") {
     return getPromptBody("human_memo.mdx");
   }
 
@@ -350,15 +361,17 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
   const personaTemplatePromptAssetName =
     personalityId === "memo"
       ? "persona_memo.mdx"
-      : personalityId === "blank"
-        ? "persona_blank.mdx"
-        : personalityId === "kawaii"
-          ? "persona_kawaii.mdx"
-          : personalityId === "linus"
-            ? "persona_linus.mdx"
-            : "persona.mdx";
+      : personalityId === "tutorial"
+        ? "persona_tutorial.mdx"
+        : personalityId === "blank"
+          ? "persona_blank.mdx"
+          : personalityId === "kawaii"
+            ? "persona_kawaii.mdx"
+            : personalityId === "linus"
+              ? "persona_linus.mdx"
+              : "persona.mdx";
   const humanTemplatePromptAssetName =
-    personalityId === "memo"
+    personalityId === "memo" || personalityId === "tutorial"
       ? "human_memo.mdx"
       : personalityId === "kawaii"
         ? "human_kawaii.mdx"

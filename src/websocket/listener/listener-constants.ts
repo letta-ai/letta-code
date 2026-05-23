@@ -12,7 +12,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "remember",
   "goal",
   "compact",
-  "set-max-context",
+  "context-limit",
   "channels",
   "toolset",
   // /secret opens the EditSecretsDialog and routes reads/writes through the

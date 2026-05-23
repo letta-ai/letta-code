@@ -54,6 +54,8 @@ export interface LocalProviderOAuthAuth {
 
 export type LocalProviderAuth = LocalProviderApiAuth | LocalProviderOAuthAuth;
 
+export const LOCAL_PROVIDER_NO_API_KEY = "not-needed";
+
 export interface LocalProviderRecord {
   id: string;
   name: string;
@@ -128,6 +130,15 @@ function providerResponse(record: LocalProviderRecord): ProviderResponse {
     ...(record.access_key ? { access_key: record.access_key } : {}),
     ...(record.region ? { region: record.region } : {}),
   };
+}
+
+export function localProviderApiKeyFromRecord(
+  record: LocalProviderRecord | null | undefined,
+): string | undefined {
+  if (record?.auth.type !== "api") return undefined;
+  return record.auth.key === LOCAL_PROVIDER_NO_API_KEY
+    ? undefined
+    : record.auth.key;
 }
 
 export function listLocalProviderRecords(
@@ -273,7 +284,7 @@ export function getLocalProviderApiKeyByName(
   storageDir?: string,
 ): string | undefined {
   const record = getLocalProviderRecordByName(providerName, storageDir);
-  return record?.auth.type === "api" ? record.auth.key : undefined;
+  return localProviderApiKeyFromRecord(record);
 }
 
 export function getLocalProviderApiKeyByType(
@@ -281,7 +292,7 @@ export function getLocalProviderApiKeyByType(
   storageDir?: string,
 ): string | undefined {
   const record = getLocalProviderRecordByType(providerType, storageDir);
-  return record?.auth.type === "api" ? record.auth.key : undefined;
+  return localProviderApiKeyFromRecord(record);
 }
 
 export function getLocalChatGPTOAuth(

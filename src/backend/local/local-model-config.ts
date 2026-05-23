@@ -13,6 +13,7 @@ import {
 import {
   type LocalProviderRecord,
   listLocalProviderRecords,
+  localProviderApiKeyFromRecord,
 } from "./local-provider-auth-store";
 
 export interface LocalModelConfig {
@@ -179,12 +180,6 @@ function providerRecordFor(
   return records.find((record) => names.includes(record.name));
 }
 
-function apiKeyFromRecord(
-  record: LocalProviderRecord | undefined,
-): string | undefined {
-  return record?.auth.type === "api" ? record.auth.key : undefined;
-}
-
 function isDiscoverableLocalProvider(provider: PiProvider): boolean {
   return getPiProviderSpec(provider).localModelDiscovery !== undefined;
 }
@@ -202,7 +197,7 @@ async function discoverModelIdsForProvider(
   const baseURL =
     record?.base_url ?? spec.baseUrlEnv?.() ?? spec.defaultBaseURL;
   if (!baseURL) return [];
-  const apiKey = apiKeyFromRecord(record) ?? spec.apiKeyEnv?.();
+  const apiKey = localProviderApiKeyFromRecord(record) ?? spec.apiKeyEnv?.();
   const input = {
     baseURL,
     apiKey,
@@ -260,7 +255,15 @@ export async function listLocalModels(
     });
   };
 
-  if (!isDiscoverableLocalProvider(configured.provider)) {
+  // Only add the configured model if its provider is actually reachable
+  // (has keys/env configured). Otherwise we'd show models the user can't use.
+  const configuredProviderIsConfigured = listConfiguredPiProviders(
+    providerNames,
+  ).includes(configured.provider);
+  if (
+    !isDiscoverableLocalProvider(configured.provider) &&
+    configuredProviderIsConfigured
+  ) {
     addModel(configured.provider, configured.model);
   }
   const discoveryOptions: Required<ListLocalModelsOptions> = {

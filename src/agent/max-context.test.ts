@@ -36,6 +36,9 @@ describe("max context command helpers", () => {
     expect(() => parseSetMaxContextArgs("10000 --force")).toThrow(
       "Unknown option: --force",
     );
+    expect(() => parseSetMaxContextArgs("10000 20000")).toThrow(
+      "Usage: /context-limit [tokens] [--override]",
+    );
   });
 
   test("resolves model.json default context windows", () => {
