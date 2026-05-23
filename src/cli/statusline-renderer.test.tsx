@@ -16,8 +16,6 @@ const DEFAULT_STATUSLINE_ACTIVATION = {
   isBashMode: false,
   modeActive: false,
   preemptionActive: false,
-  statusLineActive: false,
-  statusLineRight: undefined,
   transientHintActive: false,
 };
 
@@ -115,24 +113,6 @@ describe("statusline renderers", () => {
       shouldRenderDefaultStatuslineRenderer({
         ...DEFAULT_STATUSLINE_ACTIVATION,
         transientHintActive: true,
-      }),
-    ).toBe(false);
-  });
-
-  test("default renderer does not override command-provided right text", () => {
-    expect(
-      shouldRenderDefaultStatuslineRenderer({
-        ...DEFAULT_STATUSLINE_ACTIVATION,
-        statusLineRight: "right-side command output",
-      }),
-    ).toBe(false);
-  });
-
-  test("default renderer does not override an active command statusline", () => {
-    expect(
-      shouldRenderDefaultStatuslineRenderer({
-        ...DEFAULT_STATUSLINE_ACTIVATION,
-        statusLineActive: true,
       }),
     ).toBe(false);
   });

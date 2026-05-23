@@ -32,7 +32,6 @@ import {
   isActiveMemfsEnabled,
   isLocalMemfsActive,
 } from "@/agent/memory-runtime";
-import type { ModelReasoningEffort } from "@/agent/model";
 import {
   detectPersonalityFromPersonaFile,
   type PersonalityId,
@@ -113,7 +112,6 @@ import {
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import type { ToolsetName } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
@@ -173,7 +171,6 @@ type SubmitHandlerContext = {
   checkPendingApprovalsForSlashCommand: () => Promise<
     { blocked: true } | { blocked: false }
   >;
-  chromeColumns: number;
   commandRunner: AppCommandRunner;
   commandRunning: boolean;
   consumeQueuedApprovalInputForCurrentConversation: (
@@ -183,14 +180,10 @@ type SubmitHandlerContext = {
   conversationGenerationRef: MutableRefObject<number>;
   conversationId: string;
   conversationIdRef: MutableRefObject<string>;
-  currentModelDisplay: string | null;
   currentModelHandle: string | null;
   currentModelId: string | null;
   currentModelLabel: string | null;
   currentModelProvider: string | null;
-  currentReasoningEffort: ModelReasoningEffort | null;
-  currentSystemPromptId: string | null;
-  currentToolset: ToolsetName | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
   firstUserQueryRef: MutableRefObject<string | null>;
@@ -209,13 +202,11 @@ type SubmitHandlerContext = {
   hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   isExecutingTool: boolean;
-  lastRunIdRef: MutableRefObject<string | null>;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
   needsEagerApprovalCheck: boolean;
-  networkPhase: "error" | "upload" | "download" | null;
   openTrajectorySegment: () => void;
   overrideContentPartsRef: MutableRefObject<MessageCreate["content"] | null>;
   pendingApprovals: ApprovalRequest[];
@@ -293,9 +284,7 @@ type SubmitHandlerContext = {
   tokenStreamingEnabled: boolean;
   trajectoryRunTokenStartRef: MutableRefObject<number>;
   trajectoryTokenDisplayRef: MutableRefObject<number>;
-  triggerStatusLineRefresh: () => void;
   tuiQueueRef: MutableRefObject<QueueRuntime | null>;
-  uiPermissionMode: PermissionMode;
   updateAgentName: (name: string) => void;
   updateMemorySyncCommand: (
     commandId: string,
@@ -322,7 +311,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     bashCommandCacheRef,
     buffersRef,
     checkPendingApprovalsForSlashCommand,
-    chromeColumns,
     commandRunner,
     commandRunning,
     consumeQueuedApprovalInputForCurrentConversation,
@@ -330,14 +318,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
-    currentModelDisplay,
     currentModelHandle,
     currentModelId,
     currentModelLabel,
     currentModelProvider,
-    currentReasoningEffort,
-    currentSystemPromptId,
-    currentToolset,
     effectiveContextWindowSize,
     emittedIdsRef,
     firstUserQueryRef,
@@ -349,11 +333,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
-    lastRunIdRef,
     llmConfigRef,
     maybeCarryOverActiveConversationModel,
     needsEagerApprovalCheck,
-    networkPhase,
     openTrajectorySegment,
     overrideContentPartsRef,
     pendingApprovals,
@@ -414,9 +396,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     tokenStreamingEnabled,
     trajectoryRunTokenStartRef,
     trajectoryTokenDisplayRef,
-    triggerStatusLineRefresh,
     tuiQueueRef,
-    uiPermissionMode,
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
@@ -749,7 +729,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             sharedReminderStateRef.current.hasSentSessionContext = false;
             sharedReminderStateRef.current.pendingSessionContextReason =
               "cwd_changed";
-            triggerStatusLineRefresh();
             cmd.finish(
               `Working directory changed to ${nextWorkingDirectory}`,
               true,
@@ -957,22 +936,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           {
             agentId,
             agentIdRef,
-            agentName,
-            chromeColumns,
             commandRunner,
             contextTrackerRef,
             conversationIdRef,
-            currentModelDisplay,
             currentModelHandle,
             currentModelId,
-            currentReasoningEffort,
-            currentSystemPromptId,
-            currentToolset,
             effectiveContextWindowSize,
-            lastRunIdRef,
             llmConfigRef,
-            networkPhase,
-            projectDirectory,
             sessionStatsRef,
             setAgentState,
             setCommandRunning,
@@ -980,9 +950,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setConversationOverrideModelSettings,
             setHasConversationModelOverride,
             setLlmConfig,
-            sharedReminderStateRef,
-            triggerStatusLineRefresh,
-            uiPermissionMode,
           },
         );
         if (diagnosticsCommandResult) {

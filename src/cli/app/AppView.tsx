@@ -68,6 +68,7 @@ import {
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
+import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -75,7 +76,6 @@ import {
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
-import type { StatusLineState } from "@/cli/hooks/use-configurable-status-line";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -295,7 +295,8 @@ type AppViewProps = {
   ) => CommandHandle;
   staticItems: StaticItem[];
   staticRenderEpoch: number;
-  statusLine: StatusLineState;
+  statusLinePayload: StatusLinePayload;
+  statusLinePrompt: string;
   extensionRuntime: LocalExtensionRuntime;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
@@ -435,7 +436,8 @@ export function AppView(props: AppViewProps) {
     openOverlay,
     staticItems,
     staticRenderEpoch,
-    statusLine,
+    statusLinePayload,
+    statusLinePrompt,
     extensionRuntime,
     streaming,
     stubDescriptions,
@@ -454,7 +456,7 @@ export function AppView(props: AppViewProps) {
         renderEpoch={staticRenderEpoch}
         items={staticItems}
         columns={columns}
-        statusLinePrompt={statusLine.prompt}
+        statusLinePrompt={statusLinePrompt}
         showCompactionsEnabled={showCompactionsEnabled}
         precomputedDiffs={precomputedDiffsRef.current}
         hiddenToolCallId={expandedToolCallId ?? undefined}
@@ -548,7 +550,7 @@ export function AppView(props: AppViewProps) {
                             showPreview={showApprovalPreview}
                           />
                         ) : ln.kind === "user" ? (
-                          <UserMessage line={ln} prompt={statusLine.prompt} />
+                          <UserMessage line={ln} prompt={statusLinePrompt} />
                         ) : ln.kind === "reasoning" ? (
                           <ReasoningMessage line={ln} />
                         ) : ln.kind === "assistant" ? (
@@ -715,12 +717,9 @@ export function AppView(props: AppViewProps) {
                 executionPhase={executionPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
-                statusLineActive={statusLine.active}
-                statusLineText={statusLine.text || undefined}
-                statusLineRight={statusLine.rightText || undefined}
-                statusLinePayload={statusLine.payload}
+                statusLinePayload={statusLinePayload}
                 extensionRuntime={extensionRuntime}
-                statusLinePrompt={statusLine.prompt}
+                statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
                 showInspirationalPromptHints={showInspirationalPromptHints}
               />
