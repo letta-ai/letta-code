@@ -1,7 +1,7 @@
 import { colors } from "@/cli/components/colors";
 import { Text } from "@/cli/display/DisplayComponents";
 import { formatStatuslineReasoningEffort } from "@/cli/display/statusline/formatting";
-import type { StatuslineRenderContext } from "./types";
+import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
 
 export function CommandHintSegment() {
   return <Text dimColor>Press / for commands</Text>;
@@ -51,13 +51,4 @@ export function ByokIndicatorSegment({
 
 export function TemporaryModelOverrideSegment() {
   return <Text color="yellow">▲</Text>;
-}
-
-export function shouldShowByokIndicator(
-  context: Pick<
-    StatuslineRenderContext,
-    "isByokProvider" | "isOpenAICodexProvider"
-  >,
-): boolean {
-  return context.isByokProvider || context.isOpenAICodexProvider;
 }
