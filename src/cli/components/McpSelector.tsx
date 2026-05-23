@@ -7,6 +7,7 @@ import type { Tool } from "@letta-ai/letta-client/resources/tools";
 import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useState } from "react";
 import { getClient } from "@/backend/api/client";
+import { buildLegacyMcpServerRepair } from "@/cli/helpers/mcp-server-repair";
 import { truncateText } from "@/cli/helpers/truncate-text";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
@@ -176,7 +177,23 @@ export const McpSelector = memo(function McpSelector({
       await client.mcpServers.refresh(viewingServer.id, { agent_id: agentId });
 
       // Reload tools list
-      const toolsList = await client.mcpServers.tools.list(viewingServer.id);
+      let toolsList = await client.mcpServers.tools.list(viewingServer.id);
+
+      if (toolsList.length === 0 && viewingServer.mcp_server_type !== "stdio") {
+        const repair = buildLegacyMcpServerRepair(viewingServer);
+        if (repair) {
+          const repairedServer = await client.mcpServers.update(
+            viewingServer.id,
+            repair,
+          );
+          setViewingServer(repairedServer);
+          await client.mcpServers.refresh(viewingServer.id, {
+            agent_id: agentId,
+          });
+          toolsList = await client.mcpServers.tools.list(viewingServer.id);
+        }
+      }
+
       setTools(toolsList);
 
       // Refresh agent's current tools
