@@ -64,7 +64,7 @@ describe("formatChannelNotification", () => {
       "Plain assistant text is not delivered to the user.",
     );
     expect(reminder).toContain(
-      'If you should reply to the external user, your final action for this turn must be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
+      'If you should reply to the external user, use MessageChannel with action="send", channel="telegram", and chat_id="12345"',
     );
     expect(reminder).toContain(
       "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
@@ -90,7 +90,7 @@ describe("formatChannelNotification", () => {
     const xml = buildChannelNotificationXml(msg);
 
     expect(reminder).toContain(
-      'If you should reply to the external user, your final action for this turn must be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
+      'If you should reply to the external user, use MessageChannel with action="send", channel="telegram", and chat_id="12345"',
     );
     expect(reminder).not.toContain('accountId="account-1"');
     expect(xml).toContain('account_id="account-1"');
