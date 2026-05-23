@@ -7,7 +7,7 @@ import {
   getBuiltinStatuslineRenderer,
   getBuiltinStatuslineRenderers,
 } from "@/cli/display/statusline/registry";
-import { buildLegacyStatuslineParts } from "@/cli/display/statusline/renderers/Legacy";
+import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
 import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
 import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
 
@@ -52,16 +52,16 @@ function createStatuslineContext({
 }
 
 describe("statusline renderers", () => {
-  test("default renderer is legacy", () => {
-    expect(DEFAULT_STATUSLINE_RENDERER_ID).toBe("legacy");
-    expect(getBuiltinStatuslineRenderer(undefined).id).toBe("legacy");
-    expect(getBuiltinStatuslineRenderer("missing").id).toBe("legacy");
+  test("default renderer is built in", () => {
+    expect(DEFAULT_STATUSLINE_RENDERER_ID).toBe("default");
+    expect(getBuiltinStatuslineRenderer(undefined).id).toBe("default");
+    expect(getBuiltinStatuslineRenderer("missing").id).toBe("default");
   });
 
-  test("registry exposes the legacy renderer", () => {
+  test("registry exposes the default renderer", () => {
     expect(
       getBuiltinStatuslineRenderers().map((renderer) => renderer.id),
-    ).toEqual(["legacy"]);
+    ).toEqual(["default"]);
   });
 
   test("context exposes broad app state and raw payload", () => {
@@ -81,21 +81,21 @@ describe("statusline renderers", () => {
     expect(context.model.reasoningEffort).toBe("high");
   });
 
-  test("legacy renderer preserves the detailed model label", () => {
-    const output = buildLegacyStatuslineParts(createStatuslineContext());
+  test("default renderer shows compact agent and model label", () => {
+    const output = buildDefaultStatuslineParts(createStatuslineContext());
 
     expect(stripAnsi(String(output.right)).trim()).toBe(
-      "Letta Code [GPT-5.5 (ChatGPT) (high)] · local",
+      "Letta Code · GPT-5.5 (ChatGPT)",
     );
   });
 
-  test("legacy renderer suppresses reasoning for the no-model placeholder", () => {
-    const output = buildLegacyStatuslineParts(
+  test("default renderer omits reasoning and backend labels", () => {
+    const output = buildDefaultStatuslineParts(
       createStatuslineContext({ modelDisplayName: "No model selected" }),
     );
 
     expect(stripAnsi(String(output.right)).trim()).toBe(
-      "Letta Code [No model selected] · local",
+      "Letta Code · No model selected",
     );
   });
 
