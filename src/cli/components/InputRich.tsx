@@ -428,11 +428,178 @@ function StatusLineContent({
   );
 }
 
+type StatuslinePreemption =
+  | { type: "confirm-exit" }
+  | { type: "confirm-clear" }
+  | { type: "bash-mode" }
+  | {
+      type: "mode-hint";
+      modeName: string;
+      modeColor: string;
+      modeGlyph?: string | null;
+      showExitHint: boolean;
+    }
+  | { type: "footer-notification"; message: string }
+  | {
+      type: "queued-message-hint";
+      queueMode: "immediate" | "defer";
+      deferModeSupported: boolean;
+    };
+
+function getStatuslinePreemption({
+  ctrlCPressed,
+  escapePressed,
+  isBashMode,
+  statusLineText,
+  modeName,
+  modeColor,
+  modeGlyph,
+  showExitHint,
+  footerNotification,
+  hasQueuedMessages,
+  queueMode,
+  deferModeSupported,
+}: {
+  ctrlCPressed: boolean;
+  escapePressed: boolean;
+  isBashMode: boolean;
+  statusLineText?: string;
+  modeName: string | null;
+  modeColor: string | null;
+  modeGlyph?: string | null;
+  showExitHint: boolean;
+  footerNotification?: string | null;
+  hasQueuedMessages: boolean;
+  queueMode: "immediate" | "defer";
+  deferModeSupported: boolean;
+}): StatuslinePreemption | null {
+  if (ctrlCPressed) {
+    return { type: "confirm-exit" };
+  }
+
+  if (escapePressed) {
+    return { type: "confirm-clear" };
+  }
+
+  if (isBashMode) {
+    return { type: "bash-mode" };
+  }
+
+  // Preserve current behavior: a configured statusline owns the slot over
+  // non-armed host interaction hints.
+  if (statusLineText) {
+    return null;
+  }
+
+  if (modeName && modeColor) {
+    return {
+      type: "mode-hint",
+      modeName,
+      modeColor,
+      modeGlyph,
+      showExitHint,
+    };
+  }
+
+  if (footerNotification) {
+    return { type: "footer-notification", message: footerNotification };
+  }
+
+  if (hasQueuedMessages) {
+    return {
+      type: "queued-message-hint",
+      queueMode,
+      deferModeSupported,
+    };
+  }
+
+  return null;
+}
+
+function StatuslinePreemptionView({
+  preemption,
+}: {
+  preemption: StatuslinePreemption;
+}) {
+  switch (preemption.type) {
+    case "confirm-exit":
+      return <Text dimColor>Press CTRL-C again to exit</Text>;
+    case "confirm-clear":
+      return <Text dimColor>Press Esc again to clear</Text>;
+    case "bash-mode":
+      return (
+        <Text>
+          <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
+          <Text color={colors.bash.prompt} dimColor>
+            {" "}
+            (backspace to exit)
+          </Text>
+        </Text>
+      );
+    case "mode-hint":
+      return (
+        <Text>
+          <Text color={preemption.modeColor}>
+            {formatModeLabel(preemption.modeName, preemption.modeGlyph)}
+          </Text>
+          <Text color={preemption.modeColor} dimColor>
+            {" "}
+            (shift+tab to {preemption.showExitHint ? "exit" : "cycle"})
+          </Text>
+        </Text>
+      );
+    case "footer-notification":
+      return (
+        <Text color={colors.status.processingShimmer}>
+          {preemption.message}
+        </Text>
+      );
+    case "queued-message-hint":
+      return (
+        <Text dimColor>
+          {preemption.deferModeSupported
+            ? preemption.queueMode === "defer"
+              ? "press ↑ to edit queued message · ctrl+d to release queue"
+              : "press ↑ to edit queued message · ctrl+d to hold queue until done"
+            : "press ↑ to edit queued message"}
+        </Text>
+      );
+  }
+}
+
+function DefaultOrExtensionStatusline({
+  statusLineText,
+  modeName,
+  modeColor,
+  modeGlyph,
+  showExitHint,
+}: {
+  statusLineText?: string;
+  modeName: string | null;
+  modeColor: string | null;
+  modeGlyph?: string | null;
+  showExitHint: boolean;
+}) {
+  if (statusLineText) {
+    return (
+      <StatusLineContent
+        text={statusLineText}
+        modeName={modeName}
+        modeColor={modeColor}
+        modeGlyph={modeGlyph}
+        showExitHint={showExitHint}
+      />
+    );
+  }
+
+  return <Text dimColor>Press / for commands</Text>;
+}
+
 /**
- * Memoized footer component to prevent re-renders during high-frequency
- * shimmer/timer updates. Only updates when its specific props change.
+ * Bottom statusline slot. The default/custom statusline owns this row in the
+ * idle/base state, while host-owned input states can preempt it.
  */
-const InputFooter = memo(function InputFooter({
+const StatuslineSlot = memo(function StatuslineSlot({
   ctrlCPressed,
   escapePressed,
   isBashMode,
@@ -480,6 +647,32 @@ const InputFooter = memo(function InputFooter({
   deferModeSupported?: boolean;
 }) {
   const hideFooterContent = hideFooter;
+
+  const preemption = getStatuslinePreemption({
+    ctrlCPressed,
+    escapePressed,
+    isBashMode,
+    statusLineText,
+    modeName,
+    modeColor,
+    modeGlyph,
+    showExitHint,
+    footerNotification,
+    hasQueuedMessages,
+    queueMode,
+    deferModeSupported,
+  });
+  const leftContent = preemption ? (
+    <StatuslinePreemptionView preemption={preemption} />
+  ) : (
+    <DefaultOrExtensionStatusline
+      statusLineText={statusLineText}
+      modeName={modeName}
+      modeColor={modeColor}
+      modeGlyph={modeGlyph}
+      showExitHint={showExitHint}
+    />
+  );
 
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
@@ -542,53 +735,7 @@ const InputFooter = memo(function InputFooter({
   return (
     <Box flexDirection="row" marginBottom={1}>
       <Box flexGrow={1} paddingRight={1}>
-        {hideFooterContent ? (
-          <Text> </Text>
-        ) : ctrlCPressed ? (
-          <Text dimColor>Press CTRL-C again to exit</Text>
-        ) : escapePressed ? (
-          <Text dimColor>Press Esc again to clear</Text>
-        ) : isBashMode ? (
-          <Text>
-            <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
-            <Text color={colors.bash.prompt} dimColor>
-              {" "}
-              (backspace to exit)
-            </Text>
-          </Text>
-        ) : statusLineText ? (
-          <StatusLineContent
-            text={statusLineText}
-            modeName={modeName}
-            modeColor={modeColor}
-            modeGlyph={modeGlyph}
-            showExitHint={showExitHint}
-          />
-        ) : modeName && modeColor ? (
-          <Text>
-            <Text color={modeColor}>
-              {formatModeLabel(modeName, modeGlyph)}
-            </Text>
-            <Text color={modeColor} dimColor>
-              {" "}
-              (shift+tab to {showExitHint ? "exit" : "cycle"})
-            </Text>
-          </Text>
-        ) : footerNotification ? (
-          <Text color={colors.status.processingShimmer}>
-            {footerNotification}
-          </Text>
-        ) : hasQueuedMessages ? (
-          <Text dimColor>
-            {deferModeSupported
-              ? queueMode === "defer"
-                ? "press ↑ to edit queued message · ctrl+d to release queue"
-                : "press ↑ to edit queued message · ctrl+d to hold queue until done"
-              : "press ↑ to edit queued message"}
-          </Text>
-        ) : (
-          <Text dimColor>Press / for commands</Text>
-        )}
+        {hideFooterContent ? <Text> </Text> : leftContent}
       </Box>
       <Box
         flexDirection="column"
@@ -1916,7 +2063,7 @@ export function Input({
             )}
 
             {!suppressDividers && (
-              <InputFooter
+              <StatuslineSlot
                 ctrlCPressed={ctrlCPressed}
                 escapePressed={escapePressed}
                 isBashMode={isBashMode}
