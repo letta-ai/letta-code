@@ -5,6 +5,7 @@ import { Text } from "./Text";
 
 interface ShimmerTextProps {
   color?: string;
+  shimmerColor?: string;
   boldPrefix?: string;
   message: string;
   shimmerOffset: number;
@@ -18,6 +19,7 @@ interface ShimmerTextProps {
 
 export const ShimmerText = memo(function ShimmerText({
   color = colors.status.processing,
+  shimmerColor = colors.status.processingShimmer,
   boldPrefix,
   message,
   shimmerOffset,
@@ -81,7 +83,7 @@ export const ShimmerText = memo(function ShimmerText({
   const after = fullText.slice(end);
 
   pushRegion(before, 0, color);
-  pushRegion(shimmer, start, colors.status.processingShimmer);
+  pushRegion(shimmer, start, shimmerColor);
   pushRegion(after, end, color);
 
   // Use chalk for ALL styling (color + bold) instead of <Text> style props.

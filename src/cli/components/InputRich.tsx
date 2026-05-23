@@ -20,8 +20,14 @@ import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
+import {
+  type ExecutionPhase,
+  getPhaseVisual,
+} from "@/cli/helpers/phase-visuals";
 import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
+import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
+import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
@@ -845,6 +851,7 @@ const StreamingStatus = memo(function StreamingStatus({
   agentName,
   interruptRequested,
   networkPhase,
+  executionPhase,
   terminalWidth,
   shouldAnimate,
 }: {
@@ -859,9 +866,11 @@ const StreamingStatus = memo(function StreamingStatus({
   agentName: string | null | undefined;
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
+  executionPhase: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate: boolean;
 }) {
+  const phaseVisual = getPhaseVisual(executionPhase);
   // While the user is actively resizing the terminal, Ink can struggle to
   // clear/redraw rapidly-changing animated output (spinner/shimmer).
   // Freeze animations briefly during resize to keep output stable.
@@ -903,10 +912,10 @@ const StreamingStatus = memo(function StreamingStatus({
   const contextTier = contextTierFromRatio(contextRatio);
   const spinnerColumnWidth = spinnerWidthForTier(contextTier) + 1;
 
-  // Bump a counter on each false→true streaming edge so the spinner
-  // remounts (via key={}) and re-picks from its tier pool. Without this
-  // the useState initializer can persist a pick across messages when
-  // the JSX shape and tier value are unchanged between streams.
+  // Bump a counter on each false→true streaming edge. The spinner reads
+  // it as `pool[streamSeed % pool.length]`, so consecutive streams rotate
+  // through the tier's pool deterministically (round-robin) without any
+  // fiber remount.
   const [streamSeed, setStreamSeed] = useState(0);
   const prevStreamingRef = useRef(false);
   useEffect(() => {
@@ -916,32 +925,22 @@ const StreamingStatus = memo(function StreamingStatus({
     prevStreamingRef.current = streaming;
   }, [streaming]);
 
-  const [shimmerOffset, setShimmerOffset] = useState(-3);
+  // Include agent name length (+1 for space) and trailing ellipsis in cycle
+  const agentPrefixLength = agentName ? agentName.length + 1 : 0;
+  const shimmerTextLength = agentPrefixLength + thinkingMessage.length + 1;
+  const isLive = streaming && visible && animate;
+
+  const { offset: shimmerOffset, baseColor: shimmerBaseColor } =
+    useShimmerAnimation({
+      active: isLive,
+      textLength: shimmerTextLength,
+      phaseVisual,
+    });
+  const displayedTokenBytes = useTokenSmoothing(tokenCount, isLive);
+
   const [elapsedMs, setElapsedMs] = useState(0);
   const [tipMessage, setTipMessage] = useState("");
   const streamStartRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!streaming || !visible || !animate) return;
-
-    const id = setInterval(() => {
-      setShimmerOffset((prev) => {
-        // Include agent name length (+1 for space) in shimmer cycle
-        const prefixLen = agentName ? agentName.length + 1 : 0;
-        const len = prefixLen + thinkingMessage.length;
-        const next = prev + 1;
-        return next > len + 3 ? -3 : next;
-      });
-    }, 120); // Speed of shimmer animation
-
-    return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible, agentName, animate]);
-
-  useEffect(() => {
-    if (!animate) {
-      setShimmerOffset(-3);
-    }
-  }, [animate]);
 
   // Elapsed time tracking: pause updates during resize, but do not reset.
   useEffect(() => {
@@ -976,10 +975,14 @@ const StreamingStatus = memo(function StreamingStatus({
     }
   }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
-  const estimatedTokens = bytesToTokens(tokenCount);
+  // Gate visibility on the actual count so the counter appears the instant
+  // the real total crosses the threshold; render the smoothed value so it
+  // animates up rather than popping in mid-number.
+  const actualEstimatedTokens = bytesToTokens(tokenCount);
+  const estimatedTokens = bytesToTokens(displayedTokenBytes);
   const totalElapsedMs = elapsedBaseMs + elapsedMs;
   const shouldShowTokenCount =
-    streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
+    streaming && actualEstimatedTokens > TOKEN_DISPLAY_THRESHOLD;
   const shouldShowElapsed =
     streaming && totalElapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
   const elapsedLabel = formatElapsedLabel(totalElapsedMs);
@@ -987,7 +990,7 @@ const StreamingStatus = memo(function StreamingStatus({
   const networkArrow = useMemo(() => {
     if (!networkPhase) return "";
     if (networkPhase === "upload") return "↑";
-    if (networkPhase === "download") return "↑"; // Use ↑ for both to avoid distracting flip (change to ↓ to restore)
+    if (networkPhase === "download") return "↓";
     return "↑\u0338";
   }, [networkPhase]);
   const showErrorArrow = networkArrow === "↑\u0338";
@@ -1083,6 +1086,8 @@ const StreamingStatus = memo(function StreamingStatus({
               boldPrefix={agentName || undefined}
               message={thinkingMessage}
               shimmerOffset={animate ? shimmerOffset : -3}
+              color={animate ? shimmerBaseColor : phaseVisual.baseColor}
+              shimmerColor={phaseVisual.shimmerColor}
               wrap="truncate-end"
             />
           </Box>
@@ -1157,6 +1162,7 @@ export function Input({
   restoredInput,
   onRestoredInputConsumed,
   networkPhase = null,
+  executionPhase = null,
   terminalWidth,
   shouldAnimate = true,
   statusLineActive = false,
@@ -1209,6 +1215,7 @@ export function Input({
   restoredInput?: string | null;
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
+  executionPhase?: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate?: boolean;
   statusLineActive?: boolean;
@@ -2342,6 +2349,7 @@ export function Input({
         agentName={agentName}
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}
+        executionPhase={executionPhase}
         terminalWidth={columns}
         shouldAnimate={shouldAnimate}
       />
