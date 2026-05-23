@@ -25,6 +25,33 @@ function createIoDeps() {
   };
 }
 
+async function withEnv<T>(
+  updates: Record<string, string | undefined>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = Object.fromEntries(
+    Object.keys(updates).map((key) => [key, process.env[key]]),
+  );
+  try {
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    return await run();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 describe("connect subcommand", () => {
   test("runs OAuth flow for codex alias", async () => {
     const { stdout, deps } = createIoDeps();
@@ -86,7 +113,9 @@ describe("connect subcommand", () => {
   test("connects API-key optional local providers without prompting", async () => {
     const { deps } = createIoDeps();
 
-    const exitCode = await runConnectSubcommand(["ollama"], deps);
+    const exitCode = await withEnv({ OLLAMA_LOCAL_API_KEY: undefined }, () =>
+      runConnectSubcommand(["ollama"], deps),
+    );
 
     expect(exitCode).toBe(0);
     expect(deps.promptSecret).not.toHaveBeenCalled();
@@ -104,15 +133,17 @@ describe("connect subcommand", () => {
   test("passes local provider base URL and timeout options", async () => {
     const { deps } = createIoDeps();
 
-    const exitCode = await runConnectSubcommand(
-      [
-        "lmstudio",
-        "--base-url",
-        "http://127.0.0.1:1234/v1",
-        "--timeout",
-        "600s",
-      ],
-      deps,
+    const exitCode = await withEnv({ LMSTUDIO_API_KEY: undefined }, () =>
+      runConnectSubcommand(
+        [
+          "lmstudio",
+          "--base-url",
+          "http://127.0.0.1:1234/v1",
+          "--timeout",
+          "600s",
+        ],
+        deps,
+      ),
     );
 
     expect(exitCode).toBe(0);
@@ -137,9 +168,11 @@ describe("connect subcommand", () => {
   test("connects llama.cpp local provider alias", async () => {
     const { deps } = createIoDeps();
 
-    const exitCode = await runConnectSubcommand(
-      ["llama.cpp", "--base-url", "http://localhost:8080/v1"],
-      deps,
+    const exitCode = await withEnv({ LLAMA_CPP_API_KEY: undefined }, () =>
+      runConnectSubcommand(
+        ["llama.cpp", "--base-url", "http://localhost:8080/v1"],
+        deps,
+      ),
     );
 
     expect(exitCode).toBe(0);
@@ -151,6 +184,32 @@ describe("connect subcommand", () => {
       undefined,
       undefined,
       { baseURL: "http://localhost:8080/v1" },
+    );
+  });
+
+  test("uses LM Studio environment API key when no key is provided", async () => {
+    const { deps } = createIoDeps();
+
+    const exitCode = await withEnv({ LMSTUDIO_API_KEY: "1234" }, () =>
+      runConnectSubcommand(
+        ["lmstudio", "--base-url", "http://localhost:8000/v1"],
+        deps,
+      ),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "lmstudio_openai",
+      "1234",
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "lmstudio_openai",
+      "lc-lmstudio",
+      "1234",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "http://localhost:8000/v1" },
     );
   });
 

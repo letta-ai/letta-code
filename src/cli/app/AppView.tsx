@@ -153,6 +153,8 @@ type AppViewProps = {
 
   feedbackPrefill: string;
   footerUpdateText: string | null;
+  showInspirationalPromptHints: boolean;
+  onEscapeCommandCancel?: () => boolean;
   handleAgentSelect: (
     targetAgentId: string,
     opts?: {
@@ -229,6 +231,7 @@ type AppViewProps = {
   liveItems: Line[];
   liveTrajectoryElapsedBaseMs: number;
   loadingState: AppLoadingState;
+  markLocalModelsAvailable: () => void;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
@@ -344,6 +347,8 @@ export function AppView(props: AppViewProps) {
     handleCtrlD,
     feedbackPrefill,
     footerUpdateText,
+    showInspirationalPromptHints,
+    onEscapeCommandCancel,
     handleAgentSelect,
     handleApproveAlways,
     handleApproveCurrent,
@@ -380,6 +385,7 @@ export function AppView(props: AppViewProps) {
     liveItems,
     liveTrajectoryElapsedBaseMs,
     loadingState,
+    markLocalModelsAvailable,
     maybeCarryOverActiveConversationModel,
     modelReasoningPrompt,
     modelSelectorOptions,
@@ -691,6 +697,7 @@ export function AppView(props: AppViewProps) {
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
+                onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
                 goalLoopActive={uiGoalLoopActive}
                 onGoalLoopExit={handleGoalLoopExit}
@@ -705,6 +712,7 @@ export function AppView(props: AppViewProps) {
                 statusLineRight={statusLine.rightText || undefined}
                 statusLinePrompt={statusLine.prompt}
                 footerNotification={footerUpdateText}
+                showInspirationalPromptHints={showInspirationalPromptHints}
               />
             </Box>
 
@@ -890,6 +898,7 @@ export function AppView(props: AppViewProps) {
                         refreshDerived,
                         setCommandRunning,
                         onCodexConnected: () => {
+                          markLocalModelsAvailable();
                           setModelSelectorOptions({
                             filterProvider: "chatgpt-plus-pro",
                             forceRefresh: true,
@@ -962,6 +971,15 @@ export function AppView(props: AppViewProps) {
                     commandId: overlayCommand?.id,
                     backendMode,
                   });
+                }}
+                onLogin={() => {
+                  completeOverlay("resume");
+                  openOverlay(
+                    "login",
+                    "/login",
+                    "Opening login...",
+                    "Login dismissed",
+                  );
                 }}
                 onCancel={closeOverlay}
                 onCreateNewAgent={(name: string, backendMode) => {

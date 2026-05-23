@@ -1,6 +1,8 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "@/backend/api/client";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
+import type { Settings } from "@/settings-manager";
+import { settingsManager } from "@/settings-manager";
 
 export interface RecentAgentOption {
   agent: AgentState;
@@ -27,6 +29,16 @@ function sortRecentAgents(
   });
 }
 
+export function shouldIncludeConstellationRecentAgents(
+  includeConstellation: boolean,
+  settings: Pick<Settings, "refreshToken" | "env">,
+): boolean {
+  return Boolean(
+    includeConstellation &&
+      (settings.refreshToken || settings.env?.LETTA_API_KEY),
+  );
+}
+
 export async function getRecentAgentOptions(options?: {
   includeLocal?: boolean;
   includeConstellation?: boolean;
@@ -36,12 +48,19 @@ export async function getRecentAgentOptions(options?: {
   const includeLocal = options?.includeLocal !== false;
   const includeConstellation = options?.includeConstellation !== false;
   const limit = options?.limit ?? 5;
+  const settings = includeConstellation
+    ? await settingsManager.getSettingsWithSecureTokens()
+    : null;
+  const shouldIncludeConstellation =
+    settings !== null
+      ? shouldIncludeConstellationRecentAgents(includeConstellation, settings)
+      : false;
 
   const localAgents = includeLocal
     ? listLocalAgentsFromDisk().map((agent) => ({ agent, isLocal: true }))
     : [];
 
-  const constellationAgents = includeConstellation
+  const constellationAgents = shouldIncludeConstellation
     ? await (async () => {
         try {
           const client = await getClient();

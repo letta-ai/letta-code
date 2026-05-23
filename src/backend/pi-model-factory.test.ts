@@ -187,6 +187,31 @@ describe("pi model factory", () => {
     }
   });
 
+  test("does not let local no-key placeholders mask LM Studio env API keys", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-env-key-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "lmstudio",
+        providerName: "lc-lmstudio",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:8000/v1",
+      });
+
+      await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {
+        const resolved = await resolvePiModelForAgent(
+          "lmstudio/local-model",
+          { provider_type: "lmstudio" },
+          { localProviderAuthStorageDir: storageDir },
+        );
+
+        expect(resolved.apiKey).toBe("1234");
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("restores process env overrides", () => {
     const originalRegion = process.env.AWS_REGION;
     delete process.env.AWS_PROFILE;

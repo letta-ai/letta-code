@@ -6,6 +6,7 @@ import {
   type LocalProviderTimeout,
   parseLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { setActiveConnectAbortController } from "@/cli/commands/connect-command-state";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import {
   checkProviderApiKey,
@@ -356,6 +357,8 @@ async function handleConnectChatGPT(
   }
 
   ctx.setCommandRunning(true);
+  const abortController = new AbortController();
+  setActiveConnectAbortController(abortController);
   const cmdId = addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
@@ -367,6 +370,7 @@ async function handleConnectChatGPT(
 
   try {
     await runChatGPTOAuthConnectFlow({
+      signal: abortController.signal,
       onStatus: (status) =>
         updateCommandResult(
           ctx.buffersRef,
@@ -395,16 +399,20 @@ async function handleConnectChatGPT(
       setTimeout(() => ctx.onCodexConnected?.(), 500);
     }
   } catch (error) {
+    const isCancelled = error instanceof Error && error.name === "AbortError";
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✗ Failed to connect: ${getErrorMessage(error)}`,
+      isCancelled
+        ? "Cancelled ChatGPT connection."
+        : `✗ Failed to connect: ${getErrorMessage(error)}`,
       false,
       "finished",
     );
   } finally {
+    setActiveConnectAbortController(null);
     ctx.setCommandRunning(false);
   }
 }

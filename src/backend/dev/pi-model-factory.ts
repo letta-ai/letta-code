@@ -4,6 +4,7 @@ import {
   getLocalChatGPTApiKey,
   getLocalProviderRecordByName,
   type LocalProviderRecord,
+  localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
 import {
   type LocalProviderTimeout,
@@ -123,12 +124,6 @@ function localProviderRecord(
   return null;
 }
 
-function apiKeyFromRecord(
-  record: LocalProviderRecord | null,
-): string | undefined {
-  return record?.auth.type === "api" ? record.auth.key : undefined;
-}
-
 function localProviderConnection(
   providerNames: readonly string[],
   envValue: string | undefined,
@@ -142,7 +137,7 @@ function localProviderConnection(
 } {
   const record = localProviderRecord(providerNames, storageDir);
   return {
-    apiKey: apiKeyFromRecord(record) ?? envValue,
+    apiKey: localProviderApiKeyFromRecord(record) ?? envValue,
     baseURL: record?.base_url,
     timeout: resolveLocalProviderTimeout({
       configuredTimeout: record?.timeout,
@@ -172,11 +167,12 @@ export function resolveZaiConnection(options: {
     options.storageDir,
   );
   const regularKey =
-    apiKeyFromRecord(regularRecord) ??
+    localProviderApiKeyFromRecord(regularRecord) ??
     process.env.ZAI_API_KEY ??
     process.env.ZHIPU_API_KEY;
   const codingKey =
-    apiKeyFromRecord(codingRecord) ?? process.env.ZAI_CODING_API_KEY;
+    localProviderApiKeyFromRecord(codingRecord) ??
+    process.env.ZAI_CODING_API_KEY;
   const regularConnection: ZaiConnection = {
     providerName: "zai",
     baseURL:

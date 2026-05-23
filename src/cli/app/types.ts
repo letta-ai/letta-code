@@ -199,7 +199,6 @@ export type StaticItem =
       snapshot: {
         continueSession: boolean;
         agentState?: AgentState | null;
-        agentProvenance?: AgentProvenance | null;
         startupHasAvailableLocalModels?: boolean;
         terminalWidth: number;
       };

@@ -40,6 +40,10 @@ import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
 import {
+  cancelActiveConnectOperation,
+  isActiveConnectOperationCancellable,
+} from "@/cli/commands/connect-command-state";
+import {
   type CommandFinishedEvent,
   type CommandHandle,
   createCommandRunner,
@@ -279,6 +283,23 @@ function buildStartupCommandHints(options: {
   return dedupedHints;
 }
 
+function hasConversationContent(lines: Line[]): boolean {
+  return lines.some((line) => {
+    switch (line.kind) {
+      case "user":
+      case "assistant":
+      case "reasoning":
+      case "tool_call":
+      case "error":
+      case "command":
+      case "bash_command":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
 export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
@@ -303,6 +324,13 @@ export function App({
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
     prefetchAvailableModelHandles();
+  }, []);
+
+  const [hasAvailableLocalModels, setHasAvailableLocalModels] = useState(
+    startupHasAvailableLocalModels,
+  );
+  const markLocalModelsAvailable = useCallback(() => {
+    setHasAvailableLocalModels(true);
   }, []);
 
   // Track current agent (can change when swapping)
@@ -814,8 +842,7 @@ export function App({
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
-    startupHasAvailableLocalModels,
-    agentProvenance,
+    startupHasAvailableLocalModels: hasAvailableLocalModels,
   });
 
   // Use tier-aware resolution so the display matches the agent's reasoning effort
@@ -2611,7 +2638,6 @@ export function App({
             snapshot: {
               continueSession,
               agentState,
-              agentProvenance,
               startupHasAvailableLocalModels,
               terminalWidth: columns,
             },
@@ -2690,7 +2716,6 @@ export function App({
     continueSession,
     columns,
     agentState,
-    agentProvenance,
     resumedExistingConversation,
     releaseNotes,
     startupHasCloudCredentials,
@@ -3773,6 +3798,7 @@ export function App({
     setHasConversationModelOverride,
     setLines,
     setLlmConfig,
+    markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
@@ -3944,6 +3970,7 @@ export function App({
     setConversationOverrideModelSettings,
     setCurrentModelHandle,
     setCurrentModelId,
+    setHasAvailableLocalModels,
     setCurrentPersonalityId,
     setCurrentSystemPromptId,
     setCurrentToolset,
@@ -4338,7 +4365,6 @@ export function App({
           snapshot: {
             continueSession,
             agentState,
-            agentProvenance,
             startupHasAvailableLocalModels,
             terminalWidth: columns,
           },
@@ -4430,6 +4456,20 @@ export function App({
   const inputVisible = !showExitStats;
   const inputEnabled =
     !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+  const onEscapeCommandCancel = useCallback(() => {
+    if (isActiveConnectOperationCancellable()) {
+      cancelActiveConnectOperation();
+      return true;
+    }
+    return false;
+  }, []);
+  const showInspirationalPromptHints =
+    loadingState === "ready" &&
+    !hasConversationContent(lines) &&
+    !streaming &&
+    queueDisplay.length === 0 &&
+    pendingApprovals.length === 0 &&
+    !anySelectorOpen;
   const currentApprovalPreviewCommitted = currentApproval?.toolCallId
     ? eagerCommittedPreviewsRef.current.has(currentApproval.toolCallId)
     : false;
@@ -4483,6 +4523,8 @@ export function App({
       emittedIdsRef={emittedIdsRef}
       feedbackPrefill={feedbackPrefill}
       footerUpdateText={footerUpdateText}
+      showInspirationalPromptHints={showInspirationalPromptHints}
+      onEscapeCommandCancel={onEscapeCommandCancel}
       handleAgentSelect={handleAgentSelect}
       handleApproveAlways={handleApproveAlways}
       handleApproveCurrent={handleApproveCurrent}
@@ -4519,6 +4561,7 @@ export function App({
       liveItems={liveItems}
       liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
       loadingState={loadingState}
+      markLocalModelsAvailable={markLocalModelsAvailable}
       maybeCarryOverActiveConversationModel={
         maybeCarryOverActiveConversationModel
       }

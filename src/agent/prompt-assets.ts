@@ -17,6 +17,7 @@ import personaBlankPrompt from "./prompts/persona_blank.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import personaLinusPrompt from "./prompts/persona_linus.mdx";
 import personaMemoPrompt from "./prompts/persona_memo.mdx";
+import personaTutorialPrompt from "./prompts/persona_tutorial.mdx";
 import projectPrompt from "./prompts/project.mdx";
 import rememberPrompt from "./prompts/remember.md";
 import skillCreatorModePrompt from "./prompts/skill_creator_mode.md";
@@ -42,6 +43,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "persona_kawaii.mdx": personaKawaiiPrompt,
   "persona_linus.mdx": personaLinusPrompt,
   "persona_memo.mdx": personaMemoPrompt,
+  "persona_tutorial.mdx": personaTutorialPrompt,
   "human.mdx": humanPrompt,
   "human_kawaii.mdx": humanKawaiiPrompt,
   "human_linus.mdx": humanLinusPrompt,
