@@ -653,7 +653,7 @@ export function ProviderSelector({
             {apiKeyInput
               ? maskApiKey(apiKeyInput)
               : hasDefaultApiKey
-                ? "(press Enter for no key)"
+                ? "(press Enter for default key)"
                 : "(enter key)"}
           </Text>
           <Text
@@ -670,7 +670,7 @@ export function ProviderSelector({
           <Text dimColor>
             {"  "}
             {hasDefaultApiKey && !hasTypedApiKey && validationState === "idle"
-              ? "Enter to validate without a key · Esc cancel"
+              ? "Enter to validate with default key · Esc cancel"
               : footerText}
           </Text>
         </Box>

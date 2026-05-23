@@ -62,6 +62,33 @@ function pageItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
   return Array.isArray(value) ? value : value.getPaginatedItems();
 }
 
+async function withEnv<T>(
+  updates: Record<string, string | undefined>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = Object.fromEntries(
+    Object.keys(updates).map((key) => [key, process.env[key]]),
+  );
+  try {
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    return await run();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 function assistantMessage(input: {
   content: AssistantMessage["content"];
   stopReason: AssistantMessage["stopReason"];
@@ -459,6 +486,36 @@ describe("local backend pi transcript", () => {
     expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
+  });
+
+  test("uses LM Studio env API key for discovery when stored key is placeholder", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-lmstudio-env-key-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://localhost:8000/v1",
+      storageDir,
+    });
+    const captured: { authorization?: string | null } = {};
+    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+      captured.authorization = new Headers(init?.headers).get("Authorization");
+      return new Response(JSON.stringify({ data: [{ id: "secure-model" }] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {
+      const handles = (
+        await listLocalModels(storageDir, { fetch: fetchImpl })
+      ).map((model) => model.handle);
+
+      expect(handles).toContain("lmstudio/secure-model");
+    });
+
+    expect(captured.authorization).toBe("Bearer 1234");
   });
 
   test("discovers configured llama.cpp models from OpenAI-compatible catalog", async () => {
