@@ -6,7 +6,7 @@ import {
   getBuiltinStatuslineRenderers,
 } from "@/cli/display/statusline/registry";
 import { renderCustomStatusline } from "@/cli/display/statusline/renderers/Custom";
-import { renderLegacyStatusline } from "@/cli/display/statusline/renderers/Legacy";
+import { buildLegacyStatuslineParts } from "@/cli/display/statusline/renderers/Legacy";
 
 describe("statusline renderers", () => {
   test("default renderer is legacy", () => {
@@ -26,7 +26,7 @@ describe("statusline renderers", () => {
   });
 
   test("legacy renderer preserves the detailed model label", () => {
-    const output = renderLegacyStatusline({
+    const output = buildLegacyStatuslineParts({
       agentName: "Letta Code",
       currentModel: "GPT-5.5 (ChatGPT)",
       currentModelProvider: "chatgpt-plus-pro",
@@ -45,7 +45,7 @@ describe("statusline renderers", () => {
   });
 
   test("legacy renderer suppresses reasoning for the no-model placeholder", () => {
-    const output = renderLegacyStatusline({
+    const output = buildLegacyStatuslineParts({
       agentName: "Letta Code",
       currentModel: "No model selected",
       currentModelProvider: "chatgpt-plus-pro",

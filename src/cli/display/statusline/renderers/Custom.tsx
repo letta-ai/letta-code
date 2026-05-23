@@ -1,9 +1,6 @@
-import type {
-  StatuslineRenderer,
-  StatuslineRendererOutput,
-} from "@/cli/display/statusline/types";
+import type { StatuslineRenderer } from "@/cli/display/statusline/types";
 
-export function renderCustomStatusline(): StatuslineRendererOutput | null {
+export function renderCustomStatusline() {
   return null;
 }
 

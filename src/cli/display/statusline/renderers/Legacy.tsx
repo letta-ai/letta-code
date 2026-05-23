@@ -1,5 +1,7 @@
 import chalk from "chalk";
+import type { ReactNode } from "react";
 import { colors } from "@/cli/components/colors";
+import { Box, Text } from "@/cli/display/DisplayComponents";
 import {
   formatStatuslineReasoningEffort,
   truncateStatuslineText,
@@ -8,13 +10,19 @@ import { CommandHintSegment } from "@/cli/display/statusline/Segments";
 import type {
   StatuslineRenderContext,
   StatuslineRenderer,
-  StatuslineRendererOutput,
 } from "@/cli/display/statusline/types";
 import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
 
-export function renderLegacyStatusline(
+interface LegacyStatuslineParts {
+  left: ReactNode;
+  right: string;
+  rightCore: string;
+  rightWidth: number;
+}
+
+export function buildLegacyStatuslineParts(
   context: StatuslineRenderContext,
-): StatuslineRendererOutput {
+): LegacyStatuslineParts {
   const maxAgentChars = Math.max(
     10,
     Math.floor(context.rightColumnWidth * 0.45),
@@ -84,6 +92,26 @@ export function renderLegacyStatusline(
     rightCore,
     rightWidth,
   };
+}
+
+export function renderLegacyStatusline(context: StatuslineRenderContext) {
+  const parts = buildLegacyStatuslineParts(context);
+
+  return (
+    <Box flexDirection="row" marginBottom={1}>
+      <Box flexGrow={1} paddingRight={1}>
+        {parts.left}
+      </Box>
+      <Box
+        flexDirection="column"
+        alignItems="flex-end"
+        width={context.rightColumnWidth}
+        flexShrink={0}
+      >
+        <Text>{parts.right}</Text>
+      </Box>
+    </Box>
+  );
 }
 
 export const legacyStatuslineRenderer: StatuslineRenderer = {

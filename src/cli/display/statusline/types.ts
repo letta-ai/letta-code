@@ -14,16 +14,11 @@ export interface StatuslineRenderContext {
   rightColumnWidth: number;
 }
 
-export interface StatuslineRendererOutput {
-  left: ReactNode | null;
-  right: ReactNode | null;
-  rightCore: ReactNode | null;
-  rightWidth: number;
-}
+export type StatuslineRendererOutput = ReactNode | null;
 
 export interface StatuslineRenderer {
   id: string;
   label: string;
   description: string;
-  render: (context: StatuslineRenderContext) => StatuslineRendererOutput | null;
+  render: (context: StatuslineRenderContext) => StatuslineRendererOutput;
 }

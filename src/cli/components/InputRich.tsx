@@ -21,6 +21,7 @@ import {
   DEFAULT_STATUSLINE_RENDERER_ID,
   getBuiltinStatuslineRenderer,
 } from "@/cli/display/statusline/registry";
+import { buildLegacyStatuslineParts } from "@/cli/display/statusline/renderers/Legacy";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
@@ -730,10 +731,8 @@ const StatuslineSlot = memo(function StatuslineSlot({
     ctrlCPressed,
     escapePressed,
   });
-  const statuslineRenderer = getBuiltinStatuslineRenderer(
-    DEFAULT_STATUSLINE_RENDERER_ID,
-  );
-  const renderedStatusline = statuslineRenderer.render({
+
+  const statuslineContext = {
     agentName,
     currentModel,
     currentModelProvider,
@@ -744,11 +743,15 @@ const StatuslineSlot = memo(function StatuslineSlot({
     isLocalBackend,
     isOpenAICodexProvider,
     rightColumnWidth,
-  });
-  const defaultLeftStatusline = renderedStatusline?.left ?? (
-    <Text dimColor>Press / for commands</Text>
+  };
+  const statuslineRenderer = getBuiltinStatuslineRenderer(
+    DEFAULT_STATUSLINE_RENDERER_ID,
   );
-  const rightLabel = renderedStatusline?.right ?? <Text> </Text>;
+  const renderedDefaultStatusline =
+    statuslineRenderer.render(statuslineContext);
+  const legacyStatuslineParts = buildLegacyStatuslineParts(statuslineContext);
+  const rightLabel = legacyStatuslineParts.right;
+  const defaultLeftStatusline = legacyStatuslineParts.left;
 
   const leftContent = preemption ? (
     <StatuslinePreemptionView preemption={preemption} />
@@ -766,6 +769,19 @@ const StatuslineSlot = memo(function StatuslineSlot({
       showExitHint={showExitHint}
     />
   );
+
+  const shouldRenderDefaultStatusline =
+    !hideFooterContent &&
+    !preemption &&
+    !transientHint &&
+    !statusLineActive &&
+    !statusLineRight &&
+    !isBashMode &&
+    !(modeName && modeColor);
+
+  if (shouldRenderDefaultStatusline) {
+    return renderedDefaultStatusline;
+  }
 
   return (
     <Box flexDirection="row" marginBottom={1}>
