@@ -18,7 +18,8 @@ import { colors } from "./colors";
 import { Text } from "./Text";
 
 const MAX_PRODUCT_STATUS_INDICATORS = 1;
-const DREAMING_STATUS_PRIORITY = 100;
+const GOAL_STATUS_PRIORITY = 100;
+const DREAMING_STATUS_PRIORITY = 50;
 
 interface ProductStatusIndicator {
   id: string;
@@ -100,7 +101,17 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
   );
 }
 
-export function ProductStatusRow({ terminalWidth }: { terminalWidth: number }) {
+function renderGoalStatus(goalStatusText: string): ReactNode {
+  return <Text color={colors.status.processingShimmer}>{goalStatusText}</Text>;
+}
+
+export function ProductStatusRow({
+  goalStatusText,
+  terminalWidth,
+}: {
+  goalStatusText?: string | null;
+  terminalWidth: number;
+}) {
   const snapshot = useSyncExternalStore(
     subscribeToSubagents,
     getSubagentSnapshot,
@@ -125,17 +136,23 @@ export function ProductStatusRow({ terminalWidth }: { terminalWidth: number }) {
     return () => clearInterval(timer);
   }, [dreamingAgent]);
 
-  const visibleIndicators = visibleProductStatusIndicators(
-    dreamingAgent
-      ? [
-          {
-            id: "dreaming",
-            priority: DREAMING_STATUS_PRIORITY,
-            node: renderDreamingStatus(dreamingAgent),
-          },
-        ]
-      : [],
-  );
+  const indicators: ProductStatusIndicator[] = [];
+  if (dreamingAgent) {
+    indicators.push({
+      id: "dreaming",
+      priority: DREAMING_STATUS_PRIORITY,
+      node: renderDreamingStatus(dreamingAgent),
+    });
+  }
+  if (goalStatusText) {
+    indicators.push({
+      id: "goal",
+      priority: GOAL_STATUS_PRIORITY,
+      node: renderGoalStatus(goalStatusText),
+    });
+  }
+
+  const visibleIndicators = visibleProductStatusIndicators(indicators);
   const rowWidth = Math.max(0, terminalWidth - 1);
 
   if (visibleIndicators.length === 0 || rowWidth === 0) {
