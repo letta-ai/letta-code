@@ -17,6 +17,7 @@ import {
 import { getBackend } from "@/backend/backend";
 import {
   getPiProviderSpec,
+  LMSTUDIO_OPENAI_PROVIDER_TYPE,
   PROVIDER_TYPE_TO_BASE_PROVIDER,
   resolveProviderFromProviderType,
 } from "@/backend/dev/pi-provider-registry";
@@ -148,7 +149,7 @@ export const BYOK_PROVIDERS = [
     id: "lmstudio",
     displayName: "LM Studio (local)",
     description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
-    providerType: "lmstudio",
+    providerType: LMSTUDIO_OPENAI_PROVIDER_TYPE,
     providerName: "lc-lmstudio",
     requiresApiKey: false,
     defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,

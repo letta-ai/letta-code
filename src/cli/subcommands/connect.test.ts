@@ -147,8 +147,12 @@ describe("connect subcommand", () => {
     );
 
     expect(exitCode).toBe(0);
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "lmstudio_openai",
+      "not-needed",
+    );
     expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
-      "lmstudio",
+      "lmstudio_openai",
       "lc-lmstudio",
       "not-needed",
       undefined,
@@ -194,9 +198,12 @@ describe("connect subcommand", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(deps.checkProviderApiKey).toHaveBeenCalledWith("lmstudio", "1234");
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "lmstudio_openai",
+      "1234",
+    );
     expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
-      "lmstudio",
+      "lmstudio_openai",
       "lc-lmstudio",
       "1234",
       undefined,
