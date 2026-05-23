@@ -1,6 +1,7 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { getModelDisplayName } from "@/agent/model";
 import { getBackendForMode } from "@/backend/backend";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
@@ -766,9 +767,17 @@ export function AgentSelector({
     extra?: { isLocal?: boolean; backend?: "local" | "constellation" },
   ) => {
     const isCurrent = agent.id === currentAgentId;
+    const isLocalAgent = isLocalAgentId(agent.id);
     const relativeTime = formatRelativeTime(agent.last_run_completion);
     const blockCount = agent.blocks?.length ?? 0;
     const modelStr = formatModel(agent);
+    const metadataParts = [
+      relativeTime,
+      ...(isLocalAgent
+        ? []
+        : [`${blockCount} memory block${blockCount === 1 ? "" : "s"}`]),
+      modelStr,
+    ];
 
     const nameLen = (agent.name || "Unnamed").length;
     const fixedChars = 2 + 3 + (isCurrent ? 10 : 0);
@@ -811,10 +820,7 @@ export function AgentSelector({
           </Text>
         </Box>
         <Box flexDirection="row" marginLeft={2}>
-          <Text dimColor>
-            {relativeTime} · {blockCount} memory block
-            {blockCount === 1 ? "" : "s"} · {modelStr}
-          </Text>
+          <Text dimColor>{metadataParts.join(" · ")}</Text>
         </Box>
       </Box>
     );
