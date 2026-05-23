@@ -49,6 +49,8 @@ import {
   createCommandRunner,
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
+import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
+import { useLocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -2152,6 +2154,12 @@ export function App({
     turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.trigger,
     reflectionStepCount: reflectionSettings.stepCount,
+    memfsEnabled:
+      agentId !== "loading" ? settingsManager.isMemfsEnabled(agentId) : false,
+    memfsDirectory:
+      agentId !== "loading" && settingsManager.isMemfsEnabled(agentId)
+        ? getScopedMemoryFilesystemRoot(agentId)
+        : null,
     permissionMode: uiPermissionMode,
     networkPhase,
     terminalWidth: chromeColumns,
@@ -2162,6 +2170,36 @@ export function App({
     })),
     triggerVersion: statusLineTriggerVersion,
   });
+  const extensionContext = useMemo(
+    () =>
+      buildStatuslineRenderContext({
+        payload: statusLine.payload,
+        ui: {
+          currentModelProvider: currentModelProvider ?? null,
+          goalStatusText: null,
+          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+          isByokProvider: Boolean(
+            currentModelProvider?.startsWith("lc-") ||
+              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          ),
+          isLocalBackend,
+          isOpenAICodexProvider:
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          rightColumnWidth: Math.max(
+            28,
+            Math.min(72, Math.floor(chromeColumns * 0.45)),
+          ),
+        },
+      }),
+    [
+      chromeColumns,
+      currentModelProvider,
+      hasTemporaryModelOverride,
+      isLocalBackend,
+      statusLine.payload,
+    ],
+  );
+  const extensionRuntime = useLocalExtensionRuntime(extensionContext);
 
   const previousStreamingForStatusLineRef = useRef(streaming);
   useEffect(() => {
@@ -4614,6 +4652,7 @@ export function App({
       staticItems={staticItems}
       staticRenderEpoch={staticRenderEpoch}
       statusLine={statusLine}
+      extensionRuntime={extensionRuntime}
       streaming={streaming}
       stubDescriptions={stubDescriptions}
       thinkingMessage={thinkingMessage}

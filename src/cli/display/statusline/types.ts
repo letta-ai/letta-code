@@ -45,6 +45,7 @@ export interface StatuslineCostContext {
 export interface StatuslineRenderContext {
   rawPayload: StatusLinePayload;
   components: typeof DisplayComponents;
+  statuses: Record<string, string>;
   app: {
     version: string;
   };

@@ -76,6 +76,7 @@ describe("statusline renderers", () => {
     expect(context.components.Box).toBeDefined();
     expect(context.components.Text).toBeDefined();
     expect(context.components.Spacer).toBeDefined();
+    expect(context.statuses).toEqual({});
     expect(context.agent.name).toBe("Letta Code");
     expect(context.model.displayName).toBe("GPT-5.5 (ChatGPT)");
     expect(context.model.provider).toBe("chatgpt-plus-pro");
@@ -98,6 +99,24 @@ describe("statusline renderers", () => {
     expect(stripAnsi(String(output.right)).trim()).toBe(
       "Letta Code [No model selected] · local",
     );
+  });
+
+  test("default renderer does not override safety preemptions", () => {
+    expect(
+      shouldRenderDefaultStatuslineRenderer({
+        ...DEFAULT_STATUSLINE_ACTIVATION,
+        preemptionActive: true,
+      }),
+    ).toBe(false);
+  });
+
+  test("default renderer does not override transient host hints", () => {
+    expect(
+      shouldRenderDefaultStatuslineRenderer({
+        ...DEFAULT_STATUSLINE_ACTIVATION,
+        transientHintActive: true,
+      }),
+    ).toBe(false);
   });
 
   test("default renderer does not override command-provided right text", () => {

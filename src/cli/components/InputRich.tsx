@@ -24,6 +24,8 @@ import {
   getBuiltinStatuslineRenderer,
 } from "@/cli/display/statusline/registry";
 import { buildLegacyStatuslineParts } from "@/cli/display/statusline/renderers/Legacy";
+import { evaluateLocalExtensionStatuses } from "@/cli/extensions/local-extension-loader";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
@@ -43,6 +45,7 @@ import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -61,7 +64,7 @@ import { Text } from "./Text";
 const ESC_CLEAR_WINDOW_MS = 2500;
 const FOOTER_WIDTH_STREAMING_DELTA = 2;
 const EMPTY_COMPOSER_PROMPT_ROTATION_MS = 6000;
-const STATUSLINE_TRANSIENT_HINT_MS = 4000;
+const STATUSLINE_TRANSIENT_HINT_MS = 3000;
 const EMPTY_COMPOSER_PROMPT_HINTS = [
   'Try "help me understand this codebase"',
   'Try "help me organize my desktop"',
@@ -484,6 +487,25 @@ type StatuslineTransientHint =
       deferModeSupported: boolean;
     };
 
+function isStatuslineTransientHintRelevant(
+  hint: StatuslineTransientHint,
+  state: {
+    isBashMode: boolean;
+    queuedUserMessageCount: number;
+  },
+): boolean {
+  switch (hint.type) {
+    case "bash-mode":
+      return state.isBashMode;
+    case "queued-message-hint":
+    case "queue-mode-changed":
+      return state.queuedUserMessageCount > 0;
+    case "message":
+    case "permission-mode":
+      return true;
+  }
+}
+
 function getStatuslinePreemption({
   ctrlCPressed,
   escapePressed,
@@ -627,10 +649,8 @@ function StatuslineTransientHintView({
   }
 }
 
-function DefaultOrExtensionStatusline({
+function DefaultStatuslineLeftContent({
   defaultLeftStatusline,
-  statusLineActive,
-  statusLineText,
   isBashMode,
   modeName,
   modeColor,
@@ -638,29 +658,12 @@ function DefaultOrExtensionStatusline({
   showExitHint,
 }: {
   defaultLeftStatusline: ReactNode;
-  statusLineActive: boolean;
-  statusLineText?: string;
   isBashMode: boolean;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
   showExitHint: boolean;
 }) {
-  if (statusLineActive) {
-    if (!statusLineText) {
-      return <Text> </Text>;
-    }
-
-    return (
-      <StatusLineContent
-        text={statusLineText}
-        modeName={null}
-        modeColor={null}
-        showExitHint={false}
-      />
-    );
-  }
-
   if (isBashMode) {
     return <StatuslineBashModeHint />;
   }
@@ -679,9 +682,31 @@ function DefaultOrExtensionStatusline({
   return defaultLeftStatusline;
 }
 
+function BlankStatuslineRow({
+  rightColumnWidth,
+}: {
+  rightColumnWidth: number;
+}) {
+  return (
+    <Box flexDirection="row" marginBottom={1}>
+      <Box flexGrow={1} paddingRight={1}>
+        <Text> </Text>
+      </Box>
+      <Box
+        flexDirection="column"
+        alignItems="flex-end"
+        width={rightColumnWidth}
+        flexShrink={0}
+      >
+        <Text>{" ".repeat(rightColumnWidth)}</Text>
+      </Box>
+    </Box>
+  );
+}
+
 /**
- * Bottom statusline slot. The default/custom statusline owns this row in the
- * idle/base state, while host-owned input states can preempt it.
+ * Bottom statusline slot. Safety states and transient host hints may preempt the
+ * row; otherwise custom extensions own the idle row before the built-in default.
  */
 const StatuslineSlot = memo(function StatuslineSlot({
   ctrlCPressed,
@@ -702,6 +727,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   statusLineText,
   statusLineRight,
   statusLinePayload,
+  extensionRuntime,
   transientHint,
 }: {
   ctrlCPressed: boolean;
@@ -722,6 +748,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   statusLineText?: string;
   statusLineRight?: string;
   statusLinePayload: StatusLinePayload;
+  extensionRuntime: LocalExtensionRuntime;
   transientHint?: StatuslineTransientHint | null;
 }) {
   const hideFooterContent = hideFooter;
@@ -731,7 +758,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
     escapePressed,
   });
 
-  const statuslineContext = buildStatuslineRenderContext({
+  const baseStatuslineContext = buildStatuslineRenderContext({
     payload: statusLinePayload,
     ui: {
       currentModelProvider: currentModelProvider ?? null,
@@ -743,11 +770,45 @@ const StatuslineSlot = memo(function StatuslineSlot({
       rightColumnWidth,
     },
   });
-  const statuslineRenderer = getBuiltinStatuslineRenderer(
+  const statuslineContext = {
+    ...baseStatuslineContext,
+    statuses: evaluateLocalExtensionStatuses(
+      extensionRuntime.registry,
+      baseStatuslineContext,
+    ),
+  };
+  extensionRuntime.updateContext(statuslineContext);
+
+  const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
     DEFAULT_STATUSLINE_RENDERER_ID,
   );
-  const renderedDefaultStatusline =
-    statuslineRenderer.render(statuslineContext);
+  const localStatuslineRenderer =
+    extensionRuntime.registry?.ui.statuslineRenderer ?? null;
+  const idleSlotAvailable =
+    !hideFooterContent && !preemption && !transientHint && !statusLineActive;
+
+  if (idleSlotAvailable && localStatuslineRenderer) {
+    try {
+      return localStatuslineRenderer.render(statuslineContext);
+    } catch (error) {
+      debugLog(
+        "extensions",
+        "statusline renderer %s failed: %s",
+        localStatuslineRenderer.id,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  if (
+    idleSlotAvailable &&
+    extensionRuntime.isLoading &&
+    (extensionRuntime.hasExtensionSources ||
+      extensionRuntime.hadStatuslineRenderer)
+  ) {
+    return <BlankStatuslineRow rightColumnWidth={rightColumnWidth} />;
+  }
+
   const legacyStatuslineParts = buildLegacyStatuslineParts(statuslineContext);
   const rightLabel = legacyStatuslineParts.right;
   const defaultLeftStatusline = legacyStatuslineParts.left;
@@ -756,11 +817,20 @@ const StatuslineSlot = memo(function StatuslineSlot({
     <StatuslinePreemptionView preemption={preemption} />
   ) : transientHint ? (
     <StatuslineTransientHintView hint={transientHint} />
+  ) : statusLineActive ? (
+    statusLineText ? (
+      <StatusLineContent
+        text={statusLineText}
+        modeName={null}
+        modeColor={null}
+        showExitHint={false}
+      />
+    ) : (
+      <Text> </Text>
+    )
   ) : (
-    <DefaultOrExtensionStatusline
+    <DefaultStatuslineLeftContent
       defaultLeftStatusline={defaultLeftStatusline}
-      statusLineActive={statusLineActive}
-      statusLineText={statusLineText}
       isBashMode={isBashMode}
       modeName={modeName}
       modeColor={modeColor}
@@ -768,6 +838,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
       showExitHint={showExitHint}
     />
   );
+  const shouldBlankRightColumn = Boolean(preemption || transientHint);
 
   const shouldRenderDefaultStatusline = shouldRenderDefaultStatuslineRenderer({
     hideFooterContent,
@@ -780,7 +851,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   });
 
   if (shouldRenderDefaultStatusline) {
-    return renderedDefaultStatusline;
+    return builtInStatuslineRenderer.render(statuslineContext);
   }
 
   return (
@@ -797,6 +868,8 @@ const StatuslineSlot = memo(function StatuslineSlot({
         flexShrink={0}
       >
         {hideFooterContent ? (
+          <Text>{" ".repeat(rightColumnWidth)}</Text>
+        ) : shouldBlankRightColumn ? (
           <Text>{" ".repeat(rightColumnWidth)}</Text>
         ) : statusLineRight ? (
           statusLineRight.split("\n").map((line, i) => (
@@ -1142,6 +1215,7 @@ export function Input({
   statusLineText,
   statusLineRight,
   statusLinePayload,
+  extensionRuntime,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
@@ -1196,6 +1270,7 @@ export function Input({
   statusLineText?: string;
   statusLineRight?: string;
   statusLinePayload: StatusLinePayload;
+  extensionRuntime: LocalExtensionRuntime;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -1275,6 +1350,14 @@ export function Input({
   const interactionEnabled = visible && inputEnabled && !inputDisabled;
   const reserveInputSpace = !collapseInputWhenDisabled;
 
+  const clearStatuslineTransientHint = useCallback(() => {
+    if (statuslineTransientHintTimerRef.current) {
+      clearTimeout(statuslineTransientHintTimerRef.current);
+      statuslineTransientHintTimerRef.current = null;
+    }
+    setStatuslineTransientHint(null);
+  }, []);
+
   const showStatuslineTransientHint = useCallback(
     (hint: StatuslineTransientHint) => {
       if (statuslineTransientHintTimerRef.current) {
@@ -1288,6 +1371,7 @@ export function Input({
     },
     [],
   );
+
   const hideFooter = !interactionEnabled || value.startsWith("/");
   const inputRowLines = useMemo(() => {
     return Math.max(1, getVisualLines(value, contentWidth).length);
@@ -2071,6 +2155,23 @@ export function Input({
   const queuedUserMessageCount =
     messageQueue?.filter((message) => message.kind === "user").length ?? 0;
 
+  useEffect(() => {
+    if (!statuslineTransientHint) return;
+    if (
+      !isStatuslineTransientHintRelevant(statuslineTransientHint, {
+        isBashMode,
+        queuedUserMessageCount,
+      })
+    ) {
+      clearStatuslineTransientHint();
+    }
+  }, [
+    statuslineTransientHint,
+    isBashMode,
+    queuedUserMessageCount,
+    clearStatuslineTransientHint,
+  ]);
+
   const previousQueuedUserMessageCountRef = useRef(queuedUserMessageCount);
   useEffect(() => {
     const previousCount = previousQueuedUserMessageCountRef.current;
@@ -2243,6 +2344,7 @@ export function Input({
                 statusLineText={statusLineText}
                 statusLineRight={statusLineRight}
                 statusLinePayload={statusLinePayload}
+                extensionRuntime={extensionRuntime}
                 transientHint={statuslineTransientHint}
               />
             )}
@@ -2293,6 +2395,7 @@ export function Input({
     statusLineText,
     statusLineRight,
     statusLinePayload,
+    extensionRuntime,
 
     goalStatusText,
     promptChar,
