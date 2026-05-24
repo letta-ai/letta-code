@@ -155,11 +155,35 @@ describe("isValidCron", () => {
     expect(isValidCron("0-59 * * * *")).toBe(true);
   });
 
+  test("valid comma-separated values", () => {
+    expect(isValidCron("1,5,9 * * * *")).toBe(true);
+    expect(isValidCron("0 1,5,9 * * *")).toBe(true);
+    expect(isValidCron("1,5,9,13,17,21 * * * *")).toBe(true);
+    expect(isValidCron("0 0 * * 1,3,5")).toBe(true);
+  });
+
+  test("valid range with step", () => {
+    expect(isValidCron("1-21/4 * * * *")).toBe(true);
+    expect(isValidCron("0 0-23/2 * * *")).toBe(true);
+  });
+
+  test("valid comma-separated with ranges and steps", () => {
+    // Comma-separated items that include ranges
+    expect(isValidCron("1-5,10-15 * * * *")).toBe(true);
+    // Comma-separated items that include steps
+    expect(isValidCron("*/5,*/15 * * * *")).toBe(true);
+    // Mixed: exact, range, step
+    expect(isValidCron("0,10-20,30-59/5 * * * *")).toBe(true);
+  });
+
   test("invalid expressions", () => {
     expect(isValidCron("")).toBe(false);
     expect(isValidCron("* * *")).toBe(false); // too few fields
     expect(isValidCron("* * * * * *")).toBe(false); // too many fields
     expect(isValidCron("abc * * * *")).toBe(false);
+    expect(isValidCron("1, * * * *")).toBe(false); // trailing comma
+    expect(isValidCron(",5 * * * *")).toBe(false); // leading comma
+    expect(isValidCron(", * * * *")).toBe(false); // lone comma
   });
 });
 
@@ -257,6 +281,35 @@ describe("cronMatchesTime", () => {
     const date = new Date("2026-03-26T14:30:00");
     expect(cronMatchesTime("30 14 * * *", date, null)).toBe(true);
     expect(cronMatchesTime("30 14 * * *", date, undefined)).toBe(true);
+  });
+
+  test("comma-separated values match", () => {
+    const date = new Date("2026-03-26T14:30:00");
+    // minute 30 is in the list 0,15,30,45
+    expect(cronMatchesTime("0,15,30,45 * * * *", date)).toBe(true);
+    // minute 30 is NOT in the list 1,5,9
+    expect(cronMatchesTime("1,5,9 * * * *", date)).toBe(false);
+    // comma-separated day-of-week: Thursday is 4
+    expect(cronMatchesTime("30 14 * * 1,3,5", date)).toBe(false); // not Mon/Wed/Fri
+    expect(cronMatchesTime("30 14 * * 1,4,5", date)).toBe(true); // Thu is in list
+  });
+
+  test("range with step matches", () => {
+    const date = new Date("2026-03-26T14:30:00");
+    // 1-21/4 → 1,5,9,13,17,21 → 30 is NOT in this set
+    expect(cronMatchesTime("1-21/4 * * * *", date)).toBe(false);
+    // 0-59/15 → 0,15,30,45 → 30 IS in this set
+    expect(cronMatchesTime("0-59/15 * * * *", date)).toBe(true);
+    // Range with step for hour: 14 is in 0-23/2 → 0,2,4,...,14,...,22
+    expect(cronMatchesTime("* 0-23/2 * * *", date)).toBe(true);
+  });
+
+  test("comma-separated with ranges", () => {
+    const date = new Date("2026-03-26T14:30:00");
+    // 10-20,30-40 → minute 30 is in 30-40 range
+    expect(cronMatchesTime("10-20,30-40 * * * *", date)).toBe(true);
+    // 1-5,10-15 → minute 30 is NOT in either range
+    expect(cronMatchesTime("1-5,10-15 * * * *", date)).toBe(false);
   });
 });
 
