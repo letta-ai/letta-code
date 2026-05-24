@@ -105,7 +105,7 @@ Local agents do not appear in the Constellation, but their memory is still a nor
 
 ## 🌌 Constellation
 
-Agents created with Constellation can be accessed from any machine: your laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a sandbox, remote VM, or a Mac Mini. You can also chat with agents through [chat.letta.com](https://chat.letta.com/) or through the desktop app.
+Agents hosted on Constellation can be accessed from any machine: your laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a sandbox, remote VM, or a Mac Mini. You can also chat with agents through [chat.letta.com](https://chat.letta.com/) or through the desktop app.
 
 ```mermaid
 graph TD
