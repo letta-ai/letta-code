@@ -79,6 +79,16 @@ type ExtensionCommandContext = {
 
 Use `ctx.args` for the raw argument string and `ctx.argv` for simple quote-aware splitting.
 
+## Letta SDK client
+
+Extensions also receive the configured Letta SDK client:
+
+```ts
+letta.client
+```
+
+Use it for advanced workflows that need the full Letta API, such as forking conversations, reading agent state, or sending messages. This is the same authenticated client context the app uses.
+
 ### Results
 
 Command handlers return declarative results. The app owns transcript rendering, approval checks, and sending prompts.
@@ -149,10 +159,67 @@ export default function activate(letta) {
 }
 ```
 
+### Ask a side question in a forked conversation
+
+This example intentionally returns normal command output rather than opening a custom side panel.
+
+```ts
+export default function activate(letta) {
+  function appendAssistantText(chunk, parts) {
+    if (chunk.message_type !== "assistant_message") return;
+    const content = chunk.content;
+    if (typeof content === "string") {
+      parts.push(content);
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
+        if (part && typeof part === "object" && "text" in part) {
+          parts.push(String(part.text));
+        }
+      }
+    }
+  }
+
+  return letta.commands.register({
+    id: "btw",
+    description: "Ask a side question in a forked conversation",
+    args: "<question>",
+    async run(ctx) {
+      if (!ctx.args.trim()) {
+        return {
+          type: "output",
+          output: "Usage: /btw <question>",
+          success: false,
+        };
+      }
+
+      const forked = await letta.client.conversations.fork(ctx.conversation.id, {
+        agent_id: ctx.agent.id,
+      });
+      const stream = await letta.client.conversations.messages.create(forked.id, {
+        agent_id: ctx.agent.id,
+        input: ctx.args,
+        streaming: true,
+      });
+
+      const parts = [];
+      for await (const chunk of stream) {
+        appendAssistantText(chunk, parts);
+      }
+
+      return {
+        type: "output",
+        output: parts.join("").trim() || "No response.",
+      };
+    },
+  });
+}
+```
+
 ## Constraints
 
 - Global trusted code only for now. Do not create project extensions.
-- Do not expose app internals, React setters, backend clients, or command runner objects.
+- Do not use app internals, React setters, or command runner objects.
+- Prefer `letta.client` over raw `fetch` when using the Letta API.
 - Keep command handlers fast. Async handlers are allowed, but they should return prompt/output/handled results rather than mutating app state.
 - Do not register built-in command IDs.
 - Do not do surprising side effects on startup; extension files execute when Letta Code starts or `/reload` runs.

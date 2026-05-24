@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getClient } from "@/backend/api/client";
 import { debugLog } from "@/utils/debug";
 import {
   disposeLocalExtensions,
@@ -80,6 +81,7 @@ export function useLocalExtensionRuntime(
     }
 
     const nextRegistry = await loadLocalExtensions({
+      getClient,
       getContext: () => contextRef.current,
       onChange: () => {
         if (mountedRef.current) {

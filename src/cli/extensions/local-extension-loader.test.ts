@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type Letta from "@letta-ai/letta-client";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
 import {
@@ -47,6 +48,7 @@ function createStatuslineContext(): StatuslineRenderContext {
 function createLoadOptions(root: string) {
   return {
     cacheDirectory: path.join(root, "extension-cache"),
+    getClient: async () => ({ marker: "test-client" }) as unknown as Letta,
     getContext: createStatuslineContext,
     globalExtensionsDirectory: path.join(root, "global-extensions"),
   };
@@ -272,6 +274,49 @@ describe("local extension loader", () => {
 
       disposeLocalExtensions(registry);
       expect(registry.commands).toEqual({});
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("passes the configured SDK client to extensions", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "client.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "client-check",
+            description: "Check client availability",
+            run() {
+              return { type: "output", output: letta.client.marker };
+            },
+          });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      await expect(
+        Promise.resolve(
+          registry.commands["client-check"]?.run({
+            agent: { id: "agent-1", name: "Amelia" },
+            args: "",
+            argv: [],
+            command: "client-check",
+            conversation: { id: "conversation-1" },
+            cwd: "/tmp/project",
+            getContext: createStatuslineContext,
+            model: { id: "model-1", displayName: "Sonnet" },
+            permissionMode: "standard",
+            rawInput: "/client-check",
+          }),
+        ),
+      ).resolves.toEqual({ type: "output", output: "test-client" });
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

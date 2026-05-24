@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type Letta from "@letta-ai/letta-client";
 import * as ts from "typescript";
 import { commands as builtinCommands } from "@/cli/commands/registry";
 import type {
@@ -60,6 +61,7 @@ export type LettaExtensionFactory = (
   | Promise<undefined | LettaExtensionDisposer>;
 
 export interface LettaExtensionApi {
+  client: Letta;
   getContext: () => ExtensionContext;
   commands: {
     register: (command: ExtensionCommandRegistration) => LettaExtensionDisposer;
@@ -118,6 +120,7 @@ export interface ResolveLocalExtensionSourcesOptions {
 export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
+  getClient: () => Promise<Letta>;
   onChange?: () => void;
   reservedCommandIds?: Iterable<string>;
 }
@@ -326,6 +329,7 @@ function normalizeExtensionCommand(
 function createLettaExtensionApi(
   registry: LocalExtensionRegistry,
   extensionPath: string,
+  client: Letta,
   getContext: () => ExtensionContext,
   onChange: () => void,
   reservedCommandIds: Set<string>,
@@ -340,6 +344,7 @@ function createLettaExtensionApi(
   };
 
   return {
+    client,
     getContext,
     commands: {
       register(command) {
@@ -396,9 +401,10 @@ function getExtensionFactory(module: LocalExtensionModule): unknown {
 }
 
 export async function loadLocalExtensions(
-  options: LoadLocalExtensionsOptions = {},
+  options: LoadLocalExtensionsOptions,
 ): Promise<LocalExtensionRegistry> {
   const cacheDirectory = options.cacheDirectory ?? EXTENSION_CACHE_DIRECTORY;
+  const client = await options.getClient();
   const getContext =
     options.getContext ??
     (() => {
@@ -444,6 +450,7 @@ export async function loadLocalExtensions(
         createLettaExtensionApi(
           registry,
           extensionPath,
+          client,
           getContext,
           onChange,
           reservedCommandIds,
