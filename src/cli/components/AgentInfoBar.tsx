@@ -3,9 +3,12 @@ import Link from "ink-link";
 import { memo, useMemo } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
-import { buildAppUrl, buildChatUrl } from "@/cli/helpers/app-urls";
+import {
+  buildAppUrl,
+  buildChatUrl,
+  isLocalAgentId,
+} from "@/cli/helpers/app-urls";
 import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
-import { truncateText } from "@/cli/helpers/truncate-text";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
@@ -35,6 +38,65 @@ function formatReasoningLabel(
   return null;
 }
 
+function splitTokenToWidth(token: string, maxWidth: number): string[] {
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const char of Array.from(token)) {
+    const candidate = `${current}${char}`;
+    if (current && stringWidth(candidate) > maxWidth) {
+      chunks.push(current);
+      current = char;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function wrapTextToWidth(text: string, maxWidth: number): string[] {
+  if (maxWidth <= 0) return [text];
+
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [""];
+
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    if (!current) {
+      if (stringWidth(word) <= maxWidth) {
+        current = word;
+      } else {
+        const chunks = splitTokenToWidth(word, maxWidth);
+        lines.push(...chunks.slice(0, -1));
+        current = chunks[chunks.length - 1] ?? "";
+      }
+      continue;
+    }
+
+    const candidate = `${current} ${word}`;
+    if (stringWidth(candidate) <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+
+    lines.push(current);
+    if (stringWidth(word) <= maxWidth) {
+      current = word;
+    } else {
+      const chunks = splitTokenToWidth(word, maxWidth);
+      lines.push(...chunks.slice(0, -1));
+      current = chunks[chunks.length - 1] ?? "";
+    }
+  }
+
+  if (current) lines.push(current);
+  return lines;
+}
+
 /**
  * Shows agent info bar with current agent details and useful links.
  */
@@ -57,8 +119,10 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   }, [agentId]);
 
   const isCloudUser = serverUrl?.includes("api.letta.com");
+  const isLocalAgent = agentId ? isLocalAgentId(agentId) : false;
+  const showCloudLinks = Boolean(isCloudUser && agentId && !isLocalAgent);
   const adeConversationUrl =
-    agentId && agentId !== "loading"
+    showCloudLinks && agentId && agentId !== "loading"
       ? buildChatUrl(agentId, { conversationId })
       : "";
   const showBottomBar = agentId && agentId !== "loading";
@@ -73,10 +137,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
     return null;
   }
 
-  // Alien ASCII art lines (4 lines tall, with 2-char indent + extra space before text)
-  const alienLines = ["   ▗▖▗▖   ", "  ▙█▜▛█▟  ", "  ▝▜▛▜▛▘  ", "          "];
-  const leftWidth = Math.max(...alienLines.map((l) => stringWidth(l)));
-  const rightWidth = Math.max(0, columns - leftWidth);
+  const contentWidth = Math.max(1, columns - 2);
 
   const agentNameLabel = agentName || "Unnamed";
   const agentHint = isPinned
@@ -85,99 +146,86 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       ? " (type /pin to give your agent a real name!)"
       : " (type /pin to pin agent)";
   const agentNameLine = `${agentNameLabel}${agentHint}`;
+  const conversationLabel =
+    conversationId && conversationId !== "default"
+      ? conversationId
+      : "default conversation";
+  const identityLines = wrapTextToWidth(
+    `${agentId} ·\u00A0${conversationLabel}`,
+    contentWidth,
+  ).map((line) => line.replaceAll("\u00A0", " "));
 
   return (
     <Box flexDirection="column">
       {/* Blank line after commands */}
       <Box height={1} />
 
+      {/* Agent summary */}
+      <Box flexDirection="column">
+        <Box>
+          <Box width={2} flexShrink={0}>
+            <Text>{"  "}</Text>
+          </Box>
+          <Box width={contentWidth} flexShrink={1}>
+            <Text wrap="wrap">
+              <Text bold color={colors.footer.agentName}>
+                {agentNameLine}
+              </Text>
+              {modelLine ? <Text dimColor> · {modelLine}</Text> : null}
+            </Text>
+          </Box>
+        </Box>
+        {identityLines.map((line, index) => (
+          <Box key={`${index}:${line}`}>
+            <Box width={2} flexShrink={0}>
+              <Text>{"  "}</Text>
+            </Box>
+            <Box width={contentWidth} flexShrink={1}>
+              <Text dimColor>{line}</Text>
+            </Box>
+          </Box>
+        ))}
+      </Box>
+
+      {showCloudLinks && adeConversationUrl && (
+        <>
+          <Box height={1} />
+          <Box>
+            <Box width={2} flexShrink={0}>
+              <Text>{"  "}</Text>
+            </Box>
+            <Box width={contentWidth} flexShrink={1}>
+              {isTmux ? (
+                <Text wrap="wrap">Open in ADE ↗ · View usage ↗</Text>
+              ) : (
+                <>
+                  <Link url={adeConversationUrl} fallback={false}>
+                    <Text>Open in ADE ↗</Text>
+                  </Link>
+                  <Text dimColor>· </Text>
+                  <Link
+                    url={buildAppUrl("/settings/organization/usage")}
+                    fallback={false}
+                  >
+                    <Text>View usage ↗</Text>
+                  </Link>
+                </>
+              )}
+            </Box>
+          </Box>
+        </>
+      )}
+
       {/* Version and Discord/feedback info */}
       <Box>
-        <Text wrap="truncate-end">
-          {"  "}Letta Code v{getVersion()} · /feedback · discord.gg/letta
-        </Text>
-      </Box>
-
-      {/* Blank line before agent info */}
-      <Box height={1} />
-
-      {/* Alien + Agent name */}
-      <Box>
-        <Text color={colors.footer.agentName}>{alienLines[0]}</Text>
-        <Box width={rightWidth} flexShrink={1}>
-          <Text bold color={colors.footer.agentName} wrap="truncate-end">
-            {truncateText(agentNameLine, rightWidth)}
+        <Box width={2} flexShrink={0}>
+          <Text>{"  "}</Text>
+        </Box>
+        <Box width={contentWidth} flexShrink={1}>
+          <Text dimColor wrap="wrap">
+            Letta Code v{getVersion()} · /feedback · discord.gg/letta
           </Text>
         </Box>
-      </Box>
-
-      {/* Alien + Links */}
-      <Box>
-        <Text color={colors.footer.agentName}>{alienLines[1]}</Text>
-        {isCloudUser && adeConversationUrl && !isTmux && (
-          <Box flexShrink={1}>
-            <Link url={adeConversationUrl}>
-              <Text>Open in ADE ↗</Text>
-            </Link>
-            <Text dimColor>· </Text>
-            <Link url={buildAppUrl("/settings/organization/usage")}>
-              <Text>View usage ↗</Text>
-            </Link>
-          </Box>
-        )}
-        {isCloudUser && adeConversationUrl && isTmux && (
-          <Box width={rightWidth} flexShrink={1}>
-            <Text dimColor wrap="truncate-end">
-              {truncateText(
-                `Open in ADE: ${adeConversationUrl} · Usage: ${buildAppUrl("/settings/organization/usage")}`,
-                rightWidth,
-              )}
-            </Text>
-          </Box>
-        )}
-        {!isCloudUser && (
-          <Box width={rightWidth} flexShrink={1}>
-            <Text dimColor wrap="truncate-end">
-              {truncateText(serverUrl ?? "", rightWidth)}
-            </Text>
-          </Box>
-        )}
-      </Box>
-
-      {/* Model summary */}
-      <Box>
-        <Text color={colors.footer.agentName}>{alienLines[2]}</Text>
-        <Box width={rightWidth} flexShrink={1}>
-          <Text dimColor wrap="truncate-end">
-            {truncateText(modelLine ?? "model unknown", rightWidth)}
-          </Text>
-        </Box>
-      </Box>
-
-      {/* Agent ID */}
-      <Box>
-        <Text>{alienLines[3]}</Text>
-        <Box width={rightWidth} flexShrink={1}>
-          <Text dimColor wrap="truncate-end">
-            {truncateText(agentId, rightWidth)}
-          </Text>
-        </Box>
-      </Box>
-
-      {/* Phantom alien row + Conversation ID */}
-      <Box>
-        <Text>{alienLines[3]}</Text>
-        {conversationId && conversationId !== "default" ? (
-          <Box width={rightWidth} flexShrink={1}>
-            <Text dimColor wrap="truncate-end">
-              {truncateText(conversationId, rightWidth)}
-            </Text>
-          </Box>
-        ) : (
-          <Box width={rightWidth} flexShrink={1}>
-            <Text dimColor>default conversation</Text>
-          </Box>
-        )}
       </Box>
     </Box>
   );
