@@ -19,16 +19,6 @@ export const LOCAL_KIMI_CODE_PROVIDER_NAME = "lc-kimi-code";
 export const LOCAL_GOOGLE_AI_PROVIDER_NAME = "lc-gemini";
 export const LOCAL_BEDROCK_PROVIDER_NAME = "lc-bedrock";
 
-const OLLAMA_CLOUD_MODELS = [
-  "ollama-cloud/glm-4.7",
-  "ollama-cloud/qwen3-coder:480b",
-  "ollama-cloud/gpt-oss:20b",
-  "ollama-cloud/gpt-oss:120b",
-  "ollama-cloud/kimi-k2.5",
-  "ollama-cloud/minimax-m2.1",
-  "ollama-cloud/deepseek-v3.2",
-] as const;
-
 function hasEnvValue(value: string | undefined): boolean {
   return typeof value === "string" && value.length > 0;
 }
@@ -61,7 +51,6 @@ export interface PiProviderSpec {
   baseUrlEnv?: () => string | undefined;
   fallbackApiKey?: string;
   headers?: () => Record<string, string> | undefined;
-  staticModels?: readonly string[];
   localModelDiscovery?: "ollama" | "openai-compatible";
   envConfigured?: () => boolean;
   createCustomModel?: boolean;
@@ -209,10 +198,10 @@ export const PI_PROVIDER_SPECS = [
     handlePrefixes: ["ollama-cloud/"],
     localProviderNames: [LOCAL_OLLAMA_CLOUD_PROVIDER_NAME],
     defaultModel: "ollama-cloud/gpt-oss:20b",
-    staticModels: OLLAMA_CLOUD_MODELS,
     defaultBaseURL: "https://ollama.com/v1",
     apiKeyEnv: () => process.env.OLLAMA_API_KEY,
     baseUrlEnv: () => process.env.OLLAMA_CLOUD_BASE_URL,
+    localModelDiscovery: "openai-compatible",
     envConfigured: () => hasEnvValue(process.env.OLLAMA_API_KEY),
     createCustomModel: true,
   },
@@ -375,9 +364,6 @@ export function listCatalogModelsForProvider(provider: PiProvider): string[] {
     for (const model of getModels(spec.piProvider)) {
       add(spec.catalogModelHandle(model as Model<Api>));
     }
-  }
-  for (const model of spec.staticModels ?? []) {
-    add(model);
   }
 
   return models;

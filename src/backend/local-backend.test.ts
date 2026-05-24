@@ -488,6 +488,40 @@ describe("local backend pi transcript", () => {
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
   });
 
+  test("discovers configured Ollama Cloud models from OpenAI-compatible catalog", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-ollama-cloud-discovery-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "ollama_cloud",
+      providerName: "lc-ollama-cloud",
+      apiKey: "ollama-key",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const captured: { authorization?: string | null } = {};
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      captured.authorization = new Headers(init?.headers).get("Authorization");
+      return new Response(
+        JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual(["https://ollama.com/v1/models"]);
+    expect(captured.authorization).toBe("Bearer ollama-key");
+    expect(handles).toContain("ollama-cloud/rnj-1:8b");
+    expect(handles).toContain("ollama-cloud/glm-5.1");
+    expect(handles).not.toContain("ollama-cloud/gpt-oss:20b");
+    expect(handles).not.toContain("ollama-cloud/gpt-oss:120b");
+  });
+
   test("uses LM Studio env API key for discovery when stored key is placeholder", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-lmstudio-env-key-"),
