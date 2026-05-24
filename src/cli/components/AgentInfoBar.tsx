@@ -125,6 +125,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
     showCloudLinks && agentId && agentId !== "loading"
       ? buildChatUrl(agentId, { conversationId })
       : "";
+  const usageUrl = buildAppUrl("/settings/organization/usage");
   const showBottomBar = agentId && agentId !== "loading";
   const reasoningLabel = shouldHideReasoningForModelDisplay(currentModel)
     ? null
@@ -196,17 +197,16 @@ export const AgentInfoBar = memo(function AgentInfoBar({
             </Box>
             <Box width={contentWidth} flexShrink={1}>
               {isTmux ? (
-                <Text wrap="wrap">Open in ADE ↗ · View usage ↗</Text>
+                <Text wrap="wrap">
+                  Open in ADE: {adeConversationUrl} · Usage: {usageUrl}
+                </Text>
               ) : (
                 <>
                   <Link url={adeConversationUrl} fallback={false}>
                     <Text>Open in ADE ↗</Text>
                   </Link>
                   <Text dimColor>· </Text>
-                  <Link
-                    url={buildAppUrl("/settings/organization/usage")}
-                    fallback={false}
-                  >
+                  <Link url={usageUrl} fallback={false}>
                     <Text>View usage ↗</Text>
                   </Link>
                 </>
