@@ -779,6 +779,9 @@ export function ProviderSelector({
           <Text dimColor>{"  "}</Text>
           <Text
             bold={selectedTarget === "local"}
+            color={
+              selectedTarget === "local" ? colors.selector.title : undefined
+            }
             dimColor={selectedTarget !== "local"}
           >
             {selectedTarget === "local" ? "[ Local ]" : "  Local  "}
@@ -786,6 +789,7 @@ export function ProviderSelector({
           <Text dimColor>{"  "}</Text>
           <Text
             bold={selectedTarget === "api"}
+            color={selectedTarget === "api" ? colors.selector.title : undefined}
             dimColor={selectedTarget !== "api"}
           >
             {selectedTarget === "api"
