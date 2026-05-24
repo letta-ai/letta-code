@@ -22,7 +22,7 @@ import { colors } from "./colors";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
-const VISIBLE_PROVIDERS = 12;
+const VISIBLE_PROVIDERS = 8;
 
 type ViewState =
   | { type: "list" }
@@ -61,11 +61,10 @@ export function hasConstellationProviderStoreCredentials(
   );
 }
 
-export function shouldShowConstellationLoginPrompt(
-  target: ProviderStorageTarget,
+export function shouldShowProviderStoreTabs(
   hasConstellationCredentials: boolean | null,
 ): boolean {
-  return target === "api" && hasConstellationCredentials === false;
+  return hasConstellationCredentials === true;
 }
 
 export function filterProviderConfigs(
@@ -134,13 +133,10 @@ export function ProviderSelector({
     () => filterProviderConfigs(providers, searchQuery),
     [providers, searchQuery],
   );
-  const showConstellationLoginPrompt = shouldShowConstellationLoginPrompt(
-    selectedTarget,
+  const showProviderStoreTabs = shouldShowProviderStoreTabs(
     hasConstellationCredentials,
   );
-  const selectableProviders = showConstellationLoginPrompt
-    ? []
-    : filteredProviders;
+  const selectableProviders = filteredProviders;
   const providerStartIndex = useMemo(() => {
     if (selectedIndex < VISIBLE_PROVIDERS) return 0;
     return Math.min(
@@ -156,7 +152,6 @@ export function ProviderSelector({
       ),
     [selectableProviders, providerStartIndex],
   );
-  const providersAbove = providerStartIndex;
   const providersBelow = Math.max(
     0,
     selectableProviders.length - providerStartIndex - VISIBLE_PROVIDERS,
@@ -192,14 +187,8 @@ export function ProviderSelector({
 
   // Load connected providers on mount and when switching targets.
   useEffect(() => {
-    if (showConstellationLoginPrompt) {
-      setConnectedProviders(new Map());
+    if (selectedTarget === "api" && !showProviderStoreTabs) {
       setIsLoading(false);
-      return;
-    }
-
-    if (selectedTarget === "api" && hasConstellationCredentials === null) {
-      setIsLoading(true);
       return;
     }
 
@@ -219,11 +208,16 @@ export function ProviderSelector({
         }
       }
     })();
-  }, [
-    selectedTarget,
-    hasConstellationCredentials,
-    showConstellationLoginPrompt,
-  ]);
+  }, [selectedTarget, showProviderStoreTabs]);
+
+  useEffect(() => {
+    if (!showProviderStoreTabs && selectedTarget !== "local") {
+      setSelectedTarget("local");
+      setSelectedIndex(0);
+      setSearchQuery("");
+      setViewState({ type: "list" });
+    }
+  }, [selectedTarget, showProviderStoreTabs]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -242,11 +236,12 @@ export function ProviderSelector({
   }, [selectedIndex, selectableProviders.length]);
 
   const switchTarget = useCallback(() => {
+    if (!showProviderStoreTabs) return;
     setSelectedTarget((target) => (target === "local" ? "api" : "local"));
     setSelectedIndex(0);
     setSearchQuery("");
     setViewState({ type: "list" });
-  }, []);
+  }, [showProviderStoreTabs]);
 
   // Check if a provider is connected
   const isConnected = useCallback(
@@ -584,7 +579,10 @@ export function ProviderSelector({
         } else {
           onCancel();
         }
-      } else if (key.leftArrow || key.rightArrow || key.tab) {
+      } else if (
+        showProviderStoreTabs &&
+        (key.leftArrow || key.rightArrow || key.tab)
+      ) {
         switchTarget();
       } else if (key.backspace || key.delete) {
         if (searchQuery) {
@@ -606,10 +604,12 @@ export function ProviderSelector({
         }
       } else if (
         input &&
-        !showConstellationLoginPrompt &&
         !key.ctrl &&
         !key.meta &&
         !key.return &&
+        !key.tab &&
+        !key.leftArrow &&
+        !key.rightArrow &&
         !key.upArrow &&
         !key.downArrow
       ) {
@@ -775,63 +775,54 @@ export function ProviderSelector({
           Connect your LLM API keys
         </Text>
         <Text dimColor>Change models with /model after connecting</Text>
-        <Box marginTop={1} flexDirection="row">
-          <Text dimColor>{"  "}</Text>
-          <Text
-            bold={selectedTarget === "local"}
-            color={
-              selectedTarget === "local" ? colors.selector.title : undefined
-            }
-            dimColor={selectedTarget !== "local"}
-          >
-            {selectedTarget === "local" ? "[ Local ]" : "  Local  "}
-          </Text>
-          <Text dimColor>{"  "}</Text>
-          <Text
-            bold={selectedTarget === "api"}
-            color={selectedTarget === "api" ? colors.selector.title : undefined}
-            dimColor={selectedTarget !== "api"}
-          >
-            {selectedTarget === "api"
-              ? "[ Constellation ]"
-              : "  Constellation  "}
-          </Text>
-        </Box>
-        <Text dimColor>
-          {selectedTarget === "local"
-            ? "  Local providers are stored on this machine and affect local agents only."
-            : "  Constellation providers are stored in Letta and affect Constellation agents."}
-        </Text>
-        {!showConstellationLoginPrompt && (
-          <Text>
-            <Text dimColor>{"  Filter: "}</Text>
-            {searchQuery ? (
-              <Text>{searchQuery}</Text>
-            ) : (
-              <Text dimColor>(type to filter)</Text>
-            )}
-          </Text>
+        {showProviderStoreTabs && (
+          <Box marginTop={1} flexDirection="row">
+            <Text>{"  "}</Text>
+            <Text
+              bold={selectedTarget === "local"}
+              color={
+                selectedTarget === "local"
+                  ? colors.selector.title
+                  : colors.command.running
+              }
+            >
+              {selectedTarget === "local" ? "[ Local ]" : "  Local  "}
+            </Text>
+            <Text>{"  "}</Text>
+            <Text
+              bold={selectedTarget === "api"}
+              color={
+                selectedTarget === "api"
+                  ? colors.selector.title
+                  : colors.command.running
+              }
+            >
+              {selectedTarget === "api"
+                ? "[ Constellation ]"
+                : "  Constellation  "}
+            </Text>
+          </Box>
         )}
+        {!showProviderStoreTabs && <Box height={1} />}
+        <Text>
+          <Text dimColor>{"  Filter: "}</Text>
+          {searchQuery ? (
+            <Text>{searchQuery}</Text>
+          ) : (
+            <Text dimColor>(type to filter)</Text>
+          )}
+        </Text>
       </Box>
 
       {isLoading ? (
         <Box>
           <Text dimColor>{"  "}Loading providers...</Text>
         </Box>
-      ) : showConstellationLoginPrompt ? (
-        <Box flexDirection="column">
-          <Text dimColor>{"  "}Use /login to log into Constellation.</Text>
-        </Box>
       ) : (
         <Box flexDirection="column">
           {selectableProviders.length === 0 && searchQuery ? (
             <Text dimColor>{"  "}No providers match your filter.</Text>
           ) : null}
-          {providersAbove > 0 && (
-            <Text dimColor>
-              {"  "}↑ {providersAbove} more above
-            </Text>
-          )}
           {visibleProviders.map((provider, index) => {
             const actualIndex = providerStartIndex + index;
             const isSelected = actualIndex === selectedIndex;
@@ -882,11 +873,13 @@ export function ProviderSelector({
       {!isLoading && (
         <Box marginTop={1}>
           <Text dimColor>
-            {showConstellationLoginPrompt
-              ? "  Tab/←→ switch tab · Esc cancel"
-              : searchQuery
+            {searchQuery
+              ? showProviderStoreTabs
                 ? "  Enter select · ↑↓ navigate · Backspace edit filter · Tab/←→ switch tab · Esc clear"
-                : "  Enter select · ↑↓ navigate · type filter · Tab/←→ switch tab · Esc cancel"}
+                : "  Enter select · ↑↓ navigate · Backspace edit filter · Esc clear"
+              : showProviderStoreTabs
+                ? "  Enter select · ↑↓ navigate · type filter · Tab/←→ switch tab · Esc cancel"
+                : "  Enter select · ↑↓ navigate · type filter · Esc cancel"}
           </Text>
         </Box>
       )}

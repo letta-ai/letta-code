@@ -3,7 +3,7 @@ import {
   filterProviderConfigs,
   hasConstellationProviderStoreCredentials,
   providerApiKeyFromInput,
-  shouldShowConstellationLoginPrompt,
+  shouldShowProviderStoreTabs,
 } from "@/cli/components/ProviderSelector";
 import {
   type ByokProvider,
@@ -113,15 +113,15 @@ describe("ProviderSelector local provider API keys", () => {
 });
 
 describe("ProviderSelector Constellation auth gating", () => {
-  test("requires Constellation credentials before showing API provider rows", () => {
+  test("requires Constellation credentials before showing provider-store tabs", () => {
     const loggedOut = hasConstellationProviderStoreCredentials(
       { env: {}, refreshToken: undefined },
       {},
     );
 
     expect(loggedOut).toBe(false);
-    expect(shouldShowConstellationLoginPrompt("api", loggedOut)).toBe(true);
-    expect(shouldShowConstellationLoginPrompt("local", loggedOut)).toBe(false);
+    expect(shouldShowProviderStoreTabs(loggedOut)).toBe(false);
+    expect(shouldShowProviderStoreTabs(null)).toBe(false);
   });
 
   test("accepts env, stored API key, or refresh token as Constellation auth", () => {
@@ -143,6 +143,7 @@ describe("ProviderSelector Constellation auth gating", () => {
         {},
       ),
     ).toBe(true);
+    expect(shouldShowProviderStoreTabs(true)).toBe(true);
   });
 });
 
