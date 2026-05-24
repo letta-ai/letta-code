@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
+import { listChannelSlashCommands } from "@/channels/commands";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
@@ -1125,24 +1126,34 @@ export function createSlackAdapter(
       }
     });
 
-    instance.command("/cancel", async ({ command, ack }) => {
+    const handleNativeChannelSlashCommand = async ({
+      command,
+      ack,
+    }: {
+      command: SlackCommandPayload;
+      ack: () => Promise<void>;
+    }) => {
       await ack();
 
       if (!adapter.onMessage) {
         return;
       }
 
-      const payload = command as SlackCommandPayload;
+      const payload = command;
       if (
+        !isNonEmptyString(payload.command) ||
         !isNonEmptyString(payload.channel_id) ||
         !isNonEmptyString(payload.user_id)
       ) {
         return;
       }
 
-      const commandText = isNonEmptyString(payload.text)
-        ? `/cancel ${payload.text.trim()}`
-        : "/cancel";
+      const commandArgs = isNonEmptyString(payload.text)
+        ? payload.text.trim()
+        : "";
+      const commandText = commandArgs
+        ? `${payload.command} ${commandArgs}`
+        : payload.command;
 
       const inbound: InboundChannelMessage = {
         channel: "slack",
@@ -1166,9 +1177,21 @@ export function createSlackAdapter(
       try {
         await adapter.onMessage(inbound);
       } catch (error) {
-        console.error("[Slack] Error handling /cancel command:", error);
+        console.error(
+          `[Slack] Error handling ${payload.command} command:`,
+          error,
+        );
       }
-    });
+    };
+
+    for (const definition of listChannelSlashCommands()) {
+      for (const commandName of [
+        definition.name,
+        ...(definition.aliases ?? []),
+      ]) {
+        instance.command(`/${commandName}`, handleNativeChannelSlashCommand);
+      }
+    }
 
     const handleReactionEvent = async (
       event: SlackReactionEvent,

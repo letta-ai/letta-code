@@ -642,6 +642,165 @@ describe("ChannelRegistry", () => {
     expect(replies[0]?.text).toContain("Conversation: conv-1.");
   });
 
+  test("/model invokes the channel model handler for the routed conversation", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const modelCalls: unknown[] = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setModelHandler(async (params) => {
+      modelCalls.push(params);
+      return {
+        handled: true,
+        text: params.modelIdentifier
+          ? `Switched to ${params.modelIdentifier}`
+          : "Model selector text",
+      };
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/model",
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+    });
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/model openai/gpt-5",
+      timestamp: Date.now(),
+      messageId: "1712800000.000201",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(modelCalls).toEqual([
+      {
+        channelId: "slack",
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+        modelIdentifier: undefined,
+      },
+      {
+        channelId: "slack",
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+        modelIdentifier: "openai/gpt-5",
+      },
+    ]);
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "Model selector text",
+        replyToMessageId: "1712800000.000200",
+      },
+      {
+        chatId: "C123",
+        text: "Switched to openai/gpt-5",
+        replyToMessageId: "1712800000.000201",
+      },
+    ]);
+  });
+
+  test("/model reports no route without invoking the model handler", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const modelCalls: unknown[] = [];
+    const registry = new ChannelRegistry();
+    registry.setMessageHandler(() => {});
+    registry.setModelHandler(async (params) => {
+      modelCalls.push(params);
+      return { handled: true, text: "unused" };
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "/model sonnet",
+      timestamp: Date.now(),
+      messageId: "77",
+      chatType: "direct",
+    });
+
+    expect(modelCalls).toHaveLength(0);
+    expect(replies[0]?.text).toContain(
+      "Telegram could not find an existing route for this chat.",
+    );
+  });
+
   test("/reflection invokes the channel reflection handler for the routed conversation", async () => {
     const replies: Array<{
       chatId: string;

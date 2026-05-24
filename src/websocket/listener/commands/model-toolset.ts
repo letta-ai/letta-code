@@ -37,6 +37,7 @@ import {
   emitRuntimeStateUpdates,
   emitStatusDelta,
 } from "@/websocket/listener/protocol-outbound";
+import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   ConversationRuntime,
   ListenerRuntime,
@@ -274,7 +275,7 @@ export function buildModelUpdateStatusMessage(params: {
 }
 
 export async function applyModelUpdateForRuntime(params: {
-  socket: WebSocket;
+  socket: ListenerTransport;
   listener: ListenerRuntime;
   scopedRuntime: ConversationRuntime;
   requestId: string;
