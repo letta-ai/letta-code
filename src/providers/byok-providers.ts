@@ -15,12 +15,18 @@ import {
   updateProvider as updateProviderRequest,
 } from "@/backend/api/providers";
 import { getBackend } from "@/backend/backend";
-import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "@/backend/dev/pi-provider-registry";
+import {
+  getPiProviderSpec,
+  LMSTUDIO_OPENAI_PROVIDER_TYPE,
+  PROVIDER_TYPE_TO_BASE_PROVIDER,
+  resolveProviderFromProviderType,
+} from "@/backend/dev/pi-provider-registry";
 import {
   createOrUpdateLocalProvider,
   deleteLocalProvider,
   getLocalProviderByName,
   isLocalProviderTypeSupported,
+  LOCAL_PROVIDER_NO_API_KEY,
   listLocalProviders,
   removeLocalProviderByName,
   updateLocalProvider,
@@ -130,7 +136,7 @@ export const BYOK_PROVIDERS = [
     providerType: "ollama",
     providerName: "lc-ollama",
     requiresApiKey: false,
-    defaultApiKey: "not-needed",
+    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
   },
   {
     id: "ollama-cloud",
@@ -143,10 +149,10 @@ export const BYOK_PROVIDERS = [
     id: "lmstudio",
     displayName: "LM Studio (local)",
     description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
-    providerType: "lmstudio",
+    providerType: LMSTUDIO_OPENAI_PROVIDER_TYPE,
     providerName: "lc-lmstudio",
     requiresApiKey: false,
-    defaultApiKey: "not-needed",
+    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
   },
   {
     id: "llama-cpp",
@@ -155,7 +161,7 @@ export const BYOK_PROVIDERS = [
     providerType: "llama_cpp",
     providerName: "lc-llama-cpp",
     requiresApiKey: false,
-    defaultApiKey: "not-needed",
+    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
   },
   {
     id: "bedrock",
@@ -194,11 +200,24 @@ export const BYOK_PROVIDERS = [
 export type ByokProviderId = (typeof BYOK_PROVIDERS)[number]["id"];
 export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 
+function providerEnvApiKey(provider: ByokProvider): string | undefined {
+  const piProvider = resolveProviderFromProviderType(provider.providerType);
+  if (!piProvider) return undefined;
+
+  const apiKey = getPiProviderSpec(piProvider).apiKeyEnv?.();
+  return apiKey && apiKey.length > 0 ? apiKey : undefined;
+}
+
 export function defaultProviderApiKey(
   provider: ByokProvider,
 ): string | undefined {
   if ("requiresApiKey" in provider && provider.requiresApiKey === false) {
-    return "defaultApiKey" in provider ? provider.defaultApiKey : "not-needed";
+    return (
+      providerEnvApiKey(provider) ??
+      ("defaultApiKey" in provider
+        ? provider.defaultApiKey
+        : LOCAL_PROVIDER_NO_API_KEY)
+    );
   }
   return undefined;
 }

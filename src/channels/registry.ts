@@ -77,8 +77,15 @@ import type {
   DiscordChannelAccount,
   InboundChannelMessage,
   SlackChannelAccount,
+  WhatsAppChannelAccount,
 } from "./types";
-import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
+import {
+  isDiscordChannelAccount,
+  isSlackChannelAccount,
+  isWhatsAppChannelAccount,
+} from "./types";
+import { allowedUsersIncludes } from "./whatsapp/jid";
+import { subscribeWhatsAppConnectionState } from "./whatsapp/state";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
@@ -198,6 +205,27 @@ function buildDiscordConversationSummary(
   return `[Discord] Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
+function buildWhatsAppConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[WhatsApp] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const textPreview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (textPreview) {
+    return `[WhatsApp] Group${channelLabel}: ${textPreview}`;
+  }
+
+  return `[WhatsApp] Group${channelLabel || ` ${msg.chatId}`}`;
+}
+
 function buildChannelTurnSource(
   route: ChannelRoute,
   msg: Pick<
@@ -309,6 +337,11 @@ export type ChannelRegistryEvent =
       channelId: string;
     }
   | {
+      type: "channel_account_state_updated";
+      channelId: string;
+      accountId: string;
+    }
+  | {
       type: "slack_conversation_created";
       channelId: "slack";
       accountId: string;
@@ -342,6 +375,7 @@ export class ChannelRegistry {
     PendingChannelControlRequest
   >();
   private readonly pendingControlRequestIdByScope = new Map<string, string>();
+  private readonly unsubscribeWhatsAppState: () => void;
 
   constructor() {
     if (instance) {
@@ -350,6 +384,15 @@ export class ChannelRegistry {
       );
     }
     instance = this;
+    this.unsubscribeWhatsAppState = subscribeWhatsAppConnectionState(
+      (accountId) => {
+        this.eventHandler?.({
+          type: "channel_account_state_updated",
+          channelId: "whatsapp",
+          accountId,
+        });
+      },
+    );
     this.primePersistedPendingControlRequests();
   }
 
@@ -794,6 +837,7 @@ export class ChannelRegistry {
     this.modelHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
+    this.unsubscribeWhatsAppState();
     instance = null;
   }
 
@@ -1222,6 +1266,38 @@ export class ChannelRegistry {
       return;
     }
 
+    // WhatsApp sends through a linked human account, so the adapter performs
+    // the conservative self-chat/group gates before messages reach here.
+    // Direct chats can auto-route when not using pairing; groups auto-route
+    // through the account binding.
+    if (
+      msg.channel === "whatsapp" &&
+      isWhatsAppChannelAccount(config) &&
+      (msg.chatType === "channel" || config.dmPolicy !== "pairing")
+    ) {
+      const whatsappResult = await this.ensureWhatsAppRoute(
+        adapter,
+        msg,
+        config,
+      );
+      if (!whatsappResult) {
+        return;
+      }
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: whatsappResult.isFirstRouteTurn,
+          })
+        : msg;
+      this.deliverOrBuffer({
+        route: whatsappResult.route,
+        content: formatChannelNotification(preparedMessage),
+        turnSources: [
+          buildChannelTurnSource(whatsappResult.route, preparedMessage),
+        ],
+      });
+      return;
+    }
+
     // 1. Check pairing/allowlist policy
     if (config.dmPolicy === "allowlist") {
       if (!config.allowedUsers.includes(msg.senderId)) {
@@ -1542,6 +1618,102 @@ export class ChannelRegistry {
 
     return {
       route: await this.createDiscordRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
+  private async createWhatsAppRoute(
+    config: WhatsAppChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.agentId) {
+      throw new Error("WhatsApp account is missing an agent binding.");
+    }
+
+    const conversationId = await this.createConversationForAgent(
+      config.agentId,
+      buildWhatsAppConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: null,
+      agentId: config.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  private async ensureWhatsAppRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: WhatsAppChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.agentId) {
+      if (msg.chatType !== "channel" || msg.isMention) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "This WhatsApp account isn't connected to a Letta agent yet.\n\n" +
+            "Open Channels > WhatsApp in Letta Code, choose which agent this WhatsApp account should represent, and try again.",
+        );
+      }
+      return null;
+    }
+
+    if (
+      msg.chatType === "direct" &&
+      config.dmPolicy === "allowlist" &&
+      !allowedUsersIncludes(config.allowedUsers, msg.senderId)
+    ) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "You are not on the allowed users list for this WhatsApp account.",
+      );
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    let route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    if (msg.chatType === "channel") {
+      const now = new Date().toISOString();
+      loadTargetStore(msg.channel);
+      upsertChannelTarget(msg.channel, {
+        accountId,
+        targetId: msg.chatId,
+        targetType: "channel",
+        chatId: msg.chatId,
+        label: msg.chatLabel ?? `WhatsApp group ${msg.chatId}`,
+        discoveredAt: now,
+        lastSeenAt: now,
+        lastMessageId: msg.messageId,
+      });
+      this.eventHandler?.({
+        type: "targets_updated",
+        channelId: msg.channel,
+      });
+    }
+
+    return {
+      route: await this.createWhatsAppRoute(config, msg),
       isFirstRouteTurn: true,
     };
   }

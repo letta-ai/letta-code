@@ -93,6 +93,25 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       return customChannelPlugin;
     },
   },
+  whatsapp: {
+    metadata: {
+      id: "whatsapp",
+      displayName: "WhatsApp",
+      runtimePackages: [
+        "@whiskeysockets/baileys@6.7.21",
+        "qrcode-terminal@0.12.0",
+      ],
+      runtimeModules: ["@whiskeysockets/baileys", "qrcode-terminal"],
+      source: "first-party",
+      firstParty: true,
+    },
+    load: async () => {
+      const { whatsappChannelPlugin } = await import(
+        "@/channels/whatsapp/plugin"
+      );
+      return whatsappChannelPlugin;
+    },
+  },
 };
 
 const loadedUserPlugins = new Map<string, Promise<ChannelPlugin>>();

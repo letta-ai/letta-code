@@ -47,7 +47,7 @@ describe("local provider timeout", () => {
     try {
       await createOrUpdateLocalProvider({
         storageDir,
-        providerType: "lmstudio",
+        providerType: "lmstudio_openai",
         providerName: "lc-lmstudio",
         apiKey: "not-needed",
         baseURL: "http://127.0.0.1:1234/v1",
@@ -55,6 +55,7 @@ describe("local provider timeout", () => {
       });
       const stored = await getLocalProviderByName("lc-lmstudio", storageDir);
       expect(stored).toMatchObject({
+        provider_type: "lmstudio_openai",
         base_url: "http://127.0.0.1:1234/v1",
         timeout: 600_000,
       });

@@ -311,7 +311,6 @@ function ProfileSelectionUI({
         loadingState={loading ? "loading_profiles" : "ready"}
         continueSession={false}
         agentState={null}
-        agentProvenance={null}
       />
       <Box height={1} />
 

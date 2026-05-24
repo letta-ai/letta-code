@@ -154,6 +154,16 @@ describe("pi model factory", () => {
     }
   });
 
+  test("resolves server LM Studio provider type to local runtime provider", async () => {
+    const resolved = await resolvePiModelForAgent(undefined, {
+      provider_type: "lmstudio_openai",
+    });
+
+    expect(resolved.provider).toBe("lmstudio");
+    expect(resolved.model.provider).toBe("lmstudio");
+    expect(resolved.model.baseUrl).toBe("http://127.0.0.1:1234/v1");
+  });
+
   test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-llama-cpp-base-url-"));
     try {
@@ -172,6 +182,31 @@ describe("pi model factory", () => {
       );
 
       expect(resolved.model.baseUrl).toBe("http://localhost:8088/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not let local no-key placeholders mask LM Studio env API keys", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-env-key-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "lmstudio",
+        providerName: "lc-lmstudio",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:8000/v1",
+      });
+
+      await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {
+        const resolved = await resolvePiModelForAgent(
+          "lmstudio/local-model",
+          { provider_type: "lmstudio" },
+          { localProviderAuthStorageDir: storageDir },
+        );
+
+        expect(resolved.apiKey).toBe("1234");
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

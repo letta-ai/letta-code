@@ -10,6 +10,7 @@
         "ink-link": "^5.0.0",
         "node-pty": "^1.1.0",
         "open": "^10.2.0",
+        "react": "18.2.0",
         "sharp": "^0.34.5",
         "shiki": "^4.0.2",
         "strip-ansi": "^7.2.0",
@@ -33,7 +34,6 @@
         "madge": "^8.0.0",
         "minimatch": "^10.0.3",
         "picomatch": "^2.3.1",
-        "react": "18.2.0",
         "typescript": "^5.0.0",
       },
       "optionalDependencies": {

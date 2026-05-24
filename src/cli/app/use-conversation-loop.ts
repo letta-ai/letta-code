@@ -68,6 +68,7 @@ import {
   buildLocalNoModelResponse,
   splitSyntheticAssistantResponse,
 } from "@/cli/helpers/local-no-model-response";
+import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
@@ -142,6 +143,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function makeExecutionPhaseHook(
+  setExecutionPhase: Dispatch<SetStateAction<ExecutionPhase>>,
+) {
+  return ({ chunk }: { chunk: { message_type?: string } }) => {
+    const t = chunk?.message_type;
+    if (t === "reasoning_message") setExecutionPhase("thinking");
+    else if (t === "tool_call_message" || t === "approval_request_message")
+      setExecutionPhase("toolUse");
+    else if (t === "assistant_message") setExecutionPhase("responding");
+    return undefined;
+  };
+}
+
 type ConversationLoopContext = {
   abortControllerRef: MutableRefObject<AbortController | null>;
   agentIdRef: MutableRefObject<string>;
@@ -205,6 +219,7 @@ type ConversationLoopContext = {
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
   setNetworkPhase: Dispatch<SetStateAction<NetworkPhase>>;
+  setExecutionPhase: Dispatch<SetStateAction<ExecutionPhase>>;
   setPendingApprovals: Dispatch<SetStateAction<ApprovalRequest[]>>;
   setRestoreQueueOnCancel: Dispatch<SetStateAction<boolean>>;
   setRestoredInput: Dispatch<SetStateAction<string | null>>;
@@ -296,6 +311,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setLlmConfig,
     setNeedsEagerApprovalCheck,
     setNetworkPhase,
+    setExecutionPhase,
     setPendingApprovals,
     setRestoreQueueOnCancel,
     setRestoredInput,
@@ -403,6 +419,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         });
       }
       setNetworkPhase(null);
+      setExecutionPhase(null);
       setStreaming(false);
       refreshDerived();
       return true;
@@ -412,6 +429,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       buffersRef,
       refreshDerived,
       setNetworkPhase,
+      setExecutionPhase,
       setStreaming,
       setThinkingMessage,
     ],
@@ -626,6 +644,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         setStreaming(true);
         openTrajectorySegment();
         setNetworkPhase("upload");
+        setExecutionPhase("requesting");
         abortControllerRef.current = new AbortController();
 
         if (
@@ -923,7 +942,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   refreshDerivedThrottled,
                   signal,
                   undefined, // no handleFirstMessage on resume
-                  undefined,
+                  makeExecutionPhaseHook(setExecutionPhase),
                   contextTrackerRef.current,
                   highestSeqIdSeen,
                 );
@@ -1331,7 +1350,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   refreshDerivedThrottled,
                   signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
                   handleFirstMessage,
-                  undefined,
+                  makeExecutionPhaseHook(setExecutionPhase),
                   contextTrackerRef.current,
                   highestSeqIdSeen,
                 );
@@ -2627,6 +2646,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           // When lastRunId is present, prefer the richer server-side error details below.
           if (fallbackError && !lastRunId) {
             setNetworkPhase("error");
+            setExecutionPhase(null);
             const formattedFallback = formatErrorDetails(
               fallbackError,
               agentIdRef.current,
