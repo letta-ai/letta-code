@@ -79,6 +79,13 @@ describe("connect provider normalization", () => {
     expect(resolveConnectProvider("unknown-provider", "api")).toBeNull();
   });
 
+  test("does not resolve local-only providers for the API provider store", () => {
+    expect(resolveConnectProvider("ollama", "api")).toBeNull();
+    expect(resolveConnectProvider("ollama-cloud", "api")).toBeNull();
+    expect(resolveConnectProvider("lmstudio", "api")).toBeNull();
+    expect(resolveConnectProvider("llama.cpp", "api")).toBeNull();
+  });
+
   test("help list contains chatgpt alias", () => {
     expect(listConnectProvidersForHelp("api")).toContain(
       "chatgpt (alias: codex)",
@@ -93,9 +100,9 @@ describe("connect provider normalization", () => {
         LLAMA_CPP_API_KEY: undefined,
       },
       () => {
-        const ollama = resolveConnectProvider("ollama", "api");
-        const lmstudio = resolveConnectProvider("lmstudio", "api");
-        const llamaCpp = resolveConnectProvider("llama.cpp", "api");
+        const ollama = resolveConnectProvider("ollama", "local");
+        const lmstudio = resolveConnectProvider("lmstudio", "local");
+        const llamaCpp = resolveConnectProvider("llama.cpp", "local");
         if (!ollama || !lmstudio || !llamaCpp) {
           throw new Error("Expected local providers to resolve");
         }
@@ -111,7 +118,7 @@ describe("connect provider normalization", () => {
 
   test("uses environment keys before API-key optional defaults", () => {
     withEnv({ LMSTUDIO_API_KEY: "1234" }, () => {
-      const lmstudio = resolveConnectProvider("lmstudio", "api");
+      const lmstudio = resolveConnectProvider("lmstudio", "local");
       if (!lmstudio) {
         throw new Error("Expected lmstudio provider to resolve");
       }

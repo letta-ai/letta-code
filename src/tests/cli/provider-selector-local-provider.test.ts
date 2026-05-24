@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { providerApiKeyFromInput } from "@/cli/components/ProviderSelector";
 import {
-  BYOK_PROVIDERS,
   type ByokProvider,
   defaultProviderApiKey,
+  getProviderConfigs,
 } from "@/providers/byok-providers";
 
 function withEnv<T>(
@@ -34,7 +34,9 @@ function withEnv<T>(
 }
 
 function providerById(id: string): ByokProvider {
-  const provider = BYOK_PROVIDERS.find((candidate) => candidate.id === id);
+  const provider = getProviderConfigs("local").find(
+    (candidate) => candidate.id === id,
+  );
   if (!provider) {
     throw new Error(`Expected provider ${id} to exist`);
   }
@@ -45,7 +47,7 @@ describe("ProviderSelector local provider API keys", () => {
   test("keeps LM Studio UI identity while using server provider type", () => {
     const lmstudio = providerById("lmstudio");
 
-    expect(lmstudio.providerName).toBe("lc-lmstudio");
+    expect(lmstudio.providerNames).toContain("lc-lmstudio");
     expect(lmstudio.providerType).toBe("lmstudio_openai");
   });
 

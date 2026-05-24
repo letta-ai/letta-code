@@ -24,10 +24,27 @@ describe("buildByokProviderAliases", () => {
     expect(aliases["lc-gemini"]).toBe("google");
     expect(aliases["lc-minimax"]).toBe("minimax");
     expect(aliases["lc-openrouter"]).toBe("openrouter");
-    expect(aliases["lc-lmstudio"]).toBe("lmstudio");
-    expect(aliases["lc-llama-cpp"]).toBe("llama.cpp");
     expect(aliases["lc-bedrock"]).toBe("amazon-bedrock");
     expect(aliases["chatgpt-plus-pro"]).toBe("openai-codex");
+  });
+
+  test("includes local endpoint aliases only for the local provider store", () => {
+    const apiAliases = buildByokProviderAliases([], "api");
+    const localAliases = buildByokProviderAliases([], "local");
+
+    expect(apiAliases["lc-ollama"]).toBeUndefined();
+    expect(apiAliases["lc-ollama-cloud"]).toBeUndefined();
+    expect(apiAliases["lc-lmstudio"]).toBeUndefined();
+    expect(apiAliases["lc-llama-cpp"]).toBeUndefined();
+
+    expect(localAliases.ollama).toBe("ollama");
+    expect(localAliases["lc-ollama"]).toBe("ollama");
+    expect(localAliases["ollama-cloud"]).toBe("ollama-cloud");
+    expect(localAliases["lc-ollama-cloud"]).toBe("ollama-cloud");
+    expect(localAliases.lmstudio).toBe("lmstudio");
+    expect(localAliases["lc-lmstudio"]).toBe("lmstudio");
+    expect(localAliases["llama-cpp"]).toBe("llama.cpp");
+    expect(localAliases["lc-llama-cpp"]).toBe("llama.cpp");
   });
 
   test("layers connected providers on top of built-in aliases", () => {

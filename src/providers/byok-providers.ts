@@ -181,40 +181,6 @@ export const CONSTELLATION_BYOK_PROVIDERS: readonly ByokProvider[] = [
     providerName: "lc-openrouter",
   },
   {
-    id: "ollama",
-    displayName: "Ollama (local)",
-    description: "Connect local Ollama at http://localhost:11434/v1",
-    providerType: "ollama",
-    providerName: "lc-ollama",
-    requiresApiKey: false,
-    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
-  },
-  {
-    id: "ollama-cloud",
-    displayName: "Ollama Cloud",
-    description: "Connect an Ollama Cloud API key",
-    providerType: "ollama_cloud",
-    providerName: "lc-ollama-cloud",
-  },
-  {
-    id: "lmstudio",
-    displayName: "LM Studio (local)",
-    description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
-    providerType: LMSTUDIO_OPENAI_PROVIDER_TYPE,
-    providerName: "lc-lmstudio",
-    requiresApiKey: false,
-    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
-  },
-  {
-    id: "llama-cpp",
-    displayName: "llama.cpp (local)",
-    description: "Connect local llama.cpp at http://localhost:8080/v1",
-    providerType: "llama_cpp",
-    providerName: "lc-llama-cpp",
-    requiresApiKey: false,
-    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
-  },
-  {
     id: "bedrock",
     displayName: "AWS Bedrock",
     description: "Connect to Claude on Amazon Bedrock",
@@ -470,7 +436,12 @@ export function buildByokProviderAliases(
   for (const bp of getProviderConfigs(target)) {
     const base = PROVIDER_TYPE_TO_BASE_PROVIDER[bp.providerType];
     if (base) {
-      aliases[bp.providerName] = base;
+      for (const providerName of [
+        bp.providerName,
+        ...(bp.providerNames ?? []),
+      ]) {
+        aliases[providerName] = base;
+      }
     }
   }
 

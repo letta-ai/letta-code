@@ -9,6 +9,17 @@ import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth
 import { getProviderConfigs } from "@/providers/byok-providers";
 
 describe("local pi provider catalog", () => {
+  test("Constellation /connect configs exclude local-only providers", () => {
+    const apiProviderIds = new Set(
+      getProviderConfigs("api").map((provider) => provider.id),
+    );
+
+    expect(apiProviderIds.has("ollama")).toBe(false);
+    expect(apiProviderIds.has("ollama-cloud")).toBe(false);
+    expect(apiProviderIds.has("lmstudio")).toBe(false);
+    expect(apiProviderIds.has("llama-cpp")).toBe(false);
+  });
+
   test("local /connect configs cover every upstream pi-ai provider", () => {
     const coveredProviders = new Set(
       getProviderConfigs("local")
