@@ -2488,9 +2488,32 @@ ${SYSTEM_REMINDER_CLOSE}
         const { executeApprovalBatch } = await import(
           "@/agent/approval-execution"
         );
+        // Forward each ToolReturnMessage onto the wire so SDK consumers (ACP
+        // adapters, etc.) can render tool results.  Without this, headless
+        // mode silently drops returns for auto-approved tools and the only
+        // signal a downstream gets is the final `result` text.
         const executedResults = await executeApprovalBatch(
           decisions,
-          undefined,
+          (chunk) => {
+            const uuid = randomUUID();
+            if (includePartialMessages) {
+              const streamEvent: StreamEvent = {
+                type: "stream_event",
+                event: chunk,
+                session_id: sessionId,
+                uuid,
+              };
+              writeWireMessage(streamEvent);
+            } else {
+              const msg: MessageWire = {
+                type: "message",
+                ...chunk,
+                session_id: sessionId,
+                uuid,
+              };
+              writeWireMessage(msg);
+            }
+          },
           {
             toolContextId: turnToolContextId ?? undefined,
           },
@@ -4254,13 +4277,34 @@ async function runBidirectionalMode(
               }
             }
 
-            // Execute approved tools
+            // Execute approved tools (interactive permission path).  Mirror
+            // the auto-approve path above and surface each tool_return on the
+            // wire so SDK consumers can render results.
             const { executeApprovalBatch } = await import(
               "@/agent/approval-execution"
             );
             const executedResults = await executeApprovalBatch(
               decisions,
-              undefined,
+              (chunk) => {
+                const uuid = randomUUID();
+                if (includePartialMessages) {
+                  const streamEvent: StreamEvent = {
+                    type: "stream_event",
+                    event: chunk,
+                    session_id: sessionId,
+                    uuid,
+                  };
+                  writeWireMessage(streamEvent);
+                } else {
+                  const msg: MessageWire = {
+                    type: "message",
+                    ...chunk,
+                    session_id: sessionId,
+                    uuid,
+                  };
+                  writeWireMessage(msg);
+                }
+              },
               { toolContextId: turnToolContextId ?? undefined },
             );
 
