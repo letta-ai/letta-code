@@ -1,5 +1,21 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { __testSetBackend, type Backend } from "@/backend";
 import { runConnectSubcommand } from "@/cli/subcommands/connect";
+
+function setProviderTarget(target: "api" | "local") {
+  __testSetBackend({
+    capabilities: {
+      remoteMemfs: target === "api",
+      serverSideToolManagement: target === "api",
+      serverSecrets: target === "api",
+      agentFileImportExport: target === "api",
+      promptRecompile: target === "api",
+      byokProviderRefresh: target === "api",
+      localModelCatalog: target === "local",
+      localMemfs: target === "local",
+    },
+  } as Backend);
+}
 
 function createIoDeps() {
   const stdout: string[] = [];
@@ -53,6 +69,14 @@ async function withEnv<T>(
 }
 
 describe("connect subcommand", () => {
+  beforeEach(() => {
+    setProviderTarget("api");
+  });
+
+  afterEach(() => {
+    setProviderTarget("api");
+  });
+
   test("runs OAuth flow for codex alias", async () => {
     const { stdout, deps } = createIoDeps();
 
@@ -112,6 +136,7 @@ describe("connect subcommand", () => {
 
   test("connects API-key optional local providers without prompting", async () => {
     const { deps } = createIoDeps();
+    setProviderTarget("local");
 
     const exitCode = await withEnv({ OLLAMA_LOCAL_API_KEY: undefined }, () =>
       runConnectSubcommand(["ollama"], deps),
@@ -125,13 +150,14 @@ describe("connect subcommand", () => {
     );
     expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
       "ollama",
-      "lc-ollama",
+      "ollama",
       "not-needed",
     );
   });
 
   test("passes local provider base URL and timeout options", async () => {
     const { deps } = createIoDeps();
+    setProviderTarget("local");
 
     const exitCode = await withEnv({ LMSTUDIO_API_KEY: undefined }, () =>
       runConnectSubcommand(
@@ -153,7 +179,7 @@ describe("connect subcommand", () => {
     );
     expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
       "lmstudio_openai",
-      "lc-lmstudio",
+      "lmstudio",
       "not-needed",
       undefined,
       undefined,
@@ -167,6 +193,7 @@ describe("connect subcommand", () => {
 
   test("connects llama.cpp local provider alias", async () => {
     const { deps } = createIoDeps();
+    setProviderTarget("local");
 
     const exitCode = await withEnv({ LLAMA_CPP_API_KEY: undefined }, () =>
       runConnectSubcommand(
@@ -178,7 +205,7 @@ describe("connect subcommand", () => {
     expect(exitCode).toBe(0);
     expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
       "llama_cpp",
-      "lc-llama-cpp",
+      "llama-cpp",
       "not-needed",
       undefined,
       undefined,
@@ -189,6 +216,7 @@ describe("connect subcommand", () => {
 
   test("uses LM Studio environment API key when no key is provided", async () => {
     const { deps } = createIoDeps();
+    setProviderTarget("local");
 
     const exitCode = await withEnv({ LMSTUDIO_API_KEY: "1234" }, () =>
       runConnectSubcommand(
@@ -204,7 +232,7 @@ describe("connect subcommand", () => {
     );
     expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
       "lmstudio_openai",
-      "lc-lmstudio",
+      "lmstudio",
       "1234",
       undefined,
       undefined,

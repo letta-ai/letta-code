@@ -37,7 +37,7 @@ function withEnv<T>(
 
 describe("connect provider normalization", () => {
   test("normalizes codex alias to chatgpt provider", () => {
-    const resolved = resolveConnectProvider("codex");
+    const resolved = resolveConnectProvider("codex", "api");
 
     expect(resolved).not.toBeNull();
     if (!resolved) {
@@ -50,8 +50,8 @@ describe("connect provider normalization", () => {
   });
 
   test("resolves standard api-key providers", () => {
-    const anthropic = resolveConnectProvider("anthropic");
-    const openrouter = resolveConnectProvider("openrouter");
+    const anthropic = resolveConnectProvider("anthropic", "api");
+    const openrouter = resolveConnectProvider("openrouter", "api");
 
     if (!anthropic || !openrouter) {
       throw new Error("Expected anthropic and openrouter providers to resolve");
@@ -65,7 +65,7 @@ describe("connect provider normalization", () => {
   });
 
   test("resolves bedrock as non-api-key provider", () => {
-    const bedrock = resolveConnectProvider("bedrock");
+    const bedrock = resolveConnectProvider("bedrock", "api");
     if (!bedrock) {
       throw new Error("Expected bedrock provider to resolve");
     }
@@ -76,11 +76,20 @@ describe("connect provider normalization", () => {
   });
 
   test("returns null for unknown provider", () => {
-    expect(resolveConnectProvider("unknown-provider")).toBeNull();
+    expect(resolveConnectProvider("unknown-provider", "api")).toBeNull();
+  });
+
+  test("does not resolve local-only providers for the API provider store", () => {
+    expect(resolveConnectProvider("ollama", "api")).toBeNull();
+    expect(resolveConnectProvider("ollama-cloud", "api")).toBeNull();
+    expect(resolveConnectProvider("lmstudio", "api")).toBeNull();
+    expect(resolveConnectProvider("llama.cpp", "api")).toBeNull();
   });
 
   test("help list contains chatgpt alias", () => {
-    expect(listConnectProvidersForHelp()).toContain("chatgpt (alias: codex)");
+    expect(listConnectProvidersForHelp("api")).toContain(
+      "chatgpt (alias: codex)",
+    );
   });
 
   test("supports API-key optional local providers", () => {
@@ -91,9 +100,9 @@ describe("connect provider normalization", () => {
         LLAMA_CPP_API_KEY: undefined,
       },
       () => {
-        const ollama = resolveConnectProvider("ollama");
-        const lmstudio = resolveConnectProvider("lmstudio");
-        const llamaCpp = resolveConnectProvider("llama.cpp");
+        const ollama = resolveConnectProvider("ollama", "local");
+        const lmstudio = resolveConnectProvider("lmstudio", "local");
+        const llamaCpp = resolveConnectProvider("llama.cpp", "local");
         if (!ollama || !lmstudio || !llamaCpp) {
           throw new Error("Expected local providers to resolve");
         }
@@ -107,9 +116,23 @@ describe("connect provider normalization", () => {
     );
   });
 
+  test("resolves local subscription providers from the pi OAuth catalog", () => {
+    const anthropicOAuth = resolveConnectProvider("anthropic-oauth", "local");
+    const githubCopilot = resolveConnectProvider("github-copilot", "local");
+
+    if (!anthropicOAuth || !githubCopilot) {
+      throw new Error("Expected local OAuth providers to resolve");
+    }
+
+    expect(isConnectOAuthProvider(anthropicOAuth)).toBe(true);
+    expect(anthropicOAuth.byokProvider.oauthProviderId).toBe("anthropic");
+    expect(isConnectOAuthProvider(githubCopilot)).toBe(true);
+    expect(githubCopilot.byokProvider.oauthProviderId).toBe("github-copilot");
+  });
+
   test("uses environment keys before API-key optional defaults", () => {
     withEnv({ LMSTUDIO_API_KEY: "1234" }, () => {
-      const lmstudio = resolveConnectProvider("lmstudio");
+      const lmstudio = resolveConnectProvider("lmstudio", "local");
       if (!lmstudio) {
         throw new Error("Expected lmstudio provider to resolve");
       }

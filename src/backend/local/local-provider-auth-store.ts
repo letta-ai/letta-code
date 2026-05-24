@@ -50,6 +50,7 @@ export interface LocalProviderOAuthAuth {
   idToken?: string;
   expires: number;
   accountId?: string;
+  [key: string]: unknown;
 }
 
 export type LocalProviderAuth = LocalProviderApiAuth | LocalProviderOAuthAuth;
@@ -125,6 +126,7 @@ function providerResponse(record: LocalProviderRecord): ProviderResponse {
     name: record.name,
     provider_type: record.provider_type,
     provider_category: record.provider_category,
+    auth_type: record.auth.type,
     ...(record.base_url ? { base_url: record.base_url } : {}),
     ...(record.timeout !== undefined ? { timeout: record.timeout } : {}),
     ...(record.access_key ? { access_key: record.access_key } : {}),
@@ -309,83 +311,148 @@ export function setLocalChatGPTOAuth(
   auth: LocalProviderOAuthAuth,
   storageDir?: string,
 ): void {
-  const file = readAuthFile(storageDir);
-  const now = new Date().toISOString();
-  const existing = file.providers[LOCAL_CHATGPT_PROVIDER_NAME];
-  file.providers[LOCAL_CHATGPT_PROVIDER_NAME] = {
-    id: existing?.id ?? providerId(LOCAL_CHATGPT_PROVIDER_NAME),
-    name: LOCAL_CHATGPT_PROVIDER_NAME,
-    provider_type: "chatgpt_oauth",
-    provider_category: "byok",
+  setLocalOAuthProvider({
+    providerName: LOCAL_CHATGPT_PROVIDER_NAME,
+    providerType: "chatgpt_oauth",
     auth,
+    storageDir,
+  });
+}
+
+export function setLocalOAuthProvider(input: {
+  providerName: string;
+  providerType: string;
+  auth: LocalProviderOAuthAuth;
+  storageDir?: string;
+}): void {
+  if (!isLocalProviderTypeSupported(input.providerType)) {
+    throw new Error(
+      `Provider type "${input.providerType}" is not supported in local mode yet.`,
+    );
+  }
+
+  const file = readAuthFile(input.storageDir);
+  const now = new Date().toISOString();
+  const existing = file.providers[input.providerName];
+  file.providers[input.providerName] = {
+    id: existing?.id ?? providerId(input.providerName),
+    name: input.providerName,
+    provider_type: input.providerType,
+    provider_category: "byok",
+    auth: input.auth,
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
-  writeAuthFile(file, storageDir);
+  writeAuthFile(file, input.storageDir);
 }
 
 function toPiOAuthCredentials(auth: LocalProviderOAuthAuth): OAuthCredentials {
+  const { type: _type, ...credentials } = auth;
   return {
+    ...credentials,
     access: auth.access,
     refresh: auth.refresh ?? "",
     expires: auth.expires,
-    ...(auth.accountId ? { accountId: auth.accountId } : {}),
-    ...(auth.idToken ? { idToken: auth.idToken } : {}),
   };
 }
 
-function toLocalChatGPTOAuth(
+function toLocalOAuthAuth(
   credentials: OAuthCredentials,
-  previous: LocalProviderOAuthAuth,
+  previous?: LocalProviderOAuthAuth,
 ): LocalProviderOAuthAuth {
-  const refresh = credentials.refresh || previous.refresh;
+  const refresh = credentials.refresh || previous?.refresh;
   return {
     type: "oauth",
     access: credentials.access,
     expires: credentials.expires,
     ...(refresh ? { refresh } : {}),
-    ...(typeof credentials.accountId === "string"
-      ? { accountId: credentials.accountId }
-      : previous.accountId
-        ? { accountId: previous.accountId }
-        : {}),
-    ...(typeof credentials.idToken === "string"
-      ? { idToken: credentials.idToken }
-      : previous.idToken
-        ? { idToken: previous.idToken }
-        : {}),
+    ...Object.fromEntries(
+      Object.entries(credentials).filter(
+        ([key, value]) =>
+          !["access", "refresh", "expires"].includes(key) &&
+          value !== undefined,
+      ),
+    ),
   };
 }
 
-function localChatGPTOAuthEquals(
+function localOAuthAuthEquals(
   left: LocalProviderOAuthAuth,
   right: LocalProviderOAuthAuth,
 ): boolean {
-  return (
-    left.access === right.access &&
-    left.refresh === right.refresh &&
-    left.idToken === right.idToken &&
-    left.expires === right.expires &&
-    left.accountId === right.accountId
-  );
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function localOAuthAuthFromCredentials(
+  credentials: OAuthCredentials,
+): LocalProviderOAuthAuth {
+  return toLocalOAuthAuth(credentials);
+}
+
+function localOAuthRecord(
+  providerNames: readonly string[],
+  storageDir?: string,
+): LocalProviderRecord | undefined {
+  for (const providerName of providerNames) {
+    const record = getLocalProviderRecordByName(providerName, storageDir);
+    if (record?.auth.type === "oauth") return record;
+  }
+  return undefined;
+}
+
+export function getLocalOAuthCredentials(
+  providerNames: readonly string[],
+  storageDir?: string,
+): OAuthCredentials | undefined {
+  const record = localOAuthRecord(providerNames, storageDir);
+  return record
+    ? toPiOAuthCredentials(record.auth as LocalProviderOAuthAuth)
+    : undefined;
+}
+
+export async function getLocalOAuthApiKey(input: {
+  providerId: string;
+  providerNames: readonly string[];
+  storageDir?: string;
+}): Promise<
+  | {
+      apiKey: string;
+      credentials: OAuthCredentials;
+    }
+  | undefined
+> {
+  const record = localOAuthRecord(input.providerNames, input.storageDir);
+  if (!record || record.auth.type !== "oauth") return undefined;
+
+  const result = await getOAuthApiKey(input.providerId, {
+    [input.providerId]: toPiOAuthCredentials(record.auth),
+  });
+  if (!result) return undefined;
+
+  const nextAuth = toLocalOAuthAuth(result.newCredentials, record.auth);
+  if (!localOAuthAuthEquals(nextAuth, record.auth)) {
+    setLocalOAuthProvider({
+      providerName: record.name,
+      providerType: record.provider_type,
+      auth: nextAuth,
+      storageDir: input.storageDir,
+    });
+  }
+  return {
+    apiKey: result.apiKey,
+    credentials: result.newCredentials,
+  };
 }
 
 export async function getLocalChatGPTApiKey(
   storageDir?: string,
 ): Promise<string | undefined> {
-  const auth = getLocalChatGPTOAuth(storageDir);
-  if (!auth) return undefined;
-
-  const result = await getOAuthApiKey("openai-codex", {
-    "openai-codex": toPiOAuthCredentials(auth),
+  const result = await getLocalOAuthApiKey({
+    providerId: "openai-codex",
+    providerNames: [LOCAL_CHATGPT_PROVIDER_NAME, "openai-codex"],
+    storageDir,
   });
-  if (!result) return undefined;
-
-  const nextAuth = toLocalChatGPTOAuth(result.newCredentials, auth);
-  if (!localChatGPTOAuthEquals(nextAuth, auth)) {
-    setLocalChatGPTOAuth(nextAuth, storageDir);
-  }
-  return result.apiKey;
+  return result?.apiKey;
 }
 
 function parseChatGPTOAuth(value: string): LocalProviderOAuthAuth {

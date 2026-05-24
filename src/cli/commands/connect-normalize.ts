@@ -2,70 +2,49 @@ import {
   type ByokProvider,
   type ByokProviderId,
   defaultProviderApiKey,
+  defaultProviderStorageTarget,
   getProviderConfig,
+  getProviderConfigs,
+  type ProviderStorageTarget,
 } from "@/providers/byok-providers";
 
-export type ConnectProviderCanonical =
-  | "chatgpt"
-  | "anthropic"
-  | "openai"
-  | "zai"
-  | "zai-coding"
-  | "minimax"
-  | "moonshot"
-  | "kimi-code"
-  | "gemini"
-  | "openrouter"
-  | "ollama"
-  | "ollama-cloud"
-  | "lmstudio"
-  | "llama-cpp"
-  | "bedrock";
+export type ConnectProviderCanonical = string;
 
 const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   chatgpt: "chatgpt",
   codex: "chatgpt",
-  anthropic: "anthropic",
-  openai: "openai",
-  zai: "zai",
-  "zai-coding": "zai-coding",
-  minimax: "minimax",
-  moonshot: "moonshot",
-  "kimi-code": "kimi-code",
-  gemini: "gemini",
-  openrouter: "openrouter",
+  "openai-codex": "chatgpt",
   ollama: "ollama",
   "ollama-cloud": "ollama-cloud",
   lmstudio: "lmstudio",
   "llama-cpp": "llama-cpp",
   "llama.cpp": "llama-cpp",
   llamacpp: "llama-cpp",
-  bedrock: "bedrock",
 };
 
-const CANONICAL_ORDER: ConnectProviderCanonical[] = [
-  "chatgpt",
-  "anthropic",
-  "openai",
-  "zai",
-  "zai-coding",
-  "minimax",
-  "moonshot",
-  "kimi-code",
-  "gemini",
-  "openrouter",
-  "ollama",
-  "ollama-cloud",
-  "lmstudio",
-  "llama-cpp",
-  "bedrock",
-];
+const LOCAL_ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
+  gemini: "google",
+  "kimi-code": "kimi-coding",
+  moonshot: "moonshotai",
+  bedrock: "amazon-bedrock",
+};
 
-function canonicalToByokId(
-  canonical: ConnectProviderCanonical,
-): ByokProviderId {
-  if (canonical === "chatgpt") return "codex";
-  return canonical;
+function providerMatches(provider: ByokProvider, token: string): boolean {
+  if (provider.id === token) return true;
+  if (provider.oauthProviderId === token) return true;
+  if (provider.providerType === token) return true;
+  if (provider.providerName === token) return true;
+  return false;
+}
+
+function findChatGPTProvider(
+  target: ProviderStorageTarget,
+): ByokProvider | undefined {
+  return getProviderConfigs(target).find(
+    (provider) =>
+      provider.oauthProviderId === "openai-codex" ||
+      provider.providerType === "chatgpt_oauth",
+  );
 }
 
 export interface ResolvedConnectProvider {
@@ -73,10 +52,12 @@ export interface ResolvedConnectProvider {
   canonical: ConnectProviderCanonical;
   byokId: ByokProviderId;
   byokProvider: ByokProvider;
+  target: ProviderStorageTarget;
 }
 
 export function resolveConnectProvider(
   providerToken: string | undefined,
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): ResolvedConnectProvider | null {
   if (!providerToken) {
     return null;
@@ -87,13 +68,16 @@ export function resolveConnectProvider(
     return null;
   }
 
-  const canonical = ALIAS_TO_CANONICAL[rawInput];
-  if (!canonical) {
-    return null;
-  }
-
-  const byokId = canonicalToByokId(canonical);
-  const byokProvider = getProviderConfig(byokId);
+  const canonical =
+    ALIAS_TO_CANONICAL[rawInput] ??
+    (target === "local" ? LOCAL_ALIAS_TO_CANONICAL[rawInput] : undefined) ??
+    rawInput;
+  const byokProvider =
+    canonical === "chatgpt"
+      ? findChatGPTProvider(target)
+      : (getProviderConfigs(target).find((provider) =>
+          providerMatches(provider, canonical),
+        ) ?? getProviderConfig(canonical, target));
   if (!byokProvider) {
     return null;
   }
@@ -101,34 +85,46 @@ export function resolveConnectProvider(
   return {
     rawInput,
     canonical,
-    byokId,
+    byokId: byokProvider.id,
     byokProvider,
+    target,
   };
 }
 
-export function listConnectProvidersForHelp(): string[] {
-  return CANONICAL_ORDER.map((provider) => {
-    if (provider === "chatgpt") {
-      return "chatgpt (alias: codex)";
-    }
-    return provider;
-  });
+export function listConnectProvidersForHelp(
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
+): string[] {
+  const providers = getProviderConfigs(target).map((provider) => provider.id);
+  if (providers.includes("codex") || providers.includes("openai-codex-oauth")) {
+    return [
+      "chatgpt (alias: codex)",
+      ...providers.filter(
+        (provider) => provider !== "codex" && provider !== "openai-codex-oauth",
+      ),
+    ];
+  }
+  return providers;
 }
 
-export function listConnectProviderTokens(): string[] {
-  return [...CANONICAL_ORDER, "codex"];
+export function listConnectProviderTokens(
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
+): string[] {
+  return [...listConnectProvidersForHelp(target), "codex"];
 }
 
 export function isConnectOAuthProvider(
   provider: ResolvedConnectProvider,
 ): boolean {
-  return provider.canonical === "chatgpt";
+  return provider.byokProvider.isOAuth === true;
 }
 
 export function isConnectBedrockProvider(
   provider: ResolvedConnectProvider,
 ): boolean {
-  return provider.canonical === "bedrock";
+  return (
+    provider.byokProvider.providerType === "bedrock" ||
+    provider.byokProvider.providerType === "amazon-bedrock"
+  );
 }
 
 export function isConnectApiKeyProvider(
@@ -148,5 +144,5 @@ export function defaultConnectApiKey(
 export function isConnectZaiBaseProvider(
   provider: ResolvedConnectProvider,
 ): boolean {
-  return provider.canonical === "zai";
+  return provider.byokProvider.providerType === "zai";
 }

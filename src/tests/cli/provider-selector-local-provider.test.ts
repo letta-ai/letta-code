@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { providerApiKeyFromInput } from "@/cli/components/ProviderSelector";
 import {
-  BYOK_PROVIDERS,
+  filterProviderConfigs,
+  hasConstellationProviderStoreCredentials,
+  providerApiKeyFromInput,
+  shouldShowProviderStoreTabs,
+} from "@/cli/components/ProviderSelector";
+import {
   type ByokProvider,
   defaultProviderApiKey,
+  getProviderConfigs,
 } from "@/providers/byok-providers";
 
 function withEnv<T>(
@@ -34,7 +39,9 @@ function withEnv<T>(
 }
 
 function providerById(id: string): ByokProvider {
-  const provider = BYOK_PROVIDERS.find((candidate) => candidate.id === id);
+  const provider = getProviderConfigs("local").find(
+    (candidate) => candidate.id === id,
+  );
   if (!provider) {
     throw new Error(`Expected provider ${id} to exist`);
   }
@@ -45,7 +52,7 @@ describe("ProviderSelector local provider API keys", () => {
   test("keeps LM Studio UI identity while using server provider type", () => {
     const lmstudio = providerById("lmstudio");
 
-    expect(lmstudio.providerName).toBe("lc-lmstudio");
+    expect(lmstudio.providerNames).toContain("lc-lmstudio");
     expect(lmstudio.providerType).toBe("lmstudio_openai");
   });
 
@@ -101,6 +108,65 @@ describe("ProviderSelector local provider API keys", () => {
   test("uses explicitly typed keys over local provider defaults", () => {
     expect(providerApiKeyFromInput(providerById("lmstudio"), " lm-key ")).toBe(
       "lm-key",
+    );
+  });
+});
+
+describe("ProviderSelector Constellation auth gating", () => {
+  test("requires Constellation credentials before showing provider-store tabs", () => {
+    const loggedOut = hasConstellationProviderStoreCredentials(
+      { env: {}, refreshToken: undefined },
+      {},
+    );
+
+    expect(loggedOut).toBe(false);
+    expect(shouldShowProviderStoreTabs(loggedOut)).toBe(false);
+    expect(shouldShowProviderStoreTabs(null)).toBe(false);
+  });
+
+  test("accepts env, stored API key, or refresh token as Constellation auth", () => {
+    expect(
+      hasConstellationProviderStoreCredentials(
+        { env: {}, refreshToken: undefined },
+        { LETTA_API_KEY: "env-key" },
+      ),
+    ).toBe(true);
+    expect(
+      hasConstellationProviderStoreCredentials(
+        { env: { LETTA_API_KEY: "stored-key" }, refreshToken: undefined },
+        {},
+      ),
+    ).toBe(true);
+    expect(
+      hasConstellationProviderStoreCredentials(
+        { env: {}, refreshToken: "refresh-token" },
+        {},
+      ),
+    ).toBe(true);
+    expect(shouldShowProviderStoreTabs(true)).toBe(true);
+  });
+});
+
+describe("ProviderSelector provider filtering", () => {
+  test("matches local providers by display name and description", () => {
+    const providers = getProviderConfigs("local");
+
+    expect(
+      filterProviderConfigs(providers, "copilot").map((p) => p.id),
+    ).toEqual(["github-copilot"]);
+    expect(
+      filterProviderConfigs(providers, "subscription").map((p) => p.id),
+    ).toEqual(["anthropic-oauth", "openai-codex-oauth", "github-copilot"]);
+  });
+
+  test("matches provider aliases and restores all providers for blank query", () => {
+    const providers = getProviderConfigs("local");
+
+    expect(
+      filterProviderConfigs(providers, "lc-lmstudio").map((p) => p.id),
+    ).toEqual(["lmstudio"]);
+    expect(filterProviderConfigs(providers, "   ").length).toBe(
+      providers.length,
     );
   });
 });
