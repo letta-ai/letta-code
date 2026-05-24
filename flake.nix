@@ -33,9 +33,9 @@
           };
 
           nativeBuildInputs = [
+            pkgs.nodejs_22
             pkgs.bun
             pkgs.makeWrapper
-            pkgs.nodejs_22
             pkgs.pkg-config
             pkgs.python3
             pkgs.bun2nix.hook
@@ -54,6 +54,8 @@
 
           preBuild = ''
             export HOME="$TMPDIR"
+            substituteInPlace build.js \
+              --replace-fail 'await Bun.$`bunx tsc -p tsconfig.types.json`' 'true'
           '';
 
           buildPhase = ''
@@ -73,9 +75,16 @@
               -C "$out/lib/letta-code" \
               --strip-components=1
 
-            makeWrapper ${pkgs.nodejs_22}/bin/node "$out/bin/letta" \
-              --add-flags "$out/lib/letta-code/letta.js" \
+            cp -rL node_modules "$out/lib/letta-code/node_modules"
+
+            makeWrapperArgs=(
+              --add-flags "$out/lib/letta-code/letta.js"
               --prefix PATH : ${lib.makeBinPath [ pkgs.git pkgs.ripgrep ]}
+            )
+            ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+              makeWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.stdenv.cc.cc.lib}/lib) # libstdc++.so.6 for sharp
+            ''}
+            makeWrapper ${pkgs.bun}/bin/bun "$out/bin/letta" "''${makeWrapperArgs[@]}"
 
             runHook postInstall
           '';
