@@ -48,7 +48,8 @@ function createStatuslineContext(): StatuslineRenderContext {
 function createLoadOptions(root: string) {
   return {
     cacheDirectory: path.join(root, "extension-cache"),
-    getClient: async () => ({ marker: "test-client" }) as unknown as Letta,
+    getClient: async () =>
+      ({ getMarker: () => "test-client" }) as unknown as Letta,
     getContext: createStatuslineContext,
     globalExtensionsDirectory: path.join(root, "global-extensions"),
   };
@@ -104,6 +105,35 @@ describe("local extension loader", () => {
 
       expect(registry.loadedPaths).toEqual([]);
       expect(registry.errors).toEqual([]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("does not initialize SDK client until an extension uses it", async () => {
+    const root = createTempDir();
+    try {
+      const options = {
+        ...createLoadOptions(root),
+        getClient: async () => {
+          throw new Error("client should be lazy");
+        },
+      };
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "status.ts"),
+        `export default function(letta) {
+          letta.ui.setStatus("mode", "fast");
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(
+        evaluateLocalExtensionStatuses(registry, createStatuslineContext()),
+      ).toEqual({ mode: "fast" });
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -314,8 +344,8 @@ describe("local extension loader", () => {
           letta.commands.register({
             id: "client-check",
             description: "Check client availability",
-            run() {
-              return { type: "output", output: letta.client.marker };
+            async run() {
+              return { type: "output", output: await letta.client.getMarker() };
             },
           });
         }`,

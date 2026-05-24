@@ -67,6 +67,7 @@ export type LettaExtensionFactory = (
 
 export interface LettaExtensionApi {
   client: Letta;
+  getClient: () => Promise<Letta>;
   getContext: () => ExtensionContext;
   commands: {
     register: (command: ExtensionCommandRegistration) => LettaExtensionDisposer;
@@ -291,6 +292,36 @@ function toStatuslineRenderer(
   return renderer;
 }
 
+function createLazyClient(getClient: () => Promise<Letta>): Letta {
+  const createProxy = (path: PropertyKey[] = []): unknown =>
+    new Proxy(function lazyLettaClientProxy() {}, {
+      apply(_target, _thisArg, args) {
+        return getClient().then((client) => {
+          let owner: unknown = client;
+          let value: unknown = client;
+          for (const property of path) {
+            owner = value;
+            value = (value as Record<PropertyKey, unknown>)[property];
+          }
+          if (typeof value !== "function") {
+            throw new TypeError(
+              `letta.client.${path.map(String).join(".")} is not callable`,
+            );
+          }
+          return value.apply(owner, args);
+        });
+      },
+      get(_target, property) {
+        // Keep the proxy from being treated as a Promise when code does
+        // `await letta.client` or Promise.resolve(letta.client).
+        if (property === "then") return undefined;
+        return createProxy([...path, property]);
+      },
+    });
+
+  return createProxy() as Letta;
+}
+
 function stripSlash(command: string): string {
   return command.startsWith("/") ? command.slice(1) : command;
 }
@@ -379,7 +410,7 @@ function upsertExtensionPanel(
 function createLettaExtensionApi(
   registry: LocalExtensionRegistry,
   extensionPath: string,
-  client: Letta,
+  getClient: () => Promise<Letta>,
   getContext: () => ExtensionContext,
   onChange: () => void,
   reservedCommandIds: Set<string>,
@@ -404,7 +435,8 @@ function createLettaExtensionApi(
   };
 
   return {
-    client,
+    client: createLazyClient(getClient),
+    getClient,
     getContext,
     commands: {
       register(command) {
@@ -525,12 +557,11 @@ export async function loadLocalExtensions(
         );
       }
 
-      const client = await getConfiguredClient();
       const dispose = await (factory as LettaExtensionFactory)(
         createLettaExtensionApi(
           registry,
           extensionPath,
-          client,
+          getConfiguredClient,
           getContext,
           onChange,
           reservedCommandIds,

@@ -167,6 +167,11 @@ type ModelSelectorOptions = {
   forceRefresh?: boolean;
 };
 
+async function hasCustomCommand(commandName: string): Promise<boolean> {
+  const { findCustomCommand } = await import("@/cli/commands/custom.js");
+  return Boolean(await findCustomCommand(commandName));
+}
+
 type SubmitHandlerContext = {
   abortControllerRef: MutableRefObject<AbortController | null>;
   agentDescription: string | null;
@@ -565,13 +570,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const queueBypassExtensionCommand = parsedExtensionCommand
         ? extensionRuntime.registry?.commands[parsedExtensionCommand.command]
         : undefined;
+      const isExtensionCommandShadowedByCustom =
+        isAgentBusy() && queueBypassExtensionCommand?.runWhenBusy === true
+          ? await hasCustomCommand(parsedExtensionCommand?.command ?? "")
+          : false;
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
         isSlashCommand &&
         (isInteractiveCommand(userTextForInput) ||
           isNonStateCommand(userTextForInput) ||
-          queueBypassExtensionCommand?.runWhenBusy === true);
+          (queueBypassExtensionCommand?.runWhenBusy === true &&
+            !isExtensionCommandShadowedByCustom));
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
         const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
@@ -3045,6 +3055,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
 
             if (result.type === "prompt") {
+              if (!showInTranscript) {
+                getFeedbackCommand().fail(
+                  `/${matchedExtensionCommand.id} returned a prompt with showInTranscript: false. Hidden extension commands must return output or handled and own their UI.`,
+                );
+                return { submitted: true };
+              }
+
               if (matchedExtensionCommand.runWhenBusy && isAgentBusy()) {
                 getFeedbackCommand().fail(
                   `/${matchedExtensionCommand.id} returned a prompt while the agent is running. Busy-safe extension commands must handle their own SDK calls or return output.`,
@@ -3071,7 +3088,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 },
               ]);
             } else if (result.type === "output") {
-              cmd?.finish(result.output, result.success ?? true);
+              getFeedbackCommand().finish(
+                result.output,
+                result.success ?? true,
+              );
             } else {
               cmd?.finish("Handled.", true, true);
             }

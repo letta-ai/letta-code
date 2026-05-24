@@ -25,6 +25,20 @@ interface LocalExtensionLoadState {
   isLoading: boolean;
 }
 
+function snapshotRegistryForRender(
+  registry: LocalExtensionRegistry,
+): LocalExtensionRegistry {
+  return {
+    ...registry,
+    commands: { ...registry.commands },
+    ui: {
+      ...registry.ui,
+      panels: { ...registry.ui.panels },
+      statusValues: { ...registry.ui.statusValues },
+    },
+  };
+}
+
 function hasLocalExtensionSources(): boolean {
   return resolveLocalExtensionSources().some(
     (source) => source.files.length > 0,
@@ -47,7 +61,6 @@ export function useLocalExtensionRuntime(
     };
   });
   const loadStateRef = useRef(loadState);
-  const [renderVersion, bumpRenderVersion] = useState(0);
 
   useEffect(() => {
     loadStateRef.current = loadState;
@@ -84,8 +97,8 @@ export function useLocalExtensionRuntime(
       getClient,
       getContext: () => contextRef.current,
       onChange: () => {
-        if (mountedRef.current) {
-          bumpRenderVersion((version) => version + 1);
+        if (mountedRef.current && registryRef.current) {
+          setRegistry(snapshotRegistryForRender(registryRef.current));
         }
       },
     });
@@ -120,7 +133,7 @@ export function useLocalExtensionRuntime(
     );
 
     registryRef.current = nextRegistry;
-    setRegistry(nextRegistry);
+    setRegistry(snapshotRegistryForRender(nextRegistry));
     setLoadState({
       hadStatuslineRenderer: nextHadStatuslineRenderer,
       hasExtensionSources: nextHasExtensionSources,
@@ -141,17 +154,8 @@ export function useLocalExtensionRuntime(
     };
   }, [reload]);
 
-  return useMemo(() => {
-    // Extension UI registries are mutated in place by trusted extension code.
-    // Keep renderVersion private but include it here so onChange invalidates
-    // the memoized runtime object and downstream components re-render.
-    void renderVersion;
-    return {
-      registry,
-      getContext,
-      reload,
-      updateContext,
-      ...loadState,
-    };
-  }, [getContext, loadState, registry, reload, updateContext, renderVersion]);
+  return useMemo(
+    () => ({ registry, getContext, reload, updateContext, ...loadState }),
+    [getContext, loadState, registry, reload, updateContext],
+  );
 }
