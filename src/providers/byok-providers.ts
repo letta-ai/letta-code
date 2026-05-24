@@ -73,6 +73,7 @@ export interface ByokProvider {
   providerName: string;
   providerNames?: readonly string[];
   isOAuth?: boolean;
+  oauthProviderId?: string;
   requiresApiKey?: boolean;
   defaultApiKey?: string;
   fields?: ProviderField[];
@@ -308,35 +309,53 @@ function byokProviderFromPiSpec(provider: string): ByokProvider | undefined {
   };
 }
 
-function localOAuthProviderConfigs(): ByokProvider[] {
-  return getOAuthProviders()
-    .filter((provider) => provider.id === "openai-codex")
-    .map((provider) => {
-      const spec = PI_PROVIDER_SPECS.find(
-        (candidate) => candidate.piProvider === provider.id,
-      );
-      return {
-        id: `${provider.id}-oauth`,
-        displayName: provider.name,
-        description: "Connect a subscription account",
-        providerType:
-          provider.id === "openai-codex"
-            ? "chatgpt_oauth"
-            : (spec?.providerTypes[0] ?? provider.id),
-        providerName:
-          provider.id === "openai-codex"
-            ? "chatgpt-plus-pro"
-            : (spec?.localProviderNames[0] ?? provider.id),
-        providerNames:
-          provider.id === "openai-codex"
-            ? ["chatgpt-plus-pro", "openai-codex"]
-            : spec?.localProviderNames,
-        isOAuth: true,
-      };
-    });
+// Pi TUI exposes Anthropic in both subscription and API-key login flows.
+// Other OAuth providers are subscription-only in the Pi TUI.
+const PI_TUI_API_KEY_OAUTH_PROVIDER_IDS = new Set(["anthropic"]);
+
+function localOAuthConfigId(providerId: string): string {
+  if (providerId === "openai-codex") return "openai-codex-oauth";
+  if (PI_TUI_API_KEY_OAUTH_PROVIDER_IDS.has(providerId)) {
+    return `${providerId}-oauth`;
+  }
+  return providerId;
 }
 
-const API_KEY_PROVIDER_EXCLUSIONS = new Set(["openai-codex"]);
+function localOAuthProviderConfigs(): ByokProvider[] {
+  return getOAuthProviders().map((provider) => {
+    const spec = PI_PROVIDER_SPECS.find(
+      (candidate) => candidate.piProvider === provider.id,
+    );
+    const providerName =
+      provider.id === "openai-codex"
+        ? "chatgpt-plus-pro"
+        : (spec?.localProviderNames[0] ?? provider.id);
+    return {
+      id: localOAuthConfigId(provider.id),
+      displayName: provider.name,
+      description: "Connect a subscription account",
+      providerType: spec?.providerTypes[0] ?? provider.id,
+      providerName,
+      providerNames:
+        provider.id === "openai-codex"
+          ? [providerName, "openai-codex"]
+          : spec?.localProviderNames,
+      isOAuth: true,
+      oauthProviderId: provider.id,
+    };
+  });
+}
+
+function localApiKeyProviderIds(): string[] {
+  const oauthProviderIds = new Set(
+    getOAuthProviders().map((provider) => provider.id),
+  );
+  return getProviders().filter(
+    (provider) =>
+      !oauthProviderIds.has(provider) ||
+      PI_TUI_API_KEY_OAUTH_PROVIDER_IDS.has(provider),
+  );
+}
 
 export function getProviderConfigs(
   target: ProviderStorageTarget = defaultProviderStorageTarget(),
@@ -347,8 +366,7 @@ export function getProviderConfigs(
   for (const provider of localOAuthProviderConfigs()) {
     byId.set(provider.id, provider);
   }
-  for (const provider of getProviders()) {
-    if (API_KEY_PROVIDER_EXCLUSIONS.has(provider)) continue;
+  for (const provider of localApiKeyProviderIds()) {
     const config = byokProviderFromPiSpec(provider);
     if (config) byId.set(config.id, config);
   }

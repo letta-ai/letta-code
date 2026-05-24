@@ -154,7 +154,7 @@ const PI_PROVIDER_OVERRIDES: Partial<
     providerTypes: ["openai-codex", "chatgpt_oauth"],
     handlePrefixes: ["openai-codex/", "chatgpt-plus-pro/"],
     localProviderNames: ["openai-codex", LOCAL_CHATGPT_PROVIDER_NAME],
-    defaultModel: "openai-codex/gpt-5.1-codex-max",
+    defaultModel: "openai-codex/gpt-5.5",
   },
 };
 

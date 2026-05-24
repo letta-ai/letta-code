@@ -116,6 +116,20 @@ describe("connect provider normalization", () => {
     );
   });
 
+  test("resolves local subscription providers from the pi OAuth catalog", () => {
+    const anthropicOAuth = resolveConnectProvider("anthropic-oauth", "local");
+    const githubCopilot = resolveConnectProvider("github-copilot", "local");
+
+    if (!anthropicOAuth || !githubCopilot) {
+      throw new Error("Expected local OAuth providers to resolve");
+    }
+
+    expect(isConnectOAuthProvider(anthropicOAuth)).toBe(true);
+    expect(anthropicOAuth.byokProvider.oauthProviderId).toBe("anthropic");
+    expect(isConnectOAuthProvider(githubCopilot)).toBe(true);
+    expect(githubCopilot.byokProvider.oauthProviderId).toBe("github-copilot");
+  });
+
   test("uses environment keys before API-key optional defaults", () => {
     withEnv({ LMSTUDIO_API_KEY: "1234" }, () => {
       const lmstudio = resolveConnectProvider("lmstudio", "local");

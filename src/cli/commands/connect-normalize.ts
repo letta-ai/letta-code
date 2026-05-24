@@ -31,6 +31,7 @@ const LOCAL_ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
 
 function providerMatches(provider: ByokProvider, token: string): boolean {
   if (provider.id === token) return true;
+  if (provider.oauthProviderId === token) return true;
   if (provider.providerType === token) return true;
   if (provider.providerName === token) return true;
   return false;
@@ -40,7 +41,9 @@ function findChatGPTProvider(
   target: ProviderStorageTarget,
 ): ByokProvider | undefined {
   return getProviderConfigs(target).find(
-    (provider) => provider.providerType === "chatgpt_oauth",
+    (provider) =>
+      provider.oauthProviderId === "openai-codex" ||
+      provider.providerType === "chatgpt_oauth",
   );
 }
 

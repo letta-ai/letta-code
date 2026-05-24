@@ -25,6 +25,7 @@ import {
   removeOpenAICodexProvider,
 } from "@/providers/openai-codex-provider";
 import { getErrorMessage } from "@/utils/error";
+import { runLocalOAuthConnectFlow } from "./connect-local-oauth";
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
@@ -432,6 +433,86 @@ async function handleConnectChatGPT(
   }
 }
 
+async function handleConnectLocalOAuthProvider(
+  ctx: ConnectCommandContext,
+  msg: string,
+  provider: ResolvedConnectProvider,
+): Promise<void> {
+  const existingProvider = await getProviderByName(
+    provider.byokProvider.providerName,
+    { target: "local" },
+  );
+  if (existingProvider?.auth_type === "oauth") {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Already connected to ${provider.byokProvider.displayName}. Disconnect first if you want to re-authenticate.`,
+      false,
+    );
+    return;
+  }
+
+  ctx.setCommandRunning(true);
+  const abortController = new AbortController();
+  setActiveConnectAbortController(abortController);
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    `Starting ${provider.byokProvider.displayName} login...`,
+    true,
+    "running",
+  );
+
+  try {
+    await runLocalOAuthConnectFlow(provider.byokProvider, {
+      signal: abortController.signal,
+      onStatus: (status) =>
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          status,
+          true,
+          "running",
+        ),
+    });
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Successfully connected to ${provider.byokProvider.displayName}!\n\n` +
+        `Provider '${provider.byokProvider.providerName}' saved in local storage.`,
+      true,
+      "finished",
+    );
+
+    if (provider.byokProvider.oauthProviderId === "openai-codex") {
+      setTimeout(() => ctx.onCodexConnected?.(), 500);
+    }
+  } catch (error) {
+    const isCancelled = error instanceof Error && error.name === "AbortError";
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      isCancelled
+        ? `Cancelled ${provider.byokProvider.displayName} connection.`
+        : `✗ Failed to connect ${provider.byokProvider.displayName}: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    setActiveConnectAbortController(null);
+    ctx.setCommandRunning(false);
+  }
+}
+
 async function handleConnectApiKeyProvider(
   ctx: ConnectCommandContext,
   msg: string,
@@ -673,7 +754,11 @@ export async function handleConnect(
   }
 
   if (isConnectOAuthProvider(provider)) {
-    await handleConnectChatGPT(ctx, msg);
+    if (provider.target === "local") {
+      await handleConnectLocalOAuthProvider(ctx, msg, provider);
+    } else {
+      await handleConnectChatGPT(ctx, msg);
+    }
     return;
   }
 
@@ -798,9 +883,15 @@ async function handleDisconnectByokProvider(
   provider: ResolvedConnectProvider,
 ): Promise<void> {
   const existing = await getProviderByName(provider.byokProvider.providerName, {
-    target: ctx.target,
+    target: provider.target,
   });
-  if (!existing) {
+  const authMatches =
+    provider.target !== "local" || !existing?.auth_type
+      ? true
+      : provider.byokProvider.isOAuth
+        ? existing.auth_type === "oauth"
+        : existing.auth_type !== "oauth";
+  if (!existing || !authMatches) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -823,7 +914,7 @@ async function handleDisconnectByokProvider(
   ctx.setCommandRunning(true);
   try {
     await removeProviderByName(provider.byokProvider.providerName, {
-      target: ctx.target,
+      target: provider.target,
     });
     updateCommandResult(
       ctx.buffersRef,
@@ -831,7 +922,7 @@ async function handleDisconnectByokProvider(
       cmdId,
       msg,
       `✓ Disconnected from ${provider.byokProvider.displayName}.\n\n` +
-        `Provider '${provider.byokProvider.providerName}' removed from ${providerStorageTargetLabel(ctx.target)}.`,
+        `Provider '${provider.byokProvider.providerName}' removed from ${providerStorageTargetLabel(provider.target)}.`,
       true,
       "finished",
     );
@@ -971,7 +1062,11 @@ export async function handleDisconnect(
   }
 
   if (isConnectOAuthProvider(provider)) {
-    await handleDisconnectChatGPT(ctx, msg);
+    if (provider.target === "local") {
+      await handleDisconnectByokProvider(ctx, msg, provider);
+    } else {
+      await handleDisconnectChatGPT(ctx, msg);
+    }
     return;
   }
 

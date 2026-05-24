@@ -154,17 +154,31 @@ export function ProviderSelector({
   const isConnected = useCallback(
     (provider: ByokProvider) => {
       const providerNames = provider.providerNames ?? [provider.providerName];
-      return providerNames.some((name) => connectedProviders.has(name));
+      return providerNames.some((name) => {
+        const connected = connectedProviders.get(name);
+        if (!connected) return false;
+        if (selectedTarget !== "local" || !connected.auth_type) return true;
+        return provider.isOAuth
+          ? connected.auth_type === "oauth"
+          : connected.auth_type !== "oauth";
+      });
     },
-    [connectedProviders],
+    [connectedProviders, selectedTarget],
   );
 
   const getConnectedProviderName = useCallback(
     (provider: ByokProvider): string | undefined => {
       const providerNames = provider.providerNames ?? [provider.providerName];
-      return providerNames.find((name) => connectedProviders.has(name));
+      return providerNames.find((name) => {
+        const connected = connectedProviders.get(name);
+        if (!connected) return false;
+        if (selectedTarget !== "local" || !connected.auth_type) return true;
+        return provider.isOAuth
+          ? connected.auth_type === "oauth"
+          : connected.auth_type !== "oauth";
+      });
     },
-    [connectedProviders],
+    [connectedProviders, selectedTarget],
   );
 
   // Get provider ID if connected

@@ -890,7 +890,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async (_provider, target) => {
+                onStartOAuth={async (provider, target) => {
                   const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
@@ -921,7 +921,7 @@ export function AppView(props: AppViewProps) {
                           );
                         },
                       },
-                      "/connect chatgpt",
+                      `/connect ${provider.id === "openai-codex-oauth" ? "chatgpt" : provider.id}`,
                     );
                   } finally {
                     setActiveConnectCommandId(null);

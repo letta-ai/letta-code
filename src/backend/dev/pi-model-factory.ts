@@ -1,7 +1,11 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModel, getModels } from "@earendil-works/pi-ai";
 import {
-  getLocalChatGPTApiKey,
+  getOAuthProvider,
+  type OAuthCredentials,
+} from "@earendil-works/pi-ai/oauth";
+import {
+  getLocalOAuthApiKey,
   getLocalProviderRecordByName,
   type LocalProviderRecord,
   localProviderApiKeyFromRecord,
@@ -211,12 +215,18 @@ export function resolveZaiConnection(options: {
 function getCatalogModel(
   provider: PiProvider,
   modelId: string,
+  oauthCredentials?: OAuthCredentials,
 ): Model<Api> | undefined {
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return undefined;
-  return getModels(spec.piProvider).find((model) => model.id === modelId) as
-    | Model<Api>
-    | undefined;
+  const model = getModels(spec.piProvider).find(
+    (model) => model.id === modelId,
+  ) as Model<Api> | undefined;
+  if (!model || !oauthCredentials) return model;
+
+  const oauthProvider = getOAuthProvider(spec.piProvider);
+  return (oauthProvider?.modifyModels?.([model], oauthCredentials)[0] ??
+    model) as Model<Api>;
 }
 
 function customOpenAICompatibleModel(input: {
@@ -355,6 +365,7 @@ export async function resolvePiModelForAgent(
   const headers = spec.headers?.();
   let providerOptions: Record<string, unknown> | undefined;
   let envOverrides: Record<string, string | undefined> | undefined;
+  let oauthCredentials: OAuthCredentials | undefined;
 
   if (provider === "zai") {
     const zai = resolveZaiConnection({
@@ -373,11 +384,17 @@ export async function resolvePiModelForAgent(
     baseURL = zai.baseURL;
   }
 
-  if (provider === "openai-codex") {
+  if (connection.record?.auth.type === "oauth" && spec.piProvider) {
+    const oauth = await getLocalOAuthApiKey({
+      providerId: spec.piProvider,
+      providerNames: spec.localProviderNames,
+      storageDir,
+    });
     connection = {
       ...connection,
-      apiKey: await getLocalChatGPTApiKey(storageDir),
+      apiKey: oauth?.apiKey,
     };
+    oauthCredentials = oauth?.credentials;
   }
 
   if (provider === "amazon-bedrock") {
@@ -388,7 +405,7 @@ export async function resolvePiModelForAgent(
 
   const contextWindow = numericSetting(modelSettings.context_window_limit);
   const maxTokens = numericSetting(modelSettings.max_tokens);
-  const catalogModel = getCatalogModel(provider, modelId);
+  const catalogModel = getCatalogModel(provider, modelId, oauthCredentials);
   const model = spec.createCustomModel
     ? customOpenAICompatibleModel({
         provider,
