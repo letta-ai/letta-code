@@ -1,6 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import WebSocket from "ws";
+import {
+  __testSetBackend,
+  type AgentCreateBody,
+  type ConversationCreateBody,
+} from "@/backend";
+import { LocalBackend } from "@/backend/local";
+import { settingsManager } from "@/settings-manager";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 
 /**
@@ -18,6 +29,20 @@ function readModelToolsetCommandSource(): string {
   );
   return readFileSync(commandPath, "utf-8");
 }
+
+class MockSocket {
+  readyState = WebSocket.OPEN;
+  sentPayloads: string[] = [];
+
+  send(data: string): void {
+    this.sentPayloads.push(data);
+  }
+}
+
+afterEach(async () => {
+  __testSetBackend(null);
+  await settingsManager.reset();
+});
 
 describe("listen-client model update status message", () => {
   test("emits only model name when toolset did not change", () => {
@@ -196,8 +221,80 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
 
     // Conversation-scoped update for non-default
     expect(source).toContain("updateConversationLLMConfig(");
-    expect(source).toContain("preserveContextWindow: false");
+    expect(source).toContain(
+      "preserveContextWindow: shouldPreserveContextWindow",
+    );
     expect(source).toContain('appliedTo = "conversation"');
+  });
+
+  test("preserves conversation context limit for same-handle desktop model updates", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-model-context-"));
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = storageDir;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Desktop Model Agent",
+        model: "openai/gpt-5.5",
+        context_window_limit: 500000,
+        model_settings: {
+          provider_type: "openai",
+          reasoning: { reasoning_effort: "high" },
+          parallel_tool_calls: true,
+        },
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        context_window_limit: 500000,
+      } as Parameters<typeof backend.updateConversation>[1]);
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const scopedRuntime =
+        __listenClientTestUtils.getOrCreateConversationRuntime(
+          listener,
+          agent.id,
+          conversation.id,
+        );
+      const model = __listenClientTestUtils.resolveModelForUpdate({
+        model_id: "gpt-5.5-medium",
+      });
+      if (!model) throw new Error("Expected gpt-5.5-medium model fixture");
+
+      const response = await __listenClientTestUtils.applyModelUpdateForRuntime(
+        {
+          socket: new MockSocket() as unknown as WebSocket,
+          listener,
+          scopedRuntime,
+          requestId: "model-update-context-1",
+          model,
+        },
+      );
+
+      expect(response.success).toBe(true);
+      expect(
+        (
+          (await backend.retrieveConversation(conversation.id)) as {
+            context_window_limit?: number;
+          }
+        ).context_window_limit,
+      ).toBe(500000);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 });
 
