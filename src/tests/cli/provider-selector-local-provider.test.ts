@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { providerApiKeyFromInput } from "@/cli/components/ProviderSelector";
+import {
+  filterProviderConfigs,
+  hasConstellationProviderStoreCredentials,
+  providerApiKeyFromInput,
+  shouldShowConstellationLoginPrompt,
+} from "@/cli/components/ProviderSelector";
 import {
   type ByokProvider,
   defaultProviderApiKey,
@@ -103,6 +108,64 @@ describe("ProviderSelector local provider API keys", () => {
   test("uses explicitly typed keys over local provider defaults", () => {
     expect(providerApiKeyFromInput(providerById("lmstudio"), " lm-key ")).toBe(
       "lm-key",
+    );
+  });
+});
+
+describe("ProviderSelector Constellation auth gating", () => {
+  test("requires Constellation credentials before showing API provider rows", () => {
+    const loggedOut = hasConstellationProviderStoreCredentials(
+      { env: {}, refreshToken: undefined },
+      {},
+    );
+
+    expect(loggedOut).toBe(false);
+    expect(shouldShowConstellationLoginPrompt("api", loggedOut)).toBe(true);
+    expect(shouldShowConstellationLoginPrompt("local", loggedOut)).toBe(false);
+  });
+
+  test("accepts env, stored API key, or refresh token as Constellation auth", () => {
+    expect(
+      hasConstellationProviderStoreCredentials(
+        { env: {}, refreshToken: undefined },
+        { LETTA_API_KEY: "env-key" },
+      ),
+    ).toBe(true);
+    expect(
+      hasConstellationProviderStoreCredentials(
+        { env: { LETTA_API_KEY: "stored-key" }, refreshToken: undefined },
+        {},
+      ),
+    ).toBe(true);
+    expect(
+      hasConstellationProviderStoreCredentials(
+        { env: {}, refreshToken: "refresh-token" },
+        {},
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("ProviderSelector provider filtering", () => {
+  test("matches local providers by display name and description", () => {
+    const providers = getProviderConfigs("local");
+
+    expect(
+      filterProviderConfigs(providers, "copilot").map((p) => p.id),
+    ).toEqual(["github-copilot"]);
+    expect(
+      filterProviderConfigs(providers, "subscription").map((p) => p.id),
+    ).toEqual(["anthropic-oauth", "openai-codex-oauth", "github-copilot"]);
+  });
+
+  test("matches provider aliases and restores all providers for blank query", () => {
+    const providers = getProviderConfigs("local");
+
+    expect(
+      filterProviderConfigs(providers, "lc-lmstudio").map((p) => p.id),
+    ).toEqual(["lmstudio"]);
+    expect(filterProviderConfigs(providers, "   ").length).toBe(
+      providers.length,
     );
   });
 });

@@ -15,6 +15,7 @@ import {
   type ProviderStorageTarget,
   removeProviderByName,
 } from "@/providers/byok-providers";
+import { type Settings, settingsManager } from "@/settings-manager";
 import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
 import { debugLog } from "@/utils/debug";
 import { colors } from "./colors";
@@ -49,6 +50,48 @@ export function providerApiKeyFromInput(
   return input.trim() || defaultProviderApiKey(provider);
 }
 
+export function hasConstellationProviderStoreCredentials(
+  settings: Pick<Settings, "env" | "refreshToken">,
+  env: { LETTA_API_KEY?: string } = {
+    LETTA_API_KEY: process.env.LETTA_API_KEY,
+  },
+): boolean {
+  return Boolean(
+    env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || settings.refreshToken,
+  );
+}
+
+export function shouldShowConstellationLoginPrompt(
+  target: ProviderStorageTarget,
+  hasConstellationCredentials: boolean | null,
+): boolean {
+  return target === "api" && hasConstellationCredentials === false;
+}
+
+export function filterProviderConfigs(
+  providers: readonly ByokProvider[],
+  query: string,
+): ByokProvider[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return [...providers];
+
+  return providers.filter((provider) => {
+    const searchable = [
+      provider.id,
+      provider.displayName,
+      provider.description,
+      provider.providerType,
+      provider.providerName,
+      provider.oauthProviderId,
+      ...(provider.providerNames ?? []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return searchable.includes(normalized);
+  });
+}
+
 export function ProviderSelector({
   onCancel,
   onStartOAuth,
@@ -60,12 +103,15 @@ export function ProviderSelector({
   const [selectedTarget, setSelectedTarget] = useState<ProviderStorageTarget>(
     defaultProviderStorageTarget(),
   );
+  const [hasConstellationCredentials, setHasConstellationCredentials] =
+    useState<boolean | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [connectedProviders, setConnectedProviders] = useState<
     Map<string, ProviderResponse>
   >(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [viewState, setViewState] = useState<ViewState>({ type: "list" });
+  const [searchQuery, setSearchQuery] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [validationState, setValidationState] =
     useState<ValidationState>("idle");
@@ -84,25 +130,36 @@ export function ProviderSelector({
     () => getProviderConfigs(selectedTarget),
     [selectedTarget],
   );
+  const filteredProviders = useMemo(
+    () => filterProviderConfigs(providers, searchQuery),
+    [providers, searchQuery],
+  );
+  const showConstellationLoginPrompt = shouldShowConstellationLoginPrompt(
+    selectedTarget,
+    hasConstellationCredentials,
+  );
+  const selectableProviders = showConstellationLoginPrompt
+    ? []
+    : filteredProviders;
   const providerStartIndex = useMemo(() => {
     if (selectedIndex < VISIBLE_PROVIDERS) return 0;
     return Math.min(
       selectedIndex - VISIBLE_PROVIDERS + 1,
-      Math.max(0, providers.length - VISIBLE_PROVIDERS),
+      Math.max(0, selectableProviders.length - VISIBLE_PROVIDERS),
     );
-  }, [selectedIndex, providers.length]);
+  }, [selectedIndex, selectableProviders.length]);
   const visibleProviders = useMemo(
     () =>
-      providers.slice(
+      selectableProviders.slice(
         providerStartIndex,
         providerStartIndex + VISIBLE_PROVIDERS,
       ),
-    [providers, providerStartIndex],
+    [selectableProviders, providerStartIndex],
   );
   const providersAbove = providerStartIndex;
   const providersBelow = Math.max(
     0,
-    providers.length - providerStartIndex - VISIBLE_PROVIDERS,
+    selectableProviders.length - providerStartIndex - VISIBLE_PROVIDERS,
   );
 
   const mountedRef = useRef(true);
@@ -113,8 +170,39 @@ export function ProviderSelector({
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    settingsManager
+      .getSettingsWithSecureTokens()
+      .then((settings) => {
+        if (cancelled || !mountedRef.current) return;
+        setHasConstellationCredentials(
+          hasConstellationProviderStoreCredentials(settings),
+        );
+      })
+      .catch(() => {
+        if (cancelled || !mountedRef.current) return;
+        setHasConstellationCredentials(Boolean(process.env.LETTA_API_KEY));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Load connected providers on mount and when switching targets.
   useEffect(() => {
+    if (showConstellationLoginPrompt) {
+      setConnectedProviders(new Map());
+      setIsLoading(false);
+      return;
+    }
+
+    if (selectedTarget === "api" && hasConstellationCredentials === null) {
+      setIsLoading(true);
+      return;
+    }
+
     setIsLoading(true);
     (async () => {
       try {
@@ -131,7 +219,11 @@ export function ProviderSelector({
         }
       }
     })();
-  }, [selectedTarget]);
+  }, [
+    selectedTarget,
+    hasConstellationCredentials,
+    showConstellationLoginPrompt,
+  ]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -139,14 +231,20 @@ export function ProviderSelector({
   }, []);
 
   useEffect(() => {
-    if (selectedIndex >= providers.length && providers.length > 0) {
-      setSelectedIndex(providers.length - 1);
+    if (selectableProviders.length === 0) {
+      if (selectedIndex !== 0) setSelectedIndex(0);
+      return;
     }
-  }, [selectedIndex, providers.length]);
+
+    if (selectedIndex >= selectableProviders.length) {
+      setSelectedIndex(selectableProviders.length - 1);
+    }
+  }, [selectedIndex, selectableProviders.length]);
 
   const switchTarget = useCallback(() => {
     setSelectedTarget((target) => (target === "local" ? "api" : "local"));
     setSelectedIndex(0);
+    setSearchQuery("");
     setViewState({ type: "list" });
   }, []);
 
@@ -480,18 +578,43 @@ export function ProviderSelector({
       if (isLoading) return;
 
       if (key.escape) {
-        onCancel();
+        if (searchQuery) {
+          setSearchQuery("");
+          setSelectedIndex(0);
+        } else {
+          onCancel();
+        }
       } else if (key.leftArrow || key.rightArrow || key.tab) {
         switchTarget();
+      } else if (key.backspace || key.delete) {
+        if (searchQuery) {
+          setSearchQuery((prev) => prev.slice(0, -1));
+          setSelectedIndex(0);
+        }
       } else if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) => Math.min(providers.length - 1, prev + 1));
+        setSelectedIndex((prev) =>
+          selectableProviders.length === 0
+            ? 0
+            : Math.min(selectableProviders.length - 1, prev + 1),
+        );
       } else if (key.return) {
-        const provider = providers[selectedIndex];
+        const provider = selectableProviders[selectedIndex];
         if (provider) {
           handleSelectProvider(provider);
         }
+      } else if (
+        input &&
+        !showConstellationLoginPrompt &&
+        !key.ctrl &&
+        !key.meta &&
+        !key.return &&
+        !key.upArrow &&
+        !key.downArrow
+      ) {
+        setSearchQuery((prev) => prev + input);
+        setSelectedIndex(0);
       }
     } else if (viewState.type === "input") {
       if (key.escape) {
@@ -683,14 +806,31 @@ export function ProviderSelector({
             ? "  Local providers are stored on this machine and affect local agents only."
             : "  Constellation providers are stored in Letta and affect Constellation agents."}
         </Text>
+        {!showConstellationLoginPrompt && (
+          <Text>
+            <Text dimColor>{"  Filter: "}</Text>
+            {searchQuery ? (
+              <Text>{searchQuery}</Text>
+            ) : (
+              <Text dimColor>(type to filter)</Text>
+            )}
+          </Text>
+        )}
       </Box>
 
       {isLoading ? (
         <Box>
           <Text dimColor>{"  "}Loading providers...</Text>
         </Box>
+      ) : showConstellationLoginPrompt ? (
+        <Box flexDirection="column">
+          <Text dimColor>{"  "}Use /login to log into Constellation.</Text>
+        </Box>
       ) : (
         <Box flexDirection="column">
+          {selectableProviders.length === 0 && searchQuery ? (
+            <Text dimColor>{"  "}No providers match your filter.</Text>
+          ) : null}
           {providersAbove > 0 && (
             <Text dimColor>
               {"  "}↑ {providersAbove} more above
@@ -737,7 +877,7 @@ export function ProviderSelector({
             <Text dimColor>
               {"  "}↓ {providersBelow} more below
             </Text>
-          ) : providers.length > VISIBLE_PROVIDERS ? (
+          ) : selectableProviders.length > VISIBLE_PROVIDERS ? (
             <Text> </Text>
           ) : null}
         </Box>
@@ -746,7 +886,11 @@ export function ProviderSelector({
       {!isLoading && (
         <Box marginTop={1}>
           <Text dimColor>
-            {"  "}Enter select · ↑↓ navigate · Tab/←→ switch tab · Esc cancel
+            {showConstellationLoginPrompt
+              ? "  Tab/←→ switch tab · Esc cancel"
+              : searchQuery
+                ? "  Enter select · ↑↓ navigate · Backspace edit filter · Tab/←→ switch tab · Esc clear"
+                : "  Enter select · ↑↓ navigate · type filter · Tab/←→ switch tab · Esc cancel"}
           </Text>
         </Box>
       )}
