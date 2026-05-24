@@ -1,10 +1,10 @@
 import { Box } from "ink";
 import { useEffect } from "react";
 import type { ModelReasoningEffort } from "@/agent/model";
-import type { ExtensionCommand } from "@/cli/extensions/types";
 import { AgentInfoBar } from "./AgentInfoBar";
 import { FileAutocomplete } from "./FileAutocomplete";
 import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";
+import type { ExtensionCommandAutocompleteItem } from "./types/autocomplete";
 
 interface InputAssistProps {
   currentInput: string;
@@ -20,7 +20,7 @@ interface InputAssistProps {
   serverUrl?: string;
   workingDirectory?: string;
   conversationId?: string;
-  extensionCommands?: Record<string, ExtensionCommand>;
+  extensionCommands?: Record<string, ExtensionCommandAutocompleteItem>;
 }
 
 /**

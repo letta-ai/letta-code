@@ -14,6 +14,8 @@ describe("extension command runtime", () => {
       args: "current diff",
     });
     expect(parseExtensionSlashCommand("review current diff")).toBeNull();
+    expect(parseExtensionSlashCommand("/")).toBeNull();
+    expect(parseExtensionSlashCommand("//bad")).toBeNull();
   });
 
   test("splits extension command argv", () => {

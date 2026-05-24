@@ -51,7 +51,16 @@ export function buildStatuslineRenderContext({
       totalOutputTokens: payload.context_window.total_output_tokens,
       usedPercentage: payload.context_window.used_percentage,
       remainingPercentage: payload.context_window.remaining_percentage,
-      currentUsage: payload.context_window.current_usage,
+      currentUsage: payload.context_window.current_usage
+        ? {
+            inputTokens: payload.context_window.current_usage.input_tokens,
+            outputTokens: payload.context_window.current_usage.output_tokens,
+            cacheCreationInputTokens:
+              payload.context_window.current_usage.cache_creation_input_tokens,
+            cacheReadInputTokens:
+              payload.context_window.current_usage.cache_read_input_tokens,
+          }
+        : null,
     },
     cost: {
       totalDurationMs: payload.cost.total_duration_ms,
@@ -60,9 +69,21 @@ export function buildStatuslineRenderContext({
       totalLinesAdded: payload.cost.total_lines_added,
       totalLinesRemoved: payload.cost.total_lines_removed,
     },
-    reflection: payload.reflection,
-    memfs: payload.memfs,
-    backgroundAgents: backgroundAgents ?? payload.background_agents,
+    reflection: {
+      mode: payload.reflection.mode,
+      stepCount: payload.reflection.step_count,
+    },
+    memfs: {
+      enabled: payload.memfs.enabled,
+      memoryDir: payload.memfs.memory_dir,
+    },
+    backgroundAgents: (backgroundAgents ?? payload.background_agents).map(
+      (agent) => ({
+        type: agent.type,
+        status: agent.status,
+        durationMs: agent.duration_ms,
+      }),
+    ),
     ui,
   };
 }

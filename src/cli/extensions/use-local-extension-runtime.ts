@@ -47,7 +47,7 @@ export function useLocalExtensionRuntime(
     };
   });
   const loadStateRef = useRef(loadState);
-  const [, bumpVersion] = useState(0);
+  const [renderVersion, bumpRenderVersion] = useState(0);
 
   useEffect(() => {
     loadStateRef.current = loadState;
@@ -85,7 +85,7 @@ export function useLocalExtensionRuntime(
       getContext: () => contextRef.current,
       onChange: () => {
         if (mountedRef.current) {
-          bumpVersion((version) => version + 1);
+          bumpRenderVersion((version) => version + 1);
         }
       },
     });
@@ -141,8 +141,17 @@ export function useLocalExtensionRuntime(
     };
   }, [reload]);
 
-  return useMemo(
-    () => ({ registry, getContext, reload, updateContext, ...loadState }),
-    [getContext, loadState, registry, reload, updateContext],
-  );
+  return useMemo(() => {
+    // Extension UI registries are mutated in place by trusted extension code.
+    // Keep renderVersion private but include it here so onChange invalidates
+    // the memoized runtime object and downstream components re-render.
+    void renderVersion;
+    return {
+      registry,
+      getContext,
+      reload,
+      updateContext,
+      ...loadState,
+    };
+  }, [getContext, loadState, registry, reload, updateContext, renderVersion]);
 }

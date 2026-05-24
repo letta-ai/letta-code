@@ -90,6 +90,25 @@ describe("local extension loader", () => {
     }
   });
 
+  test("does not initialize SDK client when no extension files exist", async () => {
+    const root = createTempDir();
+    try {
+      const options = {
+        ...createLoadOptions(root),
+        getClient: async () => {
+          throw new Error("client should not initialize without extensions");
+        },
+      };
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.loadedPaths).toEqual([]);
+      expect(registry.errors).toEqual([]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("loads extensions that register statuses and statusline renderers", async () => {
     const root = createTempDir();
     try {
@@ -240,6 +259,8 @@ describe("local extension loader", () => {
             description: "Review a GitHub PR",
             args: "<url-or-number>",
             order: 250,
+            runWhenBusy: true,
+            showInTranscript: false,
             run(ctx) {
               return { type: "prompt", content: "Review this PR: " + ctx.args };
             },
@@ -255,6 +276,8 @@ describe("local extension loader", () => {
       );
       expect(registry.commands["review-pr"]?.args).toBe("<url-or-number>");
       expect(registry.commands["review-pr"]?.order).toBe(250);
+      expect(registry.commands["review-pr"]?.runWhenBusy).toBe(true);
+      expect(registry.commands["review-pr"]?.showInTranscript).toBe(false);
       await expect(
         Promise.resolve(
           registry.commands["review-pr"]?.run({
@@ -317,6 +340,69 @@ describe("local extension loader", () => {
           }),
         ),
       ).resolves.toEqual({ type: "output", output: "test-client" });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("lets extensions manage UI panels", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "panel.ts"),
+        `export default function(letta) {
+          const panel = letta.ui.openPanel({
+            id: "btw",
+            content: ["┌ /btw question ┐", "│ …             │", "└───────────────┘"],
+          });
+          panel.update({ content: "answer" });
+          return () => panel.close();
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(Object.values(registry.ui.panels)[0]).toMatchObject({
+        content: ["answer"],
+        id: "btw",
+      });
+
+      disposeLocalExtensions(registry);
+      expect(registry.ui.panels).toEqual({});
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("scopes panel ids by extension path", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "a.ts"),
+        `export default function(letta) {
+          letta.ui.openPanel({ id: "status", content: "from a" });
+        }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "b.ts"),
+        `export default function(letta) {
+          letta.ui.openPanel({ id: "status", content: "from b" });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(
+        Object.values(registry.ui.panels).map((panel) => panel.content),
+      ).toEqual([["from a"], ["from b"]]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

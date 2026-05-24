@@ -14,8 +14,10 @@ export function parseExtensionSlashCommand(trimmed: string): {
   if (!trimmed.startsWith("/")) return null;
   const commandToken = trimmed.split(/\s+/, 1)[0];
   if (!commandToken || commandToken === "/") return null;
+  const command = commandToken.slice(1);
+  if (!command || command.includes("/")) return null;
   return {
-    command: commandToken.slice(1),
+    command,
     args: trimmed.slice(commandToken.length).trim(),
   };
 }

@@ -559,12 +559,19 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       const isSlashCommand = userTextForInput.startsWith("/");
+      const parsedExtensionCommand = isSlashCommand
+        ? parseExtensionSlashCommand(userTextForInput.trim())
+        : null;
+      const queueBypassExtensionCommand = parsedExtensionCommand
+        ? extensionRuntime.registry?.commands[parsedExtensionCommand.command]
+        : undefined;
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
         isSlashCommand &&
         (isInteractiveCommand(userTextForInput) ||
-          isNonStateCommand(userTextForInput));
+          isNonStateCommand(userTextForInput) ||
+          queueBypassExtensionCommand?.runWhenBusy === true);
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
         const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
@@ -711,8 +718,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 "@/cli/commands/custom.js"
               );
               refreshCustomCommands();
-            } catch {
-              // Best-effort: the TUI reload below will still refresh extension state.
+            } catch (error) {
+              debugLog(
+                "commands",
+                "refreshCustomCommands failed during /reload: %s",
+                error instanceof Error ? error.message : String(error),
+              );
             }
             // Defer the reload to let the command UI render first
             setTimeout(
@@ -2982,7 +2993,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
         // === END custom command handling ===
 
-        const parsedExtensionCommand = parseExtensionSlashCommand(trimmed);
         const matchedExtensionCommand: ExtensionCommand | undefined =
           parsedExtensionCommand
             ? extensionRuntime.registry?.commands[
@@ -2991,11 +3001,23 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             : undefined;
 
         if (parsedExtensionCommand && matchedExtensionCommand) {
-          const cmd = commandRunner.start(
-            trimmed,
-            `Running /${matchedExtensionCommand.id}...`,
-          );
-          setCommandRunning(true);
+          const showInTranscript = matchedExtensionCommand.showInTranscript;
+          const shouldLockCommand = !matchedExtensionCommand.runWhenBusy;
+          const cmd = showInTranscript
+            ? commandRunner.start(
+                trimmed,
+                `Running /${matchedExtensionCommand.id}...`,
+              )
+            : null;
+          const getFeedbackCommand = () =>
+            cmd ??
+            commandRunner.start(
+              trimmed,
+              `Running /${matchedExtensionCommand.id}...`,
+            );
+          if (shouldLockCommand) {
+            setCommandRunning(true);
+          }
 
           try {
             const extensionContext = extensionRuntime.getContext();
@@ -3023,16 +3045,23 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
 
             if (result.type === "prompt") {
+              if (matchedExtensionCommand.runWhenBusy && isAgentBusy()) {
+                getFeedbackCommand().fail(
+                  `/${matchedExtensionCommand.id} returned a prompt while the agent is running. Busy-safe extension commands must handle their own SDK calls or return output.`,
+                );
+                return { submitted: true };
+              }
+
               const approvalCheck =
                 await checkPendingApprovalsForSlashCommand();
               if (approvalCheck.blocked) {
-                cmd.fail(
+                getFeedbackCommand().fail(
                   `Pending approval(s). Resolve approvals before running /${matchedExtensionCommand.id}.`,
                 );
                 return { submitted: false };
               }
 
-              cmd.finish(`Running /${matchedExtensionCommand.id}...`, true);
+              cmd?.finish(`Running /${matchedExtensionCommand.id}...`, true);
               await processConversationWithQueuedApprovals([
                 {
                   type: "message",
@@ -3042,17 +3071,19 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 },
               ]);
             } else if (result.type === "output") {
-              cmd.finish(result.output, result.success ?? true);
+              cmd?.finish(result.output, result.success ?? true);
             } else {
-              cmd.finish("Handled.", true, true);
+              cmd?.finish("Handled.", true, true);
             }
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(
+            getFeedbackCommand().fail(
               `Failed to run /${matchedExtensionCommand.id}: ${errorDetails}`,
             );
           } finally {
-            setCommandRunning(false);
+            if (shouldLockCommand) {
+              setCommandRunning(false);
+            }
           }
 
           return { submitted: true };
@@ -3520,6 +3551,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversationId,
       currentModelHandle,
       currentModelId,
+      extensionRuntime,
       effectiveContextWindowSize,
       commandRunner,
       handleExit,

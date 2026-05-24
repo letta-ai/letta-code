@@ -1,6 +1,6 @@
 ---
 name: customizing-commands
-description: Creates, edits, and enables Letta Code extension-provided slash commands. Use when the user asks to add a custom /command, slash command, command shortcut, or prompt-oriented command behavior.
+description: Creates, edits, and enables Letta Code extension-provided slash commands. Use when the user asks to add a custom /command, slash command, command shortcut, SDK-backed command, or panel-rendered command behavior.
 ---
 
 # Customizing Commands
@@ -57,6 +57,26 @@ export default function activate(letta) {
 - Use a lowercase slug with letters, numbers, and hyphens only.
 - Built-in commands like `/reload`, `/model`, `/statusline`, etc. are reserved.
 - Duplicate extension command IDs fail unless the command explicitly uses `override: true`.
+- Prefer specific names for shared commands (`github-review`, `btw-code`) to avoid collisions with other extensions.
+
+Command resolution order is: built-in/special commands, custom command files, extension commands, then remaining registry/skill commands. Extension commands cannot replace built-ins, and custom command files with the same name win over extensions.
+
+### Command metadata
+
+```ts
+letta.commands.register({
+  id: "btw",
+  description: "Ask a side question",
+  runWhenBusy: true,
+  showInTranscript: false,
+  run(ctx) {
+    return { type: "handled" };
+  },
+});
+```
+
+- `runWhenBusy`: allows the command to run while the main agent is streaming/executing. Busy-safe commands must use their own SDK calls and should not return `prompt` while the agent is running.
+- `showInTranscript`: defaults to `true`. Set `false` for commands that render their own UI panel and should not add a command row to the transcript.
 
 ### Command context
 
@@ -88,6 +108,45 @@ letta.client
 ```
 
 Use it for advanced workflows that need the full Letta API, such as forking conversations, reading agent state, or sending messages. This is the same authenticated client context the app uses.
+
+API reference:
+
+- Letta API docs: https://docs.letta.com/api-reference/overview
+- TypeScript SDK package: https://www.npmjs.com/package/@letta-ai/letta-client
+
+Guidance:
+
+- Prefer `letta.client` over raw `fetch`; it already has the current backend URL, auth, and app headers.
+- Verify SDK method and parameter names before guessing. The generated SDK follows API field names, so request params are often snake_case (`agent_id`), not camelCase (`agentId`).
+- For the default conversation, pass `"default"` plus `{ agent_id: ctx.agent.id }` when the endpoint requires agent-direct mode.
+- Common conversation calls:
+  - `await letta.client.conversations.fork(conversationId, { agent_id: ctx.agent.id })`
+  - `await letta.client.conversations.messages.create(conversationId, { agent_id: ctx.agent.id, input, streaming: true })`
+- Streaming message calls return an async iterable of chunks. Extract assistant text from `assistant_message` chunks; chunk content may be a string or an array of text parts.
+
+## UI panels
+
+Commands can write raw lines into the space above the input bar:
+
+```ts
+const panel = letta.ui.openPanel({
+  id: "btw",
+  content: [`/btw ${question}`, "…"],
+});
+
+panel.update({ content: [`/btw ${question}`, "Caren"] });
+setTimeout(() => panel.close(), 10_000);
+```
+
+Panels are intentionally minimal: `id`, `content`, and optional `order`. `content` may be a string (split on newlines) or an array of strings. Core only reserves the slot above the input bar and truncates lines to terminal width; the extension owns visual formatting such as borders, spacing, wrapping, and right alignment.
+
+Guidance:
+
+- Keep panel output short. If you need long-form output, prefer command `output` or a normal `prompt` flow.
+- Panels persist until `panel.close()`, `letta.ui.clearPanel(id)`, the same `id` is overwritten, or `/reload` disposes extensions.
+- For transient results, close the panel after a short timeout.
+- If formatting depends on terminal size, use `ctx.getContext().terminalWidth` inside a command or `letta.getContext().terminalWidth` outside a command. Terminal sizes are columns, not pixels.
+- Avoid unexplained magic widths. If you cap width for aesthetics, name the constant, e.g. `PANEL_MAX_COLUMNS`.
 
 ### Results
 
@@ -161,65 +220,14 @@ export default function activate(letta) {
 
 ### Ask a side question in a forked conversation
 
-This example intentionally returns normal command output rather than opening a custom side panel.
-
-```ts
-export default function activate(letta) {
-  function appendAssistantText(chunk, parts) {
-    if (chunk.message_type !== "assistant_message") return;
-    const content = chunk.content;
-    if (typeof content === "string") {
-      parts.push(content);
-    } else if (Array.isArray(content)) {
-      for (const part of content) {
-        if (part && typeof part === "object" && "text" in part) {
-          parts.push(String(part.text));
-        }
-      }
-    }
-  }
-
-  return letta.commands.register({
-    id: "btw",
-    description: "Ask a side question in a forked conversation",
-    args: "<question>",
-    async run(ctx) {
-      if (!ctx.args.trim()) {
-        return {
-          type: "output",
-          output: "Usage: /btw <question>",
-          success: false,
-        };
-      }
-
-      const forked = await letta.client.conversations.fork(ctx.conversation.id, {
-        agent_id: ctx.agent.id,
-      });
-      const stream = await letta.client.conversations.messages.create(forked.id, {
-        agent_id: ctx.agent.id,
-        input: ctx.args,
-        streaming: true,
-      });
-
-      const parts = [];
-      for await (const chunk of stream) {
-        appendAssistantText(chunk, parts);
-      }
-
-      return {
-        type: "output",
-        output: parts.join("").trim() || "No response.",
-      };
-    },
-  });
-}
-```
+For a fuller `/btw` recipe using `runWhenBusy`, `showInTranscript: false`, `letta.client.conversations.fork(...)`, streaming, and `letta.ui.openPanel(...)`, see [`reference/btw-command.md`](reference/btw-command.md).
 
 ## Constraints
 
 - Global trusted code only for now. Do not create project extensions.
 - Do not use app internals, React setters, or command runner objects.
 - Prefer `letta.client` over raw `fetch` when using the Letta API.
-- Keep command handlers fast. Async handlers are allowed, but they should return prompt/output/handled results rather than mutating app state.
+- Keep command handlers fast. For long-running SDK work, start an async task, update a panel, and return `{ type: "handled" }` immediately.
+- If a command uses `runWhenBusy`, do not return `prompt` while the agent is running. Use `letta.client` and panels instead.
 - Do not register built-in command IDs.
 - Do not do surprising side effects on startup; extension files execute when Letta Code starts or `/reload` runs.
