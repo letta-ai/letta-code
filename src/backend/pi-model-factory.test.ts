@@ -117,7 +117,7 @@ describe("pi model factory", () => {
       { provider_type: "bedrock" },
     );
 
-    expect(resolved.provider).toBe("bedrock");
+    expect(resolved.provider).toBe("amazon-bedrock");
     expect(resolved.model.id).toBe("us.anthropic.claude-opus-4-7");
     expect(resolved.model.reasoning).toBe(true);
   });

@@ -3,14 +3,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
-  BYOK_PROVIDERS,
   type ByokProvider,
   checkProviderApiKey,
   createOrUpdateProvider,
   defaultProviderApiKey,
+  defaultProviderStorageTarget,
   getConnectedProviders,
+  getProviderConfigs,
   type ProviderField,
   type ProviderResponse,
+  type ProviderStorageTarget,
   removeProviderByName,
 } from "@/providers/byok-providers";
 import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
@@ -32,8 +34,11 @@ type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
 
 interface ProviderSelectorProps {
   onCancel: () => void;
-  /** Called when ChatGPT/Codex OAuth flow should start */
-  onStartOAuth?: () => void;
+  /** Called when an OAuth flow should start */
+  onStartOAuth?: (
+    provider: ByokProvider,
+    target: ProviderStorageTarget,
+  ) => void;
 }
 
 export function providerApiKeyFromInput(
@@ -51,6 +56,9 @@ export function ProviderSelector({
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
   // State
+  const [selectedTarget, setSelectedTarget] = useState<ProviderStorageTarget>(
+    defaultProviderStorageTarget(),
+  );
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [connectedProviders, setConnectedProviders] = useState<
     Map<string, ProviderResponse>
@@ -71,6 +79,7 @@ export function ProviderSelector({
   const [awsProfiles, setAwsProfiles] = useState<AwsProfile[]>([]);
   const [profileIndex, setProfileIndex] = useState(0);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
+  const providers = getProviderConfigs(selectedTarget);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -80,11 +89,14 @@ export function ProviderSelector({
     };
   }, []);
 
-  // Load connected providers on mount
+  // Load connected providers on mount and when switching targets.
   useEffect(() => {
+    setIsLoading(true);
     (async () => {
       try {
-        const providers = await getConnectedProviders();
+        const providers = await getConnectedProviders({
+          target: selectedTarget,
+        });
         if (mountedRef.current) {
           setConnectedProviders(providers);
           setIsLoading(false);
@@ -95,12 +107,32 @@ export function ProviderSelector({
         }
       }
     })();
+  }, [selectedTarget]);
+
+  useEffect(() => {
+    setSelectedIndex(0);
+    setViewState({ type: "list" });
+  }, []);
+
+  const switchTarget = useCallback(() => {
+    setSelectedTarget((target) => (target === "local" ? "api" : "local"));
+    setSelectedIndex(0);
+    setViewState({ type: "list" });
   }, []);
 
   // Check if a provider is connected
   const isConnected = useCallback(
     (provider: ByokProvider) => {
-      return connectedProviders.has(provider.providerName);
+      const providerNames = provider.providerNames ?? [provider.providerName];
+      return providerNames.some((name) => connectedProviders.has(name));
+    },
+    [connectedProviders],
+  );
+
+  const getConnectedProviderName = useCallback(
+    (provider: ByokProvider): string | undefined => {
+      const providerNames = provider.providerNames ?? [provider.providerName];
+      return providerNames.find((name) => connectedProviders.has(name));
     },
     [connectedProviders],
   );
@@ -108,9 +140,12 @@ export function ProviderSelector({
   // Get provider ID if connected
   const getProviderId = useCallback(
     (provider: ByokProvider): string | undefined => {
-      return connectedProviders.get(provider.providerName)?.id;
+      const providerName = getConnectedProviderName(provider);
+      return providerName
+        ? connectedProviders.get(providerName)?.id
+        : undefined;
     },
-    [connectedProviders],
+    [connectedProviders, getConnectedProviderName],
   );
 
   // Handle selecting a provider from the list
@@ -119,7 +154,7 @@ export function ProviderSelector({
       if ("isOAuth" in provider && provider.isOAuth) {
         // OAuth provider - trigger OAuth flow
         if (onStartOAuth) {
-          onStartOAuth();
+          onStartOAuth(provider, selectedTarget);
         }
         return;
       }
@@ -151,7 +186,7 @@ export function ProviderSelector({
         setValidationError(null);
       }
     },
-    [isConnected, getProviderId, onStartOAuth],
+    [isConnected, getProviderId, onStartOAuth, selectedTarget],
   );
 
   // Handle selecting an auth method
@@ -232,9 +267,16 @@ export function ProviderSelector({
           provider.providerType,
           provider.providerName,
           apiKey,
+          undefined,
+          undefined,
+          undefined,
+          {},
+          { target: selectedTarget },
         );
         // Refresh connected providers
-        const providers = await getConnectedProviders();
+        const providers = await getConnectedProviders({
+          target: selectedTarget,
+        });
         if (mountedRef.current) {
           setConnectedProviders(providers);
           setViewState({ type: "list" });
@@ -257,7 +299,14 @@ export function ProviderSelector({
     setValidationError(null);
 
     try {
-      await checkProviderApiKey(provider.providerType, apiKey);
+      await checkProviderApiKey(
+        provider.providerType,
+        apiKey,
+        undefined,
+        undefined,
+        undefined,
+        { target: selectedTarget },
+      );
       if (mountedRef.current) {
         setValidationState("valid");
       }
@@ -269,7 +318,7 @@ export function ProviderSelector({
         );
       }
     }
-  }, [viewState, apiKeyInput, validationState]);
+  }, [viewState, apiKeyInput, validationState, selectedTarget]);
 
   // Handle multi-field validation and saving (for providers like Bedrock)
   const handleMultiFieldValidateAndSave = useCallback(async () => {
@@ -302,9 +351,13 @@ export function ProviderSelector({
           accessKey,
           region,
           profile,
+          {},
+          { target: selectedTarget },
         );
         // Refresh connected providers
-        const providers = await getConnectedProviders();
+        const providers = await getConnectedProviders({
+          target: selectedTarget,
+        });
         if (mountedRef.current) {
           setConnectedProviders(providers);
           setViewState({ type: "list" });
@@ -333,6 +386,7 @@ export function ProviderSelector({
         accessKey,
         region,
         profile,
+        { target: selectedTarget },
       );
       if (mountedRef.current) {
         setValidationState("valid");
@@ -345,7 +399,7 @@ export function ProviderSelector({
         );
       }
     }
-  }, [viewState, fieldValues, validationState]);
+  }, [viewState, fieldValues, validationState, selectedTarget]);
 
   // Handle disconnect
   const handleDisconnect = useCallback(async () => {
@@ -353,9 +407,14 @@ export function ProviderSelector({
 
     const { provider } = viewState;
     try {
-      await removeProviderByName(provider.providerName);
+      await removeProviderByName(
+        getConnectedProviderName(provider) ?? provider.providerName,
+        {
+          target: selectedTarget,
+        },
+      );
       // Refresh connected providers
-      const providers = await getConnectedProviders();
+      const providers = await getConnectedProviders({ target: selectedTarget });
       if (mountedRef.current) {
         setConnectedProviders(providers);
         setViewState({ type: "list" });
@@ -363,7 +422,7 @@ export function ProviderSelector({
     } catch {
       // Silently fail, stay on options view
     }
-  }, [viewState]);
+  }, [viewState, selectedTarget, getConnectedProviderName]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -378,14 +437,14 @@ export function ProviderSelector({
 
       if (key.escape) {
         onCancel();
+      } else if (key.leftArrow || key.rightArrow || key.tab) {
+        switchTarget();
       } else if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) =>
-          Math.min(BYOK_PROVIDERS.length - 1, prev + 1),
-        );
+        setSelectedIndex((prev) => Math.min(providers.length - 1, prev + 1));
       } else if (key.return) {
-        const provider = BYOK_PROVIDERS[selectedIndex];
+        const provider = providers[selectedIndex];
         if (provider) {
           handleSelectProvider(provider);
         }
@@ -549,6 +608,37 @@ export function ProviderSelector({
           Connect your LLM API keys
         </Text>
         <Text dimColor>Change models with /model after connecting</Text>
+        <Box marginTop={1} flexDirection="row">
+          <Text dimColor>{"  "}</Text>
+          <Text
+            bold={selectedTarget === "local"}
+            color={
+              selectedTarget === "local"
+                ? colors.selector.itemHighlighted
+                : undefined
+            }
+          >
+            {selectedTarget === "local" ? "[ Local ]" : "  Local  "}
+          </Text>
+          <Text dimColor>{"  "}</Text>
+          <Text
+            bold={selectedTarget === "api"}
+            color={
+              selectedTarget === "api"
+                ? colors.selector.itemHighlighted
+                : undefined
+            }
+          >
+            {selectedTarget === "api"
+              ? "[ Constellation ]"
+              : "  Constellation  "}
+          </Text>
+        </Box>
+        <Text dimColor>
+          {selectedTarget === "local"
+            ? "  Local providers are stored on this machine and affect local agents only."
+            : "  Constellation providers are stored in Letta and affect Constellation agents."}
+        </Text>
       </Box>
 
       {isLoading ? (
@@ -557,7 +647,7 @@ export function ProviderSelector({
         </Box>
       ) : (
         <Box flexDirection="column">
-          {BYOK_PROVIDERS.map((provider, index) => {
+          {providers.map((provider, index) => {
             const isSelected = index === selectedIndex;
             const connected = isConnected(provider);
 
@@ -598,7 +688,9 @@ export function ProviderSelector({
 
       {!isLoading && (
         <Box marginTop={1}>
-          <Text dimColor>{"  "}Enter select · ↑↓ navigate · Esc cancel</Text>
+          <Text dimColor>
+            {"  "}Enter select · ↑↓ navigate · Tab/←→ switch tab · Esc cancel
+          </Text>
         </Box>
       )}
     </>

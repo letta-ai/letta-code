@@ -22,7 +22,7 @@ import {
   stripProviderHandlePrefix,
 } from "./pi-provider-registry";
 
-export const DEFAULT_PI_PROVIDER = "openai-responses" satisfies PiProvider;
+export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
 export type { PiProvider } from "./pi-provider-registry";
 
 export interface PiModelSettings {
@@ -88,7 +88,6 @@ export function resolvePiProvider(
   provider = process.env.LETTA_CODE_DEV_PI_PROVIDER ??
     inferDefaultProviderFromStandardKeys(),
 ): PiProvider {
-  if (provider === "openai") return "openai-responses";
   if (isPiProvider(provider)) return provider;
   throw new Error(
     `Unknown pi provider "${provider}". Expected ${expectedPiProviderList()}.`,
@@ -158,12 +157,12 @@ export function resolveZaiConnection(options: {
   storageDir?: string;
   preferredProviderType?: "zai" | "zai_coding";
 }): ZaiConnection {
-  const regularRecord = getLocalProviderRecordByName(
-    LOCAL_ZAI_PROVIDER_NAME,
+  const regularRecord = localProviderRecord(
+    ["zai", LOCAL_ZAI_PROVIDER_NAME],
     options.storageDir,
   );
-  const codingRecord = getLocalProviderRecordByName(
-    LOCAL_ZAI_CODING_PROVIDER_NAME,
+  const codingRecord = localProviderRecord(
+    ["zai_coding", LOCAL_ZAI_CODING_PROVIDER_NAME],
     options.storageDir,
   );
   const regularKey =
@@ -374,14 +373,14 @@ export async function resolvePiModelForAgent(
     baseURL = zai.baseURL;
   }
 
-  if (provider === "chatgpt-oauth") {
+  if (provider === "openai-codex") {
     connection = {
       ...connection,
       apiKey: await getLocalChatGPTApiKey(storageDir),
     };
   }
 
-  if (provider === "bedrock") {
+  if (provider === "amazon-bedrock") {
     const bedrock = bedrockLocalProviderOptions(connection.record);
     providerOptions = bedrock.providerOptions;
     envOverrides = bedrock.envOverrides;

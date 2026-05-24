@@ -890,7 +890,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async () => {
+                onStartOAuth={async (_provider, target) => {
                   const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
@@ -906,6 +906,7 @@ export function AppView(props: AppViewProps) {
                         buffersRef,
                         refreshDerived,
                         setCommandRunning,
+                        target,
                         onCodexConnected: () => {
                           markLocalModelsAvailable();
                           setModelSelectorOptions({

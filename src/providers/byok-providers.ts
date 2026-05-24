@@ -3,6 +3,8 @@
  * Unified module for managing custom LLM provider connections
  */
 
+import { getProviders } from "@earendil-works/pi-ai";
+import { getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import {
   checkProviderApiKey as checkProviderApiKeyRequest,
   createOrUpdateProvider as createOrUpdateProviderRequest,
@@ -18,6 +20,7 @@ import { getBackend } from "@/backend/backend";
 import {
   getPiProviderSpec,
   LMSTUDIO_OPENAI_PROVIDER_TYPE,
+  PI_PROVIDER_SPECS,
   PROVIDER_TYPE_TO_BASE_PROVIDER,
   resolveProviderFromProviderType,
 } from "@/backend/dev/pi-provider-registry";
@@ -35,9 +38,15 @@ import type { LocalProviderTimeout } from "@/backend/local/local-provider-timeou
 
 export type { ProviderResponse } from "@/backend/api/providers";
 
+export type ProviderStorageTarget = "api" | "local";
+
 export interface ProviderConnectionOptions {
   baseURL?: string;
   timeout?: LocalProviderTimeout;
+}
+
+export interface ProviderOperationOptions {
+  target?: ProviderStorageTarget;
 }
 
 // Field definition for multi-field providers (like Bedrock)
@@ -56,8 +65,50 @@ export interface AuthMethod {
   fields: ProviderField[];
 }
 
-// Provider configuration for the /connect UI
-export const BYOK_PROVIDERS = [
+export interface ByokProvider {
+  id: string;
+  displayName: string;
+  description: string;
+  providerType: string;
+  providerName: string;
+  providerNames?: readonly string[];
+  isOAuth?: boolean;
+  requiresApiKey?: boolean;
+  defaultApiKey?: string;
+  fields?: ProviderField[];
+  authMethods?: AuthMethod[];
+}
+
+export type ByokProviderId = string;
+
+const BEDROCK_AUTH_METHODS: AuthMethod[] = [
+  {
+    id: "iam",
+    label: "AWS Access Keys",
+    description: "Enter access key and secret key manually",
+    fields: [
+      {
+        key: "accessKey",
+        label: "AWS Access Key ID",
+        placeholder: "AKIA...",
+      },
+      { key: "apiKey", label: "AWS Secret Access Key", secret: true },
+      { key: "region", label: "AWS Region", placeholder: "us-east-1" },
+    ],
+  },
+  {
+    id: "profile",
+    label: "AWS Profile",
+    description: "Load credentials from ~/.aws/credentials",
+    fields: [
+      { key: "profile", label: "Profile Name", placeholder: "default" },
+      { key: "region", label: "AWS Region", placeholder: "us-east-1" },
+    ],
+  },
+];
+
+// Provider configuration for the Constellation / Letta API provider store.
+export const CONSTELLATION_BYOK_PROVIDERS: readonly ByokProvider[] = [
   {
     id: "codex",
     displayName: "ChatGPT / Codex plan",
@@ -169,36 +220,179 @@ export const BYOK_PROVIDERS = [
     description: "Connect to Claude on Amazon Bedrock",
     providerType: "bedrock",
     providerName: "lc-bedrock",
-    authMethods: [
-      {
-        id: "iam",
-        label: "AWS Access Keys",
-        description: "Enter access key and secret key manually",
-        fields: [
-          {
-            key: "accessKey",
-            label: "AWS Access Key ID",
-            placeholder: "AKIA...",
-          },
-          { key: "apiKey", label: "AWS Secret Access Key", secret: true },
-          { key: "region", label: "AWS Region", placeholder: "us-east-1" },
-        ],
-      },
-      {
-        id: "profile",
-        label: "AWS Profile",
-        description: "Load credentials from ~/.aws/credentials",
-        fields: [
-          { key: "profile", label: "Profile Name", placeholder: "default" },
-          { key: "region", label: "AWS Region", placeholder: "us-east-1" },
-        ],
-      },
-    ] as AuthMethod[],
+    authMethods: BEDROCK_AUTH_METHODS,
   },
-] as const;
+];
 
-export type ByokProviderId = (typeof BYOK_PROVIDERS)[number]["id"];
-export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
+// Backwards-compatible export for code/tests that mean the API provider list.
+export const BYOK_PROVIDERS = CONSTELLATION_BYOK_PROVIDERS;
+
+const LOCAL_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  anthropic: "Anthropic",
+  "amazon-bedrock": "Amazon Bedrock",
+  "azure-openai-responses": "Azure OpenAI Responses",
+  cerebras: "Cerebras",
+  "cloudflare-ai-gateway": "Cloudflare AI Gateway",
+  "cloudflare-workers-ai": "Cloudflare Workers AI",
+  deepseek: "DeepSeek",
+  fireworks: "Fireworks",
+  google: "Google Gemini",
+  "google-vertex": "Google Vertex AI",
+  groq: "Groq",
+  "github-copilot": "GitHub Copilot",
+  huggingface: "Hugging Face",
+  "kimi-coding": "Kimi For Coding",
+  mistral: "Mistral",
+  minimax: "MiniMax",
+  "minimax-cn": "MiniMax (China)",
+  moonshotai: "Moonshot AI",
+  "moonshotai-cn": "Moonshot AI (China)",
+  opencode: "OpenCode Zen",
+  "opencode-go": "OpenCode Go",
+  openai: "OpenAI",
+  "openai-codex": "ChatGPT Plus/Pro",
+  openrouter: "OpenRouter",
+  together: "Together AI",
+  "vercel-ai-gateway": "Vercel AI Gateway",
+  xai: "xAI",
+  xiaomi: "Xiaomi MiMo",
+  "xiaomi-token-plan-cn": "Xiaomi MiMo Token Plan (China)",
+  "xiaomi-token-plan-ams": "Xiaomi MiMo Token Plan (Amsterdam)",
+  "xiaomi-token-plan-sgp": "Xiaomi MiMo Token Plan (Singapore)",
+  zai: "ZAI",
+};
+
+const LOCAL_EXTRA_PROVIDER_CONFIGS: readonly ByokProvider[] = [
+  {
+    id: "zai-coding",
+    displayName: "zAI Coding Plan",
+    description: "Connect a zAI Coding plan key",
+    providerType: "zai_coding",
+    providerName: "zai_coding",
+    providerNames: ["zai_coding", "lc-zai-coding"],
+  },
+  {
+    id: "ollama",
+    displayName: "Ollama (local)",
+    description: "Connect local Ollama at http://localhost:11434/v1",
+    providerType: "ollama",
+    providerName: "ollama",
+    providerNames: ["ollama", "lc-ollama"],
+    requiresApiKey: false,
+    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
+  },
+  {
+    id: "ollama-cloud",
+    displayName: "Ollama Cloud",
+    description: "Connect an Ollama Cloud API key",
+    providerType: "ollama_cloud",
+    providerName: "ollama-cloud",
+    providerNames: ["ollama-cloud", "lc-ollama-cloud"],
+  },
+  {
+    id: "lmstudio",
+    displayName: "LM Studio (local)",
+    description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
+    providerType: LMSTUDIO_OPENAI_PROVIDER_TYPE,
+    providerName: "lmstudio",
+    providerNames: ["lmstudio", "lc-lmstudio"],
+    requiresApiKey: false,
+    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
+  },
+  {
+    id: "llama-cpp",
+    displayName: "llama.cpp (local)",
+    description: "Connect local llama.cpp at http://localhost:8080/v1",
+    providerType: "llama_cpp",
+    providerName: "llama-cpp",
+    providerNames: ["llama-cpp", "lc-llama-cpp"],
+    requiresApiKey: false,
+    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
+  },
+];
+
+function humanizeProviderId(provider: string): string {
+  return provider
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function displayNameForLocalProvider(provider: string): string {
+  return LOCAL_PROVIDER_DISPLAY_NAMES[provider] ?? humanizeProviderId(provider);
+}
+
+function localProviderDescription(provider: string): string {
+  return `Connect a ${displayNameForLocalProvider(provider)} API key`;
+}
+
+function byokProviderFromPiSpec(provider: string): ByokProvider | undefined {
+  const spec = PI_PROVIDER_SPECS.find((candidate) => candidate.id === provider);
+  if (!spec) return undefined;
+  return {
+    id: provider,
+    displayName: displayNameForLocalProvider(provider),
+    description: localProviderDescription(provider),
+    providerType: spec.providerTypes[0] ?? provider,
+    providerName: spec.localProviderNames[0] ?? provider,
+    providerNames: spec.localProviderNames,
+    ...(provider === "amazon-bedrock"
+      ? { authMethods: BEDROCK_AUTH_METHODS }
+      : {}),
+  };
+}
+
+function localOAuthProviderConfigs(): ByokProvider[] {
+  return getOAuthProviders()
+    .filter((provider) => provider.id === "openai-codex")
+    .map((provider) => {
+      const spec = PI_PROVIDER_SPECS.find(
+        (candidate) => candidate.piProvider === provider.id,
+      );
+      return {
+        id: `${provider.id}-oauth`,
+        displayName: provider.name,
+        description: "Connect a subscription account",
+        providerType:
+          provider.id === "openai-codex"
+            ? "chatgpt_oauth"
+            : (spec?.providerTypes[0] ?? provider.id),
+        providerName:
+          provider.id === "openai-codex"
+            ? "chatgpt-plus-pro"
+            : (spec?.localProviderNames[0] ?? provider.id),
+        providerNames:
+          provider.id === "openai-codex"
+            ? ["chatgpt-plus-pro", "openai-codex"]
+            : spec?.localProviderNames,
+        isOAuth: true,
+      };
+    });
+}
+
+const API_KEY_PROVIDER_EXCLUSIONS = new Set(["openai-codex"]);
+
+export function getProviderConfigs(
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
+): readonly ByokProvider[] {
+  if (target === "api") return CONSTELLATION_BYOK_PROVIDERS;
+
+  const byId = new Map<string, ByokProvider>();
+  for (const provider of localOAuthProviderConfigs()) {
+    byId.set(provider.id, provider);
+  }
+  for (const provider of getProviders()) {
+    if (API_KEY_PROVIDER_EXCLUSIONS.has(provider)) continue;
+    const config = byokProviderFromPiSpec(provider);
+    if (config) byId.set(config.id, config);
+  }
+  for (const provider of LOCAL_EXTRA_PROVIDER_CONFIGS) {
+    byId.set(provider.id, provider);
+  }
+  return [...byId.values()].sort((left, right) =>
+    left.displayName.localeCompare(right.displayName),
+  );
+}
 
 function providerEnvApiKey(provider: ByokProvider): string | undefined {
   const piProvider = resolveProviderFromProviderType(provider.providerType);
@@ -211,13 +405,8 @@ function providerEnvApiKey(provider: ByokProvider): string | undefined {
 export function defaultProviderApiKey(
   provider: ByokProvider,
 ): string | undefined {
-  if ("requiresApiKey" in provider && provider.requiresApiKey === false) {
-    return (
-      providerEnvApiKey(provider) ??
-      ("defaultApiKey" in provider
-        ? provider.defaultApiKey
-        : LOCAL_PROVIDER_NO_API_KEY)
-    );
+  if (provider.requiresApiKey === false) {
+    return providerEnvApiKey(provider) ?? provider.defaultApiKey;
   }
   return undefined;
 }
@@ -226,8 +415,20 @@ export function isLocalProviderStoreEnabled(): boolean {
   return getBackend().capabilities.localModelCatalog;
 }
 
-export function providerStorageTargetLabel(): string {
-  return isLocalProviderStoreEnabled() ? "local storage" : "Letta";
+export function defaultProviderStorageTarget(): ProviderStorageTarget {
+  return isLocalProviderStoreEnabled() ? "local" : "api";
+}
+
+function useLocalProviderStore(
+  target = defaultProviderStorageTarget(),
+): boolean {
+  return target === "local";
+}
+
+export function providerStorageTargetLabel(
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
+): string {
+  return target === "local" ? "local storage" : "Letta";
 }
 
 function assertLocalProviderSupported(providerType: string): void {
@@ -242,27 +443,31 @@ function assertLocalProviderSupported(providerType: string): void {
 // These are used by both the TUI ModelSelector and the WS list_models handler
 // to categorize model handles as BYOK vs Letta API.
 
-/** Prefixes that always indicate a BYOK handle (ChatGPT OAuth + lc-* providers) */
-export const STATIC_BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
+/** Prefixes that always indicate a BYOK handle (subscription aliases + lc-* providers) */
+export const STATIC_BYOK_PROVIDER_PREFIXES = [
+  "chatgpt-plus-pro/",
+  "openai-codex/",
+  "lc-",
+];
 
 export { PROVIDER_TYPE_TO_BASE_PROVIDER };
 
 /**
  * Build a mapping of BYOK provider names → base provider strings.
  *
- * Default aliases are derived from BYOK_PROVIDERS metadata so all built-in
- * providers are always covered. Connected providers (from API) are layered on
- * top to support custom provider names (e.g., "openai-sarah" → "openai").
+ * Default aliases are derived from both Constellation and local provider
+ * metadata so all built-in providers are covered. Connected providers are
+ * layered on top to support custom provider names.
  */
 export function buildByokProviderAliases(
   connectedProviders: Array<
     Pick<ProviderResponse, "name" | "provider_type">
   > = [],
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): Record<string, string> {
   const aliases: Record<string, string> = {};
 
-  // Seed from built-in BYOK_PROVIDERS so every known provider has an alias
-  for (const bp of BYOK_PROVIDERS) {
+  for (const bp of getProviderConfigs(target)) {
     const base = PROVIDER_TYPE_TO_BASE_PROVIDER[bp.providerType];
     if (base) {
       aliases[bp.providerName] = base;
@@ -282,8 +487,8 @@ export function buildByokProviderAliases(
 
 /**
  * Check whether a model handle belongs to a BYOK provider.
- * Matches static prefixes (chatgpt-plus-pro/, lc-*) and any provider
- * name present in the alias map.
+ * Matches static prefixes (subscription aliases + lc-* providers) and any
+ * provider name present in the alias map.
  */
 export function isByokHandleForSelector(
   handle: string,
@@ -303,22 +508,24 @@ export function isByokHandleForSelector(
 }
 
 /**
- * List all BYOK providers for the current user
+ * List all BYOK providers for the target store.
  */
-export async function listProviders(): Promise<ProviderResponse[]> {
-  if (isLocalProviderStoreEnabled()) {
+export async function listProviders(
+  options: ProviderOperationOptions = {},
+): Promise<ProviderResponse[]> {
+  if (useLocalProviderStore(options.target)) {
     return listLocalProviders();
   }
   return listApiProviders();
 }
 
 /**
- * Get a map of connected providers by name
+ * Get a map of connected providers by name.
  */
-export async function getConnectedProviders(): Promise<
-  Map<string, ProviderResponse>
-> {
-  const providers = await listProviders();
+export async function getConnectedProviders(
+  options: ProviderOperationOptions = {},
+): Promise<Map<string, ProviderResponse>> {
+  const providers = await listProviders(options);
   const map = new Map<string, ProviderResponse>();
   for (const provider of providers) {
     map.set(provider.name, provider);
@@ -327,30 +534,32 @@ export async function getConnectedProviders(): Promise<
 }
 
 /**
- * Check if a specific BYOK provider is connected
+ * Check if a specific BYOK provider is connected.
  */
 export async function isProviderConnected(
   providerName: string,
+  options: ProviderOperationOptions = {},
 ): Promise<boolean> {
-  const providers = await listProviders();
+  const providers = await listProviders(options);
   return providers.some((p) => p.name === providerName);
 }
 
 /**
- * Get a provider by name
+ * Get a provider by name.
  */
 export async function getProviderByName(
   providerName: string,
+  options: ProviderOperationOptions = {},
 ): Promise<ProviderResponse | null> {
-  if (isLocalProviderStoreEnabled()) {
+  if (useLocalProviderStore(options.target)) {
     return getLocalProviderByName(providerName);
   }
   return getProviderByNameRequest(providerName);
 }
 
 /**
- * Validate an API key with the provider's check endpoint
- * Returns true if valid, throws error if invalid
+ * Validate an API key with the provider's check endpoint.
+ * Returns true if valid, throws error if invalid.
  */
 export async function checkProviderApiKey(
   providerType: string,
@@ -358,8 +567,9 @@ export async function checkProviderApiKey(
   accessKey?: string,
   region?: string,
   profile?: string,
+  options: ProviderOperationOptions = {},
 ): Promise<void> {
-  if (isLocalProviderStoreEnabled()) {
+  if (useLocalProviderStore(options.target)) {
     assertLocalProviderSupported(providerType);
     return;
   }
@@ -373,7 +583,7 @@ export async function checkProviderApiKey(
 }
 
 /**
- * Create a new BYOK provider
+ * Create a new BYOK provider.
  */
 export async function createProvider(
   providerType: string,
@@ -383,8 +593,9 @@ export async function createProvider(
   region?: string,
   profile?: string,
   options: ProviderConnectionOptions = {},
+  operationOptions: ProviderOperationOptions = {},
 ): Promise<ProviderResponse> {
-  if (isLocalProviderStoreEnabled()) {
+  if (useLocalProviderStore(operationOptions.target)) {
     return createOrUpdateLocalProvider({
       providerType,
       providerName,
@@ -407,7 +618,7 @@ export async function createProvider(
 }
 
 /**
- * Update an existing provider's API key
+ * Update an existing provider's API key.
  */
 export async function updateProvider(
   providerId: string,
@@ -415,16 +626,19 @@ export async function updateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  storageDirOrOptions?: string | ProviderOperationOptions,
   options: ProviderConnectionOptions = {},
 ): Promise<ProviderResponse> {
-  if (isLocalProviderStoreEnabled()) {
+  const operationOptions =
+    typeof storageDirOrOptions === "object" ? storageDirOrOptions : {};
+  if (useLocalProviderStore(operationOptions.target)) {
     return updateLocalProvider(
       providerId,
       apiKey,
       accessKey,
       region,
       profile,
-      undefined,
+      typeof storageDirOrOptions === "string" ? storageDirOrOptions : undefined,
       options,
     );
   }
@@ -432,10 +646,13 @@ export async function updateProvider(
 }
 
 /**
- * Delete a provider by ID
+ * Delete a provider by ID.
  */
-export async function deleteProvider(providerId: string): Promise<void> {
-  if (isLocalProviderStoreEnabled()) {
+export async function deleteProvider(
+  providerId: string,
+  options: ProviderOperationOptions = {},
+): Promise<void> {
+  if (useLocalProviderStore(options.target)) {
     await deleteLocalProvider(providerId);
     return;
   }
@@ -443,8 +660,8 @@ export async function deleteProvider(providerId: string): Promise<void> {
 }
 
 /**
- * Create or update a BYOK provider
- * If provider exists, updates the API key; otherwise creates new
+ * Create or update a BYOK provider.
+ * If provider exists, updates the API key; otherwise creates new.
  */
 export async function createOrUpdateProvider(
   providerType: string,
@@ -454,8 +671,9 @@ export async function createOrUpdateProvider(
   region?: string,
   profile?: string,
   options: ProviderConnectionOptions = {},
+  operationOptions: ProviderOperationOptions = {},
 ): Promise<ProviderResponse> {
-  if (isLocalProviderStoreEnabled()) {
+  if (useLocalProviderStore(operationOptions.target)) {
     return createOrUpdateLocalProvider({
       providerType,
       providerName,
@@ -478,12 +696,13 @@ export async function createOrUpdateProvider(
 }
 
 /**
- * Remove a provider by name
+ * Remove a provider by name.
  */
 export async function removeProviderByName(
   providerName: string,
+  options: ProviderOperationOptions = {},
 ): Promise<void> {
-  if (isLocalProviderStoreEnabled()) {
+  if (useLocalProviderStore(options.target)) {
     await removeLocalProviderByName(providerName);
     return;
   }
@@ -491,10 +710,11 @@ export async function removeProviderByName(
 }
 
 /**
- * Get provider config by ID
+ * Get provider config by ID for a target.
  */
 export function getProviderConfig(
   id: ByokProviderId,
+  target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): ByokProvider | undefined {
-  return BYOK_PROVIDERS.find((p) => p.id === id);
+  return getProviderConfigs(target).find((p) => p.id === id);
 }
