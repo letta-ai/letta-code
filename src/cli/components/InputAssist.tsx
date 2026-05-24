@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import { useEffect } from "react";
 import type { ModelReasoningEffort } from "@/agent/model";
+import type { ExtensionCommand } from "@/cli/extensions/types";
 import { AgentInfoBar } from "./AgentInfoBar";
 import { FileAutocomplete } from "./FileAutocomplete";
 import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";
@@ -19,6 +20,7 @@ interface InputAssistProps {
   serverUrl?: string;
   workingDirectory?: string;
   conversationId?: string;
+  extensionCommands?: Record<string, ExtensionCommand>;
 }
 
 /**
@@ -41,6 +43,7 @@ export function InputAssist({
   serverUrl,
   workingDirectory,
   conversationId,
+  extensionCommands,
 }: InputAssistProps) {
   const showFileAutocomplete = currentInput.includes("@");
   const showCommandAutocomplete =
@@ -81,6 +84,7 @@ export function InputAssist({
           onActiveChange={onAutocompleteActiveChange}
           agentId={agentId}
           workingDirectory={workingDirectory}
+          extensionCommands={extensionCommands}
         />
         <AgentInfoBar
           agentId={agentId}

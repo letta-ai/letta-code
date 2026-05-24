@@ -14,11 +14,17 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as ts from "typescript";
+import { commands as builtinCommands } from "@/cli/commands/registry";
 import type {
   StatuslineRenderContext,
   StatuslineRenderer,
   StatuslineRendererOutput,
 } from "@/cli/display/statusline/types";
+import type {
+  ExtensionCommand,
+  ExtensionCommandRegistration,
+  ExtensionContext,
+} from "@/cli/extensions/types";
 
 export const GLOBAL_EXTENSIONS_DIRECTORY = path.join(
   homedir(),
@@ -39,12 +45,6 @@ export type StatuslineRenderFunction = (
   context: StatuslineRenderContext,
 ) => StatuslineRendererOutput;
 
-// First extension surface is statusline rendering, so the shared extension
-// context is currently the statusline render context. When we add non-UI
-// surfaces like commands, split this into a generic ExtensionContext base and
-// let StatuslineRenderContext extend it.
-export type ExtensionContext = StatuslineRenderContext;
-
 export type ExtensionStatusValue =
   | string
   | null
@@ -61,6 +61,10 @@ export type LettaExtensionFactory = (
 
 export interface LettaExtensionApi {
   getContext: () => ExtensionContext;
+  commands: {
+    register: (command: ExtensionCommandRegistration) => LettaExtensionDisposer;
+    unregister: (id: string) => void;
+  };
   ui: {
     clearStatus: (key: string) => void;
     setStatus: (key: string, value: ExtensionStatusValue | undefined) => void;
@@ -86,6 +90,7 @@ export interface LocalExtensionUiRegistry {
 }
 
 export interface LocalExtensionRegistry {
+  commands: Record<string, ExtensionCommand>;
   disposers: LocalExtensionDisposer[];
   errors: LocalExtensionLoadError[];
   loadedPaths: string[];
@@ -114,6 +119,7 @@ export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   onChange?: () => void;
+  reservedCommandIds?: Iterable<string>;
 }
 
 function listExtensionFiles(directory: string): string[] {
@@ -274,14 +280,90 @@ function toStatuslineRenderer(
   return renderer;
 }
 
+function stripSlash(command: string): string {
+  return command.startsWith("/") ? command.slice(1) : command;
+}
+
+function getDefaultReservedCommandIds(): Set<string> {
+  return new Set(Object.keys(builtinCommands).map(stripSlash));
+}
+
+function validateExtensionCommandId(id: string): void {
+  if (id.startsWith("/")) {
+    throw new Error("Extension command id must not start with '/'");
+  }
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+    throw new Error(
+      "Extension command id must be a lowercase slug using letters, numbers, and hyphens",
+    );
+  }
+}
+
+function normalizeExtensionCommand(
+  command: ExtensionCommandRegistration,
+  extensionPath: string,
+): ExtensionCommand {
+  validateExtensionCommandId(command.id);
+  if (!command.description.trim()) {
+    throw new Error(
+      `Extension command '${command.id}' must include a description`,
+    );
+  }
+  if (typeof command.run !== "function") {
+    throw new Error(`Extension command '${command.id}' must include run()`);
+  }
+
+  return {
+    id: command.id,
+    description: command.description,
+    ...(command.args ? { args: command.args } : {}),
+    order: command.order ?? 250,
+    path: extensionPath,
+    run: command.run,
+  };
+}
+
 function createLettaExtensionApi(
   registry: LocalExtensionRegistry,
   extensionPath: string,
   getContext: () => ExtensionContext,
   onChange: () => void,
+  reservedCommandIds: Set<string>,
 ): LettaExtensionApi {
+  const unregisterCommand = (id: string) => {
+    validateExtensionCommandId(id);
+    const existing = registry.commands[id];
+    if (existing?.path === extensionPath) {
+      delete registry.commands[id];
+      onChange();
+    }
+  };
+
   return {
     getContext,
+    commands: {
+      register(command) {
+        const normalized = normalizeExtensionCommand(command, extensionPath);
+        if (reservedCommandIds.has(normalized.id)) {
+          throw new Error(
+            `Extension command '${normalized.id}' conflicts with a built-in command`,
+          );
+        }
+
+        const existing = registry.commands[normalized.id];
+        if (existing && !command.override) {
+          throw new Error(
+            `Extension command '${normalized.id}' is already registered by ${existing.path}`,
+          );
+        }
+
+        registry.commands[normalized.id] = normalized;
+        onChange();
+
+        return () => unregisterCommand(normalized.id);
+      },
+      unregister: unregisterCommand,
+    },
     ui: {
       clearStatus(key) {
         delete registry.ui.statusValues[key];
@@ -324,7 +406,12 @@ export async function loadLocalExtensions(
     });
   const onChange = options.onChange ?? (() => {});
   const sources = resolveLocalExtensionSources(options);
+  const reservedCommandIds = new Set([
+    ...getDefaultReservedCommandIds(),
+    ...(options.reservedCommandIds ?? []),
+  ]);
   const registry: LocalExtensionRegistry = {
+    commands: {},
     disposers: [],
     errors: [],
     loadedPaths: [],
@@ -354,7 +441,13 @@ export async function loadLocalExtensions(
       }
 
       const dispose = await (factory as LettaExtensionFactory)(
-        createLettaExtensionApi(registry, extensionPath, getContext, onChange),
+        createLettaExtensionApi(
+          registry,
+          extensionPath,
+          getContext,
+          onChange,
+          reservedCommandIds,
+        ),
       );
       if (typeof dispose === "function") {
         registry.disposers.push({ dispose, path: extensionPath });
@@ -408,6 +501,7 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
     }
   }
 
+  registry.commands = {};
   registry.ui.statusValues = {};
   registry.ui.statuslineRenderer = null;
 }

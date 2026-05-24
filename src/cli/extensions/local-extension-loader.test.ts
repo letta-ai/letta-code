@@ -223,6 +223,125 @@ describe("local extension loader", () => {
     }
   });
 
+  test("loads extension-provided slash commands", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      const extensionPath = path.join(extensionDir, "commands.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          return letta.commands.register({
+            id: "review-pr",
+            description: "Review a GitHub PR",
+            args: "<url-or-number>",
+            order: 250,
+            run(ctx) {
+              return { type: "prompt", content: "Review this PR: " + ctx.args };
+            },
+          });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(registry.commands["review-pr"]?.description).toBe(
+        "Review a GitHub PR",
+      );
+      expect(registry.commands["review-pr"]?.args).toBe("<url-or-number>");
+      expect(registry.commands["review-pr"]?.order).toBe(250);
+      await expect(
+        Promise.resolve(
+          registry.commands["review-pr"]?.run({
+            agent: { id: "agent-1", name: "Amelia" },
+            args: "123",
+            argv: ["123"],
+            command: "review-pr",
+            conversation: { id: "conversation-1" },
+            cwd: "/tmp/project",
+            getContext: createStatuslineContext,
+            model: { id: "model-1", displayName: "Sonnet" },
+            permissionMode: "standard",
+            rawInput: "/review-pr 123",
+          }),
+        ),
+      ).resolves.toEqual({ type: "prompt", content: "Review this PR: 123" });
+
+      disposeLocalExtensions(registry);
+      expect(registry.commands).toEqual({});
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("rejects extension command id collisions", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "a.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "dupe",
+            description: "First command",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "b.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "dupe",
+            description: "Second command",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "c.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "reload",
+            description: "Built-in conflict",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "d.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "/bad",
+            description: "Invalid id",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(Object.keys(registry.commands)).toEqual(["dupe"]);
+      expect(registry.errors.map((entry) => entry.path).sort()).toEqual([
+        path.join(extensionDir, "b.ts"),
+        path.join(extensionDir, "c.ts"),
+        path.join(extensionDir, "d.ts"),
+      ]);
+      expect(registry.errors.map((entry) => entry.error.message)).toEqual([
+        expect.stringContaining("already registered"),
+        expect.stringContaining("built-in command"),
+        expect.stringContaining("must not start"),
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("runs extension disposers", async () => {
     const root = createTempDir();
     try {

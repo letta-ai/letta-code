@@ -2,17 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { debugLog } from "@/utils/debug";
 import {
   disposeLocalExtensions,
-  type ExtensionContext,
   type LocalExtensionRegistry,
   loadLocalExtensions,
   resolveLocalExtensionSources,
 } from "./local-extension-loader";
+import type { ExtensionContext } from "./types";
 
 export interface LocalExtensionRuntime {
   hadStatuslineRenderer: boolean;
   hasExtensionSources: boolean;
   isLoading: boolean;
   registry: LocalExtensionRegistry | null;
+  getContext: () => ExtensionContext;
   reload: () => Promise<void>;
   updateContext: (context: ExtensionContext) => void;
 }
@@ -54,6 +55,8 @@ export function useLocalExtensionRuntime(
   const updateContext = useCallback((context: ExtensionContext) => {
     contextRef.current = context;
   }, []);
+
+  const getContext = useCallback(() => contextRef.current, []);
 
   useEffect(() => {
     contextRef.current = initialContext;
@@ -137,7 +140,7 @@ export function useLocalExtensionRuntime(
   }, [reload]);
 
   return useMemo(
-    () => ({ registry, reload, updateContext, ...loadState }),
-    [loadState, registry, reload, updateContext],
+    () => ({ registry, getContext, reload, updateContext, ...loadState }),
+    [getContext, loadState, registry, reload, updateContext],
   );
 }

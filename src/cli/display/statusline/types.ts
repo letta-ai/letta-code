@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type * as DisplayComponents from "@/cli/display/DisplayComponents";
+import type { ExtensionContext } from "@/cli/extensions/types";
 import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 
 export interface StatuslineUiContext {
@@ -42,7 +43,7 @@ export interface StatuslineCostContext {
   totalLinesRemoved: number | null;
 }
 
-export interface StatuslineRenderContext {
+export interface StatuslineRenderContext extends ExtensionContext {
   rawPayload: StatusLinePayload;
   components: typeof DisplayComponents;
   statuses: Record<string, string>;

@@ -1,3 +1,5 @@
+import type { ExtensionCommand } from "@/cli/extensions/types";
+
 /**
  * Shared types for autocomplete components
  */
@@ -20,6 +22,8 @@ export interface AutocompleteProps {
   agentId?: string;
   /** Working directory for local pin status checking */
   workingDirectory?: string;
+  /** Slash commands registered by trusted local extensions */
+  extensionCommands?: Record<string, ExtensionCommand>;
 }
 
 /**

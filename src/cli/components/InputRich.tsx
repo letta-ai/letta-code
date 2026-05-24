@@ -2025,6 +2025,7 @@ export function Input({
                 serverUrl={serverUrl}
                 workingDirectory={process.cwd()}
                 conversationId={conversationId}
+                extensionCommands={extensionRuntime.registry?.commands}
               />
             )}
 
