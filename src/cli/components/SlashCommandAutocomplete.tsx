@@ -8,7 +8,7 @@ import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
-const VISIBLE_COMMANDS = 7; // Number of commands visible at once
+const VISIBLE_COMMANDS = 5; // Number of commands visible at once
 const CMD_COL_WIDTH = 14;
 
 // Compute filtered command list (excluding hidden commands), sorted by order
