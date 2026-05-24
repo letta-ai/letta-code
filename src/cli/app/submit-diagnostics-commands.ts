@@ -175,6 +175,9 @@ export async function handleDiagnosticsCommand(
         setConversationOverrideContextWindowLimit(null);
       } else {
         setHasConversationModelOverride(true);
+        setConversationOverrideModelSettings(
+          result.conversationModelSettings ?? null,
+        );
         setConversationOverrideContextWindowLimit(result.contextWindow);
       }
 

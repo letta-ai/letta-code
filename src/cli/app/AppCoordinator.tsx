@@ -3000,8 +3000,21 @@ export function App({
           return;
         }
 
+        const hasConversationModelSettings =
+          conversationModelSettings !== undefined &&
+          conversationModelSettings !== null &&
+          Object.keys(conversationModelSettings as Record<string, unknown>)
+            .length > 0;
+        const resolvedConversationModelSettings = hasConversationModelSettings
+          ? conversationModelSettings
+          : conversationModel === undefined ||
+              conversationModel === null ||
+              conversationModel === agentModelHandle
+            ? (agentState.model_settings ?? null)
+            : null;
+
         const reasoningEffort = deriveReasoningEffort(
-          conversationModelSettings,
+          resolvedConversationModelSettings,
           agentState.llm_config,
         );
 
@@ -3026,7 +3039,7 @@ export function App({
             : conversationContextWindowLimit;
 
         setHasConversationModelOverride(true);
-        setConversationOverrideModelSettings(conversationModelSettings ?? null);
+        setConversationOverrideModelSettings(resolvedConversationModelSettings);
         setConversationOverrideContextWindowLimit(
           resolvedConversationContextWindowLimit,
         );
@@ -3965,6 +3978,7 @@ export function App({
     contextTrackerRef,
     conversationIdRef,
     currentModelHandle,
+    currentModelId,
     currentToolset,
     isAgentBusy,
     llmConfig,

@@ -8,7 +8,10 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ModelReasoningEffort } from "@/agent/model";
+import {
+  type ModelReasoningEffort,
+  shouldPreserveContextWindowForModelSelection,
+} from "@/agent/model";
 import {
   applyPersonalityToMemory,
   getPersonalityBlockValues,
@@ -70,6 +73,7 @@ type ConfigurationHandlersContext = {
   contextTrackerRef: MutableRefObject<ContextTracker>;
   conversationIdRef: MutableRefObject<string>;
   currentModelHandle: string | null;
+  currentModelId: string | null;
   currentToolset: ToolsetName | null;
   isAgentBusy: () => boolean;
   llmConfig: LlmConfig | null;
@@ -114,6 +118,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     contextTrackerRef,
     conversationIdRef,
     currentModelHandle,
+    currentModelId,
     currentToolset,
     isAgentBusy,
     llmConfig,
@@ -299,6 +304,22 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           return;
         }
 
+        const currentLlmConfig = llmConfigRef.current;
+        const shouldPreserveContextWindow =
+          shouldPreserveContextWindowForModelSelection({
+            currentModelHandle,
+            currentModelId,
+            currentLlmConfig,
+            selectedModelHandle: modelHandle,
+            selectedContextWindow,
+          });
+        const modelUpdateArgsForRequest = model.updateArgs
+          ? { ...(model.updateArgs as Record<string, unknown>) }
+          : undefined;
+        if (shouldPreserveContextWindow && modelUpdateArgsForRequest) {
+          delete modelUpdateArgsForRequest.context_window;
+        }
+
         await withCommandLock(async () => {
           const cmd =
             resolveOverlayCommand() ??
@@ -326,7 +347,8 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             updatedAgent = await updateAgentLLMConfig(
               agentIdRef.current,
               modelHandle,
-              model.updateArgs,
+              modelUpdateArgsForRequest,
+              { preserveContextWindow: shouldPreserveContextWindow },
             );
             conversationModelSettings = updatedAgent?.model_settings;
           } else {
@@ -336,8 +358,8 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             const updatedConversation = await updateConversationLLMConfig(
               conversationIdRef.current,
               modelHandle,
-              model.updateArgs,
-              { preserveContextWindow: false },
+              modelUpdateArgsForRequest,
+              { preserveContextWindow: shouldPreserveContextWindow },
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -376,15 +398,17 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             );
           }
 
-          const presetContextWindow = (
-            model.updateArgs as { context_window?: unknown } | undefined
-          )?.context_window;
+          const presetContextWindow = modelUpdateArgsForRequest?.context_window;
+          const preservedContextWindow = llmConfigRef.current?.context_window;
           const resolvedContextWindow =
             typeof conversationContextWindowLimit === "number"
               ? conversationContextWindowLimit
-              : typeof presetContextWindow === "number"
-                ? presetContextWindow
-                : undefined;
+              : shouldPreserveContextWindow &&
+                  typeof preservedContextWindow === "number"
+                ? preservedContextWindow
+                : typeof presetContextWindow === "number"
+                  ? presetContextWindow
+                  : undefined;
           if (!isDefaultConversation) {
             setConversationOverrideContextWindowLimit(
               typeof resolvedContextWindow === "number"
@@ -504,6 +528,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       commandRunner,
       consumeOverlayCommand,
       currentModelHandle,
+      currentModelId,
       currentToolset,
       isAgentBusy,
       maybeRecordToolsetChangeReminder,
