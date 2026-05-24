@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
@@ -21,6 +21,7 @@ import { colors } from "./colors";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
+const VISIBLE_PROVIDERS = 12;
 
 type ViewState =
   | { type: "list" }
@@ -79,7 +80,30 @@ export function ProviderSelector({
   const [awsProfiles, setAwsProfiles] = useState<AwsProfile[]>([]);
   const [profileIndex, setProfileIndex] = useState(0);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
-  const providers = getProviderConfigs(selectedTarget);
+  const providers = useMemo(
+    () => getProviderConfigs(selectedTarget),
+    [selectedTarget],
+  );
+  const providerStartIndex = useMemo(() => {
+    if (selectedIndex < VISIBLE_PROVIDERS) return 0;
+    return Math.min(
+      selectedIndex - VISIBLE_PROVIDERS + 1,
+      Math.max(0, providers.length - VISIBLE_PROVIDERS),
+    );
+  }, [selectedIndex, providers.length]);
+  const visibleProviders = useMemo(
+    () =>
+      providers.slice(
+        providerStartIndex,
+        providerStartIndex + VISIBLE_PROVIDERS,
+      ),
+    [providers, providerStartIndex],
+  );
+  const providersAbove = providerStartIndex;
+  const providersBelow = Math.max(
+    0,
+    providers.length - providerStartIndex - VISIBLE_PROVIDERS,
+  );
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -113,6 +137,12 @@ export function ProviderSelector({
     setSelectedIndex(0);
     setViewState({ type: "list" });
   }, []);
+
+  useEffect(() => {
+    if (selectedIndex >= providers.length && providers.length > 0) {
+      setSelectedIndex(providers.length - 1);
+    }
+  }, [selectedIndex, providers.length]);
 
   const switchTarget = useCallback(() => {
     setSelectedTarget((target) => (target === "local" ? "api" : "local"));
@@ -647,8 +677,14 @@ export function ProviderSelector({
         </Box>
       ) : (
         <Box flexDirection="column">
-          {providers.map((provider, index) => {
-            const isSelected = index === selectedIndex;
+          {providersAbove > 0 && (
+            <Text dimColor>
+              {"  "}↑ {providersAbove} more above
+            </Text>
+          )}
+          {visibleProviders.map((provider, index) => {
+            const actualIndex = providerStartIndex + index;
+            const isSelected = actualIndex === selectedIndex;
             const connected = isConnected(provider);
 
             return (
@@ -683,6 +719,13 @@ export function ProviderSelector({
               </Box>
             );
           })}
+          {providersBelow > 0 ? (
+            <Text dimColor>
+              {"  "}↓ {providersBelow} more below
+            </Text>
+          ) : providers.length > VISIBLE_PROVIDERS ? (
+            <Text> </Text>
+          ) : null}
         </Box>
       )}
 
