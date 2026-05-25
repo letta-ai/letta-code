@@ -44,6 +44,8 @@ export interface ChannelMessageAttachment {
   imageDataBase64?: string;
   /** Best-effort speech-to-text transcription (voice memos only). */
   transcription?: string;
+  /** Best-effort reason voice memo transcription failed. */
+  transcriptionError?: string;
 }
 
 export interface ChannelReactionNotification {

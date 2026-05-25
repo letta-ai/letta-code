@@ -296,6 +296,33 @@ describe("formatChannelNotification", () => {
     expect(xml).not.toContain("</attachment>");
   });
 
+  test("renders attempted_transcription_error child node when transcription fails", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/voice.ogg",
+          name: "voice.ogg",
+          mimeType: "audio/ogg",
+          transcriptionError: "OpenAI transcription API error (429): nope",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain(
+      "<attempted_transcription_error>OpenAI transcription API error (429): nope</attempted_transcription_error>",
+    );
+    expect(xml).toContain("</attachment>");
+    expect(xml).not.toMatch(/<attachment[^>]*\/>/);
+  });
+
   test("escapes XML in transcription text", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",

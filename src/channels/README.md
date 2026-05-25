@@ -133,6 +133,43 @@ Plugins that need Slack/Discord-style auto-routing or rich Desktop management
 remain first-party/bundled work for now. Custom plugins can still expose custom
 `MessageChannel` actions and schema fragments via `messageActions`.
 
+> Note: inbound channel delivery and user-visible replies are separate steps.
+> A channel message can successfully reach the agent, but the agent still has to
+> call `MessageChannel` to reply. If the transcript shows the incoming
+> `<channel-notification>` but no `MessageChannel` tool call, this is usually a
+> model/prompting issue rather than a channel adapter failure. For debugging,
+> check whether the notification reached the conversation, whether the agent
+> called `MessageChannel`, whether the tool result says the message was sent,
+> and whether the route/account IDs match the original chat.
+
+## Local backend channels
+
+Channels can run against the experimental local backend without registering a
+remote environment. In this mode the backend is in-process, so no
+`LETTA_BASE_URL` is required.
+
+```bash
+letta channels install telegram
+letta channels configure telegram
+letta server --backend local --channels telegram
+```
+
+Then send the bot a message to get a pairing code and bind it to the local agent
+and conversation:
+
+```bash
+letta channels pair \
+  --channel telegram \
+  --code XXXXXX \
+  --agent <agent-id> \
+  --conversation default
+```
+
+Only set `LETTA_BASE_URL` for a separate self-hosted server. For example,
+`LETTA_BASE_URL=http://localhost:8283 letta server --channels telegram` talks to
+a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
+`--backend local`.
+
 ## Channel slash commands
 
 Typed slash commands are handled before normal channel ingress so operational
@@ -198,6 +235,7 @@ unambiguous.
 
 The slash command `url` is present because Slack manifests require one; the
 Socket Mode listener receives the command over the app-level WebSocket.
+
 
 ## First-party vs user plugins
 
