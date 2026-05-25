@@ -37,6 +37,9 @@ import { sessionPermissions } from "@/permissions/session";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
+  type InheritedChannelContextPayload,
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+  type RuntimeContextSnapshot,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -651,6 +654,26 @@ export interface ComposeSubagentChildEnvOptions {
    * channel turns. Forwarded so the child can safely rediscover only tools
    * available in the parent turn (not a broader process-wide toolset). */
   inheritedToolContextId?: string | null;
+  /** Serializable channel scope for child processes. Execution-context IDs are
+   * process-local, so channel scope must be copied explicitly across spawn. */
+  inheritedChannelContext?: InheritedChannelContextPayload | null;
+}
+
+function buildInheritedChannelContextPayload(
+  runtimeContext: RuntimeContextSnapshot | undefined,
+): InheritedChannelContextPayload | null {
+  const channelToolScope = runtimeContext?.channelToolScope;
+  const channelTurnSources = runtimeContext?.channelTurnSources ?? [];
+  if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
+    return null;
+  }
+
+  return {
+    ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
+    ...(channelTurnSources.length
+      ? { channelTurnSources: [...channelTurnSources] }
+      : {}),
+  };
 }
 
 /**
@@ -684,6 +707,7 @@ export function composeSubagentChildEnv(
     inheritedBaseUrl,
     transcriptPath,
     inheritedToolContextId,
+    inheritedChannelContext,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -695,6 +719,11 @@ export function composeSubagentChildEnv(
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
     ...(inheritedToolContextId && {
       LETTA_INHERITED_TOOL_CONTEXT_ID: inheritedToolContextId,
+    }),
+    ...(inheritedChannelContext && {
+      [LETTA_INHERITED_CHANNEL_CONTEXT_ENV]: JSON.stringify(
+        inheritedChannelContext,
+      ),
     }),
   };
 
@@ -1010,6 +1039,9 @@ async function executeSubagent(
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
       ? "local"
       : "api";
+    const runtimeContext = getRuntimeContext();
+    const inheritedChannelContext =
+      buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
     const cliArgs = buildSubagentArgs(
       type,
@@ -1023,7 +1055,7 @@ async function executeSubagent(
         backendMode,
         promptTransport: "stdin",
         extraTools:
-          config.fork && process.env.LETTA_INHERITED_TOOL_CONTEXT_ID
+          config.fork && inheritedChannelContext
             ? ["MessageChannel"]
             : undefined,
       },
@@ -1083,7 +1115,8 @@ async function executeSubagent(
       inheritedApiKey,
       inheritedBaseUrl,
       transcriptPath,
-      inheritedToolContextId: getRuntimeContext()?.toolContextId ?? null,
+      inheritedToolContextId: runtimeContext?.toolContextId ?? null,
+      inheritedChannelContext,
     });
 
     const proc = spawn(launcher.command, launcher.args, {

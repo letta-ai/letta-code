@@ -6,9 +6,14 @@ import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
 import { getSupportedChannelIds } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
-import type { SupportedChannelId } from "@/channels/types";
-import type { RuntimeContextSnapshot } from "@/runtime-context";
+import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
+import {
+  type InheritedChannelContextPayload,
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+  type RuntimeContextSnapshot,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
 import {
   ANTHROPIC_DEFAULT_TOOLS,
@@ -315,6 +320,105 @@ export function resolveConversationChannelToolScope(
   return { channels };
 }
 
+function parseInheritedChannelToolScope(
+  value: unknown,
+): MessageChannelToolDiscoveryScope | null {
+  if (!isRecord(value) || !Array.isArray(value.channels)) {
+    return null;
+  }
+
+  const supportedChannelIds = new Set<string>(getSupportedChannelIds());
+  const channels: MessageChannelToolDiscoveryScope["channels"] = [];
+  for (const entry of value.channels) {
+    if (!isRecord(entry) || typeof entry.channelId !== "string") {
+      continue;
+    }
+    if (!supportedChannelIds.has(entry.channelId)) {
+      continue;
+    }
+    const accountId = entry.accountId;
+    channels.push({
+      channelId: entry.channelId as SupportedChannelId,
+      ...(typeof accountId === "string" || accountId === null
+        ? { accountId }
+        : {}),
+    });
+  }
+
+  return { channels };
+}
+
+function parseInheritedChannelTurnSources(value: unknown): ChannelTurnSource[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const sources: ChannelTurnSource[] = [];
+  for (const entry of value) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.channel !== "string" ||
+      typeof entry.chatId !== "string" ||
+      typeof entry.agentId !== "string" ||
+      typeof entry.conversationId !== "string"
+    ) {
+      continue;
+    }
+
+    sources.push({
+      channel: entry.channel,
+      chatId: entry.chatId,
+      agentId: entry.agentId,
+      conversationId: entry.conversationId,
+      ...(typeof entry.accountId === "string"
+        ? { accountId: entry.accountId }
+        : {}),
+      ...(entry.chatType === "direct" || entry.chatType === "channel"
+        ? { chatType: entry.chatType }
+        : {}),
+      ...(typeof entry.messageId === "string"
+        ? { messageId: entry.messageId }
+        : {}),
+      ...(typeof entry.threadId === "string" || entry.threadId === null
+        ? { threadId: entry.threadId }
+        : {}),
+    });
+  }
+
+  return sources;
+}
+
+function parseInheritedChannelContextEnv(): InheritedChannelContextPayload | null {
+  const raw = process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV];
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+
+    const channelToolScope = parseInheritedChannelToolScope(
+      parsed.channelToolScope,
+    );
+    const channelTurnSources = parseInheritedChannelTurnSources(
+      parsed.channelTurnSources,
+    );
+    if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
+      return null;
+    }
+
+    return {
+      ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
+      ...(channelTurnSources.length ? { channelTurnSources } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function prepareToolExecutionContextForScope(params: {
   agentId: string;
   conversationId?: string | null;
@@ -380,14 +484,18 @@ export async function prepareToolExecutionContextForScope(params: {
   const inheritedContext = inheritedContextId
     ? getExecutionContextById(inheritedContextId)
     : undefined;
-  const inheritedChannelToolScope = inheritedContext
-    ? {
-        channels:
-          inheritedContext.runtimeContext.channelToolScope?.channels ?? [],
-      }
-    : null;
+  const inheritedChannelContext = parseInheritedChannelContextEnv();
+  const inheritedChannelToolScope =
+    inheritedChannelContext?.channelToolScope ??
+    (inheritedContext
+      ? {
+          channels:
+            inheritedContext.runtimeContext.channelToolScope?.channels ?? [],
+        }
+      : null);
   const inheritedChannelTurnSources =
     explicitChannelTurnSources ??
+    inheritedChannelContext?.channelTurnSources ??
     inheritedContext?.runtimeContext.channelTurnSources ??
     [];
   const scopedConversationId = conversationId ?? "default";

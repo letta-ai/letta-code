@@ -21,6 +21,14 @@ export interface RuntimeContextSnapshot {
   channelTurnSources?: ChannelTurnSource[];
 }
 
+export interface InheritedChannelContextPayload {
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  channelTurnSources?: ChannelTurnSource[];
+}
+
+export const LETTA_INHERITED_CHANNEL_CONTEXT_ENV =
+  "LETTA_INHERITED_CHANNEL_CONTEXT";
+
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
 
 export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
