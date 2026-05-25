@@ -56,6 +56,18 @@ export interface ExtensionBackgroundAgentContext {
   durationMs: number;
 }
 
+export interface ExtensionUiCapabilities {
+  panels: boolean;
+  statusValues: boolean;
+  customStatuslineRenderer: boolean;
+}
+
+export interface ExtensionCapabilities {
+  tools: boolean;
+  commands: boolean;
+  ui: ExtensionUiCapabilities;
+}
+
 export type ExtensionSourceScope = "global" | "project" | "bundled";
 
 export interface ExtensionOwner {

@@ -11,9 +11,13 @@ import {
   clearExtensionTools,
   getExtensionToolDefinition,
 } from "@/extensions/tool-registry";
-import type { ExtensionPanelHandle } from "@/extensions/types";
+import type {
+  ExtensionCapabilities,
+  ExtensionPanelHandle,
+} from "@/extensions/types";
 
 type ExtensionTestGlobal = typeof globalThis & {
+  __lettaExtensionCapabilities?: ExtensionCapabilities;
   __lettaExtensionGate?: Promise<void>;
   __lettaExtensionPanel?: ExtensionPanelHandle;
   __lettaExtensionSignal?: AbortSignal;
@@ -24,13 +28,27 @@ function createTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "letta-extension-host-"));
 }
 
-function createHost(root: string): ExtensionHost {
+function createHost(
+  root: string,
+  capabilities?: ExtensionCapabilities,
+): ExtensionHost {
   return createExtensionHost({
     cacheDirectory: path.join(root, "extension-cache"),
+    ...(capabilities ? { capabilities } : {}),
     getClient: async () => ({}) as unknown as Letta,
     globalExtensionsDirectory: path.join(root, "global-extensions"),
   });
 }
+
+const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
+  tools: true,
+  commands: false,
+  ui: {
+    panels: false,
+    statusValues: false,
+    customStatuslineRenderer: false,
+  },
+};
 
 describe("extension host", () => {
   afterEach(() => {
@@ -75,6 +93,96 @@ describe("extension host", () => {
 
       unsubscribe();
       host.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("exposes configured capabilities to extensions", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ExtensionTestGlobal;
+    delete testGlobal.__lettaExtensionCapabilities;
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "capabilities.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          globalThis.__lettaExtensionCapabilities = letta.capabilities;
+          if (letta.capabilities.commands) {
+            letta.commands.register({
+              id: "hidden",
+              description: "Should not register",
+              run() { return { type: "handled" }; },
+            });
+          }
+          if (letta.capabilities.ui.panels) {
+            letta.ui.openPanel({ id: "hidden", content: "hidden" });
+          }
+          if (letta.capabilities.tools) {
+            letta.tools.register({
+              name: "visible_tool",
+              description: "Visible tool",
+              run() { return "ok"; },
+            });
+          }
+        }`,
+      );
+
+      const host = createHost(root, TOOL_ONLY_EXTENSION_CAPABILITIES);
+      await host.reload();
+      const snapshot = host.getSnapshot();
+
+      const observedCapabilities = testGlobal.__lettaExtensionCapabilities as
+        | ExtensionCapabilities
+        | undefined;
+      expect(observedCapabilities).toEqual(TOOL_ONLY_EXTENSION_CAPABILITIES);
+      expect(snapshot.capabilities).toEqual(TOOL_ONLY_EXTENSION_CAPABILITIES);
+      expect(Object.keys(snapshot.commands)).toEqual([]);
+      expect(Object.values(snapshot.ui.panels)).toEqual([]);
+      expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
+    } finally {
+      delete testGlobal.__lettaExtensionCapabilities;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("unsupported capabilities no-op even when extensions call the APIs", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "unsupported.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "hidden",
+            description: "Should not register",
+            run() { return { type: "handled" }; },
+          });
+          letta.ui.openPanel({ id: "hidden", content: "hidden" });
+          letta.ui.setStatus("hidden", "hidden");
+          letta.ui.setStatuslineRenderer(() => "hidden");
+          letta.tools.register({
+            name: "visible_tool",
+            description: "Visible tool",
+            run() { return "ok"; },
+          });
+        }`,
+      );
+
+      const host = createHost(root, TOOL_ONLY_EXTENSION_CAPABILITIES);
+      await host.reload();
+      const snapshot = host.getSnapshot();
+
+      expect(snapshot.errors).toEqual([]);
+      expect(snapshot.commands).toEqual({});
+      expect(snapshot.ui.panels).toEqual({});
+      expect(snapshot.ui.statusValues).toEqual({});
+      expect(snapshot.ui.statuslineRenderer).toBeNull();
+      expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

@@ -12,7 +12,9 @@ import {
   loadLocalExtensions as loadLocalExtensionsBase,
   resolveLocalExtensionSources,
 } from "@/extensions/extension-host";
+import type { ExtensionCapabilities } from "@/extensions/types";
 import { getAllLettaToolNames, getServerToolName } from "@/tools/manager";
+import { TUI_EXTENSION_CAPABILITIES } from "./capabilities";
 
 function stripSlash(command: string): string {
   return command.startsWith("/") ? command.slice(1) : command;
@@ -33,12 +35,14 @@ function getDefaultReservedToolNames(): Set<string> {
 
 function withDefaultReservations<
   T extends {
+    capabilities?: ExtensionCapabilities;
     reservedCommandIds?: Iterable<string>;
     reservedToolNames?: Iterable<string>;
   },
 >(options: T): T {
   return {
     ...options,
+    capabilities: options.capabilities ?? TUI_EXTENSION_CAPABILITIES,
     reservedCommandIds: [
       ...getDefaultReservedCommandIds(),
       ...(options.reservedCommandIds ?? []),
@@ -82,3 +86,4 @@ export type {
   ResolveLocalExtensionSourcesOptions,
   StatuslineRenderFunction,
 } from "@/extensions/extension-host";
+export { TUI_EXTENSION_CAPABILITIES } from "./capabilities";
