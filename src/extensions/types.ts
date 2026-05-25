@@ -67,6 +67,7 @@ export interface ExtensionOwner {
 
 export type ExtensionCapabilityKind =
   | "command"
+  | "tool"
   | "panel"
   | "status"
   | "statusline";
@@ -197,4 +198,77 @@ export interface ExtensionCommand {
   runWhenBusy: boolean;
   showInTranscript: boolean;
   run: ExtensionCommandRegistration["run"];
+}
+
+export interface ExtensionToolContentText {
+  type: "text";
+  text: string;
+}
+
+export interface ExtensionToolContentImage {
+  type: "image";
+  source: {
+    type: "base64";
+    media_type: string;
+    data: string;
+  };
+}
+
+export type ExtensionToolContent =
+  | ExtensionToolContentText
+  | ExtensionToolContentImage;
+
+export type ExtensionToolRunResult =
+  | string
+  | ExtensionToolContent[]
+  | {
+      content?: string | ExtensionToolContent[];
+      output?: string;
+      stdout?: string[];
+      stderr?: string[];
+      status?: "success" | "error";
+      isError?: boolean;
+      success?: boolean;
+    };
+
+export interface ExtensionToolRunContext {
+  args: Record<string, unknown>;
+  cwd: string;
+  workingDirectory: string;
+  toolCallId: string | null;
+  signal: AbortSignal;
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  permissionMode: string | null;
+  agent: {
+    id: string | null;
+  };
+  conversation: {
+    id: string | null;
+  };
+  getContext: () => ExtensionContext;
+}
+
+export interface ExtensionToolRegistration {
+  name: string;
+  description: string;
+  parameters?: Record<string, unknown>;
+  override?: boolean;
+  requiresApproval?: boolean;
+  parallelSafe?: boolean;
+  isEnabled?: (context: ExtensionContext) => boolean;
+  run: (
+    context: ExtensionToolRunContext,
+  ) => ExtensionToolRunResult | Promise<ExtensionToolRunResult>;
+}
+
+export interface ExtensionTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  owner?: ExtensionOwner;
+  path: string;
+  requiresApproval: boolean;
+  parallelSafe: boolean;
+  isEnabled?: ExtensionToolRegistration["isEnabled"];
+  run: ExtensionToolRegistration["run"];
 }

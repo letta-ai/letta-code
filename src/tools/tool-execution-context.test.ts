@@ -27,6 +27,10 @@ import {
 } from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";
 import {
+  clearExtensionTools,
+  registerExtensionTool,
+} from "@/extensions/tool-registry";
+import {
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
   runWithRuntimeContext,
 } from "@/runtime-context";
@@ -79,6 +83,33 @@ describe("tool execution context snapshot", () => {
     };
   }
 
+  function registerEchoExtensionTool(signal: AbortSignal): void {
+    registerExtensionTool({
+      name: "local_echo",
+      description: "Echo input from a local extension",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } },
+        required: ["message"],
+      },
+      owner: {
+        id: "global:/tmp/local-echo.ts",
+        path: "/tmp/local-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/local-echo.ts",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: signal,
+      getContext: () => {
+        throw new Error("context should not be needed for this test");
+      },
+      isAvailable: () => true,
+      run: (ctx) => `echo:${ctx.args.message}`,
+    });
+  }
+
   beforeAll(() => {
     initialTools = getToolNames();
   });
@@ -91,6 +122,7 @@ describe("tool execution context snapshot", () => {
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
     clearExternalTools();
+    clearExtensionTools();
     clearAllRoutes();
     __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
@@ -108,6 +140,7 @@ describe("tool execution context snapshot", () => {
 
   afterAll(async () => {
     clearExternalTools();
+    clearExtensionTools();
     if (initialTools.length > 0) {
       await loadSpecificTools(initialTools);
     } else {
@@ -270,6 +303,83 @@ describe("tool execution context snapshot", () => {
 
     expect(prepared.loadedToolNames).toEqual([]);
     expect(prepared.clientTools).toEqual([]);
+  });
+
+  test("prepares and executes extension tools from turn snapshots", async () => {
+    const controller = new AbortController();
+    registerEchoExtensionTool(controller.signal);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["local_echo"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "local_echo",
+    ]);
+
+    clearExtensionTools();
+
+    const result = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("echo:hi");
+  });
+
+  test("extension tools take precedence over external tools with the same name", async () => {
+    registerExternalTools([
+      {
+        name: "local_echo",
+        description: "External tool with duplicate name",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+    const controller = new AbortController();
+    registerEchoExtensionTool(controller.signal);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["local_echo"] },
+    );
+
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "local_echo",
+    ]);
+
+    const result = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("echo:hi");
+  });
+
+  test("aborted extension activations stop captured tool execution", async () => {
+    const controller = new AbortController();
+    registerEchoExtensionTool(controller.signal);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["local_echo"] },
+    );
+
+    controller.abort();
+
+    const result = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("error");
+    expect(asText(result.toolReturn)).toBe("Interrupted by user");
   });
 
   test("prepares current tool snapshots with fresh MessageChannel discovery", async () => {

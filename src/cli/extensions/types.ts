@@ -23,5 +23,12 @@ export type {
   ExtensionReflectionContext,
   ExtensionSourceScope,
   ExtensionTokenUsageContext,
+  ExtensionTool,
+  ExtensionToolContent,
+  ExtensionToolContentImage,
+  ExtensionToolContentText,
+  ExtensionToolRegistration,
+  ExtensionToolRunContext,
+  ExtensionToolRunResult,
   ExtensionWorkspaceContext,
 } from "@/extensions/types";

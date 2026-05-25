@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,6 +7,10 @@ import {
   createExtensionHost,
   type ExtensionHost,
 } from "@/extensions/extension-host";
+import {
+  clearExtensionTools,
+  getExtensionToolDefinition,
+} from "@/extensions/tool-registry";
 import type { ExtensionPanelHandle } from "@/extensions/types";
 
 type ExtensionTestGlobal = typeof globalThis & {
@@ -29,6 +33,10 @@ function createHost(root: string): ExtensionHost {
 }
 
 describe("extension host", () => {
+  afterEach(() => {
+    clearExtensionTools();
+  });
+
   test("reload publishes snapshots with owner metadata", async () => {
     const root = createTempDir();
     try {
@@ -300,6 +308,54 @@ describe("extension host", () => {
       });
 
       host.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads extension-provided tools with owner metadata", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "tools.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          return letta.tools.register({
+            name: "local_weather",
+            description: "Get local weather",
+            parameters: {
+              type: "object",
+              properties: { city: { type: "string" } },
+              required: ["city"],
+            },
+            requiresApproval: false,
+            parallelSafe: true,
+            run(ctx) { return "weather for " + ctx.args.city; },
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+      const snapshot = host.getSnapshot();
+
+      expect(snapshot.errors).toEqual([]);
+      expect(snapshot.tools.local_weather).toMatchObject({
+        description: "Get local weather",
+        owner: {
+          generation: 1,
+          id: `global:${extensionPath}`,
+          path: extensionPath,
+        },
+        parallelSafe: true,
+        requiresApproval: false,
+      });
+      expect(getExtensionToolDefinition("local_weather")).toBeDefined();
+
+      host.dispose();
+      expect(getExtensionToolDefinition("local_weather")).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
