@@ -608,7 +608,16 @@ async function downloadTelegramAttachment(params: {
       const result = await transcribeAudioFile(localPath);
       if (result.success && result.text) {
         attachment.transcription = result.text;
+      } else if (result.error) {
+        attachment.transcriptionError = result.error;
+        console.warn(
+          `[Telegram] Voice transcription failed for ${fileName}:`,
+          result.error,
+        );
       }
+    } else {
+      attachment.transcriptionError =
+        "OPENAI_API_KEY not set; transcription skipped.";
     }
   }
 
