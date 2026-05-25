@@ -1,5 +1,5 @@
-import { runNotificationHooks } from "../../hooks";
-import { debugLog } from "../../utils/debug";
+import { runNotificationHooks } from "@/hooks";
+import { debugLog } from "@/utils/debug";
 
 // Send desktop notification via terminal bell
 // Modern terminals (iTerm2, Ghostty, WezTerm, Kitty) convert this to a desktop

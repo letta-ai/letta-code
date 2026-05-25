@@ -1,0 +1,200 @@
+import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { LIMITS, truncateByChars } from "./truncation.js";
+import { validateRequiredParams } from "./validation.js";
+
+const execFileAsync = promisify(execFile);
+
+function getRipgrepPath(): string {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const require = createRequire(__filename);
+    const rgPackage = require("@vscode/ripgrep");
+    return rgPackage.rgPath;
+  } catch (_error) {
+    return "rg";
+  }
+}
+
+const rgPath = getRipgrepPath();
+
+function applyOffsetAndLimit<T>(
+  items: T[],
+  offset: number,
+  limit: number,
+): T[] {
+  const sliced = items.slice(offset);
+  if (limit > 0) {
+    return sliced.slice(0, limit);
+  }
+  return sliced; // 0 = unlimited
+}
+
+export interface GrepArgs {
+  pattern: string;
+  path?: string;
+  glob?: string;
+  output_mode?: "content" | "files_with_matches" | "count";
+  "-B"?: number;
+  "-A"?: number;
+  "-C"?: number;
+  "-n"?: boolean;
+  "-i"?: boolean;
+  type?: string;
+  head_limit?: number;
+  offset?: number;
+  multiline?: boolean;
+}
+
+interface GrepResult {
+  output: string;
+  matches?: number;
+  files?: number;
+}
+
+export async function grep(args: GrepArgs): Promise<GrepResult> {
+  validateRequiredParams(args, ["pattern"], "Grep");
+  const {
+    pattern,
+    path: searchPath,
+    glob,
+    output_mode = "files_with_matches",
+    "-B": before,
+    "-A": after,
+    "-C": context,
+    "-n": lineNumbers = true,
+    "-i": ignoreCase,
+    type: fileType,
+    head_limit = 100,
+    offset = 0,
+    multiline,
+  } = args;
+
+  const userCwd = getCurrentWorkingDirectory();
+  const rgArgs: string[] = [];
+  if (output_mode === "files_with_matches") rgArgs.push("-l");
+  else if (output_mode === "count") rgArgs.push("-c");
+  if (output_mode === "content") {
+    if (context !== undefined) rgArgs.push("-C", context.toString());
+    else {
+      if (before !== undefined) rgArgs.push("-B", before.toString());
+      if (after !== undefined) rgArgs.push("-A", after.toString());
+    }
+    if (lineNumbers) rgArgs.push("-n");
+  }
+  if (ignoreCase) rgArgs.push("-i");
+  if (fileType) rgArgs.push("--type", fileType);
+  if (glob) rgArgs.push("--glob", glob);
+  if (multiline) rgArgs.push("-U", "--multiline-dotall");
+  rgArgs.push(pattern);
+  if (searchPath)
+    rgArgs.push(
+      path.isAbsolute(searchPath)
+        ? searchPath
+        : path.resolve(userCwd, searchPath),
+    );
+  else rgArgs.push(userCwd);
+
+  try {
+    const { stdout } = await execFileAsync(rgPath, rgArgs, {
+      maxBuffer: 10 * 1024 * 1024,
+      cwd: userCwd,
+    });
+    if (output_mode === "files_with_matches") {
+      const allFiles = stdout.trim().split("\n").filter(Boolean);
+      const files = applyOffsetAndLimit(allFiles, offset, head_limit);
+      const fileCount = files.length;
+      const totalCount = allFiles.length;
+      if (totalCount === 0) return { output: "No files found", files: 0 };
+
+      const fileList = files.join("\n");
+      const fullOutput = `Found ${totalCount} file${totalCount !== 1 ? "s" : ""}${fileCount < totalCount ? ` (showing ${fileCount})` : ""}\n${fileList}`;
+
+      // Apply character limit to prevent large file lists
+      const { content: truncatedOutput } = truncateByChars(
+        fullOutput,
+        LIMITS.GREP_OUTPUT_CHARS,
+        "Grep",
+        { workingDirectory: userCwd, toolName: "Grep" },
+      );
+
+      return {
+        output: truncatedOutput,
+        files: totalCount,
+      };
+    } else if (output_mode === "count") {
+      const allLines = stdout.trim().split("\n").filter(Boolean);
+      const lines = applyOffsetAndLimit(allLines, offset, head_limit);
+      let totalMatches = 0;
+      let filesWithMatches = 0;
+      for (const line of allLines) {
+        const parts = line.split(":");
+        if (parts.length >= 2) {
+          const lastPart = parts[parts.length - 1];
+          if (!lastPart) continue;
+          const count = parseInt(lastPart, 10);
+          if (!Number.isNaN(count) && count > 0) {
+            totalMatches += count;
+            filesWithMatches++;
+          }
+        }
+      }
+      if (totalMatches === 0)
+        return {
+          output: "0\n\nFound 0 total occurrences across 0 files.",
+          matches: 0,
+          files: 0,
+        };
+      const countOutput = lines.join("\n");
+      return {
+        output: `${countOutput}\n\nFound ${totalMatches} total occurrence${totalMatches !== 1 ? "s" : ""} across ${filesWithMatches} file${filesWithMatches !== 1 ? "s" : ""}.`,
+        matches: totalMatches,
+        files: filesWithMatches,
+      };
+    } else {
+      if (!stdout || stdout.trim() === "")
+        return { output: "No matches found", matches: 0 };
+
+      const allLines = stdout.split("\n");
+      const lines = applyOffsetAndLimit(allLines, offset, head_limit);
+      const content = lines.join("\n");
+
+      // Apply character limit to content output
+      const { content: truncatedOutput } = truncateByChars(
+        content,
+        LIMITS.GREP_OUTPUT_CHARS,
+        "Grep",
+        { workingDirectory: userCwd, toolName: "Grep" },
+      );
+
+      return {
+        output: truncatedOutput,
+        matches: allLines.filter(Boolean).length,
+      };
+    }
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException & {
+      stdout?: string;
+    };
+    const code = typeof err.code === "number" ? err.code : undefined;
+
+    const message =
+      typeof err.message === "string" ? err.message : "Unknown error";
+    if (code === 1) {
+      if (output_mode === "files_with_matches")
+        return { output: "No files found", files: 0 };
+      if (output_mode === "count")
+        return {
+          output: "0\n\nFound 0 total occurrences across 0 files.",
+          matches: 0,
+          files: 0,
+        };
+      return { output: "No matches found", matches: 0 };
+    }
+    throw new Error(`Grep failed: ${message}`);
+  }
+}

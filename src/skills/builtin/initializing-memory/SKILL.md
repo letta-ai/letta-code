@@ -50,7 +50,7 @@ You should determine what the users goals and motivations are, to help yourself 
 Understanding the user's personality and other attributes about them will help contextualize their interactions and allow you to engage with them more effectively. Can you pattern match them to common personas? Do they have unique attributes, quirks, or linguistic patterns? How would you describe them as a person? 
 
 **Understanding their preferences**: 
-You should learn how the user wants work to be done, and how they want to collaborate with AIs like yourself. Examples of this can include coding preferences (e.g. "Prefer functional components over class components", "Use early returns instead of nested conditionals"), but also higher-level preferences such as when to use plan mode, the scope of changes, how to communicate in different scenarios, etc. 
+You should learn how the user wants work to be done, and how they want to collaborate with AIs like yourself. Examples of this can include coding preferences (e.g. "Prefer functional components over class components", "Use early returns instead of nested conditionals"), but also higher-level preferences such as when to ask before planning or implementing, the scope of changes, how to communicate in different scenarios, etc.
 
 ### Understanding the codebase and existing work
 You should also learn as much as possible about the existing codebase and work. Think of this as your onboarding period - an opportunity to maximize your performance for future tasks. Learn things like: 
@@ -717,5 +717,4 @@ git push
 **Use parallel tool calls wherever possible** — read multiple files in a single turn, write multiple memory files in a single turn. This dramatically reduces init time.
 **Write findings to memory as you go** — don't wait until the end.
 **Edit memory files directly via the filesystem** — memory is projected to `$MEMORY_DIR` specifically for ease of bulk modification. Use standard file tools (Read, Write, Edit) and git to manage changes during initialization.
-
 

@@ -8,7 +8,7 @@ const TESTS_DIR_ENV = "LETTA_MOCK_ISOLATION_TESTS_DIR";
 const rootDir = process.cwd();
 const testsDir = process.env[TESTS_DIR_ENV]
   ? resolve(process.env[TESTS_DIR_ENV])
-  : join(rootDir, "src", "tests");
+  : join(rootDir, "src");
 
 const FORBIDDEN_MOCK_MODULES = new Map([
   [
@@ -41,24 +41,24 @@ const COMPLETE_EXPORT_MOCK_MODULES = new Set([
 // explicit test override helper. If a new top-level mock is truly unavoidable,
 // add a file+module entry here in the same PR with a clear explanation.
 const ALLOWED_TOP_LEVEL_MOCKS = new Set([
-  "src/tests/channels/discord-registry.test.ts::../../backend/api/client",
-  "src/tests/channels/slack-adapter-interop.test.ts::../../channels/slack/media",
-  "src/tests/channels/slack-adapter-interop.test.ts::../../channels/slack/runtime",
-  "src/tests/channels/slack-adapter.test.ts::../../channels/slack/media",
-  "src/tests/channels/slack-adapter.test.ts::../../channels/slack/runtime",
-  "src/tests/channels/telegram-adapter.test.ts::../../channels/telegram/runtime",
-  "src/tests/cli/message-search-cache-warm.test.ts::../../backend/api/search",
-  "src/tests/hooks/prompt-executor.test.ts::../../backend/api/generate",
-  "src/tests/tools/memory-apply-patch.test.ts::../../backend/api/client",
-  "src/tests/tools/memory-tool.test.ts::../../backend/api/client",
-  "src/tests/tools/toolset-client-tool-rule-cleanup.test.ts::../../backend/api/client",
-  "src/tests/tools/toolset-memfs-detach.test.ts::../../backend/api/client",
-  "src/tests/websocket/listen-client-concurrency.test.ts::../../agent/approval-execution",
-  "src/tests/websocket/listen-client-concurrency.test.ts::../../agent/approval-recovery",
-  "src/tests/websocket/listen-client-concurrency.test.ts::../../agent/message",
-  "src/tests/websocket/listen-client-concurrency.test.ts::../../backend/api/client",
-  "src/tests/websocket/listen-client-concurrency.test.ts::../../cli/helpers/approvalClassification",
-  "src/tests/websocket/listen-client-concurrency.test.ts::../../cli/helpers/stream",
+  "src/channels/discord-registry.test.ts::../backend/api/client",
+  "src/channels/slack-adapter-interop.test.ts::./slack/media",
+  "src/channels/slack-adapter-interop.test.ts::./slack/runtime",
+  "src/channels/slack-adapter.test.ts::./slack/media",
+  "src/channels/slack-adapter.test.ts::./slack/runtime",
+  "src/channels/telegram-adapter.test.ts::./telegram/runtime",
+  "src/cli/message-search-cache-warm.test.ts::../backend/api/search",
+  "src/hooks/prompt-executor.test.ts::../backend/api/generate",
+  "src/tools/memory-apply-patch.test.ts::../backend/api/client",
+  "src/tools/memory-tool.test.ts::../backend/api/client",
+  "src/tools/toolset-client-tool-rule-cleanup.test.ts::../backend/api/client",
+  "src/tools/toolset-memfs-detach.test.ts::../backend/api/client",
+  "src/websocket/listen-client-concurrency.test.ts::../agent/approval-execution",
+  "src/websocket/listen-client-concurrency.test.ts::../agent/approval-recovery",
+  "src/websocket/listen-client-concurrency.test.ts::../agent/message",
+  "src/websocket/listen-client-concurrency.test.ts::../backend/api/client",
+  "src/websocket/listen-client-concurrency.test.ts::../cli/helpers/approvalClassification",
+  "src/websocket/listen-client-concurrency.test.ts::../cli/helpers/stream",
 ]);
 
 const mockModulePattern = /\bmock\.module\s*\(\s*(["'`])([^"'`]+)\1/g;

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 import {
   formatCapturedOutput,
   summarizeRecentMessages,
-} from "./processDiagnostics";
+} from "./process-diagnostics";
 
 /**
  * Integration test for lazy approval recovery (LET-7101).

@@ -1,8 +1,8 @@
 import { Box } from "ink";
 import { memo } from "react";
-import { COMPACTION_SUMMARY_HEADER } from "../../constants";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { COMPACTION_SUMMARY_HEADER } from "@/constants";
 import { BlinkDot } from "./BlinkDot.js";
 import { CompactingAnimation } from "./CompactingAnimation";
 import { colors } from "./colors.js";
@@ -71,20 +71,6 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
   ) : (
     <Text color={colors.tool.completed}>{CLI_GLYPHS.bullet}</Text>
   );
-
-  // Format the args display (message count or fallback)
-  // Commented out for now - we show a simple "Conversation compacted" message instead
-  // const formatArgs = (): string => {
-  //   const stats = line.stats;
-  //   if (
-  //     stats?.messagesCountBefore !== undefined &&
-  //     stats?.messagesCountAfter !== undefined
-  //   ) {
-  //     return `${stats.messagesCountBefore} → ${stats.messagesCountAfter} messages`;
-  //   }
-  //   return "...";
-  // };
-  // const argsDisplay = formatArgs();
 
   return (
     <Box flexDirection="column">

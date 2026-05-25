@@ -1,48 +1,49 @@
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
 import stripAnsi from "strip-ansi";
-import { getDisplayableToolReturn } from "../agent/approval-execution";
+import { getDisplayableToolReturn } from "@/agent/approval-execution";
 import {
   getConversationId,
   getCurrentAgentId,
   getSkillSources,
   getSkillsDirectory,
-} from "../agent/context";
-import { getModelInfo } from "../agent/model";
-import { getAllSubagentConfigs } from "../agent/subagents";
+} from "@/agent/context";
+import { getModelInfo } from "@/agent/model";
+import { getAllSubagentConfigs } from "@/agent/subagents";
 import {
   buildDynamicMessageChannelToolDefinition,
   getCachedDynamicMessageChannelToolDefinition,
   type MessageChannelToolDiscoveryScope,
-} from "../channels/messageTool";
-import { getActiveChannelIds } from "../channels/registry";
-import type { ChannelTurnSource } from "../channels/types";
-import { refreshFileIndex } from "../cli/helpers/fileIndex";
-import { INTERRUPTED_BY_USER } from "../constants";
+} from "@/channels/message-tool";
+import { getActiveChannelIds } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
-} from "../hooks";
+} from "@/hooks";
 import {
   permissionMode as globalPermissionMode,
   type PermissionMode,
-} from "../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+} from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
   type RuntimeContextSnapshot,
   runWithRuntimeContext,
-} from "../runtime-context";
-import { settingsManager } from "../settings-manager";
-import { telemetry } from "../telemetry";
-import { debugLog } from "../utils/debug";
+} from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import { debugLog } from "@/utils/debug";
+import { refreshFileIndex } from "@/utils/file-index";
+import { isRecord } from "@/utils/type-guards";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "./secret-substitution";
-import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
+import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -100,7 +101,7 @@ async function resolveBackendSpecificToolDescription(
 ): Promise<string> {
   let isLocalMemfs = false;
   try {
-    const { getBackend } = await import("../backend");
+    const { getBackend } = await import("@/backend");
     isLocalMemfs = getBackend().capabilities.localMemfs;
   } catch {
     isLocalMemfs = false;
@@ -254,29 +255,22 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const PLAN_MODE_TOOL_NAMES = new Set<ToolName>([
-  "EnterPlanMode",
-  "ExitPlanMode",
-]);
+const WORKTREE_TOOL_NAMES = new Set<ToolName>(["CreateWorktree"]);
 
-function isPlanModeTool(toolName: string): boolean {
-  return PLAN_MODE_TOOL_NAMES.has(toolName as ToolName);
-}
-
-function isPlanModeEnabled(): boolean {
+function shouldIncludeWorktreeTool(): boolean {
   try {
-    return settingsManager.isPlanModeEnabled();
+    return settingsManager.shouldIncludeWorktreeTool();
   } catch {
-    return false;
+    return true;
   }
 }
 
-function filterPlanModeTools(toolNames: ToolName[]): ToolName[] {
-  if (isPlanModeEnabled()) {
+function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
+  if (shouldIncludeWorktreeTool()) {
     return toolNames;
   }
 
-  return toolNames.filter((name) => !PLAN_MODE_TOOL_NAMES.has(name));
+  return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
 }
 
 function filterExternalToolsByClientAllowlist(
@@ -299,9 +293,8 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
   "TaskOutput",
+  "CreateWorktree",
   "Edit",
-  "EnterPlanMode",
-  "ExitPlanMode",
   "TaskStop",
   // "MultiEdit",
   // "LS",
@@ -330,6 +323,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "glob_gemini",
   "search_file_content",
   "memory",
+  "CreateWorktree",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -342,8 +336,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "EnterPlanMode",
-  "ExitPlanMode",
+  "CreateWorktree",
   "memory_apply_patch",
   "Task",
   "TaskOutput",
@@ -359,8 +352,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "EnterPlanMode",
-  "ExitPlanMode",
+  "CreateWorktree",
   "memory",
   "Skill",
   "Task",
@@ -382,9 +374,8 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
+  CreateWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },
-  EnterPlanMode: { requiresApproval: true },
-  ExitPlanMode: { requiresApproval: false },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
   KillBash: { requiresApproval: true },
@@ -520,15 +511,11 @@ let toolExecutionContextCounter = 0;
 
 /**
  * Mutable, shared-by-reference permission mode state.
- * Stored in each ToolExecutionContextSnapshot so tools like EnterPlanMode
- * and ExitPlanMode can update the mode without touching the global singleton.
  * Listener mode populates this from ConversationRuntime; CLI mode uses a
  * wrapper around the global permissionMode singleton.
  */
 export type PermissionModeState = {
   mode: PermissionMode;
-  planFilePath: string | null;
-  modeBeforePlan: PermissionMode | null;
 };
 
 type ToolExecutionContextSnapshot = {
@@ -610,10 +597,6 @@ function buildExecutionRuntimeContextSnapshot(options?: {
     getCurrentWorkingDirectory();
   mergedScope.permissionMode =
     options?.permissionModeState?.mode ?? mergedScope.permissionMode;
-  mergedScope.planFilePath =
-    options?.permissionModeState?.planFilePath ?? mergedScope.planFilePath;
-  mergedScope.modeBeforePlan =
-    options?.permissionModeState?.modeBeforePlan ?? mergedScope.modeBeforePlan;
 
   return mergedScope;
 }
@@ -624,10 +607,22 @@ function getExecutionContextById(
   return getExecutionContexts().get(contextId);
 }
 
+export function updateToolExecutionContextWorkingDirectory(
+  contextId: string,
+  workingDirectory: string,
+): boolean {
+  const context = getExecutionContextById(contextId);
+  if (!context) {
+    return false;
+  }
+
+  context.workingDirectory = workingDirectory;
+  context.runtimeContext.workingDirectory = workingDirectory;
+  return true;
+}
+
 /**
  * Returns the mutable PermissionModeState for an execution context.
- * EnterPlanMode / ExitPlanMode use this to update the per-conversation
- * state without touching the global singleton.
  */
 export function getExecutionContextPermissionModeState(
   contextId: string,
@@ -912,7 +907,7 @@ function getEffectivePermissionModeState(
   permissionModeState?: PermissionModeState,
 ): PermissionModeState {
   // When no scoped state is provided (local/CLI mode), create a live proxy to
-  // the global singleton so EnterPlanMode/ExitPlanMode still work correctly.
+  // the global singleton.
   return (
     permissionModeState ?? {
       get mode() {
@@ -920,18 +915,6 @@ function getEffectivePermissionModeState(
       },
       set mode(value: PermissionMode) {
         globalPermissionMode.setMode(value);
-      },
-      get planFilePath() {
-        return globalPermissionMode.getPlanFilePath();
-      },
-      set planFilePath(value: string | null) {
-        globalPermissionMode.setPlanFilePath(value);
-      },
-      get modeBeforePlan() {
-        return globalPermissionMode.getModeBeforePlan();
-      },
-      set modeBeforePlan(_value: PermissionMode | null) {
-        // managed internally by globalPermissionMode
       },
     }
   );
@@ -966,6 +949,7 @@ function capturePreparedToolExecutionContext(
     ),
   };
   const contextId = saveExecutionContext(executionSnapshot);
+  executionSnapshot.runtimeContext.toolContextId = contextId;
 
   return {
     contextId,
@@ -1080,16 +1064,6 @@ export function getToolPermissions(toolName: string) {
 }
 
 /**
- * Check if a tool requires approval before execution.
- * @param toolName - The name of the tool
- * @returns true if the tool requires approval, false otherwise
- * @deprecated Use checkToolPermission instead for full permission system support
- */
-export function requiresApproval(toolName: string): boolean {
-  return TOOL_PERMISSIONS[toolName as ToolName]?.requiresApproval ?? false;
-}
-
-/**
  * Check permission for a tool execution using the full permission system.
  * @param toolName - Name of the tool
  * @param toolArgs - Tool arguments
@@ -1107,8 +1081,8 @@ export async function checkToolPermission(
   matchedRule?: string;
   reason?: string;
 }> {
-  const { checkPermissionWithHooks } = await import("../permissions/checker");
-  const { loadPermissions } = await import("../permissions/loader");
+  const { checkPermissionWithHooks } = await import("@/permissions/checker");
+  const { loadPermissions } = await import("@/permissions/loader");
 
   const permissions = await loadPermissions(workingDirectory);
   return runWithRuntimeContext(
@@ -1116,8 +1090,6 @@ export async function checkToolPermission(
       ...(agentIdArg ? { agentId: agentIdArg } : {}),
       workingDirectory,
       permissionMode: permissionModeStateArg?.mode,
-      planFilePath: permissionModeStateArg?.planFilePath ?? null,
-      modeBeforePlan: permissionModeStateArg?.modeBeforePlan ?? null,
     },
     () =>
       checkPermissionWithHooks(
@@ -1146,13 +1118,13 @@ export async function savePermissionRule(
 ): Promise<void> {
   // Handle session-only permissions
   if (scope === "session") {
-    const { sessionPermissions } = await import("../permissions/session");
+    const { sessionPermissions } = await import("@/permissions/session");
     sessionPermissions.addRule(rule, ruleType);
     return;
   }
 
   // Handle persisted permissions
-  const { savePermissionRule: save } = await import("../permissions/loader");
+  const { savePermissionRule: save } = await import("@/permissions/loader");
   await save(rule, ruleType, scope, workingDirectory);
 }
 
@@ -1167,8 +1139,8 @@ export async function analyzeToolApproval(
   toolName: string,
   toolArgs: ToolArgs,
   workingDirectory: string = process.cwd(),
-): Promise<import("../permissions/analyzer").ApprovalContext> {
-  const { analyzeApprovalContext } = await import("../permissions/analyzer");
+): Promise<import("@/permissions/analyzer").ApprovalContext> {
+  const { analyzeApprovalContext } = await import("@/permissions/analyzer");
   return analyzeApprovalContext(toolName, toolArgs, workingDirectory);
 }
 
@@ -1210,7 +1182,7 @@ async function buildSpecificToolRegistry(
   toolNames: string[],
   channelToolScope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("./filter");
+  const { toolFilter } = await import("@/tools/filter");
   const newRegistry: ToolRegistry = new Map();
 
   for (const name of toolNames) {
@@ -1219,10 +1191,12 @@ async function buildSpecificToolRegistry(
     }
 
     const internalName = getInternalToolName(name);
-    if (!isPlanModeEnabled() && isPlanModeTool(internalName)) {
+    if (
+      !shouldIncludeWorktreeTool() &&
+      WORKTREE_TOOL_NAMES.has(internalName as ToolName)
+    ) {
       continue;
     }
-
     const definition = TOOL_DEFINITIONS[internalName as ToolName];
     if (!definition) {
       console.warn(
@@ -1272,7 +1246,7 @@ async function resolveBaseToolNamesForModel(
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolName[]> {
-  const { toolFilter } = await import("./filter");
+  const { toolFilter } = await import("@/tools/filter");
   let baseToolNames: ToolName[];
   if (
     !toolFilter.isActive() &&
@@ -1303,7 +1277,7 @@ async function resolveBaseToolNamesForModel(
     }
   }
 
-  baseToolNames = filterPlanModeTools(baseToolNames);
+  baseToolNames = filterWorktreeTools(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
@@ -1328,7 +1302,7 @@ async function buildRegistryForModel(
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolRegistry> {
-  const { toolFilter } = await import("./filter");
+  const { toolFilter } = await import("@/tools/filter");
   const allSubagentConfigs = await getAllSubagentConfigs();
   const discoveredSubagents = Object.entries(allSubagentConfigs).map(
     ([name, config]) => ({
@@ -1571,10 +1545,6 @@ export function clipToolReturn(
  * @param result - The raw result from a tool execution
  * @returns A flattened string representation of the result
  */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
@@ -1838,15 +1808,12 @@ export async function executeTool(
         }
       }
 
-      // Inject the execution context id for plan-mode tools so they can update
-      // the per-conversation PermissionModeState without touching the global singleton.
-      const PLAN_MODE_TOOL_NAMES = new Set([
-        "EnterPlanMode",
-        "enter_plan_mode",
-        "ExitPlanMode",
-        "exit_plan_mode",
-      ]);
-      if (PLAN_MODE_TOOL_NAMES.has(internalName) && options?.toolContextId) {
+      // Inject the execution context id for tools that need to mutate
+      // turn-scoped execution state without touching global singletons.
+      if (
+        WORKTREE_TOOL_NAMES.has(internalName as ToolName) &&
+        options?.toolContextId
+      ) {
         enhancedArgs = {
           ...enhancedArgs,
           _executionContextId: options.toolContextId,

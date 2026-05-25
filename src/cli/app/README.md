@@ -10,8 +10,7 @@ file first.
 - `useSubmitHandler.ts`: slash-command and user-submit router.
 - `useConversationLoop.ts`: streaming turn loop, retry/recovery, tool execution,
   and reflection auto-launch.
-- `useApprovalFlow.ts`: approval recovery, approve/deny batching, and plan-mode
-  approval handlers.
+- `useApprovalFlow.ts`: approval recovery and approve/deny batching.
 - `useConversationSwitching.ts`: `/btw`, agent selection, and new-agent
   conversation switching flows.
 - `useBashHandlers.ts`: bash-mode submit/interrupt handling.
@@ -25,9 +24,9 @@ file first.
 - `constants.ts`: timing, retry, provider fallback, and layout constants.
 - `modelConfig.ts`: model handle, reasoning effort, and model error hint helpers.
 - `commandRouting.ts`: slash command queue-bypass classification.
-- `approvalDiffs.ts`, `approvalQuestions.ts`, `planFile.ts`: approval helpers.
+- `approvalDiffs.ts`, `approvalQuestions.ts`: approval helpers.
 - `ids.ts`, `layout.ts`, `contentParts.ts`, `systemReminders.ts`: transcript and content utilities.
-- `ralph.ts`, `reflection.ts`, `retry.ts`, `session.ts`, `notifications.ts`, `errors.ts`: focused runtime helpers.
+- `goal-loop.ts`, `reflection.ts`, `retry.ts`, `session.ts`, `notifications.ts`, `errors.ts`: focused runtime helpers.
 - `StaticTranscript.tsx`, `ExitStats.tsx`: render-only pieces extracted from the coordinator.
 - `types.ts`: app props and static transcript item types.
 

@@ -1,4 +1,4 @@
-import { QueueRuntime } from "../../queue/queueRuntime";
+import { QueueRuntime } from "@/queue/queue-runtime";
 import { scheduleQueueEmit } from "./protocol-outbound";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import {

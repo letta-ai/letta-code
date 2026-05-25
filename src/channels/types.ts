@@ -7,12 +7,14 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
-import type { PermissionMode } from "../permissions/mode";
+import type { PermissionMode } from "@/permissions/mode";
 
 export const FIRST_PARTY_CHANNEL_IDS = [
   "telegram",
   "slack",
   "discord",
+  "custom",
+  "whatsapp",
 ] as const;
 export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 /**
@@ -28,6 +30,9 @@ export type ChannelDefaultPermissionMode = Extract<
 >;
 export type SlackDefaultPermissionMode = ChannelDefaultPermissionMode;
 export type DiscordDefaultPermissionMode = ChannelDefaultPermissionMode;
+
+/** Per-channel mode for Discord guild channels. */
+export type DiscordChannelMode = "open" | "mention-only";
 
 export interface ChannelMessageAttachment {
   id?: string;
@@ -76,8 +81,6 @@ export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
 
 export type ChannelControlRequestKind =
   | "ask_user_question"
-  | "enter_plan_mode"
-  | "exit_plan_mode"
   | "generic_tool_approval";
 
 export interface ChannelControlRequestEvent {
@@ -86,8 +89,6 @@ export interface ChannelControlRequestEvent {
   source: ChannelTurnSource;
   toolName: string;
   input: Record<string, unknown>;
-  planFilePath?: string;
-  planContent?: string;
 }
 
 export type ChannelTurnLifecycleEvent =
@@ -200,6 +201,10 @@ export interface InboundChannelMessage {
   chatType?: ChannelChatType;
   /** Whether this inbound message was explicitly addressed to the bot. */
   isMention?: boolean;
+  /** Whether this message is policy-permitted ambient traffic in an open channel. */
+  isOpenChannel?: boolean;
+  /** For platform channel threads, the parent channel ID (e.g. Discord guild channel). */
+  parentChannelId?: string;
   /** Downloaded attachments/media associated with the inbound message. */
   attachments?: ChannelMessageAttachment[];
   /** Reaction metadata for non-text channel events. */
@@ -264,6 +269,7 @@ export interface ChannelRoute {
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
+export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 
 export interface ChannelAccountBinding {
   agentId: string | null;
@@ -314,18 +320,85 @@ export interface DiscordChannelConfig {
   dmPolicy: DmPolicy;
   allowedUsers: string[];
   /**
-   * Optional allowlist of guild channel IDs. When non-empty, only messages
-   * whose channel ID (or parent channel ID for thread messages) appears in
-   * this list are processed. Empty/undefined preserves the default behavior
-   * of listening in every guild channel the bot can see.
+   * Optional allowlist or mode map for guild channels.
+   *
+   * Legacy `string[]` — each entry is treated as "mention-only".
+   * `Record<channelId, mode>` — each channel declares its behavior:
+   *   - `"open"`: respond to every non-bot message, no @mention required
+   *   - `"mention-only"`: only respond when the bot is @mentioned
+   *
+   * Empty/undefined preserves the default behavior of processing
+   * all guild channels the bot can see (mention-only for non-thread
+   * messages, open for threads with an existing route).
    */
-  allowedChannels?: string[];
+  allowedChannels?: string[] | Record<string, DiscordChannelMode>;
+  /**
+   * When `true`, @mentions in non-thread guild channels auto-create a
+   * Discord thread for the conversation. When `false`, the bot replies
+   * directly in the parent channel. Default `false`; thread creation is opt-in.
+   */
+  autoThreadOnMention?: boolean;
+  /**
+   * Per-channel override map for thread creation on @mention.
+   * Key: guild channel ID. Value: `true` to auto-create a thread on
+   * @mention in that channel, `false` to reply in-line.
+   * Resolution order: per-channel override → account-level
+   * `autoThreadOnMention` → `false`.
+   */
+  threadPolicyByChannel?: Record<string, boolean>;
+  /**
+   * When true, the bot sends lifecycle reaction acknowledgments on messages
+   * (👀 on receipt, ✅ on completion). Default false — the typing indicator
+   * is the primary UX for in-flight feedback.
+   */
+  acknowledgeMessageReaction?: boolean;
+  /**
+   * When true and a guild channel is removed from `allowedChannels`,
+   * stale routes for that channel can be removed by reconcile `--apply`.
+   * This only removes routes (not conversations). Default false — routes
+   * are preserved even if the channel is no longer allowed.
+   */
+  removeStaleRoutes?: boolean;
+  /**
+   * Optional debounce window (ms) for inbound open-channel guild messages.
+   * When greater than `0`, short back-to-back messages from the same sender
+   * in the same channel/thread stack into a single combined dispatch
+   * (trailing edge). Default `0` (disabled). Only applies to
+   * open-channel messages; DMs, @mentions, attachments, and reactions always
+   * bypass.
+   * The env var `LETTA_DISCORD_INBOUND_DEBOUNCE_MS` takes precedence if set.
+   * Clamped to `0..10000`.
+   */
+  inboundDebounceMs?: number;
+}
+
+export interface WhatsAppChannelConfig {
+  channel: "whatsapp";
+  enabled: boolean;
+  dmPolicy: DmPolicy;
+  allowedUsers: string[];
+  agentId: string | null;
+  /** Default true. When true, only the user's own Message Yourself chat routes. */
+  selfChatMode: boolean;
+  /** Default disabled. Controls group-message ingestion. */
+  groupMode: WhatsAppGroupMode;
+  /** Optional allowlist of WhatsApp group JIDs. Empty/undefined allows any group when groupMode is not disabled. */
+  allowedGroups?: string[];
+  /** Optional textual aliases for group mention detection. */
+  mentionPatterns?: string[];
+  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
+  transcribeVoice?: boolean;
+  /** When true, supported inbound media is downloaded to local channel storage. */
+  downloadMedia?: boolean;
+  /** Maximum inbound media bytes to download. Undefined uses channel default. */
+  mediaMaxBytes?: number;
 }
 
 export type ChannelConfig =
   | TelegramChannelConfig
   | SlackChannelConfig
-  | DiscordChannelConfig;
+  | DiscordChannelConfig
+  | WhatsAppChannelConfig;
 
 export interface TelegramChannelAccount extends ChannelAccountBase {
   channel: "telegram";
@@ -355,23 +428,89 @@ export interface SlackChannelAccount extends ChannelAccountBase {
 export interface DiscordChannelAccount extends ChannelAccountBase {
   channel: "discord";
   token: string;
+  /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
   /** Agent ID used for account-bound DM and guild auto-routing. */
   agentId: string | null;
   /** Permission mode for new Discord-created conversations. */
   defaultPermissionMode: DiscordDefaultPermissionMode;
   /**
-   * Optional allowlist of guild channel IDs. When non-empty, only messages
-   * whose channel ID (or parent channel ID for thread messages) appears in
-   * this list are processed. Empty/undefined preserves the default behavior
-   * of listening in every guild channel the bot can see. DMs are unaffected.
+   * Optional allowlist or mode map for guild channels.
+   *
+   * Legacy `string[]` — each entry is treated as "mention-only".
+   * `Record<channelId, mode>` — each channel declares its behavior:
+   *   - `"open"`: respond to every non-bot message, no @mention required
+   *   - `"mention-only"`: only respond when the bot is @mentioned
+   *
+   * Empty/undefined preserves the default behavior of processing
+   * all guild channels the bot can see. DMs are unaffected.
    */
-  allowedChannels?: string[];
+  allowedChannels?: string[] | Record<string, DiscordChannelMode>;
+  /**
+   * When `true`, @mentions in non-thread guild channels auto-create a
+   * Discord thread for the conversation. When `false`, the bot replies
+   * directly in the parent channel. Default `false`; thread creation is opt-in.
+   */
+  autoThreadOnMention?: boolean;
+  /**
+   * Per-channel override map for thread creation on @mention.
+   * Key: guild channel ID. Value: `true` to auto-create a thread on
+   * @mention in that channel, `false` to reply in-line.
+   * Resolution order: per-channel override → account-level
+   * `autoThreadOnMention` → `false`.
+   */
+  threadPolicyByChannel?: Record<string, boolean>;
+  /**
+   * When true, the bot sends lifecycle reaction acknowledgments on messages
+   * (👀 on receipt, ✅ on completion). Default false — the typing indicator
+   * is the primary UX for in-flight feedback.
+   */
+  acknowledgeMessageReaction?: boolean;
+  /**
+   * When true and a guild channel is removed from `allowedChannels`,
+   * stale routes for that channel can be removed by reconcile `--apply`.
+   * This only removes routes (not conversations). Default false — routes
+   * are preserved even if the channel is no longer allowed.
+   */
+  removeStaleRoutes?: boolean;
+  /**
+   * Optional debounce window (ms) for inbound open-channel guild messages.
+   * When greater than `0`, short back-to-back messages from the same sender
+   * in the same channel/thread stack into a single combined dispatch
+   * (trailing edge). Default `0` (disabled). Only applies to
+   * open-channel messages; DMs, @mentions, attachments, and reactions always
+   * bypass.
+   * The env var `LETTA_DISCORD_INBOUND_DEBOUNCE_MS` takes precedence if set.
+   * Clamped to `0..10000`.
+   */
+  inboundDebounceMs?: number;
+}
+
+export interface WhatsAppChannelAccount extends ChannelAccountBase {
+  channel: "whatsapp";
+  /** Agent ID used for account-bound DM and group auto-routing. */
+  agentId: string | null;
+  /** Default true. Explicitly set false before replying under the linked user's identity. */
+  selfChatMode: boolean;
+  /** Default disabled. Controls group-message ingestion. */
+  groupMode: WhatsAppGroupMode;
+  /** Optional allowlist of WhatsApp group JIDs. */
+  allowedGroups?: string[];
+  /** Optional textual aliases for group mention detection. */
+  mentionPatterns?: string[];
+  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
+  transcribeVoice?: boolean;
+  /** When true, supported inbound media is downloaded to local channel storage. */
+  downloadMedia?: boolean;
+  /** Maximum inbound media bytes to download. Undefined uses channel default. */
+  mediaMaxBytes?: number;
 }
 
 export type ChannelAccount =
   | TelegramChannelAccount
   | SlackChannelAccount
   | DiscordChannelAccount
+  | WhatsAppChannelAccount
   | CustomChannelAccount;
 
 export function isFirstPartyChannelId(
@@ -404,9 +543,20 @@ export function isDiscordChannelAccount(
   return account.channel === "discord" && "token" in account;
 }
 
+export function isWhatsAppChannelAccount(
+  account: ChannelAccount,
+): account is WhatsAppChannelAccount {
+  return account.channel === "whatsapp" && "selfChatMode" in account;
+}
+
 export function isCustomChannelAccount(
   account: ChannelAccount,
 ): account is CustomChannelAccount {
+  // The "custom" first-party channel and all user-installed channels share the
+  // same generic config-bag shape (no specific fields like `token`).
+  if (account.channel === "custom") {
+    return "config" in account;
+  }
   return !isFirstPartyChannelId(account.channel) && "config" in account;
 }
 
