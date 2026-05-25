@@ -1,6 +1,7 @@
 export type {
   ExtensionAgentContext,
   ExtensionBackgroundAgentContext,
+  ExtensionCapabilities,
   ExtensionCapabilityKind,
   ExtensionCapabilityRecord,
   ExtensionCommand,
@@ -30,5 +31,6 @@ export type {
   ExtensionToolRegistration,
   ExtensionToolRunContext,
   ExtensionToolRunResult,
+  ExtensionUiCapabilities,
   ExtensionWorkspaceContext,
 } from "@/extensions/types";

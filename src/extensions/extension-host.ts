@@ -21,12 +21,17 @@ import type {
   StatuslineRendererOutput,
 } from "@/cli/display/statusline/types";
 import {
+  cloneExtensionCapabilities,
+  resolveExtensionCapabilities,
+} from "@/extensions/capabilities";
+import {
   getExtensionToolDefinition,
   registerExtensionTool,
   unregisterExtensionTool,
   unregisterExtensionToolsForOwner,
 } from "@/extensions/tool-registry";
 import type {
+  ExtensionCapabilities,
   ExtensionCommand,
   ExtensionCommandRegistration,
   ExtensionContext,
@@ -75,6 +80,7 @@ export type LettaExtensionFactory = (
   | Promise<undefined | LettaExtensionDisposer>;
 
 export interface LettaExtensionApi {
+  capabilities: ExtensionCapabilities;
   client: Letta;
   getClient: () => Promise<Letta>;
   getContext: () => ExtensionContext;
@@ -121,6 +127,7 @@ export interface LocalExtensionUiRegistry {
 }
 
 export interface LocalExtensionRegistry {
+  capabilities: ExtensionCapabilities;
   commands: Record<string, ExtensionCommand>;
   diagnostics: ExtensionDiagnostic[];
   disposers: LocalExtensionDisposer[];
@@ -155,6 +162,7 @@ export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
+  capabilities?: ExtensionCapabilities;
   generation?: number;
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void;
@@ -173,6 +181,7 @@ export interface CreateExtensionHostOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
+  capabilities?: ExtensionCapabilities;
   reservedCommandIds?: Iterable<string>;
   reservedToolNames?: Iterable<string>;
 }
@@ -209,8 +218,10 @@ export function resolveLocalExtensionSources(
 function createEmptyExtensionRegistry(
   sources: LocalExtensionSource[],
   generation: number,
+  capabilities: ExtensionCapabilities,
 ): LocalExtensionRegistry {
   return {
+    capabilities: cloneExtensionCapabilities(capabilities),
     commands: {},
     diagnostics: [],
     disposers: [],
@@ -298,6 +309,7 @@ function snapshotRegistryForReaders(
   return {
     ...registry,
     commands: { ...registry.commands },
+    capabilities: cloneExtensionCapabilities(registry.capabilities),
     diagnostics: [...registry.diagnostics],
     disposers: [...registry.disposers],
     errors: [...registry.errors],
@@ -656,6 +668,7 @@ function upsertExtensionPanel(
 function createLettaExtensionApi(
   registry: LocalExtensionRegistry,
   owner: ExtensionOwner,
+  capabilities: ExtensionCapabilities,
   getClient: () => Promise<Letta>,
   getContext: () => ExtensionContext,
   onChange: () => void,
@@ -674,6 +687,7 @@ function createLettaExtensionApi(
   };
 
   const unregisterCommand = (id: string) => {
+    if (!capabilities.commands) return;
     validateExtensionCommandId(id);
     if (!guardLive({ id, kind: "command" })) return;
     const existing = registry.commands[id];
@@ -684,6 +698,7 @@ function createLettaExtensionApi(
   };
 
   const clearPanel = (id: string) => {
+    if (!capabilities.ui.panels) return;
     validateExtensionPanelId(id);
     if (!guardLive({ id, kind: "panel" })) return;
     const panelKey = getExtensionPanelKey(owner.id, id);
@@ -695,6 +710,7 @@ function createLettaExtensionApi(
   };
 
   const unregisterTool = (name: string) => {
+    if (!capabilities.tools) return;
     validateExtensionToolName(name);
     if (!guardLive({ id: name, kind: "tool" })) return;
     const existing = registry.tools[name];
@@ -706,12 +722,16 @@ function createLettaExtensionApi(
   };
 
   return {
+    capabilities: cloneExtensionCapabilities(capabilities),
     client: createLazyClient(getClient),
     getClient,
     getContext,
     signal,
     commands: {
       register(command) {
+        if (!capabilities.commands) {
+          return () => undefined;
+        }
         if (!guardLive({ id: command.id, kind: "command" })) {
           return () => undefined;
         }
@@ -739,6 +759,9 @@ function createLettaExtensionApi(
     },
     tools: {
       register(tool) {
+        if (!capabilities.tools) {
+          return () => undefined;
+        }
         if (!guardLive({ id: tool.name, kind: "tool" })) {
           return () => undefined;
         }
@@ -777,12 +800,19 @@ function createLettaExtensionApi(
     ui: {
       clearPanel,
       clearStatus(key) {
+        if (!capabilities.ui.statusValues) return;
         if (!guardLive({ id: key, kind: "status" })) return;
         delete registry.ui.statusValues[key];
         delete registry.ui.statusOwners[key];
         onChange();
       },
       openPanel(panel) {
+        if (!capabilities.ui.panels) {
+          return {
+            close() {},
+            update() {},
+          };
+        }
         if (!guardLive({ id: panel.id, kind: "panel" })) {
           return {
             close() {},
@@ -804,6 +834,7 @@ function createLettaExtensionApi(
         };
       },
       setStatus(key, value) {
+        if (!capabilities.ui.statusValues) return;
         if (!guardLive({ id: key, kind: "status" })) return;
         if (value == null) {
           delete registry.ui.statusValues[key];
@@ -816,6 +847,7 @@ function createLettaExtensionApi(
         onChange();
       },
       setStatuslineRenderer(renderer) {
+        if (!capabilities.ui.customStatuslineRenderer) return;
         if (!guardLive({ id: owner.id, kind: "statusline" })) return;
         registry.ui.statuslineRenderer = toStatuslineRenderer(
           renderer,
@@ -850,10 +882,15 @@ export async function loadLocalExtensions(
     });
   const onChange = options.onChange ?? (() => {});
   const sources = resolveLocalExtensionSources(options);
+  const capabilities = resolveExtensionCapabilities(options.capabilities);
   const generation = options.generation ?? 1;
   const reservedCommandIds = new Set([...(options.reservedCommandIds ?? [])]);
   const reservedToolNames = new Set([...(options.reservedToolNames ?? [])]);
-  const registry = createEmptyExtensionRegistry(sources, generation);
+  const registry = createEmptyExtensionRegistry(
+    sources,
+    generation,
+    capabilities,
+  );
 
   for (const source of sources) {
     for (const extensionPath of source.files) {
@@ -891,6 +928,7 @@ export async function loadLocalExtensions(
           createLettaExtensionApi(
             registry,
             owner,
+            capabilities,
             getConfiguredClient,
             getContext,
             onChange,
@@ -993,9 +1031,11 @@ export function createExtensionHost(
 ): ExtensionHost {
   let generation = 0;
   let disposed = false;
+  const capabilities = resolveExtensionCapabilities(options.capabilities);
   let activeRegistry = createEmptyExtensionRegistry(
     resolveLocalExtensionSources(options),
     generation,
+    capabilities,
   );
   let snapshot = snapshotRegistryForReaders(activeRegistry);
   const listeners = new Set<() => void>();
@@ -1016,6 +1056,7 @@ export function createExtensionHost(
     activeRegistry = createEmptyExtensionRegistry(
       resolveLocalExtensionSources(options),
       loadGeneration,
+      capabilities,
     );
     publish();
 
@@ -1071,6 +1112,7 @@ export function createExtensionHost(
       activeRegistry = createEmptyExtensionRegistry(
         resolveLocalExtensionSources(options),
         generation,
+        capabilities,
       );
       publish();
       listeners.clear();
