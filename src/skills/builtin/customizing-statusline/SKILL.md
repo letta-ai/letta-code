@@ -31,8 +31,9 @@ A custom statusline owns the whole idle row. Do not preserve legacy left/right s
 3. If it does not exist, start from the built-in default template or synthesize a focused starter for the user's request.
 4. If the user asks to migrate, import a `.sh` file, or match a shell prompt, read `references/migration.md`.
 5. If API details or concrete patterns are needed, read `references/api.md` and `references/examples.md`.
-6. Edit `~/.letta/extensions/statusline.tsx`.
-7. Summarize the absolute file path changed and tell the user to run `/reload` unless the command can reload automatically.
+6. Guard statusline-specific behavior with `letta.capabilities.ui.customStatuslineRenderer` when writing new files.
+7. Edit `~/.letta/extensions/statusline.tsx`.
+8. Summarize the absolute file path changed and tell the user to run `/reload` unless the command can reload automatically.
 
 ## Bare `/statusline` behavior
 
@@ -56,6 +57,8 @@ Keep this conversational. Do not build a menu UI unless the product command expl
 - Do not use relative multi-file imports yet.
 - Keep renderers synchronous. Do not shell, fetch, or await inside render.
 - Do async work in setup code, intervals, subscriptions, or status providers.
+- Use `letta.ui.setStatus` for data and `setStatuslineRenderer` for drawing that data.
+- Guard optional APIs with `letta.capabilities.ui.statusValues` and `letta.capabilities.ui.customStatuslineRenderer` in new files.
 - Return a disposer that clears timers/subscriptions.
 - Preserve existing extension code unless the user asks to reset.
 - Do not delete legacy command statusline files or settings unless the user explicitly asks.

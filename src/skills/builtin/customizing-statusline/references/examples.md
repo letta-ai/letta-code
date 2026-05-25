@@ -6,6 +6,8 @@ Use these as patterns, not mandatory templates. Keep the final extension focused
 
 ```tsx
 export default function activate(letta) {
+  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+
   letta.ui.setStatuslineRenderer((context) => {
     const { Text } = context.components;
     return <Text>{context.agent.name ?? "Letta"} · {context.model.displayName ?? "no model"}</Text>;
@@ -22,6 +24,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default function activate(letta) {
+  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+
   const update = async () => {
     try {
       const context = letta.getContext();
@@ -50,6 +54,8 @@ export default function activate(letta) {
 
 ```tsx
 export default function activate(letta) {
+  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+
   letta.ui.setStatuslineRenderer((context) => {
     const { Box, Text } = context.components;
     const model = context.model.displayName ?? "no model";
@@ -75,6 +81,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default function activate(letta) {
+  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+
   const update = async () => {
     try {
       const context = letta.getContext();
@@ -110,6 +118,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default function activate(letta) {
+  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+
   const update = async () => {
     try {
       const script = 'tell application "Music" to if it is running then artist of current track & " - " & name of current track';
