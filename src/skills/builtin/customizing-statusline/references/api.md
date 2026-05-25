@@ -16,6 +16,8 @@ Export a default function or named `activate` function:
 
 ```tsx
 export default function activate(letta) {
+  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+
   letta.ui.setStatuslineRenderer((context) => {
     const { Text } = context.components;
     return <Text>{context.agent.name} · {context.model.displayName}</Text>;
@@ -27,6 +29,9 @@ export default function activate(letta) {
 
 ```ts
 letta.getContext(): StatuslineRenderContext
+
+letta.capabilities.ui.statusValues: boolean
+letta.capabilities.ui.customStatuslineRenderer: boolean
 
 letta.ui.setStatus(key: string, value: string | null | undefined | ((context) => string | null)): void
 letta.ui.clearStatus(key: string): void
@@ -63,15 +68,21 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default function activate(letta) {
+  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+
   const update = async () => {
     try {
       const context = letta.getContext();
       const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
         cwd: context.workspace.currentDir,
       });
-      letta.ui.setStatus("branch", stdout.trim());
+      if (letta.capabilities.ui.statusValues) {
+        letta.ui.setStatus("branch", stdout.trim());
+      }
     } catch {
-      letta.ui.clearStatus("branch");
+      if (letta.capabilities.ui.statusValues) {
+        letta.ui.clearStatus("branch");
+      }
     }
   };
 
@@ -86,7 +97,9 @@ export default function activate(letta) {
 
   return () => {
     clearInterval(timer);
-    letta.ui.clearStatus("branch");
+    if (letta.capabilities.ui.statusValues) {
+      letta.ui.clearStatus("branch");
+    }
   };
 }
 ```
