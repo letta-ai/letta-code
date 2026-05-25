@@ -244,6 +244,50 @@ function toPiMessages(messages: LocalMessage[]): Message[] {
   return normalized;
 }
 
+function stripOpenAIResponsesReplayItemIds(
+  payload: unknown,
+): unknown | undefined {
+  if (!isRecord(payload) || !Array.isArray(payload.input)) return undefined;
+
+  let changed = false;
+  const input = payload.input.map((item) => {
+    if (!isRecord(item) || !("id" in item)) return item;
+    const type = item.type;
+    if (
+      type !== "reasoning" &&
+      type !== "message" &&
+      type !== "function_call"
+    ) {
+      return item;
+    }
+
+    changed = true;
+    const next = { ...item };
+    delete next.id;
+    return next;
+  });
+
+  return changed ? { ...payload, input } : undefined;
+}
+
+function withOpenAIResponsesReplayIdSanitizer(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+): SimpleStreamOptions["onPayload"] {
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+
+    const sanitized = stripOpenAIResponsesReplayItemIds(next);
+    if (sanitized !== undefined) return sanitized;
+    return upstreamChanged ? next : undefined;
+  };
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -420,6 +464,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
+    if (resolved.model.api === "openai-responses") {
+      // pi-ai replays OpenAI Responses output items from transcript history.
+      // Those upstream item IDs (rs_*, msg_*, fc_*) are not retrievable when the
+      // request uses store:false, so remove them and replay the full item bodies.
+      options.onPayload = withOpenAIResponsesReplayIdSanitizer(
+        options.onPayload,
+      );
+    }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
     try {

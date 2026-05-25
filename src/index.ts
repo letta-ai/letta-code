@@ -654,7 +654,7 @@ async function main(): Promise<void> {
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
-  let explicitBackendMode: "api" | "local" | undefined;
+  let explicitBackendMode: BackendMode | undefined;
   try {
     const backendSelection = extractBackendFlag(rawCliArgs);
     subcommandArgs = normalizeUpdateCommandAliases(backendSelection.args);
@@ -1414,6 +1414,7 @@ async function main(): Promise<void> {
       skillsDirectory,
       resolvedSkillSources,
       !noSystemInfoReminderFlag,
+      { requestedBackendMode: explicitBackendMode },
     );
     return;
   }

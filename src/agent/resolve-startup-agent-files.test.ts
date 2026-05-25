@@ -403,4 +403,46 @@ describe("startup resolution from settings files", () => {
       conversationId: "conv-b",
     });
   });
+
+  test("local backend ignores legacy API agent fallbacks", async () => {
+    const storageDir = join(testHomeDir, "lc-local-backend");
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+    await writeLocalSettings({
+      lastAgent: "agent-api-legacy",
+      lastSession: {
+        agentId: "agent-api-legacy",
+        conversationId: "conv-api-legacy",
+      },
+      sessionsByServer: {
+        "api.letta.com": {
+          agentId: "agent-api-session",
+          conversationId: "conv-api-session",
+        },
+      },
+    });
+
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    expect(settingsManager.getLocalLastSession(testProjectDir)).toBeNull();
+    expect(settingsManager.getLocalLastAgentId(testProjectDir)).toBeNull();
+  });
+
+  test("API backend ignores legacy local-backend agent fallbacks", async () => {
+    await writeLocalSettings({
+      lastAgent: "agent-local-legacy",
+      lastSession: {
+        agentId: "agent-local-legacy",
+        conversationId: "local-conv-legacy",
+      },
+    });
+
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    expect(settingsManager.getLocalLastSession(testProjectDir)).toBeNull();
+    expect(settingsManager.getLocalLastAgentId(testProjectDir)).toBeNull();
+  });
 });
