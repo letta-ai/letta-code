@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isAgentIdCompatibleWithBackend,
+  isCloudAgentId,
+} from "@/agent/agent-id";
+import {
   buildAgentReference,
   buildAgentTerminalLink,
   buildChatUrl,
@@ -28,6 +32,19 @@ describe("app URL helpers", () => {
   test("isLocalAgentId detects local-backend agents", () => {
     expect(isLocalAgentId("agent-local-abc")).toBe(true);
     expect(isLocalAgentId("agent-abc")).toBe(false);
+  });
+
+  test("cloud/local agent ID helpers are backend-aware", () => {
+    expect(isCloudAgentId("agent-abc")).toBe(true);
+    expect(isCloudAgentId("agent-local-abc")).toBe(false);
+    expect(isAgentIdCompatibleWithBackend("agent-local-abc", "local")).toBe(
+      true,
+    );
+    expect(isAgentIdCompatibleWithBackend("agent-local-abc", "api")).toBe(
+      false,
+    );
+    expect(isAgentIdCompatibleWithBackend("agent-abc", "api")).toBe(true);
+    expect(isAgentIdCompatibleWithBackend("agent-abc", "local")).toBe(false);
   });
 
   test("buildAgentTerminalLink only hyperlinks API-backed agents", () => {

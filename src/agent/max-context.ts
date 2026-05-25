@@ -25,6 +25,7 @@ export type SetMaxContextResult = {
   defaultContextWindow?: number;
   modelLabel?: string;
   updatedAgent?: AgentState;
+  conversationModelSettings?: AgentState["model_settings"] | null;
 };
 
 type ModelContextDefault = {
@@ -56,6 +57,19 @@ function getUpdateArgs(model: (typeof models)[number] | null | undefined) {
   return model?.updateArgs && typeof model.updateArgs === "object"
     ? (model.updateArgs as Record<string, unknown>)
     : undefined;
+}
+
+function nonEmptyModelSettings(
+  value: unknown,
+): AgentState["model_settings"] | null {
+  if (
+    value &&
+    typeof value === "object" &&
+    Object.keys(value as Record<string, unknown>).length > 0
+  ) {
+    return value as AgentState["model_settings"];
+  }
+  return null;
 }
 
 export function formatContextWindowTokens(value: number): string {
@@ -92,7 +106,7 @@ export function parseSetMaxContextArgs(
   }
 
   if (values.length > 1) {
-    throw new Error("Usage: /set-max-context [tokens] [--override]");
+    throw new Error("Usage: /context-limit [tokens] [--override]");
   }
 
   if (values.length === 0) {
@@ -301,9 +315,36 @@ export async function applySetMaxContext(params: {
     };
   }
 
-  await backend.updateConversation(params.conversationId, {
-    context_window_limit: contextWindow,
-  } as Parameters<typeof backend.updateConversation>[1]);
+  const updatedConversation = await backend.updateConversation(
+    params.conversationId,
+    {
+      context_window_limit: contextWindow,
+    } as Parameters<typeof backend.updateConversation>[1],
+  );
+  const updatedConversationRecord = updatedConversation as unknown as Record<
+    string,
+    unknown
+  >;
+  const conversationModel =
+    typeof updatedConversationRecord.model === "string"
+      ? updatedConversationRecord.model
+      : typeof conversationRecord.model === "string"
+        ? conversationRecord.model
+        : null;
+  const conversationModelSettings =
+    nonEmptyModelSettings(updatedConversationRecord.model_settings) ??
+    nonEmptyModelSettings(conversationRecord.model_settings);
+  const agentModelHandle =
+    typeof agent.model === "string" && agent.model.length > 0
+      ? agent.model
+      : buildModelHandleFromConfig(
+          agent.llm_config as ModelConfigSnapshot | null,
+        );
+  const inheritedModelSettings =
+    conversationModelSettings ??
+    (conversationModel === null || conversationModel === agentModelHandle
+      ? (agent.model_settings ?? null)
+      : null);
   return {
     contextWindow,
     reset,
@@ -311,6 +352,7 @@ export async function applySetMaxContext(params: {
     appliedTo: "conversation",
     defaultContextWindow: modelDefault.contextWindow,
     modelLabel: modelDefault.modelLabel,
+    conversationModelSettings: inheritedModelSettings,
   };
 }
 

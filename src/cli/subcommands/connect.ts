@@ -3,6 +3,10 @@ import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { parseLocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 import {
+  type LocalOAuthConnectCallbacks,
+  runLocalOAuthConnectFlow,
+} from "@/cli/commands/connect-local-oauth";
+import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
   isConnectBedrockProvider,
@@ -65,6 +69,10 @@ interface ConnectSubcommandDeps {
   runChatGPTOAuthConnectFlow: (
     callbacks: ChatGPTOAuthFlowCallbacks,
   ) => Promise<unknown>;
+  runLocalOAuthConnectFlow: (
+    provider: Parameters<typeof runLocalOAuthConnectFlow>[0],
+    callbacks: LocalOAuthConnectCallbacks,
+  ) => Promise<unknown>;
   providerStorageTargetLabel: () => string;
 }
 
@@ -87,6 +95,7 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   createOrUpdateProvider,
   isChatGPTOAuthConnected,
   runChatGPTOAuthConnectFlow,
+  runLocalOAuthConnectFlow,
   providerStorageTargetLabel,
 };
 
@@ -214,23 +223,47 @@ export async function runConnectSubcommand(
 
   if (isConnectOAuthProvider(provider)) {
     try {
-      await io.ensureSettingsReady();
+      if (provider.target !== "local") {
+        await io.ensureSettingsReady();
 
-      if (await io.isChatGPTOAuthConnected()) {
-        io.stdout(
-          "Already connected to ChatGPT via OAuth. Disconnect first if you want to re-authenticate.",
-        );
+        if (await io.isChatGPTOAuthConnected()) {
+          io.stdout(
+            "Already connected to ChatGPT via OAuth. Disconnect first if you want to re-authenticate.",
+          );
+          return 0;
+        }
+
+        await io.runChatGPTOAuthConnectFlow({
+          onStatus: (status) => io.stdout(status),
+        });
+
+        io.stdout("Successfully connected to ChatGPT OAuth.");
         return 0;
       }
 
-      await io.runChatGPTOAuthConnectFlow({
+      await io.runLocalOAuthConnectFlow(provider.byokProvider, {
         onStatus: (status) => io.stdout(status),
+        onPrompt: async (prompt) => {
+          if (prompt.allowEmpty && !io.isTTY()) return "";
+          if (!io.isTTY()) {
+            throw new Error(
+              `${provider.byokProvider.displayName} requires input: ${prompt.message}`,
+            );
+          }
+          return io.promptSecret(
+            `${prompt.message}${prompt.placeholder ? ` (${prompt.placeholder})` : ""}: `,
+          );
+        },
       });
 
-      io.stdout("Successfully connected to ChatGPT OAuth.");
+      io.stdout(
+        `Successfully connected to ${provider.byokProvider.displayName}.`,
+      );
       return 0;
     } catch (error) {
-      io.stderr(`Failed to connect ChatGPT OAuth: ${getErrorMessage(error)}`);
+      io.stderr(
+        `Failed to connect ${provider.byokProvider.displayName}: ${getErrorMessage(error)}`,
+      );
       return 1;
     }
   }

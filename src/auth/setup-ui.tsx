@@ -2,7 +2,6 @@
  * Ink UI components for OAuth setup flow
  */
 
-import { hostname } from "node:os";
 import { Box, useApp, useInput } from "ink";
 import { useState } from "react";
 import { configureBackendMode } from "@/backend";
@@ -10,7 +9,7 @@ import { AnimatedLogo } from "@/cli/components/AnimatedLogo";
 import { colors } from "@/cli/components/colors";
 import { Text } from "@/cli/components/Text";
 import { settingsManager } from "@/settings-manager";
-import { pollForToken, requestDeviceCode } from "./oauth";
+import { ConstellationLoginView } from "./ConstellationLoginView";
 
 type SetupMode = "menu" | "device-code" | "auth-code" | "self-host" | "done";
 
@@ -27,9 +26,6 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   const [selectedOption, setSelectedOption] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState("Starting Letta Code...");
-  const [_deviceCode, setDeviceCode] = useState<string | null>(null);
-  const [userCode, setUserCode] = useState<string | null>(null);
-  const [verificationUri, setVerificationUri] = useState<string | null>(null);
 
   const { exit } = useApp();
 
@@ -45,7 +41,6 @@ export function SetupUI({ onComplete }: SetupUIProps) {
           if (selectedOption === 0) {
             // Login to Constellation - start device code flow
             setMode("device-code");
-            startDeviceCodeFlow();
           } else if (selectedOption === 1) {
             proceedLocally();
           } else if (selectedOption === 2) {
@@ -56,77 +51,6 @@ export function SetupUI({ onComplete }: SetupUIProps) {
     },
     { isActive: mode === "menu" },
   );
-
-  const startDeviceCodeFlow = async () => {
-    try {
-      const deviceData = await requestDeviceCode();
-      setDeviceCode(deviceData.device_code);
-      setUserCode(deviceData.user_code);
-      setVerificationUri(deviceData.verification_uri_complete);
-
-      // Auto-open browser (fire-and-forget, never crash)
-      // Uses promise chaining to ensure error handler is attached immediately
-      // after promise resolution, preventing race conditions with error events
-      import("open")
-        .then(({ default: open }) =>
-          open(deviceData.verification_uri_complete, { wait: false }),
-        )
-        .then((subprocess) => {
-          subprocess.on("error", () => {
-            // Silently ignore - user can manually visit the URL shown above
-          });
-        })
-        .catch(() => {
-          // Silently ignore any failures (WSL PowerShell issues, missing xdg-open, etc.)
-        });
-
-      // Get or generate device ID
-      const deviceId = settingsManager.getOrCreateDeviceId();
-      const deviceName = hostname();
-
-      // Start polling in background
-      pollForToken(
-        deviceData.device_code,
-        deviceData.interval,
-        deviceData.expires_in,
-        deviceId,
-        deviceName,
-      )
-        .then(async (tokens) => {
-          // Save tokens using secrets for secure storage
-          // Note: LETTA_BASE_URL is intentionally NOT saved to settings
-          // It should only come from environment variables
-          const now = Date.now();
-
-          try {
-            // Update settings with non-sensitive data and tokens (secrets handles secure storage)
-            settingsManager.updateSettings({
-              env: {
-                ...settingsManager.getSettings().env,
-                LETTA_API_KEY: tokens.access_token,
-              },
-              refreshToken: tokens.refresh_token,
-              tokenExpiresAt: now + tokens.expires_in * 1000,
-              preferredBackendMode: "api",
-            });
-
-            // Wait for all pending writes (keychain, disk) to complete before continuing
-            // This prevents a race condition where main() validation runs before tokens are persisted
-            await settingsManager.flush();
-
-            setMode("done");
-            setTimeout(() => onComplete(), 1000);
-          } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
-          }
-        })
-        .catch((err) => {
-          setError(err.message);
-        });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
 
   const proceedLocally = async () => {
     try {
@@ -171,17 +95,10 @@ export function SetupUI({ onComplete }: SetupUIProps) {
         <Text> </Text>
         <Text bold>{AUTH_LOGIN_LABEL}</Text>
         <Text> </Text>
-        <Text dimColor>Opening browser for authorization...</Text>
-        <Text> </Text>
-        <Text>
-          Your authorization code:{" "}
-          <Text color="yellow" bold>
-            {userCode}
-          </Text>
-        </Text>
-        <Text dimColor>If browser didn't open, visit: {verificationUri}</Text>
-        <Text> </Text>
-        <Text dimColor>Waiting for you to authorize in the browser...</Text>
+        <ConstellationLoginView
+          onComplete={onComplete}
+          onAlreadyLoggedIn={onComplete}
+        />
       </Box>
     );
   }

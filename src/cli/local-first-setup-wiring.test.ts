@@ -32,7 +32,7 @@ describe("local-first setup wiring", () => {
   });
 
   test("successful cloud login records the api backend preference", () => {
-    const source = readSource("../auth/setup-ui.tsx");
+    const source = readSource("../auth/ConstellationLoginView.tsx");
     const start = source.indexOf("settingsManager.updateSettings({");
     const end = source.indexOf("await settingsManager.flush();", start);
 
@@ -41,7 +41,7 @@ describe("local-first setup wiring", () => {
     expect(source.slice(start, end)).toContain('preferredBackendMode: "api"');
   });
 
-  test("startup shows setup for new users while honoring saved local preference", () => {
+  test("startup auto-enters local mode for credentialless new users while honoring saved local preference", () => {
     const source = readSource("../index.ts");
     const start = source.indexOf('settings.preferredBackendMode === "local"');
     const end = source.indexOf('configureBackendMode("local")', start);
@@ -56,11 +56,30 @@ describe("local-first setup wiring", () => {
     expect(segment).not.toContain("!apiKey");
     expect(segment).not.toContain("!settings.refreshToken");
 
-    const setupStart = source.indexOf("!settings.refreshToken");
-    const setupEnd = source.indexOf("return main().catch", setupStart);
+    const setupStart = source.indexOf(
+      "Local-first new-user flow: if the user has no Letta Cloud credentials",
+    );
+    const setupEnd = source.indexOf(
+      "await settingsManager.flush();",
+      setupStart,
+    );
     expect(setupStart).toBeGreaterThan(-1);
     expect(setupEnd).toBeGreaterThan(setupStart);
-    expect(source.slice(setupStart, setupEnd)).toContain("await runSetup()");
+    const setupSegment = source.slice(
+      setupStart,
+      setupEnd + "await settingsManager.flush();".length,
+    );
+    expect(setupSegment).toContain("!explicitBackendMode");
+    expect(setupSegment).toContain("!isHeadless");
+    expect(setupSegment).toContain("!settings.refreshToken");
+    expect(setupSegment).toContain("!apiKey");
+    expect(setupSegment).toContain('configureBackendMode("local")');
+    expect(setupSegment).toContain(
+      'settingsManager.updateSettings({ preferredBackendMode: "local" })',
+    );
+    expect(setupSegment).toContain("await settingsManager.flush();");
+    expect(source).toContain("isCredentiallessLocalStartup");
+    expect(source).toContain(".filter((entry) => entry.isLocal)");
   });
 
   test("backend and setup subcommands expose default backend controls", () => {

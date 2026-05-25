@@ -31,7 +31,6 @@ describe("/chdir command", () => {
     expect(source).toContain("await switchCurrentRuntimeWorkingDirectory");
     expect(source).toContain("pendingSessionContextReason");
     expect(source).toContain('"cwd_changed"');
-    expect(source).toContain("triggerStatusLineRefresh()");
   });
 
   test("parses chdir commands and aliases", () => {

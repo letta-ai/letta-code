@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isRecord } from "@/utils/type-guards";
 import { getChannelDir, getChannelsRoot } from "./config";
 import { CUSTOM_CHANNEL_CONFIG_SCHEMA } from "./custom/plugin";
 import type {
@@ -92,13 +93,28 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       return customChannelPlugin;
     },
   },
+  whatsapp: {
+    metadata: {
+      id: "whatsapp",
+      displayName: "WhatsApp",
+      runtimePackages: [
+        "@whiskeysockets/baileys@6.7.21",
+        "qrcode-terminal@0.12.0",
+      ],
+      runtimeModules: ["@whiskeysockets/baileys", "qrcode-terminal"],
+      source: "first-party",
+      firstParty: true,
+    },
+    load: async () => {
+      const { whatsappChannelPlugin } = await import(
+        "@/channels/whatsapp/plugin"
+      );
+      return whatsappChannelPlugin;
+    },
+  },
 };
 
 const loadedUserPlugins = new Map<string, Promise<ChannelPlugin>>();
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 
 function isValidChannelId(value: string): boolean {
   return CHANNEL_ID_PATTERN.test(value);

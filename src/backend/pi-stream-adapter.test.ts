@@ -77,6 +77,16 @@ function input(): ProviderTurnInput {
   };
 }
 
+function emptyTextBlocks(messages: Context["messages"]) {
+  return messages.flatMap((message) => {
+    const content = message.content;
+    if (!Array.isArray(content)) return [];
+    return content.filter(
+      (part) => part.type === "text" && part.text.trim().length === 0,
+    );
+  });
+}
+
 describe("PiStreamAdapter", () => {
   test("removes OpenAI Responses replay item IDs before provider submission", async () => {
     let sanitizedPayload: unknown;
@@ -158,6 +168,120 @@ describe("PiStreamAdapter", () => {
     expect(JSON.stringify(sanitizedPayload)).not.toContain("rs_0052");
     expect(JSON.stringify(sanitizedPayload)).not.toContain("msg_0052");
     expect(JSON.stringify(sanitizedPayload)).not.toContain("fc_0052");
+  });
+
+  test("drops empty text blocks before OpenRouter Anthropic requests", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-stream-openrouter-empty-text-"),
+    );
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openrouter",
+        providerName: "lc-openrouter",
+        apiKey: "secret-key",
+      });
+
+      let capturedContext: Context | undefined;
+      const stream: PiStreamFunction = (
+        _model: Model<string>,
+        context: Context,
+        _options?: SimpleStreamOptions & Record<string, unknown>,
+      ) => {
+        capturedContext = context;
+        const finalMessage = assistantMessage();
+        return streamFromEvents(
+          [{ type: "done", reason: "stop", message: finalMessage }],
+          finalMessage,
+        );
+      };
+
+      const adapter = new PiStreamAdapter({
+        stream,
+        localProviderAuthStorageDir: storageDir,
+      });
+      const baseInput = input();
+      for await (const _event of adapter.stream({
+        ...baseInput,
+        agent: {
+          ...baseInput.agent,
+          model: "openrouter/anthropic/claude-sonnet-4",
+          model_settings: { provider_type: "openrouter" },
+        },
+        uiMessages: [
+          {
+            id: "ui-msg-empty-user",
+            role: "user",
+            content: [{ type: "text", text: "" }],
+            timestamp: Date.now(),
+          },
+          {
+            id: "ui-msg-user",
+            role: "user",
+            content: [
+              { type: "text", text: "   " },
+              { type: "text", text: "hello" },
+            ],
+            timestamp: Date.now(),
+          },
+          {
+            id: "ui-msg-assistant",
+            role: "assistant",
+            content: [
+              { type: "text", text: "" },
+              {
+                type: "toolCall",
+                id: "call-readme",
+                name: "Read",
+                arguments: { path: "README.md" },
+              },
+            ],
+            api: "openai-completions",
+            provider: "openrouter",
+            model: "anthropic/claude-sonnet-4",
+            usage: emptyLocalUsage(),
+            stopReason: "toolUse",
+            timestamp: Date.now(),
+          },
+          {
+            id: "ui-msg-tool",
+            role: "toolResult",
+            toolCallId: "call-readme",
+            toolName: "Read",
+            content: [{ type: "text", text: "" }],
+            isError: false,
+            timestamp: Date.now(),
+          },
+        ],
+      })) {
+        // drain
+      }
+
+      const messages = capturedContext?.messages ?? [];
+      expect(emptyTextBlocks(messages)).toEqual([]);
+      expect(messages).toHaveLength(3);
+      expect(messages[0]).toMatchObject({
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      });
+      expect(messages[1]).toMatchObject({
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call-readme",
+            name: "Read",
+            arguments: { path: "README.md" },
+          },
+        ],
+      });
+      expect(messages[2]).toMatchObject({
+        role: "toolResult",
+        content: [{ type: "text", text: "No result provided" }],
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("forwards Bedrock provider options and restores AWS env overrides", async () => {

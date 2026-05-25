@@ -25,7 +25,11 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { createAgent } from "@/agent/create";
 import { selectDefaultAgentModel } from "@/agent/defaults";
 import { sendMessageStream } from "@/agent/message";
-import { getBackend } from "@/backend";
+import {
+  configureBackendMode,
+  getBackend,
+  isLocalBackendEnabled,
+} from "@/backend";
 import { getServerUrl } from "@/backend/api/client";
 import type { BtwState } from "@/cli/components/BtwPane";
 import {
@@ -366,11 +370,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           messageHistory: resumeData.messageHistory,
         };
 
-        settingsManager.setLocalLastSession(
-          { agentId, conversationId },
-          process.cwd(),
-        );
-        settingsManager.setGlobalLastSession({ agentId, conversationId });
+        settingsManager.persistSession(agentId, conversationId, process.cwd());
 
         // Clear current transcript and static items (same pattern as /search)
         buffersRef.current.byId.clear();
@@ -476,6 +476,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         profileName?: string;
         conversationId?: string;
         commandId?: string;
+        backendMode?: "local" | "api";
       },
     ) => {
       const overlayCommand = opts?.commandId
@@ -515,6 +516,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           type: "switch_agent",
           agentId: targetAgentId,
           commandId: cmd.id,
+          backendMode: opts?.backendMode,
         });
         return;
       }
@@ -527,7 +529,21 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         overlayCommand ?? commandRunner.start("/agents", "Switching agent...");
       cmd.update({ output: "Switching agent...", phase: "running" });
 
+      // Track previous backend mode for rollback on failure
+      const previousBackendMode = isLocalBackendEnabled() ? "local" : "api";
+      let didSwitchBackend = false;
+
       try {
+        // Switch backend if the target agent belongs to a different backend
+        if (opts?.backendMode) {
+          const currentIsLocal = isLocalBackendEnabled();
+          const targetIsLocal = opts.backendMode === "local";
+          if (currentIsLocal !== targetIsLocal) {
+            configureBackendMode(opts.backendMode);
+            didSwitchBackend = true;
+          }
+        }
+
         // Fetch new agent
         const agent = await getBackend().retrieveAgent(targetAgentId);
 
@@ -614,6 +630,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticItems([separator]);
         cmd.finish(successOutput, true);
       } catch (error) {
+        // Rollback backend mode if we switched before the failure
+        if (didSwitchBackend) {
+          configureBackendMode(previousBackendMode);
+        }
         const errorDetails = formatErrorDetails(error, agentId);
         cmd.fail(`Failed: ${errorDetails}`);
       } finally {
@@ -650,7 +670,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
   // Handle creating a new agent and switching to it
   // biome-ignore lint/correctness/useExhaustiveDependencies: switch refs are stable objects; .current is read dynamically during agent creation.
   const handleCreateNewAgent = useCallback(
-    async (name: string, opts?: { commandId?: string }) => {
+    async (
+      name: string,
+      opts?: { commandId?: string; backendMode?: "local" | "api" },
+    ) => {
       // Close dialog immediately
       setActiveOverlay(null);
 
@@ -662,7 +685,15 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         : commandRunner.start("/new", `Creating agent "${name}"...`);
       cmd.update({ output: `Creating agent "${name}"...`, phase: "running" });
 
+      const previousBackendMode = isLocalBackendEnabled() ? "local" : "api";
+      let didSwitchBackend = false;
+
       try {
+        if (opts?.backendMode && opts.backendMode !== previousBackendMode) {
+          configureBackendMode(opts.backendMode);
+          didSwitchBackend = true;
+        }
+
         // Pre-determine memfs mode so the agent is created with the correct prompt.
         const { isLettaCloud, enableMemfsIfCloud } = await import(
           "@/agent/memory-filesystem"
@@ -670,7 +701,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         const backend = getBackend();
         const willAutoEnableMemfs = await isLettaCloud();
 
-        let effectiveModel = currentModelId || currentModelHandle || undefined;
+        let effectiveModel = didSwitchBackend
+          ? undefined
+          : currentModelId || currentModelHandle || undefined;
         const isSelfHosted = !getServerUrl().includes("api.letta.com");
         if (isSelfHosted) {
           try {
@@ -775,6 +808,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticItems([separator]);
         cmd.finish(successOutput, true);
       } catch (error) {
+        if (didSwitchBackend) {
+          configureBackendMode(previousBackendMode);
+        }
         const errorDetails = formatErrorDetails(error, agentId);
         cmd.fail(`Failed to create agent: ${errorDetails}`);
       } finally {

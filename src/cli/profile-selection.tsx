@@ -7,6 +7,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import { getBackend } from "@/backend";
+import { getRecentAgentOptions } from "@/cli/helpers/recent-agent-options";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./components/colors";
 import { Text } from "./components/Text";
@@ -28,6 +29,7 @@ interface ProfileSelectionResult {
 }
 
 const MAX_DISPLAY = 3;
+const RECENT_FALLBACK_DISPLAY = 2;
 const MAX_VISIBLE_MODELS = 8;
 const MODEL_SEARCH_THRESHOLD = 10; // Show search input when more than this many models
 
@@ -136,8 +138,11 @@ function ProfileSelectionUI({
       }
 
       // Fetch agent data
-      const fetchedOptions = await Promise.all(
+      let fetchedOptions = await Promise.all(
         optionsToFetch.map(async (opt) => {
+          if (opt.agent) {
+            return opt;
+          }
           try {
             const agent = await backend.retrieveAgent(opt.agentId, {
               include: ["agent.blocks"],
@@ -149,7 +154,26 @@ function ProfileSelectionUI({
         }),
       );
 
-      setOptions(fetchedOptions.filter((opt) => opt.agent !== null));
+      fetchedOptions = fetchedOptions.filter((opt) => opt.agent !== null);
+
+      // Fresh repo / invalid pins fallback: show recent agents from the active backend(s)
+      if (fetchedOptions.length === 0) {
+        const recentAgents = await getRecentAgentOptions({
+          includeLocal: false,
+          includeConstellation: true,
+          limit: RECENT_FALLBACK_DISPLAY,
+        });
+
+        fetchedOptions = recentAgents.map((recent) => ({
+          name: recent.agent.name,
+          agentId: recent.agent.id,
+          isLocal: recent.isLocal,
+          isLru: false,
+          agent: recent.agent,
+        }));
+      }
+
+      setOptions(fetchedOptions);
     } catch {
       setOptions([]);
     } finally {
@@ -287,7 +311,6 @@ function ProfileSelectionUI({
         loadingState={loading ? "loading_profiles" : "ready"}
         continueSession={false}
         agentState={null}
-        agentProvenance={null}
       />
       <Box height={1} />
 
@@ -362,9 +385,6 @@ function ProfileSelectionUI({
         // Agent selection mode
         <Box flexDirection="column" gap={1}>
           <Text dimColor>{contextMessage}</Text>
-          {options.length > 0 && (
-            <Text bold>Which agent would you like to use?</Text>
-          )}
 
           <Box flexDirection="column" gap={1}>
             {displayOptions.map((option, index) => {
@@ -444,7 +464,7 @@ function ProfileSelectionUI({
             </Box>
           </Box>
 
-          <Box>
+          <Box marginLeft={2}>
             <Text dimColor>↑↓ navigate · Enter select · Esc exit</Text>
           </Box>
         </Box>

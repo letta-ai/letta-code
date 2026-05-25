@@ -12,6 +12,7 @@ import {
   runPreToolUseHooks,
 } from "@/hooks";
 import { debugLog } from "@/utils/debug";
+import { isRecord } from "@/utils/type-guards";
 import { extractCompactionSummary } from "./compaction-utils";
 import type { ContextTracker } from "./context-tracker";
 import { MAX_CONTEXT_HISTORY } from "./context-tracker";
@@ -522,9 +523,6 @@ export function markIncompleteToolsAsCancelled(
 type ToolCallLine = Extract<Line, { kind: "tool_call" }>;
 
 // Flatten common SDK "parts" → text
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === "object";
-}
 function getStringProp(obj: Record<string, unknown>, key: string) {
   const v = obj[key];
   return typeof v === "string" ? v : undefined;

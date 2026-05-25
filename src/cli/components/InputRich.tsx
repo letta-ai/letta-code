@@ -4,10 +4,7 @@ import { EventEmitter } from "node:events";
 import { stdin } from "node:process";
 import chalk from "chalk";
 import { Box, useInput } from "ink";
-import Link from "ink-link";
-import SpinnerLib from "ink-spinner";
 import {
-  type ComponentType,
   memo,
   type ReactNode,
   useCallback,
@@ -15,21 +12,30 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
-import {
-  getActiveBackgroundAgents,
-  getSnapshot as getSubagentSnapshot,
-  subscribe as subscribeToSubagents,
-} from "@/agent/subagent-state.js";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { buildChatUrl } from "@/cli/helpers/app-urls.js";
+import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
+import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
+import {
+  DEFAULT_STATUSLINE_RENDERER_ID,
+  getBuiltinStatuslineRenderer,
+} from "@/cli/display/statusline/registry";
+import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
+import { evaluateLocalExtensionStatuses } from "@/cli/extensions/local-extension-loader";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
+import {
+  type ExecutionPhase,
+  getPhaseVisual,
+} from "@/cli/helpers/phase-visuals";
+import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
+import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
+import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
@@ -37,42 +43,40 @@ import {
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
-import { ralphMode } from "@/ralph/mode";
 import { settingsManager } from "@/settings-manager";
+import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
-import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { ProductStatusRow } from "./ProductStatusRow";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
+import {
+  contextTierFromRatio,
+  spinnerWidthForTier,
+} from "./spinners/animations.js";
+import { StreamingStatusSpinner } from "./spinners/StreamingStatusSpinner.js";
 import { Text } from "./Text";
-
-// Type assertion for ink-spinner compatibility
-const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
 const FOOTER_WIDTH_STREAMING_DELTA = 2;
+const EMPTY_COMPOSER_PROMPT_ROTATION_MS = 6000;
+const STATUSLINE_TRANSIENT_HINT_MS = 3000;
+const EMPTY_COMPOSER_PROMPT_HINTS = [
+  'Try "help me understand this codebase"',
+  'Try "help me organize my desktop"',
+  'Try "debug this error"',
+  'Try "explain what this function does"',
+  'Try "review this pull request"',
+];
 
 function truncateEnd(value: string, maxChars: number): string {
   if (maxChars <= 0) return "";
   if (value.length <= maxChars) return value;
   if (maxChars <= 3) return value.slice(0, maxChars);
   return `${value.slice(0, maxChars - 3)}...`;
-}
-
-function getReasoningEffortTag(
-  effort: ModelReasoningEffort | null | undefined,
-): string | null {
-  if (effort === "none") return null;
-  if (effort === "xhigh") return "xhigh";
-  if (effort === "max") return "max";
-  if (effort === "minimal") return "minimal";
-  if (effort === "low") return "low";
-  if (effort === "medium") return "medium";
-  if (effort === "high") return "high";
-  return null;
 }
 
 /**
@@ -136,249 +140,6 @@ function findCursorLine(
   };
 }
 
-// Combined regex for ANSI colors (256-color and 24-bit) and OSC 8 hyperlinks
-// Captures: p1[;p2[;p3[;p4[;p5]]]]m
-// 256-color fg: 38;5;N     → p1=38, p2=5,  p3=N
-// 256-color bg: 48;5;N     → p1=48, p2=5,  p3=N
-// 24-bit fg:    38;2;R;G;B → p1=38, p2=2,  p3=R, p4=G, p5=B
-// 24-bit bg:    48;2;R;G;B → p1=48, p2=2,  p3=R, p4=G, p5=B
-// Reset:        0m         → p1=0
-// OSC 8: \x1b]8;;URL\x1b\DISPLAY\x1b]8;;\x1b\
-const COMBINED_STYLE_REGEX =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI/OSC escape sequences require control characters
-  /\x1b\[(\d+)(?:;(\d+)(?:;(\d+)(?:;(\d+)(?:;(\d+))?)?)?)?m|\x1b\]8;;([^\x1b]*)\x1b\\([^\x1b]*)\x1b\]8;;\x1b\\/g;
-
-// 256-color palette lookup (simplified - standard xterm colors 0-255)
-// Returns hex color for palette index
-function get256Color(index: number): string | undefined {
-  if (index < 0 || index > 255) return undefined;
-
-  // Standard 16 colors (0-15)
-  const standardColors = [
-    "#000000",
-    "#800000",
-    "#008000",
-    "#808000",
-    "#000080",
-    "#800080",
-    "#008080",
-    "#c0c0c0",
-    "#808080",
-    "#ff0000",
-    "#00ff00",
-    "#ffff00",
-    "#0000ff",
-    "#ff00ff",
-    "#00ffff",
-    "#ffffff",
-  ];
-  if (index < 16) return standardColors[index];
-
-  // 216 color cube (16-231): 6x6x6 cube
-  if (index < 232) {
-    const cubeIndex = index - 16;
-    const r = Math.floor(cubeIndex / 36) % 6;
-    const g = Math.floor(cubeIndex / 6) % 6;
-    const b = cubeIndex % 6;
-    // Convert 0-5 to 0-255 range (0, 95, 135, 175, 215, 255)
-    const values = [0, 95, 135, 175, 215, 255];
-    const toHex = (v: number) => v.toString(16).padStart(2, "0");
-    return `#${toHex(values[r] ?? 0)}${toHex(values[g] ?? 0)}${toHex(values[b] ?? 0)}`;
-  }
-
-  // Grayscale (232-255): 24 shades from black to white
-  const grayValue = 8 + (index - 232) * 10;
-  const hex = grayValue.toString(16).padStart(2, "0");
-  return `#${hex}${hex}${hex}`;
-}
-
-function parseStyledLine(line: string, keyPrefix: string): ReactNode[] {
-  const parts: ReactNode[] = [];
-  let lastIndex = 0;
-  let currentColor: string | undefined;
-  let currentBgColor: string | undefined;
-
-  const regex = new RegExp(COMBINED_STYLE_REGEX.source, "g");
-
-  for (let match = regex.exec(line); match !== null; match = regex.exec(line)) {
-    const fullMatch = match[0];
-
-    // Handle OSC 8 hyperlink: groups 6=URL, 7=display text
-    const osc8Url = match[6];
-    const osc8Display = match[7];
-    if (osc8Url !== undefined && osc8Display !== undefined) {
-      // Flush any pending text with current color before the link
-      if (match.index > lastIndex) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-      }
-      // Create link with display text (ANSI colors inside link text not supported for now)
-      parts.push(
-        <Link key={`${keyPrefix}-${match.index}`} url={osc8Url}>
-          <Text color={currentColor} backgroundColor={currentBgColor}>
-            {osc8Display}
-          </Text>
-        </Link>,
-      );
-      lastIndex = match.index + fullMatch.length;
-      continue;
-    }
-
-    const code = parseInt(match[1] ?? "0", 10);
-
-    // Handle reset
-    if (code === 0) {
-      if (lastIndex > 0 || currentColor || currentBgColor) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-      }
-      lastIndex = match.index + fullMatch.length;
-      currentColor = undefined;
-      currentBgColor = undefined;
-      continue;
-    }
-
-    // Handle 24-bit foreground color: 38;2;R;G;B → p1=38,p2=2,p3=R,p4=G,p5=B
-    if (code === 38 && match[2] === "2") {
-      const r = match[3];
-      const g = match[4];
-      const b = match[5];
-      if (r && g && b) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        currentColor = `#${parseInt(r, 10).toString(16).padStart(2, "0")}${parseInt(g, 10).toString(16).padStart(2, "0")}${parseInt(b, 10).toString(16).padStart(2, "0")}`;
-        continue;
-      }
-    }
-
-    // Handle 256-color foreground: 38;5;N
-    if (code === 38 && match[2] === "5") {
-      const n = match[3];
-      if (n) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        const color256 = get256Color(parseInt(n, 10));
-        if (color256) currentColor = color256;
-        continue;
-      }
-    }
-
-    // Handle 24-bit background color: 48;2;R;G;B → p1=48,p2=2,p3=R,p4=G,p5=B
-    if (code === 48 && match[2] === "2") {
-      const r = match[3];
-      const g = match[4];
-      const b = match[5];
-      if (r && g && b) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        currentBgColor = `#${parseInt(r, 10).toString(16).padStart(2, "0")}${parseInt(g, 10).toString(16).padStart(2, "0")}${parseInt(b, 10).toString(16).padStart(2, "0")}`;
-        continue;
-      }
-    }
-
-    // Handle 256-color background: 48;5;N
-    if (code === 48 && match[2] === "5") {
-      const n = match[3];
-      if (n) {
-        const text = line.slice(lastIndex, match.index);
-        if (text || currentColor || currentBgColor) {
-          parts.push(
-            <Text
-              key={`${keyPrefix}-${lastIndex}`}
-              color={currentColor}
-              backgroundColor={currentBgColor}
-            >
-              {text}
-            </Text>,
-          );
-        }
-        lastIndex = match.index + fullMatch.length;
-        const color256 = get256Color(parseInt(n, 10));
-        if (color256) currentBgColor = color256;
-      }
-    }
-
-    // Fallback: unrecognized SGR code (bold, underline, standard 16-color, etc.)
-    // Advance lastIndex past the matched sequence so raw escape bytes don't leak into rendered text
-    lastIndex = match.index + fullMatch.length;
-  }
-
-  // Add remaining text with current color
-  if (lastIndex < line.length) {
-    const text = line.slice(lastIndex);
-    if (text || currentColor || currentBgColor) {
-      parts.push(
-        <Text
-          key={`${keyPrefix}-${lastIndex}`}
-          color={currentColor}
-          backgroundColor={currentBgColor}
-        >
-          {text}
-        </Text>,
-      );
-    }
-  }
-
-  if (parts.length === 0) {
-    parts.push(<Text key={keyPrefix}>{line}</Text>);
-  }
-
-  return parts;
-}
-
 function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
   if (modeGlyph === "") {
     return modeName;
@@ -389,49 +150,298 @@ function formatModeLabel(modeName: string, modeGlyph?: string | null): string {
   return `${modeGlyph ?? "⏵⏵"} ${modeName}`;
 }
 
-function StatusLineContent({
-  text,
+function getPermissionModeTransientHintInfo(mode: PermissionMode): {
+  name: string;
+  color: string;
+  glyph?: string;
+} {
+  switch (mode) {
+    case "acceptEdits":
+      return { name: "accept edits", color: colors.status.processing };
+    case "standard":
+      return {
+        name: "standard (request approval) mode",
+        color: colors.status.processingShimmer,
+        glyph: "▶",
+      };
+    case "unrestricted":
+      return {
+        name: "unrestricted mode",
+        color: colors.status.success,
+        glyph: "⚡︎",
+      };
+    case "memory":
+      return { name: "memory mode", color: colors.status.processing };
+  }
+}
+
+type StatuslinePreemption =
+  | { type: "confirm-exit" }
+  | { type: "confirm-clear" };
+
+type StatuslineTransientHint =
+  | {
+      type: "message";
+      message: string;
+      color?: string;
+      dimColor?: boolean;
+    }
+  | { type: "bash-mode" }
+  | {
+      type: "permission-mode";
+      modeName: string;
+      modeColor: string;
+      modeGlyph?: string | null;
+      showExitHint: boolean;
+    }
+  | {
+      type: "queued-message-hint";
+      queueMode: "immediate" | "defer";
+      deferModeSupported: boolean;
+    }
+  | {
+      type: "queue-mode-changed";
+      queueMode: "immediate" | "defer";
+      deferModeSupported: boolean;
+    };
+
+function isStatuslineTransientHintRelevant(
+  hint: StatuslineTransientHint,
+  state: {
+    isBashMode: boolean;
+    queuedUserMessageCount: number;
+  },
+): boolean {
+  switch (hint.type) {
+    case "bash-mode":
+      return state.isBashMode;
+    case "queued-message-hint":
+    case "queue-mode-changed":
+      return state.queuedUserMessageCount > 0;
+    case "message":
+    case "permission-mode":
+      return true;
+  }
+}
+
+function getStatuslinePreemption({
+  ctrlCPressed,
+  escapePressed,
+}: {
+  ctrlCPressed: boolean;
+  escapePressed: boolean;
+}): StatuslinePreemption | null {
+  if (ctrlCPressed) {
+    return { type: "confirm-exit" };
+  }
+
+  if (escapePressed) {
+    return { type: "confirm-clear" };
+  }
+
+  return null;
+}
+
+function StatuslinePreemptionView({
+  preemption,
+}: {
+  preemption: StatuslinePreemption;
+}) {
+  switch (preemption.type) {
+    case "confirm-exit":
+      return <Text dimColor>Press CTRL-C again to exit</Text>;
+    case "confirm-clear":
+      return <Text dimColor>Press Esc again to clear</Text>;
+  }
+}
+
+function StatuslineBashModeHint() {
+  return (
+    <Text>
+      <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
+      <Text color={colors.bash.prompt} dimColor>
+        {" "}
+        (backspace to exit)
+      </Text>
+    </Text>
+  );
+}
+
+function StatuslineModeHint({
   modeName,
   modeColor,
   modeGlyph,
   showExitHint,
 }: {
-  text: string;
+  modeName: string;
+  modeColor: string;
+  modeGlyph?: string | null;
+  showExitHint: boolean;
+}) {
+  return (
+    <Text>
+      <Text color={modeColor}>{formatModeLabel(modeName, modeGlyph)}</Text>
+      <Text color={modeColor} dimColor>
+        {" "}
+        (shift+tab to {showExitHint ? "exit" : "cycle"})
+      </Text>
+    </Text>
+  );
+}
+
+function StatuslineQueuedMessageHint({
+  queueMode,
+  deferModeSupported,
+}: {
+  queueMode: "immediate" | "defer";
+  deferModeSupported: boolean;
+}) {
+  return (
+    <Text dimColor>
+      {deferModeSupported
+        ? queueMode === "defer"
+          ? "press ↑ to edit queued message · ctrl+d to release queue"
+          : "press ↑ to edit queued message · ctrl+d to hold queue until done"
+        : "press ↑ to edit queued message"}
+    </Text>
+  );
+}
+
+function StatuslineQueueModeChangedHint({
+  queueMode,
+  deferModeSupported,
+}: {
+  queueMode: "immediate" | "defer";
+  deferModeSupported: boolean;
+}) {
+  if (!deferModeSupported) {
+    return null;
+  }
+
+  return (
+    <Text dimColor>
+      {queueMode === "defer"
+        ? "queue held until done · ctrl+d to release"
+        : "queue sends as soon as possible · ctrl+d to hold"}
+    </Text>
+  );
+}
+
+function StatuslineTransientHintView({
+  hint,
+}: {
+  hint: StatuslineTransientHint;
+}) {
+  switch (hint.type) {
+    case "message":
+      return (
+        <Text color={hint.color} dimColor={hint.dimColor}>
+          {hint.message}
+        </Text>
+      );
+    case "bash-mode":
+      return <StatuslineBashModeHint />;
+    case "permission-mode":
+      return (
+        <StatuslineModeHint
+          modeName={hint.modeName}
+          modeColor={hint.modeColor}
+          modeGlyph={hint.modeGlyph}
+          showExitHint={hint.showExitHint}
+        />
+      );
+    case "queued-message-hint":
+      return (
+        <StatuslineQueuedMessageHint
+          queueMode={hint.queueMode}
+          deferModeSupported={hint.deferModeSupported}
+        />
+      );
+    case "queue-mode-changed":
+      return (
+        <StatuslineQueueModeChangedHint
+          queueMode={hint.queueMode}
+          deferModeSupported={hint.deferModeSupported}
+        />
+      );
+  }
+}
+
+function shouldTransientHintBlankRightColumn({
+  customStatuslineActive,
+  hint,
+}: {
+  customStatuslineActive: boolean;
+  hint: StatuslineTransientHint | null | undefined;
+}): boolean {
+  if (!hint) return false;
+  if (customStatuslineActive) return true;
+
+  // With the built-in default, bash and permission modes render on the left
+  // while the default renderer owns the right label, so they can coexist.
+  return hint.type !== "bash-mode" && hint.type !== "permission-mode";
+}
+
+function DefaultStatuslineLeftContent({
+  defaultLeftStatusline,
+  isBashMode,
+  modeName,
+  modeColor,
+  modeGlyph,
+  showExitHint,
+}: {
+  defaultLeftStatusline: ReactNode;
+  isBashMode: boolean;
   modeName: string | null;
   modeColor: string | null;
   modeGlyph?: string | null;
   showExitHint: boolean;
 }) {
-  const lines = text.split("\n");
-  const parts: ReactNode[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (i > 0) {
-      parts.push("\n");
-    }
-    parts.push(...parseStyledLine(lines[i] ?? "", `l${i}`));
+  if (isBashMode) {
+    return <StatuslineBashModeHint />;
   }
+
+  if (modeName && modeColor) {
+    return (
+      <StatuslineModeHint
+        modeName={modeName}
+        modeColor={modeColor}
+        modeGlyph={modeGlyph}
+        showExitHint={showExitHint}
+      />
+    );
+  }
+
+  return defaultLeftStatusline;
+}
+
+function BlankStatuslineRow({
+  rightColumnWidth,
+}: {
+  rightColumnWidth: number;
+}) {
   return (
-    <Text wrap="wrap">
-      <Text>{parts}</Text>
-      {modeName && modeColor && (
-        <>
-          {"\n"}
-          <Text color={modeColor}>{formatModeLabel(modeName, modeGlyph)}</Text>
-          <Text color={modeColor} dimColor>
-            {" "}
-            (shift+tab to {showExitHint ? "exit" : "cycle"})
-          </Text>
-        </>
-      )}
-    </Text>
+    <Box flexDirection="row" marginBottom={1}>
+      <Box flexGrow={1} paddingRight={1}>
+        <Text> </Text>
+      </Box>
+      <Box
+        flexDirection="column"
+        alignItems="flex-end"
+        width={rightColumnWidth}
+        flexShrink={0}
+      >
+        <Text>{" ".repeat(rightColumnWidth)}</Text>
+      </Box>
+    </Box>
   );
 }
 
 /**
- * Memoized footer component to prevent re-renders during high-frequency
- * shimmer/timer updates. Only updates when its specific props change.
+ * Bottom statusline slot. Safety states and transient host hints may preempt the
+ * row; otherwise custom extensions own the idle row before the built-in default.
  */
-const InputFooter = memo(function InputFooter({
+const StatuslineSlot = memo(function StatuslineSlot({
   ctrlCPressed,
   escapePressed,
   isBashMode,
@@ -439,21 +449,16 @@ const InputFooter = memo(function InputFooter({
   modeColor,
   modeGlyph,
   showExitHint,
-  agentName,
-  currentModel,
-  currentReasoningEffort,
+  currentModelProvider,
   isOpenAICodexProvider,
   isByokProvider,
+  isLocalBackend = false,
   hasTemporaryModelOverride,
   hideFooter,
   rightColumnWidth,
-  statusLineText,
-  statusLineRight,
-  footerNotification,
-  goalStatusText,
-  hasQueuedMessages = false,
-  queueMode = "immediate",
-  deferModeSupported = false,
+  statusLinePayload,
+  extensionRuntime,
+  transientHint,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -462,247 +467,131 @@ const InputFooter = memo(function InputFooter({
   modeColor: string | null;
   modeGlyph?: string | null;
   showExitHint: boolean;
-  agentName: string | null | undefined;
-  currentModel: string | null | undefined;
-  currentReasoningEffort?: ModelReasoningEffort | null;
+  currentModelProvider?: string | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
+  isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   hideFooter: boolean;
   rightColumnWidth: number;
-  statusLineText?: string;
-  statusLineRight?: string;
-  footerNotification?: string | null;
-  goalStatusText?: string | null;
-  hasQueuedMessages?: boolean;
-  queueMode?: "immediate" | "defer";
-  deferModeSupported?: boolean;
+  statusLinePayload: StatusLinePayload;
+  extensionRuntime: LocalExtensionRuntime;
+  transientHint?: StatuslineTransientHint | null;
 }) {
   const hideFooterContent = hideFooter;
 
-  // Subscribe to subagent state for background agent indicators
-  useSyncExternalStore(subscribeToSubagents, getSubagentSnapshot);
-  const backgroundAgents = [
-    ...getActiveBackgroundAgents(),
-    ...(process.env.LETTA_DEBUG_FOOTER === "1"
-      ? [
-          {
-            id: "debug-bg-agent",
-            type: "Reflection",
-            description: "Debug background agent",
-            status: "running" as const,
-            agentURL: "https://app.letta.com/chat/agent-debug-link",
-            toolCalls: [],
-            totalTokens: 0,
-            durationMs: 0,
-            startTime: Date.now() - 12_000,
-            isBackground: true,
-            silent: true,
-          },
-        ]
-      : []),
-  ];
-
-  // Tick counter for elapsed time display (only active when background agents exist)
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (backgroundAgents.length === 0) return;
-    const t = setInterval(() => setTick((v) => v + 1), 1000);
-    return () => clearInterval(t);
-  }, [backgroundAgents.length]);
-
-  // Background agent display parts for the footer indicator
-  const bgAgentParts = backgroundAgents.map((a) => {
-    const elapsedS = Math.round((Date.now() - a.startTime) / 1000);
-    const agentId =
-      a.agentURL?.match(/\/(?:agents|chat)\/([^/?#]+)/)?.[1] ?? null;
-    const rawType = a.type.toLowerCase();
-    return {
-      id: a.id,
-      typeLabel: rawType === "reflection" ? "dreaming" : rawType,
-      chatUrl: agentId ? buildChatUrl(agentId) : null,
-      elapsed: `${elapsedS}s`,
-    };
+  const preemption = getStatuslinePreemption({
+    ctrlCPressed,
+    escapePressed,
   });
 
-  const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
-  const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
-  const reasoningTag = getReasoningEffortTag(currentReasoningEffort);
-  const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
-  const tempOverrideExtraChars = hasTemporaryModelOverride ? 2 : 0; // " ▲"
+  const baseStatuslineContext = buildStatuslineRenderContext({
+    payload: statusLinePayload,
+    ui: {
+      currentModelProvider: currentModelProvider ?? null,
+      goalStatusText: null,
+      hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+      isByokProvider,
+      isLocalBackend,
+      isOpenAICodexProvider,
+      rightColumnWidth,
+    },
+  });
+  const statuslineContext = {
+    ...baseStatuslineContext,
+    statuses: evaluateLocalExtensionStatuses(
+      extensionRuntime.registry,
+      baseStatuslineContext,
+    ),
+  };
+  extensionRuntime.updateContext(statuslineContext);
 
-  const baseReservedChars =
-    displayAgentName.length + byokExtraChars + tempOverrideExtraChars + 4;
-  const modelWithReasoning =
-    (currentModel ?? "unknown") + (reasoningTag ? ` (${reasoningTag})` : "");
+  const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
+    DEFAULT_STATUSLINE_RENDERER_ID,
+  );
+  const localStatuslineRenderer =
+    extensionRuntime.registry?.ui.statuslineRenderer ?? null;
+  const extensionStatuslineLoading =
+    extensionRuntime.isLoading &&
+    (extensionRuntime.hasExtensionSources ||
+      extensionRuntime.hadStatuslineRenderer);
+  const customStatuslineActive = Boolean(
+    localStatuslineRenderer || extensionStatuslineLoading,
+  );
+  const idleSlotAvailable = !hideFooterContent && !preemption && !transientHint;
 
-  const maxModelChars = Math.max(8, rightColumnWidth - baseReservedChars);
-  const displayModel = truncateEnd(modelWithReasoning, maxModelChars);
-  const rightTextLength =
-    displayAgentName.length +
-    displayModel.length +
-    byokExtraChars +
-    tempOverrideExtraChars +
-    3;
-  const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
-
-  // When bg agents are active, widen the right column to fit the indicator + label
-  // spinner slot (3) + parts text + " │ " (3)
-  const bgIndicatorWidth =
-    backgroundAgents.length > 0
-      ? 3 +
-        bgAgentParts.reduce(
-          (acc, p, i) =>
-            acc +
-            (i > 0 ? 3 : 0) +
-            p.typeLabel.length +
-            1 +
-            p.elapsed.length +
-            2,
-          0,
-        ) +
-        3
-      : 0;
-  const effectiveRightWidth =
-    backgroundAgents.length > 0
-      ? Math.max(rightColumnWidth, bgIndicatorWidth + rightTextLength)
-      : rightColumnWidth;
-
-  // Agent label without leading spaces (used by both default and bg-agent cases)
-  const rightLabelCore = useMemo(() => {
-    const parts: string[] = [];
-    parts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
-    parts.push(chalk.dim(" ["));
-    parts.push(chalk.dim(displayModel));
-    if (isByokProvider) {
-      parts.push(chalk.dim(" "));
-      parts.push(
-        isOpenAICodexProvider ? chalk.hex("#74AA9C")("▲") : chalk.yellow("▲"),
+  if (idleSlotAvailable && localStatuslineRenderer) {
+    try {
+      return localStatuslineRenderer.render(statuslineContext);
+    } catch (error) {
+      debugLog(
+        "extensions",
+        "statusline renderer %s failed: %s",
+        localStatuslineRenderer.id,
+        error instanceof Error ? error.message : String(error),
       );
     }
-    if (hasTemporaryModelOverride) {
-      parts.push(chalk.dim(" "));
-      parts.push(chalk.yellow("▲"));
-    }
-    parts.push(chalk.dim("]"));
-    return parts.join("");
-  }, [
-    displayAgentName,
-    displayModel,
-    isByokProvider,
-    isOpenAICodexProvider,
-    hasTemporaryModelOverride,
-  ]);
+  }
 
-  const rightLabel = useMemo(() => {
-    if (goalStatusText) {
-      return chalk.magenta(goalStatusText);
-    }
-    return " ".repeat(rightPrefixSpaces) + rightLabelCore;
-  }, [goalStatusText, rightPrefixSpaces, rightLabelCore]);
+  if (idleSlotAvailable && extensionStatuslineLoading) {
+    return <BlankStatuslineRow rightColumnWidth={rightColumnWidth} />;
+  }
+
+  const defaultStatuslineParts = buildDefaultStatuslineParts(
+    statuslineContext,
+    rightColumnWidth,
+  );
+  const rightLabel = defaultStatuslineParts.right;
+  const defaultLeftStatusline = defaultStatuslineParts.left;
+
+  const leftContent = preemption ? (
+    <StatuslinePreemptionView preemption={preemption} />
+  ) : transientHint ? (
+    <StatuslineTransientHintView hint={transientHint} />
+  ) : (
+    <DefaultStatuslineLeftContent
+      defaultLeftStatusline={defaultLeftStatusline}
+      isBashMode={isBashMode}
+      modeName={modeName}
+      modeColor={modeColor}
+      modeGlyph={modeGlyph}
+      showExitHint={showExitHint}
+    />
+  );
+  const shouldBlankRightColumn =
+    Boolean(preemption) ||
+    shouldTransientHintBlankRightColumn({
+      customStatuslineActive,
+      hint: transientHint,
+    });
+
+  const shouldRenderDefaultStatusline = shouldRenderDefaultStatuslineRenderer({
+    hideFooterContent,
+    isBashMode,
+    modeActive: Boolean(modeName && modeColor),
+    preemptionActive: Boolean(preemption),
+    transientHintActive: Boolean(transientHint),
+  });
+
+  if (shouldRenderDefaultStatusline) {
+    return builtInStatuslineRenderer.render(statuslineContext);
+  }
 
   return (
     <Box flexDirection="row" marginBottom={1}>
       <Box flexGrow={1} paddingRight={1}>
-        {hideFooterContent ? (
-          <Text> </Text>
-        ) : ctrlCPressed ? (
-          <Text dimColor>Press CTRL-C again to exit</Text>
-        ) : escapePressed ? (
-          <Text dimColor>Press Esc again to clear</Text>
-        ) : isBashMode ? (
-          <Text>
-            <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
-            <Text color={colors.bash.prompt} dimColor>
-              {" "}
-              (backspace to exit)
-            </Text>
-          </Text>
-        ) : statusLineText ? (
-          <StatusLineContent
-            text={statusLineText}
-            modeName={modeName}
-            modeColor={modeColor}
-            modeGlyph={modeGlyph}
-            showExitHint={showExitHint}
-          />
-        ) : modeName && modeColor ? (
-          <Text>
-            <Text color={modeColor}>
-              {formatModeLabel(modeName, modeGlyph)}
-            </Text>
-            <Text color={modeColor} dimColor>
-              {" "}
-              (shift+tab to {showExitHint ? "exit" : "cycle"})
-            </Text>
-          </Text>
-        ) : footerNotification ? (
-          <Text color={colors.status.processingShimmer}>
-            {footerNotification}
-          </Text>
-        ) : hasQueuedMessages ? (
-          <Text dimColor>
-            {deferModeSupported
-              ? queueMode === "defer"
-                ? "press ↑ to edit queued message · ctrl+d to release queue"
-                : "press ↑ to edit queued message · ctrl+d to hold queue until done"
-              : "press ↑ to edit queued message"}
-          </Text>
-        ) : (
-          <Text dimColor>Press / for commands</Text>
-        )}
+        {hideFooterContent ? <Text> </Text> : leftContent}
       </Box>
       <Box
         flexDirection="column"
         alignItems="flex-end"
-        width={
-          statusLineRight && !hideFooterContent
-            ? undefined
-            : effectiveRightWidth
-        }
+        width={rightColumnWidth}
         flexShrink={0}
       >
         {hideFooterContent ? (
           <Text>{" ".repeat(rightColumnWidth)}</Text>
-        ) : statusLineRight ? (
-          statusLineRight.split("\n").map((line, i) => (
-            <Text key={`${i}-${line}`} wrap="truncate-end">
-              {parseStyledLine(line, `r${i}`)}
-            </Text>
-          ))
-        ) : backgroundAgents.length > 0 ? (
-          <Text>
-            <BlinkingSpinner
-              color={colors.bgSubagent.spinner}
-              width={2}
-              marginRight={0}
-              pulseIntervalMs={400}
-            />
-            {bgAgentParts.map((part, i) => (
-              <Text key={`bg-agent-${part.id}`}>
-                {i > 0 && (
-                  <Text
-                    key={`bg-agent-indicator-${part}`}
-                    color={colors.bgSubagent.label}
-                  >
-                    {" · "}
-                  </Text>
-                )}
-                {part.chatUrl ? (
-                  <Link url={part.chatUrl} fallback={false}>
-                    <Text color={colors.bgSubagent.label}>
-                      {part.typeLabel}
-                    </Text>
-                  </Link>
-                ) : (
-                  <Text color={colors.bgSubagent.label}>{part.typeLabel}</Text>
-                )}
-                <Text dimColor> ({part.elapsed})</Text>
-              </Text>
-            ))}
-            <Text dimColor>{" │ "}</Text>
-            {rightLabelCore}
-          </Text>
+        ) : shouldBlankRightColumn ? (
+          <Text>{" ".repeat(rightColumnWidth)}</Text>
         ) : (
           <Text>{rightLabel}</Text>
         )}
@@ -715,27 +604,34 @@ const StreamingStatus = memo(function StreamingStatus({
   streaming,
   visible,
   tokenCount,
+  usedContextTokens,
+  contextWindowSize,
   elapsedBaseMs,
   thinkingMessage,
   includeSystemPromptUpgradeTip,
   agentName,
   interruptRequested,
   networkPhase,
+  executionPhase,
   terminalWidth,
   shouldAnimate,
 }: {
   streaming: boolean;
   visible: boolean;
   tokenCount: number;
+  usedContextTokens: number;
+  contextWindowSize: number | null | undefined;
   elapsedBaseMs: number;
   thinkingMessage: string;
   includeSystemPromptUpgradeTip: boolean;
   agentName: string | null | undefined;
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
+  executionPhase: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate: boolean;
 }) {
+  const phaseVisual = getPhaseVisual(executionPhase);
   // While the user is actively resizing the terminal, Ink can struggle to
   // clear/redraw rapidly-changing animated output (spinner/shimmer).
   // Freeze animations briefly during resize to keep output stable.
@@ -768,32 +664,44 @@ const StreamingStatus = memo(function StreamingStatus({
 
   const animate = shouldAnimate && !isResizing;
 
-  const [shimmerOffset, setShimmerOffset] = useState(-3);
+  // Context-usage tier drives both the spinner animation and its column
+  // width — wider as the conversation fills up.
+  const contextRatio =
+    contextWindowSize && contextWindowSize > 0
+      ? usedContextTokens / contextWindowSize
+      : 0;
+  const contextTier = contextTierFromRatio(contextRatio);
+  const spinnerColumnWidth = spinnerWidthForTier(contextTier) + 1;
+
+  // Bump a counter on each false→true streaming edge. The spinner reads
+  // it as `pool[streamSeed % pool.length]`, so consecutive streams rotate
+  // through the tier's pool deterministically (round-robin) without any
+  // fiber remount.
+  const [streamSeed, setStreamSeed] = useState(0);
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    if (streaming && !prevStreamingRef.current) {
+      setStreamSeed((s) => s + 1);
+    }
+    prevStreamingRef.current = streaming;
+  }, [streaming]);
+
+  // Include agent name length (+1 for space) and trailing ellipsis in cycle
+  const agentPrefixLength = agentName ? agentName.length + 1 : 0;
+  const shimmerTextLength = agentPrefixLength + thinkingMessage.length + 1;
+  const isLive = streaming && visible && animate;
+
+  const { offset: shimmerOffset, baseColor: shimmerBaseColor } =
+    useShimmerAnimation({
+      active: isLive,
+      textLength: shimmerTextLength,
+      phaseVisual,
+    });
+  const displayedTokenBytes = useTokenSmoothing(tokenCount, isLive);
+
   const [elapsedMs, setElapsedMs] = useState(0);
   const [tipMessage, setTipMessage] = useState("");
   const streamStartRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!streaming || !visible || !animate) return;
-
-    const id = setInterval(() => {
-      setShimmerOffset((prev) => {
-        // Include agent name length (+1 for space) in shimmer cycle
-        const prefixLen = agentName ? agentName.length + 1 : 0;
-        const len = prefixLen + thinkingMessage.length;
-        const next = prev + 1;
-        return next > len + 3 ? -3 : next;
-      });
-    }, 120); // Speed of shimmer animation
-
-    return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible, agentName, animate]);
-
-  useEffect(() => {
-    if (!animate) {
-      setShimmerOffset(-3);
-    }
-  }, [animate]);
 
   // Elapsed time tracking: pause updates during resize, but do not reset.
   useEffect(() => {
@@ -828,10 +736,14 @@ const StreamingStatus = memo(function StreamingStatus({
     }
   }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
-  const estimatedTokens = bytesToTokens(tokenCount);
+  // Gate visibility on the actual count so the counter appears the instant
+  // the real total crosses the threshold; render the smoothed value so it
+  // animates up rather than popping in mid-number.
+  const actualEstimatedTokens = bytesToTokens(tokenCount);
+  const estimatedTokens = bytesToTokens(displayedTokenBytes);
   const totalElapsedMs = elapsedBaseMs + elapsedMs;
   const shouldShowTokenCount =
-    streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
+    streaming && actualEstimatedTokens > TOKEN_DISPLAY_THRESHOLD;
   const shouldShowElapsed =
     streaming && totalElapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
   const elapsedLabel = formatElapsedLabel(totalElapsedMs);
@@ -839,14 +751,17 @@ const StreamingStatus = memo(function StreamingStatus({
   const networkArrow = useMemo(() => {
     if (!networkPhase) return "";
     if (networkPhase === "upload") return "↑";
-    if (networkPhase === "download") return "↑"; // Use ↑ for both to avoid distracting flip (change to ↓ to restore)
+    if (networkPhase === "download") return "↓";
     return "↑\u0338";
   }, [networkPhase]);
   const showErrorArrow = networkArrow === "↑\u0338";
   // Avoid painting into the terminal's last column; some terminals will soft-wrap
   // padded Ink rows at the edge which breaks Ink's line-clearing accounting and
   // leaves duplicate status rows behind during streaming/resizes.
-  const statusContentWidth = Math.max(0, terminalWidth - 3);
+  const statusContentWidth = Math.max(
+    0,
+    terminalWidth - 1 - spinnerColumnWidth,
+  );
   const minMessageWidth = 12;
   const statusHintParts = useMemo(() => {
     const parts: string[] = [];
@@ -914,9 +829,16 @@ const StreamingStatus = memo(function StreamingStatus({
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box flexDirection="row">
-        <Box width={2} flexShrink={0}>
+        <Box width={spinnerColumnWidth} flexShrink={0}>
           <Text color={colors.status.processing}>
-            {animate ? <Spinner type="layer" /> : CLI_GLYPHS.bullet}
+            {animate ? (
+              <StreamingStatusSpinner
+                tier={contextTier}
+                streamSeed={streamSeed}
+              />
+            ) : (
+              CLI_GLYPHS.bullet
+            )}
           </Text>
         </Box>
         <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
@@ -925,6 +847,8 @@ const StreamingStatus = memo(function StreamingStatus({
               boldPrefix={agentName || undefined}
               message={thinkingMessage}
               shimmerOffset={animate ? shimmerOffset : -3}
+              color={animate ? shimmerBaseColor : phaseVisual.baseColor}
+              shimmerColor={phaseVisual.shimmerColor}
               wrap="truncate-end"
             />
           </Box>
@@ -937,7 +861,7 @@ const StreamingStatus = memo(function StreamingStatus({
         </Box>
       </Box>
       <Box flexDirection="row">
-        <Box width={2} flexShrink={0} />
+        <Box width={spinnerColumnWidth} flexShrink={0} />
         <Box width={statusContentWidth} flexShrink={0}>
           <Text color={colors.subagent.hint} wrap="truncate-end">
             {tipLineText}
@@ -960,6 +884,8 @@ export function Input({
   visible = true,
   streaming,
   tokenCount,
+  usedContextTokens = 0,
+  contextWindowSize,
   elapsedBaseMs = 0,
   thinkingMessage,
   includeSystemPromptUpgradeTip = true,
@@ -982,32 +908,36 @@ export function Input({
   agentName,
   currentModel,
   currentModelProvider,
+  isLocalBackend = false,
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
   messageQueue,
   onQueueEdit,
   onEscapeCancel,
+  onEscapeCommandCancel,
   inputDisabled = false,
-  ralphActive = false,
-  ralphPending = false,
-  ralphPendingYolo = false,
-  onRalphExit,
+  goalLoopActive = false,
+  onGoalLoopExit,
   conversationId,
   onPasteError,
   restoredInput,
   onRestoredInputConsumed,
   networkPhase = null,
+  executionPhase = null,
   terminalWidth,
   shouldAnimate = true,
-  statusLineText,
-  statusLineRight,
+  statusLinePayload,
+  extensionRuntime,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
+  showInspirationalPromptHints = false,
 }: {
   visible?: boolean;
   streaming: boolean;
   tokenCount: number;
+  usedContextTokens?: number;
+  contextWindowSize?: number | null;
   elapsedBaseMs?: number;
   thinkingMessage: string;
   includeSystemPromptUpgradeTip?: boolean;
@@ -1030,38 +960,47 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
+  isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   messageQueue?: QueuedMessage[];
   onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
+  onEscapeCommandCancel?: () => boolean;
   inputDisabled?: boolean;
-  ralphActive?: boolean;
-  ralphPending?: boolean;
-  ralphPendingYolo?: boolean;
-  onRalphExit?: () => void;
+  goalLoopActive?: boolean;
+  onGoalLoopExit?: () => void;
   conversationId?: string;
   onPasteError?: (message: string) => void;
   restoredInput?: string | null;
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
+  executionPhase?: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate?: boolean;
-  statusLineText?: string;
-  statusLineRight?: string;
+  statusLinePayload: StatusLinePayload;
+  extensionRuntime: LocalExtensionRuntime;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
+  showInspirationalPromptHints?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
   const escapeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [ctrlCPressed, setCtrlCPressed] = useState(false);
   const ctrlCTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [statuslineTransientHint, setStatuslineTransientHint] =
+    useState<StatuslineTransientHint | null>(null);
+  const statuslineTransientHintTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const previousValueRef = useRef(value);
   const [currentMode, setCurrentMode] = useState<PermissionMode>(
     externalMode || permissionMode.getMode(),
   );
+  const [emptyPromptHintIndex, setEmptyPromptHintIndex] = useState(0);
+  const [emptyPromptHintReady, setEmptyPromptHintReady] = useState(false);
   const [isAutocompleteActive, setIsAutocompleteActive] = useState(false);
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
@@ -1119,6 +1058,29 @@ export function Input({
 
   const interactionEnabled = visible && inputEnabled && !inputDisabled;
   const reserveInputSpace = !collapseInputWhenDisabled;
+
+  const clearStatuslineTransientHint = useCallback(() => {
+    if (statuslineTransientHintTimerRef.current) {
+      clearTimeout(statuslineTransientHintTimerRef.current);
+      statuslineTransientHintTimerRef.current = null;
+    }
+    setStatuslineTransientHint(null);
+  }, []);
+
+  const showStatuslineTransientHint = useCallback(
+    (hint: StatuslineTransientHint) => {
+      if (statuslineTransientHintTimerRef.current) {
+        clearTimeout(statuslineTransientHintTimerRef.current);
+      }
+      setStatuslineTransientHint(hint);
+      statuslineTransientHintTimerRef.current = setTimeout(() => {
+        statuslineTransientHintTimerRef.current = null;
+        setStatuslineTransientHint(null);
+      }, STATUSLINE_TRANSIENT_HINT_MS);
+    },
+    [],
+  );
+
   const hideFooter = !interactionEnabled || value.startsWith("/");
   const inputRowLines = useMemo(() => {
     return Math.max(1, getVisualLines(value, contentWidth).length);
@@ -1202,13 +1164,55 @@ export function Input({
     }
   }, [restoredInput, value, onRestoredInputConsumed]);
 
+  useEffect(() => {
+    if (!showInspirationalPromptHints || value !== "") {
+      setEmptyPromptHintIndex(0);
+      setEmptyPromptHintReady(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setEmptyPromptHintReady(true);
+    }, EMPTY_COMPOSER_PROMPT_ROTATION_MS);
+
+    return () => clearTimeout(timer);
+  }, [showInspirationalPromptHints, value]);
+
+  useEffect(() => {
+    if (
+      !showInspirationalPromptHints ||
+      value !== "" ||
+      !emptyPromptHintReady
+    ) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setEmptyPromptHintIndex(
+        (prev) => (prev + 1) % EMPTY_COMPOSER_PROMPT_HINTS.length,
+      );
+    }, EMPTY_COMPOSER_PROMPT_ROTATION_MS);
+
+    return () => clearInterval(timer);
+  }, [showInspirationalPromptHints, value, emptyPromptHintReady]);
+
+  const inspirationalPlaceholder = showInspirationalPromptHints
+    ? (EMPTY_COMPOSER_PROMPT_HINTS[emptyPromptHintIndex] ?? undefined)
+    : undefined;
+  const showInspirationalPlaceholder =
+    showInspirationalPromptHints &&
+    emptyPromptHintReady &&
+    value === "" &&
+    !!inspirationalPlaceholder;
+
   const handleBangAtEmpty = useCallback(() => {
     if (isBashMode) return false;
     setIsBashMode(true);
+    showStatuslineTransientHint({ type: "bash-mode" });
     // Arm immediately so initial empty backspace exits in one press.
     setBashExitArmed(true);
     return true;
-  }, [isBashMode]);
+  }, [isBashMode, showStatuslineTransientHint]);
 
   const handleBackspaceAtEmpty = useCallback(() => {
     if (!isBashMode) return false;
@@ -1256,7 +1260,7 @@ export function Input({
     setPreferredColumn(null);
   }, [currentCursorPosition, value.length]);
 
-  // Sync with external mode changes (from plan approval dialog)
+  // Sync with external mode changes.
   useEffect(() => {
     if (externalMode !== undefined) {
       setCurrentMode(externalMode);
@@ -1268,6 +1272,29 @@ export function Input({
       setIsAutocompleteActive(false);
     }
   }, [interactionEnabled]);
+
+  const interactionEnabledRef = useRef(interactionEnabled);
+  useEffect(() => {
+    interactionEnabledRef.current = interactionEnabled;
+  }, [interactionEnabled]);
+
+  const onEscapeCommandCancelRef = useRef(onEscapeCommandCancel);
+  useEffect(() => {
+    onEscapeCommandCancelRef.current = onEscapeCommandCancel;
+  }, [onEscapeCommandCancel]);
+
+  useEffect(() => {
+    const handleRawInput = (data: Buffer | string) => {
+      if (!interactionEnabledRef.current) return;
+      if (data.toString("utf8") !== "\u001b") return;
+      onEscapeCommandCancelRef.current?.();
+    };
+
+    stdin.on("data", handleRawInput);
+    return () => {
+      stdin.off("data", handleRawInput);
+    };
+  }, []);
 
   // Get server URL (same logic as client.ts)
   const settings = settingsManager.getSettings();
@@ -1317,6 +1344,10 @@ export function Input({
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
         // in App.tsx process them automatically after the interrupt completes.
+        return;
+      }
+
+      if (onEscapeCommandCancel?.()) {
         return;
       }
 
@@ -1388,7 +1419,7 @@ export function Input({
   // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
   // consume the keystroke before it renders (no flicker).
 
-  // Handle Shift+Tab for permission mode cycling (or ralph mode exit)
+  // Handle Shift+Tab for permission mode cycling (or goal loop exit)
   useInput((_input, key) => {
     if (!interactionEnabled) return;
 
@@ -1414,16 +1445,18 @@ export function Input({
     }
 
     if (key.shift && key.tab) {
-      // If ralph mode is active, exit it first (goes to default mode)
-      if (ralphActive && onRalphExit) {
-        onRalphExit();
+      // If a goal loop is active, pause it before cycling permission mode.
+      if (goalLoopActive && onGoalLoopExit) {
+        onGoalLoopExit();
         return;
       }
 
       // Cycle through permission modes
-      const modes: PermissionMode[] = settingsManager.isPlanModeEnabled()
-        ? ["unrestricted", "acceptEdits", "standard", "plan"]
-        : ["unrestricted", "acceptEdits", "standard"];
+      const modes: PermissionMode[] = [
+        "unrestricted",
+        "acceptEdits",
+        "standard",
+      ];
       const currentIndex = modes.indexOf(currentMode);
       const nextIndex = (currentIndex + 1) % modes.length;
       const nextMode = modes[nextIndex] ?? "unrestricted";
@@ -1606,6 +1639,9 @@ export function Input({
     return () => {
       if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
       if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
+      if (statuslineTransientHintTimerRef.current) {
+        clearTimeout(statuslineTransientHintTimerRef.current);
+      }
     };
   }, []);
 
@@ -1734,7 +1770,7 @@ export function Input({
     setCursorPos(selectedCommand.length);
   }, []);
 
-  // Get display name and color for permission mode (ralph modes take precedence)
+  // Get display name and color for permission mode
   // Memoized to prevent unnecessary footer re-renders
   const modeInfo = useMemo<{
     name: string;
@@ -1742,44 +1778,6 @@ export function Input({
     glyph?: string;
     showExitHint?: boolean;
   } | null>(() => {
-    // Check ralph pending first (waiting for task input)
-    if (ralphPending) {
-      if (ralphPendingYolo) {
-        return {
-          name: "yolo-ralph (waiting)",
-          color: "#FF8C00", // dark orange
-        };
-      }
-      return {
-        name: "ralph (waiting)",
-        color: "#FEE19C", // yellow (brandColors.statusWarning)
-      };
-    }
-
-    // Check ralph mode active (using prop for reactivity)
-    if (ralphActive) {
-      const ralph = ralphMode.getState();
-      const iterDisplay =
-        ralph.maxIterations > 0
-          ? `${ralph.currentIteration}/${ralph.maxIterations}`
-          : `${ralph.currentIteration}`;
-
-      if (ralph.mode === "goal") {
-        return null;
-      }
-
-      if (ralph.isYolo) {
-        return {
-          name: `yolo-ralph (iter ${iterDisplay})`,
-          color: "#FF8C00", // dark orange
-        };
-      }
-      return {
-        name: `ralph (iter ${iterDisplay})`,
-        color: "#FEE19C", // yellow (brandColors.statusWarning)
-      };
-    }
-
     // Fall through to permission modes
     switch (currentMode) {
       case "acceptEdits":
@@ -1790,21 +1788,32 @@ export function Input({
           color: colors.status.processingShimmer,
           glyph: "▶",
         };
-      case "plan":
-        return {
-          name: "plan (read-only) mode",
-          color: colors.status.success,
-          glyph: "⏸",
-        };
       case "unrestricted":
-        // Default mode — show nothing so "Press / for commands" renders instead
+        // Default mode — show nothing so the built-in idle row owns the space.
         return null;
       default:
         return null;
     }
-  }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
+  }, [currentMode]);
 
-  // Goal status footer text. Stored in state (rather than recomputed every
+  const previousModeRef = useRef(currentMode);
+  useEffect(() => {
+    if (previousModeRef.current === currentMode) {
+      return;
+    }
+    previousModeRef.current = currentMode;
+
+    const hintInfo = getPermissionModeTransientHintInfo(currentMode);
+    showStatuslineTransientHint({
+      type: "permission-mode",
+      modeName: hintInfo.name,
+      modeColor: hintInfo.color,
+      modeGlyph: hintInfo.glyph,
+      showExitHint: goalLoopActive,
+    });
+  }, [currentMode, goalLoopActive, showStatuslineTransientHint]);
+
+  // Goal product status text. Stored in state (rather than recomputed every
   // render) so we only trigger a re-render when the displayed string actually
   // changes. The previous implementation used setGoalFooterTick + setInterval
   // which forced a full Input re-render every second while a goal was active,
@@ -1835,7 +1844,7 @@ export function Input({
   // While the goal is active, re-check the formatted string each second but
   // only re-render when it actually changes. Combined with the fixed-width
   // format from formatGoalElapsedSeconds, the string changes at most once per
-  // second and the change is always same-width, so no footer flicker.
+  // second and the change is always same-width, so no product row flicker.
   useEffect(() => {
     if (!goalIsActive || !conversationId) return;
     const timer = setInterval(() => {
@@ -1852,6 +1861,83 @@ export function Input({
     [columns],
   );
 
+  const queuedUserMessageCount =
+    messageQueue?.filter((message) => message.kind === "user").length ?? 0;
+
+  useEffect(() => {
+    if (!statuslineTransientHint) return;
+    if (
+      !isStatuslineTransientHintRelevant(statuslineTransientHint, {
+        isBashMode,
+        queuedUserMessageCount,
+      })
+    ) {
+      clearStatuslineTransientHint();
+    }
+  }, [
+    statuslineTransientHint,
+    isBashMode,
+    queuedUserMessageCount,
+    clearStatuslineTransientHint,
+  ]);
+
+  const previousQueuedUserMessageCountRef = useRef(queuedUserMessageCount);
+  useEffect(() => {
+    const previousCount = previousQueuedUserMessageCountRef.current;
+    previousQueuedUserMessageCountRef.current = queuedUserMessageCount;
+
+    if (previousCount === 0 && queuedUserMessageCount > 0) {
+      showStatuslineTransientHint({
+        type: "queued-message-hint",
+        queueMode,
+        deferModeSupported,
+      });
+    }
+  }, [
+    queuedUserMessageCount,
+    queueMode,
+    deferModeSupported,
+    showStatuslineTransientHint,
+  ]);
+
+  const previousQueueModeRef = useRef(queueMode);
+  useEffect(() => {
+    const previousMode = previousQueueModeRef.current;
+    previousQueueModeRef.current = queueMode;
+
+    if (
+      previousMode !== queueMode &&
+      queuedUserMessageCount > 0 &&
+      deferModeSupported
+    ) {
+      showStatuslineTransientHint({
+        type: "queue-mode-changed",
+        queueMode,
+        deferModeSupported,
+      });
+    }
+  }, [
+    queueMode,
+    queuedUserMessageCount,
+    deferModeSupported,
+    showStatuslineTransientHint,
+  ]);
+
+  const previousFooterNotificationRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      footerNotification &&
+      footerNotification !== previousFooterNotificationRef.current
+    ) {
+      showStatuslineTransientHint({
+        type: "message",
+        message: footerNotification,
+        color: colors.status.processingShimmer,
+      });
+    }
+    previousFooterNotificationRef.current = footerNotification ?? null;
+  }, [footerNotification, showStatuslineTransientHint]);
+
   const lowerPane = useMemo(() => {
     return (
       <>
@@ -1862,6 +1948,13 @@ export function Input({
 
         {interactionEnabled ? (
           <Box flexDirection="column">
+            {!suppressDividers && (
+              <ProductStatusRow
+                goalStatusText={goalStatusText}
+                terminalWidth={terminalWidth}
+              />
+            )}
+
             {/* Top horizontal divider */}
             {!suppressDividers && (
               <Text
@@ -1887,6 +1980,11 @@ export function Input({
                   value={value}
                   onChange={setValue}
                   onSubmit={handleSubmit}
+                  placeholder={
+                    showInspirationalPlaceholder
+                      ? inspirationalPlaceholder
+                      : undefined
+                  }
                   cursorPosition={cursorPos}
                   onCursorMove={setCurrentCursorPosition}
                   focus={interactionEnabled && !onEscapeCancel}
@@ -1931,19 +2029,15 @@ export function Input({
             )}
 
             {!suppressDividers && (
-              <InputFooter
+              <StatuslineSlot
                 ctrlCPressed={ctrlCPressed}
                 escapePressed={escapePressed}
                 isBashMode={isBashMode}
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
-                showExitHint={
-                  modeInfo?.showExitHint ?? (ralphActive || ralphPending)
-                }
-                agentName={agentName}
-                currentModel={currentModel}
-                currentReasoningEffort={currentReasoningEffort}
+                showExitHint={modeInfo?.showExitHint ?? goalLoopActive}
+                currentModelProvider={currentModelProvider}
                 isOpenAICodexProvider={
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
@@ -1951,19 +2045,13 @@ export function Input({
                   currentModelProvider?.startsWith("lc-") ||
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
+                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
-                statusLineText={statusLineText}
-                statusLineRight={statusLineRight}
-                footerNotification={footerNotification}
-                goalStatusText={goalStatusText}
-                hasQueuedMessages={
-                  (messageQueue?.filter((m) => m.kind === "user").length ?? 0) >
-                  0
-                }
-                queueMode={queueMode}
-                deferModeSupported={deferModeSupported}
+                statusLinePayload={statusLinePayload}
+                extensionRuntime={extensionRuntime}
+                transientHint={statuslineTransientHint}
               />
             )}
           </Box>
@@ -1980,6 +2068,7 @@ export function Input({
     contentWidth,
     value,
     handleSubmit,
+    showInspirationalPlaceholder,
     cursorPos,
     onEscapeCancel,
     handleBangAtEmpty,
@@ -1999,8 +2088,7 @@ export function Input({
     modeInfo?.color,
     modeInfo?.glyph,
     modeInfo?.showExitHint,
-    ralphActive,
-    ralphPending,
+    goalLoopActive,
     currentModel,
     currentReasoningEffort,
     currentModelProvider,
@@ -2009,16 +2097,18 @@ export function Input({
     footerRightColumnWidth,
     reserveInputSpace,
     inputChromeHeight,
-    statusLineText,
-    statusLineRight,
+    statusLinePayload,
+    extensionRuntime,
 
-    footerNotification,
     goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,
     queueMode,
-    deferModeSupported,
+    isLocalBackend,
+    inspirationalPlaceholder,
+    terminalWidth,
+    statuslineTransientHint,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
@@ -2032,12 +2122,15 @@ export function Input({
         streaming={streaming}
         visible={visible}
         tokenCount={tokenCount}
+        usedContextTokens={usedContextTokens}
+        contextWindowSize={contextWindowSize}
         elapsedBaseMs={elapsedBaseMs}
         thinkingMessage={thinkingMessage}
         includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
         agentName={agentName}
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}
+        executionPhase={executionPhase}
         terminalWidth={columns}
         shouldAnimate={shouldAnimate}
       />

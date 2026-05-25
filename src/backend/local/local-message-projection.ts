@@ -47,6 +47,29 @@ function localMessageConversationId(
     : fallbackConversationId;
 }
 
+function isoFromTimestamp(value: number | undefined): string | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? new Date(value).toISOString()
+    : undefined;
+}
+
+function localMessageDate(message: LocalMessage, fallbackDate: string): string {
+  return (
+    (typeof message.metadata?.created_at === "string"
+      ? message.metadata.created_at
+      : undefined) ??
+    isoFromTimestamp(message.timestamp) ??
+    fallbackDate
+  );
+}
+
+function offsetIsoTimestamp(value: string, offsetMs: number): string {
+  if (offsetMs === 0) return value;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return value;
+  return new Date(parsed + offsetMs).toISOString();
+}
+
 function userContentToStoredContent(
   content: LocalUserMessage["content"],
 ): unknown {
@@ -157,7 +180,7 @@ export function projectLocalMessageToStoredMessages(
     message,
     fallbackConversationId,
   );
-  const date = fallbackDate;
+  const date = localMessageDate(message, fallbackDate);
 
   if (message.metadata?.compaction) {
     return [
@@ -280,15 +303,13 @@ export function projectLocalMessagesToStoredMessages(
 
 export function withProjectedMessageDates(
   messages: StoredMessage[],
-  sourceMessageIndex: number,
+  _sourceMessageIndex: number,
 ): StoredMessage[] {
   return messages.map(
     (message, projectedIndex) =>
       ({
         ...message,
-        date: new Date(
-          Date.UTC(2026, 0, 1, 0, 0, sourceMessageIndex + 1, projectedIndex),
-        ).toISOString(),
+        date: offsetIsoTimestamp(message.date, projectedIndex),
       }) as StoredMessage,
   );
 }

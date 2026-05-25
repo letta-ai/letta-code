@@ -36,6 +36,9 @@ describe("max context command helpers", () => {
     expect(() => parseSetMaxContextArgs("10000 --force")).toThrow(
       "Unknown option: --force",
     );
+    expect(() => parseSetMaxContextArgs("10000 20000")).toThrow(
+      "Usage: /context-limit [tokens] [--override]",
+    );
   });
 
   test("resolves model.json default context windows", () => {
@@ -65,6 +68,11 @@ describe("max context command helpers", () => {
       const agent = await backend.createAgent({
         name: "Max Context Agent",
         model: "anthropic/claude-sonnet-4-6",
+        model_settings: {
+          provider_type: "anthropic",
+          effort: "high",
+          parallel_tool_calls: true,
+        },
       } as AgentCreateBody);
 
       await expect(
@@ -110,6 +118,14 @@ describe("max context command helpers", () => {
       expect(resetResult.contextWindow).toBe(200_000);
       expect(resetResult.reset).toBe(true);
 
+      await backend.updateAgent(agent.id, {
+        model_settings: {
+          provider_type: "anthropic",
+          effort: "high",
+          parallel_tool_calls: true,
+        },
+      } as Parameters<typeof backend.updateAgent>[1]);
+
       const conversation = await backend.createConversation({
         agent_id: agent.id,
       } as ConversationCreateBody);
@@ -120,6 +136,10 @@ describe("max context command helpers", () => {
         currentModelId: "sonnet",
       });
       expect(conversationResult.appliedTo).toBe("conversation");
+      expect(conversationResult.conversationModelSettings).toMatchObject({
+        provider_type: "anthropic",
+        effort: "high",
+      });
       expect(
         (
           (await backend.retrieveConversation(conversation.id)) as {

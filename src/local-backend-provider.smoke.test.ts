@@ -41,7 +41,7 @@ async function runLocalProviderCli(
           "Reply with exactly: LOCAL_PROVIDER_SMOKE_OK",
           "--new-agent",
           "--permission-mode",
-          "plan",
+          "standard",
           "--no-skills",
         ],
         {
