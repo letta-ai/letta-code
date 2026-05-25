@@ -42,6 +42,17 @@ import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
+import {
+  buildExtensionCommandPrompt,
+  parseExtensionCommandArgv,
+  parseExtensionSlashCommand,
+  runExtensionCommandWithTimeout,
+} from "@/cli/extensions/command-runtime";
+import type {
+  ExtensionCommand,
+  ExtensionCommandContext,
+} from "@/cli/extensions/types";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
@@ -156,6 +167,11 @@ type ModelSelectorOptions = {
   forceRefresh?: boolean;
 };
 
+async function hasCustomCommand(commandName: string): Promise<boolean> {
+  const { findCustomCommand } = await import("@/cli/commands/custom.js");
+  return Boolean(await findCustomCommand(commandName));
+}
+
 type SubmitHandlerContext = {
   abortControllerRef: MutableRefObject<AbortController | null>;
   agentDescription: string | null;
@@ -186,6 +202,7 @@ type SubmitHandlerContext = {
   currentModelProvider: string | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
+  extensionRuntime: LocalExtensionRuntime;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
   generateConversationTitle: () => Promise<string | null>;
@@ -324,6 +341,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
+    extensionRuntime,
     firstUserQueryRef,
     flushPendingReasoningEffort,
     generateConversationTitle,
@@ -546,12 +564,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       const isSlashCommand = userTextForInput.startsWith("/");
+      const parsedExtensionCommand = isSlashCommand
+        ? parseExtensionSlashCommand(userTextForInput.trim())
+        : null;
+      const queueBypassExtensionCommand = parsedExtensionCommand
+        ? extensionRuntime.registry?.commands[parsedExtensionCommand.command]
+        : undefined;
+      const isExtensionCommandShadowedByCustom =
+        isAgentBusy() && queueBypassExtensionCommand?.runWhenBusy === true
+          ? await hasCustomCommand(parsedExtensionCommand?.command ?? "")
+          : false;
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
         isSlashCommand &&
         (isInteractiveCommand(userTextForInput) ||
-          isNonStateCommand(userTextForInput));
+          isNonStateCommand(userTextForInput) ||
+          (queueBypassExtensionCommand?.runWhenBusy === true &&
+            !isExtensionCommandShadowedByCustom));
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
         const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
@@ -693,6 +723,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "Reloading settings and restarting TUI effects...",
             );
             cmd.finish("Reloading...", true);
+            try {
+              const { refreshCustomCommands } = await import(
+                "@/cli/commands/custom.js"
+              );
+              refreshCustomCommands();
+            } catch (error) {
+              debugLog(
+                "commands",
+                "refreshCustomCommands failed during /reload: %s",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
             // Defer the reload to let the command UI render first
             setTimeout(
               () =>
@@ -2961,6 +3003,112 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
         // === END custom command handling ===
 
+        const matchedExtensionCommand: ExtensionCommand | undefined =
+          parsedExtensionCommand
+            ? extensionRuntime.registry?.commands[
+                parsedExtensionCommand.command
+              ]
+            : undefined;
+
+        if (parsedExtensionCommand && matchedExtensionCommand) {
+          const showInTranscript = matchedExtensionCommand.showInTranscript;
+          const shouldLockCommand = !matchedExtensionCommand.runWhenBusy;
+          const cmd = showInTranscript
+            ? commandRunner.start(
+                trimmed,
+                `Running /${matchedExtensionCommand.id}...`,
+              )
+            : null;
+          const getFeedbackCommand = () =>
+            cmd ??
+            commandRunner.start(
+              trimmed,
+              `Running /${matchedExtensionCommand.id}...`,
+            );
+          if (shouldLockCommand) {
+            setCommandRunning(true);
+          }
+
+          try {
+            const extensionContext = extensionRuntime.getContext();
+            const commandContext: ExtensionCommandContext = {
+              agent: { id: agentId, name: agentName },
+              args: parsedExtensionCommand.args,
+              argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
+              command: parsedExtensionCommand.command,
+              conversation: { id: conversationIdRef.current },
+              cwd: getCurrentWorkingDirectory(),
+              getContext: extensionRuntime.getContext,
+              model: {
+                id:
+                  currentModelId ??
+                  llmConfigRef.current?.model ??
+                  extensionContext.model.id,
+                displayName: extensionContext.model.displayName,
+              },
+              permissionMode: extensionContext.permissionMode,
+              rawInput: trimmed,
+            };
+            const result = await runExtensionCommandWithTimeout(
+              matchedExtensionCommand,
+              commandContext,
+            );
+
+            if (result.type === "prompt") {
+              if (!showInTranscript) {
+                getFeedbackCommand().fail(
+                  `/${matchedExtensionCommand.id} returned a prompt with showInTranscript: false. Hidden extension commands must return output or handled and own their UI.`,
+                );
+                return { submitted: true };
+              }
+
+              if (matchedExtensionCommand.runWhenBusy && isAgentBusy()) {
+                getFeedbackCommand().fail(
+                  `/${matchedExtensionCommand.id} returned a prompt while the agent is running. Busy-safe extension commands must handle their own SDK calls or return output.`,
+                );
+                return { submitted: true };
+              }
+
+              const approvalCheck =
+                await checkPendingApprovalsForSlashCommand();
+              if (approvalCheck.blocked) {
+                getFeedbackCommand().fail(
+                  `Pending approval(s). Resolve approvals before running /${matchedExtensionCommand.id}.`,
+                );
+                return { submitted: false };
+              }
+
+              cmd?.finish(`Running /${matchedExtensionCommand.id}...`, true);
+              await processConversationWithQueuedApprovals([
+                {
+                  type: "message",
+                  role: "user",
+                  content: buildTextParts(buildExtensionCommandPrompt(result)),
+                  otid: randomUUID(),
+                },
+              ]);
+            } else if (result.type === "output") {
+              getFeedbackCommand().finish(
+                result.output,
+                result.success ?? true,
+              );
+            } else {
+              cmd?.finish("Handled.", true, true);
+            }
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            getFeedbackCommand().fail(
+              `Failed to run /${matchedExtensionCommand.id}: ${errorDetails}`,
+            );
+          } finally {
+            if (shouldLockCommand) {
+              setCommandRunning(false);
+            }
+          }
+
+          return { submitted: true };
+        }
+
         // Check if this is a known command before treating it as a slash command
         const { commands, executeCommand } = await import(
           "@/cli/commands/registry"
@@ -3423,6 +3571,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversationId,
       currentModelHandle,
       currentModelId,
+      extensionRuntime,
       effectiveContextWindowSize,
       commandRunner,
       handleExit,

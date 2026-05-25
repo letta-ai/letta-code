@@ -13,12 +13,24 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type Letta from "@letta-ai/letta-client";
 import * as ts from "typescript";
+import { commands as builtinCommands } from "@/cli/commands/registry";
 import type {
   StatuslineRenderContext,
   StatuslineRenderer,
   StatuslineRendererOutput,
 } from "@/cli/display/statusline/types";
+import type {
+  ExtensionCommand,
+  ExtensionCommandRegistration,
+  ExtensionContext,
+  ExtensionPanel,
+  ExtensionPanelContent,
+  ExtensionPanelHandle,
+  ExtensionPanelOptions,
+  ExtensionPanelUpdate,
+} from "@/cli/extensions/types";
 
 export const GLOBAL_EXTENSIONS_DIRECTORY = path.join(
   homedir(),
@@ -39,12 +51,6 @@ export type StatuslineRenderFunction = (
   context: StatuslineRenderContext,
 ) => StatuslineRendererOutput;
 
-// First extension surface is statusline rendering, so the shared extension
-// context is currently the statusline render context. When we add non-UI
-// surfaces like commands, split this into a generic ExtensionContext base and
-// let StatuslineRenderContext extend it.
-export type ExtensionContext = StatuslineRenderContext;
-
 export type ExtensionStatusValue =
   | string
   | null
@@ -60,9 +66,17 @@ export type LettaExtensionFactory = (
   | Promise<undefined | LettaExtensionDisposer>;
 
 export interface LettaExtensionApi {
+  client: Letta;
+  getClient: () => Promise<Letta>;
   getContext: () => ExtensionContext;
+  commands: {
+    register: (command: ExtensionCommandRegistration) => LettaExtensionDisposer;
+    unregister: (id: string) => void;
+  };
   ui: {
+    clearPanel: (id: string) => void;
     clearStatus: (key: string) => void;
+    openPanel: (panel: ExtensionPanelOptions) => ExtensionPanelHandle;
     setStatus: (key: string, value: ExtensionStatusValue | undefined) => void;
     setStatuslineRenderer: (
       renderer: StatuslineRenderer | StatuslineRenderFunction,
@@ -81,11 +95,13 @@ export interface LocalExtensionLoadError {
 }
 
 export interface LocalExtensionUiRegistry {
+  panels: Record<string, ExtensionPanel>;
   statuslineRenderer: StatuslineRenderer | null;
   statusValues: Record<string, ExtensionStatusValue>;
 }
 
 export interface LocalExtensionRegistry {
+  commands: Record<string, ExtensionCommand>;
   disposers: LocalExtensionDisposer[];
   errors: LocalExtensionLoadError[];
   loadedPaths: string[];
@@ -113,7 +129,9 @@ export interface ResolveLocalExtensionSourcesOptions {
 export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
+  getClient: () => Promise<Letta>;
   onChange?: () => void;
+  reservedCommandIds?: Iterable<string>;
 }
 
 function listExtensionFiles(directory: string): string[] {
@@ -274,18 +292,193 @@ function toStatuslineRenderer(
   return renderer;
 }
 
+function createLazyClient(getClient: () => Promise<Letta>): Letta {
+  const createProxy = (path: PropertyKey[] = []): unknown =>
+    new Proxy(function lazyLettaClientProxy() {}, {
+      apply(_target, _thisArg, args) {
+        return getClient().then((client) => {
+          let owner: unknown = client;
+          let value: unknown = client;
+          for (const property of path) {
+            owner = value;
+            value = (value as Record<PropertyKey, unknown>)[property];
+          }
+          if (typeof value !== "function") {
+            throw new TypeError(
+              `letta.client.${path.map(String).join(".")} is not callable`,
+            );
+          }
+          return value.apply(owner, args);
+        });
+      },
+      get(_target, property) {
+        // Keep the proxy from being treated as a Promise when code does
+        // `await letta.client` or Promise.resolve(letta.client).
+        if (property === "then") return undefined;
+        return createProxy([...path, property]);
+      },
+    });
+
+  return createProxy() as Letta;
+}
+
+function stripSlash(command: string): string {
+  return command.startsWith("/") ? command.slice(1) : command;
+}
+
+function getDefaultReservedCommandIds(): Set<string> {
+  return new Set(Object.keys(builtinCommands).map(stripSlash));
+}
+
+function validateExtensionCommandId(id: string): void {
+  if (id.startsWith("/")) {
+    throw new Error("Extension command id must not start with '/'");
+  }
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+    throw new Error(
+      "Extension command id must be a lowercase slug using letters, numbers, and hyphens",
+    );
+  }
+}
+
+function normalizeExtensionCommand(
+  command: ExtensionCommandRegistration,
+  extensionPath: string,
+): ExtensionCommand {
+  validateExtensionCommandId(command.id);
+  if (!command.description.trim()) {
+    throw new Error(
+      `Extension command '${command.id}' must include a description`,
+    );
+  }
+  if (typeof command.run !== "function") {
+    throw new Error(`Extension command '${command.id}' must include run()`);
+  }
+
+  return {
+    id: command.id,
+    description: command.description,
+    ...(command.args ? { args: command.args } : {}),
+    order: command.order ?? 250,
+    path: extensionPath,
+    runWhenBusy: command.runWhenBusy === true,
+    showInTranscript: command.showInTranscript !== false,
+    run: command.run,
+  };
+}
+
+function validateExtensionPanelId(id: string): void {
+  if (!id.trim()) {
+    throw new Error("Extension panel id must not be empty");
+  }
+}
+
+function getExtensionPanelKey(extensionPath: string, id: string): string {
+  return JSON.stringify([extensionPath, id]);
+}
+
+function normalizePanelContent(
+  content: ExtensionPanelContent | undefined,
+): string[] {
+  if (content == null) return [];
+  return Array.isArray(content)
+    ? content.map(String)
+    : String(content).split("\n");
+}
+
+function upsertExtensionPanel(
+  registry: LocalExtensionRegistry,
+  extensionPath: string,
+  id: string,
+  update: ExtensionPanelUpdate,
+): void {
+  validateExtensionPanelId(id);
+  const panelKey = getExtensionPanelKey(extensionPath, id);
+  const existing = registry.ui.panels[panelKey];
+  registry.ui.panels[panelKey] = {
+    content:
+      update.content === undefined
+        ? (existing?.content ?? [])
+        : normalizePanelContent(update.content),
+    id,
+    order: update.order ?? existing?.order ?? 100,
+    path: extensionPath,
+    updatedAt: Date.now(),
+  };
+}
+
 function createLettaExtensionApi(
   registry: LocalExtensionRegistry,
   extensionPath: string,
+  getClient: () => Promise<Letta>,
   getContext: () => ExtensionContext,
   onChange: () => void,
+  reservedCommandIds: Set<string>,
 ): LettaExtensionApi {
+  const unregisterCommand = (id: string) => {
+    validateExtensionCommandId(id);
+    const existing = registry.commands[id];
+    if (existing?.path === extensionPath) {
+      delete registry.commands[id];
+      onChange();
+    }
+  };
+
+  const clearPanel = (id: string) => {
+    validateExtensionPanelId(id);
+    const panelKey = getExtensionPanelKey(extensionPath, id);
+    const existing = registry.ui.panels[panelKey];
+    if (existing?.path === extensionPath) {
+      delete registry.ui.panels[panelKey];
+      onChange();
+    }
+  };
+
   return {
+    client: createLazyClient(getClient),
+    getClient,
     getContext,
+    commands: {
+      register(command) {
+        const normalized = normalizeExtensionCommand(command, extensionPath);
+        if (reservedCommandIds.has(normalized.id)) {
+          throw new Error(
+            `Extension command '${normalized.id}' conflicts with a built-in command`,
+          );
+        }
+
+        const existing = registry.commands[normalized.id];
+        if (existing && !command.override) {
+          throw new Error(
+            `Extension command '${normalized.id}' is already registered by ${existing.path}`,
+          );
+        }
+
+        registry.commands[normalized.id] = normalized;
+        onChange();
+
+        return () => unregisterCommand(normalized.id);
+      },
+      unregister: unregisterCommand,
+    },
     ui: {
+      clearPanel,
       clearStatus(key) {
         delete registry.ui.statusValues[key];
         onChange();
+      },
+      openPanel(panel) {
+        upsertExtensionPanel(registry, extensionPath, panel.id, panel);
+        onChange();
+        return {
+          close() {
+            clearPanel(panel.id);
+          },
+          update(update) {
+            upsertExtensionPanel(registry, extensionPath, panel.id, update);
+            onChange();
+          },
+        };
       },
       setStatus(key, value) {
         if (value == null) {
@@ -314,9 +507,14 @@ function getExtensionFactory(module: LocalExtensionModule): unknown {
 }
 
 export async function loadLocalExtensions(
-  options: LoadLocalExtensionsOptions = {},
+  options: LoadLocalExtensionsOptions,
 ): Promise<LocalExtensionRegistry> {
   const cacheDirectory = options.cacheDirectory ?? EXTENSION_CACHE_DIRECTORY;
+  let clientPromise: Promise<Letta> | null = null;
+  const getConfiguredClient = () => {
+    clientPromise ??= options.getClient();
+    return clientPromise;
+  };
   const getContext =
     options.getContext ??
     (() => {
@@ -324,12 +522,18 @@ export async function loadLocalExtensions(
     });
   const onChange = options.onChange ?? (() => {});
   const sources = resolveLocalExtensionSources(options);
+  const reservedCommandIds = new Set([
+    ...getDefaultReservedCommandIds(),
+    ...(options.reservedCommandIds ?? []),
+  ]);
   const registry: LocalExtensionRegistry = {
+    commands: {},
     disposers: [],
     errors: [],
     loadedPaths: [],
     sources,
     ui: {
+      panels: {},
       statuslineRenderer: null,
       statusValues: {},
     },
@@ -354,7 +558,14 @@ export async function loadLocalExtensions(
       }
 
       const dispose = await (factory as LettaExtensionFactory)(
-        createLettaExtensionApi(registry, extensionPath, getContext, onChange),
+        createLettaExtensionApi(
+          registry,
+          extensionPath,
+          getConfiguredClient,
+          getContext,
+          onChange,
+          reservedCommandIds,
+        ),
       );
       if (typeof dispose === "function") {
         registry.disposers.push({ dispose, path: extensionPath });
@@ -408,6 +619,8 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
     }
   }
 
+  registry.commands = {};
+  registry.ui.panels = {};
   registry.ui.statusValues = {};
   registry.ui.statuslineRenderer = null;
 }

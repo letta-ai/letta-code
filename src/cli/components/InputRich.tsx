@@ -47,6 +47,7 @@ import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { colors } from "./colors";
+import { ExtensionPanelRow } from "./ExtensionPanelRow";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ProductStatusRow } from "./ProductStatusRow";
@@ -1949,6 +1950,13 @@ export function Input({
         {interactionEnabled ? (
           <Box flexDirection="column">
             {!suppressDividers && (
+              <ExtensionPanelRow
+                panels={extensionRuntime.registry?.ui.panels}
+                terminalWidth={terminalWidth}
+              />
+            )}
+
+            {!suppressDividers && (
               <ProductStatusRow
                 goalStatusText={goalStatusText}
                 terminalWidth={terminalWidth}
@@ -2025,6 +2033,7 @@ export function Input({
                 serverUrl={serverUrl}
                 workingDirectory={process.cwd()}
                 conversationId={conversationId}
+                extensionCommands={extensionRuntime.registry?.commands}
               />
             )}
 

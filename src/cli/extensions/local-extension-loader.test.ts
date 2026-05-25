@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type Letta from "@letta-ai/letta-client";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
 import {
@@ -47,6 +48,8 @@ function createStatuslineContext(): StatuslineRenderContext {
 function createLoadOptions(root: string) {
   return {
     cacheDirectory: path.join(root, "extension-cache"),
+    getClient: async () =>
+      ({ getMarker: () => "test-client" }) as unknown as Letta,
     getContext: createStatuslineContext,
     globalExtensionsDirectory: path.join(root, "global-extensions"),
   };
@@ -83,6 +86,54 @@ describe("local extension loader", () => {
           trusted: true,
         },
       ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("does not initialize SDK client when no extension files exist", async () => {
+    const root = createTempDir();
+    try {
+      const options = {
+        ...createLoadOptions(root),
+        getClient: async () => {
+          throw new Error("client should not initialize without extensions");
+        },
+      };
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.loadedPaths).toEqual([]);
+      expect(registry.errors).toEqual([]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("does not initialize SDK client until an extension uses it", async () => {
+    const root = createTempDir();
+    try {
+      const options = {
+        ...createLoadOptions(root),
+        getClient: async () => {
+          throw new Error("client should be lazy");
+        },
+      };
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "status.ts"),
+        `export default function(letta) {
+          letta.ui.setStatus("mode", "fast");
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(
+        evaluateLocalExtensionStatuses(registry, createStatuslineContext()),
+      ).toEqual({ mode: "fast" });
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -218,6 +269,235 @@ describe("local extension loader", () => {
       expect(registry.errors[0]?.error.message).toContain(
         "Extension must export",
       );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads extension-provided slash commands", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      const extensionPath = path.join(extensionDir, "commands.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          return letta.commands.register({
+            id: "review-pr",
+            description: "Review a GitHub PR",
+            args: "<url-or-number>",
+            order: 250,
+            runWhenBusy: true,
+            showInTranscript: false,
+            run(ctx) {
+              return { type: "prompt", content: "Review this PR: " + ctx.args };
+            },
+          });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(registry.commands["review-pr"]?.description).toBe(
+        "Review a GitHub PR",
+      );
+      expect(registry.commands["review-pr"]?.args).toBe("<url-or-number>");
+      expect(registry.commands["review-pr"]?.order).toBe(250);
+      expect(registry.commands["review-pr"]?.runWhenBusy).toBe(true);
+      expect(registry.commands["review-pr"]?.showInTranscript).toBe(false);
+      await expect(
+        Promise.resolve(
+          registry.commands["review-pr"]?.run({
+            agent: { id: "agent-1", name: "Amelia" },
+            args: "123",
+            argv: ["123"],
+            command: "review-pr",
+            conversation: { id: "conversation-1" },
+            cwd: "/tmp/project",
+            getContext: createStatuslineContext,
+            model: { id: "model-1", displayName: "Sonnet" },
+            permissionMode: "standard",
+            rawInput: "/review-pr 123",
+          }),
+        ),
+      ).resolves.toEqual({ type: "prompt", content: "Review this PR: 123" });
+
+      disposeLocalExtensions(registry);
+      expect(registry.commands).toEqual({});
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("passes the configured SDK client to extensions", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "client.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "client-check",
+            description: "Check client availability",
+            async run() {
+              return { type: "output", output: await letta.client.getMarker() };
+            },
+          });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      await expect(
+        Promise.resolve(
+          registry.commands["client-check"]?.run({
+            agent: { id: "agent-1", name: "Amelia" },
+            args: "",
+            argv: [],
+            command: "client-check",
+            conversation: { id: "conversation-1" },
+            cwd: "/tmp/project",
+            getContext: createStatuslineContext,
+            model: { id: "model-1", displayName: "Sonnet" },
+            permissionMode: "standard",
+            rawInput: "/client-check",
+          }),
+        ),
+      ).resolves.toEqual({ type: "output", output: "test-client" });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("lets extensions manage UI panels", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "panel.ts"),
+        `export default function(letta) {
+          const panel = letta.ui.openPanel({
+            id: "btw",
+            content: ["┌ /btw question ┐", "│ …             │", "└───────────────┘"],
+          });
+          panel.update({ content: "answer" });
+          return () => panel.close();
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(Object.values(registry.ui.panels)[0]).toMatchObject({
+        content: ["answer"],
+        id: "btw",
+      });
+
+      disposeLocalExtensions(registry);
+      expect(registry.ui.panels).toEqual({});
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("scopes panel ids by extension path", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "a.ts"),
+        `export default function(letta) {
+          letta.ui.openPanel({ id: "status", content: "from a" });
+        }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "b.ts"),
+        `export default function(letta) {
+          letta.ui.openPanel({ id: "status", content: "from b" });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.errors).toEqual([]);
+      expect(
+        Object.values(registry.ui.panels).map((panel) => panel.content),
+      ).toEqual([["from a"], ["from b"]]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("rejects extension command id collisions", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "a.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "dupe",
+            description: "First command",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "b.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "dupe",
+            description: "Second command",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "c.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "reload",
+            description: "Built-in conflict",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "d.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "/bad",
+            description: "Invalid id",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(Object.keys(registry.commands)).toEqual(["dupe"]);
+      expect(registry.errors.map((entry) => entry.path).sort()).toEqual([
+        path.join(extensionDir, "b.ts"),
+        path.join(extensionDir, "c.ts"),
+        path.join(extensionDir, "d.ts"),
+      ]);
+      expect(registry.errors.map((entry) => entry.error.message)).toEqual([
+        expect.stringContaining("already registered"),
+        expect.stringContaining("built-in command"),
+        expect.stringContaining("must not start"),
+      ]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

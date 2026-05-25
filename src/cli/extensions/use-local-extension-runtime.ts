@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getClient } from "@/backend/api/client";
 import { debugLog } from "@/utils/debug";
 import {
   disposeLocalExtensions,
-  type ExtensionContext,
   type LocalExtensionRegistry,
   loadLocalExtensions,
   resolveLocalExtensionSources,
 } from "./local-extension-loader";
+import type { ExtensionContext } from "./types";
 
 export interface LocalExtensionRuntime {
   hadStatuslineRenderer: boolean;
   hasExtensionSources: boolean;
   isLoading: boolean;
   registry: LocalExtensionRegistry | null;
+  getContext: () => ExtensionContext;
   reload: () => Promise<void>;
   updateContext: (context: ExtensionContext) => void;
 }
@@ -21,6 +23,20 @@ interface LocalExtensionLoadState {
   hadStatuslineRenderer: boolean;
   hasExtensionSources: boolean;
   isLoading: boolean;
+}
+
+function snapshotRegistryForRender(
+  registry: LocalExtensionRegistry,
+): LocalExtensionRegistry {
+  return {
+    ...registry,
+    commands: { ...registry.commands },
+    ui: {
+      ...registry.ui,
+      panels: { ...registry.ui.panels },
+      statusValues: { ...registry.ui.statusValues },
+    },
+  };
 }
 
 function hasLocalExtensionSources(): boolean {
@@ -45,7 +61,6 @@ export function useLocalExtensionRuntime(
     };
   });
   const loadStateRef = useRef(loadState);
-  const [, bumpVersion] = useState(0);
 
   useEffect(() => {
     loadStateRef.current = loadState;
@@ -54,6 +69,8 @@ export function useLocalExtensionRuntime(
   const updateContext = useCallback((context: ExtensionContext) => {
     contextRef.current = context;
   }, []);
+
+  const getContext = useCallback(() => contextRef.current, []);
 
   useEffect(() => {
     contextRef.current = initialContext;
@@ -77,10 +94,11 @@ export function useLocalExtensionRuntime(
     }
 
     const nextRegistry = await loadLocalExtensions({
+      getClient,
       getContext: () => contextRef.current,
       onChange: () => {
-        if (mountedRef.current) {
-          bumpVersion((version) => version + 1);
+        if (mountedRef.current && registryRef.current) {
+          setRegistry(snapshotRegistryForRender(registryRef.current));
         }
       },
     });
@@ -115,7 +133,7 @@ export function useLocalExtensionRuntime(
     );
 
     registryRef.current = nextRegistry;
-    setRegistry(nextRegistry);
+    setRegistry(snapshotRegistryForRender(nextRegistry));
     setLoadState({
       hadStatuslineRenderer: nextHadStatuslineRenderer,
       hasExtensionSources: nextHasExtensionSources,
@@ -137,7 +155,7 @@ export function useLocalExtensionRuntime(
   }, [reload]);
 
   return useMemo(
-    () => ({ registry, reload, updateContext, ...loadState }),
-    [loadState, registry, reload, updateContext],
+    () => ({ registry, getContext, reload, updateContext, ...loadState }),
+    [getContext, loadState, registry, reload, updateContext],
   );
 }
