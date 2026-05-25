@@ -9,6 +9,7 @@ import type {
   OutboundChannelMessage,
   SlackChannelMode,
   TelegramGroupMode,
+  WhatsAppGroupMode,
 } from "./types";
 
 export interface ChannelPluginMetadata {
@@ -149,7 +150,7 @@ export interface ChannelPluginAccountPatch {
   botToken?: string;
   appToken?: string;
   mode?: SlackChannelMode;
-  groupMode?: TelegramGroupMode;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
@@ -158,7 +159,12 @@ export interface ChannelPluginAccountPatch {
   acknowledgeMessageReaction?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  selfChatMode?: boolean;
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
   transcribeVoice?: boolean;
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

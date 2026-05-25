@@ -15,10 +15,7 @@ describe("buildTelegramDebounceKey", () => {
 
   test("groups forum topic messages by thread id", () => {
     expect(
-      buildTelegramDebounceKey(
-        { chatId: "-100123", threadId: "42" },
-        ACCOUNT,
-      ),
+      buildTelegramDebounceKey({ chatId: "-100123", threadId: "42" }, ACCOUNT),
     ).toBe("telegram:telegram-account:-100123:42");
   });
 
@@ -59,9 +56,9 @@ describe("resolveTelegramInboundDebounceMs", () => {
 
   test("clamps config and env values", () => {
     delete process.env.LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS;
-    expect(resolveTelegramInboundDebounceMs({ inboundDebounceMs: 50_000 })).toBe(
-      10_000,
-    );
+    expect(
+      resolveTelegramInboundDebounceMs({ inboundDebounceMs: 50_000 }),
+    ).toBe(10_000);
     process.env.LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS = "50000";
     expect(resolveTelegramInboundDebounceMs({ inboundDebounceMs: 1500 })).toBe(
       10_000,

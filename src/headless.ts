@@ -905,7 +905,7 @@ export async function handleHeadlessCommand(
     : null;
   if (personalityInput && !personality) {
     console.error(
-      `Error: Unknown personality "${personalityInput}". Valid: letta-code, blank, linus, kawaii, claude, codex`,
+      `Error: Unknown personality "${personalityInput}". Valid: letta-code, tutorial, blank, linus, kawaii, claude, codex`,
     );
     process.exit(1);
   }
@@ -1145,6 +1145,17 @@ export async function handleHeadlessCommand(
     const localAgentId = settingsManager.getLocalLastAgentId(
       getCurrentWorkingDirectory(),
     );
+    if (
+      localAgentId &&
+      process.env.AGENT_ID &&
+      process.env.AGENT_ID !== localAgentId
+    ) {
+      console.error(
+        `Using local backend agent ${localAgentId} from project-local settings (.letta/settings.local.json). \n` +
+          `Current session AGENT_ID=${process.env.AGENT_ID}; ` +
+          `--backend local switches to a separate persisted local agent.\n`,
+      );
+    }
     if (
       localAgentId &&
       isAgentIdCompatibleWithBackend(localAgentId, startupBackendMode)

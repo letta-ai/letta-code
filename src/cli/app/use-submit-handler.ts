@@ -32,7 +32,6 @@ import {
   isActiveMemfsEnabled,
   isLocalMemfsActive,
 } from "@/agent/memory-runtime";
-import type { ModelReasoningEffort } from "@/agent/model";
 import {
   detectPersonalityFromPersonaFile,
   type PersonalityId,
@@ -113,7 +112,6 @@ import {
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import type { ToolsetName } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
@@ -173,7 +171,6 @@ type SubmitHandlerContext = {
   checkPendingApprovalsForSlashCommand: () => Promise<
     { blocked: true } | { blocked: false }
   >;
-  chromeColumns: number;
   commandRunner: AppCommandRunner;
   commandRunning: boolean;
   consumeQueuedApprovalInputForCurrentConversation: (
@@ -183,14 +180,10 @@ type SubmitHandlerContext = {
   conversationGenerationRef: MutableRefObject<number>;
   conversationId: string;
   conversationIdRef: MutableRefObject<string>;
-  currentModelDisplay: string | null;
   currentModelHandle: string | null;
   currentModelId: string | null;
   currentModelLabel: string | null;
   currentModelProvider: string | null;
-  currentReasoningEffort: ModelReasoningEffort | null;
-  currentSystemPromptId: string | null;
-  currentToolset: ToolsetName | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
   firstUserQueryRef: MutableRefObject<string | null>;
@@ -209,13 +202,11 @@ type SubmitHandlerContext = {
   hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   isExecutingTool: boolean;
-  lastRunIdRef: MutableRefObject<string | null>;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
   needsEagerApprovalCheck: boolean;
-  networkPhase: "error" | "upload" | "download" | null;
   openTrajectorySegment: () => void;
   overrideContentPartsRef: MutableRefObject<MessageCreate["content"] | null>;
   pendingApprovals: ApprovalRequest[];
@@ -265,6 +256,7 @@ type SubmitHandlerContext = {
   setHasConversationModelOverride: (value: boolean) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
+  markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
   setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
@@ -292,9 +284,7 @@ type SubmitHandlerContext = {
   tokenStreamingEnabled: boolean;
   trajectoryRunTokenStartRef: MutableRefObject<number>;
   trajectoryTokenDisplayRef: MutableRefObject<number>;
-  triggerStatusLineRefresh: () => void;
   tuiQueueRef: MutableRefObject<QueueRuntime | null>;
-  uiPermissionMode: PermissionMode;
   updateAgentName: (name: string) => void;
   updateMemorySyncCommand: (
     commandId: string,
@@ -321,7 +311,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     bashCommandCacheRef,
     buffersRef,
     checkPendingApprovalsForSlashCommand,
-    chromeColumns,
     commandRunner,
     commandRunning,
     consumeQueuedApprovalInputForCurrentConversation,
@@ -329,14 +318,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
-    currentModelDisplay,
     currentModelHandle,
     currentModelId,
     currentModelLabel,
     currentModelProvider,
-    currentReasoningEffort,
-    currentSystemPromptId,
-    currentToolset,
     effectiveContextWindowSize,
     emittedIdsRef,
     firstUserQueryRef,
@@ -348,11 +333,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
-    lastRunIdRef,
     llmConfigRef,
     maybeCarryOverActiveConversationModel,
     needsEagerApprovalCheck,
-    networkPhase,
     openTrajectorySegment,
     overrideContentPartsRef,
     pendingApprovals,
@@ -389,6 +372,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setHasConversationModelOverride,
     setLines,
     setLlmConfig,
+    markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
@@ -412,9 +396,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     tokenStreamingEnabled,
     trajectoryRunTokenStartRef,
     trajectoryTokenDisplayRef,
-    triggerStatusLineRefresh,
     tuiQueueRef,
-    uiPermissionMode,
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
@@ -747,7 +729,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             sharedReminderStateRef.current.hasSentSessionContext = false;
             sharedReminderStateRef.current.pendingSessionContextReason =
               "cwd_changed";
-            triggerStatusLineRefresh();
             cmd.finish(
               `Working directory changed to ${nextWorkingDirectory}`,
               true,
@@ -920,6 +901,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             refreshDerived,
             openOverlay,
             setCommandRunning,
+            markLocalModelsAvailable,
             setModelSelectorOptions,
           },
         );
@@ -949,27 +931,73 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
+          const args = trimmed.slice("/statusline".length).trim();
+          const cmd = commandRunner.start(
+            msg,
+            args
+              ? `Starting statusline setup for: ${args}`
+              : "Starting statusline setup...",
+          );
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /statusline.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+          try {
+            const { loadRenderedSkillContent, wrapSkillContent } = await import(
+              "@/tools/impl/skill"
+            );
+            const skillContent = await loadRenderedSkillContent(
+              "customizing-statusline",
+              {
+                agentId,
+                args,
+                allowDisabledModelInvocation: true,
+              },
+            );
+            const request = args
+              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline extension.`
+              : "The user ran `/statusline` without arguments. Use the loaded skill's bare `/statusline` behavior.";
+
+            cmd.finish("Running statusline setup...", true);
+            await processConversationWithQueuedApprovals([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${wrapSkillContent("customizing-statusline", skillContent)}\n\n${SYSTEM_REMINDER_OPEN}\n${request}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to run statusline setup: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         const diagnosticsCommandResult = await handleDiagnosticsCommand(
           trimmed,
           {
             agentId,
             agentIdRef,
-            agentName,
-            chromeColumns,
             commandRunner,
             contextTrackerRef,
             conversationIdRef,
-            currentModelDisplay,
             currentModelHandle,
             currentModelId,
-            currentReasoningEffort,
-            currentSystemPromptId,
-            currentToolset,
             effectiveContextWindowSize,
-            lastRunIdRef,
             llmConfigRef,
-            networkPhase,
-            projectDirectory,
             sessionStatsRef,
             setAgentState,
             setCommandRunning,
@@ -977,9 +1005,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setConversationOverrideModelSettings,
             setHasConversationModelOverride,
             setLlmConfig,
-            sharedReminderStateRef,
-            triggerStatusLineRefresh,
-            uiPermissionMode,
           },
         );
         if (diagnosticsCommandResult) {

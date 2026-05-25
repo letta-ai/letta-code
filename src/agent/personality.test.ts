@@ -64,9 +64,10 @@ describe("personality helpers", () => {
     expect(getPersonalityHumanContent("codex")).toBe(defaultHuman);
   });
 
-  test("default create-agent personalities are exactly memo, blank, linus, and kawaii", () => {
+  test("default create-agent personalities include memo, tutorial, blank, linus, and kawaii", () => {
     expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
       "memo",
+      "tutorial",
       "blank",
       "linus",
       "kawaii",
@@ -101,10 +102,10 @@ describe("personality helpers", () => {
     }
   });
 
-  test("linus and kawaii include onboarding memory by default", async () => {
-    expect(ONBOARDING_PERSONALITIES).toEqual(["linus", "kawaii"]);
+  test("tutorial, linus, and kawaii include onboarding memory by default", async () => {
+    expect(ONBOARDING_PERSONALITIES).toEqual(["tutorial", "linus", "kawaii"]);
 
-    for (const personality of ["linus", "kawaii"] as const) {
+    for (const personality of ["tutorial", "linus", "kawaii"] as const) {
       const options = await buildCreateAgentOptionsForPersonality({
         personalityId: personality,
       });
@@ -119,7 +120,7 @@ describe("personality helpers", () => {
     }
   });
 
-  test("letta-code and vanilla source personalities do not include onboarding", async () => {
+  test("standard Letta Code and vanilla source personalities do not include onboarding", async () => {
     for (const personality of ["memo", "claude", "codex"] as const) {
       const options = await buildCreateAgentOptionsForPersonality({
         personalityId: personality,

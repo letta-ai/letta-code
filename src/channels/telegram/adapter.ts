@@ -23,6 +23,10 @@ import type {
   TelegramChannelAccount,
 } from "@/channels/types";
 import {
+  buildTelegramDebounceKey,
+  resolveTelegramInboundDebounceMs,
+} from "./debounce";
+import {
   detectTelegramUploadMethod,
   extractTelegramMessageText,
   getTelegramSenderName,
@@ -30,10 +34,6 @@ import {
   TELEGRAM_MEDIA_GROUP_FLUSH_MS,
   type TelegramLikeMessage,
 } from "./media";
-import {
-  buildTelegramDebounceKey,
-  resolveTelegramInboundDebounceMs,
-} from "./debounce";
 import { loadGrammyModule } from "./runtime";
 
 type TelegramBot = GrammYBot<GrammYContext>;
@@ -132,12 +132,17 @@ export function detectTelegramBotMention(
     ) {
       return false;
     }
-    return text.slice(entity.offset, entity.offset + entity.length).toLowerCase() ===
-      mention.toLowerCase();
+    return (
+      text.slice(entity.offset, entity.offset + entity.length).toLowerCase() ===
+      mention.toLowerCase()
+    );
   });
   const regexMentioned = mentionRegex?.test(text) ?? false;
   const leadingNameRegex = displayName
-    ? new RegExp(`^\\s*${escapeRegExp(displayName)}(?:[:,]?\\s+|[,:]\\s*|$)`, "i")
+    ? new RegExp(
+        `^\\s*${escapeRegExp(displayName)}(?:[:,]?\\s+|[,:]\\s*|$)`,
+        "i",
+      )
     : null;
   const leadingNameMentioned = leadingNameRegex?.test(text) ?? false;
   const isMention = entityMentioned || regexMentioned || leadingNameMentioned;
@@ -283,7 +288,9 @@ function getTelegramChatType(chat: { type?: string }): "direct" | "channel" {
   return !chat.type || chat.type === "private" ? "direct" : "channel";
 }
 
-function getTelegramChatLabel(message: TelegramLikeMessage): string | undefined {
+function getTelegramChatLabel(
+  message: TelegramLikeMessage,
+): string | undefined {
   const title = message.chat.title?.trim();
   if (title) {
     return title;
@@ -434,7 +441,9 @@ export function createTelegramAdapter(
       },
     });
 
-  async function dispatchInbound(inbound: InboundChannelMessage): Promise<void> {
+  async function dispatchInbound(
+    inbound: InboundChannelMessage,
+  ): Promise<void> {
     await debouncer.enqueue({ inbound });
   }
 

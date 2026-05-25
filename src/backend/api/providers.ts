@@ -6,6 +6,7 @@ export interface ProviderResponse {
   name: string;
   provider_type: string;
   provider_category?: "base" | "byok" | null;
+  auth_type?: "api" | "oauth";
   api_key?: string;
   base_url?: string;
   timeout?: number | false;

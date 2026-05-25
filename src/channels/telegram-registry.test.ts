@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -71,8 +79,11 @@ describe("telegram channel registry", () => {
   }
 
   function createAdapter(
-    replies: Array<{ chatId: string; text: string; replyToMessageId?: string }> =
-      [],
+    replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [],
   ): ChannelAdapter {
     return {
       id: "telegram:telegram-bot",

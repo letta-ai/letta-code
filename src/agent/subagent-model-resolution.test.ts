@@ -440,20 +440,20 @@ describe("buildSubagentArgs", () => {
   });
   test("adds MessageChannel to fork subagent scoped tools when inheriting a channel tool context", () => {
     const args = buildSubagentArgs(
-        "fork",
-        {
-          ...baseConfig,
-          name: "fork",
-          fork: true,
-          allowedTools: ["Bash", "Read"],
-        },
-        null,
-        "hello",
-        undefined,
-        undefined,
-        undefined,
-        { extraTools: ["MessageChannel"] },
-      );
+      "fork",
+      {
+        ...baseConfig,
+        name: "fork",
+        fork: true,
+        allowedTools: ["Bash", "Read"],
+      },
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { extraTools: ["MessageChannel"] },
+    );
 
     const idx = args.indexOf("--tools");
     expect(idx).toBeGreaterThanOrEqual(0);
@@ -463,7 +463,6 @@ describe("buildSubagentArgs", () => {
       "MessageChannel",
     ]);
   });
-
 });
 
 describe("getModelHandleFromAgent", () => {

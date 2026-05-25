@@ -417,12 +417,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/statusline": {
-    desc: "Configure status line (help|show|set|clear|test|enable|disable)",
-    args: "[subcommand]",
+    desc: "Customize the bottom statusline",
+    args: "[request]",
     order: 36.5,
     handler: () => {
       // Handled specially in App.tsx
-      return "Managing status line...";
+      return "Starting statusline setup...";
     },
   },
   "/title": {

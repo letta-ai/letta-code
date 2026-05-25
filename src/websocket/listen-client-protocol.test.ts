@@ -201,6 +201,7 @@ describe("listen-client parseServerMessage", () => {
     test("creates the default presets through the shared helper", async () => {
       expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
         "memo",
+        "tutorial",
         "blank",
         "linus",
         "kawaii",

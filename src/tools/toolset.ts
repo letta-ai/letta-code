@@ -16,6 +16,7 @@ import {
   filterBuiltInToolNamesByClientAllowlist,
   GEMINI_DEFAULT_TOOLS,
   GEMINI_PASCAL_TOOLS,
+  getExecutionContextById,
   getToolNames,
   isOpenAIModel,
   loadSpecificTools,
@@ -25,7 +26,6 @@ import {
   type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareToolExecutionContextForModel,
-  getExecutionContextById,
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
 import type { ToolName } from "./tool-definitions";
@@ -382,7 +382,8 @@ export async function prepareToolExecutionContextForScope(params: {
     : undefined;
   const inheritedChannelToolScope = inheritedContext
     ? {
-        channels: inheritedContext.runtimeContext.channelToolScope?.channels ?? [],
+        channels:
+          inheritedContext.runtimeContext.channelToolScope?.channels ?? [],
       }
     : null;
   const inheritedChannelTurnSources =

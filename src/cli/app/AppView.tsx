@@ -53,6 +53,7 @@ import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
@@ -66,6 +67,8 @@ import {
   getReflectionSettings,
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
+import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
+import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -73,7 +76,6 @@ import {
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
-import type { StatusLineState } from "@/cli/hooks/use-configurable-status-line";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -153,6 +155,8 @@ type AppViewProps = {
 
   feedbackPrefill: string;
   footerUpdateText: string | null;
+  showInspirationalPromptHints: boolean;
+  onEscapeCommandCancel?: () => boolean;
   handleAgentSelect: (
     targetAgentId: string,
     opts?: {
@@ -229,12 +233,14 @@ type AppViewProps = {
   liveItems: Line[];
   liveTrajectoryElapsedBaseMs: number;
   loadingState: AppLoadingState;
+  markLocalModelsAvailable: () => void;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
   modelReasoningPrompt: ModelReasoningPrompt | null;
   modelSelectorOptions: ModelSelectorOptions;
   networkPhase: "error" | "upload" | "download" | null;
+  executionPhase: ExecutionPhase;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
@@ -289,7 +295,9 @@ type AppViewProps = {
   ) => CommandHandle;
   staticItems: StaticItem[];
   staticRenderEpoch: number;
-  statusLine: StatusLineState;
+  statusLinePayload: StatusLinePayload;
+  statusLinePrompt: string;
+  extensionRuntime: LocalExtensionRuntime;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
   thinkingMessage: string;
@@ -344,6 +352,8 @@ export function AppView(props: AppViewProps) {
     handleCtrlD,
     feedbackPrefill,
     footerUpdateText,
+    showInspirationalPromptHints,
+    onEscapeCommandCancel,
     handleAgentSelect,
     handleApproveAlways,
     handleApproveCurrent,
@@ -380,10 +390,12 @@ export function AppView(props: AppViewProps) {
     liveItems,
     liveTrajectoryElapsedBaseMs,
     loadingState,
+    markLocalModelsAvailable,
     maybeCarryOverActiveConversationModel,
     modelReasoningPrompt,
     modelSelectorOptions,
     networkPhase,
+    executionPhase,
     onSubmit,
     pendingApprovals,
     pendingConversationSwitchRef,
@@ -424,7 +436,9 @@ export function AppView(props: AppViewProps) {
     openOverlay,
     staticItems,
     staticRenderEpoch,
-    statusLine,
+    statusLinePayload,
+    statusLinePrompt,
+    extensionRuntime,
     streaming,
     stubDescriptions,
     thinkingMessage,
@@ -442,7 +456,7 @@ export function AppView(props: AppViewProps) {
         renderEpoch={staticRenderEpoch}
         items={staticItems}
         columns={columns}
-        statusLinePrompt={statusLine.prompt}
+        statusLinePrompt={statusLinePrompt}
         showCompactionsEnabled={showCompactionsEnabled}
         precomputedDiffs={precomputedDiffsRef.current}
         hiddenToolCallId={expandedToolCallId ?? undefined}
@@ -536,7 +550,7 @@ export function AppView(props: AppViewProps) {
                             showPreview={showApprovalPreview}
                           />
                         ) : ln.kind === "user" ? (
-                          <UserMessage line={ln} prompt={statusLine.prompt} />
+                          <UserMessage line={ln} prompt={statusLinePrompt} />
                         ) : ln.kind === "reasoning" ? (
                           <ReasoningMessage line={ln} />
                         ) : ln.kind === "assistant" ? (
@@ -691,6 +705,7 @@ export function AppView(props: AppViewProps) {
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
+                onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
                 goalLoopActive={uiGoalLoopActive}
                 onGoalLoopExit={handleGoalLoopExit}
@@ -699,12 +714,14 @@ export function AppView(props: AppViewProps) {
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
+                executionPhase={executionPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
-                statusLineText={statusLine.text || undefined}
-                statusLineRight={statusLine.rightText || undefined}
-                statusLinePrompt={statusLine.prompt}
+                statusLinePayload={statusLinePayload}
+                extensionRuntime={extensionRuntime}
+                statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
+                showInspirationalPromptHints={showInspirationalPromptHints}
               />
             </Box>
 
@@ -873,7 +890,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async () => {
+                onStartOAuth={async (provider, target) => {
                   const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
@@ -889,7 +906,9 @@ export function AppView(props: AppViewProps) {
                         buffersRef,
                         refreshDerived,
                         setCommandRunning,
+                        target,
                         onCodexConnected: () => {
+                          markLocalModelsAvailable();
                           setModelSelectorOptions({
                             filterProvider: "chatgpt-plus-pro",
                             forceRefresh: true,
@@ -902,7 +921,7 @@ export function AppView(props: AppViewProps) {
                           );
                         },
                       },
-                      "/connect chatgpt",
+                      `/connect ${provider.id === "openai-codex-oauth" ? "chatgpt" : provider.id}`,
                     );
                   } finally {
                     setActiveConnectCommandId(null);
@@ -962,6 +981,15 @@ export function AppView(props: AppViewProps) {
                     commandId: overlayCommand?.id,
                     backendMode,
                   });
+                }}
+                onLogin={() => {
+                  completeOverlay("resume");
+                  openOverlay(
+                    "login",
+                    "/login",
+                    "Opening login...",
+                    "Login dismissed",
+                  );
                 }}
                 onCancel={closeOverlay}
                 onCreateNewAgent={(name: string, backendMode) => {

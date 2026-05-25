@@ -139,6 +139,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               {
                 reasoning_effort: desired.effort,
               },
+              { preserveContextWindow: true },
             );
           } else {
             const { updateConversationLLMConfig } = await import(

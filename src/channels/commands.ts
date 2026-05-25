@@ -1,3 +1,4 @@
+import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
 import { getChannelDisplayName } from "./plugin-registry";
 import type {
   ChannelAdapter,
@@ -31,6 +32,10 @@ export type ChannelSlashCommandHandlers = {
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
   chat?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
+  model?: (
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
@@ -90,6 +95,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "chat",
     kind: "direct",
     summary: "Show the Letta web chat link for this channel route.",
+  },
+  {
+    name: "model",
+    kind: "agent-scoped",
+    summary: "Show or switch the model for this chat's routed conversation.",
   },
   {
     name: "reflection",
@@ -285,6 +295,204 @@ export function buildChannelChatUnavailableMessage(
   return `${displayName} chat UI is not available for local backend agent ${route.agentId}.`;
 }
 
+type ChannelModelListEntry = Pick<
+  ListModelsResponseModelEntry,
+  | "id"
+  | "handle"
+  | "label"
+  | "description"
+  | "isDefault"
+  | "isFeatured"
+  | "updateArgs"
+>;
+
+const DEFAULT_CHANNEL_MODEL_LIST_LIMIT = 8;
+
+function getModelEntryRank(entry: ChannelModelListEntry): number {
+  if (entry.isDefault) return 0;
+  if (entry.isFeatured) return 1;
+  const effort = (
+    entry.updateArgs as { reasoning_effort?: unknown } | undefined
+  )?.reasoning_effort;
+  if (effort === "medium") return 2;
+  if (effort === "high") return 3;
+  return 4;
+}
+
+function preferModelEntry(
+  current: ChannelModelListEntry,
+  candidate: ChannelModelListEntry,
+): ChannelModelListEntry {
+  return getModelEntryRank(candidate) < getModelEntryRank(current)
+    ? candidate
+    : current;
+}
+
+function buildModelEntriesByHandle(
+  entries: ChannelModelListEntry[],
+): Map<string, ChannelModelListEntry> {
+  const byHandle = new Map<string, ChannelModelListEntry>();
+  for (const entry of entries) {
+    const current = byHandle.get(entry.handle);
+    byHandle.set(
+      entry.handle,
+      current ? preferModelEntry(current, entry) : entry,
+    );
+  }
+  return byHandle;
+}
+
+function makeUnknownModelEntry(handle: string): ChannelModelListEntry {
+  return {
+    id: handle,
+    handle,
+    label: handle,
+    description: "",
+  };
+}
+
+function resolveModelHandles(params: {
+  handles: string[];
+  byHandle: Map<string, ChannelModelListEntry>;
+  availableHandles?: Set<string> | null;
+}): ChannelModelListEntry[] {
+  const { handles, byHandle, availableHandles } = params;
+  const seen = new Set<string>();
+  const resolved: ChannelModelListEntry[] = [];
+  for (const handle of handles) {
+    if (!handle || seen.has(handle)) continue;
+    seen.add(handle);
+    if (availableHandles && !availableHandles.has(handle)) continue;
+    resolved.push(byHandle.get(handle) ?? makeUnknownModelEntry(handle));
+  }
+  return resolved;
+}
+
+function getFallbackModelEntries(
+  byHandle: Map<string, ChannelModelListEntry>,
+): ChannelModelListEntry[] {
+  const preferred = Array.from(byHandle.values()).filter(
+    (entry) => entry.isDefault || entry.isFeatured,
+  );
+  return preferred.length > 0 ? preferred : Array.from(byHandle.values());
+}
+
+function formatChannelModelEntry(entry: ChannelModelListEntry): string {
+  const selector = entry.id || entry.handle;
+  const handleText = entry.handle === entry.label ? "" : ` — ${entry.handle}`;
+  return `• ${entry.label}${handleText} (/model ${selector})`;
+}
+
+function appendModelEntrySection(
+  lines: string[],
+  title: string,
+  entries: ChannelModelListEntry[],
+  limit: number,
+): void {
+  if (entries.length === 0) return;
+  lines.push("", `${title}:`);
+  for (const entry of entries.slice(0, limit)) {
+    lines.push(formatChannelModelEntry(entry));
+  }
+  const remaining = entries.length - limit;
+  if (remaining > 0) {
+    lines.push(`…and ${remaining} more.`);
+  }
+}
+
+export function buildChannelModelListMessage(
+  channelId: string,
+  params: {
+    entries: ListModelsResponseModelEntry[];
+    availableHandles?: string[] | null;
+    recentHandles?: string[];
+    limit?: number;
+  },
+): string {
+  const displayName = channelDisplayName(channelId);
+  const limit = params.limit ?? DEFAULT_CHANNEL_MODEL_LIST_LIMIT;
+  const entries = params.entries as ChannelModelListEntry[];
+  const byHandle = buildModelEntriesByHandle(entries);
+  const availableHandleList = Array.isArray(params.availableHandles)
+    ? params.availableHandles
+    : null;
+  const availableSet = availableHandleList
+    ? new Set(availableHandleList)
+    : null;
+  const recentEntries = resolveModelHandles({
+    handles: params.recentHandles ?? [],
+    byHandle,
+    availableHandles: availableSet,
+  });
+  const availableEntries = availableHandleList
+    ? resolveModelHandles({ handles: availableHandleList, byHandle })
+    : getFallbackModelEntries(byHandle);
+
+  const lines = [`${displayName} model selector`];
+  if (params.availableHandles === null) {
+    lines.push(
+      "Availability lookup failed; showing built-in recommended models.",
+    );
+  } else if (params.availableHandles === undefined) {
+    lines.push(
+      "Available model data was not returned; showing built-in recommended models.",
+    );
+  }
+
+  appendModelEntrySection(lines, "Recent models", recentEntries, limit);
+  appendModelEntrySection(lines, "Available models", availableEntries, limit);
+
+  if (availableEntries.length === 0) {
+    lines.push(
+      "",
+      "No available models were reported. Use /connect in Letta Code to configure a provider, then try again.",
+    );
+  }
+
+  lines.push(
+    "",
+    "Use /model <handle-or-id> to switch this chat's routed model.",
+  );
+  return lines.join("\n");
+}
+
+export function buildChannelModelListUnavailableMessage(
+  channelId: string,
+  error: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} could not load the model list: ${error}`;
+}
+
+export function buildChannelModelUpdatedMessage(
+  channelId: string,
+  params: {
+    modelLabel: string;
+    modelHandle: string;
+    appliedTo?: "agent" | "conversation";
+  },
+): string {
+  const displayName = channelDisplayName(channelId);
+  const scope = params.appliedTo === "agent" ? "agent" : "conversation";
+  const handleText =
+    params.modelHandle === params.modelLabel ? "" : ` (${params.modelHandle})`;
+  return `${displayName} updated this ${scope}'s model to ${params.modelLabel}${handleText}.`;
+}
+
+export function buildChannelModelUpdateFailedMessage(
+  channelId: string,
+  identifier: string,
+  error: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} could not switch this chat's routed model to ${identifier}: ${error}`;
+}
+
+export function buildChannelModelUnavailableMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot use /model because the listener is not ready yet. Try again in a moment.`;
+}
+
 export function buildChannelReflectionUnavailableMessage(
   channelId: string,
 ): string {
@@ -357,6 +565,12 @@ export async function tryHandleChannelSlashCommand(
           msg,
           command,
           handler: options.handlers?.chat,
+        });
+      case "model":
+        return handleScopedCommand({
+          msg,
+          command,
+          handler: options.handlers?.model,
         });
       case "reflect":
       case "reflection":

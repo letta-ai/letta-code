@@ -34,7 +34,10 @@ import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
-import { getCurrentWorkingDirectory, getRuntimeContext } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,

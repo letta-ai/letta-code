@@ -245,7 +245,6 @@ describe("composeSubagentChildEnv", () => {
 
     expect(env.LETTA_INHERITED_TOOL_CONTEXT_ID).toBeUndefined();
   });
-
 });
 
 describe("resolveSubagentInheritedPrimaryRoot", () => {

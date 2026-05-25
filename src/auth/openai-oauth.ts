@@ -213,8 +213,41 @@ export async function generatePKCE(): Promise<{
 export function startLocalOAuthServer(
   expectedState: string,
   port = OPENAI_OAUTH_CONFIG.defaultPort,
+  signal?: AbortSignal,
 ): Promise<{ result: OAuthCallbackResult; server: http.Server }> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const error = new Error("OAuth callback server cancelled");
+      error.name = "AbortError";
+      reject(error);
+      return;
+    }
+
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      callback();
+    };
+
+    const onAbort = () => {
+      server.close();
+      finish(() => {
+        const error = new Error("OAuth callback server cancelled");
+        error.name = "AbortError";
+        reject(error);
+      });
+    };
+
     const server = http.createServer((req, res) => {
       const url = new URL(req.url || "", `http://localhost:${port}`);
 
@@ -234,9 +267,11 @@ export function startLocalOAuthServer(
               detail: errorDescription || undefined,
             }),
           );
-          reject(
-            new Error(`OAuth error: ${error} - ${errorDescription || ""}`),
-          );
+          finish(() => {
+            reject(
+              new Error(`OAuth error: ${error} - ${errorDescription || ""}`),
+            );
+          });
           return;
         }
 
@@ -249,7 +284,9 @@ export function startLocalOAuthServer(
               message: "Missing authorization code or state parameter.",
             }),
           );
-          reject(new Error("Missing authorization code or state parameter"));
+          finish(() => {
+            reject(new Error("Missing authorization code or state parameter"));
+          });
           return;
         }
 
@@ -263,11 +300,13 @@ export function startLocalOAuthServer(
                 "State mismatch - the authorization may have been tampered with.",
             }),
           );
-          reject(
-            new Error(
-              "State mismatch - the authorization may have been tampered with",
-            ),
-          );
+          finish(() => {
+            reject(
+              new Error(
+                "State mismatch - the authorization may have been tampered with",
+              ),
+            );
+          });
           return;
         }
 
@@ -282,7 +321,9 @@ export function startLocalOAuthServer(
           }),
         );
 
-        resolve({ result: { code, state }, server });
+        finish(() => {
+          resolve({ result: { code, state }, server });
+        });
       } else {
         res.writeHead(404, { "Content-Type": "text/plain" });
         res.end("Not found");
@@ -291,27 +332,37 @@ export function startLocalOAuthServer(
 
     server.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
-        reject(
-          new Error(
-            `Port ${port} is already in use. Please close any application using this port and try again.`,
-          ),
-        );
+        finish(() => {
+          reject(
+            new Error(
+              `Port ${port} is already in use. Please close any application using this port and try again.`,
+            ),
+          );
+        });
       } else {
-        reject(err);
+        finish(() => {
+          reject(err);
+        });
       }
     });
+
+    if (signal) {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     server.listen(port, "127.0.0.1", () => {
       // Server started successfully, waiting for callback
     });
 
     // Timeout after 5 minutes
-    setTimeout(
+    timeout = setTimeout(
       () => {
         server.close();
-        reject(
-          new Error("OAuth timeout - no callback received within 5 minutes"),
-        );
+        finish(() => {
+          reject(
+            new Error("OAuth timeout - no callback received within 5 minutes"),
+          );
+        });
       },
       5 * 60 * 1000,
     );

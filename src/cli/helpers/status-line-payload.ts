@@ -35,9 +35,9 @@ export interface StatusLinePayloadBuildInput {
 }
 
 /**
- * Status line payload piped as JSON to the command's stdin.
+ * Shared payload for built-in and extension statusline renderers.
  *
- * Unsupported fields are set to null to keep JSON stable for scripts.
+ * Unsupported fields are set to null to keep the renderer context stable.
  */
 export interface StatusLinePayload {
   cwd: string;
@@ -49,7 +49,7 @@ export interface StatusLinePayload {
   last_run_id: string | null;
   transcript_path: string | null;
   version: string;
-  // Back-compat fields used by custom statusline scripts.
+  // Back-compat fields from the legacy statusline payload shape.
   reasoning_effort: string | null;
   system_prompt_id: string | null;
   toolset: string | null;

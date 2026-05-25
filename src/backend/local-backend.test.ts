@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -51,6 +58,37 @@ async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   return chunks;
 }
 
+function pageItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
+  return Array.isArray(value) ? value : value.getPaginatedItems();
+}
+
+async function withEnv<T>(
+  updates: Record<string, string | undefined>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = Object.fromEntries(
+    Object.keys(updates).map((key) => [key, process.env[key]]),
+  );
+  try {
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    return await run();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 function assistantMessage(input: {
   content: AssistantMessage["content"];
   stopReason: AssistantMessage["stopReason"];
@@ -94,6 +132,165 @@ function lettaStreamFromChunks(
 }
 
 describe("local backend pi transcript", () => {
+  test("uses wall-clock timestamps for new local conversations and messages", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
+    const before = Date.now() - 1_000;
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "hello" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const after = Date.now() + 1_000;
+    const conversations = (await backend.listConversations({
+      agent_id: agent.id,
+    } as never)) as Array<{ last_message_at?: string | null }>;
+    const messages = pageItems(
+      await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    const timestamps = [
+      conversation.created_at,
+      conversations[0]?.last_message_at,
+      messages[0]?.date,
+      messages.at(-1)?.date,
+    ];
+    for (const timestamp of timestamps) {
+      expect(typeof timestamp).toBe("string");
+      const parsed = Date.parse(timestamp ?? "");
+      expect(parsed).toBeGreaterThanOrEqual(before);
+      expect(parsed).toBeLessThanOrEqual(after);
+    }
+  });
+
+  test("repairs legacy synthetic transcript timestamps from manifest and file mtime", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
+    const agentId = "agent-local-default";
+    const conversationId = "local-conv-old";
+    const conversationDir = join(
+      storageDir,
+      "conversations",
+      `${conversationId}--${agentId}`,
+    );
+    const createdAt = "2026-05-22T12:00:00.000Z";
+    const activeAt = "2026-05-22T13:00:00.000Z";
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", `${agentId}.json`),
+      `${JSON.stringify({
+        id: agentId,
+        name: "Local",
+        description: null,
+        system: "",
+        tags: [],
+        model: "openai/gpt-5-mini",
+        model_settings: { model: "openai/gpt-5-mini" },
+      })}\n`,
+    );
+    await mkdir(conversationDir, { recursive: true });
+    await writeFile(
+      join(conversationDir, "conversation.json"),
+      `${JSON.stringify({
+        id: conversationId,
+        agent_id: agentId,
+        created_at: "2026-01-01T00:00:01.000Z",
+        updated_at: "2026-01-01T00:00:02.000Z",
+        last_message_at: "2026-01-01T00:00:02.000Z",
+        in_context_message_ids: ["local-ui-msg-1", "local-ui-msg-2"],
+      })}\n`,
+    );
+    await writeFile(
+      join(conversationDir, "manifest.json"),
+      `${JSON.stringify({
+        schema_version: 1,
+        message_format: "pi-ai-message-jsonl",
+        provider_stack: "pi-ai",
+        created_at: createdAt,
+      })}\n`,
+    );
+    const messagesPath = join(conversationDir, "messages.jsonl");
+    const transcriptRows = [
+      {
+        id: "local-ui-msg-1",
+        role: "user",
+        content: [{ type: "text", text: "old" }],
+        timestamp: Date.parse("2026-01-01T00:00:01.000Z"),
+        metadata: {
+          created_at: "2026-01-01T00:00:01.000Z",
+          updated_at: "2026-01-01T00:00:01.000Z",
+          agent_id: agentId,
+          conversation_id: conversationId,
+        },
+      },
+      {
+        id: "local-ui-msg-2",
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "local",
+        provider: "local",
+        model: "local",
+        usage: emptyLocalUsage(),
+        stopReason: "stop",
+        timestamp: Date.parse("2026-01-01T00:00:02.000Z"),
+        metadata: {
+          created_at: "2026-01-01T00:00:02.000Z",
+          updated_at: "2026-01-01T00:00:02.000Z",
+          agent_id: agentId,
+          conversation_id: conversationId,
+        },
+      },
+    ].map((message) => JSON.stringify(message));
+    await writeFile(messagesPath, `${transcriptRows.join("\n")}\n`);
+    await utimes(messagesPath, new Date(activeAt), new Date(activeAt));
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const conversations = (await backend.listConversations({
+      agent_id: agentId,
+    } as never)) as Array<{
+      created_at?: string | null;
+      updated_at?: string | null;
+      last_message_at?: string | null;
+    }>;
+    const messages = pageItems(
+      await backend.listConversationMessages(conversationId, {
+        agent_id: agentId,
+        order: "asc",
+      } as never),
+    );
+
+    expect(conversations[0]?.created_at).toBe(createdAt);
+    expect(conversations[0]?.updated_at).toBe(activeAt);
+    expect(conversations[0]?.last_message_at).toBe(activeAt);
+    expect(messages[0]?.date).toBe(createdAt);
+    expect(messages.at(-1)?.date).toBe(activeAt);
+  });
+
   test("reuses cached compiled system prompt across turns until explicit recompile", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-cache-"));
     const systemPrompts: string[] = [];
@@ -289,6 +486,70 @@ describe("local backend pi transcript", () => {
     expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
+  });
+
+  test("discovers configured Ollama Cloud models from OpenAI-compatible catalog", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-ollama-cloud-discovery-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "ollama_cloud",
+      providerName: "lc-ollama-cloud",
+      apiKey: "ollama-key",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const captured: { authorization?: string | null } = {};
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      captured.authorization = new Headers(init?.headers).get("Authorization");
+      return new Response(
+        JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual(["https://ollama.com/v1/models"]);
+    expect(captured.authorization).toBe("Bearer ollama-key");
+    expect(handles).toContain("ollama-cloud/rnj-1:8b");
+    expect(handles).toContain("ollama-cloud/glm-5.1");
+    expect(handles).not.toContain("ollama-cloud/gpt-oss:20b");
+    expect(handles).not.toContain("ollama-cloud/gpt-oss:120b");
+  });
+
+  test("uses LM Studio env API key for discovery when stored key is placeholder", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-lmstudio-env-key-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://localhost:8000/v1",
+      storageDir,
+    });
+    const captured: { authorization?: string | null } = {};
+    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+      captured.authorization = new Headers(init?.headers).get("Authorization");
+      return new Response(JSON.stringify({ data: [{ id: "secure-model" }] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {
+      const handles = (
+        await listLocalModels(storageDir, { fetch: fetchImpl })
+      ).map((model) => model.handle);
+
+      expect(handles).toContain("lmstudio/secure-model");
+    });
+
+    expect(captured.authorization).toBe("Bearer 1234");
   });
 
   test("discovers configured llama.cpp models from OpenAI-compatible catalog", async () => {
