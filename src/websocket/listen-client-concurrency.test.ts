@@ -125,6 +125,11 @@ const listAgentMessagesMock = mock(async () => ({
   getPaginatedItems: () => [],
 }));
 const cancelConversationMock = mock(async (_conversationId: string) => {});
+const retrieveRunDefault = async (runId: string) => ({
+  id: runId,
+  status: "completed",
+});
+const retrieveRunMock = mock(retrieveRunDefault);
 const conversationMessagesStreamMock = mock(
   async (
     conversationId: string,
@@ -157,6 +162,9 @@ const getClientMock = mock(async () => ({
   },
   messages: {
     retrieve: retrieveMessageMock,
+  },
+  runs: {
+    retrieve: retrieveRunMock,
   },
 }));
 const getResumeDataMock = mock(
@@ -247,9 +255,8 @@ mock.module("../agent/approval-recovery", () => ({
 }));
 
 const listenClientModule = await import("@/websocket/listen-client");
-const { sendApprovalContinuationWithRetry } = await import(
-  "@/websocket/listener/send"
-);
+const { sendApprovalContinuationWithRetry, sendMessageStreamWithRetry } =
+  await import("@/websocket/listener/send");
 const {
   __listenClientTestUtils,
   requestApprovalOverWS,
@@ -338,6 +345,8 @@ describe("listen-client multi-worker concurrency", () => {
     retrieveConversationMock.mockClear();
     retrieveMessageMock.mockClear();
     listAgentMessagesMock.mockClear();
+    retrieveRunMock.mockClear();
+    retrieveRunMock.mockImplementation(retrieveRunDefault);
     getResumeDataMock.mockClear();
     classifyApprovalsMock.mockClear();
     executeApprovalBatchMock.mockClear();
@@ -2600,5 +2609,159 @@ describe("listen-client multi-worker concurrency", () => {
       max_attempts: 3,
       delay_ms: 10000,
     });
+  });
+
+  test("approval continuation waits for reported blocking run to settle", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-blocking-run",
+      "conv-blocking-run",
+    );
+    const socket = new MockSocket();
+    const blockingRunId = "run-blocking-123";
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail: `Cannot send a new message: Another request (run_id=${blockingRunId}) is currently being processed for this conversation. Please wait for it to complete.`,
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+    conversationMessagesStreamMock.mockRejectedValueOnce(
+      new Error("resume unavailable"),
+    );
+
+    let pollCount = 0;
+    retrieveRunMock.mockImplementation(async (runId: string) => {
+      pollCount += 1;
+      return {
+        id: runId,
+        status: pollCount >= 5 ? "completed" : "running",
+      };
+    });
+
+    const originalSetTimeout = globalThis.setTimeout;
+    type SetTimeoutParams = Parameters<typeof setTimeout>;
+    globalThis.setTimeout = ((
+      handler: SetTimeoutParams[0],
+      _timeout?: SetTimeoutParams[1],
+      ...args: unknown[]
+    ) => originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+    try {
+      const stream = await sendApprovalContinuationWithRetry(
+        "conv-blocking-run",
+        [
+          {
+            type: "approval",
+            approvals: [],
+            otid: "approval-otid-blocking-run",
+          },
+        ],
+        {
+          agentId: "agent-blocking-run",
+          streamTokens: true,
+          background: true,
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        new AbortController().signal,
+      );
+
+      expect(stream as unknown as MockStream).toEqual({
+        conversationId: "conv-blocking-run",
+        agentId: "agent-blocking-run",
+      });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(retrieveRunMock).toHaveBeenCalledTimes(5);
+    expect(retrieveRunMock.mock.calls.map((call) => call[0])).toEqual(
+      Array(5).fill(blockingRunId),
+    );
+    expect(sendMessageStreamMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("message send waits for reported blocking run to settle", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-message-blocking-run",
+      "conv-message-blocking-run",
+    );
+    const socket = new MockSocket();
+    const blockingRunId = "run-message-blocking-123";
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail: `Cannot send a new message: Another request (run_id=${blockingRunId}) is currently being processed for this conversation. Please wait for it to complete.`,
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+    conversationMessagesStreamMock.mockRejectedValueOnce(
+      new Error("resume unavailable"),
+    );
+
+    let pollCount = 0;
+    retrieveRunMock.mockImplementation(async (runId: string) => {
+      pollCount += 1;
+      return {
+        id: runId,
+        status: pollCount >= 3 ? "completed" : "running",
+      };
+    });
+
+    const originalSetTimeout = globalThis.setTimeout;
+    type SetTimeoutParams = Parameters<typeof setTimeout>;
+    globalThis.setTimeout = ((
+      handler: SetTimeoutParams[0],
+      _timeout?: SetTimeoutParams[1],
+      ...args: unknown[]
+    ) => originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+    try {
+      const stream = await sendMessageStreamWithRetry(
+        "conv-message-blocking-run",
+        [
+          {
+            role: "user",
+            content: "hello",
+            otid: "message-otid-blocking-run",
+          },
+        ],
+        {
+          agentId: "agent-message-blocking-run",
+          streamTokens: true,
+          background: true,
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        new AbortController().signal,
+      );
+
+      expect(stream as unknown as MockStream).toEqual({
+        conversationId: "conv-message-blocking-run",
+        agentId: "agent-message-blocking-run",
+      });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(retrieveRunMock).toHaveBeenCalledTimes(3);
+    expect(retrieveRunMock.mock.calls.map((call) => call[0])).toEqual(
+      Array(3).fill(blockingRunId),
+    );
+    expect(sendMessageStreamMock).toHaveBeenCalledTimes(2);
   });
 });
