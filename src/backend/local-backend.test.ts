@@ -677,6 +677,18 @@ describe("local backend pi transcript", () => {
         );
       }
 
+      if (contexts.length === 2) {
+        const emptyMessage = assistantMessage({
+          responseId: "response-empty-after-tool",
+          stopReason: "stop",
+          content: [],
+        });
+        return streamFromEvents(
+          [{ type: "done", reason: "stop", message: emptyMessage }],
+          emptyMessage,
+        );
+      }
+
       const finalMessage = assistantMessage({
         responseId: "response-final",
         stopReason: "stop",
@@ -736,7 +748,7 @@ describe("local backend pi transcript", () => {
       "approval_request_message",
     ]);
 
-    await drain(
+    const continuationChunks = await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: agent.id,
         messages: [
@@ -755,13 +767,40 @@ describe("local backend pi transcript", () => {
       } as never),
     );
 
-    expect(contexts).toHaveLength(2);
+    expect(
+      continuationChunks.some((chunk) => {
+        const event = chunk as { message_type?: string; event_type?: string };
+        return (
+          event.message_type === "event_message" && event.event_type === "retry"
+        );
+      }),
+    ).toBe(true);
+
+    expect(contexts).toHaveLength(3);
     const secondContextMessages = contexts[1]?.messages ?? [];
     expect(secondContextMessages.at(-1)).toMatchObject({
       role: "toolResult",
       toolCallId: "call-readme",
       content: [{ type: "text", text: "README contents" }],
     });
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const messages = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "assistant",
+    ]);
+    const finalAssistant = messages.at(-1) as { content?: unknown[] };
+    expect(finalAssistant.content).toEqual([
+      { type: "text", text: "Tool result received." },
+    ]);
   });
 
   test("refuses to load unversioned non-empty transcripts with exact migration command", async () => {

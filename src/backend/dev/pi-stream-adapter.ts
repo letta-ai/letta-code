@@ -94,6 +94,29 @@ class PiProviderError extends Error {
   }
 }
 
+class EmptyPiResponseError extends Error {
+  readonly isRetryable = true;
+
+  constructor() {
+    super("Received empty content in local provider response.");
+    this.name = "EmptyPiResponseError";
+  }
+}
+
+function hasAssistantOutputContent(message: AssistantMessage): boolean {
+  return message.content.some((block) => {
+    if (block.type === "toolCall") return true;
+    if (block.type === "text") return block.text.trim().length > 0;
+    return false;
+  });
+}
+
+function assertAssistantHasOutputContent(message: AssistantMessage): void {
+  if (!hasAssistantOutputContent(message)) {
+    throw new EmptyPiResponseError();
+  }
+}
+
 async function sleepWithAbort(
   delayMs: number,
   abortSignal: AbortSignal | undefined,
@@ -495,6 +518,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         }
         if (part.type === "done") {
+          assertAssistantHasOutputContent(part.message);
           finalMessage = part.message;
           yield providerLocalMessage(
             toLocalAssistantMessage(part.message, input),
@@ -505,6 +529,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       if (streamError) throw streamError;
       finalMessage ??= await result.result();
+      assertAssistantHasOutputContent(finalMessage);
       if (
         finalMessage.stopReason === "error" ||
         finalMessage.stopReason === "aborted"

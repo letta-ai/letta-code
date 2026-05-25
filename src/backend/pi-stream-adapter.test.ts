@@ -462,4 +462,49 @@ describe("PiStreamAdapter", () => {
     ).toContain("WebSocket closed 1006 Connection ended");
     expect(events.some((event) => event.type === "local-message")).toBe(true);
   });
+
+  test("retries empty local provider responses before persisting model output", async () => {
+    let calls = 0;
+    const stream: PiStreamFunction = () => {
+      calls += 1;
+      if (calls === 1) {
+        const empty = { ...assistantMessage(), content: [] };
+        return streamFromEvents(
+          [{ type: "done", reason: "stop", message: empty }],
+          empty,
+        );
+      }
+
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({ stream });
+    const events: ProviderStreamEvent[] = [];
+    for await (const event of adapter.stream(input())) {
+      events.push(event);
+    }
+
+    expect(calls).toBe(2);
+    expect(
+      events.some((event) => {
+        if (event.type !== "letta-chunk") return false;
+        const chunk = event.chunk as {
+          message_type?: string;
+          event_type?: string;
+        };
+        return (
+          chunk.message_type === "event_message" && chunk.event_type === "retry"
+        );
+      }),
+    ).toBe(true);
+    const localMessages = events.filter(
+      (event) => event.type === "local-message",
+    );
+    expect(localMessages).toHaveLength(1);
+    expect(JSON.stringify(localMessages[0])).toContain("ok");
+  });
 });
