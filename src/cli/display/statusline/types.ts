@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type * as DisplayComponents from "@/cli/display/DisplayComponents";
-import type { ExtensionContext } from "@/cli/extensions/types";
 import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
+import type { ExtensionContext } from "@/extensions/types";
 
 export interface StatuslineUiContext {
   currentModelProvider: string | null;
