@@ -15,6 +15,8 @@ import { Text } from "./Text";
 // Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";
 export const MCP_SERVERS_LIST_TIMEOUT_MS = 15_000;
+export const MCP_SERVERS_LIST_TIMEOUT_MESSAGE =
+  "Timed out loading MCP servers. The API endpoint may be slow or unavailable; press R to retry.";
 
 interface McpSelectorProps {
   agentId: string;
@@ -24,25 +26,31 @@ interface McpSelectorProps {
 
 type McpServer = StreamableHTTPMcpServer | SseMcpServer | StdioMcpServer;
 
+interface McpServersListClient {
+  mcpServers: {
+    list(options?: {
+      maxRetries?: number;
+      signal?: AbortSignal | null;
+    }): Promise<McpServer[]>;
+  };
+}
+
 const DISPLAY_PAGE_SIZE = 5;
 const TOOLS_DISPLAY_PAGE_SIZE = 8;
 
-export async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  message: string,
-): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
+export async function listMcpServersWithTimeout(
+  client: McpServersListClient,
+  timeoutMs = MCP_SERVERS_LIST_TIMEOUT_MS,
+): Promise<McpServer[]> {
+  const signal = AbortSignal.timeout(timeoutMs);
 
   try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timeoutId !== undefined) {
-      clearTimeout(timeoutId);
+    return await client.mcpServers.list({ maxRetries: 0, signal });
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error(MCP_SERVERS_LIST_TIMEOUT_MESSAGE);
     }
+    throw error;
   }
 }
 
@@ -114,11 +122,7 @@ export const McpSelector = memo(function McpSelector({
     setError(null);
     try {
       const client = await getClient();
-      const serverList = await withTimeout(
-        client.mcpServers.list(),
-        MCP_SERVERS_LIST_TIMEOUT_MS,
-        "Timed out loading MCP servers. The API endpoint may be slow or unavailable; press R to retry.",
-      );
+      const serverList = await listMcpServersWithTimeout(client);
       setServers(serverList);
     } catch (err) {
       setError(
